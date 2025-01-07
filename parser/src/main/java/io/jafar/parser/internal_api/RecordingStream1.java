@@ -13,7 +13,7 @@ public final class RecordingStream1 implements AutoCloseable {
   private final Path path;
   private final RandomAccessFile file;
 
-  private final ParserContext context;
+  private final RecordingParserContext context;
   private long mark = -1;
 
   private final long offset;
@@ -27,14 +27,14 @@ public final class RecordingStream1 implements AutoCloseable {
   private long currentPageAnchor;
 
   RecordingStream1(Path path) throws IOException {
-    this(path, 0, Files.size(path), new ParserContext());
+    this(path, 0, Files.size(path), new RecordingParserContext());
   }
 
-  public RecordingStream1 slice(long pos, long len, ParserContext context) throws IOException {
+  public RecordingStream1 slice(long pos, long len, RecordingParserContext context) throws IOException {
     return new RecordingStream1(path, pos, len, context);
   }
 
-  public RecordingStream1(Path path, long pos, long len, ParserContext context) throws IOException {
+  public RecordingStream1(Path path, long pos, long len, RecordingParserContext context) throws IOException {
     this.path = path;
     this.file = new RandomAccessFile(path.toFile(), "r");
     this.offset = pos;
@@ -47,7 +47,7 @@ public final class RecordingStream1 implements AutoCloseable {
     file.read(page, 0, (int)Math.min(len, page.length));
   }
 
-  public ParserContext getContext() {
+  public RecordingParserContext getContext() {
     return context;
   }
 

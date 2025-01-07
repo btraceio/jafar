@@ -4,7 +4,6 @@ import io.jafar.parser.AbstractEvent;
 import io.jafar.parser.MutableConstantPool;
 import io.jafar.parser.MutableConstantPools;
 import io.jafar.parser.TypeFilter;
-import io.jafar.parser.ValueLoader;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 import java.io.IOException;
@@ -36,7 +35,7 @@ public final class CheckpointEvent extends AbstractEvent {
     }
 
     void readConstantPools() throws IOException {
-        ParserContext context = stream.getContext();
+        RecordingParserContext context = stream.getContext();
         TypeFilter typeFilter = context.getTypeFilter();
 
         boolean skipAll = context.getConstantPools().isReady();

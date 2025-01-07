@@ -4,17 +4,19 @@ import io.jafar.parser.MutableConstantPools;
 import io.jafar.parser.MutableMetadataLookup;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CachedStringParser;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-public final class ParserContext {
+public final class RecordingParserContext {
     private final MutableMetadataLookup metadataLookup;
     private final MutableConstantPools constantPools;
 
@@ -36,7 +38,10 @@ public final class ParserContext {
             this.id = clz.getId();
             this.name = clz.getName();
             this.superType = clz.getSuperType();
-            this.fieldNames = clz.getFields().stream().map(f -> f.getType().getName() + ":" + f.getName()).toList();
+            this.fieldNames = new ArrayList<>(clz.getFields().size());
+            for (MetadataField field : clz.getFields()) {
+                this.fieldNames.add(field.getType().getName() + ":" + field.getName());
+            }
         }
 
         @Override
@@ -70,16 +75,20 @@ public final class ParserContext {
     public final byte[] byteBuffer = new byte[4096];
     public final char[] charBuffer = new char[4096];
 
-    public ParserContext() {
+    public RecordingParserContext() {
+        this(new ConcurrentHashMap<>());
+    }
+
+    public RecordingParserContext(ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
         this.metadataLookup = new MutableMetadataLookup();
         this.constantPools = new MutableConstantPools(metadataLookup);
-        this.globalDeserializerCache = new ConcurrentHashMap<>();
+        this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new ConcurrentHashMap<>();
 
         this.typeFilter = null;
         this.chunkIndex = 0;
     }
 
-    public ParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
+    public RecordingParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
         this.metadataLookup = metadataLookup;
         this.constantPools = constantPools;
         this.globalDeserializerCache = deserializerCache;

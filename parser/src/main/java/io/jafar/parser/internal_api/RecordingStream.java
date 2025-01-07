@@ -6,24 +6,24 @@ import java.nio.file.Path;
 public final class RecordingStream implements AutoCloseable {
   private final RecordingStreamReader reader;
 
-  private final ParserContext context;
+  private final RecordingParserContext context;
   private long mark = -1;
 
 
-  RecordingStream(Path path) throws IOException {
-    this(RecordingStreamReader.mapped(path), new ParserContext());
+  RecordingStream(Path path, RecordingParserContext context) throws IOException {
+    this(RecordingStreamReader.mapped(path), context);
   }
 
-  public RecordingStream slice(long pos, long len, ParserContext context) {
+  public RecordingStream slice(long pos, long len, RecordingParserContext context) {
     return new RecordingStream(reader.slice(pos, len), context);
   }
 
-  public RecordingStream(RecordingStreamReader reader, ParserContext context) {
+  public RecordingStream(RecordingStreamReader reader, RecordingParserContext context) {
     this.reader = reader;
     this.context = context;
   }
 
-  public ParserContext getContext() {
+  public RecordingParserContext getContext() {
     return context;
   }
 

@@ -39,6 +39,16 @@ public final class StreamingChunkParser implements AutoCloseable {
           });
 
   private boolean closed = false;
+  private final RecordingParserContext context;
+
+  public StreamingChunkParser() {
+    this(new RecordingParserContext());
+  }
+
+  public StreamingChunkParser(RecordingParserContext context) {
+    this.context = context;
+  }
+
 
   /**
    * Parse the given JFR recording stream.<br>
@@ -62,17 +72,8 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (closed) {
       throw new IllegalStateException("Parser is closed");
     }
-    try (RecordingStream stream = new RecordingStream(path)) {
-      parse(stream, listener, false);
-    }
-  }
-
-  public void parse(Path path, ChunkParserListener listener, boolean forceConstantPools) throws IOException {
-    if (closed) {
-      throw new IllegalStateException("Parser is closed");
-    }
-    try (RecordingStream stream = new RecordingStream(path)) {
-      parse(stream, listener, forceConstantPools);
+    try (RecordingStream stream = new RecordingStream(path, context)) {
+      parse(stream, listener);
     }
   }
 
@@ -86,7 +87,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     }
   }
 
-  private Future<Boolean> submitParsingTask(ChunkHeader chunkHeader, RecordingStream chunkStream, ChunkParserListener listener, boolean forceConstantPools, long remainder) {
+  private Future<Boolean> submitParsingTask(ChunkHeader chunkHeader, RecordingStream chunkStream, ChunkParserListener listener, long remainder) {
     return executor.submit(() -> {
       int chunkCounter = chunkHeader.order;
       try {
@@ -98,7 +99,7 @@ public final class StreamingChunkParser implements AutoCloseable {
           return true;
         }
         // read metadata
-        if (!readMetadata(chunkStream, chunkHeader, listener, forceConstantPools)) {
+        if (!readMetadata(chunkStream, chunkHeader, listener, false)) {
           log.debug(
                   "'onMetadata' returned false. Skipping events for chunk {}", chunkCounter);
           listener.onChunkEnd(chunkCounter, true);
@@ -140,7 +141,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     });
   }
 
-  private void parse(RecordingStream stream, ChunkParserListener listener, boolean forceConstantPools) throws IOException {
+  private void parse(RecordingStream stream, ChunkParserListener listener) throws IOException {
     if (stream.available() == 0) {
       return;
     }
@@ -154,10 +155,10 @@ public final class StreamingChunkParser implements AutoCloseable {
         MutableMetadataLookup metadataLookup = chunkMetadataLookup.computeIfAbsent(chunkCounter, k -> new MutableMetadataLookup());
         MutableConstantPools constantPools = chunkConstantPools.computeIfAbsent(chunkCounter, k -> new MutableConstantPools(metadataLookup));
 
-        RecordingStream chunkStream = stream.slice(header.offset, header.size, new ParserContext(stream.getContext().getTypeFilter(), chunkCounter, metadataLookup, constantPools, stream.getContext().getDeserializerCache()));
+        RecordingStream chunkStream = stream.slice(header.offset, header.size, new RecordingParserContext(stream.getContext().getTypeFilter(), chunkCounter, metadataLookup, constantPools, stream.getContext().getDeserializerCache()));
         stream.position(header.offset + header.size);
 
-        results.add(submitParsingTask(header, chunkStream, listener, forceConstantPools, remainder));
+        results.add(submitParsingTask(header, chunkStream, listener, remainder));
         chunkCounter++;
       }
       results.forEach(f -> {

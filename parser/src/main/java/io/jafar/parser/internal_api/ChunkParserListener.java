@@ -7,7 +7,7 @@ import io.jafar.parser.internal_api.metadata.MetadataEvent;
  */
 public interface ChunkParserListener {
   /** Called when the recording starts to be processed */
-  default void onRecordingStart(ParserContext context) {}
+  default void onRecordingStart(RecordingParserContext context) {}
 
   /**
    * Called for each discovered chunk
@@ -16,7 +16,7 @@ public interface ChunkParserListener {
    * @param header the parsed chunk header
    * @return {@literal false} if the chunk should be skipped
    */
-  default boolean onChunkStart(int chunkIndex, ChunkHeader header, ParserContext context) {
+  default boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingParserContext context) {
     return true;
   }
 
@@ -56,5 +56,5 @@ public interface ChunkParserListener {
   }
 
   /** Called when the recording was fully processed */
-  default void onRecordingEnd(ParserContext context) {}
+  default void onRecordingEnd(RecordingParserContext context) {}
 }
