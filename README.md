@@ -67,6 +67,38 @@ This short program will parse the recording and call the `handle` method for eac
 The number of handlers per type is not limited, they all will be executed sequentially.
 With the handlers known beforehand, the parser can safely skip all unreachable events and types, massively saving on the parsing time.
 
+As an optimization for batch processing applications where the JFR files share the same type structure,
+it is possible to use a global parser context and be reusing the generated handler code
+
+```java
+@JfrType("custom.MyEvent")
+public interface MyEvent extends JfrEvent {
+  String myfield();
+}
+
+ParsingContext parsingContext = ParsingContext.create();
+
+String path;
+while ((path = getNextPath()) != null) {
+    try (JafarParser parser = JafarParser.open(path), parsingContext) {}
+        // registering a handler will return a cookie which can be used to deregister the same handler
+        var cookie = parser.handle(MyEvent.class, event -> {
+            System.out.println(event.startTime());
+            System.out.println(event.eventThread().javaName());
+            System.out.println(event.myfield());
+        });
+        parser.handle(MyEvent.class, event -> {
+            // do something else
+        });
+        parser.run();
+        
+        cookie.destroy(parser);
+        // this time only the second handler will be called
+        parser.run();
+    }
+}
+```
+
 ### Generate Jafar Type Interfaces during the build
 There is an in-progress Gradle plugin for generating the Jafar type interfaces based on either the JVM runtime JFR metadata
 or the metadata extracted from a JFR file.

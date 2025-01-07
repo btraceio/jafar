@@ -84,8 +84,8 @@ final class CodeGenerator {
         mv.visitInsn(Opcodes.POP); // stack: []
         mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
         mv.visitInsn(Opcodes.DUP); // stack: [this, this]
-        mv.visitFieldInsn(Opcodes.GETFIELD, clzName, "context", Type.getDescriptor(ParserContext.class)); // stack: [this, context]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(ParserContext.class), "getConstantPools", Type.getMethodDescriptor(Type.getType(ConstantPools.class)), false); // stack: [this, pools]
+        mv.visitFieldInsn(Opcodes.GETFIELD, clzName, "context", Type.getDescriptor(RecordingParserContext.class)); // stack: [this, context]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingParserContext.class), "getConstantPools", Type.getMethodDescriptor(Type.getType(ConstantPools.class)), false); // stack: [this, pools]
         mv.visitLdcInsn(typeId); // stack: [this, pools, type]
         mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, Type.getInternalName(ConstantPools.class), "getConstantPool", Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE), true); // stack: [this, pool]
         mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
@@ -181,7 +181,7 @@ final class CodeGenerator {
         }
     }
 
-    static void addFieldLoader(MethodVisitor mv, MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, ParserContext context) {
+    static void addFieldLoader(MethodVisitor mv, MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, RecordingParserContext context) {
         // stack: [this, stream]
         if (fld.hasConstantPool()) {
             if (fld.getDimension() > 0) {
@@ -449,7 +449,7 @@ final class CodeGenerator {
         }
     }
 
-    private static void handleArrayField(MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, ParserContext context, MethodVisitor mv) {
+    private static void handleArrayField(MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, RecordingParserContext context, MethodVisitor mv) {
         // stack: [this, stream]
         int arrayCounterIdx = lastVarIdx + 1;
         int arraySizeIdx = arrayCounterIdx + 1;
@@ -626,7 +626,7 @@ final class CodeGenerator {
         };
     }
 
-    private static void handleSimpleField(MetadataField fld, String className, int metadataIdx, int lastVarIdx, ParserContext context, MethodVisitor mv) {
+    private static void handleSimpleField(MetadataField fld, String className, int metadataIdx, int lastVarIdx, RecordingParserContext context, MethodVisitor mv) {
         // stack: [this, stream]);
         String fldTypeName = fld.getType().getName();
         switch (fldTypeName) {
@@ -689,7 +689,7 @@ final class CodeGenerator {
         }
     }
 
-    static void prepareConstructor(ClassVisitor cv, String clzName, MetadataClass clz, List<MetadataField> allFields, Set<MetadataField> appliedFields, ParserContext context) {
+    static void prepareConstructor(ClassVisitor cv, String clzName, MetadataClass clz, List<MetadataField> allFields, Set<MetadataField> appliedFields, RecordingParserContext context) {
         MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC, "<init>", Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(RecordingStream.class)), null, null);
         mv.visitCode();
         int contextIdx = 2;
@@ -701,13 +701,13 @@ final class CodeGenerator {
         // store context field
         mv.visitVarInsn(Opcodes.ALOAD,0); // [this]
         mv.visitVarInsn(Opcodes.ALOAD,1); // [this, stream]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(ParserContext.class)), false); // [this, ctx]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(RecordingParserContext.class)), false); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
         mv.visitVarInsn(Opcodes.ASTORE, contextIdx); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(ParserContext.class), "getMetadataLookup", Type.getMethodDescriptor(Type.getType(MetadataLookup.class)), false); // [this, ctx, metadata]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingParserContext.class), "getMetadataLookup", Type.getMethodDescriptor(Type.getType(MetadataLookup.class)), false); // [this, ctx, metadata]
         mv.visitVarInsn(Opcodes.ASTORE, meteadataIdx); // [this, ctx]
-        mv.visitFieldInsn(Opcodes.PUTFIELD, clzName.replace('.', '/'), "context", Type.getDescriptor(ParserContext.class)); // []
+        mv.visitFieldInsn(Opcodes.PUTFIELD, clzName.replace('.', '/'), "context", Type.getDescriptor(RecordingParserContext.class)); // []
 
         for (MetadataField fld : allFields) {;
             if (!appliedFields.contains(fld)) {
@@ -804,7 +804,7 @@ final class CodeGenerator {
         // generate handler class
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, clzName.replace('.', '/'), null, "java/lang/Object", target != null ? new String[]{origClzName.replace('.', '/')} : null);
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "context", Type.getDescriptor(ParserContext.class), null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "context", Type.getDescriptor(RecordingParserContext.class), null, null).visitEnd();
 
         Map<String, String> fieldToMethodMap = new HashMap<>();
         Set<String> usedAttributes = collectUsedAttributes(target, fieldToMethodMap);

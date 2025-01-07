@@ -1,12 +1,10 @@
 package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.MutableMetadataLookup;
-import io.jafar.parser.internal_api.ParserContext;
+import io.jafar.parser.internal_api.RecordingParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 
 public abstract class AbstractMetadataElement {
     private final RecordingStream stream;
@@ -76,7 +74,7 @@ public abstract class AbstractMetadataElement {
         return kind;
     }
 
-    public ParserContext getContext() {
+    public RecordingParserContext getContext() {
         return stream.getContext();
     }
 }

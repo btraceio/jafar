@@ -5,10 +5,12 @@ import io.jafar.parser.api.JafarParser;
 import io.jafar.parser.api.JfrIgnore;
 import io.jafar.parser.api.JfrType;
 import io.jafar.parser.api.JFRHandler;
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.parser.internal_api.ParsingContextImpl;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.ParserContext;
+import io.jafar.parser.internal_api.RecordingParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -18,7 +20,6 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import jdk.jfr.FlightRecorder;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
@@ -58,12 +59,12 @@ public final class JafarParserImpl implements JafarParser {
     private final Map<Class<?>, List<JFRHandler.Impl<?>>> handlerMap = new HashMap<>();
     private final Int2ObjectMap<Long2ObjectMap<Class<?>>> chunkTypeClassMap = new Int2ObjectOpenHashMap<>();
 
-    private final Map<String, Class<?>> globalDeserializerMap = new HashMap<>();
+    private final Map<String, Class<?>> globalHandlerMap = new HashMap<>();
 
     private boolean closed = false;
 
-    public JafarParserImpl(Path recording) {
-        this.parser = new StreamingChunkParser();
+    public JafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
+        this.parser = new StreamingChunkParser(parsingContext.newRecordingParserContext());
         this.recording = recording;
     }
 
@@ -93,10 +94,10 @@ public final class JafarParserImpl implements JafarParser {
             typeName = typeAnnotation.value();
         }
 
-        if (globalDeserializerMap.containsKey(typeName)) {
+        if (globalHandlerMap.containsKey(typeName)) {
             return;
         }
-        globalDeserializerMap.put(typeName, clz);
+        globalHandlerMap.put(typeName, clz);
         if (!isPrimitive) {
             Class<?> superClass = clz.getSuperclass();
             if (superClass != null && superClass.isInterface()) {
@@ -118,19 +119,18 @@ public final class JafarParserImpl implements JafarParser {
         // parse JFR and run handlers
         parser.parse(recording, new ChunkParserListener() {
             @Override
-            public void onRecordingStart(ParserContext context) {
-                if (!globalDeserializerMap.isEmpty()) {
-                    context.setTypeFilter(t -> globalDeserializerMap.containsKey(t.getName()));
+            public void onRecordingStart(RecordingParserContext context) {
+                if (!globalHandlerMap.isEmpty()) {
+                    context.setTypeFilter(t -> globalHandlerMap.containsKey(t.getName()));
                 }
             }
 
             @Override
-            public boolean onChunkStart(int chunkIndex, ChunkHeader header, ParserContext context) {
-                if (!globalDeserializerMap.isEmpty()) {
+            public boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingParserContext context) {
+                if (!globalHandlerMap.isEmpty()) {
                     synchronized (this) {
                         context.setClassTypeMap(chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new Long2ObjectOpenHashMap<>()));
-
-                        context.addTargetTypeMap(globalDeserializerMap);
+                        context.addTargetTypeMap(globalHandlerMap);
                     }
                     return true;
                 }
@@ -146,7 +146,7 @@ public final class JafarParserImpl implements JafarParser {
             public boolean onMetadata(MetadataEvent metadata) {
                 Long2ObjectMap<Class<?>> typeClassMap = metadata.getContext().getClassTypeMap();
 
-                ParserContext context = metadata.getContext();
+                RecordingParserContext context = metadata.getContext();
                 // typeClassMap must be fully initialized before trying to resolve/generate the handlers
                 for (MetadataClass clz : metadata.getClasses()) {
                     Class<?> targetClass = context.getClassTargetType(clz.getName());
@@ -190,7 +190,7 @@ public final class JafarParserImpl implements JafarParser {
             parser.close();
             chunkTypeClassMap.clear();
             handlerMap.clear();
-            globalDeserializerMap.clear();
+            globalHandlerMap.clear();
         }
     }
 
