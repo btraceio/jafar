@@ -121,7 +121,7 @@ public final class JafarParserImpl implements JafarParser {
             @Override
             public void onRecordingStart(RecordingParserContext context) {
                 if (!globalHandlerMap.isEmpty()) {
-                    context.setTypeFilter(t -> globalHandlerMap.containsKey(t.getName()));
+                    context.setTypeFilter(t -> t!= null && globalHandlerMap.containsKey(t.getName()));
                 }
             }
 
@@ -155,7 +155,6 @@ public final class JafarParserImpl implements JafarParser {
                     }
                 }
 
-                metadata.getContext().bindDeserializers();
                 return true;
             }
 

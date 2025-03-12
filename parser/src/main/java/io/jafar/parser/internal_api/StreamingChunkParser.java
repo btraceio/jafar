@@ -184,6 +184,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (!listener.onMetadata(m)) {
       return false;
     }
+    stream.getContext().bindDeserializers();
     stream.reset();
     return true;
   }

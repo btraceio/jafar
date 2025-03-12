@@ -5,7 +5,7 @@ import io.jafar.parser.internal_api.ParsingContextImpl;
 import java.io.IOException;
 import java.nio.file.Paths;
 
-public interface JafarParser extends AutoCloseable{
+public interface JafarParser extends AutoCloseable {
     /**
      * Start a new parsing session
      * @param path the recording path

@@ -45,8 +45,11 @@ public final class CheckpointEvent extends AbstractEvent {
             long typeId = 0;
             while ((typeId = stream.readVarint()) == 0) ; // workaround for a bug in JMC JFR writer
             try {
-                int count = (int) stream.readVarint();
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
+                if (clz == null) {
+                    continue;
+                }
+                int count = (int) stream.readVarint();
                 boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
                 MutableConstantPool constantPool = skip ? null : ((MutableConstantPools) context.getConstantPools()).addOrGetConstantPool(stream, typeId, count);
                 for (int j = 0; j < count; j++) {
