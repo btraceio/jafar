@@ -19,4 +19,5 @@ pluginManagement {
 
 rootProject.name = 'jafar'
 include ':parser'
+include ':tools'
 include ':demo'

@@ -1,6 +1,7 @@
 package io.jafar.utils;
 
 import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.RecordingParserContext;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
@@ -144,7 +145,7 @@ public final class TypeGenerator {
         try (StreamingChunkParser parser = new StreamingChunkParser()) {
             parser.parse(jfr, new ChunkParserListener() {
                 @Override
-                public boolean onMetadata(MetadataEvent metadata) {
+                public boolean onMetadata(MetadataEvent metadata, RecordingParserContext context) {
                     metadata.getClasses().forEach(TypeGenerator.this::writeClass);
                     // stop processing
                     return false;

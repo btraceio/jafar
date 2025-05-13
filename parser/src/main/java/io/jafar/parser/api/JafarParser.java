@@ -1,5 +1,6 @@
 package io.jafar.parser.api;
 import io.jafar.parser.JafarParserImpl;
+import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.ParsingContextImpl;
 
 import java.io.IOException;

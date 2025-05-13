@@ -5,8 +5,6 @@ import io.jafar.parser.api.JfrField;
 import io.jafar.parser.api.JfrIgnore;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntList;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -61,17 +59,32 @@ final class CodeGenerator {
         }
     }
 
-    static void handleFieldRef(ClassVisitor cv, String clzName, long typeId, boolean isArray, Class<?> fldType, String fldName, String methodName) {
+    static void handleFieldRef(ClassVisitor cv, String clzName, long typeId, boolean isArray, Class<?> fldType, String fldName, FieldMapping mapping, boolean generateRefField) {
         if (fldType == null) {
             // field is never accessed directly, can skip the rest
             return;
         }
         clzName = clzName.replace('.', '/');
         String fldRefName = fldName + "_ref";
+
+        if (generateRefField) {
+            cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fldRefName, (isArray ? "[" : "") + "J", null, null).visitEnd();
+        }
+        if (mapping.raw()) {
+            assert !isArray;
+            MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, mapping.method(), "()J", null, null);
+            mv.visitCode();
+            mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
+            mv.visitFieldInsn(Opcodes.GETFIELD, clzName, fldRefName, "J"); // stack: [fld]
+            mv.visitInsn(Opcodes.LRETURN); // stack: []
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
+
         String fldCpName = fldName + "_cp";
         String mthdCpName = fldCpName + "$get";
 
-        cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fldRefName, (isArray ? "[" : "") + "J", null, null).visitEnd();
         cv.visitField(Opcodes.ACC_PRIVATE, fldCpName, Type.getDescriptor(ConstantPool.class), null, null).visitEnd();
 
         MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PRIVATE, mthdCpName, Type.getMethodDescriptor(Type.getType(ConstantPool.class)), null, null);
@@ -96,7 +109,7 @@ final class CodeGenerator {
         mv.visitMaxs(3, 2);
         mv.visitEnd();
 
-        mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, methodName, "()" + (isArray ? "[" : "") + Type.getDescriptor(fldType), null, null);
+        mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, mapping.method(), "()" + (isArray ? "[" : "") + Type.getDescriptor(fldType), null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, clzName, mthdCpName, Type.getMethodDescriptor(Type.getType(ConstantPool.class)), false);
@@ -796,7 +809,7 @@ final class CodeGenerator {
             throw new RuntimeException("Unsupported type: " + clz.getName());
         }
         if (target == null) {
-            return new Deserializer.Generated<>(null, null, createSkipper(clz));
+            return new Deserializer.Generated<>(null, null, TypeSkipper.createSkipper(clz));
         }
         String origClzName = target != null ? target.getName() : clz.getName();
         String origSimpleName = target != null ? target.getSimpleName() : clz.getSimpleName();
@@ -806,8 +819,8 @@ final class CodeGenerator {
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, clzName.replace('.', '/'), null, "java/lang/Object", target != null ? new String[]{origClzName.replace('.', '/')} : null);
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "context", Type.getDescriptor(RecordingParserContext.class), null, null).visitEnd();
 
-        Map<String, String> fieldToMethodMap = new HashMap<>();
-        Set<String> usedAttributes = collectUsedAttributes(target, fieldToMethodMap);
+        Map<String, Set<FieldMapping>> fieldMap = new HashMap<>();
+        Set<String> usedAttributes = collectUsedAttributes(target, fieldMap);
 
         Deque<MetadataClass> stack = new ArrayDeque<>();
         stack.push(clz);
@@ -843,16 +856,27 @@ final class CodeGenerator {
 
                     Class<?> fldClz = clz.getContext().getClassTargetType(fldType.getName());
                     boolean withConstantPool = field.hasConstantPool();
-                    String methodName = fieldToMethodMap.get(fieldName);
-                    if (methodName == null) {
-                        methodName = fieldName;
+                    Set<FieldMapping> mappings = fieldMap.get(fieldName);
+                    if (mappings == null) {
+                        mappings = Set.of(new FieldMapping(fieldName, false));
                     }
-                    if (withConstantPool) {
-                        handleFieldRef(cw, clzName, field.getType().getId(), field.getDimension() > 0, fldClz, fieldName, methodName);
-                    } else {
-                        handleField(cw, clzName, field.getDimension() > 0, fldClz, fieldName, methodName);
+                    boolean generateRefField = true;
+                    for (FieldMapping mapping : mappings) {
+                        if (withConstantPool) {
+                            boolean isArray = field.getDimension() > 0;
+                            if (mapping.raw() && isArray) {
+                                throw new RuntimeException("CP identity is not supported for arrays");
+                            }
+                            handleFieldRef(cw, clzName, field.getType().getId(), isArray, fldClz, fieldName, mapping, generateRefField);
+                            generateRefField = false;
+                        } else {
+                            if (mapping.raw()) {
+                                throw new RuntimeException("Field " + fieldName + " is not a constant pool entry");
+                            }
+                            handleField(cw, clzName, field.getDimension() > 0, fldClz, fieldName, mapping.method());
+                        }
+                        generatedMethods.add(mapping.method());
                     }
-                    generatedMethods.add(methodName);
                 }
 
                 prepareConstructor(cw, clzName, current, allFields, appliedFields, clz.getContext());
@@ -885,66 +909,14 @@ final class CodeGenerator {
             MethodHandles.Lookup lkp = MethodHandles.lookup().defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
             MethodHandle ctrHandle = target != null ? lkp.findConstructor(lkp.lookupClass(), MethodType.methodType(void.class, RecordingStream.class)) : null;
             MethodHandle skipHandle = lkp.findStatic(lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
-            return new Deserializer.Generated<>(ctrHandle, skipHandle, createSkipper(clz));
+            return new Deserializer.Generated<>(ctrHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);
             throw new RuntimeException(e);
         }
     }
 
-    private static TypeSkipper createSkipper(MetadataClass clz) {
-        IntList instructions = new IntArrayList(20);
-        for (MetadataField fld : clz.getFields()) {
-            fillSkipper(fld, instructions);
-        }
-        return new TypeSkipper(instructions.toIntArray());
-    }
-
-    private static void fillSkipper(MetadataField fld, IntList instructions) {
-        int startingSize = instructions.size();
-        int arraySizeIdx = -1;
-        MetadataClass fldClz = fld.getType();
-        if (fld.getDimension() > 0) {
-            instructions.add(TypeSkipper.Instructions.ARRAY);
-            arraySizeIdx = instructions.size();
-            instructions.add(0); // reserve slot for the array size
-        }
-        boolean withCp = fld.hasConstantPool();
-        while (fldClz.isSimpleType()) {
-            fldClz = fldClz.getFields().getFirst().getType();
-        }
-        switch (fldClz.getName()) {
-            case "byte", "boolean" ->
-                    instructions.add(TypeSkipper.Instructions.BYTE);
-            case "char", "short", "int", "long" ->
-                    instructions.add(TypeSkipper.Instructions.VARINT);
-            case "float" ->
-                    instructions.add(TypeSkipper.Instructions.FLOAT);
-            case "double" ->
-                    instructions.add(TypeSkipper.Instructions.DOUBLE);
-            case "java.lang.String" -> {
-                if (withCp) {
-                    instructions.add(TypeSkipper.Instructions.CP_ENTRY);
-                } else {
-                    instructions.add(TypeSkipper.Instructions.STRING);
-                }
-            }
-            default -> {
-                if (withCp) {
-                    instructions.add(TypeSkipper.Instructions.CP_ENTRY);
-                } else {
-                    for (MetadataField subField : fldClz.getFields()) {
-                        fillSkipper(subField, instructions);
-                    }
-                }
-            }
-        }
-        if (fld.getDimension() > 0) {
-            instructions.set(arraySizeIdx, instructions.size() - startingSize - 2);
-        }
-    }
-
-    private static Set<String> collectUsedAttributes(Class<?> clz, Map<String, String> fieldToMethodMap) {
+    private static Set<String> collectUsedAttributes(Class<?> clz, Map<String, Set<FieldMapping>> fieldToMethodMap) {
         Set<String> usedAttributes = new HashSet<>();
         Class<?> c = clz;
         while (c != null) {
@@ -955,7 +927,9 @@ final class CodeGenerator {
                         JfrField fieldAnnotation = m.getAnnotation(JfrField.class);
                         if (fieldAnnotation != null) {
                             name = fieldAnnotation.value();
-                            fieldToMethodMap.put(name, m.getName());
+                            fieldToMethodMap.computeIfAbsent(name, k -> new HashSet<>()).add(new FieldMapping(m.getName(), fieldAnnotation.raw()));
+                        } else {
+                            fieldToMethodMap.computeIfAbsent(name, k -> new HashSet<>()).add(new FieldMapping(m.getName(), false));
                         }
                         return name;
                     })

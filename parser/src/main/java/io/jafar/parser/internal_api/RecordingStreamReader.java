@@ -3,6 +3,7 @@ package io.jafar.parser.internal_api;
 import io.jafar.utils.CustomByteBuffer;
 
 import java.io.IOException;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -158,7 +159,191 @@ public abstract class RecordingStreamReader {
                     return readVarintFromLong(pos);
                 }
             }
-            return readVarintSeq();
+//            long pos = buffer.position();
+//            long r1 = readVarintSeq();
+//            long r1pos = buffer.position();
+//            buffer.position(pos);
+//            long r2 = readVarintSwar();
+//            long r2pos = buffer.position();
+//            if (r1pos != r2pos) {
+//                throw new RuntimeException("varint pos mismatch: " + r1pos + " != " + r2pos);
+//            }
+//            if (r1 != r2) {
+//                throw new RuntimeException("varint mismatch: " + r1 + " != " + r2);
+//            }
+//            return r1;
+            return readVarintSwar();
+//            return readVarintSeq();
+        }
+
+        long readVarintSwar() {
+            if (remaining < 9) return readVarintSeq();
+
+            long basePos = buffer.position();
+//            System.err.println("===> basePos: " + basePos);
+            long lo = buffer.getLong();
+            int hi = buffer.get() & 0xFF;
+            remaining -= 9;
+
+            // Compute continuation bitmap (1 bit per byte)
+            int contBits =
+                    ((int) ((lo >>> 7)  & 1) << 0)
+                            | ((int) ((lo >>> 15) & 1) << 1)
+                            | ((int) ((lo >>> 23) & 1) << 2)
+                            | ((int) ((lo >>> 31) & 1) << 3)
+                            | ((int) ((lo >>> 39) & 1) << 4)
+                            | ((int) ((lo >>> 47) & 1) << 5)
+                            | ((int) ((lo >>> 55) & 1) << 6)
+                            | ((int) ((lo >>> 63) & 1) << 7);
+//                            | ((hi >>> 7)  & 1)     << 8;
+
+            int stopByte = Integer.numberOfTrailingZeros(~contBits);
+            if (stopByte >= 9) throw new RuntimeException("malformed varint");
+
+            long b0 =  (lo >>> (0 * 8)) & 0xFF;
+            long b1 =  (lo >>> (1 * 8)) & 0xFF;
+            long b2 =  (lo >>> (2 * 8)) & 0xFF;
+            long b3 =  (lo >>> (3 * 8)) & 0xFF;
+            long b4 =  (lo >>> (4 * 8)) & 0xFF;
+            long b5 =  (lo >>> (5 * 8)) & 0xFF;
+            long b6 =  (lo >>> (6 * 8)) & 0xFF;
+            long b7 =  (lo >>> (7 * 8)) & 0xFF;
+            long b8 =  hi & 0xFF;;
+
+            long result =
+                    (b0 & 0x7F)
+                            | ((b1 & 0x7F) << 7)
+                            | ((b2 & 0x7F) << 14)
+                            | ((b3 & 0x7F) << 21)
+                            | ((b4 & 0x7F) << 28)
+                            | ((b5 & 0x7F) << 35)
+                            | ((b6 & 0x7F) << 42)
+                            | ((b7 & 0x7F) << 49)
+                            | ((b8 & 0xFF) << 56);
+
+            buffer.position(basePos + stopByte + 1);
+            remaining += 8 - stopByte;
+
+            // Mask result to cut off unused high bits
+            // (Only the stopByte-th byte is unmasked)
+            if (stopByte < 8) {
+                return result & ((1L << ((stopByte + 1) * 7)) - 1);
+            }
+            return result;
+        }
+
+        long readRawVarint64() {
+            if (buffer.remaining() < 8) {
+                return readRawVarint56();
+            }
+            long basePos = buffer.position();
+            long wholeOrMore =
+                    ((long) buffer.get() & 0xFF)       |
+                            (((long) buffer.get() & 0xFF) << 8) |
+                            (((long) buffer.get() & 0xFF) << 16) |
+                            (((long) buffer.get() & 0xFF) << 24) |
+                            (((long) buffer.get() & 0xFF) << 32) |
+                            (((long) buffer.get() & 0xFF) << 40) |
+                            (((long) buffer.get() & 0xFF) << 48) |
+                            (((long) buffer.get() & 0xFF) << 56);
+
+            long firstOneOnStop = ~wholeOrMore & 0x8080808080808080L;
+            if (firstOneOnStop == 0) {
+                if (buffer.remaining() < 1) {
+                    throw new RuntimeException("malformed varint.");
+                }
+                byte lastByte = buffer.get();
+                if (lastByte < 0) {
+                    throw new RuntimeException("malformed varint.");
+                }
+                return (wholeOrMore & 0x7FL)
+                        | ((wholeOrMore >> 8) & 0x7FL) << 7
+                        | ((wholeOrMore >> 16) & 0x7FL) << 14
+                        | ((wholeOrMore >> 24) & 0x7FL) << 21
+                        | ((wholeOrMore >> 32) & 0x7FL) << 28
+                        | ((wholeOrMore >> 40) & 0x7FL) << 35
+                        | ((wholeOrMore >> 48) & 0x7FL) << 42
+                        | ((wholeOrMore >> 56) & 0x7FL) << 49
+                        | ((long) lastByte) << 56;
+            }
+
+            int bitsToKeep = Long.numberOfTrailingZeros(firstOneOnStop) + 1;
+            int toSkip = bitsToKeep >> 3;
+            buffer.position((int) basePos + toSkip + 8); // +8 to account for the 8 get()s
+            long thisVarintMask = firstOneOnStop ^ (firstOneOnStop - 1);
+            long wholeWithContinuations = wholeOrMore & thisVarintMask;
+
+            wholeWithContinuations =
+                    (wholeWithContinuations & 0x7F007F007F007F00L) >>> 1 |
+                            (wholeWithContinuations & 0x007F007F007F007FL);
+
+            wholeWithContinuations =
+                    (wholeWithContinuations & 0x00003FFF00003FFFL) >>> 2 |
+                            (wholeWithContinuations & 0x3FFF00003FFF0000L);
+
+            wholeWithContinuations =
+                    (wholeWithContinuations & 0x00000000001FFFFFL) |
+                            ((wholeWithContinuations >>> 3) & 0x0000001FFFFF0000L) |
+                            ((wholeWithContinuations >>> 6) & 0x1FFF000000000000L);
+
+            return wholeWithContinuations;
+        }
+
+        private long readRawVarint56() {
+            if (buffer.remaining() < 4) {
+                if (buffer.remaining() == 0) {
+                    return 0;
+                }
+                buffer.mark();
+                byte tmp = buffer.get();
+                if (tmp >= 0) {
+                    return tmp;
+                }
+                long result = tmp & 127;
+                if (buffer.remaining() <= 0) {
+                    buffer.reset();
+                    return 0;
+                }
+                if ((tmp = buffer.get()) >= 0) {
+                    return result | ((long) tmp << 7);
+                }
+                result |= (long) (tmp & 127) << 7;
+                if (buffer.remaining() <= 0) {
+                    buffer.reset();
+                    return 0;
+                }
+                if ((tmp = buffer.get()) >= 0) {
+                    return result | ((long) tmp << 14);
+                }
+                return result | ((long) (tmp & 127)) << 14;
+            }
+
+            long basePos = buffer.position();
+            int wholeOrMore = buffer.getInt();
+            int firstOneOnStop = ~wholeOrMore & 0x80808080;
+            if (firstOneOnStop == 0) {
+                if (buffer.remaining() <= 1) {
+                    throw new RuntimeException("malformed varint.");
+                }
+                byte lastByte = buffer.get();
+                if (lastByte < 0) {
+                    throw new RuntimeException("malformed varint.");
+                }
+                return (wholeOrMore & 0x7F)
+                        | ((wholeOrMore >> 8) & 0x7F) << 7
+                        | ((wholeOrMore >> 16) & 0x7F) << 14
+                        | ((wholeOrMore >> 24) & 0x7F) << 21
+                        | ((long) lastByte) << 28;
+            }
+
+            int bitsToKeep = Integer.numberOfTrailingZeros(firstOneOnStop) + 1;
+            int toSkip = bitsToKeep >> 3;
+            buffer.position((int) basePos + toSkip);
+            int thisVarintMask = firstOneOnStop ^ (firstOneOnStop - 1);
+            int wholeWithContinuations = wholeOrMore & thisVarintMask;
+
+            wholeWithContinuations = (wholeWithContinuations & 0x7F007F) | ((wholeWithContinuations & 0x7F007F00) >> 1);
+            return (wholeWithContinuations & 0x3FFF) | ((wholeWithContinuations & 0x3FFF0000L) >> 2);
         }
 
         private long checkVarintFromLongPos() {
@@ -199,6 +384,56 @@ public abstract class RecordingStreamReader {
                 position(pos + parts);
             }
             remaining -= parts;
+            return result;
+        }
+
+        long readVarintSimd() {
+            if (remaining < 10) {
+                return readVarintSeq();
+            }
+
+            long basePos = buffer.position();
+            long first8 = buffer.getLong();
+            short last2 = buffer.getShort();
+            remaining -= 10;
+
+            // Detect stop byte
+            for (int i = 0; i < 8; i++) {
+                if (((first8 >>> (i * 8)) & 0x80) == 0) {
+                    long result = 0;
+                    for (int j = 0, shift = 0; j <= i; j++, shift += 7) {
+                        result |= ((first8 >>> (j * 8)) & 0x7FL) << shift;
+                    }
+                    buffer.position(basePos + i + 1);
+                    remaining += 9 - i;
+                    return result;
+                }
+            }
+
+            int b8 = last2 & 0xFF;
+            if ((b8 & 0x80) == 0) {
+                long result = 0;
+                for (int j = 0, shift = 0; j < 8; j++, shift += 7) {
+                    result |= ((first8 >>> (j * 8)) & 0x7FL) << shift;
+                }
+                result |= ((long) b8) << 56;
+                buffer.position(basePos + 9);
+                remaining += 0;
+                return result;
+            }
+
+            int b9 = (last2 >>> 8) & 0xFF;
+            // 10th byte has no continuation bit
+            long result = 0;
+            for (int j = 0, shift = 0; j < 9; j++, shift += 7) {
+                long b = (j < 8)
+                        ? ((first8 >>> (j * 8)) & 0x7FL)
+                        : (b8 & 0x7FL);
+                result |= b << shift;
+            }
+            result |= ((long) b9) << 63;
+
+            buffer.position(basePos + 10);
             return result;
         }
 

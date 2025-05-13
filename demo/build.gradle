@@ -35,7 +35,9 @@ tasks.build {
 
 dependencies {
     implementation project(':parser')
-    implementation 'org.jctools:jctools-core:4.0.1'
+    implementation project(':tools')
+
+    implementation 'org.jctools:jctools-core:4.0.3'
     implementation 'org.openjdk.jmc:flightrecorder:8.3.1'
 }
 
@@ -46,7 +48,7 @@ test {
 generateJafarTypes {
     overwrite = false
     eventTypeFilter {
-        it == 'jdk.ExecutionSample'
+        it == 'jdk.ExecutionSample' || it == 'jdk.SystemProcess'
     }
     targetPackage = 'io.jafar.demo.types'
 }

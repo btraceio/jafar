@@ -30,13 +30,13 @@ public final class StreamingChunkParser implements AutoCloseable {
   private final Int2ObjectMap<MutableMetadataLookup> chunkMetadataLookup = new Int2ObjectOpenHashMap<>();
   private final Int2ObjectMap<MutableConstantPools> chunkConstantPools = new Int2ObjectOpenHashMap<>();
 
-  private final ExecutorService executor = Executors.newFixedThreadPool(
-          Math.max(Runtime.getRuntime().availableProcessors() - 2, 1),
-          r -> {
-            Thread t = new Thread(r);
-            t.setDaemon(true);
-            return t;
-          });
+  private final ExecutorService executor = Executors.newFixedThreadPool(1);
+//          Math.max(Runtime.getRuntime().availableProcessors() - 2, 1),
+//          r -> {
+//            Thread t = new Thread(r);
+//            t.setDaemon(true);
+//            return t;
+//          });
 
   private boolean closed = false;
   private final RecordingParserContext context;
@@ -90,25 +90,26 @@ public final class StreamingChunkParser implements AutoCloseable {
   private Future<Boolean> submitParsingTask(ChunkHeader chunkHeader, RecordingStream chunkStream, ChunkParserListener listener, long remainder) {
     return executor.submit(() -> {
       int chunkCounter = chunkHeader.order;
+      RecordingParserContext chunkContext = chunkStream.getContext();
       try {
-        if (!listener.onChunkStart(chunkCounter, chunkHeader, chunkStream.getContext())) {
+        if (!listener.onChunkStart(chunkCounter, chunkHeader, chunkStream)) {
           log.debug(
                   "'onChunkStart' returned false. Skipping metadata and events for chunk {}",
                   chunkCounter);
-          listener.onChunkEnd(chunkCounter, true);
+          listener.onChunkEnd(chunkCounter, true, chunkContext);
           return true;
         }
         // read metadata
         if (!readMetadata(chunkStream, chunkHeader, listener, false)) {
           log.debug(
                   "'onMetadata' returned false. Skipping events for chunk {}", chunkCounter);
-          listener.onChunkEnd(chunkCounter, true);
+          listener.onChunkEnd(chunkCounter, true, chunkContext);
           return false;
         }
         if (!readConstantPool(chunkStream, chunkHeader, listener)) {
           log.debug(
                   "'onCheckpoint' returned false. Skipping the rest of the chunk {}", chunkCounter);
-          listener.onChunkEnd(chunkCounter, true);
+          listener.onChunkEnd(chunkCounter, true, chunkContext);
           return false;
         }
         chunkStream.position(remainder);
@@ -120,13 +121,13 @@ public final class StreamingChunkParser implements AutoCloseable {
             long eventType = chunkStream.readVarint();
             if (eventType > 1) { // skip metadata and checkpoint events
               long currentPos = chunkStream.position();
-              if (!listener.onEvent(eventType, chunkStream, eventSize - (currentPos - eventStartPos))) {
+              if (!listener.onEvent(eventType, chunkStream, eventStartPos, eventSize, eventSize - (currentPos - eventStartPos))) {
                 log.debug(
                         "'onEvent({}, stream, {})' returned false. Skipping the rest of the chunk {}",
                         eventType,
                         eventSize - (currentPos - eventStartPos),
                         chunkCounter);
-                listener.onChunkEnd(chunkCounter, true);
+                listener.onChunkEnd(chunkCounter, true, chunkContext);
                 return false;
               }
             }
@@ -134,7 +135,7 @@ public final class StreamingChunkParser implements AutoCloseable {
             chunkStream.position(eventStartPos + eventSize);
           }
         }
-        return listener.onChunkEnd(chunkCounter, false);
+        return listener.onChunkEnd(chunkCounter, false, chunkContext);
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
@@ -181,7 +182,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     stream.mark();
     stream.position(header.metaOffset);
     MetadataEvent m = new MetadataEvent(stream, forceConstantPools);
-    if (!listener.onMetadata(m)) {
+    if (!listener.onMetadata(m, stream.getContext())) {
       return false;
     }
     stream.getContext().bindDeserializers();
@@ -198,7 +199,7 @@ public final class StreamingChunkParser implements AutoCloseable {
       stream.position(position);
       CheckpointEvent event = new CheckpointEvent(stream);
       event.readConstantPools();
-      if (!listener.onCheckpoint(event)) {
+      if (!listener.onCheckpoint(event, stream.getContext())) {
         return false;
       }
       int delta = event.nextOffsetDelta;

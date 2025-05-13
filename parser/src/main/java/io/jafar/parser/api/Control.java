@@ -1,4 +1,11 @@
 package io.jafar.parser.api;
 
-public final class Control {
+import io.jafar.parser.internal_api.RecordingParserContext;
+
+public interface Control {
+    interface Stream {
+        long position();
+    }
+
+    Stream stream();
 }

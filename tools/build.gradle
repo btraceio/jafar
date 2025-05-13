@@ -1,0 +1,32 @@
+plugins {
+    id 'java'
+    id "io.github.goooler.shadow" version "8.1.8"
+    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    implementation project(':parser')
+}
+
+test {
+    useJUnitPlatform()
+}
+
+generateJafarTypes {
+    overwrite = false
+    targetPackage = 'io.jafar.tools.types'
+}
