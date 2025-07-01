@@ -11,11 +11,16 @@ version = "0.0.1-SNAPSHOT"
 repositories {
     mavenLocal()
     mavenCentral()
+
     maven {
-        url "https://oss.sonatype.org/content/repositories/snapshots/"
-    }
-    maven {
-        url "https://oss.sonatype.org/content/repositories/snapshots/"
+        content {
+            includeGroup "io.btrace"
+        }
+        mavenContent {
+            snapshotsOnly()
+        }
+        // see https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle
+        url 'https://central.sonatype.com/repository/maven-snapshots/'
     }
 }
 
@@ -74,6 +79,13 @@ publishing {
 nexusPublishing {
     repositories {
         sonatype {
+            // see https://github.com/gradle-nexus/publish-plugin#publishing-to-maven-central-via-sonatype-central
+            // For official documentation:
+            // staging repo publishing https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/#configuration
+            // snapshot publishing https://central.sonatype.org/publish/publish-portal-snapshots/#publishing-via-other-methods
+            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
+
             username = project.hasProperty("sonatype.user") ? project.property("sonatype.user") : System.getenv("SONATYPE_USERNAME")
             password = project.hasProperty("sonatype.password") ? project.property("sonatype.password") : System.getenv("SONATYPE_PASSWORD")
         }

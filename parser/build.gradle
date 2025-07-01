@@ -1,5 +1,3 @@
-import jdk.jfr.FlightRecorder
-
 plugins {
     id 'java'
     id 'maven-publish'

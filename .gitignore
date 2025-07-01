@@ -24,3 +24,5 @@ harness*
 launcher*
 
 /lib/
+
+**/gradle.properties
