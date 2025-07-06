@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentMap;
 public final class ParsingContextImpl implements ParsingContext {
     public static final ParsingContext EMPTY = new ParsingContextImpl();
 
-    private ConcurrentMap<RecordingParserContext.DeserializerKey, Deserializer<?>> deserializerCache = new ConcurrentHashMap<>();
+    private DeserializerCache deserializerCache = new DeserializerCache.Impl();
 
     public RecordingParserContext newRecordingParserContext() {
         return new RecordingParserContext(deserializerCache);
