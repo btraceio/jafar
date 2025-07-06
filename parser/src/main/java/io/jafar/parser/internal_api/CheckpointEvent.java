@@ -36,6 +36,11 @@ public final class CheckpointEvent extends AbstractEvent {
 
     void readConstantPools() throws IOException {
         RecordingParserContext context = stream.getContext();
+
+        ConstantPoolValueProcessor cpProcessor = context.get(ConstantPoolValueProcessor.class);
+        GenericValueReader vr = cpProcessor != null ? new GenericValueReader(cpProcessor) : null;
+        cpProcessor = cpProcessor != null ? cpProcessor : ConstantPoolValueProcessor.NOOP;
+
         TypeFilter typeFilter = context.getTypeFilter();
 
         boolean skipAll = context.getConstantPools().isReady();
@@ -54,10 +59,19 @@ public final class CheckpointEvent extends AbstractEvent {
                 MutableConstantPool constantPool = skip ? null : ((MutableConstantPools) context.getConstantPools()).addOrGetConstantPool(stream, typeId, count);
                 for (int j = 0; j < count; j++) {
                     long id = stream.readVarint();
-                    if (!skip && !constantPool.containsKey(id)) {
-                        constantPool.addOffset(id, stream.position());
+                    try {
+                        cpProcessor.onConstantPoolValueStart(clz, id);
+                        if (!skip && !constantPool.containsKey(id)) {
+                            constantPool.addOffset(id, stream.position());
+                        }
+                        if (vr == null) {
+                            clz.skip(stream);
+                        } else {
+                            vr.readValue(stream, clz);
+                        }
+                    } finally {
+                        cpProcessor.onConstantPoolValueEnd(clz, id);
                     }
-                    clz.skip(stream);
                 }
             } catch (IOException e) {
                 throw e;

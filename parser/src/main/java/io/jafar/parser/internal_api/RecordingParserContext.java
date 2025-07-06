@@ -8,6 +8,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CachedStringParser;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 
+import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +25,7 @@ public final class RecordingParserContext {
     private volatile TypeFilter typeFilter;
 
     private final Map<String, Class<?>> classTargetTypeMap = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, WeakReference<?>> bag = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, SoftReference<?>> bag = new ConcurrentHashMap<>();
 
     private Long2ObjectMap<Class<?>> classTypeMap = null;
 
@@ -68,7 +69,7 @@ public final class RecordingParserContext {
         }
     }
 
-    private final ConcurrentMap<DeserializerKey, Deserializer<?>> globalDeserializerCache;
+    private final DeserializerCache globalDeserializerCache;
 
     public final CachedStringParser.ByteArrayParser utf8Parser = CachedStringParser.byteParser();
     public final CachedStringParser.CharArrayParser charParser = CachedStringParser.charParser();
@@ -76,19 +77,19 @@ public final class RecordingParserContext {
     public final char[] charBuffer = new char[4096];
 
     public RecordingParserContext() {
-        this(new ConcurrentHashMap<>());
+        this(new DeserializerCache.Impl());
     }
 
-    public RecordingParserContext(ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
+    RecordingParserContext(DeserializerCache deserializerCache) {
         this.metadataLookup = new MutableMetadataLookup();
         this.constantPools = new MutableConstantPools(metadataLookup);
-        this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new ConcurrentHashMap<>();
+        this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new DeserializerCache.Impl();
 
         this.typeFilter = null;
         this.chunkIndex = 0;
     }
 
-    public RecordingParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
+    RecordingParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, DeserializerCache deserializerCache) {
         this.metadataLookup = metadataLookup;
         this.constantPools = constantPools;
         this.globalDeserializerCache = deserializerCache;
@@ -102,16 +103,16 @@ public final class RecordingParserContext {
         bag.clear();
     }
 
-    public MetadataLookup getMetadataLookup() {
-        return metadataLookup;
-    }
-
-    public ConstantPools getConstantPools() {
+    ConstantPools getConstantPools() {
         return constantPools;
     }
 
-    public TypeFilter getTypeFilter() {
+    TypeFilter getTypeFilter() {
         return typeFilter;
+    }
+
+    public MetadataLookup getMetadataLookup() {
+        return metadataLookup;
     }
 
     public void setTypeFilter(TypeFilter typeFilter) {
@@ -122,8 +123,19 @@ public final class RecordingParserContext {
         return chunkIndex;
     }
 
+    public <T> void put(Class<T> clz, T value) {
+        bag.put(clz.getName(), new SoftReference<>(value));
+    }
+
+    public <T> T get(Class<T> clz) {
+        if (clz.isAssignableFrom(DeserializerCache.class)) {
+            return clz.cast(globalDeserializerCache);
+        }
+        return clz.cast(bag.get(clz.getName()).get());
+    }
+
     public <T> void put(String key, Class<T> clz, T value) {
-        bag.put(key, new WeakReference<>(value));
+        bag.put(key, new SoftReference<>(value));
     }
 
     public <T> T get(String key, Class<T> clz) {
@@ -138,7 +150,7 @@ public final class RecordingParserContext {
         return classTargetTypeMap.get(name);
     }
 
-    public void bindDeserializers() {
+    void bindDeserializers() {
         metadataLookup.bindDeserializers();
     }
 
@@ -150,7 +162,4 @@ public final class RecordingParserContext {
         return classTypeMap;
     }
 
-    public ConcurrentMap<DeserializerKey, Deserializer<?>> getDeserializerCache() {
-        return globalDeserializerCache;
-    }
 }
