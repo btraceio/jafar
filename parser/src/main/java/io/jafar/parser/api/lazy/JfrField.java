@@ -1,4 +1,4 @@
-package io.jafar.parser.api;
+package io.jafar.parser.api.lazy;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -7,5 +7,7 @@ import java.lang.annotation.Target;
 
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-public @interface JfrIgnore {
+public @interface JfrField {
+    String value();
+    boolean raw() default false;
 }

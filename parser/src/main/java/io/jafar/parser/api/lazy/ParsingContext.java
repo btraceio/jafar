@@ -1,7 +1,6 @@
-package io.jafar.parser.api;
+package io.jafar.parser.api.lazy;
 
-import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.ParsingContextImpl;
+import io.jafar.parser.impl.lazy.ParsingContextImpl;
 
 /**
  * Cross-recording context.

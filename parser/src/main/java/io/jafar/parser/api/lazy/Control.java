@@ -1,6 +1,4 @@
-package io.jafar.parser.api;
-
-import io.jafar.parser.internal_api.RecordingParserContext;
+package io.jafar.parser.api.lazy;
 
 public interface Control {
     interface Stream {

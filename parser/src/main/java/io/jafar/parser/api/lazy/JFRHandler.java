@@ -1,4 +1,4 @@
-package io.jafar.parser.api;
+package io.jafar.parser.api.lazy;
 
 @FunctionalInterface
 public interface JFRHandler<T> {

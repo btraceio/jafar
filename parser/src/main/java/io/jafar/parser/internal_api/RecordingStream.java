@@ -1,29 +1,32 @@
 package io.jafar.parser.internal_api;
 
+import io.jafar.parser.api.ParserContext;
+
 import java.io.IOException;
 import java.nio.file.Path;
 
 public final class RecordingStream implements AutoCloseable {
   private final RecordingStreamReader reader;
 
-  private final RecordingParserContext context;
+  private final ParserContext context;
   private long mark = -1;
 
 
-  RecordingStream(Path path, RecordingParserContext context) throws IOException {
+  RecordingStream(Path path, ParserContext context) throws IOException {
     this(RecordingStreamReader.mapped(path), context);
   }
 
-  public RecordingStream slice(long pos, long len, RecordingParserContext context) {
+  public RecordingStream slice(long pos, long len, ParserContext context) {
     return new RecordingStream(reader.slice(pos, len), context);
   }
 
-  public RecordingStream(RecordingStreamReader reader, RecordingParserContext context) {
+  public RecordingStream(RecordingStreamReader reader, ParserContext context) {
     this.reader = reader;
     this.context = context;
+    this.context.put(RecordingStream.class, this);
   }
 
-  public RecordingParserContext getContext() {
+  public ParserContext getContext() {
     return context;
   }
 

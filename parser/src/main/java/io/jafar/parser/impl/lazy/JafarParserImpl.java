@@ -1,16 +1,13 @@
-package io.jafar.parser;
+package io.jafar.parser.impl.lazy;
 
-import io.jafar.parser.api.Control;
-import io.jafar.parser.api.HandlerRegistration;
-import io.jafar.parser.api.JafarParser;
-import io.jafar.parser.api.JfrIgnore;
-import io.jafar.parser.api.JfrType;
-import io.jafar.parser.api.JFRHandler;
-import io.jafar.parser.internal_api.ParsingContextImpl;
+import io.jafar.parser.api.lazy.Control;
+import io.jafar.parser.api.lazy.HandlerRegistration;
+import io.jafar.parser.api.lazy.JafarParser;
+import io.jafar.parser.api.lazy.JfrIgnore;
+import io.jafar.parser.api.lazy.JfrType;
+import io.jafar.parser.api.lazy.JFRHandler;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
-import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.RecordingParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -32,7 +29,7 @@ import java.util.Map;
 
 public final class JafarParserImpl implements JafarParser {
 //    private record Handlers(MethodHandle ctr, MethodHandle skip) {}
-    private final class ControlImpl implements Control {
+    private static final class ControlImpl implements Control {
         private RecordingStream rStream;
 
         private final Stream stream = new Stream() {
@@ -83,7 +80,7 @@ public final class JafarParserImpl implements JafarParser {
     private boolean closed = false;
 
     public JafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
-        this.parser = new StreamingChunkParser(parsingContext.newRecordingParserContext());
+        this.parser = new StreamingChunkParser(parsingContext.contextFactory());
         this.recording = recording;
     }
 
@@ -136,38 +133,37 @@ public final class JafarParserImpl implements JafarParser {
             throw new IOException("Parser is closed");
         }
         // parse JFR and run handlers
-        parser.parse(recording, new ChunkParserListener() {
+        parser.parse(recording, new JafarChunkParserListener() {
             private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
 
             @Override
-            public void onRecordingStart(RecordingParserContext context) {
+            public void onRecordingStart(LazyParserContext context) {
                 if (!globalHandlerMap.isEmpty()) {
                     context.setTypeFilter(t -> t!= null && globalHandlerMap.containsKey(t.getName()));
                 }
             }
 
             @Override
-            public boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingStream stream) {
+            public boolean onChunkStart(LazyParserContext context, int chunkIndex, ChunkHeader header) {
                 if (!globalHandlerMap.isEmpty()) {
                     synchronized (this) {
-                        RecordingParserContext context = stream.getContext();
                         context.setClassTypeMap(chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new Long2ObjectOpenHashMap<>()));
                         context.addTargetTypeMap(globalHandlerMap);
                     }
-                    ((ControlImpl)control.get()).setStream(stream);
+                    ((ControlImpl)control.get()).setStream(context.get(RecordingStream.class));
                     return true;
                 }
                 return false;
             }
 
             @Override
-            public boolean onChunkEnd(int chunkIndex, boolean skipped, RecordingParserContext context) {
+            public boolean onChunkEnd(LazyParserContext context, int chunkIndex, boolean skipped) {
                 ((ControlImpl)control.get()).setStream(null);
                 return true;
             }
 
             @Override
-            public boolean onMetadata(MetadataEvent metadata, RecordingParserContext context) {
+            public boolean onMetadata(LazyParserContext context, MetadataEvent metadata) {
                 Long2ObjectMap<Class<?>> typeClassMap = metadata.getContext().getClassTypeMap();
 
                 // typeClassMap must be fully initialized before trying to resolve/generate the handlers
@@ -182,17 +178,18 @@ public final class JafarParserImpl implements JafarParser {
             }
 
             @Override
-            public boolean onCheckpoint(CheckpointEvent checkpoint, RecordingParserContext context) {
-                return ChunkParserListener.super.onCheckpoint(checkpoint, context);
+            public boolean onCheckpoint(LazyParserContext context, CheckpointEvent checkpoint) {
+                return JafarChunkParserListener.super.onCheckpoint(context, checkpoint);
             }
 
             @Override
-            public boolean onEvent(long typeId, RecordingStream stream, long eventStartPos, long rawSize, long payloadSize) {
-                Long2ObjectMap<Class<?>> typeClassMap = stream.getContext().getClassTypeMap();
+            public boolean onEvent(LazyParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
+                Long2ObjectMap<Class<?>> typeClassMap = context.getClassTypeMap();
                 Class<?> typeClz = typeClassMap.get(typeId);
                 if (typeClz != null) {
                     if (handlerMap.containsKey(typeClz)) {
-                        MetadataClass clz = stream.getContext().getMetadataLookup().getClass(typeId);
+                        RecordingStream stream = context.get(RecordingStream.class);
+                        MetadataClass clz = context.getMetadataLookup().getClass(typeId);
                         Object deserialized = clz.read(stream);
                         for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
                             handler.handle(deserialized, control.get());
