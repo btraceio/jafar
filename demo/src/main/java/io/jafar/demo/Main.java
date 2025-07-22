@@ -1,10 +1,9 @@
 package io.jafar.demo;
 
 import io.jafar.demo.types.JFRExecutionSample;
-import io.jafar.parser.api.HandlerRegistration;
-import io.jafar.parser.api.JafarParser;
-import io.jafar.parser.api.ParsingContext;
-import io.jafar.parser.internal_api.ParsingContextImpl;
+import io.jafar.parser.api.lazy.HandlerRegistration;
+import io.jafar.parser.api.lazy.JafarParser;
+import io.jafar.parser.api.lazy.ParsingContext;
 import jdk.jfr.consumer.EventStream;
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordingFile;

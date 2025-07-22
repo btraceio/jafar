@@ -1,4 +1,4 @@
-package io.jafar.parser;
+package io.jafar.parser.impl.lazy;
 
 import io.jafar.parser.internal_api.ConstantPool;
 import io.jafar.parser.internal_api.RecordingStream;

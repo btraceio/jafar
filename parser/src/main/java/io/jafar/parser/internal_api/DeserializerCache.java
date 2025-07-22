@@ -1,5 +1,7 @@
 package io.jafar.parser.internal_api;
 
+import io.jafar.parser.impl.lazy.LazyParserContext;
+
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -9,9 +11,9 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
-public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.DeserializerKey, Deserializer<?>> {
+public interface DeserializerCache extends ConcurrentMap<LazyParserContext.DeserializerKey, Deserializer<?>> {
     final class Impl implements DeserializerCache {
-        private final ConcurrentMap<RecordingParserContext.DeserializerKey, Deserializer<?>> delegate = new ConcurrentHashMap<>();
+        private final ConcurrentMap<LazyParserContext.DeserializerKey, Deserializer<?>> delegate = new ConcurrentHashMap<>();
 
         @Override
         public Deserializer<?> getOrDefault(Object key, Deserializer<?> defaultValue) {
@@ -19,12 +21,12 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public void forEach(BiConsumer<? super RecordingParserContext.DeserializerKey, ? super Deserializer<?>> action) {
+        public void forEach(BiConsumer<? super LazyParserContext.DeserializerKey, ? super Deserializer<?>> action) {
             delegate.forEach(action);
         }
 
         @Override
-        public Deserializer<?> putIfAbsent(RecordingParserContext.DeserializerKey key, Deserializer<?> value) {
+        public Deserializer<?> putIfAbsent(LazyParserContext.DeserializerKey key, Deserializer<?> value) {
             return delegate.putIfAbsent(key, value);
         }
 
@@ -34,37 +36,37 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public boolean replace(RecordingParserContext.DeserializerKey key, Deserializer<?> oldValue, Deserializer<?> newValue) {
+        public boolean replace(LazyParserContext.DeserializerKey key, Deserializer<?> oldValue, Deserializer<?> newValue) {
             return delegate.replace(key, oldValue, newValue);
         }
 
         @Override
-        public Deserializer<?> replace(RecordingParserContext.DeserializerKey key, Deserializer<?> value) {
+        public Deserializer<?> replace(LazyParserContext.DeserializerKey key, Deserializer<?> value) {
             return delegate.replace(key, value);
         }
 
         @Override
-        public void replaceAll(BiFunction<? super RecordingParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> function) {
+        public void replaceAll(BiFunction<? super LazyParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> function) {
             delegate.replaceAll(function);
         }
 
         @Override
-        public Deserializer<?> computeIfAbsent(RecordingParserContext.DeserializerKey key, Function<? super RecordingParserContext.DeserializerKey, ? extends Deserializer<?>> mappingFunction) {
+        public Deserializer<?> computeIfAbsent(LazyParserContext.DeserializerKey key, Function<? super LazyParserContext.DeserializerKey, ? extends Deserializer<?>> mappingFunction) {
             return delegate.computeIfAbsent(key, mappingFunction);
         }
 
         @Override
-        public Deserializer<?> computeIfPresent(RecordingParserContext.DeserializerKey key, BiFunction<? super RecordingParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
+        public Deserializer<?> computeIfPresent(LazyParserContext.DeserializerKey key, BiFunction<? super LazyParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
             return delegate.computeIfPresent(key, remappingFunction);
         }
 
         @Override
-        public Deserializer<?> compute(RecordingParserContext.DeserializerKey key, BiFunction<? super RecordingParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
+        public Deserializer<?> compute(LazyParserContext.DeserializerKey key, BiFunction<? super LazyParserContext.DeserializerKey, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
             return delegate.compute(key, remappingFunction);
         }
 
         @Override
-        public Deserializer<?> merge(RecordingParserContext.DeserializerKey key, Deserializer<?> value, BiFunction<? super Deserializer<?>, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
+        public Deserializer<?> merge(LazyParserContext.DeserializerKey key, Deserializer<?> value, BiFunction<? super Deserializer<?>, ? super Deserializer<?>, ? extends Deserializer<?>> remappingFunction) {
             return delegate.merge(key, value, remappingFunction);
         }
 
@@ -94,7 +96,7 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public Deserializer<?> put(RecordingParserContext.DeserializerKey key, Deserializer<?> value) {
+        public Deserializer<?> put(LazyParserContext.DeserializerKey key, Deserializer<?> value) {
             return delegate.put(key, value);
         }
 
@@ -104,7 +106,7 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public void putAll(Map<? extends RecordingParserContext.DeserializerKey, ? extends Deserializer<?>> m) {
+        public void putAll(Map<? extends LazyParserContext.DeserializerKey, ? extends Deserializer<?>> m) {
             delegate.putAll(m);
         }
 
@@ -114,7 +116,7 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public Set<RecordingParserContext.DeserializerKey> keySet() {
+        public Set<LazyParserContext.DeserializerKey> keySet() {
             return delegate.keySet();
         }
 
@@ -124,7 +126,7 @@ public interface DeserializerCache extends ConcurrentMap<RecordingParserContext.
         }
 
         @Override
-        public Set<Entry<RecordingParserContext.DeserializerKey, Deserializer<?>>> entrySet() {
+        public Set<Entry<LazyParserContext.DeserializerKey, Deserializer<?>>> entrySet() {
             return delegate.entrySet();
         }
 

@@ -1,7 +1,7 @@
 package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.MutableMetadataLookup;
-import io.jafar.parser.internal_api.RecordingParserContext;
+import io.jafar.parser.impl.lazy.LazyParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 
 import java.io.IOException;
@@ -74,7 +74,7 @@ public abstract class AbstractMetadataElement {
         return kind;
     }
 
-    public RecordingParserContext getContext() {
+    public LazyParserContext getContext() {
         return stream.getContext();
     }
 }

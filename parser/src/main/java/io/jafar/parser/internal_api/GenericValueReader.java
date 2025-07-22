@@ -15,19 +15,6 @@ public final class GenericValueReader {
         this.processor = processor;
     }
 
-    public Map<String, Object> readEvent(RecordingStream stream, MetadataClass type) throws IOException {
-        if (type.getSuperType().equals("jdk.jfr.Event")) {
-            Map<String, Object> event = new HashMap<>();
-            stream.getContext().put("event", Map.class, event);
-            processor.onComplexValueStart(null, "event", type);
-            readValue(stream, type);
-            processor.onComplexValueEnd(null, "event", type);
-            stream.getContext().put("event", Map.class, null);
-            return event;
-        }
-        return null;
-    }
-
     public void readValue(RecordingStream stream, MetadataClass type) throws IOException {
         if (type.isPrimitive()) {
             readSingleValue(stream, type, "");

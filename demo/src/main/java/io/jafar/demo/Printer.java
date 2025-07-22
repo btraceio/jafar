@@ -1,8 +1,8 @@
 package io.jafar.demo;
 
-import io.jafar.parser.api.HandlerRegistration;
-import io.jafar.parser.api.JafarParser;
-import io.jafar.parser.api.ParsingContext;
+import io.jafar.parser.api.lazy.HandlerRegistration;
+import io.jafar.parser.api.lazy.JafarParser;
+import io.jafar.parser.api.lazy.ParsingContext;
 
 public class Printer {
     public static void main(String[] args) throws Exception {

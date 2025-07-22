@@ -37,6 +37,7 @@ dependencies {
     implementation project(':parser')
     implementation project(':tools')
 
+    implementation 'it.unimi.dsi:fastutil:8.5.12'
     implementation 'org.jctools:jctools-core:4.0.3'
     implementation 'org.openjdk.jmc:flightrecorder:8.3.1'
 }

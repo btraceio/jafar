@@ -1,8 +1,8 @@
 package io.jafar.parser;
 
 import io.jafar.TestJfrRecorder;
-import io.jafar.parser.api.HandlerRegistration;
-import io.jafar.parser.api.JafarParser;
+import io.jafar.parser.api.lazy.HandlerRegistration;
+import io.jafar.parser.api.lazy.JafarParser;
 import io.jafar.parser.types.JFRExecutionSample;
 import org.junit.jupiter.api.Test;
 import org.openjdk.jmc.flightrecorder.writer.api.Recording;

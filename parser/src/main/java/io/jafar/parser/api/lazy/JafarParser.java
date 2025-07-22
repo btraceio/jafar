@@ -1,7 +1,6 @@
-package io.jafar.parser.api;
-import io.jafar.parser.JafarParserImpl;
-import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.ParsingContextImpl;
+package io.jafar.parser.api.lazy;
+import io.jafar.parser.impl.lazy.JafarParserImpl;
+import io.jafar.parser.impl.lazy.ParsingContextImpl;
 
 import java.io.IOException;
 import java.nio.file.Paths;
