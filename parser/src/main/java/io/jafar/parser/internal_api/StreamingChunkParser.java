@@ -30,13 +30,13 @@ public final class StreamingChunkParser implements AutoCloseable {
   private final Int2ObjectMap<MutableMetadataLookup> chunkMetadataLookup = new Int2ObjectOpenHashMap<>();
   private final Int2ObjectMap<MutableConstantPools> chunkConstantPools = new Int2ObjectOpenHashMap<>();
 
-  private final ExecutorService executor = Executors.newFixedThreadPool(1);
-//          Math.max(Runtime.getRuntime().availableProcessors() - 2, 1),
-//          r -> {
-//            Thread t = new Thread(r);
-//            t.setDaemon(true);
-//            return t;
-//          });
+  private final ExecutorService executor = Executors.newFixedThreadPool(
+          Math.max(Runtime.getRuntime().availableProcessors() - 2, 1),
+          r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+          });
 
   private boolean closed = false;
   private final RecordingParserContext context;
