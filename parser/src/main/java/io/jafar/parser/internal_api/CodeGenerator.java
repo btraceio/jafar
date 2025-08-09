@@ -1,6 +1,10 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.MetadataLookup;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.lazy.JfrField;
 import io.jafar.parser.api.lazy.JfrIgnore;
 import io.jafar.parser.impl.lazy.LazyParserContext;
@@ -715,7 +719,8 @@ final class CodeGenerator {
         // store context field
         mv.visitVarInsn(Opcodes.ALOAD,0); // [this]
         mv.visitVarInsn(Opcodes.ALOAD,1); // [this, stream]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(LazyParserContext.class)), false); // [this, ctx]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(ParserContext.class)), false); // [this, ctx]
+        mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LazyParserContext.class)); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
         mv.visitVarInsn(Opcodes.ASTORE, contextIdx); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
@@ -805,7 +810,12 @@ final class CodeGenerator {
 
     @SuppressWarnings("unchecked")
     public static <T> Deserializer<T> generateDeserializer(MetadataClass clz) throws Exception {
-        Class<T> target = (Class<T>)clz.getContext().getClassTargetType(clz.getName());
+        ParserContext ctx = clz.getContext();
+        if (!(ctx instanceof LazyParserContext)) {
+            throw new RuntimeException("Invalid context!");
+        }
+        LazyParserContext context = (LazyParserContext) ctx;
+        Class<T> target = (Class<T>)context.getClassTargetType(clz.getName());
         if (target != null && !target.isInterface()) {
             throw new RuntimeException("Unsupported type: " + clz.getName());
         }
@@ -814,7 +824,7 @@ final class CodeGenerator {
         }
         String origClzName = target != null ? target.getName() : clz.getName();
         String origSimpleName = target != null ? target.getSimpleName() : clz.getSimpleName();
-        String clzName = CodeGenerator.class.getPackage().getName() + "." + (target != null ? target.getSimpleName() : clz.getSimpleName()) + "$" + clz.getContext().getChunkIndex();
+        String clzName = CodeGenerator.class.getPackage().getName() + "." + (target != null ? target.getSimpleName() : clz.getSimpleName()) + "$" + context.getChunkIndex();
         // generate handler class
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, clzName.replace('.', '/'), null, "java/lang/Object", target != null ? new String[]{origClzName.replace('.', '/')} : null);
@@ -855,7 +865,7 @@ final class CodeGenerator {
                         fldType = fldType.getFields().getFirst().getType();
                     }
 
-                    Class<?> fldClz = clz.getContext().getClassTargetType(fldType.getName());
+                    Class<?> fldClz = context.getClassTargetType(fldType.getName());
                     boolean withConstantPool = field.hasConstantPool();
                     Set<FieldMapping> mappings = fieldMap.get(fieldName);
                     if (mappings == null) {
@@ -880,7 +890,7 @@ final class CodeGenerator {
                     }
                 }
 
-                prepareConstructor(cw, clzName, current, allFields, appliedFields, clz.getContext());
+                prepareConstructor(cw, clzName, current, allFields, appliedFields, context);
             }
             prepareSkipHandler(cw, current);;
         }

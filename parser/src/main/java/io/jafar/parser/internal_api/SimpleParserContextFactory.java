@@ -6,6 +6,6 @@ import io.jafar.parser.api.SimpleParserContext;
 public final class SimpleParserContextFactory implements ParserContextFactory {
     @Override
     public ParserContext newContext(ParserContext parent, int chunkIndex) {
-        return parent != null ? parent : new SimpleParserContext();
+        return parent != null ? parent : new SimpleParserContext(chunkIndex);
     }
 }

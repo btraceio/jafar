@@ -1,14 +1,12 @@
 package io.jafar.parser.impl.lazy;
 
-import io.jafar.parser.MutableMetadataLookup;
+import io.jafar.parser.internal_api.MutableConstantPools;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.internal_api.ConstantPools;
 import io.jafar.parser.internal_api.DeserializerCache;
-import io.jafar.parser.internal_api.MetadataLookup;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import io.jafar.utils.CachedStringParser;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 
 import java.util.ArrayList;
@@ -18,10 +16,6 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class LazyParserContext extends ParserContext {
-    private final MutableMetadataLookup metadataLookup;
-    private final MutableConstantPools constantPools;
-
-    private final int chunkIndex;
     private volatile TypeFilter typeFilter;
 
     private final Map<String, Class<?>> classTargetTypeMap = new ConcurrentHashMap<>();
@@ -70,51 +64,38 @@ public final class LazyParserContext extends ParserContext {
 
     private final DeserializerCache globalDeserializerCache;
 
-    public final CachedStringParser.ByteArrayParser utf8Parser = CachedStringParser.byteParser();
-    public final CachedStringParser.CharArrayParser charParser = CachedStringParser.charParser();
-    public final byte[] byteBuffer = new byte[4096];
-    public final char[] charBuffer = new char[4096];
-
     public LazyParserContext() {
         this(new DeserializerCache.Impl());
     }
 
     LazyParserContext(DeserializerCache deserializerCache) {
-        this.metadataLookup = new MutableMetadataLookup();
-        this.constantPools = new MutableConstantPools(metadataLookup);
+        super(0);
+
         this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new DeserializerCache.Impl();
 
         this.typeFilter = null;
-        this.chunkIndex = 0;
+
+        this.remove(TypeFilter.class);
+        this.put(DeserializerCache.class, globalDeserializerCache);
     }
 
     LazyParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, DeserializerCache deserializerCache) {
-        this.metadataLookup = metadataLookup;
-        this.constantPools = constantPools;
+        super(chunkIndex, metadataLookup, constantPools);
         this.globalDeserializerCache = deserializerCache;
 
         this.typeFilter = typeFilter;
-        this.chunkIndex = chunkIndex;
+
+        this.put(TypeFilter.class, typeFilter);
+        this.put(DeserializerCache.class, globalDeserializerCache);
     }
 
     TypeFilter getTypeFilter() {
         return typeFilter;
     }
 
-    ConstantPools getConstantPools() {
-        return constantPools;
-    }
-
-    public MetadataLookup getMetadataLookup() {
-        return metadataLookup;
-    }
-
     public void setTypeFilter(TypeFilter typeFilter) {
         this.typeFilter = typeFilter;
-    }
-
-    public int getChunkIndex() {
-        return chunkIndex;
+        this.put(TypeFilter.class, typeFilter);
     }
 
     public void addTargetTypeMap(Map<String, Class<?>> map) {
@@ -149,5 +130,10 @@ public final class LazyParserContext extends ParserContext {
     @Override
     public void onConstantPoolsReady() {
         constantPools.setReady();
+    }
+
+    @Override
+    public MutableMetadataLookup getMetadataLookup() {
+        return (MutableMetadataLookup) super.getMetadataLookup();
     }
 }

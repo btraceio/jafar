@@ -25,10 +25,9 @@ public abstract class EventStream implements ChunkParserListener {
     }
 
     @Override
-    public final boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingStream stream) {
-        ParserContext ctx = stream.getContext();
+    public final boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
         // store a new MutableConstantPools
-        ctx.put(ConstantPools.class, new ConstantPools());
+        context.put(ConstantPools.class, new ConstantPools());
 
         //! these two keys should be removed at `onChunkEnd` to avoid any unwanted leakage
 
@@ -55,7 +54,7 @@ public abstract class EventStream implements ChunkParserListener {
             public void onConstantPoolValueEnd(MetadataClass type, long id) {
                 Map<String, Object> value = (Map<String, Object>)stack.pop(Map.class);
                 assert value != null && !value.isEmpty();
-                LazyParserContext ctx = type.getContext();
+                ParserContext ctx = type.getContext();
                 ConstantPools cpools = ctx.get(ConstantPools.class);
                 assert cpools != null;
                 cpools.add(type.getId(), id, value);
@@ -192,7 +191,7 @@ public abstract class EventStream implements ChunkParserListener {
                     } else {
                         // a special case of 'free-floating' value - will be made available in the context
                         //    as 'type-name#value' of type Map
-                        ctx.put(type.getName() + "#value", Map.class, value);
+                        context.put(type.getName() + "#value", Map.class, value);
                     }
                 }
             }
@@ -214,11 +213,10 @@ public abstract class EventStream implements ChunkParserListener {
 
             @Override
             public void onConstantPoolIndex(MetadataClass owner, String fld, MetadataClass type, long pointer) {
-                MetadataClass cpType = type;
-                LazyParserContext ctx = owner.getContext();
+                ParserContext ctx = owner.getContext();
                 assert ctx != null;
                 ConstantPools cpools = ctx.get(ConstantPools.class);
-                ConstantPoolAccessor cpAccessor = new ConstantPoolAccessor(cpools, cpType, pointer);
+                ConstantPoolAccessor cpAccessor = new ConstantPoolAccessor(cpools, type, pointer);
 
                 Map<String, Object> parent = stack.peek(Map.class);
                 assert parent != null;
@@ -226,9 +224,9 @@ public abstract class EventStream implements ChunkParserListener {
                 parent.put(fld, cpAccessor);
             }
         };
-        stream.getContext().put(ConstantPoolValueProcessor.class, cpValueProcessor);
+        context.put(ConstantPoolValueProcessor.class, cpValueProcessor);
         // store also the value reader instance to be reused in onEvent
-        stream.getContext().put(GenericValueReader.class, new GenericValueReader(cpValueProcessor));
+        context.put(GenericValueReader.class, new GenericValueReader(cpValueProcessor));
         return true;
     }
 
@@ -244,19 +242,18 @@ public abstract class EventStream implements ChunkParserListener {
 
     @SuppressWarnings("unchecked")
     @Override
-    public final boolean onEvent(long typeId, RecordingStream stream, long eventStartPos, long rawSize, long payloadSize) {
+    public final boolean onEvent(ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
         try {
-            LazyParserContext ctx = stream.getContext();
-            GenericValueReader r = ctx.get(GenericValueReader.class);
-            ValueProcessor vp = ctx.get(ConstantPoolValueProcessor.class);
+            GenericValueReader r = context.get(GenericValueReader.class);
+            ValueProcessor vp = context.get(ConstantPoolValueProcessor.class);
 
-            MetadataClass eventClz = ctx.getMetadataLookup().getClass(typeId);
+            MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
             try {
                 vp.onComplexValueStart(null, null, eventClz);
-                r.readValue(stream, eventClz);
+                r.readValue(context.get(RecordingStream.class), eventClz);
             } finally {
                 vp.onComplexValueEnd(null, null, eventClz);
-                Map<String, Object> value = (Map<String, Object>)ctx.remove(eventClz.getName() + "#value", Map.class);
+                Map<String, Object> value = (Map<String, Object>)context.remove(eventClz.getName() + "#value", Map.class);
 
                 if (value.containsKey("stackTrace")) {
                     System.out.println("xxx");

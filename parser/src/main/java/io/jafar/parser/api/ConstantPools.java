@@ -1,4 +1,4 @@
-package io.jafar.parser.internal_api;
+package io.jafar.parser.api;
 
 import java.util.stream.Stream;
 

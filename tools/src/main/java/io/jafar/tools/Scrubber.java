@@ -210,14 +210,14 @@ public final class Scrubber {
         }
 
         @Override
-        public boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingStream stream) {
+        public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
             ScrubbingInfo info = new ScrubbingInfo();
-            stream.getContext().put(SCRUBBING_INFO_KEY, ScrubbingInfo.class, info);
+            context.put(SCRUBBING_INFO_KEY, ScrubbingInfo.class, info);
             info.chunkOffset = header.offset;
             info.skipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.startPos));
             info.targetClassMap = new HashMap<>();
 
-            return ChunkParserListener.super.onChunkStart(chunkIndex, header, stream);
+            return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
         }
 
         @Override
@@ -253,14 +253,16 @@ public final class Scrubber {
         }
 
         @Override
-        public boolean onEvent(long typeId, RecordingStream stream, long eventStartPos, long rawSize, long payloadSize) {
-            ScrubbingInfo info = stream.getContext().get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
+        public boolean onEvent(ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
+            ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
             if (info == null) {
                 throw new IllegalStateException("invalid parser state, no scrubbing info found");
             }
 
             var targetScrub = info.targetClassMap.get(typeId);
             if (targetScrub != null) {
+                RecordingStream stream = context.get(RecordingStream.class);
+                assert stream != null;
                 long chunkOffset = info.chunkOffset;
                 try {
                     SkipInfo[] skipInfo = new SkipInfo[1];
@@ -305,7 +307,7 @@ public final class Scrubber {
                     return false;
                 }
             }
-            return ChunkParserListener.super.onEvent(typeId, stream, eventStartPos, rawSize, payloadSize);
+            return ChunkParserListener.super.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
         }
 
         @Override

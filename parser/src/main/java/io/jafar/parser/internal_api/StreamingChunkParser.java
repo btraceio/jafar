@@ -21,7 +21,7 @@ import java.util.concurrent.Future;
  * metadata events to come 'out-of-band' (although not very probable) and it is up to the caller to
  * deal with that eventuality. <br>
  */
-public final class StreamingChunkParser<T extends ParserContext> implements AutoCloseable {
+public final class StreamingChunkParser implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(StreamingChunkParser.class);
 
   private final ExecutorService executor = Executors.newFixedThreadPool(
@@ -33,9 +33,9 @@ public final class StreamingChunkParser<T extends ParserContext> implements Auto
           });
 
   private boolean closed = false;
-  private final ParserContextFactory<T> contextFactory;
+  private final ParserContextFactory contextFactory;
 
-  public StreamingChunkParser(ParserContextFactory<T> contextFactory) {
+  public StreamingChunkParser(ParserContextFactory contextFactory) {
     this.contextFactory = contextFactory;
   }
 
@@ -57,7 +57,7 @@ public final class StreamingChunkParser<T extends ParserContext> implements Auto
    * @param listener the parser listener
    * @throws IOException
    */
-  public void parse(Path path, ChunkParserListener<T> listener) throws IOException {
+  public void parse(Path path, ChunkParserListener listener) throws IOException {
     if (closed) {
       throw new IllegalStateException("Parser is closed");
     }
@@ -74,10 +74,10 @@ public final class StreamingChunkParser<T extends ParserContext> implements Auto
     }
   }
 
-  private Future<Boolean> submitParsingTask(ChunkHeader chunkHeader, RecordingStream chunkStream, ChunkParserListener<T> listener, long remainder) {
+  private Future<Boolean> submitParsingTask(ChunkHeader chunkHeader, RecordingStream chunkStream, ChunkParserListener listener, long remainder) {
     return executor.submit(() -> {
       int chunkCounter = chunkHeader.order;
-      T chunkContext = chunkStream.getContext();
+      ParserContext chunkContext = chunkStream.getContext();
       try {
         if (!listener.onChunkStart(chunkContext, chunkCounter, chunkHeader)) {
           log.debug(
@@ -108,7 +108,7 @@ public final class StreamingChunkParser<T extends ParserContext> implements Auto
             long eventType = chunkStream.readVarint();
             if (eventType > 1) { // skip metadata and checkpoint events
               long currentPos = chunkStream.position();
-              if (!listener.onEvent(eventType, chunkStream, eventStartPos, eventSize, eventSize - (currentPos - eventStartPos))) {
+              if (!listener.onEvent(chunkContext, eventType, eventStartPos, eventSize, eventSize - (currentPos - eventStartPos))) {
                 log.debug(
                         "'onEvent({}, stream, {})' returned false. Skipping the rest of the chunk {}",
                         eventType,

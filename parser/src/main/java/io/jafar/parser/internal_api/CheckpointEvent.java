@@ -1,9 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.impl.lazy.LazyParserContext;
-import io.jafar.parser.impl.lazy.MutableConstantPool;
-import io.jafar.parser.impl.lazy.MutableConstantPools;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
@@ -36,13 +34,13 @@ public final class CheckpointEvent extends AbstractEvent {
     }
 
     void readConstantPools() throws IOException {
-        LazyParserContext context = stream.getContext();
+        ParserContext context = stream.getContext();
 
         ConstantPoolValueProcessor cpProcessor = context.get(ConstantPoolValueProcessor.class);
         GenericValueReader vr = cpProcessor != null ? new GenericValueReader(cpProcessor) : null;
         cpProcessor = cpProcessor != null ? cpProcessor : ConstantPoolValueProcessor.NOOP;
 
-        TypeFilter typeFilter = context.getTypeFilter();
+        TypeFilter typeFilter = context.get(TypeFilter.class);
 
         boolean skipAll = context.getConstantPools().isReady();
 

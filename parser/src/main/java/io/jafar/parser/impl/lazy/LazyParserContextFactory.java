@@ -1,6 +1,7 @@
 package io.jafar.parser.impl.lazy;
 
-import io.jafar.parser.MutableMetadataLookup;
+import io.jafar.parser.internal_api.MutableConstantPools;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.DeserializerCache;
 import io.jafar.parser.internal_api.ParserContextFactory;
@@ -19,7 +20,7 @@ public final class LazyParserContextFactory implements ParserContextFactory {
             return new LazyParserContext(deserializerCache);
         }
         MutableMetadataLookup metadataLookup = chunkMetadataLookup.computeIfAbsent(chunkIndex, k -> new MutableMetadataLookup());
-        MutableConstantPools constantPools = chunkConstantPools.computeIfAbsent(chunkIndex, k -> new MutableConstantPools(metadataLookup));
+        MutableConstantPools constantPools = chunkConstantPools.computeIfAbsent(chunkIndex, k -> new MutableConstantPools());
 
         assert parent instanceof LazyParserContext;
         LazyParserContext lazyParent = (LazyParserContext) parent;

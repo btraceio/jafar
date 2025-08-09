@@ -1,5 +1,7 @@
 package io.jafar.parser.impl.lazy;
 
+import io.jafar.parser.TypeFilter;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.lazy.Control;
 import io.jafar.parser.api.lazy.HandlerRegistration;
 import io.jafar.parser.api.lazy.JafarParser;
@@ -8,6 +10,7 @@ import io.jafar.parser.api.lazy.JfrType;
 import io.jafar.parser.api.lazy.JFRHandler;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
+import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -133,22 +136,23 @@ public final class JafarParserImpl implements JafarParser {
             throw new IOException("Parser is closed");
         }
         // parse JFR and run handlers
-        parser.parse(recording, new JafarChunkParserListener() {
+        parser.parse(recording, new ChunkParserListener() {
             private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
 
             @Override
-            public void onRecordingStart(LazyParserContext context) {
+            public void onRecordingStart(ParserContext context) {
                 if (!globalHandlerMap.isEmpty()) {
-                    context.setTypeFilter(t -> t!= null && globalHandlerMap.containsKey(t.getName()));
+                    ((LazyParserContext)context).setTypeFilter(t -> t!= null && globalHandlerMap.containsKey(t.getName()));
                 }
             }
 
             @Override
-            public boolean onChunkStart(LazyParserContext context, int chunkIndex, ChunkHeader header) {
+            public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
                 if (!globalHandlerMap.isEmpty()) {
+                    LazyParserContext lCtx = (LazyParserContext) context;
                     synchronized (this) {
-                        context.setClassTypeMap(chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new Long2ObjectOpenHashMap<>()));
-                        context.addTargetTypeMap(globalHandlerMap);
+                        lCtx.setClassTypeMap(chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new Long2ObjectOpenHashMap<>()));
+                        lCtx.addTargetTypeMap(globalHandlerMap);
                     }
                     ((ControlImpl)control.get()).setStream(context.get(RecordingStream.class));
                     return true;
@@ -157,18 +161,22 @@ public final class JafarParserImpl implements JafarParser {
             }
 
             @Override
-            public boolean onChunkEnd(LazyParserContext context, int chunkIndex, boolean skipped) {
+            public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
                 ((ControlImpl)control.get()).setStream(null);
                 return true;
             }
 
             @Override
-            public boolean onMetadata(LazyParserContext context, MetadataEvent metadata) {
-                Long2ObjectMap<Class<?>> typeClassMap = metadata.getContext().getClassTypeMap();
+            public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+                if (!(context instanceof LazyParserContext)) {
+                    throw new RuntimeException("Invalid context");
+                }
+                LazyParserContext lContext = (LazyParserContext) context;
+                Long2ObjectMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
 
                 // typeClassMap must be fully initialized before trying to resolve/generate the handlers
                 for (MetadataClass clz : metadata.getClasses()) {
-                    Class<?> targetClass = context.getClassTargetType(clz.getName());
+                    Class<?> targetClass = lContext.getClassTargetType(clz.getName());
                     if (targetClass != null) {
                         typeClassMap.putIfAbsent(clz.getId(), targetClass);
                     }
@@ -178,13 +186,16 @@ public final class JafarParserImpl implements JafarParser {
             }
 
             @Override
-            public boolean onCheckpoint(LazyParserContext context, CheckpointEvent checkpoint) {
-                return JafarChunkParserListener.super.onCheckpoint(context, checkpoint);
+            public boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+                return ChunkParserListener.super.onCheckpoint(context, checkpoint);
             }
 
             @Override
-            public boolean onEvent(LazyParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
-                Long2ObjectMap<Class<?>> typeClassMap = context.getClassTypeMap();
+            public boolean onEvent(ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
+                if (!(context instanceof LazyParserContext)) {
+                    throw new RuntimeException("Invalid context");
+                }
+                Long2ObjectMap<Class<?>> typeClassMap = ((LazyParserContext)context).getClassTypeMap();
                 Class<?> typeClz = typeClassMap.get(typeId);
                 if (typeClz != null) {
                     if (handlerMap.containsKey(typeClz)) {
