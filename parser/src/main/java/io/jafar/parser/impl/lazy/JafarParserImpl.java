@@ -1,7 +1,10 @@
 package io.jafar.parser.impl.lazy;
 
 import io.jafar.parser.TypeFilter;
+import io.jafar.parser.api.JafarConfigurationException;
+import io.jafar.parser.api.JafarIOException;
 import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.api.ValidationUtils;
 import io.jafar.parser.api.lazy.Control;
 import io.jafar.parser.api.lazy.HandlerRegistration;
 import io.jafar.parser.api.lazy.JafarParser;
@@ -67,7 +70,13 @@ public final class JafarParserImpl implements JafarParser {
                 if (clz != null) {
                     handlerMap.remove(clz);
 
-                    handlerMap.keySet().forEach(JafarParserImpl.this::addDeserializer);
+                    handlerMap.keySet().forEach(clazz -> {
+                        try {
+                            addDeserializer(clazz);
+                        } catch (JafarConfigurationException e) {
+                            throw new RuntimeException("Failed to re-register deserializer for " + clazz.getName(), e);
+                        }
+                    });
                 }
             }
         }
@@ -89,27 +98,29 @@ public final class JafarParserImpl implements JafarParser {
 
     @Override
     public <T> HandlerRegistration<T> handle(Class<T> clz, JFRHandler<T> handler) {
-        addDeserializer(clz);
-        handlerMap.computeIfAbsent(clz, k -> new ArrayList<>()).add(new JFRHandler.Impl<>(clz, handler));
+        try {
+            ValidationUtils.requireNonNull(clz, "clz");
+            ValidationUtils.requireNonNull(handler, "handler");
+            addDeserializer(clz);
+            handlerMap.computeIfAbsent(clz, k -> new ArrayList<>()).add(new JFRHandler.Impl<>(clz, handler));
 
-        return new HandlerRegistrationImpl<>(clz, this);
+            return new HandlerRegistrationImpl<>(clz, this);
+        } catch (JafarConfigurationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    private void addDeserializer(Class<?> clz) {
+    private void addDeserializer(Class<?> clz) throws JafarConfigurationException {
         if (clz.isArray()) {
             clz = clz.getComponentType();
         }
+        
+        ValidationUtils.validateJfrTypeHandler(clz);
+        
         boolean isPrimitive = clz.isPrimitive() || clz.isAssignableFrom(String.class);
-
-        if (!isPrimitive && !clz.isInterface()) {
-            throw new RuntimeException("JFR type handler must be an interface: " + clz.getName());
-        }
         String typeName = clz.getName();
         if (!isPrimitive) {
             JfrType typeAnnotation = clz.getAnnotation(JfrType.class);
-            if (typeAnnotation == null) {
-                throw new RuntimeException("JFR type annotation missing on class: " + clz.getName());
-            }
             typeName = typeAnnotation.value();
         }
 
@@ -132,8 +143,10 @@ public final class JafarParserImpl implements JafarParser {
 
     @Override
     public void run() throws IOException {
-        if (closed) {
-            throw new IOException("Parser is closed");
+        try {
+            ValidationUtils.validateParserNotClosed(closed);
+        } catch (JafarIOException e) {
+            throw new IOException(e.getMessage(), e);
         }
         // parse JFR and run handlers
         parser.parse(recording, new ChunkParserListener() {

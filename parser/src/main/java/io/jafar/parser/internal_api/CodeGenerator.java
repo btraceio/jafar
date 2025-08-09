@@ -3,6 +3,7 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.JafarSerializationException;
 import io.jafar.parser.api.MetadataLookup;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.lazy.JfrField;
@@ -809,10 +810,10 @@ final class CodeGenerator {
     }
 
     @SuppressWarnings("unchecked")
-    public static <T> Deserializer<T> generateDeserializer(MetadataClass clz) throws Exception {
+    public static <T> Deserializer<T> generateDeserializer(MetadataClass clz) throws JafarSerializationException {
         ParserContext ctx = clz.getContext();
         if (!(ctx instanceof LazyParserContext)) {
-            throw new RuntimeException("Invalid context!");
+            throw new JafarSerializationException("Invalid parser context type", clz.getName());
         }
         LazyParserContext context = (LazyParserContext) ctx;
         Class<T> target = (Class<T>)context.getClassTargetType(clz.getName());
@@ -913,7 +914,12 @@ final class CodeGenerator {
         Path debugPath = null;
         if (log.isDebugEnabled()) {
             debugPath = Paths.get("/tmp/" + origSimpleName + ".class");
-            Files.write(debugPath, classData);
+            try {
+                Files.write(debugPath, classData);
+            } catch (Exception e) {
+                log.warn("Failed to write debug bytecode to {}", debugPath, e);
+                debugPath = null;
+            }
         }
 
         try {
@@ -923,7 +929,11 @@ final class CodeGenerator {
             return new Deserializer.Generated<>(ctrHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);
-            throw new RuntimeException(e);
+            if (debugPath != null) {
+                throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), debugPath, e);
+            } else {
+                throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), e);
+            }
         }
     }
 

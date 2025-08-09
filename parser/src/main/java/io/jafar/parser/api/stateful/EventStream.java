@@ -255,9 +255,7 @@ public abstract class EventStream implements ChunkParserListener {
                 vp.onComplexValueEnd(null, null, eventClz);
                 Map<String, Object> value = (Map<String, Object>)context.remove(eventClz.getName() + "#value", Map.class);
 
-                if (value.containsKey("stackTrace")) {
-                    System.out.println("xxx");
-                }
+                // Process event value with parsed data
                 onEventValue(value);
             }
         } catch (IOException e) {

@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.JafarSerializationException;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 import java.lang.invoke.MethodHandle;
@@ -123,8 +124,8 @@ public abstract class Deserializer<T> {
         }
         try {
             return CodeGenerator.generateDeserializer(clazz);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+        } catch (JafarSerializationException e) {
+            throw new RuntimeException("Failed to generate deserializer for " + clazz.getName(), e);
         }
     }
 

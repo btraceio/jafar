@@ -56,8 +56,7 @@ public final class TypeGenerator {
                         Files.writeString(target, generateTypeFromEvent(et, generated), StandardOpenOption.CREATE_NEW);
                     }
                 } catch (IOException e) {
-                    throw new RuntimeException(e);
-
+                    throw new RuntimeException("Failed to generate type interface for " + et.getName(), e);
                 }
             }
         });

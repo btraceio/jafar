@@ -125,7 +125,7 @@ public final class Scrubber {
                 long s = to - from - 1;
                 int payloadLen = computeFittingPayloadLength((int) s);
                 if (payloadLen > BUF_SIZE) {
-                    System.out.println("xxx");
+                    throw new RuntimeException("Payload length exceeds buffer size: " + payloadLen + " > " + BUF_SIZE);
                 }
                 copyBuf.clear();
                 copyBuf.put((byte)4); // string encoded as byte array

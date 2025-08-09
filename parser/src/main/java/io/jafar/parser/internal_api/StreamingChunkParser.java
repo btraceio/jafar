@@ -59,7 +59,7 @@ public final class StreamingChunkParser implements AutoCloseable {
    */
   public void parse(Path path, ChunkParserListener listener) throws IOException {
     if (closed) {
-      throw new IllegalStateException("Parser is closed");
+      throw new IOException("Parser is closed");
     }
     try (RecordingStream stream = new RecordingStream(path, contextFactory.newContext())) {
       parse(stream, listener);
@@ -151,13 +151,13 @@ public final class StreamingChunkParser implements AutoCloseable {
         try {
           f.get();
         } catch (Throwable t) {
-          throw new RuntimeException(t);
+          throw new RuntimeException("Failed to process chunk", t);
         }
       });
     } catch(EOFException e) {
-      throw new IOException("Invalid buffer", e);
+      throw new IOException("Invalid buffer encountered during parsing", e);
     } catch (Throwable t) {
-      throw new IOException("Error parsing recording", t);
+      throw new IOException("Error occurred while parsing JFR recording", t);
     } finally {
       listener.onRecordingEnd(stream.getContext());
     }
