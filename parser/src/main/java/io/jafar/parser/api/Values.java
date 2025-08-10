@@ -55,7 +55,7 @@ public final class Values {
                 throw new IllegalArgumentException("Unsupported path segment type: " + segment);
             }
         }
-        return unwrapComplex(current);
+        return unwrapArray(unwrapComplex(current));
     }
 
     /**
