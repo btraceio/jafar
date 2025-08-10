@@ -3,7 +3,6 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 
-import javax.swing.text.html.parser.Parser;
 
 /**
  * A callback to be provided to {@linkplain StreamingChunkParser#parse(java.nio.file.Path, ChunkParserListener)}
