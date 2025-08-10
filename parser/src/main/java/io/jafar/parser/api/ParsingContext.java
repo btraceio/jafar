@@ -7,7 +7,11 @@ import java.nio.file.Path;
 /**
  * Cross-recording context.
  * Implementation specific, but allows sharing computationally intensive resources
- * between parsing sessions,
+ * between parsing sessions.
+ * <p>
+ * Reuse a single {@code ParsingContext} across multiple parser instances to enable
+ * caching and reduce initialization overhead.
+ * </p>
  */
 public interface ParsingContext {
     /**
@@ -20,23 +24,26 @@ public interface ParsingContext {
     }
 
     /**
-     * Creates a new instance of a TypedJafarParser for the given path.
+     * Creates a new instance of a {@link TypedJafarParser} for the given path.
      *
      * @param path the path to the recording
-     * @return a new TypedJafarParser instance
+     * @return a new {@link TypedJafarParser} instance
      */
     TypedJafarParser newTypedParser(Path path);
 
     /**
-     * Creates a new instance of an UnTypedJafarParser for the given path.
+     * Creates a new instance of an {@link UntypedJafarParser} for the given path.
      *
      * @param path the path to the recording
-     * @return a new UnTypedJafarParser instance
+     * @return a new {@link UntypedJafarParser} instance
      */
     UntypedJafarParser newUntypedParser(Path path);
 
     /**
      * Returns the uptime of the parsing context in nanoseconds.
+     * <p>
+     * Measures cumulative time since creation, across all parser sessions using this context.
+     * </p>
      *
      * @return the uptime in nanoseconds
      */

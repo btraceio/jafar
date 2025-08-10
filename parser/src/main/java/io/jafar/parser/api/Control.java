@@ -1,16 +1,17 @@
 package io.jafar.parser.api;
 
 /**
- * Control interface represents the ability to control a stream of data.
- * It provides a method to retrieve a stream object that allows querying the position in the stream.
+ * Control utilities available to handlers during parsing.
+ * Provides access to the current stream position.
  */
 public interface Control {
     /**
-     * An interface representing a stream of data. It provides a method to query the current position in the stream.
+     * Represents the current recording stream while the handler executes.
      */
     interface Stream {
         /**
-         * Returns the current position in the stream.
+         * Returns the current byte position in the recording stream.
+         * Meaningful only during handler invocation.
          *
          * @return the current position in the stream
          */
@@ -18,7 +19,8 @@ public interface Control {
     }
 
     /**
-     * Retrieves a stream object that allows querying the position in the stream.
+     * Retrieves the stream proxy that allows querying the current byte position.
+     * The returned object may become invalid outside handler invocation.
      *
      * @return the stream object
      */
