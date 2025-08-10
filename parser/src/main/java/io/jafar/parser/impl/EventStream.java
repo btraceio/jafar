@@ -223,10 +223,14 @@ public abstract class EventStream implements ChunkParserListener {
                 ConstantPools cpools = ctx.get(ConstantPools.class);
                 ConstantPoolAccessor cpAccessor = new ConstantPoolAccessor(cpools, type, pointer);
 
-                Map<String, Object> parent = stack.peek(Map.class);
-                assert parent != null;
-
-                parent.put(fld, cpAccessor);
+                ArrayHolder ah = stack.peek(ArrayHolder.class);
+                if (ah != null) {
+                    ah.add(cpAccessor);
+                } else {
+                    Map<String, Object> parent = stack.peek(Map.class);
+                    assert parent != null;
+                    parent.put(fld, cpAccessor);
+                }
             }
         };
         context.put(ConstantPoolValueProcessor.class, cpValueProcessor);
