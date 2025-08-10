@@ -1,11 +1,11 @@
-package io.jafar.parser.api.stateful;
+package io.jafar.parser.impl;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import java.util.Map;
 
-public final class ConstantPools {
+final class ConstantPools {
     private final Long2ObjectMap<ConstantPool> cpools = new Long2ObjectOpenHashMap<>();
 
     void add(long typeId, long id, Map<String, Object> value) {

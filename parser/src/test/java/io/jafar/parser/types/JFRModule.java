@@ -1,6 +1,6 @@
 package io.jafar.parser.types;
 
-import io.jafar.parser.api.lazy.JfrType;
+import io.jafar.parser.api.JfrType;
 @JfrType("jdk.types.Module")
 
 public interface JFRModule {

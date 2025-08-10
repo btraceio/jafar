@@ -1,4 +1,4 @@
-package io.jafar.parser.impl.lazy;
+package io.jafar.parser.impl;
 
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class LazyParserContext extends ParserContext {
+public final class TypedParserContext extends ParserContext {
     private volatile TypeFilter typeFilter;
 
     private final Map<String, Class<?>> classTargetTypeMap = new ConcurrentHashMap<>();
@@ -64,11 +64,11 @@ public final class LazyParserContext extends ParserContext {
 
     private final DeserializerCache globalDeserializerCache;
 
-    public LazyParserContext() {
+    public TypedParserContext() {
         this(new DeserializerCache.Impl());
     }
 
-    LazyParserContext(DeserializerCache deserializerCache) {
+    TypedParserContext(DeserializerCache deserializerCache) {
         super(0);
 
         this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new DeserializerCache.Impl();
@@ -79,7 +79,7 @@ public final class LazyParserContext extends ParserContext {
         this.put(DeserializerCache.class, globalDeserializerCache);
     }
 
-    LazyParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, DeserializerCache deserializerCache) {
+    TypedParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, DeserializerCache deserializerCache) {
         super(chunkIndex, metadataLookup, constantPools);
         this.globalDeserializerCache = deserializerCache;
 

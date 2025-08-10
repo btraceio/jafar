@@ -6,7 +6,7 @@ import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.ParserContextFactory;
 import io.jafar.parser.internal_api.RecordingStream;
-import io.jafar.parser.internal_api.SimpleParserContextFactory;
+import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.TypeSkipper;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
@@ -91,7 +91,7 @@ public final class Scrubber {
      */
     public static void scrubFile(Path input, Path output, Function<String, ScrubField> scrubDefinition) throws Exception {
         Set<SkipInfo> globalSkipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
-        ParserContextFactory contextFactory = new SimpleParserContextFactory();
+        ParserContextFactory contextFactory = new UntypedParserContextFactory();
 
         try (StreamingChunkParser parser = new StreamingChunkParser(contextFactory)) {
             parser.parse(input, new SkipInfoCollector(scrubDefinition, globalSkipInfo));

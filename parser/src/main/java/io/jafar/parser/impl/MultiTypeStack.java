@@ -1,4 +1,4 @@
-package io.jafar.parser.api.stateful;
+package io.jafar.parser.impl;
 
 import java.util.ArrayDeque;
 import java.util.Deque;

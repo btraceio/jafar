@@ -1,6 +1,8 @@
-package io.jafar.parser.api;
+package io.jafar.parser.impl;
 
-import io.jafar.parser.api.lazy.JfrType;
+import io.jafar.parser.api.JafarConfigurationException;
+import io.jafar.parser.api.JafarIOException;
+import io.jafar.parser.api.JfrType;
 
 /**
  * Utility class for common validation operations that throw appropriate exceptions.

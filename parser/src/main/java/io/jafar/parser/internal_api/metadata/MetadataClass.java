@@ -2,7 +2,7 @@ package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.internal_api.Deserializer;
 import io.jafar.parser.internal_api.DeserializerCache;
-import io.jafar.parser.impl.lazy.LazyParserContext;
+import io.jafar.parser.impl.TypedParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 
 import java.io.IOException;
@@ -53,7 +53,7 @@ public final class MetadataClass extends AbstractMetadataElement {
     }
 
     public void bindDeserializer() {
-        DESERIALIZER_UPDATER.updateAndGet(this, v -> (v == null) ? getContext().get(DeserializerCache.class).computeIfAbsent(new LazyParserContext.DeserializerKey(MetadataClass.this), k -> Deserializer.forType(MetadataClass.this)) : v);
+        DESERIALIZER_UPDATER.updateAndGet(this, v -> (v == null) ? getContext().get(DeserializerCache.class).computeIfAbsent(new TypedParserContext.DeserializerKey(MetadataClass.this), k -> Deserializer.forType(MetadataClass.this)) : v);
     }
 
     /**

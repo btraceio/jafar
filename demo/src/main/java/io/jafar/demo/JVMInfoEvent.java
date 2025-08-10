@@ -1,6 +1,6 @@
 package io.jafar.demo;
 
-import io.jafar.parser.api.lazy.JfrType;
+import io.jafar.parser.api.JfrType;
 
 @JfrType("jdk.JVMInformation")
 public interface JVMInfoEvent {

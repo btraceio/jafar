@@ -1,4 +1,4 @@
-package io.jafar.parser.api.stateful;
+package io.jafar.parser.impl;
 
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 

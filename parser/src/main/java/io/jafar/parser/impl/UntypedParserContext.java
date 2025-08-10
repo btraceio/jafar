@@ -1,7 +1,9 @@
-package io.jafar.parser.api;
+package io.jafar.parser.impl;
 
-public class SimpleParserContext extends ParserContext {
-    public SimpleParserContext(int chunkIndex) {
+import io.jafar.parser.api.ParserContext;
+
+public class UntypedParserContext extends ParserContext {
+    public UntypedParserContext(int chunkIndex) {
         super(chunkIndex);
     }
 

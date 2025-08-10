@@ -1,4 +1,4 @@
-package io.jafar.parser.api.stateful;
+package io.jafar.parser.impl;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;

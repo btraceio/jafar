@@ -1,7 +1,7 @@
 package io.jafar.parser.types;
 
-import io.jafar.parser.api.lazy.JfrField;
-import io.jafar.parser.api.lazy.JfrType;
+import io.jafar.parser.api.JfrField;
+import io.jafar.parser.api.JfrType;
 @JfrType("jdk.ExecutionSample")
 
 public interface JFRExecutionSample {

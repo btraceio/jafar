@@ -1,4 +1,4 @@
-package io.jafar.parser.api.stateful;
+package io.jafar.parser.impl;
 
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
@@ -6,7 +6,6 @@ import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.ConstantPoolValueProcessor;
 import io.jafar.parser.internal_api.GenericValueReader;
-import io.jafar.parser.impl.lazy.LazyParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.ValueProcessor;
 import io.jafar.parser.internal_api.metadata.MetadataClass;

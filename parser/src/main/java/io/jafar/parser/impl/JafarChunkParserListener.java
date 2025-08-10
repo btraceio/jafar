@@ -1,4 +1,4 @@
-package io.jafar.parser.impl.lazy;
+package io.jafar.parser.impl;
 
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
