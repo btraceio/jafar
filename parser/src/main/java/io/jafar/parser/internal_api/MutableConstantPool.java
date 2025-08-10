@@ -1,7 +1,6 @@
-package io.jafar.parser;
+package io.jafar.parser.internal_api;
 
-import io.jafar.parser.internal_api.ConstantPool;
-import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;

@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.JafarSerializationException;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 import java.lang.invoke.MethodHandle;
@@ -75,12 +76,12 @@ public abstract class Deserializer<T> {
     );
 
     public static final class Generated<T> extends Deserializer<T> {
+        private final MethodHandle factoryHandle;
         private final MethodHandle skipHandler;
-        private final MethodHandle deserializeHandler;
         private final TypeSkipper typeSkipper;
 
-        public Generated(MethodHandle deserializeHandler, MethodHandle skipHandler, TypeSkipper skipper) {
-            this.deserializeHandler = deserializeHandler;
+        public Generated(MethodHandle factoryHandle, MethodHandle skipHandler, TypeSkipper skipper) {
+            this.factoryHandle = factoryHandle;
             this.skipHandler = skipHandler;
             this.typeSkipper = skipper;
         }
@@ -104,13 +105,13 @@ public abstract class Deserializer<T> {
         @Override
         public T deserialize(RecordingStream stream) throws Exception {
             try {
-                if (deserializeHandler == null) {
+                if (factoryHandle == null) {
                     // no deserialize method, skip
                     skip(stream);
                     // no value to return
                     return null;
                 }
-                return (T)deserializeHandler.invoke(stream);
+                return (T) factoryHandle.invoke(stream);
             } catch (Throwable t) {
                 throw new RuntimeException(t);
             }
@@ -123,8 +124,8 @@ public abstract class Deserializer<T> {
         }
         try {
             return CodeGenerator.generateDeserializer(clazz);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+        } catch (JafarSerializationException e) {
+            throw new RuntimeException("Failed to generate deserializer for " + clazz.getName(), e);
         }
     }
 

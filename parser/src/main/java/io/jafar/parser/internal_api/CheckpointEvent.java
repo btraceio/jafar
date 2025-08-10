@@ -1,8 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.MutableConstantPool;
-import io.jafar.parser.MutableConstantPools;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
@@ -35,8 +34,13 @@ public final class CheckpointEvent extends AbstractEvent {
     }
 
     void readConstantPools() throws IOException {
-        RecordingParserContext context = stream.getContext();
-        TypeFilter typeFilter = context.getTypeFilter();
+        ParserContext context = stream.getContext();
+
+        ConstantPoolValueProcessor cpProcessor = context.get(ConstantPoolValueProcessor.class);
+        GenericValueReader vr = cpProcessor != null ? new GenericValueReader(cpProcessor) : null;
+        cpProcessor = cpProcessor != null ? cpProcessor : ConstantPoolValueProcessor.NOOP;
+
+        TypeFilter typeFilter = context.get(TypeFilter.class);
 
         boolean skipAll = context.getConstantPools().isReady();
 
@@ -54,10 +58,19 @@ public final class CheckpointEvent extends AbstractEvent {
                 MutableConstantPool constantPool = skip ? null : ((MutableConstantPools) context.getConstantPools()).addOrGetConstantPool(stream, typeId, count);
                 for (int j = 0; j < count; j++) {
                     long id = stream.readVarint();
-                    if (!skip && !constantPool.containsKey(id)) {
-                        constantPool.addOffset(id, stream.position());
+                    try {
+                        cpProcessor.onConstantPoolValueStart(clz, id);
+                        if (!skip && !constantPool.containsKey(id)) {
+                            constantPool.addOffset(id, stream.position());
+                        }
+                        if (vr == null) {
+                            clz.skip(stream);
+                        } else {
+                            vr.readValue(stream, clz);
+                        }
+                    } finally {
+                        cpProcessor.onConstantPoolValueEnd(clz, id);
                     }
-                    clz.skip(stream);
                 }
             } catch (IOException e) {
                 throw e;

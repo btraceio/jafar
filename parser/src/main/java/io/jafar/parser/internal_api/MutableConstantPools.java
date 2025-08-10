@@ -1,9 +1,7 @@
-package io.jafar.parser;
+package io.jafar.parser.internal_api;
 
-import io.jafar.parser.internal_api.ConstantPool;
-import io.jafar.parser.internal_api.ConstantPools;
-import io.jafar.parser.internal_api.MetadataLookup;
-import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ConstantPools;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
@@ -12,11 +10,9 @@ import java.util.stream.Stream;
 public final class MutableConstantPools implements ConstantPools {
     private final Long2ObjectMap<MutableConstantPool> poolMap = new Long2ObjectOpenHashMap<>();
 
-    private final MetadataLookup metadata;
     private boolean ready = false;
 
-    public MutableConstantPools(MetadataLookup metadata) {
-        this.metadata = metadata;
+    public MutableConstantPools() {
     }
 
     @Override

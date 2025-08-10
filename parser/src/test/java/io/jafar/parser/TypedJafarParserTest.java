@@ -2,7 +2,7 @@ package io.jafar.parser;
 
 import io.jafar.TestJfrRecorder;
 import io.jafar.parser.api.HandlerRegistration;
-import io.jafar.parser.api.JafarParser;
+import io.jafar.parser.api.TypedJafarParser;
 import io.jafar.parser.types.JFRExecutionSample;
 import org.junit.jupiter.api.Test;
 import org.openjdk.jmc.flightrecorder.writer.api.Recording;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-public class JafarParserTest {
+public class TypedJafarParserTest {
     @Test
     void testEventParsing() throws Exception {
 
@@ -40,24 +40,24 @@ public class JafarParserTest {
 
         Files.write(tmpFile, recordingStream.toByteArray());
 
-        JafarParser parser = JafarParser.open(tmpFile.toString());
-
         AtomicInteger eventCount = new AtomicInteger(0);
-        parser.handle(ParserEvent1.class, (event, ctl) -> {
-            eventCount.incrementAndGet();
-            assertEquals(10, event.value());
-        });
+        try (TypedJafarParser parser = TypedJafarParser.open(tmpFile.toString())) {
+            parser.handle(ParserEvent1.class, (event, ctl) -> {
+                eventCount.incrementAndGet();
+                assertEquals(10, event.value());
+            });
 
-        parser.run();
+            parser.run();
+        }
 
         assertEquals(1, eventCount.get());
     }
 
     @Test
     void testRealFile() throws Exception {
-        URI uri = JafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+        URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
 
-        try (JafarParser p = JafarParser.open(new File(uri).getAbsolutePath())) {
+        try (TypedJafarParser p = TypedJafarParser.open(new File(uri).getAbsolutePath())) {
             AtomicLong eventCount = new AtomicLong(0);
             AtomicLong idHash = new AtomicLong(113);
             HandlerRegistration<JFRExecutionSample> h1 = p.handle(JFRExecutionSample.class, (event, ctl) -> {

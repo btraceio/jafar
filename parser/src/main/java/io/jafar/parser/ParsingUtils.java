@@ -1,5 +1,6 @@
 package io.jafar.parser;
 
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 
 import java.io.IOException;

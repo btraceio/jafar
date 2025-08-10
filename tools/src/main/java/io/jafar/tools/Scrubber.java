@@ -1,10 +1,12 @@
 package io.jafar.tools;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.RecordingParserContext;
+import io.jafar.parser.internal_api.ParserContextFactory;
 import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.TypeSkipper;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
@@ -89,9 +91,9 @@ public final class Scrubber {
      */
     public static void scrubFile(Path input, Path output, Function<String, ScrubField> scrubDefinition) throws Exception {
         Set<SkipInfo> globalSkipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
-        RecordingParserContext parserContext = new RecordingParserContext();
+        ParserContextFactory contextFactory = new UntypedParserContextFactory();
 
-        try (StreamingChunkParser parser = new StreamingChunkParser(parserContext)) {
+        try (StreamingChunkParser parser = new StreamingChunkParser(contextFactory)) {
             parser.parse(input, new SkipInfoCollector(scrubDefinition, globalSkipInfo));
         }
 
@@ -123,7 +125,8 @@ public final class Scrubber {
                 long s = to - from - 1;
                 int payloadLen = computeFittingPayloadLength((int) s);
                 if (payloadLen > BUF_SIZE) {
-                    System.out.println("xxx");
+                    throw new RuntimeException("Payload length exceeds buffer size: " + payloadLen + " > " + BUF_SIZE +
+                        " for skip range [" + from + ", " + to + ") (range size: " + (to - from) + ")");
                 }
                 copyBuf.clear();
                 copyBuf.put((byte)4); // string encoded as byte array
@@ -208,18 +211,18 @@ public final class Scrubber {
         }
 
         @Override
-        public boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingStream stream) {
+        public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
             ScrubbingInfo info = new ScrubbingInfo();
-            stream.getContext().put(SCRUBBING_INFO_KEY, ScrubbingInfo.class, info);
+            context.put(SCRUBBING_INFO_KEY, ScrubbingInfo.class, info);
             info.chunkOffset = header.offset;
             info.skipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.startPos));
             info.targetClassMap = new HashMap<>();
 
-            return ChunkParserListener.super.onChunkStart(chunkIndex, header, stream);
+            return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
         }
 
         @Override
-        public boolean onMetadata(MetadataEvent metadata, RecordingParserContext context) {
+        public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
             ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
             for (var md : metadata.getClasses()) {
                 ScrubField scrubField = scrubDefinition.apply(md.getName());
@@ -247,18 +250,20 @@ public final class Scrubber {
                     });
                 }
             }
-            return ChunkParserListener.super.onMetadata(metadata, context);
+            return ChunkParserListener.super.onMetadata(context, metadata);
         }
 
         @Override
-        public boolean onEvent(long typeId, RecordingStream stream, long eventStartPos, long rawSize, long payloadSize) {
-            ScrubbingInfo info = stream.getContext().get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
+        public boolean onEvent(ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
+            ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
             if (info == null) {
                 throw new IllegalStateException("invalid parser state, no scrubbing info found");
             }
 
             var targetScrub = info.targetClassMap.get(typeId);
             if (targetScrub != null) {
+                RecordingStream stream = context.get(RecordingStream.class);
+                assert stream != null;
                 long chunkOffset = info.chunkOffset;
                 try {
                     SkipInfo[] skipInfo = new SkipInfo[1];
@@ -303,11 +308,11 @@ public final class Scrubber {
                     return false;
                 }
             }
-            return ChunkParserListener.super.onEvent(typeId, stream, eventStartPos, rawSize, payloadSize);
+            return ChunkParserListener.super.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
         }
 
         @Override
-        public boolean onChunkEnd(int chunkIndex, boolean skipped, RecordingParserContext context) {
+        public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
             var info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
             globalSkipInfo.addAll(info.skipInfo);
             return true;

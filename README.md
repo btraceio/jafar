@@ -1,132 +1,226 @@
 # jafar
-Experimental, incomplete JFR parser
+Experimental, fast JFR parser with a small, focused API.
 
-Very much a work in progress. 
-The goal is to be able to parse JFR files and extract the event data in programmatic way with the least effort possible.
+Very much a work in progress. The goal is to parse JFR files and extract event data with minimal ceremony.
 
 ## Requirements
-Java 21 (mostly just because I wanted to try the pattern matching)
+- Java 17+
+- Git LFS (recordings are stored with LFS). Install per GitHub docs: `https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage`
 
-Git LFS is used to store the JFR recordings, so you will need to have it installed to clone the repository.
-Install it following the instructions at https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage
+## Build
+1) Fetch binary resources: `./get_resources.sh`
+2) Build all modules: `./gradlew shadowJar`
 
-## Tl;DR
-Allow quickly wiring JFR with interface based handlers using bytecode generation.
-I was nerdsniped by [@nitsanw](https://github.com/nitsanw) and quickly thrown together this more or less a PoC.
-
-The parser is pretty fast, actually. You can try the demo app which will extract all the `jdk.ExecutionSample` events,
-count the number of samples and calculate the sum of the associated thread ids (useful, right?). On Mac M1 and ~600MiB
-JFR this takes around 1 second as compared to cca. 7 seconds using JMC parser. The JDK `jfr` tool will run out of memory,
-but to be fair it is trying to print the full content of each event.
-
-### Building
-First, retrieve the binary resources via `./get_resources.sh`
-Then, build the project with `./gradlew shadowJar`
-
-Now, you can run the demo app with:
-```shell
-# The Jafar parser
-java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr] path_to_jfr.jfr
-```
-
-## Usage
-The main idea is to define a handling interface which corresponds to a JFR event type. The linking is done via `@JfrType` 
-annotation. For convenience, there is a `JfrEvent` interface which can be extended to define the event handling interface.
-
-The interface methods should correspond to the fields of the JFR event. The method names should be the same as the field names.
-If the field name is not a valid Java identifier, the method will be linked with the field via `@JfrField` annotation.
-The interface can have methods excluded from linking with the JFR types - by annotating such methods with `@JfrIgnore`.
+## Quick start (typed API)
+Define a Java interface per JFR type and annotate with `@JfrType`. Methods correspond to event fields; use `@JfrField` to map differing names and `@JfrIgnore` to skip fields.
 
 ```java
+import io.jafar.parser.api.*;
+import java.nio.file.Paths;
 
 @JfrType("custom.MyEvent")
-public interface MyEvent extends JfrEvent {
+public interface MyEvent { // no base interface required
   String myfield();
 }
 
-try (JafarParser parser = JafarParser.open("path_to_jfr.jfr")) {}
-    // registering a handler will return a cookie which can be used to deregister the same handler
-    var cookie = parser.handle(MyEvent.class, event -> {
-        System.out.println(event.startTime());
-        System.out.println(event.eventThread().javaName());
-        System.out.println(event.myfield());
-    });
-    parser.handle(MyEvent.class, event -> {
-        // do something else
-    });
-    parser.run();
-    
-    cookie.destroy(parser);
-    // this time only the second handler will be called
-    parser.run();
+try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recording.jfr"))) {
+  HandlerRegistration<MyEvent> reg = p.handle(MyEvent.class, (e, ctl) -> {
+    System.out.println(e.myfield());
+    long pos = ctl.stream().position(); // current byte position while in handler
+  });
+  p.run();
+  reg.destroy(p); // deregister
 }
-
 ```
 
-This short program will parse the recording and call the `handle` method for each `custom.MyEvent` event.
-The number of handlers per type is not limited, they all will be executed sequentially.
-With the handlers known beforehand, the parser can safely skip all unreachable events and types, massively saving on the parsing time.
+Notes:
+- Handlers run synchronously on the parser thread. Keep work small or offload.
+- Exceptions thrown from a handler stop parsing and propagate from `run()`.
 
-As an optimization for batch processing applications where the JFR files share the same type structure,
-it is possible to use a global parser context and be reusing the generated handler code
+## Untyped API
+Receive events as `Map<String, Object>` with nested maps/arrays when applicable.
 
 ```java
-@JfrType("custom.MyEvent")
-public interface MyEvent extends JfrEvent {
-  String myfield();
-}
+import io.jafar.parser.api.*;
+import java.nio.file.Paths;
 
-ParsingContext parsingContext = ParsingContext.create();
-
-String path;
-while ((path = getNextPath()) != null) {
-    try (JafarParser parser = JafarParser.open(path), parsingContext) {}
-        // registering a handler will return a cookie which can be used to deregister the same handler
-        var cookie = parser.handle(MyEvent.class, event -> {
-            System.out.println(event.startTime());
-            System.out.println(event.eventThread().javaName());
-            System.out.println(event.myfield());
-        });
-        parser.handle(MyEvent.class, event -> {
-            // do something else
-        });
-        parser.run();
-        
-        cookie.destroy(parser);
-        // this time only the second handler will be called
-        parser.run();
+try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
+  HandlerRegistration<?> reg = p.handle((type, value) -> {
+    if ("jdk.ExecutionSample".equals(type.getName())) {
+      Object threadId = Values.get(value, "eventThread", "javaThreadId");
+      // use threadId ...
     }
+  });
+  p.run();
+  reg.destroy(p);
 }
 ```
 
-### Generate Jafar Type Interfaces during the build
-There is an in-progress Gradle plugin for generating the Jafar type interfaces based on either the JVM runtime JFR metadata
-or the metadata extracted from a JFR file.
+### Complex and array values in untyped events
+- **ComplexType**: Complex fields may appear either inline as `Map<String, Object>` or as a wrapper implementing `io.jafar.parser.api.ComplexType` (e.g., constant-pool backed references). Use `getValue()` on a `ComplexType` to obtain the resolved `Map<String, Object>`.
+- **ArrayType**: When a field is an array, the value implements `io.jafar.parser.api.ArrayType`. Use `getType()` to inspect the array class (e.g., `int[].class`, `Object[].class`) and `getArray()` to access the underlying Java array.
+
+Examples:
+
+```java
+import io.jafar.parser.api.*;
+import java.util.Map;
+
+try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
+  p.handle((type, value) -> {
+    // ComplexType: constant-pool backed references (e.g., eventThread)
+    Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
+    if (thread != null) {
+      System.out.println("thread id=" + thread.get("javaThreadId") + ", name=" + thread.get("name"));
+    }
+
+    // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
+    Object framesVal = Values.get(value, "stackTrace", "frames");
+    if (framesVal instanceof ArrayType at) {
+      Object arr = at.getArray();
+      if (arr instanceof Object[] objs) {
+        for (Object el : objs) {
+          if (el instanceof ComplexType cpx) {
+            Map<String, Object> m = cpx.getValue();
+            // use fields from the resolved element
+          } else if (el instanceof Map) {
+            Map<String, Object> m = (Map<String, Object>) el; // inline complex value
+          } else {
+            // primitive wrapper or String
+          }
+        }
+      } else if (arr instanceof int[] ints) {
+        for (int i : ints) { /* ... */ }
+      } else if (arr instanceof long[] longs) {
+        for (long l : longs) { /* ... */ }
+      }
+    }
+  });
+  p.run();
+}
+```
+
+## Core API overview
+- `JafarParser`
+  - `newTypedParser(Path)` / `newUntypedParser(Path)`: start a session.
+  - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).
+  - `run()`: parse and invoke registered handlers.
+- `TypedJafarParser`
+  - `handle(Class<T>, JFRHandler<T>) -> HandlerRegistration<T>`
+  - Static `open(String|Path[, ParsingContext])` are also available, but prefer `JafarParser.newTypedParser(Path)`.
+- `UntypedJafarParser`
+  - `handle(UntypedJafarParser.EventHandler) -> HandlerRegistration<?>`
+  - Static `open(String|Path[, ParsingContext])` also available.
+- Data wrappers
+  - `ArrayType`: wrapper around arrays. `getType()` returns the array class; `getArray()` returns the backing Java array.
+  - `ComplexType`: wrapper around complex values. `getValue()` resolves to a `Map<String, Object>`. Note that some complex fields may be provided inline as a `Map` without a wrapper.
+- `ParsingContext`
+  - `create()`: build a reusable context.
+  - `newTypedParser(Path)` / `newUntypedParser(Path)`: create parsers bound to the shared context.
+  - `uptime()`: cumulative processing time across sessions using the context.
+- `Control`
+  - `stream().position()`: current byte position while a handler executes.
+- Annotations
+  - `@JfrType("<fq.type>")`: declare the JFR type an interface represents.
+  - `@JfrField("<jfrField>", raw = false)`: map differing names or request raw representation.
+  - `@JfrIgnore`: exclude a method from mapping.
+
+## Advanced usage
+- Reusing context across many recordings
+
+```java
+ParsingContext ctx = ParsingContext.create();
+try (TypedJafarParser p = ctx.newTypedParser(Paths.get("/path/to.a.jfr"))) {
+  p.handle(MyEvent.class, (e, ctl) -> {/*...*/});
+  p.run();
+}
+try (TypedJafarParser p = ctx.newTypedParser(Paths.get("/path/to.b.jfr"))) {
+  p.handle(MyEvent.class, (e, ctl) -> {/*...*/});
+  p.run();
+}
+System.out.println("uptime(ns)=" + ctx.uptime());
+```
+
+- Observing parse lifecycle (low-level)
+
+```java
+import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.metadata.MetadataEvent;
+
+p.withParserListener(new ChunkParserListener() {
+  @Override public boolean onMetadata(ParserContext c, MetadataEvent md) {
+    // inspect metadata per chunk
+    return true; // continue
+  }
+}).run();
+```
+
+## Gradle plugin: generate Jafar type interfaces
+Plugin id: `io.btrace.jafar-gradle-plugin`
+
+Adds task `generateJafarTypes` and wires it to `compileJava`. It can generate interfaces for selected JFR types from either the current JVM metadata (default) or a `.jfr` file.
 
 ```gradle
 plugins {
-    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
+  id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
 }
 
 repositories {
-    mavenCentral()
-    mavenLocal()
-    // use sonatype snapshots - that's where the plugin artifact lives for now
-    maven {
-        url "https://oss.sonatype.org/content/repositories/snapshots/"
-    }
+  mavenCentral()
+  mavenLocal()
+  maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
 }
 
-// This will be called implicitly before project compilation.
-// Can also be invoked by hand to bootstrap the development
 generateJafarTypes {
-    inputFile = file('/tmp/my.jfr') // extract the metadata from this JFR file; otherwise use the JVM runtime metadata
-    outputDir = project.file('src/main/java') // generate the files under this particular source directory; if not specified 'buld/generated/sources/jafar/src/main' will be used
-    overwrite = false // specify whether to overwrite the existing files 
-    eventTypeFilter { // process only certain event types (and transitive closure of types they depend on)
-        it == 'jdk.ExecutionSample'
-    }
-    targetPackage = 'io.jafar.demo.types' // generate the types in this package
-    
+  // Optional: use a JFR file to derive metadata; otherwise JVM runtime metadata is used
+  inputFile = file('/path/to/recording.jfr')
+
+  // Optional: where to generate sources (default: build/generated/sources/jafar/src/main)
+  outputDir = project.file('src/main/java')
+
+  // Optional: do not overwrite existing files (default: false)
+  overwrite = false
+
+  // Optional: filter event types by name (closure gets fully-qualified JFR type name)
+  eventTypeFilter {
+    it.startsWith('jdk.') && it != 'jdk.SomeExcludedType'
+  }
+
+  // Package for generated interfaces (default: io.jafar.parser.api.types)
+  targetPackage = 'com.acme.jfr.types'
 }
 ```
+
+You can also provide the input file via a project property: `-Pjafar.input=/path/to/recording.jfr`.
+
+## Tools: Scrubbing sensitive fields in a `.jfr`
+`io.jafar.tools.Scrubber` can scrub selected string fields in-place while copying to a new file.
+
+Example: scrub the value of `jdk.InitialSystemProperty.value` when `key == 'java.home'`.
+
+```java
+import static io.jafar.tools.Scrubber.scrubFile;
+import io.jafar.tools.Scrubber.ScrubField;
+import java.nio.file.Paths;
+
+scrubFile(Paths.get("/in.jfr"), Paths.get("/out-scrubbed.jfr"),
+  clz -> {
+    if (clz.equals("jdk.InitialSystemProperty")) {
+      return new ScrubField("key", "value", (k, v) -> "java.home".equals(k));
+    }
+    return null; // no scrubbing for other classes
+  }
+);
+```
+
+## Demo
+After building, you can run the demo application to compare parsers on `jdk.ExecutionSample`:
+
+```shell
+java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
+```
+
+On an M1 and a ~600MiB JFR, the Jafar parser completes in ~1s vs ~7s with JMC (anecdotal). The stock `jfr` tool may OOM when printing all events.
+
+## License
+Apache 2.0 (see `LICENSE`).

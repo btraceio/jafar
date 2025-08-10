@@ -1,5 +1,11 @@
 package io.jafar.parser.api;
 
+/**
+ * Functional handler receiving deserialized typed JFR events.
+ * <p>
+ * Invoked synchronously on the parser thread; keep work minimal or offload.
+ * </p>
+ */
 @FunctionalInterface
 public interface JFRHandler<T> {
     class Impl<T> {
@@ -16,5 +22,12 @@ public interface JFRHandler<T> {
         }
     }
 
+    /**
+     * Handles a single event.
+     *
+     * @param event deserialized event instance
+     * @param ctl parser control utilities; {@link Control#stream()} exposes the current
+     *            byte position while the handler is executing
+     */
     void handle(T event, Control ctl);
 }

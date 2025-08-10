@@ -2,7 +2,7 @@ package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.AbstractEvent;
 import io.jafar.parser.ParsingUtils;
-import io.jafar.parser.MutableMetadataLookup;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 
 import java.io.IOException;

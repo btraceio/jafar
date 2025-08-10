@@ -8,5 +8,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface JfrType {
+    /** Fully qualified JFR type or event name this interface represents. */
     String value();
 }

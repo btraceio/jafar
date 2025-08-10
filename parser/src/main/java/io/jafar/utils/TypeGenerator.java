@@ -1,7 +1,8 @@
 package io.jafar.utils;
 
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.impl.TypedParserContextFactory;
 import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.RecordingParserContext;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
@@ -55,8 +56,7 @@ public final class TypeGenerator {
                         Files.writeString(target, generateTypeFromEvent(et, generated), StandardOpenOption.CREATE_NEW);
                     }
                 } catch (IOException e) {
-                    throw new RuntimeException(e);
-
+                    throw new RuntimeException("Failed to generate type interface for " + et.getName(), e);
                 }
             }
         });
@@ -142,10 +142,10 @@ public final class TypeGenerator {
     }
 
     private void generateFromFile() throws Exception {
-        try (StreamingChunkParser parser = new StreamingChunkParser()) {
+        try (StreamingChunkParser parser = new StreamingChunkParser(new TypedParserContextFactory())) {
             parser.parse(jfr, new ChunkParserListener() {
                 @Override
-                public boolean onMetadata(MetadataEvent metadata, RecordingParserContext context) {
+                public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
                     metadata.getClasses().forEach(TypeGenerator.this::writeClass);
                     // stop processing
                     return false;
@@ -246,14 +246,11 @@ public final class TypeGenerator {
         if (superType == null) {
             return false;
         }
-        if ("jdk.jfr.SettingControl".equals(superType)) {
-            return true;
-        }
+        return "jdk.jfr.SettingControl".equals(superType);
         /*
         TODO: this is not technically true as a type may have JFR event upper in hierarchy but
               let's ignore it for now
          */
-        return false;
     }
 
     private static String getSimpleName(String name) {

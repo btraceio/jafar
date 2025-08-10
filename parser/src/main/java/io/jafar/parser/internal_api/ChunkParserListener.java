@@ -1,6 +1,8 @@
 package io.jafar.parser.internal_api;
 
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+
 
 /**
  * A callback to be provided to {@linkplain StreamingChunkParser#parse(java.nio.file.Path, ChunkParserListener)}
@@ -8,60 +10,67 @@ import io.jafar.parser.internal_api.metadata.MetadataEvent;
 public interface ChunkParserListener {
   ChunkParserListener NOOP = new ChunkParserListener() {};
 
-  /** Called when the recording starts to be processed */
-  default void onRecordingStart(RecordingParserContext context) {}
+  /**
+   * Called when the recording starts to be processed
+   *
+   * @param context the current {@linkplain ParserContext} instance
+   */
+  default void onRecordingStart(ParserContext context) {}
 
   /**
    * Called for each discovered chunk
    *
    * @param chunkIndex the chunk index (1-based)
    * @param header     the parsed chunk header
-   * @param stream     the associated recording stream
    * @return {@literal false} if the chunk should be skipped
    */
-  default boolean onChunkStart(int chunkIndex, ChunkHeader header, RecordingStream stream) {
+  default boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
     return true;
   }
 
   /**
    * Called for the chunk metadata event
    *
+   * @param context the current {@linkplain ParserContext} instance
    * @param metadata the chunk metadata event
-   * @param context
    * @return {@literal false} if the remainder of the chunk should be skipped
    */
-  default boolean onMetadata(MetadataEvent metadata, RecordingParserContext context) {
+  default boolean onMetadata(ParserContext context, MetadataEvent metadata) {
     return true;
   }
 
-  default boolean onCheckpoint(CheckpointEvent checkpoint, RecordingParserContext context) { return true; }
+  default boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) { return true; }
 
   /**
    * Called for each parsed event
    *
    * @param typeId        event type id
-   * @param stream        {@linkplain RecordingStream} positioned at the event payload start
+   * @param context       the current {@linkplain ParserContext} instance
    * @param eventStartPos the event start position in the stream
    * @param rawSize       the size of the raw event in bytes (how many bytes from eventStartPos)
    * @param payloadSize   the size of the payload in bytes (how many bytes from the current stream pos)
    * @return {@literal false} if the remainder of the chunk should be skipped
    */
-  default boolean onEvent(long typeId, RecordingStream stream, long eventStartPos, long rawSize, long payloadSize) {
+  default boolean onEvent(ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     return true;
   }
 
   /**
    * Called when a chunk is fully processed or skipped
    *
+   * @param context the current {@linkplain ParserContext} instance
    * @param chunkIndex the chunk index (1-based)
    * @param skipped    {@literal true} if the chunk was skipped
-   * @param context
    * @return {@literal false} if the remaining chunks in the recording should be skipped
    */
-  default boolean onChunkEnd(int chunkIndex, boolean skipped, RecordingParserContext context) {
+  default boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
     return true;
   }
 
-  /** Called when the recording was fully processed */
-  default void onRecordingEnd(RecordingParserContext context) {}
+  /**
+   * Called when the recording was fully processed
+   *
+   * @param context the current {@linkplain ParserContext} instance
+  */
+  default void onRecordingEnd(ParserContext context) {}
 }

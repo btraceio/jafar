@@ -1,30 +1,24 @@
-package io.jafar.parser.internal_api;
+package io.jafar.parser.impl;
 
-import io.jafar.parser.MutableConstantPools;
-import io.jafar.parser.MutableMetadataLookup;
+import io.jafar.parser.internal_api.MutableConstantPools;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.TypeFilter;
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.internal_api.DeserializerCache;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import io.jafar.utils.CachedStringParser;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
-public final class RecordingParserContext {
-    private final MutableMetadataLookup metadataLookup;
-    private final MutableConstantPools constantPools;
-
-    private final int chunkIndex;
+public final class TypedParserContext extends ParserContext {
     private volatile TypeFilter typeFilter;
 
     private final Map<String, Class<?>> classTargetTypeMap = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, WeakReference<?>> bag = new ConcurrentHashMap<>();
 
     private Long2ObjectMap<Class<?>> classTypeMap = null;
 
@@ -68,66 +62,40 @@ public final class RecordingParserContext {
         }
     }
 
-    private final ConcurrentMap<DeserializerKey, Deserializer<?>> globalDeserializerCache;
+    private final DeserializerCache globalDeserializerCache;
 
-    public final CachedStringParser.ByteArrayParser utf8Parser = CachedStringParser.byteParser();
-    public final CachedStringParser.CharArrayParser charParser = CachedStringParser.charParser();
-    public final byte[] byteBuffer = new byte[4096];
-    public final char[] charBuffer = new char[4096];
-
-    public RecordingParserContext() {
-        this(new ConcurrentHashMap<>());
+    public TypedParserContext() {
+        this(new DeserializerCache.Impl());
     }
 
-    public RecordingParserContext(ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
-        this.metadataLookup = new MutableMetadataLookup();
-        this.constantPools = new MutableConstantPools(metadataLookup);
-        this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new ConcurrentHashMap<>();
+    TypedParserContext(DeserializerCache deserializerCache) {
+        super(0);
+
+        this.globalDeserializerCache = deserializerCache != null ? deserializerCache : new DeserializerCache.Impl();
 
         this.typeFilter = null;
-        this.chunkIndex = 0;
+
+        this.remove(TypeFilter.class);
+        this.put(DeserializerCache.class, globalDeserializerCache);
     }
 
-    public RecordingParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, ConcurrentMap<DeserializerKey, Deserializer<?>> deserializerCache) {
-        this.metadataLookup = metadataLookup;
-        this.constantPools = constantPools;
+    TypedParserContext(TypeFilter typeFilter, int chunkIndex, MutableMetadataLookup metadataLookup, MutableConstantPools constantPools, DeserializerCache deserializerCache) {
+        super(chunkIndex, metadataLookup, constantPools);
         this.globalDeserializerCache = deserializerCache;
 
         this.typeFilter = typeFilter;
-        this.chunkIndex = chunkIndex;
+
+        this.put(TypeFilter.class, typeFilter);
+        this.put(DeserializerCache.class, globalDeserializerCache);
     }
 
-    public void clear() {
-        classTargetTypeMap.clear();
-        bag.clear();
-    }
-
-    public MetadataLookup getMetadataLookup() {
-        return metadataLookup;
-    }
-
-    public ConstantPools getConstantPools() {
-        return constantPools;
-    }
-
-    public TypeFilter getTypeFilter() {
+    TypeFilter getTypeFilter() {
         return typeFilter;
     }
 
     public void setTypeFilter(TypeFilter typeFilter) {
         this.typeFilter = typeFilter;
-    }
-
-    public int getChunkIndex() {
-        return chunkIndex;
-    }
-
-    public <T> void put(String key, Class<T> clz, T value) {
-        bag.put(key, new WeakReference<>(value));
-    }
-
-    public <T> T get(String key, Class<T> clz) {
-        return clz.cast(bag.get(key).get());
+        this.put(TypeFilter.class, typeFilter);
     }
 
     public void addTargetTypeMap(Map<String, Class<?>> map) {
@@ -138,7 +106,7 @@ public final class RecordingParserContext {
         return classTargetTypeMap.get(name);
     }
 
-    public void bindDeserializers() {
+    void bindDeserializers() {
         metadataLookup.bindDeserializers();
     }
 
@@ -150,7 +118,22 @@ public final class RecordingParserContext {
         return classTypeMap;
     }
 
-    public ConcurrentMap<DeserializerKey, Deserializer<?>> getDeserializerCache() {
+    public DeserializerCache getDeserializerCache() {
         return globalDeserializerCache;
+    }
+
+    @Override
+    public void onMetadataReady() {
+        bindDeserializers();
+    }
+
+    @Override
+    public void onConstantPoolsReady() {
+        constantPools.setReady();
+    }
+
+    @Override
+    public MutableMetadataLookup getMetadataLookup() {
+        return (MutableMetadataLookup) super.getMetadataLookup();
     }
 }

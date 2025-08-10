@@ -1,8 +1,14 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.JafarSerializationException;
+import io.jafar.parser.api.MetadataLookup;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.JfrField;
 import io.jafar.parser.api.JfrIgnore;
+import io.jafar.parser.impl.TypedParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import org.objectweb.asm.ClassVisitor;
@@ -97,8 +103,8 @@ final class CodeGenerator {
         mv.visitInsn(Opcodes.POP); // stack: []
         mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
         mv.visitInsn(Opcodes.DUP); // stack: [this, this]
-        mv.visitFieldInsn(Opcodes.GETFIELD, clzName, "context", Type.getDescriptor(RecordingParserContext.class)); // stack: [this, context]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingParserContext.class), "getConstantPools", Type.getMethodDescriptor(Type.getType(ConstantPools.class)), false); // stack: [this, pools]
+        mv.visitFieldInsn(Opcodes.GETFIELD, clzName, "context", Type.getDescriptor(TypedParserContext.class)); // stack: [this, context]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(TypedParserContext.class), "getConstantPools", Type.getMethodDescriptor(Type.getType(ConstantPools.class)), false); // stack: [this, pools]
         mv.visitLdcInsn(typeId); // stack: [this, pools, type]
         mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, Type.getInternalName(ConstantPools.class), "getConstantPool", Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE), true); // stack: [this, pool]
         mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
@@ -194,7 +200,7 @@ final class CodeGenerator {
         }
     }
 
-    static void addFieldLoader(MethodVisitor mv, MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, RecordingParserContext context) {
+    static void addFieldLoader(MethodVisitor mv, MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, TypedParserContext context) {
         // stack: [this, stream]
         if (fld.hasConstantPool()) {
             if (fld.getDimension() > 0) {
@@ -462,7 +468,7 @@ final class CodeGenerator {
         }
     }
 
-    private static void handleArrayField(MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, RecordingParserContext context, MethodVisitor mv) {
+    private static void handleArrayField(MetadataField fld, String className, int streamIdx, int metadataIdx, int lastVarIdx, TypedParserContext context, MethodVisitor mv) {
         // stack: [this, stream]
         int arrayCounterIdx = lastVarIdx + 1;
         int arraySizeIdx = arrayCounterIdx + 1;
@@ -639,7 +645,7 @@ final class CodeGenerator {
         };
     }
 
-    private static void handleSimpleField(MetadataField fld, String className, int metadataIdx, int lastVarIdx, RecordingParserContext context, MethodVisitor mv) {
+    private static void handleSimpleField(MetadataField fld, String className, int metadataIdx, int lastVarIdx, TypedParserContext context, MethodVisitor mv) {
         // stack: [this, stream]);
         String fldTypeName = fld.getType().getName();
         switch (fldTypeName) {
@@ -702,7 +708,7 @@ final class CodeGenerator {
         }
     }
 
-    static void prepareConstructor(ClassVisitor cv, String clzName, MetadataClass clz, List<MetadataField> allFields, Set<MetadataField> appliedFields, RecordingParserContext context) {
+    static void prepareConstructor(ClassVisitor cv, String clzName, MetadataClass clz, List<MetadataField> allFields, Set<MetadataField> appliedFields, TypedParserContext context) {
         MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC, "<init>", Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(RecordingStream.class)), null, null);
         mv.visitCode();
         int contextIdx = 2;
@@ -714,13 +720,14 @@ final class CodeGenerator {
         // store context field
         mv.visitVarInsn(Opcodes.ALOAD,0); // [this]
         mv.visitVarInsn(Opcodes.ALOAD,1); // [this, stream]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(RecordingParserContext.class)), false); // [this, ctx]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "getContext", Type.getMethodDescriptor(Type.getType(ParserContext.class)), false); // [this, ctx]
+        mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(TypedParserContext.class)); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
         mv.visitVarInsn(Opcodes.ASTORE, contextIdx); // [this, ctx]
         mv.visitInsn(Opcodes.DUP); // [this, ctx, ctx]
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingParserContext.class), "getMetadataLookup", Type.getMethodDescriptor(Type.getType(MetadataLookup.class)), false); // [this, ctx, metadata]
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(TypedParserContext.class), "getMetadataLookup", Type.getMethodDescriptor(Type.getType(MetadataLookup.class)), false); // [this, ctx, metadata]
         mv.visitVarInsn(Opcodes.ASTORE, meteadataIdx); // [this, ctx]
-        mv.visitFieldInsn(Opcodes.PUTFIELD, clzName.replace('.', '/'), "context", Type.getDescriptor(RecordingParserContext.class)); // []
+        mv.visitFieldInsn(Opcodes.PUTFIELD, clzName.replace('.', '/'), "context", Type.getDescriptor(TypedParserContext.class)); // []
 
         for (MetadataField fld : allFields) {;
             if (!appliedFields.contains(fld)) {
@@ -734,6 +741,21 @@ final class CodeGenerator {
             addFieldLoader(mv, fld, clzName.replace('.', '/'),  1, meteadataIdx, lastVarIdx, context); // []
         }
         mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    static void prepareFactory(ClassVisitor cv, String clzInternalName) {
+        // public static Object create(RecordingStream stream) { return new <clz>(stream); }
+        MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "create",
+                Type.getMethodDescriptor(Type.getType(Object.class), Type.getType(RecordingStream.class)), null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(Opcodes.NEW, clzInternalName);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, clzInternalName, "<init>",
+                Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(RecordingStream.class)), false);
+        mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -803,21 +825,27 @@ final class CodeGenerator {
     }
 
     @SuppressWarnings("unchecked")
-    public static <T> Deserializer<T> generateDeserializer(MetadataClass clz) throws Exception {
-        Class<T> target = (Class<T>)clz.getContext().getClassTargetType(clz.getName());
+    public static <T> Deserializer<T> generateDeserializer(MetadataClass clz) throws JafarSerializationException {
+        ParserContext ctx = clz.getContext();
+        if (!(ctx instanceof TypedParserContext)) {
+            throw new JafarSerializationException("Invalid parser context type", clz.getName());
+        }
+        TypedParserContext context = (TypedParserContext) ctx;
+        Class<T> target = (Class<T>)context.getClassTargetType(clz.getName());
         if (target != null && !target.isInterface()) {
             throw new RuntimeException("Unsupported type: " + clz.getName());
         }
         if (target == null) {
+            // No target mapping requested; generate a skipper-only deserializer
             return new Deserializer.Generated<>(null, null, TypeSkipper.createSkipper(clz));
         }
         String origClzName = target != null ? target.getName() : clz.getName();
         String origSimpleName = target != null ? target.getSimpleName() : clz.getSimpleName();
-        String clzName = CodeGenerator.class.getPackage().getName() + "." + (target != null ? target.getSimpleName() : clz.getSimpleName()) + "$" + clz.getContext().getChunkIndex();
+        String clzName = CodeGenerator.class.getPackage().getName() + "." + (target != null ? target.getSimpleName() : clz.getSimpleName()) + "$" + context.getChunkIndex();
         // generate handler class
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, clzName.replace('.', '/'), null, "java/lang/Object", target != null ? new String[]{origClzName.replace('.', '/')} : null);
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "context", Type.getDescriptor(RecordingParserContext.class), null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "context", Type.getDescriptor(TypedParserContext.class), null, null).visitEnd();
 
         Map<String, Set<FieldMapping>> fieldMap = new HashMap<>();
         Set<String> usedAttributes = collectUsedAttributes(target, fieldMap);
@@ -854,7 +882,19 @@ final class CodeGenerator {
                         fldType = fldType.getFields().getFirst().getType();
                     }
 
-                    Class<?> fldClz = clz.getContext().getClassTargetType(fldType.getName());
+                    String fldTypeNameResolved = fldType.getName();
+                    Class<?> fldClz = switch (fldTypeNameResolved) {
+                        case "byte" -> byte.class;
+                        case "boolean" -> boolean.class;
+                        case "short" -> short.class;
+                        case "char" -> char.class;
+                        case "int" -> int.class;
+                        case "long" -> long.class;
+                        case "float" -> float.class;
+                        case "double" -> double.class;
+                        case "java.lang.String" -> String.class;
+                        default -> context.getClassTargetType(fldTypeNameResolved);
+                    };
                     boolean withConstantPool = field.hasConstantPool();
                     Set<FieldMapping> mappings = fieldMap.get(fieldName);
                     if (mappings == null) {
@@ -879,7 +919,7 @@ final class CodeGenerator {
                     }
                 }
 
-                prepareConstructor(cw, clzName, current, allFields, appliedFields, clz.getContext());
+                prepareConstructor(cw, clzName, current, allFields, appliedFields, context);
             }
             prepareSkipHandler(cw, current);;
         }
@@ -895,6 +935,8 @@ final class CodeGenerator {
                 }
                 checkClasses.addAll(Arrays.stream(checkClass.getInterfaces()).toList());
             }
+            // add factory method returning the created instance
+            prepareFactory(cw, clzName.replace('.', '/'));
             cw.visitEnd();
         }
         byte[] classData = cw.toByteArray();
@@ -902,17 +944,26 @@ final class CodeGenerator {
         Path debugPath = null;
         if (log.isDebugEnabled()) {
             debugPath = Paths.get("/tmp/" + origSimpleName + ".class");
-            Files.write(debugPath, classData);
+            try {
+                Files.write(debugPath, classData);
+            } catch (Exception e) {
+                log.warn("Failed to write debug bytecode to {}", debugPath, e);
+                debugPath = null;
+            }
         }
 
         try {
             MethodHandles.Lookup lkp = MethodHandles.lookup().defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
-            MethodHandle ctrHandle = target != null ? lkp.findConstructor(lkp.lookupClass(), MethodType.methodType(void.class, RecordingStream.class)) : null;
+            MethodHandle createHandle = target != null ? lkp.findStatic(lkp.lookupClass(), "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
             MethodHandle skipHandle = lkp.findStatic(lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
-            return new Deserializer.Generated<>(ctrHandle, skipHandle, TypeSkipper.createSkipper(clz));
+            return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);
-            throw new RuntimeException(e);
+            if (debugPath != null) {
+                throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), debugPath, e);
+            } else {
+                throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), e);
+            }
         }
     }
 

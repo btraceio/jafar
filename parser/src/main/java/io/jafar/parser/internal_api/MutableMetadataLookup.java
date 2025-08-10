@@ -1,6 +1,6 @@
-package io.jafar.parser;
+package io.jafar.parser.internal_api;
 
-import io.jafar.parser.internal_api.MetadataLookup;
+import io.jafar.parser.api.MetadataLookup;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
