@@ -29,11 +29,12 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class TypedJafarParserImpl implements TypedJafarParser {
-//    private record Handlers(MethodHandle ctr, MethodHandle skip) {}
     private static final class ControlImpl implements Control {
         private RecordingStream rStream;
 
@@ -57,8 +58,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     private final class HandlerRegistrationImpl<T> implements HandlerRegistration<T> {
         private final WeakReference<Class<?>> clzRef;
         private final WeakReference<TypedJafarParser> cookieRef;
-        HandlerRegistrationImpl(Class<?> clz, TypedJafarParser cookie) {
+        private final JFRHandler.Impl<?> handler;
+        HandlerRegistrationImpl(Class<?> clz, JFRHandler.Impl<?> handler, TypedJafarParser cookie) {
             this.clzRef = new WeakReference<>(clz);
+            this.handler = handler;
             this.cookieRef = new WeakReference<>(cookie);
         }
 
@@ -67,32 +70,43 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             if (cookie != null && cookie.equals(cookieRef.get())) {
                 Class<?> clz = clzRef.get();
                 if (clz != null) {
-                    handlerMap.remove(clz);
-
-                    handlerMap.keySet().forEach(clazz -> {
-                        try {
-                            addDeserializer(clazz);
-                        } catch (JafarConfigurationException e) {
-                            throw new RuntimeException("Failed to re-register deserializer for " + clazz.getName(), e);
-                        }
-                    });
+                    Set<JFRHandler.Impl<?>> handlers = handlerMap.get(clz);
+                    handlers.remove(handler);
+                    if (handlers.isEmpty()) {
+                        handlerMap.remove(clz);
+                    }
                 }
             }
         }
     }
+    private final ChunkParserListener parserListener;
     private final StreamingChunkParser parser;
     private final Path recording;
 
-    private final Map<Class<?>, List<JFRHandler.Impl<?>>> handlerMap = new HashMap<>();
-    private final Int2ObjectMap<Long2ObjectMap<Class<?>>> chunkTypeClassMap = new Int2ObjectOpenHashMap<>();
+    private final Map<Class<?>, Set<JFRHandler.Impl<?>>> handlerMap;
+    private final Int2ObjectMap<Long2ObjectMap<Class<?>>> chunkTypeClassMap;
 
-    private final Map<String, Class<?>> globalHandlerMap = new HashMap<>();
+    private final Map<String, Class<?>> globalHandlerMap;
 
     private boolean closed = false;
 
     public TypedJafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
         this.parser = new StreamingChunkParser(parsingContext.typedContextFactory());
         this.recording = recording;
+        this.handlerMap = new HashMap<>();
+        this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>();
+        this.globalHandlerMap = new HashMap<>();
+        this.parserListener = null;
+    }
+
+    private TypedJafarParserImpl(TypedJafarParserImpl other, ChunkParserListener listener) {
+        this.parser = other.parser;
+        this.recording = other.recording;
+        this.handlerMap = new HashMap<>(other.handlerMap);
+        this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>(other.chunkTypeClassMap);
+        this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
+        this.closed = other.closed;
+        this.parserListener = listener;
     }
 
     @Override
@@ -101,9 +115,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             ValidationUtils.requireNonNull(clz, "clz");
             ValidationUtils.requireNonNull(handler, "handler");
             addDeserializer(clz);
-            handlerMap.computeIfAbsent(clz, k -> new ArrayList<>()).add(new JFRHandler.Impl<>(clz, handler));
+            JFRHandler.Impl<T> handlerImpl = new JFRHandler.Impl<>(clz, handler);
+            handlerMap.computeIfAbsent(clz, k -> new HashSet<>()).add(handlerImpl);
 
-            return new HandlerRegistrationImpl<>(clz, this);
+            return new HandlerRegistrationImpl<>(clz, handlerImpl, this);
         } catch (JafarConfigurationException e) {
             throw new RuntimeException(e);
         }
@@ -116,7 +131,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
         
         ValidationUtils.validateJfrTypeHandler(clz);
         
-        boolean isPrimitive = clz.isPrimitive() || clz.isAssignableFrom(String.class);
+        boolean isPrimitive = clz.isPrimitive() || String.class.equals(clz);
         String typeName = clz.getName();
         if (!isPrimitive) {
             JfrType typeAnnotation = clz.getAnnotation(JfrType.class);
@@ -128,10 +143,6 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
         }
         globalHandlerMap.put(typeName, clz);
         if (!isPrimitive) {
-            Class<?> superClass = clz.getSuperclass();
-            if (superClass != null && superClass.isInterface()) {
-                addDeserializer(superClass);
-            }
             for (Method m : clz.getMethods()) {
                 if (m.getAnnotation(JfrIgnore.class) == null) {
                     addDeserializer(m.getReturnType());
@@ -156,6 +167,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 if (!globalHandlerMap.isEmpty()) {
                     ((TypedParserContext)context).setTypeFilter(t -> t!= null && globalHandlerMap.containsKey(t.getName()));
                 }
+                if (parserListener != null) {
+                    parserListener.onRecordingStart(context);
+                }
             }
 
             @Override
@@ -167,15 +181,15 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                         lCtx.addTargetTypeMap(globalHandlerMap);
                     }
                     ((ControlImpl)control.get()).setStream(context.get(RecordingStream.class));
-                    return true;
+                    return parserListener == null || parserListener.onChunkStart(context, chunkIndex, header);
                 }
-                return false;
+                return parserListener != null && parserListener.onChunkStart(context, chunkIndex, header);
             }
 
             @Override
             public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
                 ((ControlImpl)control.get()).setStream(null);
-                return true;
+                return parserListener == null || parserListener.onChunkEnd(context, chunkIndex, skipped);
             }
 
             @Override
@@ -194,12 +208,16 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                     }
                 }
 
-                return true;
+                return parserListener == null || parserListener.onMetadata(context, metadata);
             }
 
             @Override
             public boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
-                return ChunkParserListener.super.onCheckpoint(context, checkpoint);
+                if (parserListener != null) {
+                    return parserListener.onCheckpoint(context, checkpoint);
+                } else {
+                    return ChunkParserListener.super.onCheckpoint(context, checkpoint);
+                }
             }
 
             @Override
@@ -219,7 +237,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                         }
                     }
                 }
-                return true;
+                return parserListener == null || parserListener.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
             };
         });
     }
@@ -234,6 +252,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             handlerMap.clear();
             globalHandlerMap.clear();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public TypedJafarParserImpl withParserListener(ChunkParserListener listener) {
+        return new TypedJafarParserImpl(this, listener);
     }
 
     private static CustomByteBuffer openJfrStream(Path jfrFile) {

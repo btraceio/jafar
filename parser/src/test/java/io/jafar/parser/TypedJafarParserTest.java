@@ -40,15 +40,15 @@ public class TypedJafarParserTest {
 
         Files.write(tmpFile, recordingStream.toByteArray());
 
-        TypedJafarParser parser = TypedJafarParser.open(tmpFile.toString());
-
         AtomicInteger eventCount = new AtomicInteger(0);
-        parser.handle(ParserEvent1.class, (event, ctl) -> {
-            eventCount.incrementAndGet();
-            assertEquals(10, event.value());
-        });
+        try (TypedJafarParser parser = TypedJafarParser.open(tmpFile.toString())) {
+            parser.handle(ParserEvent1.class, (event, ctl) -> {
+                eventCount.incrementAndGet();
+                assertEquals(10, event.value());
+            });
 
-        parser.run();
+            parser.run();
+        }
 
         assertEquals(1, eventCount.get());
     }

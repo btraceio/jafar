@@ -26,9 +26,9 @@ public class ParserContextTest {
         assertNotNull(ctx.get("key", Object.class));
         assertNotNull(ctx.remove("key", Object.class));
 
-        // Documented to possibly NPE when key is absent
-        assertThrows(NullPointerException.class, () -> ctx.get("missing", Object.class));
-        assertThrows(NullPointerException.class, () -> ctx.remove("missing", Object.class));
+        // Now null-safe when key is absent
+        assertNull(ctx.get("missing", Object.class));
+        assertNull(ctx.remove("missing", Object.class));
     }
 }
 

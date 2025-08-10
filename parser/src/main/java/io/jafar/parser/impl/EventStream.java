@@ -17,10 +17,16 @@ import java.util.Map;
 
 @SuppressWarnings("unchecked")
 public abstract class EventStream implements ChunkParserListener {
+    private final ChunkParserListener delegate;
+
+    public EventStream(ChunkParserListener delegate) {
+        this.delegate = delegate;
+    }
+
     @Override
-    public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+    public final boolean onMetadata(ParserContext context, MetadataEvent metadata) {
         // use this callback to inspect/process metadata registrations
-        return true; // can return 'false' to abort processing
+        return delegate == null || delegate.onMetadata(context, metadata); // can return 'false' to abort processing
     }
 
     @Override
@@ -226,7 +232,7 @@ public abstract class EventStream implements ChunkParserListener {
         context.put(ConstantPoolValueProcessor.class, cpValueProcessor);
         // store also the value reader instance to be reused in onEvent
         context.put(GenericValueReader.class, new GenericValueReader(cpValueProcessor));
-        return true;
+        return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
     }
 
     @Override
@@ -236,7 +242,7 @@ public abstract class EventStream implements ChunkParserListener {
         context.remove(ConstantPoolValueProcessor.class);
         context.remove(GenericValueReader.class);
 
-        return true;
+        return delegate == null || delegate.onChunkEnd(context, chunkIndex, skipped);
     }
 
     @SuppressWarnings("unchecked")
@@ -255,28 +261,36 @@ public abstract class EventStream implements ChunkParserListener {
                 Map<String, Object> value = (Map<String, Object>)context.remove(eventClz.getName() + "#value", Map.class);
 
                 // Process event value with parsed data
-                onEventValue(value);
+                onEventValue(eventClz, value);
             }
         } catch (IOException e) {
-            return false;
+            return delegate != null && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
         }
-        return true;
+        return delegate == null || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
 
     @Override
     public final void onRecordingStart(ParserContext context) {
-        ChunkParserListener.super.onRecordingStart(context);
+        if (delegate != null) {
+            delegate.onRecordingStart(context);
+        } else {
+            ChunkParserListener.super.onRecordingStart(context);
+        }
     }
 
     @Override
     public final boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
-        return ChunkParserListener.super.onCheckpoint(context, checkpoint);
+        return delegate != null ? delegate.onCheckpoint(context, checkpoint) : ChunkParserListener.super.onCheckpoint(context, checkpoint);
     }
 
     @Override
     public final void onRecordingEnd(ParserContext context) {
-        ChunkParserListener.super.onRecordingEnd(context);
+        if (delegate != null) {
+            delegate.onRecordingEnd(context);
+        } else {
+            ChunkParserListener.super.onRecordingEnd(context);
+        }
     }
 
-    protected abstract void onEventValue(Map<String, Object> value);
+    protected abstract void onEventValue(MetadataClass type, Map<String, Object> value);
 }

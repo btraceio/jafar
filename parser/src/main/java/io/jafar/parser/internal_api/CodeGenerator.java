@@ -745,6 +745,21 @@ final class CodeGenerator {
         mv.visitEnd();
     }
 
+    static void prepareFactory(ClassVisitor cv, String clzInternalName) {
+        // public static Object create(RecordingStream stream) { return new <clz>(stream); }
+        MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "create",
+                Type.getMethodDescriptor(Type.getType(Object.class), Type.getType(RecordingStream.class)), null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(Opcodes.NEW, clzInternalName);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, clzInternalName, "<init>",
+                Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(RecordingStream.class)), false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
     static void prepareSkipHandler(ClassVisitor cv, MetadataClass clz) {
         MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "skip", Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(RecordingStream.class)), null, null);
         mv.visitCode();
@@ -821,6 +836,7 @@ final class CodeGenerator {
             throw new RuntimeException("Unsupported type: " + clz.getName());
         }
         if (target == null) {
+            // No target mapping requested; generate a skipper-only deserializer
             return new Deserializer.Generated<>(null, null, TypeSkipper.createSkipper(clz));
         }
         String origClzName = target != null ? target.getName() : clz.getName();
@@ -866,7 +882,19 @@ final class CodeGenerator {
                         fldType = fldType.getFields().getFirst().getType();
                     }
 
-                    Class<?> fldClz = context.getClassTargetType(fldType.getName());
+                    String fldTypeNameResolved = fldType.getName();
+                    Class<?> fldClz = switch (fldTypeNameResolved) {
+                        case "byte" -> byte.class;
+                        case "boolean" -> boolean.class;
+                        case "short" -> short.class;
+                        case "char" -> char.class;
+                        case "int" -> int.class;
+                        case "long" -> long.class;
+                        case "float" -> float.class;
+                        case "double" -> double.class;
+                        case "java.lang.String" -> String.class;
+                        default -> context.getClassTargetType(fldTypeNameResolved);
+                    };
                     boolean withConstantPool = field.hasConstantPool();
                     Set<FieldMapping> mappings = fieldMap.get(fieldName);
                     if (mappings == null) {
@@ -907,6 +935,8 @@ final class CodeGenerator {
                 }
                 checkClasses.addAll(Arrays.stream(checkClass.getInterfaces()).toList());
             }
+            // add factory method returning the created instance
+            prepareFactory(cw, clzName.replace('.', '/'));
             cw.visitEnd();
         }
         byte[] classData = cw.toByteArray();
@@ -924,9 +954,9 @@ final class CodeGenerator {
 
         try {
             MethodHandles.Lookup lkp = MethodHandles.lookup().defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
-            MethodHandle ctrHandle = target != null ? lkp.findConstructor(lkp.lookupClass(), MethodType.methodType(void.class, RecordingStream.class)) : null;
+            MethodHandle createHandle = target != null ? lkp.findStatic(lkp.lookupClass(), "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
             MethodHandle skipHandle = lkp.findStatic(lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
-            return new Deserializer.Generated<>(ctrHandle, skipHandle, TypeSkipper.createSkipper(clz));
+            return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);
             if (debugPath != null) {

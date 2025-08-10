@@ -57,7 +57,8 @@ public abstract class ParserContext {
      * @return the removed value, or {@code null} if it was reclaimed
      */
     public final <T> T remove(String key, Class<T> clz) {
-        return clz.cast(bag.remove(key).get());
+        SoftReference<?> ref = bag.remove(key);
+        return ref != null ? clz.cast(ref.get()) : null;
     }
 
     public final <T> void put(Class<T> clz, T value) {
@@ -83,7 +84,8 @@ public abstract class ParserContext {
      * @return the value or {@code null}
      */
     public final <T> T get(String key, Class<T> clz) {
-        return clz.cast(bag.get(key).get());
+        SoftReference<?> ref = bag.get(key);
+        return ref != null ? clz.cast(ref.get()) : null;
     }
 
     public void clear() {

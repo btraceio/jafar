@@ -1,5 +1,7 @@
 package io.jafar.parser.api;
 
+import io.jafar.parser.internal_api.ChunkParserListener;
+
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -43,4 +45,6 @@ public interface JafarParser {
      *                     if a parsing error occurs and is wrapped as an I/O failure
      */
     void run() throws IOException;
+
+    <T extends JafarParser> T withParserListener(ChunkParserListener listener);
 }

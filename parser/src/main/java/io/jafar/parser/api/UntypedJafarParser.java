@@ -2,11 +2,11 @@ package io.jafar.parser.api;
 
 import io.jafar.parser.impl.ParsingContextImpl;
 import io.jafar.parser.impl.UntypedJafarParserImpl;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
-import java.util.function.Consumer;
 
 /**
  * Untyped JFR parser.
@@ -19,6 +19,11 @@ import java.util.function.Consumer;
  * </p>
  */
 public interface UntypedJafarParser extends JafarParser, AutoCloseable {
+    @FunctionalInterface
+    public static interface EventHandler {
+        void handle(MetadataClass type, Map<String, Object> value);
+    }
+
     /**
      * Start a new parsing session.
      * @param path the recording path
@@ -71,5 +76,5 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
      * @param handler consumer of event maps
      * @return a registration that can be destroyed to stop receiving events
      */
-    HandlerRegistration<?> handle(Consumer<Map<String, Object>> handler);
+    HandlerRegistration<?> handle(EventHandler handler);
 }

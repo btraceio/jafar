@@ -27,7 +27,7 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
      * @return the parser instance
      */
     static TypedJafarParser open(String path) {
-        return open(path, ParsingContextImpl.EMPTY);
+        return open(path, new ParsingContextImpl());
     }
 
     /**
@@ -36,7 +36,7 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
      * @return the parser instance
      */
     static TypedJafarParser open(Path path) {
-        return open(path, ParsingContextImpl.EMPTY);
+        return open(path, new ParsingContextImpl());
     }
 
     /**

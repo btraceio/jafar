@@ -24,8 +24,8 @@ public final class ValidationUtils {
             throw new JafarConfigurationException("JFR type handler class cannot be null");
         }
 
-        // Skip validation for primitive types and String
-        if (clazz.isPrimitive() || clazz.isAssignableFrom(String.class)) {
+        // Skip validation for primitive types and String (exact match)
+        if (clazz.isPrimitive() || String.class.equals(clazz)) {
             return;
         }
 
