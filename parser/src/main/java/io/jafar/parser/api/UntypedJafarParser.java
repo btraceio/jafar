@@ -12,7 +12,34 @@ import java.util.Map;
  * Untyped JFR parser.
  * <p>
  * Events are exposed as {@code Map<String, Object>} with keys representing field names and
- * values being boxed primitives, {@link String}, nested maps, or arrays.
+ * values being boxed primitives, {@link String}, inline complex values as {@code Map<String, Object>},
+ * or wrappers such as {@link ArrayType} (arrays) and {@link ComplexType} (complex values, e.g.,
+ * constant-pool backed references).
+ * <p>
+ * Example of consuming wrappers:
+ * </p>
+ * <pre>{@code
+ * p.handle((type, value) -> {
+ *   Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
+ *   if (thread != null) {
+ *     Object id = thread.get("javaThreadId");
+ *   }
+ *
+ *   Object framesVal = Values.get(value, "stackTrace", "frames");
+ *   if (framesVal instanceof ArrayType at) {
+ *     Object arr = at.getArray();
+ *     if (arr instanceof Object[] objs) {
+ *       for (Object el : objs) {
+ *         if (el instanceof ComplexType cpx) {
+ *           Map<String, Object> m = cpx.getValue();
+ *         } else if (el instanceof Map) {
+ *           Map<String, Object> m = (Map<String, Object>) el; // inline complex element
+ *         }
+ *       }
+ *     }
+ *   }
+ * });
+ * }</pre>
  * </p>
  * <p>
  * Handlers are invoked synchronously on the parser thread.
@@ -70,7 +97,8 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
 
     /**
      * Registers a handler receiving untyped event maps.
-     * <p>Keys are field names; values are boxed primitives, {@link String}, nested maps, or arrays.</p>
+     * <p>Keys are field names; values are boxed primitives, {@link String}, inline complex values as
+     * {@code Map<String, Object>}, or wrappers such as {@link ArrayType} and {@link ComplexType}.</p>
      * <p>Exceptions thrown from the handler stop parsing and propagate to {@link #run()}.</p>
      *
      * @param handler consumer of event maps

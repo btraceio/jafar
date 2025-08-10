@@ -1,9 +1,11 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.ArrayType;
+
 import java.lang.reflect.Array;
 import java.util.Arrays;
 
-public final class ArrayHolder {
+public final class ArrayHolder implements ArrayType {
     private final String type;
     private final Object array;
     private int index = 0;
@@ -44,8 +46,14 @@ public final class ArrayHolder {
         Array.set(array, index++, value);
     }
 
+    @Override
     public Object getArray() {
         return array;
+    }
+
+    @Override
+    public Class<?> getType() {
+        return array.getClass();
     }
 
     @Override

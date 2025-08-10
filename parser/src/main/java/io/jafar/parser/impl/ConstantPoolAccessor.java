@@ -1,11 +1,12 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 import java.util.Map;
 import java.util.Objects;
 
-final class ConstantPoolAccessor {
+final class ConstantPoolAccessor implements ComplexType {
     private final ConstantPools constantPools;
     private final long typeId;
     private final long pointer;
@@ -16,7 +17,8 @@ final class ConstantPoolAccessor {
         this.pointer = pointer;
     }
 
-    Map<String, Object> getValue() {
+    @Override
+    public Map<String, Object> getValue() {
         return constantPools.getValue(typeId, pointer);
     }
 

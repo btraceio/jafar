@@ -47,12 +47,56 @@ import java.nio.file.Paths;
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
   HandlerRegistration<?> reg = p.handle((type, value) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-      Object threadId = value.get("eventThread.id");
-      // ...
+      Object threadId = Values.get(value, "eventThread", "javaThreadId");
+      // use threadId ...
     }
   });
   p.run();
   reg.destroy(p);
+}
+```
+
+### Complex and array values in untyped events
+- **ComplexType**: Complex fields may appear either inline as `Map<String, Object>` or as a wrapper implementing `io.jafar.parser.api.ComplexType` (e.g., constant-pool backed references). Use `getValue()` on a `ComplexType` to obtain the resolved `Map<String, Object>`.
+- **ArrayType**: When a field is an array, the value implements `io.jafar.parser.api.ArrayType`. Use `getType()` to inspect the array class (e.g., `int[].class`, `Object[].class`) and `getArray()` to access the underlying Java array.
+
+Examples:
+
+```java
+import io.jafar.parser.api.*;
+import java.util.Map;
+
+try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
+  p.handle((type, value) -> {
+    // ComplexType: constant-pool backed references (e.g., eventThread)
+    Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
+    if (thread != null) {
+      System.out.println("thread id=" + thread.get("javaThreadId") + ", name=" + thread.get("name"));
+    }
+
+    // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
+    Object framesVal = Values.get(value, "stackTrace", "frames");
+    if (framesVal instanceof ArrayType at) {
+      Object arr = at.getArray();
+      if (arr instanceof Object[] objs) {
+        for (Object el : objs) {
+          if (el instanceof ComplexType cpx) {
+            Map<String, Object> m = cpx.getValue();
+            // use fields from the resolved element
+          } else if (el instanceof Map) {
+            Map<String, Object> m = (Map<String, Object>) el; // inline complex value
+          } else {
+            // primitive wrapper or String
+          }
+        }
+      } else if (arr instanceof int[] ints) {
+        for (int i : ints) { /* ... */ }
+      } else if (arr instanceof long[] longs) {
+        for (long l : longs) { /* ... */ }
+      }
+    }
+  });
+  p.run();
 }
 ```
 
@@ -67,6 +111,9 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 - `UntypedJafarParser`
   - `handle(UntypedJafarParser.EventHandler) -> HandlerRegistration<?>`
   - Static `open(String|Path[, ParsingContext])` also available.
+- Data wrappers
+  - `ArrayType`: wrapper around arrays. `getType()` returns the array class; `getArray()` returns the backing Java array.
+  - `ComplexType`: wrapper around complex values. `getValue()` resolves to a `Map<String, Object>`. Note that some complex fields may be provided inline as a `Map` without a wrapper.
 - `ParsingContext`
   - `create()`: build a reusable context.
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: create parsers bound to the shared context.

@@ -1,9 +1,11 @@
 package io.jafar.demo;
 
+import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.Values;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 
@@ -16,6 +18,10 @@ public final class GenericParser {
         LongAdder counter = new LongAdder();
         try (UntypedJafarParser p = parsingContext.newUntypedParser(Paths.get(args[0]))) {
             HandlerRegistration<?> h = p.handle((t, v) -> {
+                if ("jdk.ExecutionSample".equals(t.getName())) {
+                    Object f = Values.get(v, "stackTrace", "frames", 0);
+                    System.out.println("===> " + f);
+                }
                 counter.increment();
             });
             p.withParserListener(new ChunkParserListener() {
