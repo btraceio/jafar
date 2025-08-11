@@ -34,7 +34,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Implementation of TypedJafarParser that provides type-safe JFR event parsing.
+ * <p>
+ * This class implements the typed JFR parser interface, allowing users to register
+ * handlers for specific JFR event types. It automatically generates deserializers
+ * for registered event types and manages the parsing lifecycle.
+ * </p>
+ */
 public final class TypedJafarParserImpl implements TypedJafarParser {
+    
+    /**
+     * Implementation of Control interface that provides access to stream information.
+     */
     private static final class ControlImpl implements Control {
         private RecordingStream rStream;
 
@@ -45,26 +57,50 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             }
         };
 
+        /**
+         * Sets the recording stream for this control instance.
+         * 
+         * @param rStream the recording stream to set
+         */
         void setStream(RecordingStream rStream) {
             this.rStream = rStream;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Stream stream() {
             return stream;
         }
     }
 
+    /**
+     * Implementation of HandlerRegistration that manages handler lifecycle.
+     * 
+     * @param <T> the type of JFR events this handler processes
+     */
     private final class HandlerRegistrationImpl<T> implements HandlerRegistration<T> {
         private final WeakReference<Class<?>> clzRef;
         private final WeakReference<TypedJafarParser> cookieRef;
         private final JFRHandler.Impl<?> handler;
+        
+        /**
+         * Constructs a new HandlerRegistrationImpl.
+         * 
+         * @param clz the class type for the handler
+         * @param handler the JFR handler implementation
+         * @param cookie the parser instance that owns this registration
+         */
         HandlerRegistrationImpl(Class<?> clz, JFRHandler.Impl<?> handler, TypedJafarParser cookie) {
             this.clzRef = new WeakReference<>(clz);
             this.handler = handler;
             this.cookieRef = new WeakReference<>(cookie);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void destroy(JafarParser cookie) {
             if (cookie != null && cookie.equals(cookieRef.get())) {
@@ -79,17 +115,34 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             }
         }
     }
+    
+    /** Listener for chunk parsing events. */
     private final ChunkParserListener parserListener;
+    
+    /** Streaming chunk parser for processing JFR data. */
     private final StreamingChunkParser parser;
+    
+    /** Path to the JFR recording file. */
     private final Path recording;
 
+    /** Map of event classes to their registered handlers. */
     private final Map<Class<?>, Set<JFRHandler.Impl<?>>> handlerMap;
+    
+    /** Map of chunk indices to type ID to class mappings. */
     private final Int2ObjectMap<Long2ObjectMap<Class<?>>> chunkTypeClassMap;
 
+    /** Global map of event type names to handler classes. */
     private final Map<String, Class<?>> globalHandlerMap;
 
+    /** Whether this parser has been closed. */
     private boolean closed = false;
 
+    /**
+     * Constructs a new TypedJafarParserImpl for the specified recording.
+     * 
+     * @param recording the path to the JFR recording file
+     * @param parsingContext the parsing context to use
+     */
     public TypedJafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
         this.parser = new StreamingChunkParser(parsingContext.typedContextFactory());
         this.recording = recording;

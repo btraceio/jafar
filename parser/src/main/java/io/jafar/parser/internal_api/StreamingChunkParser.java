@@ -1,10 +1,5 @@
 package io.jafar.parser.internal_api;
 
-import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.internal_api.metadata.MetadataEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -13,6 +8,12 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.internal_api.metadata.MetadataEvent;
 
 /**
  * Streaming, almost zero-allocation, JFR chunk parser implementation. <br>
@@ -35,6 +36,11 @@ public final class StreamingChunkParser implements AutoCloseable {
   private boolean closed = false;
   private final ParserContextFactory contextFactory;
 
+  /**
+   * Constructs a new StreamingChunkParser with the specified context factory.
+   * 
+   * @param contextFactory the factory for creating parser contexts
+   */
   public StreamingChunkParser(ParserContextFactory contextFactory) {
     this.contextFactory = contextFactory;
   }
@@ -55,7 +61,7 @@ public final class StreamingChunkParser implements AutoCloseable {
    *
    * @param path the JFR recording path
    * @param listener the parser listener
-   * @throws IOException
+   * @throws IOException if an I/O error occurs during parsing
    */
   public void parse(Path path, ChunkParserListener listener) throws IOException {
     if (closed) {

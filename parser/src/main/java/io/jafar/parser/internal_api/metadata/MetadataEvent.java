@@ -1,16 +1,16 @@
 package io.jafar.parser.internal_api.metadata;
 
-import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.ParsingUtils;
-import io.jafar.parser.internal_api.MutableMetadataLookup;
-import io.jafar.parser.internal_api.RecordingStream;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+
+import io.jafar.parser.AbstractEvent;
+import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
+import io.jafar.parser.internal_api.RecordingStream;
 
 /**
  * JFR Chunk metadata
@@ -21,15 +21,30 @@ public final class MetadataEvent extends AbstractEvent {
   private boolean hasHashCode = false;
   private int hashCode;
 
+  /** The size of this metadata event in bytes. */
   public final int size;
+  
+  /** The start time of this metadata event in nanoseconds. */
   public final long startTime;
+  
+  /** The duration of this metadata event in nanoseconds. */
   public final long duration;
+  
+  /** The unique identifier for this metadata event. */
   public final long metadataId;
+  
   private final MetadataRoot root;
   private final List<MetadataClass> classes = new ArrayList<>(200);
 
   private final boolean forceConstantPools;
 
+  /**
+   * Constructs a new MetadataEvent from the recording stream.
+   * 
+   * @param stream the recording stream to read from
+   * @param forceConstantPools whether to force constant pool processing
+   * @throws IOException if an I/O error occurs during construction
+   */
   public MetadataEvent(RecordingStream stream, boolean forceConstantPools) throws IOException {
     super(stream);
     size = (int) stream.readVarint();
@@ -49,6 +64,12 @@ public final class MetadataEvent extends AbstractEvent {
     root = (MetadataRoot) readElement(stream);
   }
 
+  /**
+   * Reads the string table from the recording stream.
+   * 
+   * @param stream the recording stream to read from
+   * @throws IOException if an I/O error occurs during reading
+   */
   private void readStringTable(RecordingStream stream) throws IOException {
     int stringCnt = (int) stream.readVarint();
     String[] stringConstants = new String[stringCnt];
@@ -58,6 +79,13 @@ public final class MetadataEvent extends AbstractEvent {
     ((MutableMetadataLookup)stream.getContext().getMetadataLookup()).setStringtable(stringConstants);
   }
 
+  /**
+   * Reads a metadata element from the recording stream.
+   * 
+   * @param stream the recording stream to read from
+   * @return the parsed metadata element
+   * @throws IOException if an I/O error occurs during reading
+   */
   AbstractMetadataElement readElement(RecordingStream stream) throws IOException {
     try {
       // get the element name
@@ -107,10 +135,20 @@ public final class MetadataEvent extends AbstractEvent {
     }
   }
 
+  /**
+   * Gets the metadata root element.
+   * 
+   * @return the metadata root element
+   */
   public MetadataRoot getRoot() {
     return root;
   }
 
+  /**
+   * Gets an unmodifiable collection of all metadata classes.
+   * 
+   * @return an unmodifiable collection of metadata classes
+   */
   public Collection<MetadataClass> getClasses() {
     return Collections.unmodifiableCollection(classes);
   }

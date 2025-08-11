@@ -3,13 +3,56 @@ package io.jafar.utils;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 
+/**
+ * Utility class for parsing strings with caching for performance optimization.
+ * <p>
+ * This class provides parsers that cache previously parsed strings to avoid
+ * repeated string creation when the same data is encountered multiple times.
+ * </p>
+ */
 @SuppressWarnings("UnstableApiUsage")
 public class CachedStringParser {
+    /**
+     * Public constructor for CachedStringParser.
+     * <p>
+     * This class provides utility methods for parsing strings with caching and does not maintain state.
+     * </p>
+     */
+    public CachedStringParser() {}
+    
+    /**
+     * Parser for byte arrays with string caching.
+     * <p>
+     * This parser caches the last parsed string and byte array to avoid
+     * recreating strings when the same data is encountered.
+     * </p>
+     */
     public static final class ByteArrayParser {
+        /**
+         * Public constructor for ByteArrayParser.
+         * <p>
+         * This parser caches the last parsed string and byte array to avoid
+         * recreating strings when the same data is encountered.
+         * </p>
+         */
+        public ByteArrayParser() {}
+        
         private byte[] previousData = new byte[4096];
         private int previousLen = 0;
         private String lastString = null;
 
+        /**
+         * Parses a byte array into a string using the specified charset.
+         * <p>
+         * If the same byte array with the same length was previously parsed,
+         * the cached string is returned instead of creating a new one.
+         * </p>
+         * 
+         * @param data the byte array to parse
+         * @param len the length of data to use
+         * @param charset the charset to use for parsing
+         * @return the parsed string, either from cache or newly created
+         */
         public String parse(byte[] data, int len, Charset charset) {
             if (lastString != null && previousLen == len && Arrays.equals(data, 0, len, previousData, 0, len)) {
                 return lastString;
@@ -25,11 +68,38 @@ public class CachedStringParser {
         }
     }
 
+    /**
+     * Parser for char arrays with string caching.
+     * <p>
+     * This parser caches the last parsed string and char array to avoid
+     * recreating strings when the same data is encountered.
+     * </p>
+     */
     public static final class CharArrayParser {
+        /**
+         * Public constructor for CharArrayParser.
+         * <p>
+         * This parser caches the last parsed string and char array to avoid
+         * recreating strings when the same data is encountered.
+         * </p>
+         */
+        public CharArrayParser() {}
+        
         private char[] previousData = new char[4096];
         private int previousLen = 0;
         private String lastString = null;
 
+        /**
+         * Parses a char array into a string.
+         * <p>
+         * If the same char array with the same length was previously parsed,
+         * the cached string is returned instead of creating a new one.
+         * </p>
+         * 
+         * @param data the char array to parse
+         * @param len the length of data to use
+         * @return the parsed string, either from cache or newly created
+         */
         public String parse(char[] data, int len) {
             if (lastString != null && previousLen == len && Arrays.equals(data, 0, len, previousData, 0, len)) {
                 return lastString;
@@ -45,10 +115,20 @@ public class CachedStringParser {
         }
     }
 
+    /**
+     * Creates a new ByteArrayParser instance.
+     * 
+     * @return a new ByteArrayParser
+     */
     public static ByteArrayParser byteParser() {
         return new ByteArrayParser();
     }
 
+    /**
+     * Creates a new CharArrayParser instance.
+     * 
+     * @return a new CharArrayParser
+     */
     public static CharArrayParser charParser() {
         return new CharArrayParser();
     }

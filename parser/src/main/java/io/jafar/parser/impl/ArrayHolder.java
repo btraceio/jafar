@@ -1,15 +1,33 @@
 package io.jafar.parser.impl;
 
-import io.jafar.parser.api.ArrayType;
-
 import java.lang.reflect.Array;
 import java.util.Arrays;
 
+import io.jafar.parser.api.ArrayType;
+
+/**
+ * Implementation of ArrayType that holds array data from JFR recordings.
+ * <p>
+ * This class provides a concrete implementation for storing and managing
+ * array values parsed from JFR data, supporting all primitive types and objects.
+ * </p>
+ */
 public final class ArrayHolder implements ArrayType {
+    /** The type name of the array elements. */
     private final String type;
+    
+    /** The actual array object. */
     private final Object array;
+    
+    /** The current index for adding elements. */
     private int index = 0;
 
+    /**
+     * Constructs a new ArrayHolder with the specified type and length.
+     * 
+     * @param type the type name of the array elements
+     * @param len the length of the array to create
+     */
     ArrayHolder(String type, int len) {
         this.type = type;
         switch (type) {
@@ -42,6 +60,11 @@ public final class ArrayHolder implements ArrayType {
         }
     }
 
+    /**
+     * Adds a value to the array at the current index.
+     * 
+     * @param value the value to add
+     */
     void add(Object value) {
         Array.set(array, index++, value);
     }

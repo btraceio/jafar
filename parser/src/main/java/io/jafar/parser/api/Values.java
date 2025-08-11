@@ -61,6 +61,12 @@ public final class Values {
     /**
      * Typed extraction using {@link #get(Map, Object...)}.
      * Returns an empty optional if the resolved value is null or not of the requested type.
+     * 
+     * @param <T> the expected type of the value
+     * @param root the root map to search in
+     * @param type the expected class type
+     * @param path the path segments to follow
+     * @return an Optional containing the value if found and of the correct type, empty otherwise
      */
     public static <T> Optional<T> as(Map<String, Object> root, Class<T> type, Object... path) {
         Object value = get(root, path);
@@ -69,6 +75,9 @@ public final class Values {
 
     /**
      * Shallowly resolve a map: unwraps {@link ComplexType} to maps and {@link ArrayType} to arrays at the top level only.
+     * 
+     * @param root the root map to resolve
+     * @return a new map with top-level ComplexType and ArrayType values unwrapped
      */
     public static Map<String, Object> resolvedShallow(Map<String, Object> root) {
         Map<String, Object> out = new HashMap<>(root.size());
@@ -86,6 +95,9 @@ public final class Values {
     /**
      * Deeply resolve a map: recursively unwraps {@link ComplexType}; unwraps {@link ArrayType} to arrays;
      * recursively resolves elements of {@code Object[]} arrays. Primitive arrays are left as-is.
+     * 
+     * @param root the root map to resolve
+     * @return a new map with all ComplexType and ArrayType values recursively unwrapped
      */
     public static Map<String, Object> resolvedDeep(Map<String, Object> root) {
         Map<String, Object> out = new HashMap<>(root.size());

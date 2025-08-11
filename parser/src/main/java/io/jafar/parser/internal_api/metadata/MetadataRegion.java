@@ -1,23 +1,51 @@
 package io.jafar.parser.internal_api.metadata;
 
-import io.jafar.parser.internal_api.RecordingStream;
-
 import java.io.IOException;
 import java.util.Objects;
 
+import io.jafar.parser.internal_api.RecordingStream;
+
+/**
+ * Represents a metadata region element in JFR recordings.
+ * <p>
+ * This class extends AbstractMetadataElement to provide timezone and locale
+ * information for the JFR recording.
+ * </p>
+ */
 public final class MetadataRegion extends AbstractMetadataElement {
+    /** Flag indicating whether the hash code has been computed. */
     private boolean hasHashCode = false;
+    
+    /** Cached hash code value. */
     private int hashCode;
 
+    /** Daylight saving time offset in milliseconds. */
     private long dst;
+    
+    /** GMT offset in milliseconds. */
     private long gmtOffset;
+    
+    /** Locale string (e.g., "en_US"). */
     private String locale;
 
+    /**
+     * Constructs a new MetadataRegion from the recording stream and event.
+     * 
+     * @param stream the recording stream to read from
+     * @param event the metadata event containing subelements
+     * @throws IOException if an I/O error occurs during construction
+     */
     MetadataRegion(RecordingStream stream, MetadataEvent event) throws IOException {
         super(stream, MetadataElementKind.REGION);
         readSubelements(event);
     }
 
+    /**
+     * Handles attributes encountered during parsing.
+     * 
+     * @param key the attribute key
+     * @param value the attribute value
+     */
     @Override
     protected void onAttribute(String key, String value) {
         switch (key) {
@@ -33,23 +61,49 @@ public final class MetadataRegion extends AbstractMetadataElement {
         }
     }
 
+    /**
+     * Gets the daylight saving time offset.
+     * 
+     * @return the DST offset in milliseconds
+     */
     public long getDst() {
         return dst;
     }
 
+    /**
+     * Gets the GMT offset.
+     * 
+     * @return the GMT offset in milliseconds
+     */
     public long getGmtOffset() {
         return gmtOffset;
     }
 
+    /**
+     * Gets the locale string.
+     * 
+     * @return the locale string
+     */
     public String getLocale() {
         return locale;
     }
 
+    /**
+     * Handles subelements encountered during parsing.
+     * 
+     * @param count the total count of subelements
+     * @param element the subelement that was read
+     */
     @Override
     protected void onSubelement(int count, AbstractMetadataElement element) {
         throw new IllegalStateException("Unexpected subelement: " + element.getKind());
     }
 
+    /**
+     * Accepts a metadata visitor for processing this element.
+     * 
+     * @param visitor the visitor to accept
+     */
     @Override
     public void accept(MetadataVisitor visitor) {
         visitor.visitRegion(this);

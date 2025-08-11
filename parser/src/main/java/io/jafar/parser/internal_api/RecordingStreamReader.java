@@ -1,13 +1,35 @@
 package io.jafar.parser.internal_api;
 
-import io.jafar.utils.CustomByteBuffer;
-
 import java.io.IOException;
-import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import io.jafar.utils.CustomByteBuffer;
+
+/**
+ * Abstract base class for reading JFR recording data streams.
+ * <p>
+ * This class provides a unified interface for reading JFR recording data with support
+ * for different data types, position tracking, and slicing operations. It handles
+ * byte order conversion automatically and provides efficient varint decoding.
+ * </p>
+ */
 public abstract class RecordingStreamReader {
+    /**
+     * Protected constructor for RecordingStreamReader.
+     * <p>
+     * This abstract class provides a unified interface for reading JFR recording data.
+     * </p>
+     */
+    protected RecordingStreamReader() {}
+    
+    /**
+     * Implementation of RecordingStreamReader that uses memory-mapped files.
+     * <p>
+     * This class provides efficient reading of JFR recording data by mapping
+     * the file into memory and using optimized byte operations.
+     * </p>
+     */
     public static final class MappedRecordingStreamReader extends RecordingStreamReader {
         private final CustomByteBuffer buffer;
         private final long length;
@@ -16,10 +38,23 @@ public abstract class RecordingStreamReader {
 
         private long remaining;
 
+        /**
+         * Constructs a new MappedRecordingStreamReader for the specified file path.
+         * 
+         * @param path the path to the JFR recording file
+         * @throws IOException if an I/O error occurs during file mapping
+         */
         public MappedRecordingStreamReader(Path path) throws IOException {
             this(CustomByteBuffer.map(path, Integer.MAX_VALUE), Files.size(path), 0);
         }
 
+        /**
+         * Constructs a new MappedRecordingStreamReader with the specified buffer and parameters.
+         * 
+         * @param buffer the custom byte buffer to use for reading
+         * @param length the total length of the data
+         * @param alignementOffset the alignment offset for proper byte ordering
+         */
         private MappedRecordingStreamReader(CustomByteBuffer buffer, long length, int alignementOffset) {
             this.buffer = buffer;
             this.length = length;
@@ -28,62 +63,95 @@ public abstract class RecordingStreamReader {
             this.remaining = length;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RecordingStreamReader slice() {
             long sliceLength = buffer.remaining();
             return new MappedRecordingStreamReader(buffer.slice(), sliceLength, (int)(alignementOffset + buffer.position()) % 8);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RecordingStreamReader slice(long pos, long size) {
             return new MappedRecordingStreamReader(buffer.slice(pos, size), size, (int)(alignementOffset + pos) % 8);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long length() {
             return length;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long remaining() {
             return remaining;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long position() {
             return buffer.position();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void position(long newPosition) {
             remaining = length - newPosition;
             buffer.position(newPosition);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void skip(long n) {
             remaining -= n;
             buffer.position(buffer.position() + n);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public byte read() {
             remaining--;
             return buffer.get();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void read(byte[] b, int off, int len) {
             remaining -= len;
             buffer.get(b, off, len);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean readBoolean() {
             remaining--;
             return buffer.get() != 0;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public short readShort() {
             remaining -= 2;
@@ -91,6 +159,9 @@ public abstract class RecordingStreamReader {
             return nativeOrder ? s : Short.reverseBytes(s);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int readInt() {
             remaining -= 4;
@@ -98,6 +169,9 @@ public abstract class RecordingStreamReader {
             return nativeOrder ? i : Integer.reverseBytes(i);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long readLong() {
             remaining -= 8;
@@ -105,16 +179,31 @@ public abstract class RecordingStreamReader {
             return nativeOrder ? l : Long.reverseBytes(l);
         }
 
+        /**
+         * Reverses the byte order of a float value.
+         * 
+         * @param f the float value to reverse
+         * @return the float value with reversed byte order
+         */
         private static float reverseBytes(float f) {
             int i = Float.floatToRawIntBits(f);
             return Float.intBitsToFloat(Integer.reverseBytes(i));
         }
 
+        /**
+         * Reverses the byte order of a double value.
+         * 
+         * @param d the double value to reverse
+         * @return the double value with reversed byte order
+         */
         private static double reverseBytes(double d) {
             long l = Double.doubleToRawLongBits(d);
             return Double.longBitsToDouble(Long.reverseBytes(l));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public float readFloat() {
             remaining -= 4;
@@ -122,6 +211,9 @@ public abstract class RecordingStreamReader {
             return nativeOrder ? f : reverseBytes(f);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public double readDouble() {
             remaining -= 8;
@@ -129,6 +221,12 @@ public abstract class RecordingStreamReader {
             return nativeOrder ? d : reverseBytes(d);
         }
 
+        /**
+         * Finds the first byte position where the 8th bit is unset.
+         * 
+         * @param value the 64-bit value to check
+         * @return the position of the first unset 8th bit
+         */
         private static int findFirstUnset8thBit(long value) {
             // Step 1: Mask out the 8th bits of each byte
             long mask = 0x8080808080808080L;
@@ -146,6 +244,9 @@ public abstract class RecordingStreamReader {
 
         private static final boolean VARINT_FROM_LONG = Boolean.getBoolean("io.jafar.parser.varint_from_long");
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long readVarint() {
             if (VARINT_FROM_LONG) {
@@ -176,6 +277,11 @@ public abstract class RecordingStreamReader {
 //            return readVarintSeq();
         }
 
+        /**
+         * Reads a varint using SWAR (SIMD Within A Register) optimization.
+         * 
+         * @return the decoded varint value
+         */
         long readVarintSwar() {
             if (remaining < 9) return readVarintSeq();
 
@@ -491,30 +597,145 @@ public abstract class RecordingStreamReader {
             return ret + (((long) (b8 & 0XFF)) << 56);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
 
         }
     }
 
+    /**
+     * Creates a slice of this reader starting from the current position.
+     * 
+     * @return a new RecordingStreamReader representing the slice
+     */
     public abstract RecordingStreamReader slice();
+    
+    /**
+     * Creates a slice of this reader with the specified position and size.
+     * 
+     * @param pos the starting position for the slice
+     * @param size the size of the slice
+     * @return a new RecordingStreamReader representing the slice
+     */
     public abstract RecordingStreamReader slice(long pos, long size);
+    
+    /**
+     * Gets the total length of the data stream.
+     * 
+     * @return the total length in bytes
+     */
     public abstract long length();
+    
+    /**
+     * Gets the number of bytes remaining to be read.
+     * 
+     * @return the number of remaining bytes
+     */
     public abstract long remaining();
+    
+    /**
+     * Gets the current position in the data stream.
+     * 
+     * @return the current position in bytes
+     */
     public abstract long position();
+    
+    /**
+     * Sets the position in the data stream.
+     * 
+     * @param newPosition the new position to set
+     */
     public abstract void position(long newPosition);
+    
+    /**
+     * Skips the specified number of bytes.
+     * 
+     * @param n the number of bytes to skip
+     */
     public abstract void skip(long n);
+    
+    /**
+     * Reads a single byte from the stream.
+     * 
+     * @return the byte value read
+     */
     public abstract byte read();
+    
+    /**
+     * Reads bytes into the specified array.
+     * 
+     * @param b the byte array to read into
+     * @param off the starting offset in the array
+     * @param len the number of bytes to read
+     */
     public abstract void read(byte[] b, int off, int len);
+    
+    /**
+     * Reads a boolean value from the stream.
+     * 
+     * @return the boolean value read
+     */
     public abstract boolean readBoolean();
+    
+    /**
+     * Reads a short value from the stream.
+     * 
+     * @return the short value read
+     */
     public abstract short readShort();
+    
+    /**
+     * Reads an int value from the stream.
+     * 
+     * @return the int value read
+     */
     public abstract int readInt();
+    
+    /**
+     * Reads a long value from the stream.
+     * 
+     * @return the long value read
+     */
     public abstract long readLong();
+    
+    /**
+     * Reads a float value from the stream.
+     * 
+     * @return the float value read
+     */
     public abstract float readFloat();
+    
+    /**
+     * Reads a double value from the stream.
+     * 
+     * @return the double value read
+     */
     public abstract double readDouble();
+    
+    /**
+     * Reads a varint (variable-length integer) from the stream.
+     * 
+     * @return the varint value read
+     */
     public abstract long readVarint();
+    
+    /**
+     * Closes the reader and releases any associated resources.
+     * 
+     * @throws IOException if an I/O error occurs during closing
+     */
     public abstract void close() throws IOException;
 
+    /**
+     * Creates a new RecordingStreamReader for the specified file path.
+     * 
+     * @param path the path to the JFR recording file
+     * @return a new RecordingStreamReader instance
+     * @throws IOException if an I/O error occurs during file mapping
+     */
     public static RecordingStreamReader mapped(Path path) throws IOException {
         return new MappedRecordingStreamReader(path);
     }

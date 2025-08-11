@@ -1,5 +1,9 @@
 package io.jafar.parser.impl;
 
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -11,14 +15,23 @@ import io.jafar.parser.internal_api.ValueProcessor;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-
+/**
+ * Abstract base class for event stream processing in JFR recordings.
+ * <p>
+ * This class implements ChunkParserListener and provides a framework for
+ * processing JFR events with support for constant pools and value processing.
+ * </p>
+ */
 @SuppressWarnings("unchecked")
 public abstract class EventStream implements ChunkParserListener {
+    /** The delegate chunk parser listener. */
     private final ChunkParserListener delegate;
 
+    /**
+     * Constructs a new EventStream with the specified delegate.
+     * 
+     * @param delegate the delegate chunk parser listener
+     */
     public EventStream(ChunkParserListener delegate) {
         this.delegate = delegate;
     }
@@ -296,5 +309,15 @@ public abstract class EventStream implements ChunkParserListener {
         }
     }
 
+    /**
+     * Called when an event value is processed.
+     * <p>
+     * This method is called for each event value that is successfully parsed
+     * and should be implemented by subclasses to handle the event data.
+     * </p>
+     * 
+     * @param type the metadata class type of the event
+     * @param value the parsed event value as a map
+     */
     protected abstract void onEventValue(MetadataClass type, Map<String, Object> value);
 }

@@ -8,11 +8,33 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * Custom byte buffer interface for efficient reading of JFR data.
+ * <p>
+ * This interface provides a unified abstraction for reading binary data from JFR recordings,
+ * supporting both direct memory mapping and spliced reading for large files.
+ * </p>
+ */
 public interface CustomByteBuffer {
+    /**
+     * Maps a file path to a custom byte buffer.
+     * 
+     * @param channel the file path to map
+     * @return a custom byte buffer for the file
+     * @throws IOException if an I/O error occurs during mapping
+     */
     static CustomByteBuffer map(Path channel) throws IOException {
         return map(channel, Integer.MAX_VALUE);
     }
 
+    /**
+     * Maps a file path to a custom byte buffer with a specified splice size.
+     * 
+     * @param path the file path to map
+     * @param spliceSize the maximum size for a single mapped buffer
+     * @return a custom byte buffer for the file
+     * @throws IOException if an I/O error occurs during mapping
+     */
     static CustomByteBuffer map(Path path, int spliceSize) throws IOException  {
         long size = Files.size(path);
         if (size > spliceSize) {
@@ -24,42 +46,142 @@ public interface CustomByteBuffer {
         }
     }
 
+    /**
+     * Creates a slice of this buffer from the current position to the end.
+     * 
+     * @return a new custom byte buffer representing the slice
+     */
     CustomByteBuffer slice();
+    
+    /**
+     * Creates a slice of this buffer with the specified position and length.
+     * 
+     * @param pos the starting position for the slice
+     * @param len the length of the slice
+     * @return a new custom byte buffer representing the slice
+     */
     CustomByteBuffer slice(long pos, long len);
 
+    /**
+     * Sets the byte order for this buffer.
+     * 
+     * @param bigEndian the byte order to set
+     * @return this buffer for method chaining
+     */
     CustomByteBuffer order(ByteOrder bigEndian);
+    
+    /**
+     * Gets the current byte order of this buffer.
+     * 
+     * @return the current byte order
+     */
     ByteOrder order();
 
+    /**
+     * Checks if this buffer is using the native byte order.
+     * 
+     * @return true if using native byte order, false otherwise
+     */
     boolean isNativeOrder();
 
+    /**
+     * Sets the position of this buffer.
+     * 
+     * @param position the new position
+     */
     void position(long position);
 
+    /**
+     * Gets the current position of this buffer.
+     * 
+     * @return the current position
+     */
     long position();
 
+    /**
+     * Gets the number of remaining bytes in this buffer.
+     * 
+     * @return the number of remaining bytes
+     */
     long remaining();
 
+    /**
+     * Reads bytes into the specified buffer.
+     * 
+     * @param buffer the destination buffer
+     * @param offset the starting offset in the destination buffer
+     * @param length the number of bytes to read
+     */
     void get(byte[] buffer, int offset, int length);
 
+    /**
+     * Reads a single byte from this buffer.
+     * 
+     * @return the byte value
+     */
     byte get();
 
+    /**
+     * Reads a short value from this buffer.
+     * 
+     * @return the short value
+     */
     short getShort();
 
+    /**
+     * Reads an int value from this buffer.
+     * 
+     * @return the int value
+     */
     int getInt();
 
+    /**
+     * Reads a float value from this buffer.
+     * 
+     * @return the float value
+     */
     float getFloat();
 
+    /**
+     * Reads a double value from this buffer.
+     * 
+     * @return the double value
+     */
     double getDouble();
 
+    /**
+     * Marks the current position in this buffer.
+     */
     void mark();
 
+    /**
+     * Resets the position to the previously marked position.
+     */
     void reset();
 
+    /**
+     * Reads a long value from this buffer.
+     * 
+     * @return the long value
+     */
     long getLong();
 
+    /**
+     * Wrapper implementation of CustomByteBuffer using MappedByteBuffer.
+     * <p>
+     * This class provides a concrete implementation that delegates to a MappedByteBuffer
+     * while maintaining the CustomByteBuffer interface contract.
+     * </p>
+     */
     class ByteBufferWrapper implements CustomByteBuffer {
         private final MappedByteBuffer delegate;
         private final boolean nativeOrder;
 
+        /**
+         * Constructs a new ByteBufferWrapper with the specified MappedByteBuffer.
+         * 
+         * @param delegate the MappedByteBuffer to wrap
+         */
         public ByteBufferWrapper(MappedByteBuffer delegate) {
             this.delegate = delegate;
             this.nativeOrder = delegate.order() == ByteOrder.nativeOrder();

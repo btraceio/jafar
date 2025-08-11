@@ -1,10 +1,5 @@
 package io.jafar.parser.internal_api.metadata;
 
-import io.jafar.parser.internal_api.Deserializer;
-import io.jafar.parser.internal_api.DeserializerCache;
-import io.jafar.parser.impl.TypedParserContext;
-import io.jafar.parser.internal_api.RecordingStream;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,27 +10,66 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
+import io.jafar.parser.impl.TypedParserContext;
+import io.jafar.parser.internal_api.Deserializer;
+import io.jafar.parser.internal_api.DeserializerCache;
+import io.jafar.parser.internal_api.RecordingStream;
+
+/**
+ * Represents a metadata class in JFR recordings.
+ * <p>
+ * This class extends AbstractMetadataElement to provide specific functionality
+ * for handling class metadata, including fields, annotations, settings, and deserialization.
+ * </p>
+ */
 public final class MetadataClass extends AbstractMetadataElement {
+    /** Flag indicating whether the hash code has been computed. */
     private boolean hasHashCode = false;
+    
+    /** Cached hash code value. */
     private int hashCode;
 
+    /** Set of primitive type names. */
     private static final Set<String> primitiveTypeNames = Set.of("byte", "char", "short", "int", "long", "float", "double", "boolean", "java.lang.String");
 
+    /** Map of settings associated with this class. */
     private Map<String, MetadataSetting> settings = null;
+    
+    /** List of annotations associated with this class. */
     private List<MetadataAnnotation> annotations = null;
+    
+    /** List of fields defined in this class. */
     private List<MetadataField> fields = null;
 
+    /** The super type of this class. */
     private String superType;
+    
+    /** Cached primitive type flag. */
     private Boolean isPrimitive;
+    
+    /** Cached simple type flag. */
     private Boolean isSimpleType;
+    
+    /** Raw simple type string value. */
     private String simpleTypeVal;
 
+    /** The chunk index associated with this class. */
     private final int associatedChunk;
 
+    /** Atomic updater for the deserializer field. */
     @SuppressWarnings("rawtypes")
     private static final AtomicReferenceFieldUpdater<MetadataClass, Deserializer> DESERIALIZER_UPDATER = AtomicReferenceFieldUpdater.newUpdater(MetadataClass.class, Deserializer.class, "deserializer");
+    
+    /** The deserializer associated with this class. */
     private volatile Deserializer<?> deserializer;
 
+    /**
+     * Constructs a new MetadataClass from the recording stream and event.
+     * 
+     * @param stream the recording stream to read from
+     * @param eventr the metadata event containing subelements
+     * @throws IOException if an I/O error occurs during construction
+     */
     MetadataClass(RecordingStream stream, MetadataEvent eventr) throws IOException {
         super(stream, MetadataElementKind.CLASS);
         this.associatedChunk = stream.getContext().getChunkIndex();
@@ -43,6 +77,12 @@ public final class MetadataClass extends AbstractMetadataElement {
         metadataLookup.addClass(getId(), this);
     }
 
+    /**
+     * Handles attributes encountered during parsing.
+     * 
+     * @param key the attribute key
+     * @param value the attribute value
+     */
     @Override
     protected void onAttribute(String key, String value) {
         if (key.equals("superType")) {
@@ -52,6 +92,13 @@ public final class MetadataClass extends AbstractMetadataElement {
         }
     }
 
+    /**
+     * Binds a deserializer to this class.
+     * <p>
+     * This method ensures that a deserializer is available for this class,
+     * either by retrieving an existing one or creating a new one.
+     * </p>
+     */
     public void bindDeserializer() {
         DESERIALIZER_UPDATER.updateAndGet(this, v -> (v == null) ? getContext().get(DeserializerCache.class).computeIfAbsent(new TypedParserContext.DeserializerKey(MetadataClass.this), k -> Deserializer.forType(MetadataClass.this)) : v);
     }
@@ -65,10 +112,20 @@ public final class MetadataClass extends AbstractMetadataElement {
         return deserializer;
     }
 
+    /**
+     * Gets the super type of this class.
+     * 
+     * @return the super type name, or null if none
+     */
     public String getSuperType() {
         return superType;
     }
 
+    /**
+     * Checks if this class represents a primitive type.
+     * 
+     * @return true if this is a primitive type, false otherwise
+     */
     public boolean isPrimitive() {
         if (isPrimitive == null) {
             isPrimitive = primitiveTypeNames.contains(getName());
@@ -76,6 +133,11 @@ public final class MetadataClass extends AbstractMetadataElement {
         return isPrimitive;
     }
 
+    /**
+     * Checks if this class represents a simple type.
+     * 
+     * @return true if this is a simple type, false otherwise
+     */
     public boolean isSimpleType() {
         if (isSimpleType == null) {
             isSimpleType = Boolean.parseBoolean(simpleTypeVal);
@@ -83,6 +145,12 @@ public final class MetadataClass extends AbstractMetadataElement {
         return isSimpleType;
     }
 
+    /**
+     * Handles subelements encountered during parsing.
+     * 
+     * @param count the total count of subelements
+     * @param element the subelement that was read
+     */
     protected void onSubelement(int count, AbstractMetadataElement element) {
         if (element.getKind() == MetadataElementKind.SETTING) {
             if (settings == null) {
@@ -121,10 +189,21 @@ public final class MetadataClass extends AbstractMetadataElement {
         visitor.visitEnd(this);
     }
 
+    /**
+     * Gets the list of metadata fields for this class.
+     * 
+     * @return an unmodifiable list of metadata fields
+     */
     public List<MetadataField> getFields() {
         return Collections.unmodifiableList(fields == null ? Collections.emptyList() : fields);
     }
 
+    /**
+     * Skips over the data for this class in the recording stream.
+     * 
+     * @param stream the recording stream to skip over
+     * @throws IOException if an I/O error occurs during skipping
+     */
     public void skip(RecordingStream stream) throws IOException {
         if (deserializer == null) {
             return;
@@ -136,6 +215,14 @@ public final class MetadataClass extends AbstractMetadataElement {
         }
     }
 
+    /**
+     * Reads and deserializes data for this class from the recording stream.
+     * 
+     * @param <T> the expected type of the deserialized object
+     * @param stream the recording stream to read from
+     * @return the deserialized object, or null if no deserializer is available
+     * @throws RuntimeException if deserialization fails
+     */
     @SuppressWarnings("unchecked")
     public <T> T read(RecordingStream stream) {
         if (deserializer == null) {

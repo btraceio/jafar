@@ -1,10 +1,10 @@
 package io.jafar.parser.api;
-import io.jafar.parser.impl.TypedJafarParserImpl;
-import io.jafar.parser.impl.ParsingContextImpl;
-
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
+import io.jafar.parser.impl.ParsingContextImpl;
+import io.jafar.parser.impl.TypedJafarParserImpl;
 
 /**
  * Strongly-typed JFR parser.
@@ -74,6 +74,7 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
      * <p>Handlers are invoked synchronously on the parser thread. If a handler throws, parsing
      * stops and the exception propagates to {@link #run()}.</p>
      *
+     * @param <T> the type of JFR events this handler processes
      * @param clz JFR event interface to handle
      * @param handler callback receiving deserialized events and parse {@link Control}
      * @return a registration that can be destroyed to stop receiving events

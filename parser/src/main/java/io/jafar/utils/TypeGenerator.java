@@ -1,5 +1,13 @@
 package io.jafar.utils;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Predicate;
+
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.TypedParserContextFactory;
 import io.jafar.parser.internal_api.ChunkParserListener;
@@ -11,21 +19,41 @@ import jdk.jfr.EventType;
 import jdk.jfr.FlightRecorder;
 import jdk.jfr.ValueDescriptor;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.function.Predicate;
-
+/**
+ * Utility class for generating Java interfaces from JFR event types.
+ * <p>
+ * This class provides functionality to generate Java interface definitions
+ * that correspond to JFR event types, either from runtime JFR information
+ * or from JFR recording files. The generated interfaces can be used with
+ * the typed JFR parser for type-safe event handling.
+ * </p>
+ */
 public final class TypeGenerator {
+    /** Path to the JFR recording file, or null for runtime generation. */
     private final Path jfr;
+    
+    /** Output directory for generated files. */
     private final Path output;
+    
+    /** Target package for generated interfaces. */
     private final String pkg;
+    
+    /** Whether to overwrite existing files. */
     private final boolean overwrite;
+    
+    /** Filter for selecting which event types to generate. */
     private final Predicate<String> eventTypeFilter;
 
+    /**
+     * Constructs a new TypeGenerator with the specified parameters.
+     * 
+     * @param jfr the path to the JFR recording file, or null for runtime generation
+     * @param output the output directory for generated files
+     * @param targetPackage the target package for generated interfaces
+     * @param overwrite whether to overwrite existing files
+     * @param eventTypeFilter filter for selecting which event types to generate
+     * @throws IOException if an I/O error occurs during setup
+     */
     public TypeGenerator(Path jfr, Path output, String targetPackage, boolean overwrite, Predicate<String> eventTypeFilter) throws IOException{
         if (!Files.isDirectory(output) || !Files.exists(output)) {
             throw new IllegalArgumentException("Output directory does not exist: " + output);
@@ -38,6 +66,15 @@ public final class TypeGenerator {
         Files.createDirectories(this.output);
     }
 
+    /**
+     * Generates Java interfaces from JFR event types.
+     * <p>
+     * This method either generates interfaces from runtime JFR information
+     * or from a JFR recording file, depending on the configuration.
+     * </p>
+     * 
+     * @throws Exception if an error occurs during generation
+     */
     public void generate() throws Exception {
         if (jfr == null) {
             generateFromRuntime();

@@ -1,9 +1,9 @@
 package io.jafar.parser.api;
 
-import io.jafar.parser.internal_api.ChunkParserListener;
-
 import java.io.IOException;
 import java.nio.file.Path;
+
+import io.jafar.parser.internal_api.ChunkParserListener;
 
 /**
  * Common entry point for JFR parsing sessions.
@@ -22,18 +22,44 @@ import java.nio.file.Path;
  * </p>
  */
 public interface JafarParser {
+    /**
+     * Creates a new typed parser for the specified file path.
+     * 
+     * @param path the path to the JFR recording file
+     * @return a new TypedJafarParser instance
+     */
     static TypedJafarParser newTypedParser(Path path) {
         return TypedJafarParser.open(path.toString());
     }
 
+    /**
+     * Creates a new typed parser for the specified file path with a shared context.
+     * 
+     * @param path the path to the JFR recording file
+     * @param context the shared parsing context
+     * @return a new TypedJafarParser instance
+     */
     static TypedJafarParser newTypedParser(Path path, ParsingContext context) {
         return TypedJafarParser.open(path, context);
     }
 
+    /**
+     * Creates a new untyped parser for the specified file path.
+     * 
+     * @param path the path to the JFR recording file
+     * @return a new UntypedJafarParser instance
+     */
     static UntypedJafarParser newUntypedParser(Path path) {
         return UntypedJafarParser.open(path.toString());
     }
 
+    /**
+     * Creates a new untyped parser for the specified file path with a shared context.
+     * 
+     * @param path the path to the JFR recording file
+     * @param context the shared parsing context
+     * @return a new UntypedJafarParser instance
+     */
     static UntypedJafarParser newUntypedParser(Path path, ParsingContext context) {
         return UntypedJafarParser.open(path, context);
     }
@@ -46,5 +72,12 @@ public interface JafarParser {
      */
     void run() throws IOException;
 
+    /**
+     * Configures a parser listener for chunk-level parsing events.
+     * 
+     * @param <T> the type of parser being configured
+     * @param listener the chunk parser listener to use
+     * @return this parser instance for method chaining
+     */
     <T extends JafarParser> T withParserListener(ChunkParserListener listener);
 }

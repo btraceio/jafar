@@ -1,20 +1,38 @@
 package io.jafar.parser.internal_api;
 
+import java.io.IOException;
+
 import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-
+/**
+ * Generic value reader for processing JFR data values.
+ * <p>
+ * This class provides functionality to read and process various types of values
+ * from JFR recordings, including primitives, arrays, and complex types.
+ * </p>
+ */
 public final class GenericValueReader {
+    /** The value processor to delegate value handling to. */
     private final ValueProcessor processor;
 
+    /**
+     * Constructs a new GenericValueReader with the specified processor.
+     * 
+     * @param processor the value processor to use for handling values
+     */
     public GenericValueReader(ValueProcessor processor) {
         this.processor = processor;
     }
 
+    /**
+     * Reads a value of the specified type from the recording stream.
+     * 
+     * @param stream the recording stream to read from
+     * @param type the metadata class type to read
+     * @throws IOException if an I/O error occurs during reading
+     */
     public void readValue(RecordingStream stream, MetadataClass type) throws IOException {
         if (type.isPrimitive()) {
             readSingleValue(stream, type, "");
@@ -36,6 +54,14 @@ public final class GenericValueReader {
         }
     }
 
+    /**
+     * Reads a single field value from the recording stream.
+     * 
+     * @param stream the recording stream to read from
+     * @param type the metadata class type
+     * @param fld the metadata field to read
+     * @throws IOException if an I/O error occurs during reading
+     */
     private void readSingleFieldValue(RecordingStream stream, MetadataClass type, MetadataField fld) throws IOException {
         if (fld.hasConstantPool()) {
             long idx = stream.readVarint();
@@ -51,6 +77,14 @@ public final class GenericValueReader {
         }
     }
 
+    /**
+     * Reads a single primitive value from the recording stream.
+     * 
+     * @param stream the recording stream to read from
+     * @param type the metadata class type
+     * @param fldName the field name
+     * @throws IOException if an I/O error occurs during reading
+     */
     private void readSingleValue(RecordingStream stream, MetadataClass type, String fldName) throws IOException {
         switch (type.getName()) {
             case "short":

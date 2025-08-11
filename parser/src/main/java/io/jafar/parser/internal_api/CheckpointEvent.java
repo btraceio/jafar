@@ -1,21 +1,41 @@
 package io.jafar.parser.internal_api;
 
-import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.TypeFilter;
-import io.jafar.parser.internal_api.metadata.MetadataClass;
-
 import java.io.IOException;
 
+import io.jafar.parser.AbstractEvent;
+import io.jafar.parser.TypeFilter;
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
+
+/**
+ * Represents a checkpoint event in JFR recordings.
+ * <p>
+ * Checkpoint events mark important points in the recording timeline and contain
+ * information about constant pools and other metadata that may be referenced
+ * by subsequent events.
+ * </p>
+ */
 public final class CheckpointEvent extends AbstractEvent {
+    /** The start time of the checkpoint in nanoseconds. */
     public final long startTime;
+    
+    /** The duration of the checkpoint in nanoseconds. */
     public final long duration;
+    
+    /** The offset delta to the next checkpoint. */
     public final int nextOffsetDelta;
 
+    /** Whether this checkpoint represents a flush operation. */
     public final boolean isFlush;
 
     private final RecordingStream stream;
 
+    /**
+     * Constructs a new CheckpointEvent from the recording stream.
+     * 
+     * @param stream the recording stream to read from
+     * @throws IOException if an I/O error occurs during construction
+     */
     CheckpointEvent(RecordingStream stream) throws IOException {
         super(stream);
         this.stream = stream;
@@ -33,6 +53,15 @@ public final class CheckpointEvent extends AbstractEvent {
         this.isFlush = stream.read() != 0;
     }
 
+    /**
+     * Reads and processes constant pools from the recording stream.
+     * <p>
+     * This method processes all constant pool entries associated with this checkpoint,
+     * applying type filtering and value processing as configured in the parser context.
+     * </p>
+     * 
+     * @throws IOException if an I/O error occurs during reading
+     */
     void readConstantPools() throws IOException {
         ParserContext context = stream.getContext();
 

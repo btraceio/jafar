@@ -1,12 +1,12 @@
 package io.jafar.parser.api;
 
-import io.jafar.parser.impl.ParsingContextImpl;
-import io.jafar.parser.impl.UntypedJafarParserImpl;
-import io.jafar.parser.internal_api.metadata.MetadataClass;
-
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+
+import io.jafar.parser.impl.ParsingContextImpl;
+import io.jafar.parser.impl.UntypedJafarParserImpl;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 /**
  * Untyped JFR parser.
@@ -17,7 +17,6 @@ import java.util.Map;
  * constant-pool backed references).
  * <p>
  * Example of consuming wrappers:
- * </p>
  * <pre>{@code
  * p.handle((type, value) -> {
  *   Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
@@ -40,14 +39,26 @@ import java.util.Map;
  *   }
  * });
  * }</pre>
- * </p>
  * <p>
  * Handlers are invoked synchronously on the parser thread.
  * </p>
  */
 public interface UntypedJafarParser extends JafarParser, AutoCloseable {
+    /**
+     * Functional interface for handling untyped JFR events.
+     * <p>
+     * This interface provides a callback mechanism for processing
+     * untyped JFR events as maps of field names to values.
+     * </p>
+     */
     @FunctionalInterface
     public static interface EventHandler {
+        /**
+         * Handles an untyped JFR event.
+         * 
+         * @param type the metadata class type of the event
+         * @param value the event data as a map of field names to values
+         */
         void handle(MetadataClass type, Map<String, Object> value);
     }
 
