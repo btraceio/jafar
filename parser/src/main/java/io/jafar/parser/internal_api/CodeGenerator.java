@@ -994,10 +994,13 @@ final class CodeGenerator {
 
         try {
             // Use automatic runtime detection for the best class definition method
-            Class<?> generatedClass = ClassDefinitionHelper.defineClass(clzName, classData, true);
+            ClassDefinitionHelper.ClassDefinitionResult result = ClassDefinitionHelper.defineClass(clzName, classData, true);
+            Class<?> generatedClass = result.getGeneratedClass();
+            MethodHandles.Lookup lkp = result.getLookup();
+            
             MethodHandle createHandle = target != null ? 
-                MethodHandles.lookup().findStatic(generatedClass, "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
-            MethodHandle skipHandle = MethodHandles.lookup().findStatic(generatedClass, "skip", MethodType.methodType(void.class, RecordingStream.class));
+                lkp.findStatic(generatedClass, "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
+            MethodHandle skipHandle = lkp.findStatic(generatedClass, "skip", MethodType.methodType(void.class, RecordingStream.class));
             return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);

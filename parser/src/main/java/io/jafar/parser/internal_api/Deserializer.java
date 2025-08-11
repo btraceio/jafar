@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.JafarSerializationException;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 /**
@@ -143,7 +144,13 @@ public abstract class Deserializer<T> {
         @Override
         public T deserialize(RecordingStream stream) throws Exception {
             try {
-                return (T) factoryHandle.invokeExact(stream);
+                if (factoryHandle == null) {
+                    // no deserialize method, skip
+                    skip(stream);
+                    // no value to return
+                    return null;
+                }
+                return (T) factoryHandle.invoke(stream);
             } catch (Throwable t) {
                 throw new RuntimeException(t);
             }
@@ -157,7 +164,14 @@ public abstract class Deserializer<T> {
      * @return a deserializer instance for the given class
      */
     public static Deserializer<?> forType(MetadataClass clazz) {
-        return DESERIALIZERS.getOrDefault(clazz.getName(), VARINT);
+        if (clazz.isPrimitive()) {
+            return DESERIALIZERS.get(clazz.getName());
+        }
+        try {
+            return CodeGenerator.generateDeserializer(clazz);
+        } catch (JafarSerializationException e) {
+            throw new RuntimeException("Failed to generate deserializer for " + clazz.getName(), e);
+        }
     }
 
     /**
