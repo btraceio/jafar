@@ -197,7 +197,10 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
         do {
             checkSpliceOffset();
             int toLoad = (int)Math.min(spliceSize - this.offset, length - loaded);
-            splices[index].get(this.offset, buffer, offset + loaded, toLoad);
+            // For Java 8 compatibility, manually copy bytes instead of using get(int, byte[], int, int)
+            for (int i = 0; i < toLoad; i++) {
+                buffer[offset + loaded + i] = splices[index].get(this.offset + i);
+            }
             loaded += toLoad;
             this.offset += toLoad;
         } while (loaded < length);

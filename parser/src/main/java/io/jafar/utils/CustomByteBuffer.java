@@ -2,6 +2,7 @@ package io.jafar.utils;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -195,12 +196,17 @@ public interface CustomByteBuffer {
 
         @Override
         public CustomByteBuffer slice(long pos, long len) {
-            return new ByteBufferWrapper(delegate.slice((int)pos, (int)len));
+            // For Java 8 compatibility, manually create a slice
+            ByteBuffer original = delegate;
+            original.position((int)pos);
+            ByteBuffer slice = original.slice();
+            slice.limit((int)len);
+            return new ByteBufferWrapper((MappedByteBuffer) slice);
         }
 
         @Override
         public CustomByteBuffer slice() {
-            return new ByteBufferWrapper(delegate.slice());
+            return new ByteBufferWrapper((MappedByteBuffer) delegate.slice());
         }
 
         @Override

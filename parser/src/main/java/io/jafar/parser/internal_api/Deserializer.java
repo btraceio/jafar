@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import java.lang.invoke.MethodHandle;
+import java.util.HashMap;
 import java.util.Map;
 
 import io.jafar.parser.ParsingUtils;
@@ -28,7 +29,7 @@ public abstract class Deserializer<T> {
     /**
      * UTF-8 string deserializer implementation.
      */
-    private static final Deserializer<String> UTF8_STRING = new Deserializer<>() {
+    private static final Deserializer<String> UTF8_STRING = new Deserializer<String>() {
         @Override
         public void skip(RecordingStream stream) throws Exception {
             ParsingUtils.skipUTF8(stream);
@@ -39,7 +40,7 @@ public abstract class Deserializer<T> {
             return ParsingUtils.readUTF8(stream);
         }
     };
-    private static final Deserializer<?> VARINT = new Deserializer<>() {
+    private static final Deserializer<?> VARINT = new Deserializer<Object>() {
         @Override
         public void skip(RecordingStream stream) throws Exception {
             stream.readVarint();
@@ -50,7 +51,7 @@ public abstract class Deserializer<T> {
             throw new UnsupportedOperationException();
         }
     };
-    private static final Deserializer<?> FLOAT = new Deserializer<>() {
+    private static final Deserializer<?> FLOAT = new Deserializer<Object>() {
         @Override
         public void skip(RecordingStream stream) throws Exception {
             stream.readFloat();
@@ -61,7 +62,7 @@ public abstract class Deserializer<T> {
             throw new UnsupportedOperationException();
         }
     };
-    private static final Deserializer<?> DOUBLE = new Deserializer<>() {
+    private static final Deserializer<?> DOUBLE = new Deserializer<Object>() {
         @Override
         public void skip(RecordingStream stream) throws Exception {
             stream.readDouble();
@@ -72,7 +73,7 @@ public abstract class Deserializer<T> {
             throw new UnsupportedOperationException();
         }
     };
-    private static final Deserializer<?> BYTE = new Deserializer<>() {
+    private static final Deserializer<?> BYTE = new Deserializer<Object>() {
         @Override
         public void skip(RecordingStream stream) throws Exception {
             stream.read();
@@ -83,17 +84,18 @@ public abstract class Deserializer<T> {
             throw new UnsupportedOperationException();
         }
     };
-    private static final Map<String, Deserializer<?>> DESERIALIZERS = Map.of(
-            "java.lang.String", UTF8_STRING,
-            "short", VARINT,
-            "char", VARINT,
-            "int", VARINT,
-            "long", VARINT,
-            "double", DOUBLE,
-            "float", FLOAT,
-            "byte", BYTE,
-            "boolean", BYTE
-    );
+    private static final Map<String, Deserializer<?>> DESERIALIZERS = new HashMap<>();
+    static {
+        DESERIALIZERS.put("java.lang.String", UTF8_STRING);
+        DESERIALIZERS.put("short", VARINT);
+        DESERIALIZERS.put("char", VARINT);
+        DESERIALIZERS.put("int", VARINT);
+        DESERIALIZERS.put("long", VARINT);
+        DESERIALIZERS.put("double", DOUBLE);
+        DESERIALIZERS.put("float", FLOAT);
+        DESERIALIZERS.put("byte", BYTE);
+        DESERIALIZERS.put("boolean", BYTE);
+    }
 
     /**
      * Generated implementation of a deserializer.

@@ -81,16 +81,25 @@ public final class ArrayHolder implements ArrayType {
 
     @Override
     public String toString() {
-        return switch (type) {
-            case "short" -> Arrays.toString((short[]) array);
-            case "char" -> Arrays.toString((char[]) array);
-            case "int" -> Arrays.toString((int[]) array);
-            case "long" -> Arrays.toString((long[]) array);
-            case "byte" -> Arrays.toString((byte[]) array);
-            case "boolean" -> Arrays.toString((boolean[]) array);
-            case "double" -> Arrays.toString((double[]) array);
-            case "float" -> Arrays.toString((float[]) array);
-            default -> Arrays.toString((Object[]) array);
-        };
+        switch (type) {
+            case "short":
+                return Arrays.toString((short[]) array);
+            case "char":
+                return Arrays.toString((char[]) array);
+            case "int":
+                return Arrays.toString((int[]) array);
+            case "long":
+                return Arrays.toString((long[]) array);
+            case "byte":
+                return Arrays.toString((byte[]) array);
+            case "boolean":
+                return Arrays.toString((boolean[]) array);
+            case "double":
+                return Arrays.toString((double[]) array);
+            case "float":
+                return Arrays.toString((float[]) array);
+            default:
+                return Arrays.toString((Object[]) array);
+        }
     }
 }

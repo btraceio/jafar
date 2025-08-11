@@ -116,19 +116,20 @@ public final class ParsingUtils {
   public static void skipUTF8(RecordingStream stream) throws IOException {
     byte id = stream.read();
     switch (id) {
-      case 3, 5 -> {
+      case 3:
+      case 5:
         int size = (int) stream.readVarint();
         stream.skip(size);
-      }
-      case 4 -> {
-        int size = (int) stream.readVarint();
-        for (int i = 0; i < size; i++) {
+        break;
+      case 4:
+        int size2 = (int) stream.readVarint();
+        for (int i = 0; i < size2; i++) {
           stream.readVarint();
         }
-      }
-      case 2 -> {
+        break;
+      case 2:
         stream.readVarint();
-      }
+        break;
     }
   }
 }

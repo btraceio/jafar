@@ -54,7 +54,7 @@ public class CachedStringParser {
          * @return the parsed string, either from cache or newly created
          */
         public String parse(byte[] data, int len, Charset charset) {
-            if (lastString != null && previousLen == len && Arrays.equals(data, 0, len, previousData, 0, len)) {
+            if (lastString != null && previousLen == len && equalsRange(data, 0, len, previousData, 0, len)) {
                 return lastString;
             }
             if (len > previousData.length) {
@@ -65,6 +65,18 @@ public class CachedStringParser {
             previousLen = len;
             lastString = new String(data, 0, len, charset);
             return lastString;
+        }
+        
+        private boolean equalsRange(byte[] a, int aFromIndex, int aToIndex, byte[] b, int bFromIndex, int bToIndex) {
+            if (aToIndex - aFromIndex != bToIndex - bFromIndex) {
+                return false;
+            }
+            for (int i = 0; i < aToIndex - aFromIndex; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
@@ -101,7 +113,7 @@ public class CachedStringParser {
          * @return the parsed string, either from cache or newly created
          */
         public String parse(char[] data, int len) {
-            if (lastString != null && previousLen == len && Arrays.equals(data, 0, len, previousData, 0, len)) {
+            if (lastString != null && previousLen == len && equalsRange(data, 0, len, previousData, 0, len)) {
                 return lastString;
             }
             if (len > previousData.length) {
@@ -112,6 +124,18 @@ public class CachedStringParser {
             previousLen = len;
             lastString = new String(data, 0, len);
             return lastString;
+        }
+        
+        private boolean equalsRange(char[] a, int aFromIndex, int aToIndex, char[] b, int bFromIndex, int bToIndex) {
+            if (aToIndex - aFromIndex != bToIndex - bFromIndex) {
+                return false;
+            }
+            for (int i = 0; i < aToIndex - aFromIndex; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 

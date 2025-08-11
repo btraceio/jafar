@@ -1,6 +1,7 @@
 package io.jafar.utils;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -90,7 +91,7 @@ public final class TypeGenerator {
                 try {
                     Path target = output.resolve("JFR" + getSimpleName(et.getName()) + ".java");
                     if (overwrite || !Files.exists(target)) {
-                        Files.writeString(target, generateTypeFromEvent(et, generated), StandardOpenOption.CREATE_NEW);
+                        Files.write(target, generateTypeFromEvent(et, generated).getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
                     }
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to generate type interface for " + et.getName(), e);
@@ -136,7 +137,7 @@ public final class TypeGenerator {
             String targetName = isPrimitiveName(typeName) ? typeName : "JFR" + getSimpleName(typeName);
             Path target = output.resolve(targetName + ".java");
             if (overwrite || !Files.exists(target)) {
-                Files.writeString(output.resolve(targetName + ".java"), data, StandardOpenOption.CREATE_NEW);
+                Files.write(output.resolve(targetName + ".java"), data.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
             }
         }
     }
@@ -201,7 +202,7 @@ public final class TypeGenerator {
         try {
             Path classFile = output.resolve(getClassName(metadataClass) + ".java");
             if (overwrite || !Files.exists(classFile)) {
-                Files.writeString(classFile, generateClass(metadataClass), StandardOpenOption.CREATE_NEW);
+                Files.write(classFile, generateClass(metadataClass).getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -224,10 +225,12 @@ public final class TypeGenerator {
             }
             MetadataClass fldType = field.getType();
             while (fldType.isSimpleType()) {
-                fldType = fldType.getFields().getFirst().getType();
+                fldType = fldType.getFields().get(0).getType();
             }
             sb.append(getClassName(fldType));
-            sb.append("[]".repeat(Math.max(0, field.getDimension())));
+            for (int i = 0; i < Math.max(0, field.getDimension()); i++) {
+                sb.append("[]");
+            }
             sb.append(" ");
             sb.append(fldName).append("();\n");
 

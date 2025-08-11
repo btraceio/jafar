@@ -103,7 +103,7 @@ public class ValuesTest {
 
         // javaThreadId is a Long
         assertTrue(Values.as(event, Long.class, "eventThread", "javaThreadId").isPresent());
-        assertTrue(Values.as(event, String.class, "eventThread", "javaThreadId").isEmpty());
+        assertTrue(!Values.as(event, String.class, "eventThread", "javaThreadId").isPresent());
     }
 
     @Test

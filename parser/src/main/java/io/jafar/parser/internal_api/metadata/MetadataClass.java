@@ -2,8 +2,10 @@ package io.jafar.parser.internal_api.metadata;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,7 +32,7 @@ public final class MetadataClass extends AbstractMetadataElement {
     private int hashCode;
 
     /** Set of primitive type names. */
-    private static final Set<String> primitiveTypeNames = Set.of("byte", "char", "short", "int", "long", "float", "double", "boolean", "java.lang.String");
+    private static final Set<String> primitiveTypeNames = new HashSet<>(Arrays.asList("byte", "char", "short", "int", "long", "float", "double", "boolean", "java.lang.String"));
 
     /** Map of settings associated with this class. */
     private Map<String, MetadataSetting> settings = null;

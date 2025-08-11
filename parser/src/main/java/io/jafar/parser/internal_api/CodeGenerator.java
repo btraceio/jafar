@@ -1,25 +1,5 @@
 package io.jafar.parser.internal_api;
 
-import io.jafar.parser.ParsingUtils;
-import io.jafar.parser.api.ConstantPool;
-import io.jafar.parser.api.ConstantPools;
-import io.jafar.parser.api.JafarSerializationException;
-import io.jafar.parser.api.MetadataLookup;
-import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.api.JfrField;
-import io.jafar.parser.api.JfrIgnore;
-import io.jafar.parser.impl.TypedParserContext;
-import io.jafar.parser.internal_api.metadata.MetadataClass;
-import io.jafar.parser.internal_api.metadata.MetadataField;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.PrintStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -38,6 +18,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.JafarSerializationException;
+import io.jafar.parser.api.JfrField;
+import io.jafar.parser.api.JfrIgnore;
+import io.jafar.parser.api.MetadataLookup;
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.impl.TypedParserContext;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 
 final class CodeGenerator {
 
@@ -286,12 +287,16 @@ final class CodeGenerator {
         Type dataType = null;
 
         switch (fldTypeName) {
-            case "byte", "boolean": {
+            case "byte":
+            case "boolean": {
                 fldType = fldTypeName.equals("byte") ? Type.BYTE_TYPE : Type.BOOLEAN_TYPE;
                 dataType = Type.BYTE_TYPE;
                 break;
             }
-            case "short", "char", "int", "long": {
+            case "short":
+            case "char":
+            case "int":
+            case "long": {
                 dataType = Type.LONG_TYPE;
                 switch (fldTypeName) {
                     case "short": {
@@ -416,7 +421,8 @@ final class CodeGenerator {
         // stack: [stream]
         String fldTypeName = fldType.getName();
         switch (fldTypeName) {
-            case "byte", "boolean": {
+            case "byte":
+            case "boolean": {
                 if (keepStream) {
                     mv.visitInsn(Opcodes.DUP); // [stream, stream]
                 }
@@ -480,13 +486,17 @@ final class CodeGenerator {
         int arrayOpcode = 0;
 
         switch (fldTypeName) {
-            case "byte", "boolean": {
+            case "byte":
+            case "boolean": {
                 fldType = fldTypeName.equals("byte") ? Type.BYTE_TYPE : Type.BOOLEAN_TYPE;
                 arrayOpcode = fldTypeName.equals("byte") ? Opcodes.T_BYTE : Opcodes.T_BOOLEAN;
                 dataType = Type.BYTE_TYPE;
                 break;
             }
-            case "short", "char", "int", "long": {
+            case "short":
+            case "char":
+            case "int":
+            case "long": {
                 dataType = Type.LONG_TYPE;
                 switch (fldTypeName) {
                     case "short": {
@@ -632,29 +642,37 @@ final class CodeGenerator {
     }
 
     private static String getPrimitiveReadOperation(Type type) {
-        return switch (type.getSort()) {
-            case Type.BYTE -> "read";
-            case Type.BOOLEAN -> "read";
-            case Type.SHORT -> "readVarint";
-            case Type.CHAR -> "readVarint";
-            case Type.INT -> "readVarint";
-            case Type.LONG -> "readVarint";
-            case Type.FLOAT -> "readFloat";
-            case Type.DOUBLE -> "readDouble";
-            default -> throw new RuntimeException("Unexpected type: " + type.getDescriptor());
-        };
+        switch (type.getSort()) {
+            case Type.BYTE:
+                return "read";
+            case Type.SHORT:
+            case Type.CHAR:
+            case Type.INT:
+            case Type.LONG:
+                return "readVarint";
+            case Type.FLOAT:
+                return "readFloat";
+            case Type.DOUBLE:
+                return "readDouble";
+            default:
+                throw new RuntimeException("Unexpected type: " + type.getDescriptor());
+        }
     }
 
     private static void handleSimpleField(MetadataField fld, String className, int metadataIdx, int lastVarIdx, TypedParserContext context, MethodVisitor mv) {
         // stack: [this, stream]);
         String fldTypeName = fld.getType().getName();
         switch (fldTypeName) {
-            case "byte", "boolean": {
+            case "byte":
+            case "boolean": {
                 mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "read", Type.getMethodDescriptor(Type.BYTE_TYPE), false); // [this, int]
                 mv.visitFieldInsn(Opcodes.PUTFIELD, className, fld.getName(), fld.getType().getName().equals("byte") ? Type.BYTE_TYPE.getDescriptor() : Type.BOOLEAN_TYPE.getDescriptor()); // []
                 break;
             }
-            case "short", "char", "int", "long": {
+            case "short":
+            case "char":
+            case "int":
+            case "long": {
                 mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, Type.getInternalName(RecordingStream.class), "readVarint", Type.getMethodDescriptor(Type.LONG_TYPE), false); // [this, long]
                 switch (fldTypeName) {
                     case "short": {
@@ -879,26 +897,48 @@ final class CodeGenerator {
 
                     MetadataClass fldType = field.getType();
                     while (fldType.isSimpleType()) {
-                        fldType = fldType.getFields().getFirst().getType();
+                        fldType = fldType.getFields().get(0).getType();
                     }
 
                     String fldTypeNameResolved = fldType.getName();
-                    Class<?> fldClz = switch (fldTypeNameResolved) {
-                        case "byte" -> byte.class;
-                        case "boolean" -> boolean.class;
-                        case "short" -> short.class;
-                        case "char" -> char.class;
-                        case "int" -> int.class;
-                        case "long" -> long.class;
-                        case "float" -> float.class;
-                        case "double" -> double.class;
-                        case "java.lang.String" -> String.class;
-                        default -> context.getClassTargetType(fldTypeNameResolved);
-                    };
+                    Class<?> fldClz;
+                    switch (fldTypeNameResolved) {
+                        case "byte":
+                            fldClz = byte.class;
+                            break;
+                        case "boolean":
+                            fldClz = boolean.class;
+                            break;
+                        case "short":
+                            fldClz = short.class;
+                            break;
+                        case "char":
+                            fldClz = char.class;
+                            break;
+                        case "int":
+                            fldClz = int.class;
+                            break;
+                        case "long":
+                            fldClz = long.class;
+                            break;
+                        case "float":
+                            fldClz = float.class;
+                            break;
+                        case "double":
+                            fldClz = double.class;
+                            break;
+                        case "java.lang.String":
+                            fldClz = String.class;
+                            break;
+                        default:
+                            fldClz = context.getClassTargetType(fldTypeNameResolved);
+                            break;
+                    }
                     boolean withConstantPool = field.hasConstantPool();
                     Set<FieldMapping> mappings = fieldMap.get(fieldName);
                     if (mappings == null) {
-                        mappings = Set.of(new FieldMapping(fieldName, false));
+                        mappings = new HashSet<>();
+                        mappings.add(new FieldMapping(fieldName, false));
                     }
                     boolean generateRefField = true;
                     for (FieldMapping mapping : mappings) {
@@ -933,7 +973,7 @@ final class CodeGenerator {
                         prepareEmptyMethod(m, cw);
                     }
                 }
-                checkClasses.addAll(Arrays.stream(checkClass.getInterfaces()).toList());
+                checkClasses.addAll(Arrays.stream(checkClass.getInterfaces()).collect(Collectors.toList()));
             }
             // add factory method returning the created instance
             prepareFactory(cw, clzName.replace('.', '/'));
@@ -953,9 +993,11 @@ final class CodeGenerator {
         }
 
         try {
-            MethodHandles.Lookup lkp = MethodHandles.lookup().defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
-            MethodHandle createHandle = target != null ? lkp.findStatic(lkp.lookupClass(), "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
-            MethodHandle skipHandle = lkp.findStatic(lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
+            // Use automatic runtime detection for the best class definition method
+            Class<?> generatedClass = ClassDefinitionHelper.defineClass(clzName, classData, true);
+            MethodHandle createHandle = target != null ? 
+                MethodHandles.lookup().findStatic(generatedClass, "create", MethodType.methodType(Object.class, RecordingStream.class)) : null;
+            MethodHandle skipHandle = MethodHandles.lookup().findStatic(generatedClass, "skip", MethodType.methodType(void.class, RecordingStream.class));
             return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
         } catch (Exception e) {
             log.error("Failed to load generated handler class for {}, bytecode can be found at {}", clz, debugPath, e);
