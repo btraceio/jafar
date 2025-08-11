@@ -19,6 +19,7 @@ build/
 .idea
 
 *.jfr
+**/.DS_Store
 
 harness*
 launcher*
@@ -26,3 +27,6 @@ launcher*
 /lib/
 
 **/gradle.properties
+
+# cursor history
+.history
