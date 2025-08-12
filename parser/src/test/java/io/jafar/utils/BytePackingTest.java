@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 public class BytePackingTest {
 
     public static Stream<Arguments> byteOrders() {
-        return Stream.of(Arguments.of(BIG_ENDIAN, LITTLE_ENDIAN));
+        return Stream.of(Arguments.of(BIG_ENDIAN), Arguments.of(LITTLE_ENDIAN));
     }
 
     @ParameterizedTest
