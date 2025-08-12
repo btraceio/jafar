@@ -17,7 +17,7 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(8)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
@@ -36,9 +36,6 @@ dependencies {
 }
 
 test {
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(11)
-    }
     jvmArgs '-Xmx8g', '-Xms1g'
     useJUnitPlatform()
 }

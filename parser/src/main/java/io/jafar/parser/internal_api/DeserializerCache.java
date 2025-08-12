@@ -1,10 +1,7 @@
 package io.jafar.parser.internal_api;
 
-import java.util.AbstractMap;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -250,7 +247,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an empty immutable map
          */
         public static <K, V> Map<K, V> of() {
-            return new HashMap<>();
+            return Map.of();
         }
 
         /**
@@ -263,9 +260,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mapping
          */
         public static <K, V> Map<K, V> of(K k1, V v1) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            return map;
+            return Map.of(k1, v1);
         }
 
         /**
@@ -280,10 +275,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            return map;
+            return Map.of(k1, v1, k2, v2);
         }
 
         /**
@@ -300,11 +292,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3);
         }
 
         /**
@@ -323,12 +311,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4);
         }
 
         /**
@@ -349,13 +332,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5);
         }
 
         /**
@@ -378,14 +355,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            map.put(k6, v6);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6);
         }
 
         /**
@@ -410,15 +380,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6, K k7, V v7) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            map.put(k6, v6);
-            map.put(k7, v7);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7);
         }
 
         /**
@@ -445,16 +407,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6, K k7, V v7, K k8, V v8) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            map.put(k6, v6);
-            map.put(k7, v7);
-            map.put(k8, v8);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8);
         }
 
         /**
@@ -483,17 +436,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6, K k7, V v7, K k8, V v8, K k9, V v9) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            map.put(k6, v6);
-            map.put(k7, v7);
-            map.put(k8, v8);
-            map.put(k9, v9);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8, k9, v9);
         }
 
         /**
@@ -524,18 +467,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the specified mappings
          */
         public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6, K k7, V v7, K k8, V v8, K k9, V v9, K k10, V v10) {
-            Map<K, V> map = new HashMap<>();
-            map.put(k1, v1);
-            map.put(k2, v2);
-            map.put(k3, v3);
-            map.put(k4, v4);
-            map.put(k5, v5);
-            map.put(k6, v6);
-            map.put(k7, v7);
-            map.put(k8, v8);
-            map.put(k9, v9);
-            map.put(k10, v10);
-            return map;
+            return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8, k9, v9, k10, v10);
         }
 
         /**
@@ -548,11 +480,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          */
         @SafeVarargs
         public static <K, V> Map<K, V> ofEntries(Entry<? extends K, ? extends V>... entries) {
-            Map<K, V> map = new HashMap<>();
-            for (Entry<? extends K, ? extends V> entry : entries) {
-                map.put(entry.getKey(), entry.getValue());
-            }
-            return map;
+            return Map.ofEntries(entries);
         }
 
         /**
@@ -565,7 +493,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map entry
          */
         public static <K, V> Entry<K, V> entry(K k, V v) {
-            return new AbstractMap.SimpleEntry<>(k, v);
+            return Map.entry(k, v);
         }
 
         /**
@@ -577,7 +505,7 @@ public interface DeserializerCache extends ConcurrentMap<TypedParserContext.Dese
          * @return an immutable map containing the mappings of the given map
          */
         public static <K, V> Map<K, V> copyOf(Map<? extends K, ? extends V> map) {
-            return new HashMap<>(map);
+            return Map.copyOf(map);
         }
     }
 }

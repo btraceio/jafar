@@ -48,33 +48,25 @@ public final class TypeSkipper {
         }
         boolean withCp = fld.hasConstantPool();
         while (fldClz.isSimpleType()) {
-            fldClz = fldClz.getFields().get(0).getType();
+            fldClz = fldClz.getFields().getFirst().getType();
         }
         switch (fldClz.getName()) {
-            case "byte":
-            case "boolean":
-                instructions.add(Instructions.BYTE);
-                break;
-            case "char":
-            case "short":
-            case "int":
-            case "long":
-                instructions.add(Instructions.VARINT);
-                break;
-            case "float":
-                instructions.add(Instructions.FLOAT);
-                break;
-            case "double":
-                instructions.add(Instructions.DOUBLE);
-                break;
-            case "java.lang.String":
+            case "byte", "boolean" ->
+                    instructions.add(Instructions.BYTE);
+            case "char", "short", "int", "long" ->
+                    instructions.add(Instructions.VARINT);
+            case "float" ->
+                    instructions.add(Instructions.FLOAT);
+            case "double" ->
+                    instructions.add(Instructions.DOUBLE);
+            case "java.lang.String" -> {
                 if (withCp) {
                     instructions.add(Instructions.CP_ENTRY);
                 } else {
                     instructions.add(Instructions.STRING);
                 }
-                break;
-            default:
+            }
+            default -> {
                 if (withCp) {
                     instructions.add(Instructions.CP_ENTRY);
                 } else {
@@ -82,7 +74,7 @@ public final class TypeSkipper {
                         fillSkipper(subField, instructions);
                     }
                 }
-                break;
+            }
         }
         if (fld.getDimension() > 0) {
             instructions.set(arraySizeIdx, instructions.size() - startingSize - 2);

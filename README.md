@@ -4,7 +4,7 @@ Experimental, fast JFR parser with a small, focused API.
 Very much a work in progress. The goal is to parse JFR files and extract event data with minimal ceremony.
 
 ## Requirements
-- Java 17+
+- Java 21+
 - Git LFS (recordings are stored with LFS). Install per GitHub docs: `https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage`
 
 ## Build

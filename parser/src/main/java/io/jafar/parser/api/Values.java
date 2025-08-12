@@ -35,20 +35,17 @@ public final class Values {
             return current;
         }
         for (Object segment : path) {
-            if (current instanceof ComplexType) {
-                ComplexType complex = (ComplexType) current;
+            if (current instanceof ComplexType complex) {
                 current = complex.getValue();
             }
             if (segment instanceof CharSequence) {
                 String key = segment.toString();
-                if (current instanceof Map<?, ?>) {
-                    Map<String, Object> map = (Map<String, Object>) current;
-                    current = map.get(key);
+                if (current instanceof Map<?, ?> map) {
+                    current = ((Map<String, Object>) map).get(key);
                 } else {
                     return null;
                 }
-            } else if (segment instanceof Integer) {
-                Integer idx = (Integer) segment;
+            } else if (segment instanceof Integer idx) {
                 Object array = unwrapArray(current);
                 if (array == null) return null;
                 int length = Array.getLength(array);
@@ -86,8 +83,7 @@ public final class Values {
         Map<String, Object> out = new HashMap<>(root.size());
         for (Map.Entry<String, Object> e : root.entrySet()) {
             Object v = e.getValue();
-            if (v instanceof ComplexType) {
-                ComplexType c = (ComplexType) v;
+            if (v instanceof ComplexType c) {
                 v = c.getValue();
             }
             v = unwrapArray(v);
@@ -114,8 +110,7 @@ public final class Values {
     }
 
     private static Object resolveDeepValue(Object v) {
-        if (v instanceof ComplexType) {
-            ComplexType c = (ComplexType) v;
+        if (v instanceof ComplexType c) {
             return resolvedDeep(c.getValue());
         }
         Object array = unwrapArray(v);
@@ -131,31 +126,28 @@ public final class Values {
             }
             return out;
         }
-        if (v instanceof Map<?, ?>) {
-            Map<?, ?> m = (Map<?, ?>) v;
-            Map<String, Object> res = new HashMap<>(m.size());
-            for (Map.Entry<?, ?> me : m.entrySet()) {
+        if (v instanceof Map<?, ?> m) {
+            Map<String, Object> res = new HashMap<>(((Map<?, ?>) m).size());
+            for (Map.Entry<?, ?> me : ((Map<?, ?>) m).entrySet()) {
                 res.put(String.valueOf(me.getKey()), resolveDeepValue(me.getValue()));
             }
             return res;
         }
-        return array;
+        return v;
     }
 
     /**
      * If the value is an {@link ArrayType}, return its backing array; otherwise return the value unchanged.
      */
     private static Object unwrapArray(Object value) {
-        if (value instanceof ArrayType) {
-            ArrayType at = (ArrayType) value;
+        if (value instanceof ArrayType at) {
             return at.getArray();
         }
         return value;
     }
 
     private static Object unwrapComplex(Object value) {
-        if (value instanceof ComplexType) {
-            ComplexType ct = (ComplexType) value;
+        if (value instanceof ComplexType ct) {
             return ct.getValue();
         }
         return value;
