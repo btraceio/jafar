@@ -18,20 +18,20 @@ public final class UntypedParserContextFactory implements ParserContextFactory {
      * </p>
      */
     public UntypedParserContextFactory() {}
-    
+
     /**
      * Creates a new parser context for the specified chunk.
      * <p>
-     * If a parent context is provided, it is reused; otherwise, a new
-     * UntypedParserContext is created for the specified chunk index.
+     * The parent context is ignored. The untyped parser will always create
+     * a fresh context.
      * </p>
-     * 
-     * @param parent the parent parser context, or {@code null} to create a new one
+     *
+     * @param parent the parent parser context (ignored)
      * @param chunkIndex the index of the chunk to create a context for
      * @return a parser context suitable for parsing the specified chunk
      */
     @Override
     public ParserContext newContext(ParserContext parent, int chunkIndex) {
-        return parent != null ? parent : new UntypedParserContext(chunkIndex);
+        return new UntypedParserContext(chunkIndex);
     }
 }
