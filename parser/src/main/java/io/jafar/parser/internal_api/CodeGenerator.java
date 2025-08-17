@@ -66,7 +66,7 @@ final class CodeGenerator {
     }
 
     static void handleFieldRef(ClassVisitor cv, String clzName, long typeId, boolean isArray, Class<?> fldType, String fldName, FieldMapping mapping, boolean generateRefField) {
-        if (fldType == null) {
+        if (fldType == null && !mapping.raw()) {
             // field is never accessed directly, can skip the rest
             return;
         }
@@ -871,7 +871,7 @@ final class CodeGenerator {
             MetadataClass current = stack.pop();
             if (target != null) {
                 for (MetadataField field : current.getFields()) {
-                    String fieldName = field.getName();
+                    String fieldName = field.getName().replace('.', '_');
                     allFields.add(field);
                     if (usedAttributes.contains(fieldName)) {
                         appliedFields.add(field);
