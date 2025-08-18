@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# JFR Shell - Interactive JFR Analysis Tool
+# 
+# Usage: 
+#   ./jfr-shell-launcher                    # Start interactive shell
+#   ./jfr-shell-launcher --help             # Show help
+#   ./jfr-shell-launcher -f recording.jfr   # Open JFR file immediately
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JAR_FILE="$SCRIPT_DIR/jfr-shell/build/libs/jfr-shell-0.0.1-SNAPSHOT.jar"
+
+# Build if jar doesn't exist
+if [ ! -f "$JAR_FILE" ]; then
+    echo "Building JFR Shell..."
+    cd "$SCRIPT_DIR"
+    ./gradlew :jfr-shell:build -q
+fi
+
+# Run the JFR shell
+exec java -jar "$JAR_FILE" "$@"

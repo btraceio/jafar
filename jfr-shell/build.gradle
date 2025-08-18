@@ -1,0 +1,80 @@
+plugins {
+    id 'groovy'
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '8.3.6'
+    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
+}
+
+def libraryName = "jfr-shell"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'io.jafar.shell.Main'
+}
+
+dependencies {
+    implementation project(':parser')
+    implementation project(':tools')
+    
+    // Groovy dependencies
+    implementation 'org.apache.groovy:groovy-all:4.0.15'
+    
+    // Command line parsing
+    implementation 'info.picocli:picocli:4.7.5'
+    
+    // JLine for better terminal handling
+    implementation 'org.jline:jline-terminal:3.21.0'
+    implementation 'org.jline:jline-reader:3.21.0'
+    
+    // Utilities
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+    implementation 'org.slf4j:slf4j-simple:2.0.5'
+    
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testImplementation 'org.spockframework:spock-core:2.3-groovy-4.0'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+shadowJar {
+    group 'Build'
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('')
+    
+    // Ensure main class is set
+    manifest {
+        attributes 'Main-Class': 'io.jafar.shell.Main'
+    }
+}
+
+generateJafarTypes {
+    overwrite = true
+    targetPackage = 'io.jafar.shell.types'
+    // Generate types for common JFR events by default
+    eventTypeFilter {
+        it.startsWith('jdk.') || it.startsWith('jfr.')
+    }
+}
+
+// Ensure type generation runs before compilation
+compileJava.dependsOn tasks.named('generateJafarTypes')
+compileGroovy.dependsOn tasks.named('generateJafarTypes')
