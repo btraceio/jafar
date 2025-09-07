@@ -12,57 +12,8 @@ permissions:
   actions: read
 
 jobs:
-  test:
-    name: Build and Test (PR)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: gradle
-
-      - name: Prepare test resources
-        run: bash ./get_resources.sh
-
-      - name: Build and test
-        run: ./gradlew --stacktrace --no-daemon build
-
-      - name: JUnit PR annotations
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: JUnit Test Report
-          path: '**/build/test-results/test/*.xml'
-          reporter: java-junit
-          fail-on-error: false
-
-      - name: Upload JUnit XML reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-xml
-          path: |
-            **/build/test-results/test/*.xml
-          retention-days: 14
-
-      - name: Upload HTML test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-html
-          path: |
-            **/build/reports/tests/test
-          retention-days: 14
-
-  test-parser-matrix:
-    name: Parser Tests (JDK ${{ matrix.java }})
+  tests:
+    name: Tests (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -91,18 +42,37 @@ jobs:
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
-      - name: Build parser (skip Spotless on JDK 8)
+      - name: Build and test (JDK ${{ matrix.java }})
         run: |
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava :parser:core8Test
           else
-            ./gradlew --stacktrace --no-daemon :parser:build
+            ./gradlew --stacktrace --no-daemon build
           fi
 
-      - name: Run parser tests (skip Spotless on JDK 8)
-        run: |
-          if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:core8Test
-          else
-            ./gradlew --stacktrace --no-daemon :parser:test
-          fi
+      - name: JUnit PR annotations (JDK 21)
+        if: always() && matrix.java == '21'
+        uses: dorny/test-reporter@v1
+        with:
+          name: JUnit Test Report
+          path: '**/build/test-results/test/*.xml'
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload JUnit XML reports (JDK 21)
+        if: always() && matrix.java == '21'
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml
+          path: |
+            **/build/test-results/test/*.xml
+          retention-days: 14
+
+      - name: Upload HTML test reports (JDK 21)
+        if: always() && matrix.java == '21'
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-html
+          path: |
+            **/build/reports/tests/test
+          retention-days: 14
