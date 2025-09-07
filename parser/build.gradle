@@ -31,11 +31,28 @@ sourceSets {
         compileClasspath += sourceSets.main.output
         runtimeClasspath += output + compileClasspath
     }
+    core8Test {
+        java {
+            srcDirs = ["src/core8Test/java"]
+        }
+        resources {
+            // Reuse existing test resources (e.g., test-ap.jfr)
+            srcDirs = ["src/test/resources"]
+        }
+        compileClasspath += sourceSets.main.output + configurations.testCompileClasspath
+        runtimeClasspath += output + sourceSets.main.runtimeClasspath + configurations.testRuntimeClasspath
+    }
 }
 
 configurations {
     java21Implementation {
         extendsFrom configurations.implementation
+    }
+    core8TestImplementation {
+        extendsFrom configurations.testImplementation
+    }
+    core8TestRuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
     }
 }
 
@@ -59,6 +76,34 @@ tasks.named('jar') {
 def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
 tasks.named('compileTestJava').configure { JavaCompile t ->
     t.javaCompiler.set(j21CompilerProvider)
+}
+
+def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('test') {
+    javaLauncher.set(j21LauncherProvider)
+}
+
+// Java 8 core parser smoke tests (compile to 8, run on JDK 8)
+def j8CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(8) }
+def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+
+tasks.register('compileCore8TestJavaCompat', JavaCompile) {
+    source = sourceSets.core8Test.java
+    classpath = sourceSets.core8Test.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/core8Test")
+    options.release.set(8)
+    // Use JDK21 compiler to produce Java 8 bytecode via --release 8
+    javaCompiler.set(j21CompilerProvider)
+}
+
+tasks.register('core8Test', Test) {
+    description = 'Runs core parser smoke tests on JDK 8.'
+    group = 'verification'
+    testClassesDirs = layout.buildDirectory.dir('classes/java/core8Test').map { it.asFile }.get().exists() ? files(layout.buildDirectory.dir('classes/java/core8Test')) : files()
+    classpath = sourceSets.core8Test.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/core8Test'))
+    shouldRunAfter tasks.named('test')
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileCore8TestJavaCompat')
 }
 
 dependencies {
