@@ -69,6 +69,9 @@ public interface Control {
     long position();
   }
 
+  /** Immediately abort the curent processing */
+  void abort();
+
   /**
    * Retrieves the stream proxy that allows querying the current byte position. The returned object
    * may become invalid outside handler invocation.

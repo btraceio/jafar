@@ -82,6 +82,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   /** Implementation of Control interface that provides access to stream information. */
   private static final class ControlImpl implements Control {
     private RecordingStream rStream;
+    private volatile boolean abortFlag = false;
 
     private final Stream stream =
         new Stream() {
@@ -98,6 +99,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
      */
     void setStream(RecordingStream rStream) {
       this.rStream = rStream;
+    }
+
+    @Override
+    public void abort() {
+      this.abortFlag = true;
     }
 
     /** {@inheritDoc} */
@@ -335,8 +341,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 RecordingStream stream = context.get(RecordingStream.class);
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
                 Object deserialized = clz.read(stream);
+                ControlImpl ctrl = (ControlImpl) control.get();
                 for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
-                  handler.handle(deserialized, control.get());
+                  handler.handle(deserialized, ctrl);
+                  if (ctrl.abortFlag) {
+                    return false;
+                  }
                 }
               }
             }
