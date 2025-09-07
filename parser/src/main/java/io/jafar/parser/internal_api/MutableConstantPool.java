@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -38,7 +39,7 @@ public final class MutableConstantPool implements ConstantPool {
     this.offsets = new Long2LongOpenHashMap(count);
     this.entries = new Long2ObjectOpenHashMap<>(count);
     this.stream = chunkStream;
-    var context = chunkStream.getContext();
+    ParserContext context = chunkStream.getContext();
     clazz = context.getMetadataLookup().getClass(typeId);
   }
 

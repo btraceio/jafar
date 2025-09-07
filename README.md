@@ -132,6 +132,12 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
   - JDK 9–14: `MethodHandles.Lookup#defineClass(byte[])` (good)
   - JDK 8: `sun.misc.Unsafe#defineAnonymousClass` (compatible; slightly heavier)
 - Selection is automatic based on capability probes; no flags required. Enable debug logs to see the chosen strategy.
+
+### Multi‑Release JAR (parser)
+- The `parser` artifact is a Multi‑Release JAR:
+  - Base classes target Java 8 for broad compatibility.
+  - Java 21 overrides live under `META-INF/versions/21` and restore faster implementations (e.g., zero‑copy `ByteBuffer` slicing, `Arrays.equals` range checks, `Files.writeString`, etc.).
+- On Java 21+, the JVM loads these optimized classes automatically. On older JVMs, the Java 8 fallbacks are used.
 - Annotations
   - `@JfrType("<fq.type>")`: declare the JFR type an interface represents.
   - `@JfrField("<jfrField>", raw = false)`: map differing names or request raw representation.
