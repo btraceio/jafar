@@ -1,10 +1,12 @@
 package io.jafar.parser.types;
 
 import io.jafar.parser.api.JfrType;
-@JfrType("jdk.types.Package")
 
+@JfrType("jdk.types.Package")
 public interface JFRPackage {
-	String name();
-	JFRModule module();
-	boolean exported();
+  String name();
+
+  JFRModule module();
+
+  boolean exported();
 }

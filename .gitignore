@@ -30,3 +30,5 @@ launcher*
 
 # cursor history
 .history
+/.githooks/pre-commit
+/.vscode/settings.json

@@ -21,7 +21,31 @@ repositories {
     }
 }
 
-nexusPublishing {
+spotless {
+    // Format Java in all modules
+    java {
+        target '**/src/**/*.java'
+        googleJavaFormat('1.17.0')
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+    // Format Groovy plugin sources
+    groovy {
+        target 'jafar-gradle-plugin/src/**/*.groovy'
+        greclipse()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+    // Format Gradle build scripts
+    format 'gradle', {
+        target '*.gradle', '**/*.gradle'
+        indentWithSpaces(4)
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+    nexusPublishing {
     repositories {
         sonatype {
           // see https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/#configuration
@@ -38,4 +62,16 @@ nexusPublishing {
     }
 }
 
+// Ensure formatting is checked during all builds
+allprojects {
+    tasks.matching { it.name == 'check' }.configureEach {
+        dependsOn rootProject.tasks.named('spotlessCheck')
+    }
+}
 
+// Also enforce formatting when running tests directly
+allprojects {
+    tasks.withType(Test).configureEach {
+        dependsOn rootProject.tasks.named('spotlessCheck')
+    }
+}

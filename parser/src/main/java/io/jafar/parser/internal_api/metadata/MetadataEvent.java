@@ -1,16 +1,15 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.AbstractEvent;
+import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
+import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-
-import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.ParsingUtils;
-import io.jafar.parser.internal_api.MutableMetadataLookup;
-import io.jafar.parser.internal_api.RecordingStream;
 
 /**
  * JFR Chunk metadata
@@ -23,16 +22,16 @@ public final class MetadataEvent extends AbstractEvent {
 
   /** The size of this metadata event in bytes. */
   public final int size;
-  
+
   /** The start time of this metadata event in nanoseconds. */
   public final long startTime;
-  
+
   /** The duration of this metadata event in nanoseconds. */
   public final long duration;
-  
+
   /** The unique identifier for this metadata event. */
   public final long metadataId;
-  
+
   private final MetadataRoot root;
   private final List<MetadataClass> classes = new ArrayList<>(200);
 
@@ -40,7 +39,7 @@ public final class MetadataEvent extends AbstractEvent {
 
   /**
    * Constructs a new MetadataEvent from the recording stream.
-   * 
+   *
    * @param stream the recording stream to read from
    * @param forceConstantPools whether to force constant pool processing
    * @throws IOException if an I/O error occurs during construction
@@ -66,7 +65,7 @@ public final class MetadataEvent extends AbstractEvent {
 
   /**
    * Reads the string table from the recording stream.
-   * 
+   *
    * @param stream the recording stream to read from
    * @throws IOException if an I/O error occurs during reading
    */
@@ -76,12 +75,13 @@ public final class MetadataEvent extends AbstractEvent {
     for (int stringIdx = 0; stringIdx < stringCnt; stringIdx++) {
       stringConstants[stringIdx] = ParsingUtils.readUTF8(stream);
     }
-    ((MutableMetadataLookup)stream.getContext().getMetadataLookup()).setStringtable(stringConstants);
+    ((MutableMetadataLookup) stream.getContext().getMetadataLookup())
+        .setStringtable(stringConstants);
   }
 
   /**
    * Reads a metadata element from the recording stream.
-   * 
+   *
    * @param stream the recording stream to read from
    * @return the parsed metadata element
    * @throws IOException if an I/O error occurs during reading
@@ -93,40 +93,49 @@ public final class MetadataEvent extends AbstractEvent {
       String typeId = stream.getContext().getMetadataLookup().getString(stringPtr);
       AbstractMetadataElement element = null;
       switch (typeId) {
-        case "class": {
-          MetadataClass clz = new MetadataClass(stream, this);
-          classes.add(clz);
-          element =  clz;
-          break;
-        }
-        case "field": {
-          element = new MetadataField(stream, this, forceConstantPools);
-          break;
-        }
-        case "annotation": {
-          element = new MetadataAnnotation(stream, this);
-          break;
-        }
-        case "root": {
-          element = new MetadataRoot(stream, this);
-          break;
-        }
-        case "metadata": {
-          element = new MetadataElement(stream, this);
-          break;
-        }
-        case "region": {
-          element = new MetadataRegion(stream, this);
-          break;
-        }
-        case "setting": {
-          element = new MetadataSetting(stream, this);
-          break;
-        }
-        default: {
-          throw new IOException("Unsupported metadata type: " + typeId);
-        }
-      };
+        case "class":
+          {
+            MetadataClass clz = new MetadataClass(stream, this);
+            classes.add(clz);
+            element = clz;
+            break;
+          }
+        case "field":
+          {
+            element = new MetadataField(stream, this, forceConstantPools);
+            break;
+          }
+        case "annotation":
+          {
+            element = new MetadataAnnotation(stream, this);
+            break;
+          }
+        case "root":
+          {
+            element = new MetadataRoot(stream, this);
+            break;
+          }
+        case "metadata":
+          {
+            element = new MetadataElement(stream, this);
+            break;
+          }
+        case "region":
+          {
+            element = new MetadataRegion(stream, this);
+            break;
+          }
+        case "setting":
+          {
+            element = new MetadataSetting(stream, this);
+            break;
+          }
+        default:
+          {
+            throw new IOException("Unsupported metadata type: " + typeId);
+          }
+      }
+      ;
 
       return element;
     } catch (Throwable t) {
@@ -137,7 +146,7 @@ public final class MetadataEvent extends AbstractEvent {
 
   /**
    * Gets the metadata root element.
-   * 
+   *
    * @return the metadata root element
    */
   public MetadataRoot getRoot() {
@@ -146,7 +155,7 @@ public final class MetadataEvent extends AbstractEvent {
 
   /**
    * Gets an unmodifiable collection of all metadata classes.
-   * 
+   *
    * @return an unmodifiable collection of metadata classes
    */
   public Collection<MetadataClass> getClasses() {
@@ -172,13 +181,20 @@ public final class MetadataEvent extends AbstractEvent {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
     MetadataEvent that = (MetadataEvent) o;
-    return size == that.size && startTime == that.startTime && duration == that.duration && metadataId == that.metadataId && forceConstantPools == that.forceConstantPools && Objects.equals(root, that.root) && Objects.equals(classes, that.classes);
+    return size == that.size
+        && startTime == that.startTime
+        && duration == that.duration
+        && metadataId == that.metadataId
+        && forceConstantPools == that.forceConstantPools
+        && Objects.equals(root, that.root)
+        && Objects.equals(classes, that.classes);
   }
 
   @Override
   public int hashCode() {
     if (!hasHashCode) {
-      hashCode = Objects.hash(size, startTime, duration, metadataId, root, classes, forceConstantPools);
+      hashCode =
+          Objects.hash(size, startTime, duration, metadataId, root, classes, forceConstantPools);
       hasHashCode = true;
     }
     return hashCode;

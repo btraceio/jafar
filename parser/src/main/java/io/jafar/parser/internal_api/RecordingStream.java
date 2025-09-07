@@ -1,16 +1,14 @@
 package io.jafar.parser.internal_api;
 
+import io.jafar.parser.api.ParserContext;
 import java.io.IOException;
 import java.nio.file.Path;
 
-import io.jafar.parser.api.ParserContext;
-
 /**
  * A stream for reading JFR recording data with position tracking and context management.
- * <p>
- * This class provides a high-level interface for reading JFR recording data,
- * including support for slicing, marking/resetting, and context management.
- * </p>
+ *
+ * <p>This class provides a high-level interface for reading JFR recording data, including support
+ * for slicing, marking/resetting, and context management.
  */
 public final class RecordingStream implements AutoCloseable {
   /** The underlying reader for the recording data. */
@@ -18,13 +16,13 @@ public final class RecordingStream implements AutoCloseable {
 
   /** The parser context associated with this stream. */
   private final ParserContext context;
-  
+
   /** The marked position for reset operations. */
   private long mark = -1;
 
   /**
    * Constructs a new RecordingStream from a file path.
-   * 
+   *
    * @param path the path to the JFR recording file
    * @param context the parser context to use
    * @throws IOException if an I/O error occurs during construction
@@ -35,7 +33,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Creates a slice of this stream with the specified position and length.
-   * 
+   *
    * @param pos the starting position for the slice
    * @param len the length of the slice
    * @param context the parser context for the slice
@@ -47,7 +45,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Constructs a new RecordingStream from a reader and context.
-   * 
+   *
    * @param reader the reader for the recording data
    * @param context the parser context to use
    */
@@ -59,7 +57,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Gets the parser context associated with this stream.
-   * 
+   *
    * @return the parser context
    */
   public ParserContext getContext() {
@@ -68,7 +66,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Sets the position in the stream.
-   * 
+   *
    * @param position the new position
    */
   public void position(long position) {
@@ -77,7 +75,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Gets the current position in the stream.
-   * 
+   *
    * @return the current position
    */
   public long position() {
@@ -86,7 +84,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads bytes into the specified buffer.
-   * 
+   *
    * @param buffer the destination buffer
    * @param offset the starting offset in the buffer
    * @param length the number of bytes to read
@@ -100,7 +98,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads a single byte from the stream.
-   * 
+   *
    * @return the byte value
    */
   public byte read() {
@@ -109,7 +107,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads a short value from the stream.
-   * 
+   *
    * @return the short value
    */
   public short readShort() {
@@ -118,7 +116,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads an int value from the stream.
-   * 
+   *
    * @return the int value
    */
   public int readInt() {
@@ -127,7 +125,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads a long value from the stream.
-   * 
+   *
    * @return the long value
    */
   public long readLong() {
@@ -136,7 +134,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads a float value from the stream.
-   * 
+   *
    * @return the float value
    */
   public float readFloat() {
@@ -145,25 +143,25 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Reads a double value from the stream.
-   * 
+   *
    * @return the double value
    */
-  public double readDouble()  {
+  public double readDouble() {
     return reader.readDouble();
   }
 
   /**
    * Reads a variable-length integer from the stream.
-   * 
+   *
    * @return the long value
    */
   public long readVarint() {
     return reader.readVarint();
   }
-  
+
   /**
    * Reads a boolean value from the stream.
-   * 
+   *
    * @return the boolean value
    */
   public boolean readBoolean() {
@@ -172,7 +170,7 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Gets the number of bytes available for reading.
-   * 
+   *
    * @return the number of available bytes
    */
   public long available() {
@@ -181,23 +179,19 @@ public final class RecordingStream implements AutoCloseable {
 
   /**
    * Skips the specified number of bytes.
-   * 
+   *
    * @param bytes the number of bytes to skip
    */
   public void skip(int bytes) {
     reader.skip(bytes);
   }
 
-  /**
-   * Marks the current position for later reset.
-   */
+  /** Marks the current position for later reset. */
   public void mark() {
     mark = reader.position();
   }
 
-  /**
-   * Resets the position to the previously marked position.
-   */
+  /** Resets the position to the previously marked position. */
   public void reset() {
     if (mark > -1) {
       position(mark);
@@ -209,6 +203,7 @@ public final class RecordingStream implements AutoCloseable {
   public void close() {
     try {
       reader.close();
-    } catch (IOException ignored) {}
+    } catch (IOException ignored) {
+    }
   }
 }

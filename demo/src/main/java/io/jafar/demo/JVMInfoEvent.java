@@ -4,6 +4,7 @@ import io.jafar.parser.api.JfrType;
 
 @JfrType("jdk.JVMInformation")
 public interface JVMInfoEvent {
-    String jvmName();
-    String jvmVersion();
+  String jvmName();
+
+  String jvmVersion();
 }

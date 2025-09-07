@@ -1,52 +1,47 @@
 package io.jafar.parser.api;
 
 import io.jafar.parser.impl.ParsingContextImpl;
-
 import java.nio.file.Path;
 
 /**
- * Cross-recording context.
- * Implementation specific, but allows sharing computationally intensive resources
- * between parsing sessions.
- * <p>
- * Reuse a single {@code ParsingContext} across multiple parser instances to enable
- * caching and reduce initialization overhead.
- * </p>
+ * Cross-recording context. Implementation specific, but allows sharing computationally intensive
+ * resources between parsing sessions.
+ *
+ * <p>Reuse a single {@code ParsingContext} across multiple parser instances to enable caching and
+ * reduce initialization overhead.
  */
 public interface ParsingContext {
-    /**
-     * Create a new instance of ParsingContext.
-     *
-     * @return a new instance of ParsingContext
-     */
-    static ParsingContext create() {
-        return new ParsingContextImpl();
-    }
+  /**
+   * Create a new instance of ParsingContext.
+   *
+   * @return a new instance of ParsingContext
+   */
+  static ParsingContext create() {
+    return new ParsingContextImpl();
+  }
 
-    /**
-     * Creates a new instance of a {@link TypedJafarParser} for the given path.
-     *
-     * @param path the path to the recording
-     * @return a new {@link TypedJafarParser} instance
-     */
-    TypedJafarParser newTypedParser(Path path);
+  /**
+   * Creates a new instance of a {@link TypedJafarParser} for the given path.
+   *
+   * @param path the path to the recording
+   * @return a new {@link TypedJafarParser} instance
+   */
+  TypedJafarParser newTypedParser(Path path);
 
-    /**
-     * Creates a new instance of an {@link UntypedJafarParser} for the given path.
-     *
-     * @param path the path to the recording
-     * @return a new {@link UntypedJafarParser} instance
-     */
-    UntypedJafarParser newUntypedParser(Path path);
+  /**
+   * Creates a new instance of an {@link UntypedJafarParser} for the given path.
+   *
+   * @param path the path to the recording
+   * @return a new {@link UntypedJafarParser} instance
+   */
+  UntypedJafarParser newUntypedParser(Path path);
 
-    /**
-     * Returns the uptime of the parsing context in nanoseconds.
-     * <p>
-     * Measures cumulative time since creation, across all parser sessions using this context.
-     * </p>
-     *
-     * @return the uptime in nanoseconds
-     */
-    long uptime();
+  /**
+   * Returns the uptime of the parsing context in nanoseconds.
+   *
+   * <p>Measures cumulative time since creation, across all parser sessions using this context.
+   *
+   * @return the uptime in nanoseconds
+   */
+  long uptime();
 }
-
