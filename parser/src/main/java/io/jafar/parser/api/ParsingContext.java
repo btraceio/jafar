@@ -8,7 +8,12 @@ import java.nio.file.Path;
  * resources between parsing sessions.
  *
  * <p>Reuse a single {@code ParsingContext} across multiple parser instances to enable caching and
- * reduce initialization overhead.
+ * reduce initialization overhead. <hr> <i>!!! IMPORTANT !!!</i>
+ *
+ * <p>The parser is not able to verify the metadata compatibility when reusing the parsing context.
+ *
+ * <p>It is the user's responsibility to make sure the parser will be reused only for recordings
+ * with compatible metadata. Otherwise, the results can be erroneuous or the parser may crash.
  */
 public interface ParsingContext {
   /**
