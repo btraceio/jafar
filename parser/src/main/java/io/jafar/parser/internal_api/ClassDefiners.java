@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory;
 /** Factory for ClassDefiner strategies with reflective implementations. */
 public final class ClassDefiners {
   private static final Logger log = LoggerFactory.getLogger(ClassDefiners.class);
-  private static final String PROP = "jafar.classdefiner"; // hidden|lookup|unsafe|loader
   private static volatile ClassDefiner CACHED;
 
   private ClassDefiners() {}
@@ -18,14 +17,6 @@ public final class ClassDefiners {
   public static ClassDefiner best() {
     ClassDefiner local = CACHED;
     if (local != null) return local;
-
-    String forced = System.getProperty(PROP);
-    if (forced != null) {
-      local = byName(forced.trim());
-      CACHED = local;
-      if (log.isDebugEnabled()) log.debug("Using class definer (forced): {}", local.name());
-      return local;
-    }
 
     // Probe in order of preference
     try {
@@ -45,7 +36,7 @@ public final class ClassDefiners {
       if (privateLookupIn != null && defineHiddenClass != null) {
         local = new HiddenDefiner();
         CACHED = local;
-        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        if (log.isDebugEnabled()) log.debug("Using class definer (auto): {}", local.name());
         return local;
       }
     } catch (Throwable ignored) {
@@ -61,7 +52,7 @@ public final class ClassDefiners {
       if (defineClass != null && privateLookupIn != null) {
         local = new LookupDefiner();
         CACHED = local;
-        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        if (log.isDebugEnabled()) log.debug("Using class definer (auto): {}", local.name());
         return local;
       }
     } catch (Throwable ignored) {
@@ -79,7 +70,7 @@ public final class ClassDefiners {
       if (unsafe != null && m != null) {
         local = new UnsafeDefiner(unsafe, m);
         CACHED = local;
-        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        if (log.isDebugEnabled()) log.debug("Using class definer (auto): {}", local.name());
         return local;
       }
     } catch (Throwable ignored) {
@@ -89,7 +80,7 @@ public final class ClassDefiners {
     // Last resort: use ClassLoader#defineClass
     local = new LoaderDefiner();
     CACHED = local;
-    if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+    if (log.isDebugEnabled()) log.debug("Using class definer (auto): {}", local.name());
     return local;
   }
 
