@@ -18,39 +18,13 @@ import jdk.jfr.EventType;
 import jdk.jfr.FlightRecorder;
 import jdk.jfr.ValueDescriptor;
 
-/**
- * Utility class for generating Java interfaces from JFR event types.
- *
- * <p>This class provides functionality to generate Java interface definitions that correspond to
- * JFR event types, either from runtime JFR information or from JFR recording files. The generated
- * interfaces can be used with the typed JFR parser for type-safe event handling.
- */
 public final class TypeGenerator {
-  /** Path to the JFR recording file, or null for runtime generation. */
   private final Path jfr;
-
-  /** Output directory for generated files. */
   private final Path output;
-
-  /** Target package for generated interfaces. */
   private final String pkg;
-
-  /** Whether to overwrite existing files. */
   private final boolean overwrite;
-
-  /** Filter for selecting which event types to generate. */
   private final Predicate<String> eventTypeFilter;
 
-  /**
-   * Constructs a new TypeGenerator with the specified parameters.
-   *
-   * @param jfr the path to the JFR recording file, or null for runtime generation
-   * @param output the output directory for generated files
-   * @param targetPackage the target package for generated interfaces
-   * @param overwrite whether to overwrite existing files
-   * @param eventTypeFilter filter for selecting which event types to generate
-   * @throws IOException if an I/O error occurs during setup
-   */
   public TypeGenerator(
       Path jfr,
       Path output,
@@ -69,14 +43,6 @@ public final class TypeGenerator {
     Files.createDirectories(this.output);
   }
 
-  /**
-   * Generates Java interfaces from JFR event types.
-   *
-   * <p>This method either generates interfaces from runtime JFR information or from a JFR recording
-   * file, depending on the configuration.
-   *
-   * @throws Exception if an error occurs during generation
-   */
   public void generate() throws Exception {
     if (jfr == null) {
       generateFromRuntime();
@@ -95,10 +61,9 @@ public final class TypeGenerator {
                 try {
                   Path target = output.resolve("JFR" + getSimpleName(et.getName()) + ".java");
                   if (overwrite || !Files.exists(target)) {
-                    Files.write(
+                    Files.writeString(
                         target,
-                        generateTypeFromEvent(et, generated)
-                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        generateTypeFromEvent(et, generated),
                         StandardOpenOption.CREATE_NEW);
                   }
                 } catch (IOException e) {
@@ -149,10 +114,8 @@ public final class TypeGenerator {
       String targetName = isPrimitiveName(typeName) ? typeName : "JFR" + getSimpleName(typeName);
       Path target = output.resolve(targetName + ".java");
       if (overwrite || !Files.exists(target)) {
-        Files.write(
-            output.resolve(targetName + ".java"),
-            data.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-            StandardOpenOption.CREATE_NEW);
+        Files.writeString(
+            output.resolve(targetName + ".java"), data, StandardOpenOption.CREATE_NEW);
       }
     }
   }
@@ -173,26 +136,19 @@ public final class TypeGenerator {
       field
           .getFields()
           .forEach(
-              subfield -> {
-                try {
-                  writeTypeFromField(subfield, generatedTypes);
-                } catch (Exception e) {
-                  throw new RuntimeException(e);
-                }
-                String fldName = sanitizeFieldName(subfield.getName());
-                sb.append('\t');
-                if (!fldName.equals(subfield.getName())) {
-                  sb.append("@JfrField(\"").append(subfield.getName()).append("\") ");
-                }
-                sb.append(isPrimitiveName(subfield.getTypeName()) ? "" : "JFR")
-                    .append(getSimpleName(subfield.getTypeName()));
-                if (subfield.isArray()) {
-                  sb.append("[]");
-                }
-                sb.append(" ");
-                sb.append(fldName).append("();\n");
-              });
+              subfield ->
+                  sb.append("\t")
+                      .append(
+                          subfield.getTypeName().equals("java.lang.String")
+                              ? "String"
+                              : (isPrimitiveName(subfield.getTypeName())
+                                  ? subfield.getTypeName()
+                                  : "JFR" + getSimpleName(subfield.getTypeName())))
+                      .append(" ")
+                      .append(sanitizeFieldName(subfield.getName()))
+                      .append("();\n"));
       sb.append("}\n");
+
       return sb.toString();
     }
     return null;
@@ -206,7 +162,6 @@ public final class TypeGenerator {
             @Override
             public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
               metadata.getClasses().forEach(TypeGenerator.this::writeClass);
-              // stop processing
               return false;
             }
           });
@@ -223,10 +178,7 @@ public final class TypeGenerator {
     try {
       Path classFile = output.resolve(getClassName(metadataClass) + ".java");
       if (overwrite || !Files.exists(classFile)) {
-        Files.write(
-            classFile,
-            generateClass(metadataClass).getBytes(java.nio.charset.StandardCharsets.UTF_8),
-            StandardOpenOption.CREATE_NEW);
+        Files.writeString(classFile, generateClass(metadataClass), StandardOpenOption.CREATE_NEW);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -249,14 +201,10 @@ public final class TypeGenerator {
       }
       MetadataClass fldType = field.getType();
       while (fldType.isSimpleType()) {
-        java.util.List<MetadataField> fl = fldType.getFields();
-        fldType = fl.get(0).getType();
+        fldType = fldType.getFields().getFirst().getType();
       }
       sb.append(getClassName(fldType));
-      int dims = Math.max(0, field.getDimension());
-      for (int i = 0; i < dims; i++) {
-        sb.append("[]");
-      }
+      sb.append("[]".repeat(Math.max(0, field.getDimension())));
       sb.append(" ");
       sb.append(fldName).append("();\n");
     }
@@ -287,10 +235,6 @@ public final class TypeGenerator {
     if ("jdk.jfr.Event".equals(superType)) {
       return true;
     }
-    /*
-    TODO: this is not technically true as a type may have JFR event upper in hierarchy but
-          let's ignore it for now
-     */
     return false;
   }
 
@@ -302,10 +246,6 @@ public final class TypeGenerator {
     if ("java.lang.annotation.Annotation".equals(superType)) {
       return true;
     }
-    /*
-    TODO: this is not technically true as a type may have JFR event upper in hierarchy but
-          let's ignore it for now
-     */
     return false;
   }
 
@@ -315,10 +255,6 @@ public final class TypeGenerator {
       return false;
     }
     return "jdk.jfr.SettingControl".equals(superType);
-    /*
-    TODO: this is not technically true as a type may have JFR event upper in hierarchy but
-          let's ignore it for now
-     */
   }
 
   private static String getSimpleName(String name) {

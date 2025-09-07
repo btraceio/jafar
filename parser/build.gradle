@@ -17,8 +17,48 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        // Target Java 8 bytecode for the parser module
+        languageVersion = JavaLanguageVersion.of(8)
     }
+}
+
+// Multi-Release JAR setup: provide Java 21 overrides under META-INF/versions/21
+sourceSets {
+    java21 {
+        java {
+            srcDirs = ["src/java21/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    java21Implementation {
+        extendsFrom configurations.implementation
+    }
+}
+
+tasks.register('compileJava21', JavaCompile) {
+    source = sourceSets.java21.java
+    classpath = sourceSets.java21.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java21")
+    options.release.set(21)
+}
+
+// Ensure Java 21 classes are compiled before packaging
+tasks.named('jar') {
+    dependsOn tasks.named('compileJava21')
+    manifest { attributes('Multi-Release': 'true') }
+    from(layout.buildDirectory.dir('classes/java/java21')) {
+        into('META-INF/versions/21')
+    }
+}
+
+// Allow test sources to use a newer language level while main targets 8
+def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
 }
 
 dependencies {

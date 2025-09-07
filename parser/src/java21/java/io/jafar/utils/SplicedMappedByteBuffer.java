@@ -10,51 +10,17 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Implementation of CustomByteBuffer that uses multiple memory-mapped file segments.
- *
- * <p>This class provides a byte buffer implementation that splits large files into multiple
- * memory-mapped segments (splices) for efficient memory usage. It handles reading across splice
- * boundaries automatically and maintains position tracking across all segments.
- */
 public final class SplicedMappedByteBuffer implements CustomByteBuffer {
-  /** Size of each splice segment in bytes. */
   private final int spliceSize;
-
-  /** Current splice index. */
   private int index = 0;
-
-  /** Current offset within the current splice. */
   private int offset = 0;
-
-  /** Current absolute position in the buffer. */
   private long position = 0;
-
-  /** Marked position for reset operations. */
   private long mark = 0;
-
-  /** Total size limit of the buffer. */
   private final long limit;
-
-  /** Base offset for slice operations. */
   private final long sliceBase;
-
-  /** Whether the buffer uses native byte order. */
   private final boolean nativeOrder;
-
-  /** Array of memory-mapped byte buffer segments. */
   private final MappedByteBuffer[] splices;
 
-  /**
-   * Constructs a new SplicedMappedByteBuffer with the specified parameters.
-   *
-   * @param splices the array of memory-mapped byte buffers
-   * @param spliceSize the size of each splice segment
-   * @param sliceOffset the offset within the slice
-   * @param sliceIndex the starting splice index
-   * @param limit the total size limit
-   * @param nativeOrder whether to use native byte order
-   */
   SplicedMappedByteBuffer(
       MappedByteBuffer[] splices,
       int spliceSize,
@@ -71,13 +37,6 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     this.nativeOrder = nativeOrder;
   }
 
-  /**
-   * Constructs a new SplicedMappedByteBuffer for the specified file.
-   *
-   * @param file the file to memory-map
-   * @param spliceSize the size of each splice segment
-   * @throws IOException if an I/O error occurs during file mapping
-   */
   SplicedMappedByteBuffer(Path file, int spliceSize) throws IOException {
     this.sliceBase = 0;
     this.spliceSize = spliceSize;
@@ -95,7 +54,7 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
                 (long) i * spliceSize,
                 (long) Math.min(spliceSize, remaining));
         inOrder &= splices[i].order() == ByteOrder.nativeOrder();
-        splices[i].order(ByteOrder.nativeOrder()); // force native order
+        splices[i].order(ByteOrder.nativeOrder());
         remaining -= spliceSize;
       }
       this.nativeOrder = inOrder;
@@ -104,20 +63,17 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public boolean isNativeOrder() {
     return nativeOrder;
   }
 
-  /** {@inheritDoc} */
   @Override
   public CustomByteBuffer slice() {
     return new SplicedMappedByteBuffer(
         splices, spliceSize, offset, index, remaining(), nativeOrder);
   }
 
-  /** {@inheritDoc} */
   @Override
   public CustomByteBuffer slice(long pos, long len) {
     if (pos + len > limit) {
@@ -129,7 +85,6 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
         splices, spliceSize, realOffset, realIndex, len, nativeOrder);
   }
 
-  /** {@inheritDoc} */
   @Override
   public CustomByteBuffer order(ByteOrder order) {
     for (int i = 0; i < splices.length; i++) {
@@ -138,13 +93,11 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     return this;
   }
 
-  /** {@inheritDoc} */
   @Override
   public ByteOrder order() {
     return splices[0].order();
   }
 
-  /** {@inheritDoc} */
   @Override
   public void position(long position) {
     if (position > limit) {
@@ -155,23 +108,16 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     this.position = position;
   }
 
-  /** {@inheritDoc} */
   @Override
   public long position() {
     return position;
   }
 
-  /** {@inheritDoc} */
   @Override
   public long remaining() {
     return limit - position;
   }
 
-  /**
-   * Checks and updates splice offset, advancing to the next splice if necessary.
-   *
-   * @throws BufferOverflowException if attempting to read beyond available splices
-   */
   private void checkSpliceOffset() {
     if (offset == spliceSize) {
       if (++index == splices.length) {
@@ -182,28 +128,19 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public void get(byte[] buffer, int offset, int length) {
     int loaded = 0;
     do {
       checkSpliceOffset();
       int toLoad = (int) Math.min(spliceSize - this.offset, length - loaded);
-      // Absolute bulk get with destination is unavailable on older JDKs; emulate
-      int oldPos = splices[index].position();
-      try {
-        splices[index].position(this.offset);
-        splices[index].get(buffer, offset + loaded, toLoad);
-      } finally {
-        splices[index].position(oldPos);
-      }
+      splices[index].get(this.offset, buffer, offset + loaded, toLoad);
       loaded += toLoad;
       this.offset += toLoad;
     } while (loaded < length);
     position += length;
   }
 
-  /** {@inheritDoc} */
   @Override
   public byte get() {
     checkSpliceOffset();
@@ -211,10 +148,8 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     return splices[index].get(offset++);
   }
 
-  /** Temporary array for reading multi-byte values across splice boundaries. */
   private final byte[] numArray = new byte[8];
 
-  /** {@inheritDoc} */
   @Override
   public short getShort() {
     checkSpliceOffset();
@@ -230,7 +165,6 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public int getInt() {
     checkSpliceOffset();
@@ -247,7 +181,6 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public float getFloat() {
     checkSpliceOffset();
@@ -264,7 +197,6 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public double getDouble() {
     checkSpliceOffset();
@@ -281,7 +213,16 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     }
   }
 
-  /** {@inheritDoc} */
+  @Override
+  public void mark() {
+    mark = position;
+  }
+
+  @Override
+  public void reset() {
+    position(mark);
+  }
+
   @Override
   public long getLong() {
     checkSpliceOffset();
@@ -296,19 +237,5 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
       get(numArray, splitPoint, 8 - splitPoint);
       return ByteBuffer.wrap(numArray).order(splices[0].order()).getLong();
     }
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public void mark() {
-    mark = position;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public void reset() {
-    position = mark;
-    index = (int) ((position + sliceBase) / spliceSize);
-    offset = (int) ((position + sliceBase) % spliceSize);
   }
 }
