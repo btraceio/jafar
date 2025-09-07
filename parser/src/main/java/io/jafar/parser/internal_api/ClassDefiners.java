@@ -4,9 +4,12 @@ import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Factory for ClassDefiner strategies with reflective implementations. */
 public final class ClassDefiners {
+  private static final Logger log = LoggerFactory.getLogger(ClassDefiners.class);
   private static final String PROP = "jafar.classdefiner"; // hidden|lookup|unsafe|loader
   private static volatile ClassDefiner CACHED;
 
@@ -19,7 +22,9 @@ public final class ClassDefiners {
     String forced = System.getProperty(PROP);
     if (forced != null) {
       local = byName(forced.trim());
-      return CACHED = local;
+      CACHED = local;
+      if (log.isDebugEnabled()) log.debug("Using class definer (forced): {}", local.name());
+      return local;
     }
 
     // Probe in order of preference
@@ -39,7 +44,9 @@ public final class ClassDefiners {
               Array.newInstance(classOption, 0).getClass());
       if (privateLookupIn != null && defineHiddenClass != null) {
         local = new HiddenDefiner();
-        return CACHED = local;
+        CACHED = local;
+        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        return local;
       }
     } catch (Throwable ignored) {
       // fall through
@@ -53,7 +60,9 @@ public final class ClassDefiners {
           MethodHandles.class.getMethod("privateLookupIn", Class.class, MethodHandles.Lookup.class);
       if (defineClass != null && privateLookupIn != null) {
         local = new LookupDefiner();
-        return CACHED = local;
+        CACHED = local;
+        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        return local;
       }
     } catch (Throwable ignored) {
       // fall through
@@ -69,7 +78,9 @@ public final class ClassDefiners {
           unsafeClz.getMethod("defineAnonymousClass", Class.class, byte[].class, Object[].class);
       if (unsafe != null && m != null) {
         local = new UnsafeDefiner(unsafe, m);
-        return CACHED = local;
+        CACHED = local;
+        if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+        return local;
       }
     } catch (Throwable ignored) {
       // fall through
@@ -77,7 +88,9 @@ public final class ClassDefiners {
 
     // Last resort: use ClassLoader#defineClass
     local = new LoaderDefiner();
-    return CACHED = local;
+    CACHED = local;
+    if (log.isDebugEnabled()) log.debug("Using class definer: {}", local.name());
+    return local;
   }
 
   public static ClassDefiner byName(String name) {
