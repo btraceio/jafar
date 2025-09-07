@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.JafarParser;
 import io.jafar.parser.api.ParsingContext;
@@ -97,8 +98,9 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
       ChunkParserListener listener =
           new EventStream(parserListener) {
             @Override
-            protected void onEventValue(MetadataClass type, Map<String, Object> value) {
-              handlers.forEach(h -> h.handle(type, value));
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> value, Control ctl) {
+              handlers.forEach(h -> h.handle(type, value, ctl));
             }
           };
       parser.parse(path, listener);

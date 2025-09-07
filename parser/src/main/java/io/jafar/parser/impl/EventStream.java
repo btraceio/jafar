@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -25,6 +26,8 @@ public abstract class EventStream implements ChunkParserListener {
   /** The delegate chunk parser listener. */
   private final ChunkParserListener delegate;
 
+  private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+
   /**
    * Constructs a new EventStream with the specified delegate.
    *
@@ -45,6 +48,8 @@ public abstract class EventStream implements ChunkParserListener {
   public final boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
     // store a new MutableConstantPools
     context.put(ConstantPools.class, new ConstantPools());
+
+    ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
 
     // ! these two keys should be removed at `onChunkEnd` to avoid any unwanted leakage
 
@@ -268,6 +273,7 @@ public abstract class EventStream implements ChunkParserListener {
   @Override
   public final boolean onEvent(
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
+    ControlImpl ctl = (ControlImpl) control.get();
     try {
       GenericValueReader r = context.get(GenericValueReader.class);
       ValueProcessor vp = context.get(ConstantPoolValueProcessor.class);
@@ -282,14 +288,16 @@ public abstract class EventStream implements ChunkParserListener {
             (Map<String, Object>) context.remove(eventClz.getName() + "#value", Map.class);
 
         // Process event value with parsed data
-        onEventValue(eventClz, value);
+        onEventValue(eventClz, value, ctl);
       }
     } catch (IOException e) {
-      return delegate != null
+      return !ctl.abortFlag
+          && delegate != null
           && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
-    return delegate == null
-        || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+    return !ctl.abortFlag
+        && (delegate == null
+            || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
   @Override
@@ -325,6 +333,7 @@ public abstract class EventStream implements ChunkParserListener {
    *
    * @param type the metadata class type of the event
    * @param value the parsed event value as a map
+   * @param ctl parser {@linkplain Control} object
    */
-  protected abstract void onEventValue(MetadataClass type, Map<String, Object> value);
+  protected abstract void onEventValue(MetadataClass type, Map<String, Object> value, Control ctl);
 }

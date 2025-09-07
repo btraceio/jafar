@@ -46,7 +46,7 @@ public class ParsingContextReuseTest {
 
     // Second: untyped session on the same file
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
-      p.handle((t, v) -> cntr.increment());
+      p.handle((t, v, ctl) -> cntr.increment());
       p.run();
     }
     long after = ctx.uptime();
@@ -63,7 +63,7 @@ public class ParsingContextReuseTest {
     long before = ctx.uptime();
     LongAdder cntr = new LongAdder();
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
-      p.handle((t, v) -> cntr.increment());
+      p.handle((t, v, ctl) -> cntr.increment());
       p.run();
     }
 
@@ -96,7 +96,7 @@ public class ParsingContextReuseTest {
     AtomicBoolean thrown = new AtomicBoolean(false);
     try (UntypedJafarParser p = ctx.newUntypedParser(Path.of(new File(uri).getAbsolutePath()))) {
       p.handle(
-          (t, v) -> {
+          (t, v, ctl) -> {
             thrown.set(true);
             throw new RuntimeException("boom");
           });
@@ -111,7 +111,7 @@ public class ParsingContextReuseTest {
     // Second run: ensure the same context still works fine
     AtomicInteger count = new AtomicInteger();
     try (UntypedJafarParser p = ctx.newUntypedParser(Path.of(new File(uri).getAbsolutePath()))) {
-      p.handle((t, v) -> count.incrementAndGet());
+      p.handle((t, v, ctl) -> count.incrementAndGet());
       assertDoesNotThrow(p::run);
     }
     assertTrue(count.get() > 0, "context should remain usable after previous failure");

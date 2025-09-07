@@ -47,7 +47,7 @@ public class UntypedJafarParserCornerCasesTest {
       AtomicReference<MetadataClass> seen = new AtomicReference<>();
       HandlerRegistration<?> reg =
           p.handle(
-              (type, value) -> {
+              (type, value, ctl) -> {
                 seen.set(type);
                 assertNotNull(value.get("value"));
               });

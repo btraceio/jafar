@@ -31,7 +31,7 @@ public class UntypedJafarParserFuzzTest {
     ParsingContext ctx = ParsingContext.create();
     try (UntypedJafarParser p = ctx.newUntypedParser(tmp)) {
       AtomicInteger count = new AtomicInteger();
-      p.handle((t, m) -> count.incrementAndGet());
+      p.handle((t, m, ctl) -> count.incrementAndGet());
       p.run();
       assertTrue(count.get() > 0);
     }

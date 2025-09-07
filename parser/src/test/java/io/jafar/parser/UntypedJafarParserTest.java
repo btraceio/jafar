@@ -20,7 +20,7 @@ public class UntypedJafarParserTest {
     ParsingContext ctx = ParsingContext.create();
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
       AtomicInteger count = new AtomicInteger();
-      HandlerRegistration<?> reg = p.handle((t, v) -> count.incrementAndGet());
+      HandlerRegistration<?> reg = p.handle((t, v, ctl) -> count.incrementAndGet());
       p.run();
       reg.destroy(p);
       assertTrue(count.get() > 0, "Expected at least one event");
@@ -33,7 +33,7 @@ public class UntypedJafarParserTest {
     ParsingContext ctx = ParsingContext.create();
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
       p.handle(
-          (t, v) -> {
+          (t, v, ctl) -> {
             throw new RuntimeException("boom");
           });
       assertThrows(java.io.IOException.class, p::run);

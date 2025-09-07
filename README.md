@@ -27,6 +27,7 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
   HandlerRegistration<MyEvent> reg = p.handle(MyEvent.class, (e, ctl) -> {
     System.out.println(e.myfield());
     long pos = ctl.stream().position(); // current byte position while in handler
+    // ctl.abort(); // optionally stop parsing immediately without throwing
   });
   p.run();
   reg.destroy(p); // deregister
@@ -36,6 +37,7 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
 Notes:
 - Handlers run synchronously on the parser thread. Keep work small or offload.
 - Exceptions thrown from a handler stop parsing and propagate from `run()`.
+- Call `ctl.abort()` inside a handler to stop parsing early without an exception.
 
 ## Untyped API
 Receive events as `Map<String, Object>` with nested maps/arrays when applicable.
@@ -120,6 +122,9 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
   - `uptime()`: cumulative processing time across sessions using the context.
 - `Control`
   - `stream().position()`: current byte position while a handler executes.
+  - `abort()`: stop parsing immediately (no exception thrown).
+  - `chunkInfo()`: chunk metadata with `startTime()`, `duration()`, `size()`, and `convertTicks(long, TimeUnit)`.
+    - Why `convertTicks(...)`? JFR records many time values in chunk-relative ticks. Converting on demand avoids creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. Convert only when needed and to the unit you need.
 - Annotations
   - `@JfrType("<fq.type>")`: declare the JFR type an interface represents.
   - `@JfrField("<jfrField>", raw = false)`: map differing names or request raw representation.
@@ -139,6 +144,38 @@ try (TypedJafarParser p = ctx.newTypedParser(Paths.get("/path/to.b.jfr"))) {
   p.run();
 }
 System.out.println("uptime(ns)=" + ctx.uptime());
+```
+
+- Early termination with Control
+
+```java
+AtomicInteger seen = new AtomicInteger();
+try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to.jfr"))) {
+  HandlerRegistration<JFRExecutionSample> reg =
+      p.handle(JFRExecutionSample.class, (e, ctl) -> {
+        if (seen.incrementAndGet() >= 1000) {
+          ctl.abort(); // stop without throwing
+        }
+      });
+  p.run();
+  reg.destroy(p);
+}
+```
+
+- Converting JFR ticks to time units
+
+```java
+// Some fields are expressed in JFR ticks. Convert them only when needed.
+try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/file.jfr"))) {
+  p.handle((type, value, ctl) -> {
+    long ticksObj = value.get("startTime"); // example field holding ticks
+    long nanos = ctl.chunkInfo().convertTicks(n.longValue(), TimeUnit.NANOSECONDS);
+    // Use nanos directly, or wrap as Instant only when necessary
+    Instant startTs = ctl.chunkInfo().startTime().plusNanos(nanos);
+    // use the startTs instant ...
+  });
+  p.run();
+}
 ```
 
 - Observing parse lifecycle (low-level)

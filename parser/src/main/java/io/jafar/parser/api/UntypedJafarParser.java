@@ -18,7 +18,7 @@ import java.util.Map;
  * <p>Example of consuming wrappers:
  *
  * <pre>{@code
- * p.handle((type, value) -> {
+ * p.handle((type, value, ctl) -> {
  *   Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
  *   if (thread != null) {
  *     Object id = thread.get("javaThreadId");
@@ -50,14 +50,14 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * field names to values.
    */
   @FunctionalInterface
-  public static interface EventHandler {
+  interface EventHandler {
     /**
      * Handles an untyped JFR event.
      *
      * @param type the metadata class type of the event
      * @param value the event data as a map of field names to values
      */
-    void handle(MetadataClass type, Map<String, Object> value);
+    void handle(MetadataClass type, Map<String, Object> value, Control ctl);
   }
 
   /**
