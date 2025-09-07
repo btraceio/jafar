@@ -16,6 +16,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Method;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -1442,19 +1443,25 @@ final class CodeGenerator {
     }
 
     try {
-      MethodHandles.Lookup lkp =
-          MethodHandles.lookup()
-              .defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
-      MethodHandle createHandle =
-          target != null
-              ? lkp.findStatic(
-                  lkp.lookupClass(),
-                  "create",
-                  MethodType.methodType(Object.class, RecordingStream.class))
-              : null;
-      MethodHandle skipHandle =
-          lkp.findStatic(
-              lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
+      // Define the class using the best available strategy for the current JDK
+      Class<?> implClz;
+      try {
+        implClz = ClassDefiners.best().define(classData, CodeGenerator.class);
+      } catch (Throwable t) {
+        throw new Exception(t);
+      }
+
+      MethodHandle createHandle = null;
+      if (target != null) {
+        Method mCreate = implClz.getDeclaredMethod("create", RecordingStream.class);
+        mCreate.setAccessible(true);
+        createHandle = MethodHandles.lookup().unreflect(mCreate);
+      }
+
+      Method mSkip = implClz.getDeclaredMethod("skip", RecordingStream.class);
+      mSkip.setAccessible(true);
+      MethodHandle skipHandle = MethodHandles.lookup().unreflect(mSkip);
+
       return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
     } catch (Exception e) {
       log.error(
