@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -x
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
@@ -37,6 +36,13 @@ if [ ! -f "$JFR_FILE" ]; then
   download "$JFR_URL" "$JFR_FILE"
 fi
 
-if [ ! -f ${HERE}/parser/src/test/resources/test-ap.jfr ]; then
-  ln -s ${HERE}/demo/src/test/resources/test-ap.jfr ${HERE}/parser/src/test/resources/test-ap.jfr
+PARSER_RES_DIR="$HERE/parser/src/test/resources"
+mkdir -p "$PARSER_RES_DIR"
+
+# Copy into parser test resources to keep parser tests self-contained
+if [ ! -f "$PARSER_RES_DIR/test-ap.jfr" ]; then
+  cp -f "$AP_FILE" "$PARSER_RES_DIR/test-ap.jfr"
+fi
+if [ ! -f "$PARSER_RES_DIR/test-jfr.jfr" ]; then
+  cp -f "$JFR_FILE" "$PARSER_RES_DIR/test-jfr.jfr"
 fi
