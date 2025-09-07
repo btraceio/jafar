@@ -8,10 +8,12 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import jdk.jfr.EventType;
@@ -97,8 +99,7 @@ public final class TypeGenerator {
                   if (overwrite || !Files.exists(target)) {
                     Files.write(
                         target,
-                        generateTypeFromEvent(et, generated)
-                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        generateTypeFromEvent(et, generated).getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.CREATE_NEW);
                   }
                 } catch (IOException e) {
@@ -151,7 +152,7 @@ public final class TypeGenerator {
       if (overwrite || !Files.exists(target)) {
         Files.write(
             output.resolve(targetName + ".java"),
-            data.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            data.getBytes(StandardCharsets.UTF_8),
             StandardOpenOption.CREATE_NEW);
       }
     }
@@ -225,7 +226,7 @@ public final class TypeGenerator {
       if (overwrite || !Files.exists(classFile)) {
         Files.write(
             classFile,
-            generateClass(metadataClass).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            generateClass(metadataClass).getBytes(StandardCharsets.UTF_8),
             StandardOpenOption.CREATE_NEW);
       }
     } catch (IOException e) {
@@ -249,7 +250,7 @@ public final class TypeGenerator {
       }
       MetadataClass fldType = field.getType();
       while (fldType.isSimpleType()) {
-        java.util.List<MetadataField> fl = fldType.getFields();
+        List<MetadataField> fl = fldType.getFields();
         fldType = fl.get(0).getType();
       }
       sb.append(getClassName(fldType));

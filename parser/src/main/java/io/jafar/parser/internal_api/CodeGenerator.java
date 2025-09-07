@@ -1374,7 +1374,7 @@ final class CodeGenerator {
 
           MetadataClass fldType = field.getType();
           while (fldType.isSimpleType()) {
-            java.util.List<MetadataField> fl = fldType.getFields();
+            List<MetadataField> fl = fldType.getFields();
             fldType = fl.get(0).getType();
           }
 

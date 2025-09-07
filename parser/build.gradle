@@ -22,8 +22,22 @@ java {
     }
 }
 
-// Multi-Release JAR setup: provide Java 21 overrides under META-INF/versions/21
+// Multi-Release JAR setup: provide Java 9/13/21 overrides under META-INF/versions/<ver>
 sourceSets {
+    java9 {
+        java {
+            srcDirs = ["src/java9/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java13 {
+        java {
+            srcDirs = ["src/java13/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
     java21 {
         java {
             srcDirs = ["src/java21/java"]
@@ -45,6 +59,12 @@ sourceSets {
 }
 
 configurations {
+    java9Implementation {
+        extendsFrom configurations.implementation
+    }
+    java13Implementation {
+        extendsFrom configurations.implementation
+    }
     java21Implementation {
         extendsFrom configurations.implementation
     }
@@ -56,6 +76,20 @@ configurations {
     }
 }
 
+tasks.register('compileJava9', JavaCompile) {
+    source = sourceSets.java9.java
+    classpath = sourceSets.java9.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java9")
+    options.release.set(9)
+}
+
+tasks.register('compileJava13', JavaCompile) {
+    source = sourceSets.java13.java
+    classpath = sourceSets.java13.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java13")
+    options.release.set(13)
+}
+
 tasks.register('compileJava21', JavaCompile) {
     source = sourceSets.java21.java
     classpath = sourceSets.java21.compileClasspath
@@ -65,8 +99,16 @@ tasks.register('compileJava21', JavaCompile) {
 
 // Ensure Java 21 classes are compiled before packaging
 tasks.named('jar') {
+    dependsOn tasks.named('compileJava9')
+    dependsOn tasks.named('compileJava13')
     dependsOn tasks.named('compileJava21')
     manifest { attributes('Multi-Release': 'true') }
+    from(layout.buildDirectory.dir('classes/java/java9')) {
+        into('META-INF/versions/9')
+    }
+    from(layout.buildDirectory.dir('classes/java/java13')) {
+        into('META-INF/versions/13')
+    }
     from(layout.buildDirectory.dir('classes/java/java21')) {
         into('META-INF/versions/21')
     }

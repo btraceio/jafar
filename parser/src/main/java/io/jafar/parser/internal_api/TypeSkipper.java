@@ -6,6 +6,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Utility class for efficiently skipping over JFR data without deserializing it.
@@ -46,7 +47,7 @@ public final class TypeSkipper {
     }
     boolean withCp = fld.hasConstantPool();
     while (fldClz.isSimpleType()) {
-      java.util.List<MetadataField> fl = fldClz.getFields();
+      List<MetadataField> fl = fldClz.getFields();
       fldClz = fl.get(0).getType();
     }
     String name = fldClz.getName();

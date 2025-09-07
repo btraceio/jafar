@@ -2,6 +2,7 @@ package io.jafar.utils;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
@@ -168,7 +169,7 @@ public interface CustomByteBuffer {
    * maintaining the CustomByteBuffer interface contract.
    */
   class ByteBufferWrapper implements CustomByteBuffer {
-    private final java.nio.ByteBuffer delegate;
+    private final ByteBuffer delegate;
     private final boolean nativeOrder;
 
     /**
@@ -176,7 +177,7 @@ public interface CustomByteBuffer {
      *
      * @param delegate the MappedByteBuffer to wrap
      */
-    public ByteBufferWrapper(java.nio.ByteBuffer delegate) {
+    public ByteBufferWrapper(ByteBuffer delegate) {
       this.delegate = delegate;
       this.nativeOrder = delegate.order() == ByteOrder.nativeOrder();
       delegate.order(ByteOrder.nativeOrder());
@@ -189,7 +190,7 @@ public interface CustomByteBuffer {
 
     @Override
     public CustomByteBuffer slice(long pos, long len) {
-      java.nio.ByteBuffer dup = delegate.duplicate();
+      ByteBuffer dup = delegate.duplicate();
       dup.position((int) pos);
       dup.limit((int) (pos + len));
       return new ByteBufferWrapper(dup.slice());
@@ -197,7 +198,7 @@ public interface CustomByteBuffer {
 
     @Override
     public CustomByteBuffer slice() {
-      java.nio.ByteBuffer dup = delegate.duplicate();
+      ByteBuffer dup = delegate.duplicate();
       return new ByteBufferWrapper(dup.slice());
     }
 
