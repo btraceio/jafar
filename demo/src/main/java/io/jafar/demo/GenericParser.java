@@ -17,7 +17,7 @@ public final class GenericParser {
     try (UntypedJafarParser p = parsingContext.newUntypedParser(Paths.get(args[0]))) {
       HandlerRegistration<?> h =
           p.handle(
-              (t, v) -> {
+              (t, v, ctl) -> {
                 if ("jdk.ExecutionSample".equals(t.getName())) {
                   Object f = Values.get(v, "stackTrace", "frames", 0);
                   System.out.println("===> " + f);
