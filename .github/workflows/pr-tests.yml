@@ -60,3 +60,28 @@ jobs:
           path: |
             **/build/reports/tests/test
           retention-days: 14
+
+  test-jdk8:
+    name: Parser Tests on JDK 8 (PR)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: gradle
+
+      - name: Prepare test resources
+        run: bash ./get_resources.sh
+
+      - name: Build parser only (skip Spotless)
+        run: ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:build
+
+      - name: Run parser tests (skip Spotless)
+        run: ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:test

@@ -1444,7 +1444,11 @@ final class CodeGenerator {
       // Define the class using the best available strategy for the current JDK
       Class<?> implClz;
       try {
-        implClz = ClassDefiners.best().define(classData, CodeGenerator.class);
+        var definer = ClassDefiners.best();
+        if (log.isDebugEnabled()) {
+          log.debug("Generating typed class using definer: {}", definer.name());
+        }
+        implClz = definer.define(classData, CodeGenerator.class);
       } catch (Throwable t) {
         throw new Exception(t);
       }
