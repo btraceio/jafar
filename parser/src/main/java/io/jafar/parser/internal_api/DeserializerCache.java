@@ -225,7 +225,7 @@ public interface DeserializerCache
      * @return an empty immutable map
      */
     public static <K, V> Map<K, V> of() {
-      return Map.of();
+      return java.util.Collections.emptyMap();
     }
 
     /**
@@ -238,7 +238,9 @@ public interface DeserializerCache
      * @return an immutable map containing the specified mapping
      */
     public static <K, V> Map<K, V> of(K k1, V v1) {
-      return Map.of(k1, v1);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(1);
+      m.put(k1, v1);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -253,7 +255,10 @@ public interface DeserializerCache
      * @return an immutable map containing the specified mappings
      */
     public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2) {
-      return Map.of(k1, v1, k2, v2);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(2);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -270,7 +275,11 @@ public interface DeserializerCache
      * @return an immutable map containing the specified mappings
      */
     public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3) {
-      return Map.of(k1, v1, k2, v2, k3, v3);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(3);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -289,7 +298,12 @@ public interface DeserializerCache
      * @return an immutable map containing the specified mappings
      */
     public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(4);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -310,7 +324,13 @@ public interface DeserializerCache
      * @return an immutable map containing the specified mappings
      */
     public static <K, V> Map<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(5);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -334,7 +354,14 @@ public interface DeserializerCache
      */
     public static <K, V> Map<K, V> of(
         K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(6);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      m.put(k6, v6);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -360,7 +387,15 @@ public interface DeserializerCache
      */
     public static <K, V> Map<K, V> of(
         K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5, K k6, V v6, K k7, V v7) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(7);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      m.put(k6, v6);
+      m.put(k7, v7);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -403,7 +438,16 @@ public interface DeserializerCache
         V v7,
         K k8,
         V v8) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(8);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      m.put(k6, v6);
+      m.put(k7, v7);
+      m.put(k8, v8);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -450,7 +494,17 @@ public interface DeserializerCache
         V v8,
         K k9,
         V v9) {
-      return Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8, k9, v9);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(9);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      m.put(k6, v6);
+      m.put(k7, v7);
+      m.put(k8, v8);
+      m.put(k9, v9);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -501,8 +555,18 @@ public interface DeserializerCache
         V v9,
         K k10,
         V v10) {
-      return Map.of(
-          k1, v1, k2, v2, k3, v3, k4, v4, k5, v5, k6, v6, k7, v7, k8, v8, k9, v9, k10, v10);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(10);
+      m.put(k1, v1);
+      m.put(k2, v2);
+      m.put(k3, v3);
+      m.put(k4, v4);
+      m.put(k5, v5);
+      m.put(k6, v6);
+      m.put(k7, v7);
+      m.put(k8, v8);
+      m.put(k9, v9);
+      m.put(k10, v10);
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -515,7 +579,11 @@ public interface DeserializerCache
      */
     @SafeVarargs
     public static <K, V> Map<K, V> ofEntries(Entry<? extends K, ? extends V>... entries) {
-      return Map.ofEntries(entries);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(entries.length);
+      for (Entry<? extends K, ? extends V> e : entries) {
+        m.put(e.getKey(), e.getValue());
+      }
+      return java.util.Collections.unmodifiableMap(m);
     }
 
     /**
@@ -528,7 +596,7 @@ public interface DeserializerCache
      * @return an immutable map entry
      */
     public static <K, V> Entry<K, V> entry(K k, V v) {
-      return Map.entry(k, v);
+      return new java.util.AbstractMap.SimpleImmutableEntry<>(k, v);
     }
 
     /**
@@ -540,7 +608,8 @@ public interface DeserializerCache
      * @return an immutable map containing the mappings of the given map
      */
     public static <K, V> Map<K, V> copyOf(Map<? extends K, ? extends V> map) {
-      return Map.copyOf(map);
+      java.util.LinkedHashMap<K, V> m = new java.util.LinkedHashMap<>(map);
+      return java.util.Collections.unmodifiableMap(m);
     }
   }
 }

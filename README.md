@@ -125,6 +125,19 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
   - `abort()`: stop parsing immediately (no exception thrown).
   - `chunkInfo()`: chunk metadata with `startTime()`, `duration()`, `size()`, and `convertTicks(long, TimeUnit)`.
     - Why `convertTicks(...)`? JFR records many time values in chunk-relative ticks. Converting on demand avoids creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. Convert only when needed and to the unit you need.
+
+### Typed runtime (JDK support)
+- The typed parser defines small, generated classes at runtime. It automatically picks the best available strategy for the running JDK:
+  - JDK 15+: hidden classes via `MethodHandles.Lookup#defineHiddenClass` (fastest, unloadable)
+  - JDK 9–14: `MethodHandles.Lookup#defineClass(byte[])` (good)
+  - JDK 8: `sun.misc.Unsafe#defineAnonymousClass` (compatible; slightly heavier)
+- Selection is automatic based on capability probes; no flags required. Enable debug logs to see the chosen strategy.
+
+### Multi‑Release JAR (parser)
+- The `parser` artifact is a Multi‑Release JAR:
+  - Base classes target Java 8 for broad compatibility.
+  - Java 21 overrides live under `META-INF/versions/21` and restore faster implementations (e.g., zero‑copy `ByteBuffer` slicing, `Arrays.equals` range checks, `Files.writeString`, etc.).
+- On Java 21+, the JVM loads these optimized classes automatically. On older JVMs, the Java 8 fallbacks are used.
 - Annotations
   - `@JfrType("<fq.type>")`: declare the JFR type an interface represents.
   - `@JfrField("<jfrField>", raw = false)`: map differing names or request raw representation.

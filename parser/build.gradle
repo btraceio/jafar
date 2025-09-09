@@ -17,8 +17,135 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        // Target Java 8 bytecode for the parser module
+        languageVersion = JavaLanguageVersion.of(8)
     }
+}
+
+// Multi-Release JAR setup: provide Java 9/13/21 overrides under META-INF/versions/<ver>
+sourceSets {
+    java9 {
+        java {
+            srcDirs = ["src/java9/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java13 {
+        java {
+            srcDirs = ["src/java13/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java21 {
+        java {
+            srcDirs = ["src/java21/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    core8Test {
+        java {
+            srcDirs = ["src/core8Test/java"]
+        }
+        resources {
+            // Reuse existing test resources (e.g., test-ap.jfr)
+            srcDirs = ["src/test/resources"]
+        }
+        compileClasspath += sourceSets.main.output + configurations.testCompileClasspath
+        runtimeClasspath += output + sourceSets.main.runtimeClasspath + configurations.testRuntimeClasspath
+    }
+}
+
+configurations {
+    java9Implementation {
+        extendsFrom configurations.implementation
+    }
+    java13Implementation {
+        extendsFrom configurations.implementation
+    }
+    java21Implementation {
+        extendsFrom configurations.implementation
+    }
+    core8TestImplementation {
+        extendsFrom configurations.testImplementation
+    }
+    core8TestRuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
+    }
+}
+
+tasks.register('compileJava9', JavaCompile) {
+    source = sourceSets.java9.java
+    classpath = sourceSets.java9.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java9")
+    options.release.set(9)
+}
+
+tasks.register('compileJava13', JavaCompile) {
+    source = sourceSets.java13.java
+    classpath = sourceSets.java13.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java13")
+    options.release.set(13)
+}
+
+tasks.register('compileJava21', JavaCompile) {
+    source = sourceSets.java21.java
+    classpath = sourceSets.java21.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/java21")
+    options.release.set(21)
+}
+
+// Ensure Java 21 classes are compiled before packaging
+tasks.named('jar') {
+    dependsOn tasks.named('compileJava9')
+    dependsOn tasks.named('compileJava13')
+    dependsOn tasks.named('compileJava21')
+    manifest { attributes('Multi-Release': 'true') }
+    from(layout.buildDirectory.dir('classes/java/java9')) {
+        into('META-INF/versions/9')
+    }
+    from(layout.buildDirectory.dir('classes/java/java13')) {
+        into('META-INF/versions/13')
+    }
+    from(layout.buildDirectory.dir('classes/java/java21')) {
+        into('META-INF/versions/21')
+    }
+}
+
+// Allow test sources to use a newer language level while main targets 8
+def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
+def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('test') {
+    javaLauncher.set(j21LauncherProvider)
+}
+
+// Java 8 core parser smoke tests (compile to 8, run on JDK 8)
+def j8CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(8) }
+def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+
+tasks.register('compileCore8TestJavaCompat', JavaCompile) {
+    source = sourceSets.core8Test.java
+    classpath = sourceSets.core8Test.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir("classes/java/core8Test")
+    options.release.set(8)
+    // Use JDK21 compiler to produce Java 8 bytecode via --release 8
+    javaCompiler.set(j21CompilerProvider)
+}
+
+tasks.register('core8Test', Test) {
+    description = 'Runs core parser smoke tests on JDK 8.'
+    group = 'verification'
+    testClassesDirs = layout.buildDirectory.dir('classes/java/core8Test').map { it.asFile }.get().exists() ? files(layout.buildDirectory.dir('classes/java/core8Test')) : files()
+    classpath = sourceSets.core8Test.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/core8Test'))
+    shouldRunAfter tasks.named('test')
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileCore8TestJavaCompat')
 }
 
 dependencies {

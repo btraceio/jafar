@@ -50,9 +50,7 @@ public class CachedStringParser {
      * @return the parsed string, either from cache or newly created
      */
     public String parse(byte[] data, int len, Charset charset) {
-      if (lastString != null
-          && previousLen == len
-          && Arrays.equals(data, 0, len, previousData, 0, len)) {
+      if (lastString != null && previousLen == len && equalsRange(data, previousData, len)) {
         return lastString;
       }
       if (len > previousData.length) {
@@ -63,6 +61,16 @@ public class CachedStringParser {
       previousLen = len;
       lastString = new String(data, 0, len, charset);
       return lastString;
+    }
+
+    private static boolean equalsRange(byte[] a, byte[] b, int len) {
+      if (a == b) return true;
+      if (a == null || b == null) return false;
+      if (a.length < len || b.length < len) return false;
+      for (int i = 0; i < len; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
     }
   }
 
@@ -96,9 +104,7 @@ public class CachedStringParser {
      * @return the parsed string, either from cache or newly created
      */
     public String parse(char[] data, int len) {
-      if (lastString != null
-          && previousLen == len
-          && Arrays.equals(data, 0, len, previousData, 0, len)) {
+      if (lastString != null && previousLen == len && equalsRange(data, previousData, len)) {
         return lastString;
       }
       if (len > previousData.length) {
@@ -109,6 +115,16 @@ public class CachedStringParser {
       previousLen = len;
       lastString = new String(data, 0, len);
       return lastString;
+    }
+
+    private static boolean equalsRange(char[] a, char[] b, int len) {
+      if (a == b) return true;
+      if (a == null || b == null) return false;
+      if (a.length < len || b.length < len) return false;
+      for (int i = 0; i < len; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
     }
   }
 

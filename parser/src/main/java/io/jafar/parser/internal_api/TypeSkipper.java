@@ -6,6 +6,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Utility class for efficiently skipping over JFR data without deserializing it.
@@ -46,21 +47,35 @@ public final class TypeSkipper {
     }
     boolean withCp = fld.hasConstantPool();
     while (fldClz.isSimpleType()) {
-      fldClz = fldClz.getFields().getFirst().getType();
+      List<MetadataField> fl = fldClz.getFields();
+      fldClz = fl.get(0).getType();
     }
-    switch (fldClz.getName()) {
-      case "byte", "boolean" -> instructions.add(Instructions.BYTE);
-      case "char", "short", "int", "long" -> instructions.add(Instructions.VARINT);
-      case "float" -> instructions.add(Instructions.FLOAT);
-      case "double" -> instructions.add(Instructions.DOUBLE);
-      case "java.lang.String" -> {
+    String name = fldClz.getName();
+    switch (name) {
+      case "byte":
+      case "boolean":
+        instructions.add(Instructions.BYTE);
+        break;
+      case "char":
+      case "short":
+      case "int":
+      case "long":
+        instructions.add(Instructions.VARINT);
+        break;
+      case "float":
+        instructions.add(Instructions.FLOAT);
+        break;
+      case "double":
+        instructions.add(Instructions.DOUBLE);
+        break;
+      case "java.lang.String":
         if (withCp) {
           instructions.add(Instructions.CP_ENTRY);
         } else {
           instructions.add(Instructions.STRING);
         }
-      }
-      default -> {
+        break;
+      default:
         if (withCp) {
           instructions.add(Instructions.CP_ENTRY);
         } else {
@@ -68,7 +83,7 @@ public final class TypeSkipper {
             fillSkipper(subField, instructions);
           }
         }
-      }
+        break;
     }
     if (fld.getDimension() > 0) {
       instructions.set(arraySizeIdx, instructions.size() - startingSize - 2);

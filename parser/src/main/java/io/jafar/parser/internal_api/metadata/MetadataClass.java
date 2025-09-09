@@ -29,8 +29,17 @@ public final class MetadataClass extends AbstractMetadataElement {
 
   /** Set of primitive type names. */
   private static final Set<String> primitiveTypeNames =
-      Set.of(
-          "byte", "char", "short", "int", "long", "float", "double", "boolean", "java.lang.String");
+      new java.util.HashSet<String>(
+          java.util.Arrays.asList(
+              "byte",
+              "char",
+              "short",
+              "int",
+              "long",
+              "float",
+              "double",
+              "boolean",
+              "java.lang.String"));
 
   /** Map of settings associated with this class. */
   private Map<String, MetadataSetting> settings = null;
