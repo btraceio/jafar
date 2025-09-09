@@ -38,6 +38,7 @@ final class ControlImpl implements Control {
 
   @Override
   public ChunkInfo chunkInfo() {
-    return rStream != null ? rStream.getContext().get(ChunkInfo.class) : ChunkInfo.NONE;
+    ChunkInfo ci = rStream != null ? rStream.getContext().get(ChunkInfo.class) : null;
+    return ci != null ? ci : ChunkInfo.NONE;
   }
 }

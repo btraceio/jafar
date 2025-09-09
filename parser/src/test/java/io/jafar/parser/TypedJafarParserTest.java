@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.TestJfrRecorder;
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.TypedJafarParser;
 import io.jafar.parser.types.JFRExecutionSample;
@@ -44,6 +45,8 @@ public class TypedJafarParserTest {
       parser.handle(
           ParserEvent1.class,
           (event, ctl) -> {
+            assertNotNull(ctl.chunkInfo());
+            assertNotEquals(Control.ChunkInfo.NONE, ctl.chunkInfo());
             eventCount.incrementAndGet();
             assertEquals(10, event.value());
           });

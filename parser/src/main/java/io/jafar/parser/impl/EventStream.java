@@ -50,6 +50,7 @@ public abstract class EventStream implements ChunkParserListener {
     context.put(ConstantPools.class, new ConstantPools());
 
     ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
+    context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
 
     // ! these two keys should be removed at `onChunkEnd` to avoid any unwanted leakage
 

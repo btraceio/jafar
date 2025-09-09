@@ -1,8 +1,11 @@
 package io.jafar.parser;
 
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
@@ -20,7 +23,13 @@ public class UntypedJafarParserTest {
     ParsingContext ctx = ParsingContext.create();
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
       AtomicInteger count = new AtomicInteger();
-      HandlerRegistration<?> reg = p.handle((t, v, ctl) -> count.incrementAndGet());
+      HandlerRegistration<?> reg =
+          p.handle(
+              (t, v, ctl) -> {
+                assertNotNull(ctl.chunkInfo());
+                assertNotEquals(Control.ChunkInfo.NONE, ctl.chunkInfo());
+                count.incrementAndGet();
+              });
       p.run();
       reg.destroy(p);
       assertTrue(count.get() > 0, "Expected at least one event");
