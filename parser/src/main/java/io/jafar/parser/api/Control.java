@@ -2,7 +2,6 @@ package io.jafar.parser.api;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Control utilities available to handlers during parsing. Provides access to the current stream
@@ -12,8 +11,8 @@ public interface Control {
   /**
    * A chunk info wrapper. <br>
    * Provides information like chunk start time, chunk duration and size. It also provides the
-   * {@linkplain ChunkInfo#convertTicks(long, TimeUnit)} method to easily convert time value in
-   * ticks into the desired time unit.
+   * {@linkplain ChunkInfo#asDuration(long)} method to easily convert time value in ticks into the
+   * desired time unit.
    */
   interface ChunkInfo {
     ChunkInfo NONE = new ChunkInfo() {};
@@ -49,12 +48,15 @@ public interface Control {
      * Convenience method to quickly covert the ticks value into the desired time unit
      *
      * @param ticks the ticks value
-     * @param unit the requested time unit
-     * @return the ticks converted to the requested time unit or -1 if there is no info available to
-     *     perform the conversion
+     * @return the ticks converted to the duration or {@code Duration.ofNanos(0)} if there is no
+     *     info available to perform the conversion
      */
-    default long convertTicks(long ticks, TimeUnit unit) {
-      return -1;
+    default Duration asDuration(long ticks) {
+      return Duration.ofNanos(0);
+    }
+
+    default Instant asInstant(long ticks) {
+      return Instant.ofEpochMilli(0);
     }
   }
 

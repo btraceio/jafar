@@ -91,10 +91,3 @@ allprojects {
         dependsOn rootProject.tasks.named('spotlessCheck')
     }
 }
-
-// Also enforce formatting when running tests directly
-allprojects {
-    tasks.withType(Test).configureEach {
-        dependsOn rootProject.tasks.named('spotlessCheck')
-    }
-}
