@@ -9,8 +9,8 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Per-session parsing context used internally and exposed via events.
  *
- * <p>Maintains per-parser reusable buffers and a key-value bag for extensions.
- * Values may be reclaimed by the GC at any time.
+ * <p>Maintains per-parser reusable buffers and a key-value bag for extensions. Values may be
+ * reclaimed by the GC at any time.
  *
  * <p>Not intended for direct instantiation by users.
  */
