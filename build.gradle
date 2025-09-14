@@ -24,21 +24,44 @@ repositories {
 spotless {
     // Format Java in all modules
     java {
-        target '**/src/**/*.java'
+        // Use an explicit FileTree to ensure excludes are honored
+        target fileTree(project.rootDir) {
+            include '**/src/**/*.java'
+            exclude '**/.history/**'
+            exclude '**/.idea/**'
+            exclude '**/.vscode/**'
+            exclude '**/.gradle/**'
+            exclude '**/build/**'
+        }
         googleJavaFormat('1.17.0')
         trimTrailingWhitespace()
         endWithNewline()
     }
     // Format Groovy plugin sources
     groovy {
-        target 'jafar-gradle-plugin/src/**/*.groovy'
+        target fileTree('jafar-gradle-plugin/src') {
+            include '**/*.groovy'
+            exclude '**/.history/**'
+            exclude '**/.idea/**'
+            exclude '**/.vscode/**'
+            exclude '**/.gradle/**'
+            exclude '**/build/**'
+        }
         greclipse()
         trimTrailingWhitespace()
         endWithNewline()
     }
     // Format Gradle build scripts
     format 'gradle', {
-        target '*.gradle', '**/*.gradle'
+        target fileTree(project.rootDir) {
+            include '*.gradle'
+            include '**/*.gradle'
+            exclude '**/.history/**'
+            exclude '**/.idea/**'
+            exclude '**/.vscode/**'
+            exclude '**/.gradle/**'
+            exclude '**/build/**'
+        }
         indentWithSpaces(4)
         trimTrailingWhitespace()
         endWithNewline()
@@ -65,13 +88,6 @@ spotless {
 // Ensure formatting is checked during all builds
 allprojects {
     tasks.matching { it.name == 'check' }.configureEach {
-        dependsOn rootProject.tasks.named('spotlessCheck')
-    }
-}
-
-// Also enforce formatting when running tests directly
-allprojects {
-    tasks.withType(Test).configureEach {
         dependsOn rootProject.tasks.named('spotlessCheck')
     }
 }

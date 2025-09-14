@@ -26,14 +26,10 @@ import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Implementation of TypedJafarParser that provides type-safe JFR event parsing.
@@ -43,42 +39,6 @@ import java.util.concurrent.TimeUnit;
  * manages the parsing lifecycle.
  */
 public final class TypedJafarParserImpl implements TypedJafarParser {
-  private static final class ChunkInfoImpl implements Control.ChunkInfo {
-    private final Instant startTime;
-    private final Duration duration;
-    private final long size;
-    private final double nanosPerTick;
-
-    ChunkInfoImpl(ChunkHeader header) {
-      this.startTime =
-          Instant.ofEpochMilli(
-              TimeUnit.MILLISECONDS.convert(header.startNanos, TimeUnit.NANOSECONDS));
-      this.nanosPerTick = 1_000_000_000d / header.frequency;
-      this.duration = Duration.of(Math.round(header.duration * nanosPerTick), ChronoUnit.NANOS);
-      this.size = header.size;
-    }
-
-    @Override
-    public Instant startTime() {
-      return startTime;
-    }
-
-    @Override
-    public Duration duration() {
-      return duration;
-    }
-
-    @Override
-    public long size() {
-      return size;
-    }
-
-    @Override
-    public long convertTicks(long ticks, TimeUnit unit) {
-      return unit.convert(Math.round(ticks * nanosPerTick), TimeUnit.NANOSECONDS);
-    }
-  }
-
   /**
    * Implementation of HandlerRegistration that manages handler lifecycle.
    *

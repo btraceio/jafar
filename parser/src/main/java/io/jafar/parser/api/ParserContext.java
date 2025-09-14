@@ -88,7 +88,7 @@ public abstract class ParserContext {
   }
 
   /**
-   * Stores a value under the class name key with soft reference.
+   * Stores a value under the class name key.
    *
    * @param <T> the type of the value to store
    * @param clz the class whose name is used as the key
@@ -110,7 +110,7 @@ public abstract class ParserContext {
   }
 
   /**
-   * Stores a value under a custom key with soft reference.
+   * Stores a value under a custom key
    *
    * @param <T> the type of the value to store
    * @param key the custom key to use
