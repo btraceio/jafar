@@ -43,6 +43,9 @@ jobs:
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
+      - name: Publish local plugin and parser
+        run: bash ./rebuild_plugin.sh
+
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
           java -version
