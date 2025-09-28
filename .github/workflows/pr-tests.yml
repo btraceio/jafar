@@ -50,14 +50,37 @@ jobs:
             ./gradlew --stacktrace --no-daemon build
           fi
 
+      - name: Prepare artifacts (collect XML/HTML; add placeholder if empty)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/xml artifacts/html
+          shopt -s globstar nullglob
+          copied=0
+          for f in **/build/test-results/test/*.xml **/build/test-results/core8Test/*.xml; do
+            cp "$f" artifacts/xml/
+            copied=1
+          done
+          if [ "$copied" -eq 0 ]; then
+            cat > artifacts/xml/placeholder.xml <<'EOF'
+<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>
+EOF
+          fi
+          for d in **/build/reports/tests/test **/build/reports/tests/core8Test; do
+            if [ -d "$d" ]; then
+              dest="artifacts/html/$(basename "$d")"
+              mkdir -p "$dest"
+              cp -R "$d"/. "$dest"/
+            fi
+          done
+
       - name: Upload JUnit XML reports (JDK ${{ matrix.java }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: junit-xml-jdk-${{ matrix.java }}
-          path: |
-            **/build/test-results/test/*.xml
-            **/build/test-results/core8Test/*.xml
+          path: artifacts/xml
           retention-days: 14
 
       - name: Upload HTML test reports (JDK ${{ matrix.java }})
@@ -65,9 +88,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-html-jdk-${{ matrix.java }}
-          path: |
-            **/build/reports/tests/test
-            **/build/reports/tests/core8Test
+          path: artifacts/html
           retention-days: 14
 
   aggregate-test-report:
