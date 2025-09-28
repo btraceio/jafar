@@ -9,11 +9,16 @@
 
 pluginManagement {
     repositories {
-        mavenLocal() // Look for plugins in Maven Local
-        maven {
-            url "https://oss.sonatype.org/content/repositories/snapshots/"
-        }
-        gradlePluginPortal() // Fall back to Gradle Plugin Portal
+        mavenLocal()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        gradlePluginPortal()
+    }
+}
+
+// Include the root build to substitute the parser module with the in-repo :parser project
+includeBuild('..') {
+    dependencySubstitution {
+        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
     }
 }
 

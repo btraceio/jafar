@@ -1,8 +1,6 @@
 plugins {
     id 'java'
     id "io.github.goooler.shadow" version "8.1.8"
-    // Resolved from included build via settings.gradle (no publish needed)
-    id 'io.btrace.jafar-gradle-plugin'
 }
 
 repositories {
@@ -27,7 +25,11 @@ test {
     useJUnitPlatform()
 }
 
-generateJafarTypes {
-    overwrite = false
-    targetPackage = 'io.jafar.tools.types'
+// Apply code generation plugin only when its tasks are explicitly requested.
+if (gradle.startParameter.taskNames.any { it.contains('generateJafarTypes') }) {
+    apply plugin: 'io.btrace.jafar-gradle-plugin'
+    generateJafarTypes {
+        overwrite = false
+        targetPackage = 'io.jafar.tools.types'
+    }
 }
