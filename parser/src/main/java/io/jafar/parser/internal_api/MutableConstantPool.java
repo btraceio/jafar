@@ -88,6 +88,19 @@ public final class MutableConstantPool implements ConstantPool {
     offsets.put(id, offset);
   }
 
+  /**
+   * Returns the stream offset for the given constant pool entry id or {@code 0} if unknown.
+   *
+   * <p>This allows lazy materialization of constant pool values by positioning the recording stream
+   * at the correct location and deserializing on-demand elsewhere.
+   *
+   * @param id constant pool entry id
+   * @return absolute offset within the chunk stream, or {@code 0} if not present
+   */
+  public long getOffset(long id) {
+    return offsets.get(id);
+  }
+
   /** {@inheritDoc} */
   @Override
   public int size() {
