@@ -126,7 +126,6 @@ tasks.named('test') {
 }
 
 // Java 8 core parser smoke tests (compile to 8, run on JDK 8)
-def j8CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(8) }
 def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
 
 tasks.register('compileTest8JavaCompat', JavaCompile) {
