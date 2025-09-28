@@ -54,6 +54,11 @@ jobs:
             ./gradlew --stacktrace --no-daemon build
           fi
 
+      - name: Plugin unit tests (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          ./gradlew -p jafar-gradle-plugin --stacktrace --no-daemon test
+
       - name: Prepare artifacts (collect XML/HTML; add placeholder if empty)
         if: always()
         shell: bash
