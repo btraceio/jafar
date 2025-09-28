@@ -38,6 +38,15 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
+      - name: Cache JFR samples
+        id: cache-jfr
+        uses: actions/cache@v4
+        with:
+          path: |
+            demo/src/test/resources/test-ap.jfr
+            demo/src/test/resources/test-jfr.jfr
+          key: jfr-samples-v1
+
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
