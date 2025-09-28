@@ -4,7 +4,7 @@ plugins {
 }
 
 repositories {
-    // Prefer local if you built Jafar locally via ./rebuild_plugin.sh
+    // Prefer local if you built Jafar parser locally via publishToMavenLocal
     mavenLocal()
     mavenCentral()
     // Enable snapshots if you use snapshot versions

@@ -8,12 +8,19 @@
  */
 
 pluginManagement {
+    // Let builds resolve the in-repo Gradle plugin by ID without publishing
+    includeBuild('jafar-gradle-plugin')
     repositories {
-        mavenLocal() // Look for plugins in Maven Local
-        maven {
-            url "https://oss.sonatype.org/content/repositories/snapshots/"
-        }
-        gradlePluginPortal() // Fall back to Gradle Plugin Portal
+        mavenLocal()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        gradlePluginPortal()
+    }
+}
+
+// Wire the plugin build to use the in-repo parser project instead of a published module
+includeBuild('jafar-gradle-plugin') {
+    dependencySubstitution {
+        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
     }
 }
 

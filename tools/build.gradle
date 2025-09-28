@@ -1,7 +1,8 @@
 plugins {
     id 'java'
     id "io.github.goooler.shadow" version "8.1.8"
-    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
+    // Resolved from included build via settings.gradle (no publish needed)
+    id 'io.btrace.jafar-gradle-plugin'
 }
 
 repositories {

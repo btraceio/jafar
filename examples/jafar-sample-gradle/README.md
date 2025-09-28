@@ -29,12 +29,11 @@ This executes `com.acme.TypedApp`, which defines small annotated interfaces and 
   - `mavenLocal()`
   - `mavenCentral()`
   - Sonatype snapshots
-- If you have not published locally and a release is not on Maven Central, either:
-  - Run `./rebuild_plugin.sh` at the repo root to publish `jafar-parser` to `mavenLocal`, or
+- If you have not published locally and a release is not on Maven Central:
+  - Run `./gradlew :parser:publishToMavenLocal` at the repo root to publish `jafar-parser` to `mavenLocal`, or
   - Point the dependency version to a released version once available.
 
 ## Files
 - `src/main/java/com/acme/App.java` — untyped example
 - `src/main/java/com/acme/TypedApp.java` — typed example
 - `build.gradle` — uses Java 21 toolchain and depends on `io.btrace:jafar-parser:0.0.1-SNAPSHOT`
-
