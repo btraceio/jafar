@@ -43,13 +43,16 @@ jobs:
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
+      - name: Publish local plugin and parser
+        run: bash ./rebuild_plugin.sh
+
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
           java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew -p parser --stacktrace --no-daemon compileJava test8
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava :parser:test8
           else
-            ./gradlew -p parser --stacktrace --no-daemon build
+            ./gradlew --stacktrace --no-daemon build
           fi
 
       - name: Prepare artifacts (collect XML/HTML; add placeholder if empty)
