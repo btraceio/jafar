@@ -25,6 +25,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup JDK 21 for toolchains (when on 8)
+        if: matrix.java == '8'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
       - name: Setup JDK ${{ matrix.java }}
         uses: actions/setup-java@v4
         with:
@@ -32,20 +40,14 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: gradle
 
-      - name: Setup JDK 21 for toolchains (when on 8)
-        if: matrix.java == '8'
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
+          java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava :parser:core8Test
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava :parser:test8
           else
             ./gradlew --stacktrace --no-daemon build
           fi
@@ -58,7 +60,7 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          for f in **/build/test-results/test/*.xml **/build/test-results/core8Test/*.xml; do
+          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done
@@ -67,7 +69,7 @@ jobs:
             <testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>
             EOF
           fi
-          for d in **/build/reports/tests/test **/build/reports/tests/core8Test; do
+          for d in **/build/reports/tests/test **/build/reports/tests/test8; do
             if [ -d "$d" ]; then
               dest="artifacts/html/$(basename "$d")"
               mkdir -p "$dest"
