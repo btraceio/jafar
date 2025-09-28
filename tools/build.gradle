@@ -1,7 +1,11 @@
 plugins {
     id 'java'
+    id 'maven-publish'
     id "io.github.goooler.shadow" version "8.1.8"
 }
+
+def libraryName = "jafar-tools"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
 repositories {
     mavenCentral()
@@ -23,6 +27,35 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+tasks.register('sourcesJar', Jar) {
+  from sourceSets.main.allJava
+  archiveBaseName = libraryName
+  archiveClassifier = "sources"
+  archiveVersion = component_version
+}
+
+tasks.register('javadocJar', Jar) {
+  dependsOn javadoc
+  archiveBaseName = libraryName
+  archiveClassifier = 'javadoc'
+  archiveVersion = component_version
+  from javadoc.destinationDir
+}
+
+publishing {
+  publications {
+    assembled(MavenPublication) { publication ->
+      publication.groupId = 'io.btrace'
+      publication.artifactId = libraryName
+      publication.version = component_version
+
+      publication.artifact jar
+      publication.artifact sourcesJar
+      publication.artifact javadocJar
+    }
+  }
 }
 
 // Apply code generation plugin only when its tasks are explicitly requested.

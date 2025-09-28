@@ -34,8 +34,8 @@ tasks.build {
 }
 
 dependencies {
-    implementation project(':parser')
-    implementation project(':tools')
+    implementation 'io.btrace:jafar-parser:0.0.1-SNAPSHOT'
+    implementation 'io.btrace:jafar-tools:0.0.1-SNAPSHOT'
 
     implementation 'it.unimi.dsi:fastutil:8.5.12'
     implementation 'org.jctools:jctools-core:4.0.3'
