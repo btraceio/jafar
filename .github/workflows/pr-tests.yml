@@ -65,9 +65,7 @@ jobs:
             copied=1
           done
           if [ "$copied" -eq 0 ]; then
-            cat > artifacts/xml/placeholder.xml <<'EOF'
-            <testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>
-            EOF
+            echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
           fi
           for d in **/build/reports/tests/test **/build/reports/tests/test8; do
             if [ -d "$d" ]; then
