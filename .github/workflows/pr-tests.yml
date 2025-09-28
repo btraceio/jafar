@@ -43,18 +43,7 @@ jobs:
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
-      - name: Publish local plugin and parser
-        run: ./gradlew clean publishToMavenLocal
-
-      - name: Verify mavenLocal contents
-        run: |
-          echo "Listing ~/.m2/repository/io/btrace contents:" || true
-          ls -R ~/.m2/repository/io/btrace || true
-          echo "Check parser artifact:" || true
-          ls -R ~/.m2/repository/io/btrace/jafar-parser || true
-          echo "Check gradle plugin artifact and marker:" || true
-          ls -R ~/.m2/repository/io/btrace/jafar-gradle-plugin || true
-          ls -R ~/.m2/repository/io/btrace/jafar-gradle-plugin/io.btrace.jafar-gradle-plugin.gradle.plugin || true
+      # Composite build resolves the plugin from source; no local publish needed
 
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
