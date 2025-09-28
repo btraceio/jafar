@@ -31,14 +31,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
       - name: Setup JDK ${{ matrix.java }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-          cache: gradle
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Prepare test resources
         run: bash ./get_resources.sh
