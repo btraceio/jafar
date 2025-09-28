@@ -47,9 +47,9 @@ jobs:
         run: |
           java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser:compileJava :parser:test8
+            ./gradlew -p parser --stacktrace --no-daemon compileJava test8
           else
-            ./gradlew --stacktrace --no-daemon :parser:build
+            ./gradlew -p parser --stacktrace --no-daemon build
           fi
 
       - name: Prepare artifacts (collect XML/HTML; add placeholder if empty)
