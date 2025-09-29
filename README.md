@@ -264,10 +264,13 @@ scrubFile(Paths.get("/in.jfr"), Paths.get("/out-scrubbed.jfr"),
 ```
 
 ## Demo
-After building, you can run the demo application to compare parsers on `jdk.ExecutionSample`:
+Build and run the demo application:
 
 ```shell
-java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
+# First you need to publish parser, tools and plugin to local maven
+cd demo
+./build.sh
+java -jar build/libs/jafar-demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
 ```
 
 On an M1 and a ~600MiB JFR, the Jafar parser completes in ~1s vs ~7s with JMC (anecdotal). The stock `jfr` tool may OOM when printing all events.

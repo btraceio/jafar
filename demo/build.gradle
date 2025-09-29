@@ -23,10 +23,10 @@ application {
     mainClass = 'io.jafar.demo.Main'
 }
 
-task explodedDist(type: Copy) {
+tasks.register('explodedDist', Copy) {
     dependsOn installDist
-    from("$buildDir/install/${project.name}") // Location where the application plugin installs the distribution
-    into("$buildDir/exploded/${project.name}") // Target directory for the exploded distribution
+    from(layout.buildDirectory.dir("install/${project.name}")) // Location where the application plugin installs the distribution
+    into(layout.buildDirectory.dir("exploded/${project.name}")) // Target directory for the exploded distribution
 }
 
 tasks.build {
