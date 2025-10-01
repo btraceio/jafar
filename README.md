@@ -49,7 +49,10 @@ import java.nio.file.Paths;
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
   HandlerRegistration<?> reg = p.handle((type, value) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
+      // You can retrieve the value by providing 'path' -> "eventThread", "javaThreadId"
       Object threadId = Values.get(value, "eventThread", "javaThreadId");
+      // You can also get the value conveniently typed - for primitive values you need to use the boxed type in the call
+      long threadIdLong = Values.as(value, Long.class, "eventThread", "javaThreadId");
       // use threadId ...
     }
   });
@@ -78,6 +81,8 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 
     // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
     Object framesVal = Values.get(value, "stackTrace", "frames");
+    // You can also reference the array elements directly
+    Object firstFrame = Values.get(value, "stackTrace", "frames", 0);
     if (framesVal instanceof ArrayType at) {
       Object arr = at.getArray();
       if (arr instanceof Object[] objs) {
