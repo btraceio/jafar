@@ -123,6 +123,14 @@ tasks.named('compileTestJava').configure { JavaCompile t ->
 def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 tasks.named('test') {
     javaLauncher.set(j21LauncherProvider)
+    // Ensure JUnit 5 and fixed report locations for CI collection
+    useJUnitPlatform()
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test"))
+    }
 }
 
 // Java 8 core parser smoke tests (compile to 8, run on JDK 8)
@@ -145,6 +153,14 @@ tasks.register('test8', Test) {
     shouldRunAfter tasks.named('test')
     javaLauncher.set(j8LauncherProvider)
     dependsOn tasks.named('compileTest8JavaCompat')
+    // Run JUnit Jupiter tests on JDK 8 and align report locations with CI expectations
+    useJUnitPlatform()
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test8"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test8"))
+    }
 }
 
 dependencies {
@@ -163,7 +179,7 @@ dependencies {
 
 test {
     jvmArgs '-Xmx8g', '-Xms1g'
-    useJUnitPlatform()
+    // Keep default memory settings; platform and reports configured above in tasks.named('test')
 }
 
 tasks.register('sourcesJar', Jar) {
