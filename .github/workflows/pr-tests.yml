@@ -152,3 +152,12 @@ jobs:
           path: reports/**/*.xml
           reporter: java-junit
           fail-on-error: false
+
+      - name: Comment summary on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: reports/**/*.xml
+          check_name: Combined JUnit Test Report
+          comment_mode: update
+          fail_on: never
