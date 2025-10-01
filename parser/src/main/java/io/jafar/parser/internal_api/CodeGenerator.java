@@ -1326,8 +1326,10 @@ final class CodeGenerator {
             + context.getChunkIndex();
     // generate handler class
     ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+    // Generate classes compatible with Java 8+ to support running on JDK 8
+    // while still being usable on newer JDKs.
     cw.visit(
-        Opcodes.V11,
+        Opcodes.V1_8,
         Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
         clzName.replace('.', '/'),
         null,
