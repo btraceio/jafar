@@ -1,18 +1,17 @@
 package io.jafar.parser;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
 import io.jafar.parser.internal_api.ClassDefiner;
 import io.jafar.parser.internal_api.ClassDefiners;
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Method;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
-
-import java.lang.invoke.MethodHandles;
-import java.lang.reflect.Method;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /** Basic sanity for runtime class definition strategies. */
 public class ClassDefinerTest {

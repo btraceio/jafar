@@ -42,4 +42,3 @@ public class CustomByteBufferWrapperTest {
     assertEquals(20, buf.get());
   }
 }
-
