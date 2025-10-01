@@ -5,6 +5,7 @@ import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.Values;
+import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.nio.file.Paths;
@@ -14,13 +15,15 @@ public final class GenericParser {
   public static void main(String[] args) throws Exception {
     ParsingContext parsingContext = ParsingContext.create();
     LongAdder counter = new LongAdder();
+    LongAdder summer = new LongAdder();
     try (UntypedJafarParser p = parsingContext.newUntypedParser(Paths.get(args[0]))) {
       HandlerRegistration<?> h =
           p.handle(
               (t, v, ctl) -> {
                 if ("jdk.ExecutionSample".equals(t.getName())) {
                   Object f = Values.get(v, "stackTrace", "frames", 0);
-                  System.out.println("===> " + f);
+                  summer.add(f != null ? f.hashCode() : 0);
+                  //                  System.out.println("===> " + f);
                 }
                 counter.increment();
               });
@@ -31,12 +34,18 @@ public final class GenericParser {
                   System.out.println("===> got metadata");
                   return ChunkParserListener.super.onMetadata(context, metadata);
                 }
+
+                @Override
+                public boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+                  return ChunkParserListener.super.onCheckpoint(context, checkpoint);
+                }
               })
           .run();
 
       h.destroy(p);
     }
     long uptime = parsingContext.uptime();
+    System.out.println("===> Summed hash " + summer.sum());
     System.out.println("===> Checked " + counter.sum() + " events in " + uptime + "ns");
     System.out.println(
         "===> Time to process one event: " + (uptime / counter.doubleValue()) + "ns");

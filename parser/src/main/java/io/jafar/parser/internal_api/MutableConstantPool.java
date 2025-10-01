@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import java.util.Collections;
 
 /**
  * Mutable implementation of ConstantPool that allows adding offsets and lazy-loading entries.
@@ -66,6 +67,11 @@ public final class MutableConstantPool implements ConstantPool {
       return o;
     }
     return null;
+  }
+
+  @Override
+  public Object getUntyped(long id) {
+    return Collections.emptyMap();
   }
 
   /**

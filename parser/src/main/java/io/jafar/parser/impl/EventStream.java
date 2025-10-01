@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
@@ -46,15 +47,21 @@ public abstract class EventStream implements ChunkParserListener {
     ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
     context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
 
-    // register a Map-building value processor backed by lazy constant-pool accessors.
-    // No need to store a processor/reader in the context for constants;
-    // we build event maps per-event and resolve constants lazily.
+    MapValueBuilder builder = new MapValueBuilder(context);
+    GenericValueReader r = new GenericValueReader(builder);
+
+    // Make sure we hava the generic value reader available
+    context.put(GenericValueReader.class, r);
+    // We do this in the untyped parser -> we need 'all accepting' type filter
+    context.put(TypeFilter.class, t -> true);
+
     return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
   }
 
   @Override
   public final boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-    // nothing to clean up here
+    context.remove(GenericValueReader.class);
+    context.remove(TypeFilter.class);
 
     return delegate == null || delegate.onChunkEnd(context, chunkIndex, skipped);
   }
@@ -65,8 +72,8 @@ public abstract class EventStream implements ChunkParserListener {
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     ControlImpl ctl = (ControlImpl) control.get();
     try {
-      MapValueBuilder builder = new MapValueBuilder(context);
-      GenericValueReader r = new GenericValueReader(builder);
+      GenericValueReader r = context.get(GenericValueReader.class);
+      MapValueBuilder builder = r != null ? r.getProcessor() : null;
 
       MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
       try {

@@ -4,6 +4,7 @@ import io.jafar.parser.impl.TypedParserContext;
 import io.jafar.parser.internal_api.Deserializer;
 import io.jafar.parser.internal_api.DeserializerCache;
 import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.internal_api.TypeSkipper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -11,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -72,8 +74,15 @@ public final class MetadataClass extends AbstractMetadataElement {
           AtomicReferenceFieldUpdater.newUpdater(
               MetadataClass.class, Deserializer.class, "deserializer");
 
+  private static final AtomicReferenceFieldUpdater<MetadataClass, TypeSkipper>
+      TYPE_SKIPPER_UPDATER =
+          AtomicReferenceFieldUpdater.newUpdater(
+              MetadataClass.class, TypeSkipper.class, "typeSkipper");
+
   /** The deserializer associated with this class. */
   private volatile Deserializer<?> deserializer;
+
+  private volatile TypeSkipper typeSkipper;
 
   /**
    * Constructs a new MetadataClass from the recording stream and event.
@@ -115,11 +124,13 @@ public final class MetadataClass extends AbstractMetadataElement {
         this,
         v ->
             (v == null)
-                ? getContext()
-                    .get(DeserializerCache.class)
-                    .computeIfAbsent(
-                        new TypedParserContext.DeserializerKey(MetadataClass.this),
-                        k -> Deserializer.forType(MetadataClass.this))
+                ? Optional.ofNullable(getContext().get(DeserializerCache.class))
+                    .map(
+                        c ->
+                            c.computeIfAbsent(
+                                new TypedParserContext.DeserializerKey(MetadataClass.this),
+                                k -> Deserializer.forType(MetadataClass.this)))
+                    .orElse(Deserializer.none())
                 : v);
   }
 
@@ -129,7 +140,12 @@ public final class MetadataClass extends AbstractMetadataElement {
    * @return the associated deserializer
    */
   public Deserializer<?> getDeserializer() {
-    return deserializer;
+    Deserializer<?> ret = deserializer;
+    if (ret == null) {
+      bindDeserializer();
+      ret = deserializer;
+    }
+    return ret == Deserializer.none() ? null : ret;
   }
 
   /**
@@ -225,13 +241,19 @@ public final class MetadataClass extends AbstractMetadataElement {
    * @throws IOException if an I/O error occurs during skipping
    */
   public void skip(RecordingStream stream) throws IOException {
-    if (deserializer == null) {
-      return;
-    }
-    try {
-      deserializer.skip(stream);
-    } catch (Exception e) {
-      throw new IOException(e);
+    Deserializer<?> d = getDeserializer(); // lazily initialize deserializer
+    if (d == null) {
+      // no deserializer; use type skipper
+      TypeSkipper skipper =
+          TYPE_SKIPPER_UPDATER.updateAndGet(
+              this, ts -> ts == null ? TypeSkipper.createSkipper(this) : ts);
+      skipper.skip(stream);
+    } else {
+      try {
+        d.skip(stream);
+      } catch (Exception e) {
+        throw new IOException(e);
+      }
     }
   }
 

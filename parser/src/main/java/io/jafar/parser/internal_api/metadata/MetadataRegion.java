@@ -1,5 +1,6 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.Objects;
@@ -48,10 +49,10 @@ public final class MetadataRegion extends AbstractMetadataElement {
   protected void onAttribute(String key, String value) {
     switch (key) {
       case "dst":
-        dst = value != null ? Long.parseLong(value) : 0L;
+        dst = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
         break;
       case "gmtOffset":
-        gmtOffset = value != null ? Long.parseLong(value) : 0L;
+        gmtOffset = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
         break;
       case "locale":
         locale = value != null ? value : "en_US";

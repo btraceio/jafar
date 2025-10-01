@@ -141,4 +141,88 @@ public final class ParsingUtils {
         break;
     }
   }
+
+  private static final long POW10_8 = 100_000_000L;
+
+  public static long parseLongSWAR(CharSequence s) {
+    int n = s.length();
+    if (n == 0) throw nfe(s);
+
+    int i = 0;
+    boolean neg = false;
+    char c0 = s.charAt(0);
+    if (c0 == '+' || c0 == '-') {
+      neg = c0 == '-';
+      i++;
+      if (i == n) throw nfe(s);
+    }
+
+    // skip leading zeros (keeps overflow checks simple)
+    while (i < n && s.charAt(i) == '0') i++;
+    int start = i;
+    int digits = n - start;
+    if (digits == 0) return 0L;
+
+    if (digits > 19) throw nfe(s); // exceeds long range (19 digits max)
+
+    long acc = 0;
+
+    // process full 8-digit blocks
+    for (; digits >= 8; digits -= 8, i += 8) {
+      long block = parse8(s, i); // returns 0..99_999_999 or throws
+      // overflow check: acc*10^8 + block <= MAX (or MIN for neg)
+      long limit = neg ? -(Long.MIN_VALUE / POW10_8) : Long.MAX_VALUE / POW10_8;
+      if (acc > limit) throw nfe(s);
+      acc *= POW10_8;
+      long addLimit = neg ? -(Long.MIN_VALUE + acc) : Long.MAX_VALUE - acc;
+      if (block > addLimit) throw nfe(s);
+      acc += block;
+    }
+
+    // tail (0..7 digits)
+    while (digits-- > 0) {
+      int d = s.charAt(i++) - '0';
+      if ((d | (9 - d)) < 0) throw nfe(s); // branchless 0..9 check
+      long lim = neg ? Long.MIN_VALUE : Long.MAX_VALUE;
+      // overflow check before acc*10 + d
+      if (!neg) {
+        if (acc > (Long.MAX_VALUE - d) / 10) throw nfe(s);
+        acc = acc * 10 + d;
+      } else {
+        if (acc < (Long.MIN_VALUE + d) / 10) throw nfe(s);
+        acc = acc * 10 - d;
+      }
+    }
+    return neg ? -acc : acc;
+  }
+
+  // SWAR-ish 8-digit block: subtract '0', validate, multiply by powers of 10
+  private static long parse8(CharSequence s, int off) {
+    long v0 = s.charAt(off) - '0';
+    long v1 = s.charAt(off + 1) - '0';
+    long v2 = s.charAt(off + 2) - '0';
+    long v3 = s.charAt(off + 3) - '0';
+    long v4 = s.charAt(off + 4) - '0';
+    long v5 = s.charAt(off + 5) - '0';
+    long v6 = s.charAt(off + 6) - '0';
+    long v7 = s.charAt(off + 7) - '0';
+
+    // validate 0..9 without branches
+    if ((v0 | (9 - v0)) < 0
+        | (v1 | (9 - v1)) < 0
+        | (v2 | (9 - v2)) < 0
+        | (v3 | (9 - v3)) < 0
+        | (v4 | (9 - v4)) < 0
+        | (v5 | (9 - v5)) < 0
+        | (v6 | (9 - v6)) < 0
+        | (v7 | (9 - v7)) < 0) throw nfe(null);
+
+    // dot product with powers of 10 (fits in 32 bits)
+    return (((((v0 * 10 + v1) * 10 + v2) * 10 + v3) * 10 + v4) * 10 + v5) * 10 * 10 + v6 * 10 + v7;
+    // (The above is intentionally simple; JVM fuses mul-adds well.)
+  }
+
+  private static NumberFormatException nfe(CharSequence s) {
+    return new NumberFormatException(s == null ? "invalid digits" : "For input: \"" + s + '"');
+  }
 }
