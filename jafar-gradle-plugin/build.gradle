@@ -58,17 +58,17 @@ test {
 
 tasks.register('sourcesJar', Jar) {
     from sourceSets.main.allJava
-    archiveBaseName = libraryName
-    archiveClassifier = "sources"
-    archiveVersion = component_version
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("sources")
+    archiveVersion.set(component_version)
 }
 
 tasks.register('javadocJar', Jar) {
     dependsOn javadoc
-    archiveBaseName = libraryName
-    archiveClassifier = 'javadoc'
-    archiveVersion = component_version
-    from javadoc.destinationDir
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set('javadoc')
+    archiveVersion.set(component_version)
+    from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
 publishing {

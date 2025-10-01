@@ -25,18 +25,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup JDK 21 for toolchains (when on 8)
+      # Ensure the runner uses JDK 21 as the default when matrix is '8',
+      # while JDK 8 is available for Gradle toolchains
+      - name: Install JDK 8 for Gradle toolchains (matrix=8)
         if: matrix.java == '8'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '8'
 
-      - name: Setup JDK ${{ matrix.java }}
+      - name: Set runner default JDK to 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: ${{ matrix.java }}
+          java-version: '21'
 
       - name: Cache JFR samples
         id: cache-jfr
@@ -124,24 +126,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download JUnit XML (JDK 8)
+      - name: Download all JUnit XML artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
-          name: junit-xml-jdk-8
-          path: reports/jdk8
+          pattern: junit-xml-jdk-*
+          merge-multiple: true
+          path: reports
 
-      - name: Download JUnit XML (JDK 21)
-        uses: actions/download-artifact@v4
-        with:
-          name: junit-xml-jdk-21
-          path: reports/jdk21
+      - name: Ensure report XML presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          shopt -s globstar nullglob
+          count=$(ls -1 reports/**/*.xml 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$count" = "0" ]; then
+            echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > reports/placeholder.xml
+          fi
 
       - name: Publish combined JUnit PR annotations
         uses: dorny/test-reporter@v1
         with:
           name: Combined JUnit Test Report
-          path: |
-            reports/jdk8/**/*.xml
-            reports/jdk21/**/*.xml
+          path: reports/**/*.xml
           reporter: java-junit
           fail-on-error: false

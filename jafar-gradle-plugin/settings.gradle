@@ -15,11 +15,4 @@ pluginManagement {
     }
 }
 
-// Include the root build to substitute the parser module with the in-repo :parser project
-includeBuild('..') {
-    dependencySubstitution {
-        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
-    }
-}
-
 rootProject.name = 'gradle-plugin'

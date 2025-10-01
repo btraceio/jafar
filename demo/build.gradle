@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'application'
-    id 'com.gradleup.shadow' version '8.3.6'
+    // No shadow plugin; define a simple fatJar task compatible with Gradle 9
     id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
 }
 
@@ -20,7 +20,8 @@ java {
 }
 
 application {
-    mainClass = 'io.jafar.demo.Main'
+    // Gradle 9+: use Provider API for mainClass
+    mainClass.set('io.jafar.demo.Main')
 }
 
 tasks.register('explodedDist', Copy) {
@@ -32,6 +33,19 @@ tasks.register('explodedDist', Copy) {
 tasks.build {
     dependsOn explodedDist
 }
+
+// Create a self-contained fat jar without relying on shadow's application integration
+tasks.register('fatJar', Jar) {
+    archiveClassifier.set('all')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.output)
+    from({ configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } })
+    manifest {
+        attributes('Main-Class': 'io.jafar.demo.Main')
+    }
+}
+
+tasks.assemble { dependsOn(tasks.named('fatJar')) }
 
 dependencies {
     implementation 'io.btrace:jafar-parser:0.0.1-SNAPSHOT'

@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'maven-publish'
-    id 'com.gradleup.shadow' version '8.3.6'
+    // shadow not used for parser to avoid conflicts during publish
 }
 
 def libraryName="jafar-parser"
@@ -79,21 +79,21 @@ configurations {
 tasks.register('compileJava9', JavaCompile) {
     source = sourceSets.java9.java
     classpath = sourceSets.java9.compileClasspath
-    destinationDirectory = layout.buildDirectory.dir("classes/java/java9")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java9"))
     options.release.set(9)
 }
 
 tasks.register('compileJava13', JavaCompile) {
     source = sourceSets.java13.java
     classpath = sourceSets.java13.compileClasspath
-    destinationDirectory = layout.buildDirectory.dir("classes/java/java13")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java13"))
     options.release.set(13)
 }
 
 tasks.register('compileJava21', JavaCompile) {
     source = sourceSets.java21.java
     classpath = sourceSets.java21.compileClasspath
-    destinationDirectory = layout.buildDirectory.dir("classes/java/java21")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java21"))
     options.release.set(21)
 }
 
@@ -139,7 +139,7 @@ def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLang
 tasks.register('compileTest8JavaCompat', JavaCompile) {
     source = sourceSets.test8.java
     classpath = sourceSets.test8.compileClasspath
-    destinationDirectory = layout.buildDirectory.dir("classes/java/test8")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/test8"))
     options.release.set(8)
     // Use JDK21 compiler to produce Java 8 bytecode via --release 8
     javaCompiler.set(j21CompilerProvider)
@@ -148,7 +148,7 @@ tasks.register('compileTest8JavaCompat', JavaCompile) {
 tasks.register('test8', Test) {
     description = 'Runs core parser smoke tests on JDK 8.'
     group = 'verification'
-    testClassesDirs = layout.buildDirectory.dir('classes/java/test8').map { it.asFile }.get().exists() ? files(layout.buildDirectory.dir('classes/java/test8')) : files()
+    testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
     classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
     shouldRunAfter tasks.named('test')
     javaLauncher.set(j8LauncherProvider)
@@ -175,6 +175,8 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
 
 test {
@@ -184,40 +186,31 @@ test {
 
 tasks.register('sourcesJar', Jar) {
     from sourceSets.main.allJava
-    archiveBaseName = libraryName
-    archiveClassifier = "sources"
-    archiveVersion = component_version
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("sources")
+    archiveVersion.set(component_version)
 }
 
 tasks.register('javadocJar', Jar) {
     dependsOn javadoc
-    archiveBaseName = libraryName
-    archiveClassifier = 'javadoc'
-    archiveVersion = component_version
-    from javadoc.destinationDir
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set('javadoc')
+    archiveVersion.set(component_version)
+    // Javadoc default output path
+    from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
 publishing {
     publications {
-        assembled(MavenPublication) { publication ->
-            publication.groupId = 'io.btrace'
-            publication.artifactId = 'jafar-parser'
-            publication.version = component_version
-
-            publication.artifact shadowJar
-            publication.artifact sourcesJar
-            publication.artifact javadocJar
+        mavenJava(MavenPublication) {
+            groupId = 'io.btrace'
+            artifactId = 'jafar-parser'
+            version = component_version
+            from components.java
+            artifact sourcesJar
+            artifact javadocJar
         }
     }
 }
 
-shadowJar {
-    group 'Build'
-    archiveBaseName = libraryName
-    archiveVersion = component_version
-    archiveClassifier.set('')
-
-    relocate 'it.unimi.dsi.fastutil', 'io.jafar.libs.it.unimi.dsi.fastutil'
-    relocate 'org.objectweb.asm', 'io.jafar.libs.org.objectweb.asm'
-    relocate 'org.slf4j', 'io.jafar.libs.org.slf4j'
-}
+// No shadow jar for parser; consumers may shade as needed
