@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'application'
-    id 'com.gradleup.shadow' version '8.3.6'
+    // No shadow plugin; define a simple fatJar task compatible with Gradle 9
     id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
 }
 
@@ -20,22 +20,36 @@ java {
 }
 
 application {
-    mainClass = 'io.jafar.demo.Main'
+    // Gradle 9+: use Provider API for mainClass
+    mainClass.set('io.jafar.demo.Main')
 }
 
-task explodedDist(type: Copy) {
+tasks.register('explodedDist', Copy) {
     dependsOn installDist
-    from("$buildDir/install/${project.name}") // Location where the application plugin installs the distribution
-    into("$buildDir/exploded/${project.name}") // Target directory for the exploded distribution
+    from(layout.buildDirectory.dir("install/${project.name}")) // Location where the application plugin installs the distribution
+    into(layout.buildDirectory.dir("exploded/${project.name}")) // Target directory for the exploded distribution
 }
 
 tasks.build {
     dependsOn explodedDist
 }
 
+// Create a self-contained fat jar without relying on shadow's application integration
+tasks.register('fatJar', Jar) {
+    archiveClassifier.set('all')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.output)
+    from({ configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } })
+    manifest {
+        attributes('Main-Class': 'io.jafar.demo.Main')
+    }
+}
+
+tasks.assemble { dependsOn(tasks.named('fatJar')) }
+
 dependencies {
-    implementation project(':parser')
-    implementation project(':tools')
+    implementation 'io.btrace:jafar-parser:0.0.1-SNAPSHOT'
+    implementation 'io.btrace:jafar-tools:0.0.1-SNAPSHOT'
 
     implementation 'it.unimi.dsi:fastutil:8.5.12'
     implementation 'org.jctools:jctools-core:4.0.3'

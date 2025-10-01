@@ -8,6 +8,9 @@ plugins {
 group = "io.btrace"
 version = "0.0.1-SNAPSHOT"
 
+def libraryName = "jafar-gradle-plugin"
+def component_version = version
+
 repositories {
     mavenLocal()
     mavenCentral()
@@ -34,7 +37,7 @@ dependencies {
     implementation gradleApi() // Provides the Gradle API, including Plugin
     implementation localGroovy()
 
-    implementation 'io.btrace:jafar-parser:0.0.1-SNAPSHOT'
+    implementation "io.btrace:jafar-parser:${component_version}"
     implementation 'org.jctools:jctools-core:4.0.1'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.5'
     implementation 'org.openjdk.jmc:flightrecorder:8.3.1'
@@ -55,17 +58,17 @@ test {
 
 tasks.register('sourcesJar', Jar) {
     from sourceSets.main.allJava
-    archiveBaseName = libraryName
-    archiveClassifier = "sources"
-    archiveVersion = component_version
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("sources")
+    archiveVersion.set(component_version)
 }
 
 tasks.register('javadocJar', Jar) {
     dependsOn javadoc
-    archiveBaseName = libraryName
-    archiveClassifier = 'javadoc'
-    archiveVersion = component_version
-    from javadoc.destinationDir
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set('javadoc')
+    archiveVersion.set(component_version)
+    from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
 publishing {

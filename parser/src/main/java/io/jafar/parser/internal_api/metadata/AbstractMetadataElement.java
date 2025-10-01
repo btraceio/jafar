@@ -1,5 +1,6 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
@@ -100,7 +101,7 @@ public abstract class AbstractMetadataElement {
    * @return the element ID as a long value
    */
   public long getId() {
-    return Long.parseLong(id);
+    return ParsingUtils.parseLongSWAR(id);
   }
 
   /**

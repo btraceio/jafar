@@ -26,6 +26,8 @@ launcher*
 
 /lib/
 
+# Keep top-level gradle.properties, ignore others
+gradle.properties
 **/gradle.properties
 
 # cursor history

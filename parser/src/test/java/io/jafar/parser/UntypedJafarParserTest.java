@@ -38,7 +38,7 @@ public class UntypedJafarParserTest {
                 assertTrue(i.isBefore(cutOffDate));
                 count.incrementAndGet();
                 // this is a sanity test only; we can end early
-                ctl.abort();
+                //                ctl.abort();
               });
       p.run();
       reg.destroy(p);

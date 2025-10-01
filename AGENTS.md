@@ -5,7 +5,8 @@
 - `tools/`: Utilities built on the parser (e.g., `io.jafar.tools.Scrubber`).
 - `demo/`: Sample CLI app (`application` plugin). Main class: `io.jafar.demo.Main`.
 - `jafar-gradle-plugin/`: Gradle plugin (Groovy) that generates typed interfaces.
-- Shared scripts: `get_resources.sh` (fetch test JFRs), `rebuild_plugin.sh` (publish parser+plugin to `mavenLocal`).
+- Shared script: `get_resources.sh` (fetch test JFRs).
+  - Gradle plugin is resolved via an included build (composite); no local publish needed for development.
 
 ## Build, Test, and Development Commands
 - `./get_resources.sh` — download small JFR samples into `demo/src/test/resources`.
@@ -13,7 +14,7 @@
 - `./gradlew shadowJar` — produce fat jars (notably `parser` and `demo`).
 - `./gradlew :demo:run --args="jafar /path/to/file.jfr"` — run the demo app.
 - `./gradlew test` — run JUnit 5 tests (parser tests use higher heap; Java 21 toolchain).
-- `./rebuild_plugin.sh` — publish `parser` and the Gradle plugin to `mavenLocal` for local use.
+- Plugin development: resolved from source via composite build; `tools` can apply `id 'io.btrace.jafar-gradle-plugin'` without publishing. Use `./gradlew publishToMavenLocal` if you need the parser artifact in your local Maven.
 
 ## Coding Style & Naming Conventions
 - Language: Java 21 (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
@@ -37,4 +38,4 @@
 
 ## Security & Configuration Tips
 - Do not commit large recordings outside Git LFS. Avoid secrets in code; Sonatype credentials are provided via env/CI.
-- When using the plugin, prefer local publishing (`mavenLocal`) during development.
+- The Gradle plugin is wired via included build; no local publish required during development.

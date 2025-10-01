@@ -24,6 +24,11 @@ public final class GenericValueReader {
     this.processor = processor;
   }
 
+  @SuppressWarnings("unchecked")
+  public <T extends ValueProcessor> T getProcessor() {
+    return (T) processor;
+  }
+
   /**
    * Reads a value of the specified type from the recording stream.
    *

@@ -1,0 +1,155 @@
+name: PR Test Results Comment (forks)
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  comment-results:
+    name: Comment Test Results
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - name: Resolve PR Tests run id
+        id: resolve_run
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Find the latest completed 'PR Tests' workflow run for this head SHA
+          api="https://api.github.com/repos/${REPO}/actions/workflows/pr-tests.yml/runs?event=pull_request&status=completed&per_page=50"
+          json=$(curl -sSf -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api")
+          run_id=$(echo "$json" | jq -r --arg sha "$PR_SHA" '.workflow_runs[] | select(.head_sha==$sha) | .id' | head -n1)
+          if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
+            echo "No completed run found for head sha ${PR_SHA}" >&2
+            echo "run_id=" >> $GITHUB_OUTPUT
+          else
+            echo "Found run id: ${run_id}"
+            echo "run_id=${run_id}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download JUnit XML (JDK 8)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: pr-tests.yml
+          pr: ${{ github.event.pull_request.number }}
+          name: junit-xml-jdk-8
+          path: reports
+          if_no_artifact_found: warn
+
+      - name: Download JUnit XML (JDK 21)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: pr-tests.yml
+          pr: ${{ github.event.pull_request.number }}
+          name: junit-xml-jdk-21
+          path: reports
+          if_no_artifact_found: warn
+
+      - name: Ensure report XML presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          shopt -s globstar nullglob
+          count=$(ls -1 reports/**/*.xml 2>/dev/null | wc -l | tr -d ' ' || true)
+          if [ "${count:-0}" = "0" ]; then
+            echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > reports/placeholder.xml
+          fi
+
+
+      - name: Analyze test results and build combined PR comment
+        id: build_comment
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.resolve_run.outputs.run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          tests=fail=errs=skipped=0
+          for path in glob.glob('reports/**/*.xml', recursive=True):
+              try:
+                  tree=ET.parse(path)
+                  root=tree.getroot()
+                  suites=[]
+                  if root.tag.endswith('testsuite'):
+                      suites=[root]
+                  else:
+                      suites=[el for el in root if el.tag.endswith('testsuite')]
+                  for s in suites:
+                      tests += int(s.attrib.get('tests', 0))
+                      fail  += int(s.attrib.get('failures', 0))
+                      errs  += int(s.attrib.get('errors', 0))
+                      skipped += int(s.attrib.get('skipped', 0))
+              except Exception:
+                  pass
+          with open('summary.env','w') as f:
+              f.write(f"TOTAL={tests}\nFAIL={fail}\nERR={errs}\nSKIP={skipped}\nPASS={tests-fail-errs-skipped}\n")
+          PY
+          # shellcheck disable=SC1091
+          . summary.env
+
+          # Build HTML artifact links
+          api="https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts"
+          json=$(curl -sSf -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api")
+          id8=$(echo "$json" | jq -r --arg name "junit-html-jdk-8" '.artifacts[] | select(.name==$name) | .id' | head -n1)
+          id21=$(echo "$json" | jq -r --arg name "junit-html-jdk-21" '.artifacts[] | select(.name==$name) | .id' | head -n1)
+          url8=""; url21=""
+          if [ -n "${id8:-}" ] && [ "${id8}" != "null" ]; then url8="https://github.com/${REPO}/actions/runs/${RUN_ID}/artifacts/${id8}"; fi
+          if [ -n "${id21:-}" ] && [ "${id21}" != "null" ]; then url21="https://github.com/${REPO}/actions/runs/${RUN_ID}/artifacts/${id21}"; fi
+
+          {
+            echo "<!-- test-summary-marker -->"
+            echo "### Combined JUnit Test Report"
+            echo ""
+            echo "- Total: ${TOTAL}"
+            echo "- Passed: ${PASS}"
+            echo "- Failures: ${FAIL}"
+            echo "- Errors: ${ERR}"
+            echo "- Skipped: ${SKIP}"
+            echo ""
+            echo "### HTML Test Reports"
+            echo "Run artifacts: https://github.com/${REPO}/actions/runs/${RUN_ID}"
+            if [ -n "${url8:-}" ]; then
+              echo "- JDK 8: [HTML report artifact](${url8})"
+            else
+              echo "- JDK 8: (artifact not found)"
+            fi
+            if [ -n "${url21:-}" ]; then
+              echo "- JDK 21: [HTML report artifact](${url21})"
+            else
+              echo "- JDK 21: (artifact not found)"
+            fi
+          } | tee combined_comment.md
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat combined_comment.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Find existing combined report comment
+        if: steps.resolve_run.outputs.run_id != ''
+        id: find_comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- test-summary-marker -->
+
+      - name: Post/update combined report comment
+        if: steps.resolve_run.outputs.run_id != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          edit-mode: replace
+          body: ${{ steps.build_comment.outputs.body }}

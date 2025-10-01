@@ -60,6 +60,20 @@ public class SplicedMappedByteBufferTest {
   }
 
   @Test
+  void testNativeOrderSemantics() {
+    // Default order should be native
+    assertEquals(ByteOrder.nativeOrder(), instance.order());
+    // isNativeOrder reflects the original mapping order vs native
+    boolean expectedNativeFlag = (ByteBuffer.allocate(1).order() == ByteOrder.nativeOrder());
+    assertEquals(expectedNativeFlag, instance.isNativeOrder());
+    // Changing order should not affect the native flag value
+    instance.order(ByteOrder.BIG_ENDIAN);
+    assertEquals(expectedNativeFlag, instance.isNativeOrder());
+    // restore
+    instance.order(ByteOrder.nativeOrder());
+  }
+
+  @Test
   void testPosition() {
     assertEquals(0, instance.position());
     instance.position(SLICE_SIZE + 1);

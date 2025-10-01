@@ -9,14 +9,13 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Per-session parsing context used internally and exposed via events.
  *
- * <p>Maintains per-parser reusable buffers and a key-value bag for extensions. Values may be
- * reclaimed by the GC at any time.
+ * <p>Maintains per-parser reusable buffers and a key-value bag for extensions.
  *
  * <p>Not intended for direct instantiation by users.
  */
 public abstract class ParserContext {
-  /** Concurrent map for storing values by string keys. */
-  private final ConcurrentMap<String, Object> bag = new ConcurrentHashMap<>();
+  /** Concurrent map for storing values by class name or custom string keys. */
+  private final ConcurrentMap<String, Object> storage = new ConcurrentHashMap<>();
 
   /** Metadata lookup instance for resolving metadata during parsing. */
   protected final MutableMetadataLookup metadataLookup;
@@ -72,7 +71,7 @@ public abstract class ParserContext {
    * @return the removed value, or {@code null} if it was reclaimed or not found
    */
   public final <T> T remove(Class<T> clz) {
-    return clz.cast(bag.remove(clz.getName()));
+    return clz.cast(storage.remove(clz.getName()));
   }
 
   /**
@@ -85,7 +84,7 @@ public abstract class ParserContext {
    * @return the removed value, or {@code null} if it was reclaimed
    */
   public final <T> T remove(String key, Class<T> clz) {
-    return clz.cast(bag.remove(key));
+    return clz.cast(storage.remove(key));
   }
 
   /**
@@ -96,7 +95,7 @@ public abstract class ParserContext {
    * @param value the value to store
    */
   public final <T> void put(Class<T> clz, T value) {
-    bag.put(clz.getName(), value);
+    storage.put(clz.getName(), value);
   }
 
   /**
@@ -107,7 +106,7 @@ public abstract class ParserContext {
    * @return the value, or {@code null} if it was reclaimed or not found
    */
   public final <T> T get(Class<T> clz) {
-    return clz.cast(bag.get(clz.getName()));
+    return clz.cast(storage.get(clz.getName()));
   }
 
   /**
@@ -119,7 +118,7 @@ public abstract class ParserContext {
    * @param value the value to store
    */
   public final <T> void put(String key, Class<T> clz, T value) {
-    bag.put(key, value);
+    storage.put(key, value);
   }
 
   /**
@@ -133,12 +132,12 @@ public abstract class ParserContext {
    * @return the value or {@code null}
    */
   public final <T> T get(String key, Class<T> clz) {
-    return clz.cast(bag.get(key));
+    return clz.cast(storage.get(key));
   }
 
   /** Clears all stored values from the context. */
   public void clear() {
-    bag.clear();
+    storage.clear();
   }
 
   /**

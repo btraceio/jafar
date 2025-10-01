@@ -49,7 +49,10 @@ import java.nio.file.Paths;
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
   HandlerRegistration<?> reg = p.handle((type, value) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
+      // You can retrieve the value by providing 'path' -> "eventThread", "javaThreadId"
       Object threadId = Values.get(value, "eventThread", "javaThreadId");
+      // You can also get the value conveniently typed - for primitive values you need to use the boxed type in the call
+      long threadIdLong = Values.as(value, Long.class, "eventThread", "javaThreadId");
       // use threadId ...
     }
   });
@@ -78,6 +81,8 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 
     // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
     Object framesVal = Values.get(value, "stackTrace", "frames");
+    // You can also reference the array elements directly
+    Object firstFrame = Values.get(value, "stackTrace", "frames", 0);
     if (framesVal instanceof ArrayType at) {
       Object arr = at.getArray();
       if (arr instanceof Object[] objs) {
@@ -103,6 +108,8 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 ```
 
 ## Core API overview
+
+For the architecture of the `parser` module, see the [Parser Architecture](parser/ARCHITECTURE.md).
 - `JafarParser`
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: start a session.
   - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).
@@ -125,6 +132,19 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
   - `abort()`: stop parsing immediately (no exception thrown).
   - `chunkInfo()`: chunk metadata with `startTime()`, `duration()`, `size()`, and `convertTicks(long, TimeUnit)`.
     - Why `convertTicks(...)`? JFR records many time values in chunk-relative ticks. Converting on demand avoids creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. Convert only when needed and to the unit you need.
+
+### Typed runtime (JDK support)
+- The typed parser defines small, generated classes at runtime. It automatically picks the best available strategy for the running JDK:
+  - JDK 15+: hidden classes via `MethodHandles.Lookup#defineHiddenClass` (fastest, unloadable)
+  - JDK 9–14: `MethodHandles.Lookup#defineClass(byte[])` (good)
+  - JDK 8: `sun.misc.Unsafe#defineAnonymousClass` (compatible; slightly heavier)
+- Selection is automatic based on capability probes; no flags required. Enable debug logs to see the chosen strategy.
+
+### Multi‑Release JAR (parser)
+- The `parser` artifact is a Multi‑Release JAR:
+  - Base classes target Java 8 for broad compatibility.
+  - Java 21 overrides live under `META-INF/versions/21` and restore faster implementations (e.g., zero‑copy `ByteBuffer` slicing, `Arrays.equals` range checks, `Files.writeString`, etc.).
+- On Java 21+, the JVM loads these optimized classes automatically. On older JVMs, the Java 8 fallbacks are used.
 - Annotations
   - `@JfrType("<fq.type>")`: declare the JFR type an interface represents.
   - `@JfrField("<jfrField>", raw = false)`: map differing names or request raw representation.
@@ -251,10 +271,13 @@ scrubFile(Paths.get("/in.jfr"), Paths.get("/out-scrubbed.jfr"),
 ```
 
 ## Demo
-After building, you can run the demo application to compare parsers on `jdk.ExecutionSample`:
+Build and run the demo application:
 
 ```shell
-java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
+# First you need to publish parser, tools and plugin to local maven
+cd demo
+./build.sh
+java -jar build/libs/jafar-demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
 ```
 
 On an M1 and a ~600MiB JFR, the Jafar parser completes in ~1s vs ~7s with JMC (anecdotal). The stock `jfr` tool may OOM when printing all events.

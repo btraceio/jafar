@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -38,7 +39,7 @@ public final class MutableConstantPool implements ConstantPool {
     this.offsets = new Long2LongOpenHashMap(count);
     this.entries = new Long2ObjectOpenHashMap<>(count);
     this.stream = chunkStream;
-    var context = chunkStream.getContext();
+    ParserContext context = chunkStream.getContext();
     clazz = context.getMetadataLookup().getClass(typeId);
   }
 
@@ -85,6 +86,19 @@ public final class MutableConstantPool implements ConstantPool {
    */
   public void addOffset(long id, long offset) {
     offsets.put(id, offset);
+  }
+
+  /**
+   * Returns the stream offset for the given constant pool entry id or {@code 0} if unknown.
+   *
+   * <p>This allows lazy materialization of constant pool values by positioning the recording stream
+   * at the correct location and deserializing on-demand elsewhere.
+   *
+   * @param id constant pool entry id
+   * @return absolute offset within the chunk stream, or {@code 0} if not present
+   */
+  public long getOffset(long id) {
+    return offsets.get(id);
   }
 
   /** {@inheritDoc} */

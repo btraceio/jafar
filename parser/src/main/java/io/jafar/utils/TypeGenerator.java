@@ -8,10 +8,12 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import jdk.jfr.EventType;
@@ -95,9 +97,9 @@ public final class TypeGenerator {
                 try {
                   Path target = output.resolve("JFR" + getSimpleName(et.getName()) + ".java");
                   if (overwrite || !Files.exists(target)) {
-                    Files.writeString(
+                    Files.write(
                         target,
-                        generateTypeFromEvent(et, generated),
+                        generateTypeFromEvent(et, generated).getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.CREATE_NEW);
                   }
                 } catch (IOException e) {
@@ -148,8 +150,10 @@ public final class TypeGenerator {
       String targetName = isPrimitiveName(typeName) ? typeName : "JFR" + getSimpleName(typeName);
       Path target = output.resolve(targetName + ".java");
       if (overwrite || !Files.exists(target)) {
-        Files.writeString(
-            output.resolve(targetName + ".java"), data, StandardOpenOption.CREATE_NEW);
+        Files.write(
+            output.resolve(targetName + ".java"),
+            data.getBytes(StandardCharsets.UTF_8),
+            StandardOpenOption.CREATE_NEW);
       }
     }
   }
@@ -220,7 +224,10 @@ public final class TypeGenerator {
     try {
       Path classFile = output.resolve(getClassName(metadataClass) + ".java");
       if (overwrite || !Files.exists(classFile)) {
-        Files.writeString(classFile, generateClass(metadataClass), StandardOpenOption.CREATE_NEW);
+        Files.write(
+            classFile,
+            generateClass(metadataClass).getBytes(StandardCharsets.UTF_8),
+            StandardOpenOption.CREATE_NEW);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -243,10 +250,14 @@ public final class TypeGenerator {
       }
       MetadataClass fldType = field.getType();
       while (fldType.isSimpleType()) {
-        fldType = fldType.getFields().getFirst().getType();
+        List<MetadataField> fl = fldType.getFields();
+        fldType = fl.get(0).getType();
       }
       sb.append(getClassName(fldType));
-      sb.append("[]".repeat(Math.max(0, field.getDimension())));
+      int dims = Math.max(0, field.getDimension());
+      for (int i = 0; i < dims; i++) {
+        sb.append("[]");
+      }
       sb.append(" ");
       sb.append(fldName).append("();\n");
     }

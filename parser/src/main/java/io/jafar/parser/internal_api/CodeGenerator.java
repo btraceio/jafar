@@ -14,7 +14,6 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.PrintStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -432,13 +431,17 @@ final class CodeGenerator {
     Type dataType = null;
 
     switch (fldTypeName) {
-      case "byte", "boolean":
+      case "byte":
+      case "boolean":
         {
           fldType = fldTypeName.equals("byte") ? Type.BYTE_TYPE : Type.BOOLEAN_TYPE;
           dataType = Type.BYTE_TYPE;
           break;
         }
-      case "short", "char", "int", "long":
+      case "short":
+      case "char":
+      case "int":
+      case "long":
         {
           dataType = Type.LONG_TYPE;
           switch (fldTypeName) {
@@ -602,7 +605,8 @@ final class CodeGenerator {
     // stack: [stream]
     String fldTypeName = fldType.getName();
     switch (fldTypeName) {
-      case "byte", "boolean":
+      case "byte":
+      case "boolean":
         {
           if (keepStream) {
             mv.visitInsn(Opcodes.DUP); // [stream, stream]
@@ -703,14 +707,18 @@ final class CodeGenerator {
     int arrayOpcode = 0;
 
     switch (fldTypeName) {
-      case "byte", "boolean":
+      case "byte":
+      case "boolean":
         {
           fldType = fldTypeName.equals("byte") ? Type.BYTE_TYPE : Type.BOOLEAN_TYPE;
           arrayOpcode = fldTypeName.equals("byte") ? Opcodes.T_BYTE : Opcodes.T_BOOLEAN;
           dataType = Type.BYTE_TYPE;
           break;
         }
-      case "short", "char", "int", "long":
+      case "short":
+      case "char":
+      case "int":
+      case "long":
         {
           dataType = Type.LONG_TYPE;
           switch (fldTypeName) {
@@ -954,17 +962,22 @@ final class CodeGenerator {
   }
 
   private static String getPrimitiveReadOperation(Type type) {
-    return switch (type.getSort()) {
-      case Type.BYTE -> "read";
-      case Type.BOOLEAN -> "read";
-      case Type.SHORT -> "readVarint";
-      case Type.CHAR -> "readVarint";
-      case Type.INT -> "readVarint";
-      case Type.LONG -> "readVarint";
-      case Type.FLOAT -> "readFloat";
-      case Type.DOUBLE -> "readDouble";
-      default -> throw new RuntimeException("Unexpected type: " + type.getDescriptor());
-    };
+    switch (type.getSort()) {
+      case Type.BYTE:
+      case Type.BOOLEAN:
+        return "read";
+      case Type.SHORT:
+      case Type.CHAR:
+      case Type.INT:
+      case Type.LONG:
+        return "readVarint";
+      case Type.FLOAT:
+        return "readFloat";
+      case Type.DOUBLE:
+        return "readDouble";
+      default:
+        throw new RuntimeException("Unexpected type: " + type.getDescriptor());
+    }
   }
 
   private static void handleSimpleField(
@@ -977,7 +990,8 @@ final class CodeGenerator {
     // stack: [this, stream]);
     String fldTypeName = fld.getType().getName();
     switch (fldTypeName) {
-      case "byte", "boolean":
+      case "byte":
+      case "boolean":
         {
           mv.visitMethodInsn(
               Opcodes.INVOKEVIRTUAL,
@@ -994,7 +1008,10 @@ final class CodeGenerator {
                   : Type.BOOLEAN_TYPE.getDescriptor()); // []
           break;
         }
-      case "short", "char", "int", "long":
+      case "short":
+      case "char":
+      case "int":
+      case "long":
         {
           mv.visitMethodInsn(
               Opcodes.INVOKEVIRTUAL,
@@ -1309,8 +1326,10 @@ final class CodeGenerator {
             + context.getChunkIndex();
     // generate handler class
     ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+    // Generate classes compatible with Java 8+ to support running on JDK 8
+    // while still being usable on newer JDKs.
     cw.visit(
-        Opcodes.V11,
+        Opcodes.V1_8,
         Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
         clzName.replace('.', '/'),
         null,
@@ -1357,27 +1376,48 @@ final class CodeGenerator {
 
           MetadataClass fldType = field.getType();
           while (fldType.isSimpleType()) {
-            fldType = fldType.getFields().getFirst().getType();
+            List<MetadataField> fl = fldType.getFields();
+            fldType = fl.get(0).getType();
           }
 
           String fldTypeNameResolved = fldType.getName();
-          Class<?> fldClz =
-              switch (fldTypeNameResolved) {
-                case "byte" -> byte.class;
-                case "boolean" -> boolean.class;
-                case "short" -> short.class;
-                case "char" -> char.class;
-                case "int" -> int.class;
-                case "long" -> long.class;
-                case "float" -> float.class;
-                case "double" -> double.class;
-                case "java.lang.String" -> String.class;
-                default -> context.getClassTargetType(fldTypeNameResolved);
-              };
+          Class<?> fldClz;
+          switch (fldTypeNameResolved) {
+            case "byte":
+              fldClz = byte.class;
+              break;
+            case "boolean":
+              fldClz = boolean.class;
+              break;
+            case "short":
+              fldClz = short.class;
+              break;
+            case "char":
+              fldClz = char.class;
+              break;
+            case "int":
+              fldClz = int.class;
+              break;
+            case "long":
+              fldClz = long.class;
+              break;
+            case "float":
+              fldClz = float.class;
+              break;
+            case "double":
+              fldClz = double.class;
+              break;
+            case "java.lang.String":
+              fldClz = String.class;
+              break;
+            default:
+              fldClz = context.getClassTargetType(fldTypeNameResolved);
+          }
           boolean withConstantPool = field.hasConstantPool();
           Set<FieldMapping> mappings = fieldMap.get(fieldName);
           if (mappings == null) {
-            mappings = Set.of(new FieldMapping(fieldName, false));
+            mappings = new HashSet<>();
+            mappings.add(new FieldMapping(fieldName, false));
           }
           boolean generateRefField = true;
           for (FieldMapping mapping : mappings) {
@@ -1422,7 +1462,7 @@ final class CodeGenerator {
             prepareEmptyMethod(m, cw);
           }
         }
-        checkClasses.addAll(Arrays.stream(checkClass.getInterfaces()).toList());
+        checkClasses.addAll(Arrays.asList(checkClass.getInterfaces()));
       }
       // add factory method returning the created instance
       prepareFactory(cw, clzName.replace('.', '/'));
@@ -1442,19 +1482,29 @@ final class CodeGenerator {
     }
 
     try {
-      MethodHandles.Lookup lkp =
-          MethodHandles.lookup()
-              .defineHiddenClass(classData, true, MethodHandles.Lookup.ClassOption.NESTMATE);
-      MethodHandle createHandle =
-          target != null
-              ? lkp.findStatic(
-                  lkp.lookupClass(),
-                  "create",
-                  MethodType.methodType(Object.class, RecordingStream.class))
-              : null;
-      MethodHandle skipHandle =
-          lkp.findStatic(
-              lkp.lookupClass(), "skip", MethodType.methodType(void.class, RecordingStream.class));
+      // Define the class using the best available strategy for the current JDK
+      Class<?> implClz;
+      try {
+        ClassDefiner definer = ClassDefiners.best();
+        if (log.isDebugEnabled()) {
+          log.debug("Generating typed class using definer: {}", definer.name());
+        }
+        implClz = definer.define(classData, CodeGenerator.class);
+      } catch (Throwable t) {
+        throw new Exception(t);
+      }
+
+      MethodHandle createHandle = null;
+      if (target != null) {
+        Method mCreate = implClz.getDeclaredMethod("create", RecordingStream.class);
+        mCreate.setAccessible(true);
+        createHandle = MethodHandles.lookup().unreflect(mCreate);
+      }
+
+      Method mSkip = implClz.getDeclaredMethod("skip", RecordingStream.class);
+      mSkip.setAccessible(true);
+      MethodHandle skipHandle = MethodHandles.lookup().unreflect(mSkip);
+
       return new Deserializer.Generated<>(createHandle, skipHandle, TypeSkipper.createSkipper(clz));
     } catch (Exception e) {
       log.error(

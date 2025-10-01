@@ -189,7 +189,14 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     do {
       checkSpliceOffset();
       int toLoad = (int) Math.min(spliceSize - this.offset, length - loaded);
-      splices[index].get(this.offset, buffer, offset + loaded, toLoad);
+      // Absolute bulk get with destination is unavailable on older JDKs; emulate
+      int oldPos = splices[index].position();
+      try {
+        splices[index].position(this.offset);
+        splices[index].get(buffer, offset + loaded, toLoad);
+      } finally {
+        splices[index].position(oldPos);
+      }
       loaded += toLoad;
       this.offset += toLoad;
     } while (loaded < length);
