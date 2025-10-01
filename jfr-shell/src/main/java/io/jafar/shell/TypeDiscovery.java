@@ -51,7 +51,7 @@ public class TypeDiscovery {
             });
             
             // Register a no-op handler to trigger metadata discovery
-            parser.handle((type, value) -> { /* no-op */ });
+            parser.handle((type, value, ctl) -> { /* no-op */ });
             parser.run();
         }
         
@@ -98,7 +98,7 @@ public class TypeDiscovery {
         Map<String, Long> typeCounts = new HashMap<>();
         
         try (UntypedJafarParser parser = parsingContext.newUntypedParser(recordingPath)) {
-            parser.handle((type, value) -> {
+            parser.handle((type, value, ctl) -> {
                 String typeName = type.getName();
                 typeCounts.merge(typeName, 1L, Long::sum);
             });

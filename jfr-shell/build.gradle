@@ -1,9 +1,7 @@
 plugins {
-    id 'groovy'
     id 'java'
     id 'application'
     id 'com.gradleup.shadow' version '8.3.6'
-    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
 }
 
 def libraryName = "jfr-shell"
@@ -19,7 +17,7 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
@@ -30,10 +28,7 @@ application {
 dependencies {
     implementation project(':parser')
     implementation project(':tools')
-    
-    // Groovy dependencies
-    implementation 'org.apache.groovy:groovy-all:4.0.15'
-    
+
     // Command line parsing
     implementation 'info.picocli:picocli:4.7.5'
     
@@ -46,12 +41,15 @@ dependencies {
     implementation 'org.slf4j:slf4j-simple:2.0.5'
     
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
-    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
-    testImplementation 'org.spockframework:spock-core:2.3-groovy-4.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'org.mockito:mockito-core:5.12.0'
 }
 
 test {
     useJUnitPlatform()
+    // Enable Byte Buddy experimental support for Java 25 when used by Mockito
+    systemProperty 'net.bytebuddy.experimental', 'true'
 }
 
 shadowJar {
@@ -65,16 +63,3 @@ shadowJar {
         attributes 'Main-Class': 'io.jafar.shell.Main'
     }
 }
-
-generateJafarTypes {
-    overwrite = true
-    targetPackage = 'io.jafar.shell.types'
-    // Generate types for common JFR events by default
-    eventTypeFilter {
-        it.startsWith('jdk.') || it.startsWith('jfr.')
-    }
-}
-
-// Ensure type generation runs before compilation
-compileJava.dependsOn tasks.named('generateJafarTypes')
-compileGroovy.dependsOn tasks.named('generateJafarTypes')
