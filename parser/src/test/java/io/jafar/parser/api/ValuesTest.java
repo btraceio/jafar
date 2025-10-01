@@ -73,7 +73,7 @@ public class ValuesTest {
   }
 
   @Test
-  void get_navigates_and_unwraps_complex_and_arrays() {
+  void getNavigatesAndUnwrapsComplexAndArrays() {
     Map<String, Object> event = buildEvent();
 
     Object tid = Values.get(event, "eventThread", "javaThreadId");
@@ -92,7 +92,7 @@ public class ValuesTest {
   }
 
   @Test
-  void as_extracts_typed_values() {
+  void asExtractsTypedValues() {
     Map<String, Object> event = buildEvent();
 
     // eventThread resolves to a Map via ComplexType
@@ -106,7 +106,7 @@ public class ValuesTest {
   }
 
   @Test
-  void resolved_maps_unwrap_wrappers() {
+  void resolvedMapsUnwrapWrappers() {
     Map<String, Object> event = buildEvent();
 
     Map<String, Object> shallow = Values.resolvedShallow(event);
