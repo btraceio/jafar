@@ -103,6 +103,8 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 ```
 
 ## Core API overview
+
+For the architecture of the `parser` module, see the [Parser Architecture](parser/ARCHITECTURE.md).
 - `JafarParser`
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: start a session.
   - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).
