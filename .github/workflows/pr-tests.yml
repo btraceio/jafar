@@ -153,11 +153,101 @@ jobs:
           reporter: java-junit
           fail-on-error: false
 
-      - name: Comment summary on PR
-        if: always() && github.event_name == 'pull_request'
-        uses: EnricoMi/publish-unit-test-result-action@v2
+      - name: Analyze test results and build combined PR comment (same-repo PRs only)
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        id: build_comment
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET, os
+          tests=fail=errs=skipped=0
+          for path in glob.glob('reports/**/*.xml', recursive=True):
+              try:
+                  tree=ET.parse(path)
+                  root=tree.getroot()
+                  suites=[]
+                  if root.tag.endswith('testsuite'):
+                      suites=[root]
+                  else:
+                      suites=[el for el in root if el.tag.endswith('testsuite')]
+                  for s in suites:
+                      tests += int(s.attrib.get('tests', 0))
+                      fail  += int(s.attrib.get('failures', 0))
+                      errs  += int(s.attrib.get('errors', 0))
+                      skipped += int(s.attrib.get('skipped', 0))
+              except Exception:
+                  pass
+          with open('summary.env','w') as f:
+              f.write(f"TOTAL={tests}\nFAIL={fail}\nERR={errs}\nSKIP={skipped}\nPASS={tests-fail-errs-skipped}\n")
+          PY
+          # shellcheck disable=SC1091
+          . summary.env
+
+          # Build HTML artifact links
+          api="https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts"
+          json=$(curl -sSf -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api")
+          id8=$(echo "$json" | jq -r --arg name "junit-html-jdk-8" '.artifacts[] | select(.name==$name) | .id' | head -n1)
+          id21=$(echo "$json" | jq -r --arg name "junit-html-jdk-21" '.artifacts[] | select(.name==$name) | .id' | head -n1)
+          url8=""; url21=""
+          if [ -n "${id8:-}" ] && [ "${id8}" != "null" ]; then url8="https://github.com/${REPO}/actions/runs/${RUN_ID}/artifacts/${id8}"; fi
+          if [ -n "${id21:-}" ] && [ "${id21}" != "null" ]; then url21="https://github.com/${REPO}/actions/runs/${RUN_ID}/artifacts/${id21}"; fi
+
+          {
+            echo "<!-- test-summary-marker -->"
+            echo "### Combined JUnit Test Report"
+            echo ""
+            echo "- Total: ${TOTAL}"
+            echo "- Passed: ${PASS}"
+            echo "- Failures: ${FAIL}"
+            echo "- Errors: ${ERR}"
+            echo "- Skipped: ${SKIP}"
+            echo ""
+            echo "### HTML Test Reports"
+            echo "Run artifacts: https://github.com/${REPO}/actions/runs/${RUN_ID}"
+            if [ -n "${url8:-}" ]; then
+              echo "- JDK 8: [HTML report artifact](${url8})"
+            else
+              echo "- JDK 8: (artifact not found)"
+            fi
+            if [ -n "${url21:-}" ]; then
+              echo "- JDK 21: [HTML report artifact](${url21})"
+            else
+              echo "- JDK 21: (artifact not found)"
+            fi
+          } | tee combined_comment.md
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat combined_comment.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+
+      - name: Find existing combined report comment
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        id: find_comment
+        uses: peter-evans/find-comment@v3
         with:
-          files: reports/**/*.xml
-          check_name: Combined JUnit Test Report
-          comment_mode: update
-          fail_on: never
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- test-summary-marker -->
+
+      - name: Post/update combined report comment
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          edit-mode: replace
+          body: ${{ steps.build_comment.outputs.body }}
