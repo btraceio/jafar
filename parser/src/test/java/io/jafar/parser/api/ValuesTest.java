@@ -80,7 +80,7 @@ public class ValuesTest {
     assertEquals(123L, tid);
 
     Object framesVal = Values.get(event, "stackTrace", "frames");
-    assertTrue(framesVal instanceof Object[]);
+    assertInstanceOf(Object[].class, framesVal);
     Object[] frames = (Object[]) framesVal;
     assertEquals(3, frames.length);
 
@@ -97,6 +97,8 @@ public class ValuesTest {
 
     // eventThread resolves to a Map via ComplexType
     assertTrue(Values.as(event, Map.class, "eventThread").isPresent());
+    long tid = Values.as(event, Long.class, "eventThread", "javaThreadId").orElse(-1L);
+    assertEquals(123L, tid);
     Map<String, Object> thread = Values.as(event, Map.class, "eventThread").get();
     assertEquals("Main", thread.get("name"));
 
@@ -110,14 +112,14 @@ public class ValuesTest {
     Map<String, Object> event = buildEvent();
 
     Map<String, Object> shallow = Values.resolvedShallow(event);
-    assertTrue(shallow.get("eventThread") instanceof Map);
+    assertInstanceOf(Map.class, shallow.get("eventThread"));
     // shallow does not unwrap nested wrapper under 'stackTrace', only top-level
-    assertTrue(((Map<?, ?>) shallow.get("stackTrace")).get("frames") instanceof ArrayType);
+    assertInstanceOf(ArrayType.class, ((Map<?, ?>) shallow.get("stackTrace")).get("frames"));
 
     Map<String, Object> deep = Values.resolvedDeep(event);
-    assertTrue(deep.get("eventThread") instanceof Map);
+    assertInstanceOf(Map.class, deep.get("eventThread"));
     Object[] frames = (Object[]) ((Map<?, ?>) deep.get("stackTrace")).get("frames");
-    assertTrue(frames[1] instanceof Map);
+    assertInstanceOf(Map.class, frames[1]);
     assertEquals("m1", ((Map<?, ?>) frames[1]).get("method"));
   }
 }
