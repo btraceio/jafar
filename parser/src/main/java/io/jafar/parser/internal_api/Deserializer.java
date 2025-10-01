@@ -16,6 +16,25 @@ import java.util.Map;
  * @param <T> the type of object this deserializer produces
  */
 public abstract class Deserializer<T> {
+  @SuppressWarnings("rawtypes")
+  private static final Deserializer<?> NONE =
+      new Deserializer() {
+        @Override
+        public void skip(RecordingStream stream) throws Exception {
+          // ignore
+        }
+
+        @Override
+        public Object deserialize(RecordingStream stream) throws Exception {
+          return null;
+        }
+      };
+
+  @SuppressWarnings("unchecked")
+  public static <T> Deserializer<T> none() {
+    return (Deserializer<T>) NONE;
+  }
+
   /**
    * Protected constructor for Deserializer.
    *

@@ -1,5 +1,6 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.Objects;
@@ -23,7 +24,7 @@ final class MetadataSetting extends AbstractMetadataElement {
         this.value = value;
         break;
       case "class":
-        typeId = Long.parseLong(value);
+        typeId = ParsingUtils.parseLongSWAR(value);
         break;
     }
   }

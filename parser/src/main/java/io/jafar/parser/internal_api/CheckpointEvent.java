@@ -61,9 +61,9 @@ public final class CheckpointEvent extends AbstractEvent {
   void readConstantPools() throws IOException {
     ParserContext context = stream.getContext();
 
-    ConstantPoolValueProcessor cpProcessor = context.get(ConstantPoolValueProcessor.class);
-    GenericValueReader vr = cpProcessor != null ? new GenericValueReader(cpProcessor) : null;
-    cpProcessor = cpProcessor != null ? cpProcessor : ConstantPoolValueProcessor.NOOP;
+    //    ConstantPoolValueProcessor cpProcessor = context.get(ConstantPoolValueProcessor.class);
+    //    GenericValueReader vr = cpProcessor != null ? new GenericValueReader(cpProcessor) : null;
+    //    cpProcessor = cpProcessor != null ? cpProcessor : ConstantPoolValueProcessor.NOOP;
 
     TypeFilter typeFilter = context.get(TypeFilter.class);
 
@@ -89,17 +89,17 @@ public final class CheckpointEvent extends AbstractEvent {
         for (int j = 0; j < count; j++) {
           long id = stream.readVarint();
           try {
-            cpProcessor.onConstantPoolValueStart(clz, id);
+            //            cpProcessor.onConstantPoolValueStart(clz, id);
             if (!skip && !constantPool.containsKey(id)) {
               constantPool.addOffset(id, stream.position());
             }
-            if (vr == null) {
-              clz.skip(stream);
-            } else {
-              vr.readValue(stream, clz);
-            }
+            //            if (vr == null) {
+            clz.skip(stream);
+            //            } else {
+            //              vr.readValue(stream, clz);
+            //            }
           } finally {
-            cpProcessor.onConstantPoolValueEnd(clz, id);
+            //            cpProcessor.onConstantPoolValueEnd(clz, id);
           }
         }
       } catch (IOException e) {

@@ -1,5 +1,6 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -77,7 +78,7 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
    */
   public long getClassId() {
     if (classId == null) {
-      classId = Long.parseLong(classIdVal);
+      classId = ParsingUtils.parseLongSWAR(classIdVal);
     }
     return classId;
   }
