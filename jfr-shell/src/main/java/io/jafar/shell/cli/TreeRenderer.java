@@ -111,8 +111,9 @@ public final class TreeRenderer {
             for (Object v : fa) pager.println(indent(2) + String.valueOf(v));
         }
 
-        // If we can recurse into the field type, print its metadata subtree under the field
-        if (isRecursableType(fieldType) && maxDepth > 0) {
+        // Try to recurse into the field type if depth allows; actual recursion will only
+        // occur if the type exists in JFR metadata (checked inside renderMetadataRecursive)
+        if (maxDepth > 0) {
             Set<String> pathVisited = new HashSet<>();
             pathVisited.add(String.valueOf(owner != null ? owner.getOrDefault("name", ownerType) : ownerType));
             renderMetadataRecursive(recording, fieldType, io, pager, pathVisited, 1, 1, Math.max(0, maxDepth));
@@ -179,34 +180,20 @@ public final class TreeRenderer {
                         pager.println(indent(indent + 3) + "annotations:");
                         for (Object v : fa) pager.println(indent(indent + 4) + String.valueOf(v));
                     }
-                    if (isRecursableType(fieldType)) {
-                        if (pathVisited.contains(fieldType)) {
-                            // avoid cycles in current path; show type only
-                        } else {
-                            pathVisited.add(fieldType);
-                            // Inline the subtree under this field
-                            renderMetadataRecursive(recording, fieldType, io, pager, pathVisited, level + 1, indent + 3, maxDepth);
-                            pathVisited.remove(fieldType);
-                        }
+                    if (pathVisited.contains(fieldType)) {
+                        // avoid cycles in current path; show type only
+                    } else {
+                        pathVisited.add(fieldType);
+                        // Inline the subtree under this field if metadata is available
+                        renderMetadataRecursive(recording, fieldType, io, pager, pathVisited, level + 1, indent + 3, maxDepth);
+                        pathVisited.remove(fieldType);
                     }
                 }
             }
         }
     }
 
-    private static boolean isRecursableType(String type) {
-        if (type == null) return false;
-        // Exclude primitives and common scalars and platform classes
-        switch (type) {
-            case "byte", "short", "char", "int", "long", "float", "double", "boolean":
-            case "java.lang.String":
-                return false;
-        }
-        if (type.startsWith("java.")) return false;
-        if (type.startsWith("jdk.jfr.")) return false;
-        // Prefer JFR metadata packages (jdk.*) or custom packages
-        return type.contains(".");
-    }
+    // No package-based exclusions: recursion happens only if the target type exists in JFR metadata.
 
     private static String indent(int n) { return "  ".repeat(Math.max(0, n)); }
 }

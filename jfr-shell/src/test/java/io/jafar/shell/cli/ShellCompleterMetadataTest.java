@@ -23,7 +23,7 @@ class ShellCompleterMetadataTest {
         SessionManager.JFRSessionFactory factory = (path, c) -> {
             JFRSession s = Mockito.mock(JFRSession.class);
             when(s.getRecordingPath()).thenReturn(path);
-            when(s.getAllMetadataTypes()).thenReturn(Set.of("jdk.Thread", "jdk.JavaMonitorEnter"));
+            when(s.getAllMetadataTypes()).thenReturn(Set.of("java.lang.Thread", "jdk.JavaMonitorEnter"));
             when(s.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead"));
             return s;
         };
@@ -36,6 +36,6 @@ class ShellCompleterMetadataTest {
         // simulate typing "show metadata/"
         ShellCompleterTest.SimpleParsedLine pl = new ShellCompleterTest.SimpleParsedLine("show metadata/");
         completer.complete(null, pl, cands);
-        assertTrue(cands.stream().anyMatch(c -> c.value().equals("metadata/jdk.Thread")));
+        assertTrue(cands.stream().anyMatch(c -> c.value().equals("metadata/java.lang.Thread")));
     }
 }

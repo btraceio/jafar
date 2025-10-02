@@ -148,8 +148,7 @@ public final class JfrPathEvaluator {
                 if (!eventType.equals(ev.typeName)) return; // filter type
                 Map<String, Object> map = ev.value;
                 if (matchesAll(map, query.predicates)) {
-                    Object val = Values.get(map, proj.toArray());
-                    if (val != null) out.add(val);
+                    extractWithIndexing(map, proj, out);
                 }
             });
             return out;
@@ -230,8 +229,9 @@ public final class JfrPathEvaluator {
                 return v2 == null ? java.util.Collections.emptyList() : java.util.List.of(v2);
             }
 
-            Object v = Values.get(meta, proj.toArray());
-            return v == null ? java.util.Collections.emptyList() : java.util.List.of(v);
+            List<Object> out = new ArrayList<>();
+            extractWithIndexing(meta, proj, out);
+            return out;
         } else if (query.root == Root.CHUNKS) {
             if (query.segments.isEmpty()) {
                 throw new IllegalArgumentException("No projection path provided after 'chunks'");
@@ -239,8 +239,7 @@ public final class JfrPathEvaluator {
             List<Map<String, Object>> rows = loadChunkRows(session.getRecordingPath());
             List<Object> out = new ArrayList<>();
             for (Map<String, Object> row : rows) {
-                Object v = Values.get(row, query.segments.toArray());
-                if (v != null) out.add(v);
+                extractWithIndexing(row, query.segments, out);
             }
             return out;
         } else if (query.root == Root.CP) {
@@ -260,8 +259,7 @@ public final class JfrPathEvaluator {
                 List<String> proj = query.segments.subList(1, query.segments.size());
                 List<Object> out = new ArrayList<>();
                 for (Map<String, Object> r : rows) {
-                    Object v = Values.get(r, proj.toArray());
-                    if (v != null) out.add(v);
+                    extractWithIndexing(r, proj, out);
                 }
                 return out;
             }
@@ -269,6 +267,105 @@ public final class JfrPathEvaluator {
             throw new UnsupportedOperationException("Unsupported root: " + query.root);
         }
     }
+
+    // Indexing and tail-slice support for projection. Slice [start:end] supported only on last segment.
+    private void extractWithIndexing(Map<String, Object> root, List<String> proj, List<Object> out) {
+        if (proj.isEmpty()) return;
+        String last = proj.get(proj.size() - 1);
+        Slice sl = parseSlice(last);
+        if (sl != null) {
+            // Resolve up to base of last segment
+            String base = baseName(last);
+            List<String> head = new java.util.ArrayList<>(proj);
+            head.set(head.size() - 1, base);
+            Object arrVal = Values.get(root, buildPathTokens(head).toArray());
+            Object arr = unwrapArrayLike(arrVal);
+            if (arr == null) return;
+            int len = java.lang.reflect.Array.getLength(arr);
+            int from = Math.max(0, sl.start());
+            int to = sl.end() < 0 ? len : Math.min(len, sl.end());
+            for (int i = from; i < to; i++) {
+                out.add(java.lang.reflect.Array.get(arr, i));
+            }
+            return;
+        }
+        // If the parent of the last segment resolves to an array/list and the last is a simple
+        // field name, project that field from each element.
+        if (proj.size() >= 2) {
+            String baseName = baseName(last);
+            boolean hasIndexOrSlice = last.contains("[");
+            if (!hasIndexOrSlice) {
+                List<String> head = new java.util.ArrayList<>(proj.subList(0, proj.size() - 1));
+                Object parent = Values.get(root, buildPathTokens(head).toArray());
+                Object arr = unwrapArrayLike(parent);
+                if (arr != null) {
+                    int len = java.lang.reflect.Array.getLength(arr);
+                    for (int i = 0; i < len; i++) {
+                        Object el = java.lang.reflect.Array.get(arr, i);
+                        if (el instanceof io.jafar.parser.api.ComplexType ct) el = ct.getValue();
+                        if (el instanceof java.util.Map<?,?> m) {
+                            @SuppressWarnings("unchecked") java.util.Map<String, Object> mm = (java.util.Map<String, Object>) m;
+                            Object v = mm.get(baseName);
+                            if (v != null) out.add(v);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        Object v = Values.get(root, buildPathTokens(proj).toArray());
+        if (v != null) out.add(v);
+    }
+
+    private static java.util.List<Object> buildPathTokens(List<String> segs) {
+        java.util.List<Object> tokens = new java.util.ArrayList<>();
+        for (String seg : segs) {
+            int b = seg.indexOf('[');
+            if (b < 0) { tokens.add(seg); continue; }
+            String name = seg.substring(0, b);
+            if (!name.isEmpty()) tokens.add(name);
+            int e = seg.lastIndexOf(']');
+            if (e > b) {
+                String inside = seg.substring(b + 1, e);
+                if (!inside.contains(":")) {
+                    try { tokens.add(Integer.parseInt(inside.trim())); } catch (Exception ignore) {}
+                } else {
+                    // slice only supported at tail; ignore here
+                }
+            }
+        }
+        return tokens;
+    }
+
+    private static String baseName(String seg) {
+        int b = seg.indexOf('[');
+        return b < 0 ? seg : seg.substring(0, b);
+    }
+
+    private static Slice parseSlice(String seg) {
+        int b = seg.indexOf('[');
+        int e = seg.endsWith("]") ? seg.lastIndexOf(']') : -1;
+        if (b < 0 || e < b) return null;
+        String inside = seg.substring(b + 1, e);
+        int c = inside.indexOf(':');
+        if (c < 0) return null;
+        int from = 0, to = -1;
+        String a = inside.substring(0, c).trim();
+        String bb = inside.substring(c + 1).trim();
+        if (!a.isEmpty()) try { from = Integer.parseInt(a); } catch (Exception ignore) {}
+        if (!bb.isEmpty()) try { to = Integer.parseInt(bb); } catch (Exception ignore) {}
+        return new Slice(from, to);
+    }
+
+    private static Object unwrapArrayLike(Object v) {
+        if (v == null) return null;
+        if (v.getClass().isArray()) return v;
+        if (v instanceof java.util.Collection<?> c) return c.toArray();
+        if (v instanceof io.jafar.parser.api.ArrayType at) return at.getArray();
+        return null;
+    }
+
+    private record Slice(int start, int end) {}
 
     // Aggregations
     private List<Map<String, Object>> evaluateAggregate(JFRSession session, Query query) throws Exception {
@@ -285,6 +382,10 @@ public final class JfrPathEvaluator {
             case JfrPath.TrimOp tr -> aggregateStringTransform(session, query, tr.valuePath, "trim");
             case JfrPath.AbsOp ab -> aggregateNumberTransform(session, query, ab.valuePath, "abs");
             case JfrPath.RoundOp ro -> aggregateNumberTransform(session, query, ro.valuePath, "round");
+            case JfrPath.FloorOp flo -> aggregateNumberTransform(session, query, flo.valuePath, "floor");
+            case JfrPath.CeilOp cei -> aggregateNumberTransform(session, query, cei.valuePath, "ceil");
+            case JfrPath.ContainsOp co -> aggregateStringPredicate(session, query, co.valuePath, "contains", co.substr);
+            case JfrPath.ReplaceOp rp -> aggregateStringReplace(session, query, rp.valuePath, rp.target, rp.replacement);
         };
     }
 
@@ -511,6 +612,8 @@ public final class JfrPathEvaluator {
                     if (n instanceof Float || n instanceof Double) res = Math.round(n.doubleValue());
                     else res = n.longValue();
                 }
+                case "floor" -> res = Math.floor(n.doubleValue());
+                case "ceil" -> res = Math.ceil(n.doubleValue());
                 default -> throw new IllegalArgumentException("Unsupported op: " + opName);
             }
             Map<String, Object> row = new HashMap<>(); row.put("value", res); out.add(row);
@@ -528,6 +631,70 @@ public final class JfrPathEvaluator {
         } else {
             List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
             for (Object v : vals) addTransformed.accept(v);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> aggregateStringPredicate(JFRSession session, Query query, List<String> valuePathOverride, String opName, String arg) throws Exception {
+        if (arg == null) throw new IllegalArgumentException(opName + "() requires a string argument");
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException(opName + "() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        final List<String> path = vpath;
+        java.util.function.Consumer<Object> add = (val) -> {
+            Boolean res = null;
+            if (val == null) res = null;
+            else if (val instanceof CharSequence s) res = s.toString().contains(arg);
+            else throw new IllegalArgumentException(opName + "() expects string, got " + val.getClass().getName());
+            Map<String, Object> row = new HashMap<>(); row.put("value", res); out.add(row);
+        };
+        if (query.root == Root.EVENTS) {
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                add.accept(val);
+            });
+        } else {
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) add.accept(v);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> aggregateStringReplace(JFRSession session, Query query, List<String> valuePathOverride, String target, String repl) throws Exception {
+        if (target == null || repl == null) throw new IllegalArgumentException("replace() requires target and replacement strings");
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException("replace() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        final List<String> path = vpath;
+        java.util.function.Consumer<Object> add = (val) -> {
+            String res = null;
+            if (val == null) res = null;
+            else if (val instanceof CharSequence s) res = s.toString().replace(target, repl);
+            else throw new IllegalArgumentException("replace() expects string, got " + val.getClass().getName());
+            Map<String, Object> row = new HashMap<>(); row.put("value", res); out.add(row);
+        };
+        if (query.root == Root.EVENTS) {
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                add.accept(val);
+            });
+        } else {
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) add.accept(v);
         }
         return out;
     }
@@ -624,9 +791,62 @@ public final class JfrPathEvaluator {
                 if (!deepMatch(map, fp.fieldPath, 0, fp.op, fp.literal, fp.matchMode != null ? fp.matchMode : defaultListMatchMode)) {
                     return false;
                 }
+            } else if (p instanceof io.jafar.shell.jfrpath.JfrPath.ExprPredicate ep) {
+                if (!evalBoolExpr(map, ep.expr)) return false;
             }
         }
         return true;
+    }
+
+    private boolean evalBoolExpr(Map<String, Object> root, io.jafar.shell.jfrpath.JfrPath.BoolExpr expr) {
+        if (expr instanceof io.jafar.shell.jfrpath.JfrPath.CompExpr ce) {
+            Object val = evalValueExpr(root, ce.lhs);
+            return compare(val, ce.op, ce.literal);
+        } else if (expr instanceof io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr fb) {
+            String n = fb.name.toLowerCase(java.util.Locale.ROOT);
+            java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> args = fb.args;
+            switch (n) {
+                case "contains" -> { ensureArgs(args,2); Object s = resolveArg(root,args.get(0)); String sub = String.valueOf(resolveArg(root,args.get(1))); return s != null && String.valueOf(s).contains(sub); }
+                case "starts_with" -> { ensureArgs(args,2); Object s = resolveArg(root,args.get(0)); String pre = String.valueOf(resolveArg(root,args.get(1))); return s != null && String.valueOf(s).startsWith(pre); }
+                case "ends_with" -> { ensureArgs(args,2); Object s = resolveArg(root,args.get(0)); String suf = String.valueOf(resolveArg(root,args.get(1))); return s != null && String.valueOf(s).endsWith(suf); }
+                case "matches" -> { ensureArgsMin(args,2); Object s = resolveArg(root,args.get(0)); String re = String.valueOf(resolveArg(root,args.get(1))); int flags = 0; if (args.size()>=3 && "i".equalsIgnoreCase(String.valueOf(resolveArg(root,args.get(2))))) flags = java.util.regex.Pattern.CASE_INSENSITIVE; return s != null && java.util.regex.Pattern.compile(re, flags).matcher(String.valueOf(s)).find(); }
+                case "exists" -> { ensureArgs(args,1); return resolveArg(root,args.get(0)) != null; }
+                case "empty" -> { ensureArgs(args,1); Object v = resolveArg(root,args.get(0)); if (v==null) return true; if (v instanceof CharSequence cs) return cs.length()==0; Object arr = unwrapArrayLike(v); if (arr != null) return java.lang.reflect.Array.getLength(arr)==0; return false; }
+                case "between" -> { ensureArgs(args,3); Object v = resolveArg(root,args.get(0)); if (!(v instanceof Number)) return false; double x=((Number)v).doubleValue(); double a = toDouble(resolveArg(root,args.get(1))); double b = toDouble(resolveArg(root,args.get(2))); return x>=a && x<=b; }
+                default -> throw new IllegalArgumentException("Unknown function in filter: " + fb.name);
+            }
+        } else if (expr instanceof io.jafar.shell.jfrpath.JfrPath.LogicalExpr le) {
+            boolean l = evalBoolExpr(root, le.left);
+            if (le.op == io.jafar.shell.jfrpath.JfrPath.LogicalExpr.Lop.AND) return l && evalBoolExpr(root, le.right);
+            else return l || evalBoolExpr(root, le.right);
+        } else if (expr instanceof io.jafar.shell.jfrpath.JfrPath.NotExpr ne) {
+            return !evalBoolExpr(root, ne.inner);
+        }
+        return false;
+    }
+
+    private static void ensureArgs(java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> args, int n) { if (args.size() != n) throw new IllegalArgumentException("Function expects " + n + " args"); }
+    private static void ensureArgsMin(java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> args, int n) { if (args.size() < n) throw new IllegalArgumentException("Function expects at least " + n + " args"); }
+    private static double toDouble(Object o) { return (o instanceof Number) ? ((Number) o).doubleValue() : Double.parseDouble(String.valueOf(o)); }
+
+    private Object evalValueExpr(Map<String, Object> root, io.jafar.shell.jfrpath.JfrPath.ValueExpr vexpr) {
+        if (vexpr instanceof io.jafar.shell.jfrpath.JfrPath.PathRef pr) {
+            return Values.get(root, buildPathTokens(pr.path).toArray());
+        } else if (vexpr instanceof io.jafar.shell.jfrpath.JfrPath.FuncValueExpr fv) {
+            String n = fv.name.toLowerCase(java.util.Locale.ROOT);
+            java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> args = fv.args;
+            switch (n) {
+                case "len" -> { ensureArgs(args,1); Object v = resolveArg(root,args.get(0)); Integer L = valueLength(v); return L; }
+                default -> throw new IllegalArgumentException("Unknown value function: " + fv.name);
+            }
+        }
+        return null;
+    }
+
+    private Object resolveArg(Map<String, Object> root, io.jafar.shell.jfrpath.JfrPath.Arg arg) {
+        if (arg instanceof io.jafar.shell.jfrpath.JfrPath.LiteralArg la) return la.value;
+        if (arg instanceof io.jafar.shell.jfrpath.JfrPath.PathArg pa) return Values.get(root, buildPathTokens(pa.path).toArray());
+        return null;
     }
 
     @SuppressWarnings("unchecked")
@@ -642,9 +862,49 @@ public final class JfrPathEvaluator {
             return compare(current, op, lit);
         }
         String seg = path.get(idx);
+        // Parse possible index/slice syntax in segment
+        String segName = seg;
+        Integer segIndex = null;
+        int b = seg.indexOf('[');
+        int e = seg.endsWith("]") ? seg.lastIndexOf(']') : -1;
+        Integer sliceFrom = null, sliceTo = null;
+        if (b >= 0 && e > b) {
+            segName = seg.substring(0, b);
+            String inside = seg.substring(b + 1, e);
+            int c = inside.indexOf(':');
+            if (c >= 0) {
+                try {
+                    String a = inside.substring(0, c).trim();
+                    String bb = inside.substring(c + 1).trim();
+                    sliceFrom = a.isEmpty() ? 0 : Integer.parseInt(a);
+                    sliceTo = bb.isEmpty() ? Integer.MAX_VALUE : Integer.parseInt(bb);
+                } catch (Exception ignore) {}
+            } else {
+                try { segIndex = Integer.parseInt(inside.trim()); } catch (Exception ignore) {}
+            }
+        }
         // If current is a map-like structure
         if (current instanceof java.util.Map<?,?> m) {
-            Object next = ((java.util.Map<String, Object>) m).get(seg);
+            Object next = ((java.util.Map<String, Object>) m).get(segName);
+            if (segIndex != null) {
+                Object arr = unwrapArrayLike(next);
+                if (arr == null) return false;
+                int len = java.lang.reflect.Array.getLength(arr);
+                if (segIndex < 0 || segIndex >= len) return false;
+                next = java.lang.reflect.Array.get(arr, segIndex);
+            } else if (sliceFrom != null) {
+                Object arr = unwrapArrayLike(next);
+                if (arr == null) return false;
+                int len = java.lang.reflect.Array.getLength(arr);
+                int from = Math.max(0, sliceFrom);
+                int to = Math.min(len, sliceTo == null ? len : sliceTo);
+                int matches = 0, total = Math.max(0, to - from);
+                for (int i = from; i < to; i++) {
+                    Object el = java.lang.reflect.Array.get(arr, i);
+                    if (deepMatch(el, path, idx + 1, op, lit, mode)) matches++;
+                }
+                return applyMode(matches, total, mode);
+            }
             return deepMatch(next, path, idx + 1, op, lit, mode);
         }
         // If current is an array/list, apply match mode across elements without consuming seg

@@ -64,5 +64,49 @@ class JfrPathTransformOpsTest {
             assertTrue(n == 0L || n == 1L, "Rounded CPU load should be 0 or 1, got " + n);
         }
     }
-}
 
+    @Test
+    void floorAndCeilOnCpuLoad() throws Exception {
+        Path jfr = resource("test-ap.jfr");
+        ParsingContext ctx = ParsingContext.create();
+        SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+        sessions.open(jfr, null);
+
+        var evaluator = new JfrPathEvaluator();
+        var q1 = JfrPathParser.parse("events/jdk.CPULoad/machineTotal | floor()");
+        var q2 = JfrPathParser.parse("events/jdk.CPULoad/machineTotal | ceil()");
+        var r1 = evaluator.evaluate(sessions.getCurrent().get().session, q1);
+        var r2 = evaluator.evaluate(sessions.getCurrent().get().session, q2);
+        assertFalse(r1.isEmpty());
+        assertFalse(r2.isEmpty());
+        for (Map<String, Object> m : r1) assertTrue(m.get("value") instanceof Number);
+        for (Map<String, Object> m : r2) assertTrue(m.get("value") instanceof Number);
+    }
+
+    @Test
+    void containsAndReplaceOnCpSymbol() throws Exception {
+        Path jfr = resource("test-ap.jfr");
+        ParsingContext ctx = ParsingContext.create();
+        SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+        sessions.open(jfr, null);
+
+        var evaluator = new JfrPathEvaluator();
+        var qContains = JfrPathParser.parse("cp/jdk.types.Symbol/string | contains(\"java/\")");
+        var rows = evaluator.evaluate(sessions.getCurrent().get().session, qContains);
+        assertFalse(rows.isEmpty());
+        Boolean sawTrue = false;
+        for (Map<String,Object> m : rows) {
+            Object v = m.get("value");
+            if (v instanceof Boolean b && b) { sawTrue = true; break; }
+        }
+        var qReplace = JfrPathParser.parse("cp/jdk.types.Symbol/string | replace(\"/\",\".\")");
+        var rows2 = evaluator.evaluate(sessions.getCurrent().get().session, qReplace);
+        assertFalse(rows2.isEmpty());
+        boolean hasDot = false;
+        for (Map<String,Object> m : rows2) {
+            Object v = m.get("value");
+            if (v instanceof String s && s.contains(".")) { hasDot = true; break; }
+        }
+        assertTrue(hasDot || sawTrue);
+    }
+}

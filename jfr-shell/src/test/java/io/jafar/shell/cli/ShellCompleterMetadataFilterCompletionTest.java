@@ -13,13 +13,13 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class ShellCompleterFieldSubpropsTest {
+class ShellCompleterMetadataFilterCompletionTest {
     private static Path resource(String name) {
         return Paths.get("..", "parser", "src", "test", "resources", name).normalize().toAbsolutePath();
     }
 
     @Test
-    void suggestsFieldSubproperties() throws Exception {
+    void suggestsFieldsInsideMetadataFilterAfterType() throws Exception {
         Path jfr = resource("test-ap.jfr");
         ParsingContext ctx = ParsingContext.create();
         SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
@@ -28,11 +28,13 @@ class ShellCompleterFieldSubpropsTest {
         ShellCompleter completer = new ShellCompleter(sessions);
         List<Candidate> cands = new ArrayList<>();
 
-        // simulate typing "show metadata/jdk.ExecutionSample/"
-        ShellCompleterTest.SimpleParsedLine pl = new ShellCompleterTest.SimpleParsedLine(
-                "show metadata/jdk.ExecutionSample/");
+        // simulate typing: show metadata/jdk.ExecutionSample[
+        var pl = new ShellCompleterTest.SimpleParsedLine("show metadata/jdk.ExecutionSample[");
         completer.complete(null, pl, cands);
-        boolean hasFieldsSegment = cands.stream().anyMatch(c -> c.value().equals("metadata/jdk.ExecutionSample/fields"));
-        assertTrue(hasFieldsSegment, "Expected 'fields' segment suggestion under metadata type");
+
+        boolean hasStackTrace = cands.stream().anyMatch(c -> c.value().equals("metadata/jdk.ExecutionSample[stackTrace"));
+        boolean hasSampledThread = cands.stream().anyMatch(c -> c.value().equals("metadata/jdk.ExecutionSample[sampledThread"));
+        assertTrue(hasStackTrace || hasSampledThread, "Expected metadata field suggestions in filter after type");
     }
 }
+

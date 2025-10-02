@@ -26,8 +26,8 @@ jfr> _
 jfr> open /path/to/recording.jfr
 jfr> info
 jfr> metadata --summary
-jfr> show metadata/jdk.Thread
-jfr> show metadata/jdk.Thread --format json
+jfr> show metadata/java.lang.Thread
+jfr> show metadata/java.lang.Thread --format json
 jfr> show metadata/jdk.types.StackTrace --tree --depth 2
 jfr> show metadata/jdk.types.Method/fields/name --tree
 
@@ -89,15 +89,23 @@ is aliased for convenience.
 
 - Roots: `events`, `metadata`, `chunks`, `cp`
 - Show values: `show events/<Type>/<path>` or `show metadata/<Type>/<path>`
-- Filters: `[field op value]` with `= != > >= < <= ~` (regex)
+- Filters:
+  - Simple: `[field op value]` with `= != > >= < <= ~` (regex)
+  - Boolean expressions with functions and logic: `[expr]`
+    - Logic: `and`, `or`, `not`, parentheses
+    - String funcs: `contains(path, "substr")`, `starts_with(path, "pre")`, `ends_with(path, "suf")`, `matches(path, "re"[, "i"])`
+    - Existence/emptiness: `exists(path)`, `empty(path)`
+    - Numeric: `between(path, min, max)`, and `len(path)` for length in comparisons
+    - List-scoped: keep `any:/all:/none:` prefixes for list fields (e.g., `any:frames[ matches(method/name/string, ".*Foo.*") ]`)
   - Lists/arrays: prefix with `any:`, `all:`, or `none:` to control how a filter applies across list elements.
     - Examples:
+      - `show events/jdk.ExecutionSample[contains(sampledThread/osName, "GC")]`
       - `show events/jdk.ExecutionSample[stackTrace/truncated=true]`
-      - `show events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string~".*Main.*"]`
+      - `show events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Main.*")]]`
 - Examples:
   - `show events/jdk.FileRead[bytes>=1000] --limit 5`
   - `show events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
-  - `show metadata/jdk.Thread` (class overview)
+  - `show metadata/java.lang.Thread` (class overview)
   - `show metadata/jdk.types.Method/name` (single value)
 
 ## Aggregations
@@ -109,6 +117,10 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
 - `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
 - `| len([path])` — For attributes: length of a string or list/array. Errors on unsupported types.
+- `| uppercase([path])`, `| lowercase([path])`, `| trim([path])` — String transforms.
+- `| abs([path])`, `| round([path])`, `| floor([path])`, `| ceil([path])` — Numeric transforms.
+- `| contains([path], "substr")` — Boolean: string contains substring.
+- `| replace([path], "a", "b")` — String replace occurrences of `a` with `b`.
 
 Examples:
 - `show events/jdk.FileRead | count()`

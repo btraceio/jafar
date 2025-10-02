@@ -207,6 +207,8 @@ Acceptance: smooth interactive experience; help texts up to date.
 
 - 2025-10-02: Interleaved filters: parser now supports filters after any path segment and prefixes filter paths with the current projection prefix. Examples: `events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace`, `events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize`. Added `JfrPathInterleavedFiltersTest` and updated help/docs.
 
+- 2025-10-02: JfrPath filters v2: added boolean expressions with functions (`contains`, `starts_with`, `ends_with`, `matches`, `exists`, `empty`, `between`, `len` usable in comparisons) and logical operators `and/or/not` with parentheses. Kept compatibility with simple `[path op lit]` and `any:/all:/none:` prefixes. Updated usage docs; completion already suggests operators and path segments; function name suggestions planned next.
+
 M8 — Non-interactive subcommands
 - [ ] Picocli subcommands for `show`, `metadata`, `chunks`, `types`.
 - [ ] Proper exit codes and stdout/stderr behavior; no interactive banner.

@@ -394,12 +394,27 @@ public class CommandDispatcher {
             io.println("  chunks[/field]");
             io.println("  cp[/<type>][/field]");
             io.println("Operators: = != > >= < <= ~ (regex)");
-            io.println("Pipeline aggregations: append with '|':");
-            io.println("  | count()                  → number of rows/events");
-            io.println("  | stats([path])            → min,max,avg,stddev for numeric values");
-            io.println("  | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
-            io.println("  | sketch([path])           → stats + p50,p90,p99");
-            io.println("  | len([path])              → length of string or list/array attribute");
+            io.println("Filter functions (inside [ ... ]):");
+            io.println("  contains(path, \"s\"), starts_with(path, \"pre\"), ends_with(path, \"suf\")");
+            io.println("  matches(path, \"re\"[, \"i\"]), exists(path), empty(path), between(path, a, b)");
+            io.println("  len(path) usable in comparisons (e.g., len(frames)>10)");
+            io.println("Pipeline functions (append with '|'):");
+            io.println("  Aggregations:");
+            io.println("    | count()                  → number of rows/events");
+            io.println("    | stats([path])            → min,max,avg,stddev for numeric values");
+            io.println("    | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
+            io.println("    | sketch([path])           → stats + p50,p90,p99");
+            io.println("  Value transforms (also usable in filters where applicable):");
+            io.println("    | len([path])              → length of string or list/array attribute");
+            io.println("    | uppercase([path])        → string uppercased");
+            io.println("    | lowercase([path])        → string lowercased");
+            io.println("    | trim([path])             → string trimmed");
+            io.println("    | abs([path])              → absolute value of number");
+            io.println("    | round([path])            → round to nearest integer");
+            io.println("    | floor([path])            → floor for numbers");
+            io.println("    | ceil([path])             → ceil for numbers");
+            io.println("    | contains([path], \"s\")  → boolean per row (string contains substring)");
+            io.println("    | replace([path], \"a\", \"b\") → string replace occurrences");
             io.println("List match modes (arrays/lists): prefix a filter with any: | all: | none:");
             io.println("  e.g., [any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
             io.println("Examples:");
@@ -420,15 +435,15 @@ public class CommandDispatcher {
             io.println("  show cp/jdk.types.Symbol/string | len()");
             io.println("  show events/jdk.ExecutionSample/stackTrace/frames | len()");
             io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
-            io.println("  show metadata/jdk.Thread");
-            io.println("  show metadata/jdk.Thread --format json");
+            io.println("  show metadata/java.lang.Thread");
+            io.println("  show metadata/java.lang.Thread --format json");
             io.println("  show metadata/jdk.types.StackTrace --tree --depth 2");
             io.println("  show metadata/jdk.types.Method/fields/name --tree");
             io.println("  show metadata/jdk.types.Method/fields.name/annotations");
             io.println("  show metadata/jdk.types.Method/name");
             io.println("  show chunks/size");
             io.println("  show cp/name");
-            io.println("  show cp/jdk.Thread/totalSize");
+            io.println("  show cp/java.lang.Thread/totalSize");
             return;
         }
         if ("metadata".equals(sub) || "types".equals(sub)) {
@@ -456,8 +471,8 @@ public class CommandDispatcher {
             io.println("    --annotations  Class-level annotations only");
             io.println("    --depth N      Max recursion depth (default 10)");
             io.println("  Examples:");
-            io.println("    metadata class jdk.Thread");
-            io.println("    metadata class jdk.Thread --tree --depth 3");
+            io.println("    metadata class java.lang.Thread");
+            io.println("    metadata class java.lang.Thread --tree --depth 3");
             io.println("    metadata class jdk.types.Method --fields");
             return;
         }

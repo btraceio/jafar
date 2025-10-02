@@ -23,18 +23,18 @@ class JfrPathEvaluatorMetadataTest {
         var eval = new JfrPathEvaluator();
 
         // Evaluate metadata row for a common type and assert structure
-        var q = JfrPathParser.parse("metadata/jdk.Thread");
+        var q = JfrPathParser.parse("metadata/java.lang.Thread");
         var rows = eval.evaluate(session, q);
         assertTrue(rows.size() <= 1);
         if (!rows.isEmpty()) {
             Map<String, Object> row = rows.get(0);
-            assertEquals("jdk.Thread", row.get("name"));
+            assertEquals("java.lang.Thread", row.get("name"));
             assertTrue(row.containsKey("superType"));
             assertTrue(row.containsKey("fields"));
         }
 
         // Projection should return a scalar if present
-        var qp = JfrPathParser.parse("metadata/jdk.Thread/superType");
+        var qp = JfrPathParser.parse("metadata/java.lang.Thread/superType");
         try {
             List<Object> vals = eval.evaluateValues(session, qp);
             if (!vals.isEmpty()) {

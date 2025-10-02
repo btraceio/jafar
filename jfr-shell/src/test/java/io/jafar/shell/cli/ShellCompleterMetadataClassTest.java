@@ -23,7 +23,7 @@ class ShellCompleterMetadataClassTest {
         SessionManager.JFRSessionFactory factory = (path, c) -> {
             JFRSession s = Mockito.mock(JFRSession.class);
             when(s.getRecordingPath()).thenReturn(path);
-            when(s.getAllMetadataTypes()).thenReturn(Set.of("jdk.types.Method", "jdk.Thread"));
+            when(s.getAllMetadataTypes()).thenReturn(Set.of("jdk.types.Method", "java.lang.Thread"));
             return s;
         };
         SessionManager sm = new SessionManager(ctx, factory);

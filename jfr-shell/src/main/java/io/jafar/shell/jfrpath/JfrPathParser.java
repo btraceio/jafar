@@ -77,33 +77,34 @@ public final class JfrPathParser {
 
     private Predicate parsePredicate() {
         skipWs();
+        int start = pos;
+        try {
+            io.jafar.shell.jfrpath.JfrPath.BoolExpr expr = parseBoolExpr();
+            return new io.jafar.shell.jfrpath.JfrPath.ExprPredicate(expr);
+        } catch (IllegalArgumentException ex) {
+            pos = start;
+            return parseLegacyPredicate();
+        }
+    }
+
+    private Predicate parseLegacyPredicate() {
         List<String> fieldPath = new ArrayList<>();
-        // Optional list match mode prefix: any: | all: | none:
         MatchMode mode = null;
         int save = pos;
         String maybeMode = readIdent();
         if (!maybeMode.isEmpty() && (peek() == ':' )) {
-            // consume ':' and whitespace
             pos++; // ':'
             String mm = maybeMode.toLowerCase(Locale.ROOT);
             switch (mm) {
                 case "any" -> mode = MatchMode.ANY;
                 case "all" -> mode = MatchMode.ALL;
                 case "none" -> mode = MatchMode.NONE;
-                default -> { /* not a mode */ mode = null; pos = save; }
+                default -> { mode = null; pos = save; }
             }
         } else {
-            // not a mode prefix, rewind
             pos = save;
         }
-        // parse field path like a/b/c
-        while (!eof()) {
-            String seg = readIdent();
-            if (seg.isEmpty()) throw error("Expected field name in filter");
-            fieldPath.add(seg);
-            if (peek() == '/') { pos++; continue; }
-            break;
-        }
+        fieldPath.addAll(parsePathSegments());
         skipWs();
         Op op;
         if (match("~")) op = Op.REGEX;
@@ -116,10 +117,118 @@ public final class JfrPathParser {
         else throw error("Expected operator after field path");
         skipWs();
         Object lit = parseLiteral();
-        if (mode != null) {
-            return new FieldPredicate(fieldPath, op, lit, mode);
-        }
+        if (mode != null) return new FieldPredicate(fieldPath, op, lit, mode);
         return new FieldPredicate(fieldPath, op, lit);
+    }
+
+    // booleanExpr := andExpr ( 'or' andExpr )*
+    private io.jafar.shell.jfrpath.JfrPath.BoolExpr parseBoolExpr() {
+        var left = parseAndExpr();
+        skipWs();
+        while (startsWithIgnoreCase("or")) {
+            pos += 2; skipWs();
+            var right = parseAndExpr();
+            left = new io.jafar.shell.jfrpath.JfrPath.LogicalExpr(left, right, io.jafar.shell.jfrpath.JfrPath.LogicalExpr.Lop.OR);
+            skipWs();
+        }
+        return left;
+    }
+
+    // andExpr := notExpr ( 'and' notExpr )*
+    private io.jafar.shell.jfrpath.JfrPath.BoolExpr parseAndExpr() {
+        var left = parseNotExpr();
+        skipWs();
+        while (startsWithIgnoreCase("and")) {
+            pos += 3; skipWs();
+            var right = parseNotExpr();
+            left = new io.jafar.shell.jfrpath.JfrPath.LogicalExpr(left, right, io.jafar.shell.jfrpath.JfrPath.LogicalExpr.Lop.AND);
+            skipWs();
+        }
+        return left;
+    }
+
+    private io.jafar.shell.jfrpath.JfrPath.BoolExpr parseNotExpr() {
+        skipWs();
+        if (startsWithIgnoreCase("not")) { pos += 3; skipWs(); return new io.jafar.shell.jfrpath.JfrPath.NotExpr(parsePrimaryBool()); }
+        return parsePrimaryBool();
+    }
+
+    private io.jafar.shell.jfrpath.JfrPath.BoolExpr parsePrimaryBool() {
+        skipWs();
+        if (peek() == '(') { pos++; var e = parseBoolExpr(); expect(')'); return e; }
+        int save = pos;
+        String name = readIdent();
+        if (!name.isEmpty() && peek() == '(') {
+            pos++; var args = parseFuncArgs(); expect(')');
+            return new io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr(name, args);
+        }
+        pos = save;
+        var ve = parseValueExpr();
+        skipWs();
+        Op op;
+        if (match("~")) op = Op.REGEX;
+        else if (match(">=")) op = Op.GE;
+        else if (match("<=")) op = Op.LE;
+        else if (match("==") || match("=")) op = Op.EQ;
+        else if (match("!=")) op = Op.NE;
+        else if (match(">")) op = Op.GT;
+        else if (match("<")) op = Op.LT;
+        else throw error("Expected operator in comparison");
+        skipWs();
+        Object lit = parseLiteral();
+        return new io.jafar.shell.jfrpath.JfrPath.CompExpr(ve, op, lit);
+    }
+
+    private io.jafar.shell.jfrpath.JfrPath.ValueExpr parseValueExpr() {
+        skipWs();
+        int save = pos;
+        String name = readIdent();
+        if (!name.isEmpty() && peek() == '(') {
+            pos++; var args = parseFuncArgs(); expect(')');
+            return new io.jafar.shell.jfrpath.JfrPath.FuncValueExpr(name, args);
+        }
+        pos = save;
+        var segs = parsePathSegments();
+        return new io.jafar.shell.jfrpath.JfrPath.PathRef(segs);
+    }
+
+    private java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> parseFuncArgs() {
+        java.util.List<io.jafar.shell.jfrpath.JfrPath.Arg> args = new java.util.ArrayList<>();
+        skipWs();
+        if (peek() == ')') return args;
+        while (!eof() && peek() != ')') {
+            skipWs();
+            if (peek() == '"' || peek() == '\'') {
+                args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
+            } else if (Character.isDigit((char) peek())) {
+                args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
+            } else {
+                args.add(new io.jafar.shell.jfrpath.JfrPath.PathArg(parsePathSegments()));
+            }
+            skipWs();
+            if (peek() == ',') { pos++; skipWs(); }
+        }
+        return args;
+    }
+
+    private java.util.List<String> parsePathSegments() {
+        java.util.List<String> segs = new java.util.ArrayList<>();
+        while (!eof()) {
+            String ident = readIdent();
+            if (ident.isEmpty()) break;
+            StringBuilder seg = new StringBuilder(ident);
+            while (peek() == '[') {
+                int b = pos; pos++;
+                while (!eof() && peek() != ']') pos++;
+                expect(']');
+                seg.append(input, b, pos);
+            }
+            segs.add(seg.toString());
+            if (peek() == '/') { pos++; continue; }
+            break;
+        }
+        if (segs.isEmpty()) throw error("Expected path");
+        return segs;
     }
 
     private Object parseLiteral() {
@@ -276,6 +385,47 @@ public final class JfrPathParser {
         } else if ("round".equals(name)) {
             if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
             return new JfrPath.RoundOp(valuePath);
+        } else if ("floor".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.FloorOp(valuePath);
+        } else if ("ceil".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.CeilOp(valuePath);
+        } else if ("contains".equals(name)) {
+            String substr = null;
+            if (peek() == '(') {
+                pos++; skipWs();
+                // optional path first
+                if (peek() != ')' && peek() != '"' && peek() != '\'') {
+                    valuePath = parsePathArg();
+                    skipWs();
+                    if (peek() == ',') { pos++; skipWs(); }
+                }
+                Object lit = null;
+                if (peek() == '"' || peek() == '\'') { lit = parseLiteral(); }
+                substr = lit == null ? null : String.valueOf(lit);
+                expect(')');
+            }
+            return new JfrPath.ContainsOp(valuePath, substr);
+        } else if ("replace".equals(name)) {
+            String target = null, repl = null;
+            if (peek() == '(') {
+                pos++; skipWs();
+                // optional path first
+                if (peek() != ')' && peek() != '"' && peek() != '\'') {
+                    valuePath = parsePathArg();
+                    skipWs();
+                    if (peek() == ',') { pos++; skipWs(); }
+                }
+                Object l1 = (peek() == '"' || peek() == '\'') ? parseLiteral() : null;
+                skipWs();
+                if (peek() == ',') { pos++; skipWs(); }
+                Object l2 = (peek() == '"' || peek() == '\'') ? parseLiteral() : null;
+                target = l1 == null ? null : String.valueOf(l1);
+                repl = l2 == null ? null : String.valueOf(l2);
+                expect(')');
+            }
+            return new JfrPath.ReplaceOp(valuePath, target, repl);
         } else {
             throw error("Unknown pipeline function: " + name);
         }

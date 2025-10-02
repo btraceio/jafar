@@ -22,7 +22,7 @@ class ShellCompleterCpTest {
         SessionManager.JFRSessionFactory factory = (path, c) -> {
             JFRSession s = Mockito.mock(JFRSession.class);
             when(s.getRecordingPath()).thenReturn(path);
-            when(s.getAvailableConstantPoolTypes()).thenReturn(Set.of("jdk.Thread", "jdk.Class"));
+            when(s.getAvailableConstantPoolTypes()).thenReturn(Set.of("java.lang.Thread", "java.lang.Class"));
             return s;
         };
         SessionManager sm = new SessionManager(ctx, factory);
@@ -32,6 +32,6 @@ class ShellCompleterCpTest {
         List<Candidate> cands = new ArrayList<>();
         ShellCompleterTest.SimpleParsedLine pl = new ShellCompleterTest.SimpleParsedLine("show cp/");
         completer.complete(null, pl, cands);
-        assertTrue(cands.stream().anyMatch(c -> c.value().equals("cp/jdk.Thread")));
+        assertTrue(cands.stream().anyMatch(c -> c.value().equals("cp/java.lang.Thread")));
     }
 }

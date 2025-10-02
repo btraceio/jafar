@@ -91,7 +91,7 @@ public class ShellCompleter implements Completer {
                         }
                         // Pipeline function suggestions after a '|'
                         if ("|".equals(prev)) {
-                            for (String v : new String[]{"count()", "stats()", "quantiles(0.5,0.9,0.99)", "sketch()"}) {
+                            for (String v : new String[]{"count()", "stats()", "quantiles(0.5,0.9,0.99)", "sketch()", "len()", "uppercase()", "lowercase()", "trim()", "abs()", "round()", "floor()", "ceil()", "contains(\"\")", "replace(\"\",\"\")"}) {
                                 if (v.startsWith(w)) candidates.add(new Candidate(v));
                             }
                         }
@@ -154,10 +154,136 @@ public class ShellCompleter implements Completer {
                             String sug = "sketch(path=" + inferredPath + ")";
                             if (sug.toLowerCase(Locale.ROOT).startsWith(lw)) candidates.add(new Candidate(sug));
                         }
+                    } else if (lw.startsWith("len(")) {
+                        candidates.add(new Candidate("len()"));
+                    } else if (lw.startsWith("upper")) {
+                        candidates.add(new Candidate("uppercase()"));
+                    } else if (lw.startsWith("lower")) {
+                        candidates.add(new Candidate("lowercase()"));
+                    } else if (lw.startsWith("trim(")) {
+                        candidates.add(new Candidate("trim()"));
+                    } else if (lw.startsWith("abs(")) {
+                        candidates.add(new Candidate("abs()"));
+                    } else if (lw.startsWith("round(")) {
+                        candidates.add(new Candidate("round()"));
+                    } else if (lw.startsWith("floor(")) {
+                        candidates.add(new Candidate("floor()"));
+                    } else if (lw.startsWith("ceil(")) {
+                        candidates.add(new Candidate("ceil()"));
+                    } else if (lw.startsWith("contains(")) {
+                        candidates.add(new Candidate("contains(\"\")"));
+                    } else if (lw.startsWith("replace(")) {
+                        candidates.add(new Candidate("replace(\"\",\"\")"));
                     }
                     if (w.startsWith("events/")) {
-                        for (String t : sessions.getCurrent().get().session.getAvailableEventTypes()) {
-                            candidates.add(new Candidate("events/" + t));
+                        // Suggest event types or fields under event types
+                        String prefix = "events/";
+                        String rest = w.substring(prefix.length());
+                        int slash = rest.indexOf('/');
+                        int brIdx = rest.indexOf('[');
+                        int typeEnd = -1;
+                        if (slash >= 0 && brIdx >= 0) typeEnd = Math.min(slash, brIdx);
+                        else if (slash >= 0) typeEnd = slash;
+                        else if (brIdx >= 0) typeEnd = brIdx;
+                        if (typeEnd < 0) {
+                            for (String t : sessions.getCurrent().get().session.getAvailableEventTypes()) {
+                                if (("events/" + t).startsWith(w)) candidates.add(new Candidate("events/" + t));
+                            }
+                        } else {
+                            String type = rest.substring(0, typeEnd);
+                            String after = (slash >= 0 && slash < brIdx) ? rest.substring(slash + 1) : "";
+                            // Handle being inside a filter block: suggest field paths relative to prefix
+                            int lb = w.lastIndexOf('[');
+                            int rb = w.lastIndexOf(']');
+                            boolean inFilter = (lb >= 0) && (rb < 0 || rb < lb);
+                            String filterPrefix = null;
+                            if (inFilter) {
+                                String upTo = w.substring(0, lb); // e.g., events/<type>[/path]
+                                String base = "events/" + type;
+                                String rel = "";
+                                if (upTo.equals(base)) {
+                                    rel = "";
+                                } else if (upTo.startsWith(base + "/")) {
+                                    rel = upTo.substring((base + "/").length());
+                                }
+                                filterPrefix = rel;
+                            }
+                            try {
+                                var meta = io.jafar.shell.providers.MetadataProvider.loadClass(
+                                        sessions.getCurrent().get().session.getRecordingPath(), type);
+                                if (meta != null) {
+                                    java.util.Map<String,Object> cur = meta;
+                                    String path = inFilter ? filterPrefix : after;
+                                    String pre = path;
+                                    String listPrefix = "";
+                                    if (inFilter) {
+                                        String inside = w.substring(lb + 1);
+                                        // Extract list prefix if present
+                                        if (inside.startsWith("any:") || inside.startsWith("all:") || inside.startsWith("none:")) {
+                                            int cix = inside.indexOf(':');
+                                            listPrefix = inside.substring(0, cix + 1);
+                                            inside = inside.substring(cix + 1);
+                                        }
+                                        int lastSlash = inside.lastIndexOf('/');
+                                        if (lastSlash >= 0) pre = inside.substring(0, lastSlash);
+                                        else pre = path; // keep prefix from path before '[' when no inner segments typed
+                                    }
+                                    java.util.List<String> segs = new java.util.ArrayList<>();
+                                    for (String s : pre.split("/")) if (!s.isEmpty()) segs.add(s);
+                                    for (String s : segs) {
+                                        Object fbn = cur.get("fieldsByName");
+                                        if (!(fbn instanceof java.util.Map<?,?> m)) { cur = null; break; }
+                                        Object f = m.get(s);
+                                        if (!(f instanceof java.util.Map<?,?> fm)) { cur = null; break; }
+                                        String tname = String.valueOf(fm.get("type"));
+                                        cur = io.jafar.shell.providers.MetadataProvider.loadClass(
+                                                sessions.getCurrent().get().session.getRecordingPath(), tname);
+                                        if (cur == null) break;
+                                    }
+                                    if (cur != null) {
+                                        Object fbn2 = cur.get("fieldsByName");
+                                        if (fbn2 instanceof java.util.Map<?,?> m2) {
+                                            for (Object k : m2.keySet()) {
+                                                String fn = String.valueOf(k);
+                                                if (!inFilter) {
+                                                    candidates.add(new Candidate("events/" + type + "/" + (after.isEmpty()?"":after + "/") + fn));
+                                                } else {
+                                                    String inside = w.substring(lb + 1);
+                                                    // Recompute base after optional list prefix
+                                                    String baseInside = inside;
+                                                    if (inside.startsWith("any:") || inside.startsWith("all:") || inside.startsWith("none:")) {
+                                                        int cix = inside.indexOf(':');
+                                                        baseInside = inside.substring(cix + 1);
+                                                    }
+                                                    int lastSlash = baseInside.lastIndexOf('/');
+                                                    String base = lastSlash >= 0 ? baseInside.substring(0, lastSlash + 1) : "";
+                                                    String suggestion = w.substring(0, lb + 1) + listPrefix + base + fn;
+                                                    candidates.add(noSpace(suggestion));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignore) {}
+                            // Suggest operators, filter functions, and quoted value template inside filters
+                            if (inFilter) {
+                                String inside = w.substring(lb + 1);
+                                boolean hasOp = inside.contains("=") || inside.contains("!=") || inside.contains(">") || inside.contains("<") || inside.contains("~");
+                                if (!hasOp) {
+                                    for (String op : new String[]{"=", "!=", ">", ">=", "<", "<=", "~"}) {
+                                        candidates.add(noSpace(w + op));
+                                    }
+                                    // Also suggest filter function templates
+                                    for (String fn : new String[]{"contains(", "starts_with(", "ends_with(", "matches(", "exists(", "empty(", "between(", "len("}) {
+                                        candidates.add(noSpace(w + fn));
+                                    }
+                                } else {
+                                    // If operator present but no starting quote, suggest quotes
+                                    if (!inside.contains("\"")) {
+                                        candidates.add(noSpace(w + "\"\""));
+                                    }
+                                }
+                            }
                         }
                     } else if (w.equals("events") || w.equals("events/")) {
                         candidates.add(noSpace("events/"));
@@ -166,15 +292,48 @@ public class ShellCompleter implements Completer {
                         String prefix = "metadata/";
                         String rest = w.substring(prefix.length());
                         int slash = rest.indexOf('/');
-                        if (slash < 0) {
+                        int brIdx = rest.indexOf('[');
+                        int typeEnd = -1;
+                        if (slash >= 0 && brIdx >= 0) typeEnd = Math.min(slash, brIdx);
+                        else if (slash >= 0) typeEnd = slash;
+                        else if (brIdx >= 0) typeEnd = brIdx;
+                        if (typeEnd < 0) {
                             for (String t : sessions.getCurrent().get().session.getAllMetadataTypes()) {
                                 candidates.add(new Candidate("metadata/" + t));
                             }
                         } else {
-                            String type = rest.substring(0, slash);
-                            String after = rest.substring(slash + 1);
-                            // Suggest known segments under metadata type
-                            if (after.isEmpty()) {
+                            String type = rest.substring(0, typeEnd);
+                            String after = (slash >= 0 && slash < brIdx) ? rest.substring(slash + 1) : "";
+                            // Suggest known segments under metadata type or, if inside filter, suggest fields
+                            int lbm = w.lastIndexOf('[');
+                            int rbm = w.lastIndexOf(']');
+                            boolean inMetaFilter = (lbm >= 0) && (rbm < 0 || rbm < lbm);
+                            if (after.isEmpty() && inMetaFilter) {
+                                try {
+                                    var meta = io.jafar.shell.providers.MetadataProvider.loadClass(
+                                            sessions.getCurrent().get().session.getRecordingPath(), type);
+                                    Object fbn = meta != null ? meta.get("fieldsByName") : null;
+                                    if (fbn instanceof java.util.Map<?,?> m) {
+                                        for (Object k : m.keySet()) {
+                                            String fn = String.valueOf(k);
+                                            candidates.add(noSpace("metadata/" + type + "[" + fn));
+                                        }
+                                        // Suggest operators, quotes, and filter functions when inside metadata filter
+                                        String inside = w.substring(lbm + 1);
+                                        boolean hasOp = inside.contains("=") || inside.contains("!=") || inside.contains(">") || inside.contains("<") || inside.contains("~");
+                                        if (!hasOp) {
+                                            for (String op : new String[]{"=", "!=", ">", ">=", "<", "<=", "~"}) {
+                                                candidates.add(noSpace(w + op));
+                                            }
+                                            for (String fn : new String[]{"contains(", "starts_with(", "ends_with(", "matches(", "exists(", "empty(", "between(", "len("}) {
+                                                candidates.add(noSpace(w + fn));
+                                            }
+                                        } else if (!inside.contains("\"")) {
+                                            candidates.add(noSpace(w + "\"\""));
+                                        }
+                                    }
+                                } catch (Exception ignore) {}
+                            } else if (after.isEmpty()) {
                                 candidates.add(new Candidate("metadata/" + type + "/fields"));
                                 candidates.add(new Candidate("metadata/" + type + "/fieldsByName"));
                                 candidates.add(new Candidate("metadata/" + type + "/superType"));
@@ -209,10 +368,29 @@ public class ShellCompleter implements Completer {
                                                     String key = String.valueOf(k);
                                                     candidates.add(new Candidate("metadata/" + type + "/fields/" + fn + "/" + key));
                                                 }
+                                            } else {
+                                                // Fallback: suggest common field subproperties even if entry not materialized
+                                                for (String key : new String[]{"type","name","dimension","annotations","hasConstantPool"}) {
+                                                    candidates.add(new Candidate("metadata/" + type + "/fields/" + fn + "/" + key));
+                                                }
                                             }
                                         }
                                     }
-                                } catch (Exception ignore) {}
+                                } catch (Exception ignore) {
+                                    // Fallback without metadata: suggest common keys based on path
+                                    String rem = after.substring("fields".length());
+                                    if (rem.startsWith("/")) rem = rem.substring(1);
+                                    if (rem.startsWith(".")) rem = rem.substring(1);
+                                    if (!rem.isEmpty()) {
+                                        String fn = rem;
+                                        int ix = fn.indexOf('/');
+                                        if (ix < 0) ix = fn.indexOf('.');
+                                        if (ix > 0) fn = fn.substring(0, ix);
+                                        for (String key : new String[]{"type","name","dimension","annotations","hasConstantPool"}) {
+                                            candidates.add(new Candidate("metadata/" + type + "/fields/" + fn + "/" + key));
+                                        }
+                                    }
+                                }
                             } else if (after.contains("/fields/") || after.contains("/fields.")) {
                                 // Suggest subproperties of a field
                                 try {
@@ -241,8 +419,66 @@ public class ShellCompleter implements Completer {
                     } else if (w.equals("metadata") || w.equals("metadata/")) {
                         candidates.add(noSpace("metadata/"));
                     } else if (w.startsWith("cp/")) {
-                        for (String t : sessions.getCurrent().get().session.getAvailableConstantPoolTypes()) {
-                            candidates.add(new Candidate("cp/" + t));
+                        String prefix = "cp/";
+                        String rest = w.substring(prefix.length());
+                        int slash = rest.indexOf('/');
+                        int brIdx = rest.indexOf('[');
+                        int typeEnd = -1;
+                        if (slash >= 0 && brIdx >= 0) typeEnd = Math.min(slash, brIdx);
+                        else if (slash >= 0) typeEnd = slash;
+                        else if (brIdx >= 0) typeEnd = brIdx;
+                        int lb = w.lastIndexOf('[');
+                        int rb = w.lastIndexOf(']');
+                        boolean inFilter = lb > w.lastIndexOf('/') && (rb < lb);
+                        if (typeEnd < 0) {
+                            for (String t : sessions.getCurrent().get().session.getAvailableConstantPoolTypes()) {
+                                if (("cp/" + t).startsWith(w)) candidates.add(new Candidate("cp/" + t));
+                            }
+                        } else {
+                            String type = rest.substring(0, typeEnd);
+                            String after = (slash >= 0) ? rest.substring(slash + 1) : "";
+                            try {
+                                var meta = io.jafar.shell.providers.MetadataProvider.loadClass(
+                                        sessions.getCurrent().get().session.getRecordingPath(), type);
+                                if (meta != null) {
+                                    Object fbn = meta.get("fieldsByName");
+                                    if (fbn instanceof java.util.Map<?,?> m) {
+                                        if (!inFilter) {
+                                            for (Object k : m.keySet()) {
+                                                String fn = String.valueOf(k);
+                                                candidates.add(new Candidate("cp/" + type + "/" + (after.isEmpty()?"":after + "/") + fn));
+                                            }
+                                        } else {
+                                            String before = w.substring(0, lb);
+                                            String inside = w.substring(lb + 1);
+                                            String listPrefix = "";
+                                            if (inside.startsWith("any:") || inside.startsWith("all:") || inside.startsWith("none:")) {
+                                                int cix = inside.indexOf(':');
+                                                listPrefix = inside.substring(0, cix + 1);
+                                                inside = inside.substring(cix + 1);
+                                            }
+                                            String base = "";
+                                            int lastSlash = inside.lastIndexOf('/');
+                                            if (lastSlash >= 0) base = inside.substring(0, lastSlash + 1);
+                                            for (Object k : m.keySet()) {
+                                                String fn = String.valueOf(k);
+                                                if (inside.isEmpty() || fn.startsWith(inside) || base.length() > 0) {
+                                                    candidates.add(noSpace(before + "[" + listPrefix + base + fn));
+                                                }
+                                            }
+                                            // Also suggest operators and quotes for cp filter
+                                            boolean hasOp = inside.contains("=") || inside.contains("!=") || inside.contains(">") || inside.contains("<") || inside.contains("~");
+                                            if (!hasOp) {
+                                                for (String op : new String[]{"=", "!=", ">", ">=", "<", "<=", "~"}) {
+                                                    candidates.add(noSpace(w + op));
+                                                }
+                                            } else if (!inside.contains("\"")) {
+                                                candidates.add(noSpace(w + "\"\""));
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignore) {}
                         }
                     } else if (w.equals("cp") || w.equals("cp/")) {
                         candidates.add(noSpace("cp/"));

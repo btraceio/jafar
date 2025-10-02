@@ -57,8 +57,8 @@ JfrPath usage (show):
  - Attribute projection (single-column values):
    - `show events/jdk.ExecutionSample/sampledThread/javaName --limit 5`
  - Metadata browsing via JfrPath:
-   - `show metadata/jdk.Thread`
-   - `show metadata/jdk.Thread/superType`
+   - `show metadata/java.lang.Thread`
+   - `show metadata/java.lang.Thread/superType`
 
 Code completion hints:
 - Start typing a command and press Tab to complete.
