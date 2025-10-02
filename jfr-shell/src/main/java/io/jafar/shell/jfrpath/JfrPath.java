@@ -65,7 +65,7 @@ public final class JfrPath {
     }
 
     // Aggregation pipeline
-    public sealed interface PipelineOp permits CountOp, StatsOp, QuantilesOp, SketchOp, LenOp { }
+    public sealed interface PipelineOp permits CountOp, StatsOp, QuantilesOp, SketchOp, LenOp, UppercaseOp, LowercaseOp, TrimOp, AbsOp, RoundOp { }
     public static final class CountOp implements PipelineOp { }
     public static final class StatsOp implements PipelineOp {
         public final List<String> valuePath; // optional, if empty: use projection path
@@ -86,5 +86,25 @@ public final class JfrPath {
     public static final class LenOp implements PipelineOp {
         public final List<String> valuePath; // optional
         public LenOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class UppercaseOp implements PipelineOp {
+        public final List<String> valuePath;
+        public UppercaseOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class LowercaseOp implements PipelineOp {
+        public final List<String> valuePath;
+        public LowercaseOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class TrimOp implements PipelineOp {
+        public final List<String> valuePath;
+        public TrimOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class AbsOp implements PipelineOp {
+        public final List<String> valuePath;
+        public AbsOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class RoundOp implements PipelineOp {
+        public final List<String> valuePath;
+        public RoundOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
     }
 }

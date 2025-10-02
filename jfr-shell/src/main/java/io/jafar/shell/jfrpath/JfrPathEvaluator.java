@@ -280,6 +280,11 @@ public final class JfrPathEvaluator {
             case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
             case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
             case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
+            case JfrPath.UppercaseOp up -> aggregateStringTransform(session, query, up.valuePath, "uppercase");
+            case JfrPath.LowercaseOp lo -> aggregateStringTransform(session, query, lo.valuePath, "lowercase");
+            case JfrPath.TrimOp tr -> aggregateStringTransform(session, query, tr.valuePath, "trim");
+            case JfrPath.AbsOp ab -> aggregateNumberTransform(session, query, ab.valuePath, "abs");
+            case JfrPath.RoundOp ro -> aggregateNumberTransform(session, query, ro.valuePath, "round");
         };
     }
 
@@ -437,6 +442,94 @@ public final class JfrPathEvaluator {
         Object arr = val;
         if (arr.getClass().isArray()) return java.lang.reflect.Array.getLength(arr);
         return null;
+    }
+
+    private List<Map<String, Object>> aggregateStringTransform(JFRSession session, Query query, List<String> valuePathOverride, String opName) throws Exception {
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException(opName + "() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        final List<String> path = vpath;
+        java.util.function.Consumer<Object> addTransformed = (val) -> {
+            if (val == null) {
+                Map<String, Object> row = new HashMap<>(); row.put("value", null); out.add(row); return;
+            }
+            if (!(val instanceof CharSequence s)) {
+                throw new IllegalArgumentException(opName + "() expects string, got " + val.getClass().getName());
+            }
+            String res = switch (opName) {
+                case "uppercase" -> s.toString().toUpperCase(java.util.Locale.ROOT);
+                case "lowercase" -> s.toString().toLowerCase(java.util.Locale.ROOT);
+                case "trim" -> s.toString().trim();
+                default -> throw new IllegalArgumentException("Unsupported op: " + opName);
+            };
+            Map<String, Object> row = new HashMap<>(); row.put("value", res); out.add(row);
+        };
+        if (query.root == Root.EVENTS) {
+            if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                addTransformed.accept(val);
+            });
+        } else {
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) addTransformed.accept(v);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> aggregateNumberTransform(JFRSession session, Query query, List<String> valuePathOverride, String opName) throws Exception {
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException(opName + "() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        final List<String> path = vpath;
+        java.util.function.Consumer<Object> addTransformed = (val) -> {
+            if (val == null) { Map<String, Object> row = new HashMap<>(); row.put("value", null); out.add(row); return; }
+            if (!(val instanceof Number n)) {
+                throw new IllegalArgumentException(opName + "() expects number, got " + val.getClass().getName());
+            }
+            Number res;
+            switch (opName) {
+                case "abs" -> {
+                    if (n instanceof Integer) res = Math.abs(n.intValue());
+                    else if (n instanceof Long) res = Math.abs(n.longValue());
+                    else if (n instanceof Short) res = (short) Math.abs(n.shortValue());
+                    else if (n instanceof Byte) res = (byte) Math.abs(n.byteValue());
+                    else if (n instanceof Float) res = Math.abs(n.floatValue());
+                    else res = Math.abs(n.doubleValue());
+                }
+                case "round" -> {
+                    if (n instanceof Float || n instanceof Double) res = Math.round(n.doubleValue());
+                    else res = n.longValue();
+                }
+                default -> throw new IllegalArgumentException("Unsupported op: " + opName);
+            }
+            Map<String, Object> row = new HashMap<>(); row.put("value", res); out.add(row);
+        };
+        if (query.root == Root.EVENTS) {
+            if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                addTransformed.accept(val);
+            });
+        } else {
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) addTransformed.accept(v);
+        }
+        return out;
     }
 
     private static String pcol(double q) {

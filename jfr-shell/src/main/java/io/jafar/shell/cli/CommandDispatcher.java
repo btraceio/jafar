@@ -415,6 +415,8 @@ public class CommandDispatcher {
             io.println("  show cp/jdk.types.Symbol[string~\"find.*\"]");
             io.println("  show cp/jdk.types.Symbol[string=\"java/lang/String\"]/id");
             io.println("  show cp[name~\"jdk\\.types\\..*\"]");
+            io.println("  show events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace");
+            io.println("  show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize");
             io.println("  show cp/jdk.types.Symbol/string | len()");
             io.println("  show events/jdk.ExecutionSample/stackTrace/frames | len()");
             io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");

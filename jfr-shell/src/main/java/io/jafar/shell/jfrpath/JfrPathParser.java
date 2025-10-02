@@ -35,19 +35,31 @@ public final class JfrPathParser {
         };
         if (peek() == '/') pos++;
         List<String> segments = new ArrayList<>();
-        // read path segments until filter or end
-        while (!eof()) {
-            if (peek() == '[' || peek() == '|' || Character.isWhitespace((char) peek())) break;
-            String seg = readUntil('/', '[', ' ', '|');
-            if (!seg.isEmpty()) segments.add(seg);
-            if (peek() == '/') pos++;
-            else break;
-        }
         List<Predicate> preds = new ArrayList<>();
-        while (!eof() && peek() == '[') {
-            pos++; // [
-            preds.add(parsePredicate());
-            expect(']');
+        // Interleave segments and filters: a/b[c>0]/d[e=1]
+        while (!eof()) {
+            if (peek() == '|' || Character.isWhitespace((char) peek())) break;
+            if (peek() != '[') {
+                String seg = readUntil('/', '[', ' ', '|');
+                if (!seg.isEmpty()) segments.add(seg);
+            }
+            // consume zero or more filters after the current segment, prefixing their paths
+            while (!eof() && peek() == '[') {
+                pos++; // [
+                Predicate p = parsePredicate();
+                if (p instanceof FieldPredicate fp) {
+                    List<String> prefix = segments.size() <= 1 ? java.util.List.of() : new java.util.ArrayList<>(segments.subList(1, segments.size()));
+                    List<String> combined = new java.util.ArrayList<>(prefix.size() + fp.fieldPath.size());
+                    combined.addAll(prefix);
+                    combined.addAll(fp.fieldPath);
+                    p = new FieldPredicate(combined, fp.op, fp.literal, fp.matchMode);
+                }
+                preds.add(p);
+                expect(']');
+            }
+            if (peek() == '/') { pos++; continue; }
+            if (peek() == '|' || Character.isWhitespace((char) peek())) break;
+            if (peek() != '[') break;
         }
         // Optional pipeline: | fn(args)? (| fn(args)?)*
         List<JfrPath.PipelineOp> pipeline = new ArrayList<>();
@@ -249,6 +261,21 @@ public final class JfrPathParser {
                 expect(')');
             }
             return new JfrPath.LenOp(valuePath);
+        } else if ("uppercase".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.UppercaseOp(valuePath);
+        } else if ("lowercase".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.LowercaseOp(valuePath);
+        } else if ("trim".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.TrimOp(valuePath);
+        } else if ("abs".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.AbsOp(valuePath);
+        } else if ("round".equals(name)) {
+            if (peek() == '(') { pos++; skipWs(); if (peek() != ')') { valuePath = parsePathArg(); } expect(')'); }
+            return new JfrPath.RoundOp(valuePath);
         } else {
             throw error("Unknown pipeline function: " + name);
         }

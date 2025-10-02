@@ -120,6 +120,8 @@ Examples:
 - `show cp/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
 - `show cp/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
 - `show cp[name~"jdk\\.types\\..*"]` (filter CP summary rows)
+- `show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace` (filter before projection)
+- `show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize` (filter relative to projection path)
 - `show cp/jdk.types.Symbol/string | len()` (string length per CP entry)
 - `show events/jdk.ExecutionSample/stackTrace/frames | len()` (list length per event)
 
