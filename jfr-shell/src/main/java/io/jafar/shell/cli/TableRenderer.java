@@ -8,10 +8,15 @@ public final class TableRenderer {
 
     public static void render(List<Map<String, Object>> rows, CommandDispatcher.IO io) {
         if (rows == null || rows.isEmpty()) { io.println("(no rows)"); return; }
-        // Compute columns as union of keys from first N rows (limit to 20 for performance)
+        // Compute columns as union of keys from the first N rows (larger sample for CP entries)
         Set<String> cols = new LinkedHashSet<>();
-        int sample = Math.min(rows.size(), 20);
+        int sample = Math.min(rows.size(), 200);
         for (int i = 0; i < sample; i++) cols.addAll(rows.get(i).keySet());
+        // Heuristic: if very few columns detected and there are many rows, expand sample once
+        if (cols.size() <= 2 && rows.size() > sample) {
+            int sample2 = Math.min(rows.size(), 1000);
+            for (int i = 0; i < sample2; i++) cols.addAll(rows.get(i).keySet());
+        }
         List<String> headers = new ArrayList<>(cols);
         // Determine which columns should never truncate (special-case: "fields")
         boolean[] noTruncate = new boolean[headers.size()];

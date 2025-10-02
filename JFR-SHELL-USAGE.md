@@ -1,142 +1,118 @@
-# JFR Shell - Interactive JFR Analysis Tool
+# JFR Shell - Interactive JFR CLI
 
-## 🎉 Status: FULLY WORKING!
-
-The JFR Shell is now a fully functional interactive Groovy-based JFR analysis tool.
+An interactive CLI for exploring Java Flight Recorder (JFR) files: browse metadata, list events, inspect chunks and constant pools, and query values with a concise JfrPath expression.
 
 ## Quick Start
 
-### 1. Run the Interactive Shell
+### Run the shell
 
 ```bash
-# Option 1: Direct JAR execution  
-java -jar jfr-shell/build/libs/jfr-shell-0.0.1-SNAPSHOT.jar
+# Using the launcher script
+./jfr-cli
 
-# Option 2: Using launcher script
-./jfr-shell-launcher
-
-# Option 3: Through Gradle (may have terminal issues)
-./gradlew :jfr-shell:run --console=plain
+# Or pass a file immediately
+./jfr-cli -f /path/to/recording.jfr
 ```
 
-### 2. Basic Usage
-
-Once in the shell, you'll see:
+On startup:
 ```
-╔═══════════════════════════════════════╗
-║           JFR Shell v1.0              ║
-║   Interactive JFR Analysis Tool       ║
-╚═══════════════════════════════════════╝
-
-Type 'help' for available commands, 'exit' to quit
-
+Type 'help' for commands, 'exit' to quit
 jfr> _
 ```
 
-### 3. Test Basic Functionality
+### Open a recording and browse
 
-```groovy
-jfr> def x = 5 + 3
-jfr> x
-=> 8
-
-jfr> [1, 2, 3, 4, 5].sum()
-=> 15
-
-jfr> def stats = [thread1: 100, thread2: 75, thread3: 50]
-jfr> stats.sort { -it.value }
-=> [thread1:100, thread2:75, thread3:50]
 ```
+jfr> open /path/to/recording.jfr
+jfr> info
+jfr> metadata --summary
+jfr> show metadata/jdk.Thread
+jfr> show metadata/jdk.Thread --format json
+jfr> show metadata/jdk.types.StackTrace --tree --depth 2
+jfr> show metadata/jdk.types.Method/fields/name --tree
 
-## JFR Analysis Example
-
-```groovy
-# Open a JFR recording
-jfr> open("/path/to/recording.jfr")
-Session opened: /path/to/recording.jfr
-Found 23 event types
-
-# Set up data collection
-jfr> def threadStats = [:]
-
-# Register event handler
-jfr> handle(JFRExecutionSample) { event, ctl ->
-       def threadId = event.sampledThread().javaThreadId()
-       threadStats[threadId] = (threadStats[threadId] ?: 0) + 1
-     }
-
-# Process the recording
-jfr> run()
-Processed 12,345 events in 523 ms
-
-# Analyze results
-jfr> threadStats.sort { -it.value }.take(5)
-=> [42:2341, 15:1205, 8:892, 23:634, 31:421]
-
-# Export results
-jfr> export(threadStats, "thread-analysis.json")
-Data exported to: thread-analysis.json
+# Events example (values projection)
+jfr> show events/jdk.FileRead/bytes --limit 5
 ```
 
 ## Available Commands
 
-- `help` - Show available commands
-- `info` - Show session information  
-- `types` - Show available event types in current recording
-- `close` - Close current session
-- `exit` / `quit` - Exit shell
-
-## Helper Functions
-
-- `open(path)` - Open JFR recording
-- `handle(EventType, {})` - Register event handler
-- `run()` - Process recording
-- `export(data, filename)` - Export data to file
+- `open <path> [--alias NAME]`: Open a recording file.
+- `sessions`: List all sessions; marks the current one.
+- `use <id|alias>`: Switch current session.
+- `close [<id|alias>|--all]`: Close a session or all.
+- `info [<id|alias>]`: Show session information.
+- `show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
+- `metadata [--search <glob>|--regex <pat>] [--refresh] [--events-only|--non-events-only] [--primitives] [--summary]`: List types.
+- `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
+- `help [<command>]`: Show contextual help.
+- `exit` / `quit`: Exit shell.
 
 ## Command Line Options
 
 ```bash
-java -jar jfr-shell.jar --help
-
-Usage: jfr-shell [-hqV] [--generate-types] [-e=<executeCommand>] [-f=<jfrFile>]
-                 [-s=<scriptFile>] [--types-output=<typesOutput>]
-                 [--types-package=<typesPackage>]
-Interactive JFR Analysis Shell
-  -e, --execute=<executeCommand>
-                         Groovy command to execute and exit
+Usage: jfr-shell [-hqV] [-f=<jfrFile>]
+Interactive JFR CLI
   -f, --file=<jfrFile>   JFR file to open immediately
-      --generate-types   Generate typed interfaces from JFR file and exit
-  -h, --help             Show this help message and exit.
-  -q, --quiet            Suppress banner and startup messages
-  -s, --script=<scriptFile>
-                         Groovy script to execute and exit
-      --types-output=<typesOutput>
-                         Output directory for generated types
-      --types-package=<typesPackage>
-                         Package name for generated types
-  -V, --version          Print version information and exit.
+  -h, --help             Show this help message and exit
+  -q, --quiet            Suppress banner
+  -V, --version          Print version information and exit
 ```
+
+## Metadata Field Paths (mini guide)
+
+Use `show metadata/<Type>` with JfrPath to explore metadata. The `fields` view
+is aliased for convenience.
+
+- List fields: `show metadata/<Type>/fields`
+- Inspect field: `show metadata/<Type>/fields/<name>`
+- Field subproperties: `.../type`, `.../dimension`, `.../annotations`
+- Aliases:
+  - `show metadata/<Type>/fields.<name>` (same as `.../fields/<name>`)
+  - `show metadata/<Type>/fields.<name>/annotations`
+  - `show metadata/<Type>/fieldsByName.<name>`
+- Trees:
+  - Class tree: `show metadata/<Type> --tree [--depth N]`
+  - Field tree: `show metadata/<Type>/fields/<name> --tree [--depth N]`
+    (renders the field and recursively expands its type)
 
 ## Features
 
-✅ **Interactive Groovy Shell** with full language support  
-✅ **JFR Session Management** - Open/close recordings  
-✅ **Typed Event Handling** - Type-safe event processing  
-✅ **Data Export** - JSON export functionality  
-✅ **Command System** - Built-in commands  
-✅ **Terminal Integration** - Proper keyboard handling (Ctrl+C, Ctrl+D)  
-✅ **Standalone Executable** - Single JAR with all dependencies  
+- Interactive CLI with sessions (open/list/use/close/info)
+- JfrPath queries over `events`, `metadata`, `chunks`, and `cp`
+- Table or JSON output (`--format json`)
+- Metadata browsing: class/fields/annotations/settings
+- Recursive metadata trees (`--tree`, `--depth N`), including field-focused trees
+- Helpful completion and contextual `help`
 
-## Example Scripts
+## JfrPath Essentials
 
-Pre-built analysis templates are available in:
-- `jfr-shell/src/main/resources/examples/thread_analysis.groovy`
-- `jfr-shell/src/main/resources/examples/gc_analysis.groovy`
+- Roots: `events`, `metadata`, `chunks`, `cp`
+- Show values: `show events/<Type>/<path>` or `show metadata/<Type>/<path>`
+- Filters: `[field op value]` with `= != > >= < <= ~` (regex)
+  - Lists/arrays: prefix with `any:`, `all:`, or `none:` to control how a filter applies across list elements.
+    - Examples:
+      - `show events/jdk.ExecutionSample[stackTrace/truncated=true]`
+      - `show events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string~".*Main.*"]`
+- Examples:
+  - `show events/jdk.FileRead[bytes>=1000] --limit 5`
+  - `show events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
+  - `show metadata/jdk.Thread` (class overview)
+  - `show metadata/jdk.types.Method/name` (single value)
 
-## Notes
+## Aggregations
 
-- The shell provides full Groovy language capabilities
-- Variables persist within a single line but not between lines (Groovy shell limitation)
-- Use `def` for local variables within the shell
-- The shell supports all standard Groovy operations, collections, closures, etc.
-- Type generation happens automatically when opening JFR files
+Append pipeline functions with `|` to compute aggregates over results.
+
+- `| count()` — Count matching rows/events.
+- `| stats([path])` — Numeric stats: `min`, `max`, `avg`, `stddev`.
+- `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
+- `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
+
+Examples:
+- `show events/jdk.FileRead | count()`
+- `show events/jdk.FileRead/bytes | stats()`
+- `show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
+- `show events/jdk.FileRead | sketch(path=bytes)`
+- `show metadata/jdk.types.Method/name | count()`
+- `show cp/jdk.types.Symbol | count()`

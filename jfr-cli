@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# JFR Shell launcher script with rebuild-on-change
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR/jfr-shell"
+HASH_FILE="$PROJECT_DIR/.last_build_hash"
+
+compute_hash() {
+  # Compute a combined hash across jfr-shell, parser, tools, and top-level gradle files
+  (
+    cd "$SCRIPT_DIR" >/dev/null
+    # Build the list of files (null-separated) deterministically
+    build_list() {
+      # Only include dirs that exist
+      for d in jfr-shell parser tools; do
+        if [ -d "$d" ]; then
+          find "$d" -type f \
+            ! -path '*/.last_build_hash' \
+            ! -path '*/build/*' \
+            ! -path '*/.gradle/*' \
+            ! -path '*/.idea/*' \
+            ! -path '*/out/*' \
+            ! -path '*/src/test/*' \
+            ! -name '*.iml' -print0
+        fi
+      done
+      # Top-level gradle files if present
+      for f in build.gradle settings.gradle gradle.properties; do
+        if [ -f "$f" ]; then printf '%s\0' "$f"; fi
+      done
+    }
+    if command -v sha256sum >/dev/null 2>&1; then
+      build_list | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      build_list | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}'
+    else
+      if ! command -v openssl >/dev/null 2>&1; then
+        echo "No sha256 utility available (sha256sum/shasum/openssl)" >&2
+        exit 1
+      fi
+      build_list | sort -z | while IFS= read -r -d '' f; do
+        openssl dgst -sha256 "$f" | awk -v p="$f" '{print $2, p}'
+      done | openssl dgst -sha256 | awk '{print $2}'
+    fi
+  )
+}
+
+# Determine current and previous hashes
+echo "Computing jfr-shell hash"
+NEW_HASH="$(compute_hash)"
+OLD_HASH=""
+if [ -f "$HASH_FILE" ]; then
+  OLD_HASH="$(cat "$HASH_FILE" | tr -d '\n' || true)"
+fi
+
+# Locate current jar (if any)
+JAR_PATH=$(ls -1t "$PROJECT_DIR/build/libs"/jfr-shell-*.jar 2>/dev/null | head -n1 || true)
+
+# Build if no jar or hash changed
+if [ ! -f "$JAR_PATH" ] || [ "$NEW_HASH" != "$OLD_HASH" ]; then
+  echo "Building JFR Shell (changes detected)..."
+  ( cd "$SCRIPT_DIR" && ./gradlew -q :jfr-shell:shadowJar )
+  # Update jar path after build
+  JAR_PATH=$(ls -1t "$PROJECT_DIR/build/libs"/jfr-shell-*.jar 2>/dev/null | head -n1 || true)
+  if [ -z "$JAR_PATH" ] || [ ! -f "$JAR_PATH" ]; then
+    echo "Failed to build jfr-shell shadow jar" >&2
+    exit 1
+  fi
+  # Persist new hash
+  echo "$NEW_HASH" > "$HASH_FILE"
+fi
+
+# Run shaded jar
+exec java -jar "$JAR_PATH" "$@"

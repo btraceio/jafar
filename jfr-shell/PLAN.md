@@ -133,15 +133,19 @@ M1 — Session management (DONE)
 - [ ] Update `InteractiveJFRShell` to use `CommandDispatcher` and `SessionManager`.
 Acceptance: can open multiple files, switch, list, and close; prompts show current alias/id.
 
-M2 — Type discovery refresh + search
-- [ ] Extend `JFRSession` to store discovered types and quick refresh.
-- [ ] Implement `types [--search] [--refresh]` with glob/regex filtering.
-Acceptance: types list stable across sessions; refresh updates immediately.
+M2 — Type discovery refresh + search (WON'T DO)
+- Rationale: Replaced by unified `metadata` listing and `show metadata/<type>` path. Session already captures types on metadata scan; explicit refresh and separate discovery flow are de-scoped.
+- Impact: Keep `metadata` command with `--search/--regex/--summary`; no dedicated discovery module.
+Acceptance: N/A (superseded by `metadata` + JfrPath).
 
 M3 — Metadata browsing
-- [ ] Add `MetadataProvider` to summarize classes, fields, annotations.
-- [ ] `metadata` and `metadata class <name>` commands with `--tree|--json`.
-Acceptance: can inspect metadata structure and details for any class.
+- [x] Add `MetadataProvider` to summarize classes, fields, annotations.
+- [x] `metadata` and `metadata class <name>` commands with `--tree|--json`.
+- [x] Recursive tree rendering for classes with `--depth` option (default 10).
+- [x] Field-focused tree rendering: `show metadata/<type>/fields/<name> --tree` expands the field type.
+- [x] Help updates: show alias examples (`fields.<name>`, `fieldsByName.<name>`) and field-tree example.
+- [x] Docs updates: `JFR-SHELL-USAGE.md` Command Line Options synced; added mini metadata field paths guide.
+Acceptance: can inspect metadata structure and details for any class; render recursive trees with depth control; render field-focused trees via `--tree`; help and docs reflect aliases and examples.
 
 M4 — Chunks + Constant pools
 - [ ] Add `ChunkProvider` to summarize chunk headers and relationships.
@@ -154,15 +158,18 @@ M5 — JfrPath core (events, filters, projection)
 - [x] Implement minimal evaluator for events with type filter and predicates.
 - [x] `show` command with `--limit` and table output.
 - [x] Attribute projection: `events/<type>/<field/path>` returns only values of the path.
+- [x] Early-stop event parsing when `--limit` is provided (abort stream once enough matches collected).
 Acceptance: basic examples work; attribute projections display as a single-column table; tests passing.
 
 M6 — Aggregations + pipelines
-- [ ] Implement `count`, `sum`, `groupBy`, `top` operators.
-- [ ] Render grouped results as table/json.
-Acceptance: simple aggregations work; validated on sample datasets.
+- [x] Implement `count`, `stats` (min,max,avg,stddev), `quantiles`, `sketch` operators.
+- [x] Render aggregation results as tables (and JSON via `--format json`).
+- [ ] Add `sum`, `groupBy`, `top` operators.
+Acceptance: pipeline examples work end-to-end; docs/help/completion updated; tests passing on sample datasets.
 
 M7 — UX polish
 - [ ] JLine completion for commands, options, session ids/aliases, type names.
+- [x] Add `show` option completion including `--list-match` values (any/all/none).
 - [ ] Built-in pager for long outputs; configurable page size.
 - [ ] Contextual `help <command>` with examples.
 Acceptance: smooth interactive experience; help texts up to date.
@@ -176,6 +183,20 @@ Acceptance: smooth interactive experience; help texts up to date.
 - 2025-10-01: Metadata view: added annotated `name:Type[]` pairs, multiline non-truncated `fields` column. Enriched metadata with `classAnnotations`, `settings`, and per-field `annotations` (full and simple). Default table hides internal columns (`fieldsByName`, `classAnnotations`, `classAnnotationsFull`, `settings`, `settingsByName`, `fieldCount`). Added `--format json` to `show` to pretty-print full metadata details. Implemented field-level lookup: `show metadata/<type>/<field>` prints that field's metadata (hides `annotationsFull` in table; JSON includes all).
 - 2025-10-01: Constant pools: fixed summary counts to reflect real entry counts by reading offsets; `show cp` lists per-type totals. Implemented `show cp/<type>` to list all entries of that CP type by iterating offsets and lazily deserializing entries; supports JSON output.
 
+- 2025-10-02: Constant pools: fixed blank values for `show cp/<type>` (e.g., `jdk.types.Symbol`). Ensured `MetadataClass.read(...)` binds a deserializer before use; added non-reflective fallback in `MutableConstantPool.get(...)` to materialize entries via `GenericValueReader` + `MapValueBuilder` when typed deserializer isn’t available. Added integration test `ShowConstantPoolSymbolValuesTest` over `test-ap.jfr` that asserts non-empty `string` fields. Result: rows include `id`, `type`, and concrete fields like `string` (no more empty cells).
+
+- 2025-10-02: M2 marked WON'T DO; replaced by unified `metadata` + JfrPath. Implemented M3: added MetadataProvider (no reflection), TreeRenderer, and `metadata class <name>` command with `--tree|--json|--fields|--annotations`. Refactored JfrPathEvaluator to use provider. Extended parser internal_api with getters on metadata classes (annotations, settings) to avoid reflective access. Updated help text.
+
+- 2025-10-02: Events filtering: added list/array-aware predicates with match modes (any/all/none). Syntax: prefix filter path with `any:`/`all:`/`none:`; global default via `--list-match`. Updated help + usage. Added ShellCompleter completion for `--list-match` values. Added unit tests for deep matching across frames.
+
+- 2025-10-02: Metadata trees: implemented field-focused tree rendering for `show metadata/<type>/fields/<name> --tree`, added `--depth` option (default 10) to both class and field trees, and skipped fields with `null` type. Help updated with alias notes and examples; `JFR-SHELL-USAGE.md` updated (Command Line Options synced) and added a mini metadata field paths guide.
+
+- 2025-10-02: Performance: event queries with `--limit N` now abort parsing after collecting N matching rows (both table and value projections). Dispatcher routes events to limit-aware evaluator methods. All tests green.
+
+- 2025-10-02: Launcher: `jfr-cli` enhanced to compute a project hash (covering subprojects and top-level Gradle files) and rebuild the shaded jar when it changes.
+
+- 2025-10-02: Aggregations: implemented pipeline ops `count`, `stats`, `quantiles`, `sketch` for events/metadata/chunks/cp. Added help examples and a new Aggregations section in `JFR-SHELL-USAGE.md`. Enhanced completion to suggest pipeline functions after `|`. Added integration tests using `test-ap.jfr` for counting events and metadata values. All tests green.
+
 M8 — Non-interactive subcommands
 - [ ] Picocli subcommands for `show`, `metadata`, `chunks`, `types`.
 - [ ] Proper exit codes and stdout/stderr behavior; no interactive banner.
@@ -188,9 +209,11 @@ M9 — Testing & stability
 Acceptance: `./gradlew test` green locally with Java 21 toolchain.
 
 M10 — Docs & packaging
-- [ ] Update `JFR-SHELL-USAGE.md` with new commands and examples.
+- [x] Update `JFR-SHELL-USAGE.md` with new commands and examples.
+- [x] Add mini guide for metadata field paths (aliases, subproperties, trees).
 - [ ] Add `docs/jfrpath.md` with grammar and examples.
-- [ ] Ensure `shadowJar` builds runnable artifact; update launcher scripts.
+ - [ ] Ensure `shadowJar` builds runnable artifact; update launcher scripts.
+   - [x] `jfr-cli` auto-rebuilds shaded jar when project hash changes (jfr-shell, parser, tools, Gradle files).
 Acceptance: end-to-end usage documented and reproducible.
 
 ---
@@ -205,6 +228,12 @@ Acceptance: end-to-end usage documented and reproducible.
 
 ---
 
+
+M3.1 — Metadata JfrPath + Completion (NEW)
+- [x] JfrPath support for `metadata/<type>/fields` and `metadata/<type>/fields/<name>` (including deeper paths), plus alias `fields.<name>` and `fieldsByName.<name>`.
+- [x] Shell completion for `show metadata/` type names, `metadata/<type>/` segments, field names under `fields/` or `fields.<name>`, and field subproperties.
+Acceptance: `show metadata/jdk.ExecutionSample/fields` lists field names; `show metadata/jdk.ExecutionSample/fields/stackTrace` returns field metadata; interactive completion suggests types, fields, and subproperties.
+
 ## Testing Plan
 
 - Parser: golden tests for JfrPath strings → AST; error cases with clear diagnostics.
@@ -217,6 +246,9 @@ Run:
 - `./gradlew test` (parser tests require higher heap; Java 21 toolchain).
 
 ---
+
+- 2025-10-02: Added recursive tree rendering inline under fields, path-based cycle avoidance, `--depth` (default 10), and skip of `null` fields. Added tests for depth=0/1 and nested repetition.
+- 2025-10-02: Added `show metadata` JfrPath enhancements for fields listing and lookup, plus alias paths `fields.<name>` and `fieldsByName.<name>`. Enhanced shell completion for `show metadata/` types, segments, field names, and field subproperties. Added tests for `show metadata/.../fields` behavior.
 
 ## Open Questions
 

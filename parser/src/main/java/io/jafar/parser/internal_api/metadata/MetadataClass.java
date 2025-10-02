@@ -241,6 +241,44 @@ public final class MetadataClass extends AbstractMetadataElement {
   }
 
   /**
+   * Returns class-level JFR metadata annotations declared on this metadata class.
+   *
+   * <p>The returned list is an unmodifiable snapshot; it may be empty if the class
+   * has no annotations. Each entry provides access to the annotation type and value
+   * via {@link MetadataAnnotation#getType()} and {@link MetadataAnnotation#getValue()}.
+   *
+   * @return an unmodifiable list of class annotations (possibly empty)
+   */
+  public List<MetadataAnnotation> getAnnotations() {
+    return Collections.unmodifiableList(annotations == null ? Collections.emptyList() : annotations);
+  }
+
+  /**
+   * Returns a summary view of class settings keyed by setting name.
+   *
+   * <p>Each value is a map with keys:
+   * <ul>
+   *   <li>"type" — fully qualified type name (String)</li>
+   *   <li>"defaultValue" — default value string, may be null</li>
+   * </ul>
+   * The returned map is unmodifiable and may be empty.
+   *
+   * @return an unmodifiable map from setting name to a summary map
+   */
+  public Map<String, Map<String, Object>> getSettingsByName() {
+    if (settings == null || settings.isEmpty()) return java.util.Collections.emptyMap();
+    Map<String, Map<String, Object>> out = new HashMap<>(settings.size());
+    for (Map.Entry<String, MetadataSetting> e : settings.entrySet()) {
+      MetadataSetting s = e.getValue();
+      Map<String, Object> m = new HashMap<>();
+      m.put("type", s.getType() != null ? s.getType().getName() : null);
+      m.put("defaultValue", s.getValue());
+      out.put(e.getKey(), m);
+    }
+    return Collections.unmodifiableMap(out);
+  }
+
+  /**
    * Skips over the data for this class in the recording stream.
    *
    * @param stream the recording stream to skip over
@@ -273,11 +311,14 @@ public final class MetadataClass extends AbstractMetadataElement {
    */
   @SuppressWarnings("unchecked")
   public <T> T read(RecordingStream stream) {
-    if (deserializer == null) {
+    // Ensure a deserializer is available; some call sites (e.g., constant pool access)
+    // may invoke read() before any handler binds the deserializer.
+    Deserializer<?> d = getDeserializer();
+    if (d == null) {
       return null;
     }
     try {
-      return (T) deserializer.deserialize(stream);
+      return (T) d.deserialize(stream);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

@@ -60,5 +60,41 @@ class JfrPathEvaluatorTest {
         assertEquals(1, out.size());
         assertEquals(1500, out.get(0).get("bytes"));
     }
-}
 
+    @Test
+    void aggregationCountAndStats() throws Exception {
+        JFRSession session = Mockito.mock(JFRSession.class);
+        when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+        var src = (JfrPathEvaluator.EventSource) (recording, consumer) -> {
+            consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 1500)));
+            consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 500)));
+            consumer.accept(new JfrPathEvaluator.Event("jdk.ExecutionSample", Map.of()));
+        };
+
+        var eval = new JfrPathEvaluator(src);
+
+        var qc = JfrPathParser.parse("events/jdk.FileRead | count()");
+        List<Map<String, Object>> countRows = eval.evaluate(session, qc);
+        assertEquals(1, countRows.size());
+        assertEquals(2L, countRows.get(0).get("count"));
+
+        var qs = JfrPathParser.parse("events/jdk.FileRead/bytes | stats()");
+        List<Map<String, Object>> statsRows = eval.evaluate(session, qs);
+        assertEquals(1, statsRows.size());
+        Map<String, Object> r = statsRows.get(0);
+        assertEquals(2L, r.get("count"));
+        assertEquals(500.0, (Double) r.get("min"), 0.0001);
+        assertEquals(1500.0, (Double) r.get("max"), 0.0001);
+        assertEquals(1000.0, (Double) r.get("avg"), 0.0001);
+        assertEquals(500.0, (Double) r.get("stddev"), 0.0001);
+
+        var qq = JfrPathParser.parse("events/jdk.FileRead/bytes | quantiles(0.5,0.9)");
+        List<Map<String, Object>> qrows = eval.evaluate(session, qq);
+        assertEquals(1, qrows.size());
+        Map<String, Object> qr = qrows.get(0);
+        assertEquals(2, qr.get("count"));
+        assertEquals(1000.0, (Double) qr.get("p50"), 0.0001);
+        assertEquals(1500.0, (Double) qr.get("p90"), 0.0001);
+    }
+}

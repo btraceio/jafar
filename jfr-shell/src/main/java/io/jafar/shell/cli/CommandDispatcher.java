@@ -5,6 +5,7 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import io.jafar.shell.providers.MetadataProvider;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -83,7 +84,12 @@ public class CommandDispatcher {
                     cmdHelp(args);
                     return true;
                 case "metadata":
-                    cmdTypes(args);
+                    // Support: 'metadata class <name> [--tree|--json] [--fields] [--annotations]' and listing
+                    if (!args.isEmpty() && "class".equalsIgnoreCase(args.get(0))) {
+                        cmdMetadataClass(args.subList(1, args.size()));
+                    } else {
+                        cmdTypes(args);
+                    }
                     return true;
                 case "types":
                     io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
@@ -194,9 +200,12 @@ public class CommandDispatcher {
     private void cmdShow(List<String> args, String fullLine) throws Exception {
         var cur = sessions.current();
         if (cur.isEmpty()) { io.error("No session open"); return; }
-        // parse options: support --limit N at the end
+        // parse options: support --limit N, --format json, and metadata-only: --tree [--depth N]
         Integer limit = null;
         String format = null;
+        boolean tree = false;
+        Integer depth = null;
+        JfrPath.MatchMode listMatchMode = JfrPath.MatchMode.ANY;
         List<String> tokens = args;
         for (int i = 0; i < tokens.size(); i++) {
             String t = tokens.get(i);
@@ -216,8 +225,38 @@ public class CommandDispatcher {
                 i -= 1;
                 continue;
             }
+            if ("--tree".equals(t)) {
+                tree = true;
+                tokens = new java.util.ArrayList<>(tokens);
+                tokens.remove(i);
+                i -= 1;
+                continue;
+            }
+            if ("--depth".equals(t) && i + 1 < tokens.size()) {
+                try { depth = Integer.parseInt(tokens.get(i + 1)); }
+                catch (NumberFormatException nfe) { io.error("Invalid --depth value: " + tokens.get(i + 1)); return; }
+                tokens = new java.util.ArrayList<>(tokens);
+                tokens.remove(i + 1);
+                tokens.remove(i);
+                i -= 1;
+                continue;
+            }
+            if ("--list-match".equals(t) && i + 1 < tokens.size()) {
+                String mm = tokens.get(i + 1).toLowerCase(java.util.Locale.ROOT);
+                switch (mm) {
+                    case "any" -> listMatchMode = JfrPath.MatchMode.ANY;
+                    case "all" -> listMatchMode = JfrPath.MatchMode.ALL;
+                    case "none" -> listMatchMode = JfrPath.MatchMode.NONE;
+                    default -> { io.error("Invalid --list-match value: " + tokens.get(i + 1)); return; }
+                }
+                tokens = new java.util.ArrayList<>(tokens);
+                tokens.remove(i + 1);
+                tokens.remove(i);
+                i -= 1;
+                continue;
+            }
         }
-        if (tokens.isEmpty()) { io.error("Usage: show <expr> [--limit N] [--format json]"); return; }
+        if (tokens.isEmpty()) { io.error("Usage: show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]"); return; }
         String expr = String.join(" ", tokens);
         // Evaluate
         if (selector != null) {
@@ -231,7 +270,46 @@ public class CommandDispatcher {
             return;
         }
         var q = JfrPathParser.parse(expr);
-        var eval = new JfrPathEvaluator();
+        var eval = new JfrPathEvaluator(listMatchMode);
+        // If aggregation pipeline present, always evaluate as rows (preempts other handlers)
+        if (q.pipeline != null && !q.pipeline.isEmpty()) {
+            var rows = eval.evaluate(cur.get().session, q);
+            if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+            if ("json".equalsIgnoreCase(format)) {
+                printJson(rows, io);
+            } else {
+                TableRenderer.render(rows, io);
+            }
+            return;
+        }
+
+        // metadata tree rendering via --tree
+        if (tree && q.root == JfrPath.Root.METADATA) {
+            if (q.segments.isEmpty()) { io.error("--tree requires 'metadata/<type>' expression"); return; }
+            String typeName = q.segments.get(0);
+            int maxDepth = depth != null ? Math.max(0, depth) : 10;
+            // If path targets a specific field, render field-focused tree
+            if (q.segments.size() >= 2) {
+                String seg1 = q.segments.get(1);
+                String fieldName = null;
+                if ("fields".equals(seg1) || "fieldsByName".equals(seg1)) {
+                    if (q.segments.size() >= 3) {
+                        fieldName = q.segments.get(2);
+                    }
+                } else if (seg1.startsWith("fields.")) {
+                    fieldName = seg1.substring("fields.".length());
+                } else if (seg1.startsWith("fieldsByName.")) {
+                    fieldName = seg1.substring("fieldsByName.".length());
+                }
+                if (fieldName != null && !fieldName.isEmpty()) {
+                    TreeRenderer.renderFieldRecursive(cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+                    return;
+                }
+            }
+            // Otherwise, render the class tree for the requested type
+            TreeRenderer.renderMetadataRecursive(cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            return;
+        }
         if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty()) {
             // Equivalent of 'types'
             cmdTypes(java.util.List.of());
@@ -240,6 +318,17 @@ public class CommandDispatcher {
         if (q.root == JfrPath.Root.METADATA && q.segments.size() == 2) {
             String typeName = q.segments.get(0);
             String fieldName = q.segments.get(1);
+            if ("fields".equals(fieldName) || "fieldsByName".equals(fieldName)) {
+                // Delegate to generic evaluator to support 'fields' and 'fieldsByName'
+                var values = eval.evaluateValues(cur.get().session, q);
+                if (limit != null && limit < values.size()) values = values.subList(0, limit);
+                if ("json".equalsIgnoreCase(format)) {
+                    printJson(values, io);
+                } else {
+                    TableRenderer.renderValues(values, io);
+                }
+                return;
+            }
             var evalMeta = new JfrPathEvaluator();
             Map<String, Object> fm = evalMeta.loadFieldMetadata(cur.get().session.getRecordingPath(), typeName, fieldName);
             if (fm == null) {
@@ -257,7 +346,9 @@ public class CommandDispatcher {
             return;
         }
         if (q.segments.size() > 1) {
-            var values = eval.evaluateValues(cur.get().session, q);
+            var values = (q.root == JfrPath.Root.EVENTS)
+                    ? eval.evaluateValuesWithLimit(cur.get().session, q, limit)
+                    : eval.evaluateValues(cur.get().session, q);
             if (limit != null && limit < values.size()) values = values.subList(0, limit);
             if ("json".equalsIgnoreCase(format)) {
                 printJson(values, io);
@@ -265,7 +356,9 @@ public class CommandDispatcher {
                 TableRenderer.renderValues(values, io);
             }
         } else {
-            var rows = eval.evaluate(cur.get().session, q);
+            var rows = (q.root == JfrPath.Root.EVENTS)
+                    ? eval.evaluateWithLimit(cur.get().session, q, limit)
+                    : eval.evaluate(cur.get().session, q);
             if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
             if ("json".equalsIgnoreCase(format)) {
                 printJson(rows, io);
@@ -293,19 +386,37 @@ public class CommandDispatcher {
         }
         String sub = args.get(0).toLowerCase(Locale.ROOT);
         if ("show".equals(sub) || "select".equals(sub)) {
-            io.println("Usage: show <expr> [--limit N] [--format json]");
+            io.println("Usage: show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]");
             io.println("Where <expr> is a JfrPath like:");
             io.println("  events/<type>[field/path op literal][...]");
-            io.println("  metadata/<type>[/field][...]");
+            io.println("  metadata/<type>[/field][...]   (use --tree [--depth N] for recursive tree)");
+            io.println("    Aliases for fields: fields.<name>, fieldsByName.<name>");
             io.println("  chunks[/field]");
             io.println("  cp[/<type>][/field]");
             io.println("Operators: = != > >= < <= ~ (regex)");
+            io.println("Pipeline aggregations: append with '|':");
+            io.println("  | count()                  → number of rows/events");
+            io.println("  | stats([path])            → min,max,avg,stddev for numeric values");
+            io.println("  | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
+            io.println("  | sketch([path])           → stats + p50,p90,p99");
+            io.println("List match modes (arrays/lists): prefix a filter with any: | all: | none:");
+            io.println("  e.g., [any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
             io.println("Examples:");
             io.println("  show events/jdk.FileRead[bytes>=1000] --limit 5");
             io.println("  show events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
+            io.println("  show events/jdk.ExecutionSample[stackTrace/truncated=true]");
+            io.println("  show events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
+            io.println("  show events/jdk.FileRead | count()");
+            io.println("  show events/jdk.FileRead/bytes | stats()");
+            io.println("  show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)");
+            io.println("  show metadata/jdk.types.Method/name | count()");
+            io.println("  show cp/jdk.types.Symbol | count()");
             io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
             io.println("  show metadata/jdk.Thread");
             io.println("  show metadata/jdk.Thread --format json");
+            io.println("  show metadata/jdk.types.StackTrace --tree --depth 2");
+            io.println("  show metadata/jdk.types.Method/fields/name --tree");
+            io.println("  show metadata/jdk.types.Method/fields.name/annotations");
             io.println("  show metadata/jdk.types.Method/name");
             io.println("  show chunks/size");
             io.println("  show cp/name");
@@ -327,6 +438,19 @@ public class CommandDispatcher {
             io.println("  metadata");
             io.println("  metadata --search jdk.*");
             io.println("  metadata --regex ^custom\\..*");
+            io.println("");
+            io.println("Metadata class details:");
+            io.println("  Usage: metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]");
+            io.println("  Flags:");
+            io.println("    --tree         Hierarchical view (class → fields → annotations/settings); use --depth to limit");
+            io.println("    --json         Full JSON with all properties");
+            io.println("    --fields       Tabular list of fields (name, type, dimension, annotations)");
+            io.println("    --annotations  Class-level annotations only");
+            io.println("    --depth N      Max recursion depth (default 10)");
+            io.println("  Examples:");
+            io.println("    metadata class jdk.Thread");
+            io.println("    metadata class jdk.Thread --tree --depth 3");
+            io.println("    metadata class jdk.types.Method --fields");
             return;
         }
         io.println("No specific help for '" + sub + "'. Try 'help show'.");
@@ -457,5 +581,97 @@ public class CommandDispatcher {
         }
         io.println("Available Types (" + total + ") [" + scopeLabel + "; events=" + eventsCnt + ", non-events=" + nonEventsCnt + "]:");
         for (String t : types) io.println("  " + t);
+    }
+
+    private void cmdMetadataClass(List<String> args) {
+        var cur = sessions.current();
+        if (cur.isEmpty()) { io.error("No session open"); return; }
+        if (args.isEmpty()) { io.error("Usage: metadata class <name> [--tree|--json] [--fields] [--annotations]"); return; }
+        String typeName = args.get(0);
+        boolean tree = false;
+        boolean json = false;
+        boolean fields = false;
+        boolean annotations = false;
+        int maxDepth = 10;
+        for (int i = 1; i < args.size(); i++) {
+            switch (args.get(i)) {
+                case "--tree": tree = true; break;
+                case "--json": json = true; break;
+                case "--fields": fields = true; break;
+                case "--annotations": annotations = true; break;
+                case "--depth":
+                    if (i + 1 < args.size()) {
+                        try {
+                            maxDepth = Math.max(0, Integer.parseInt(args.get(++i)));
+                        } catch (NumberFormatException nfe) {
+                            io.error("Invalid --depth value: " + args.get(i));
+                            return;
+                        }
+                    } else {
+                        io.error("--depth requires a number");
+                        return;
+                    }
+                    break;
+                default: io.error("Unknown option: " + args.get(i)); return;
+            }
+        }
+        Map<String, Object> meta;
+        try {
+            meta = MetadataProvider.loadClass(cur.get().session.getRecordingPath(), typeName);
+        } catch (Exception e) {
+            io.error("Failed to load metadata: " + e.getMessage());
+            return;
+        }
+        if (meta == null) { io.error("Type not found: " + typeName); return; }
+
+        if (json) {
+            printJson(meta, io);
+            return;
+        }
+        if (tree) {
+            // For --tree, render recursively starting from the requested type
+            TreeRenderer.renderMetadataRecursive(cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            return;
+        }
+        if (fields) {
+            Object fbn = meta.get("fieldsByName");
+            if (!(fbn instanceof Map<?,?> m) || m.isEmpty()) { io.println("(no fields)"); return; }
+            java.util.List<java.util.Map<String, Object>> rows = new java.util.ArrayList<>();
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (Object k : m.keySet()) names.add(String.valueOf(k));
+            java.util.Collections.sort(names);
+            for (String fn : names) {
+                Object v = m.get(fn);
+                if (v instanceof Map<?,?> fm) {
+                    java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+                    row.put("name", fn);
+                    row.put("type", fm.get("type"));
+                    row.put("dimension", fm.get("dimension"));
+                    Object a = fm.get("annotations");
+                    row.put("annotations", (a instanceof java.util.List<?> l) ? String.join(" ", l.stream().map(String::valueOf).toList()) : "");
+                    rows.add(row);
+                }
+            }
+            TableRenderer.render(rows, io);
+            return;
+        }
+        if (annotations) {
+            Object ca = meta.get("classAnnotations");
+            if (!(ca instanceof java.util.List<?> list) || list.isEmpty()) {
+                io.println("(no annotations)");
+            } else {
+                io.println("Annotations:");
+                for (Object v : list) io.println("  " + String.valueOf(v));
+            }
+            return;
+        }
+        // Default: show a one-row table with curated columns
+        java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>(meta);
+        copy.remove("fieldsByName");
+        copy.remove("classAnnotations");
+        copy.remove("classAnnotationsFull");
+        copy.remove("settingsByName");
+        copy.remove("fieldCount");
+        TableRenderer.render(java.util.List.of(copy), io);
     }
 }

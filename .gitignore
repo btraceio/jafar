@@ -34,3 +34,5 @@ gradle.properties
 .history
 /.githooks/pre-commit
 /.vscode/settings.json
+
+**/.last_build_hash

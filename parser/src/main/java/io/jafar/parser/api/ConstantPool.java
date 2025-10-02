@@ -32,4 +32,23 @@ public interface ConstantPool {
    * @return the metadata class representing the type of objects in this pool
    */
   MetadataClass getType();
+
+  /**
+   * Returns an accurate count of entries known to this constant pool based on its index.
+   * Unlike {@link #size()}, which reflects only deserialized entries, this returns the number of
+   * IDs present in the index, even if values have not been materialized yet.
+   */
+  default int entryCount() { return size(); }
+
+  /**
+   * Returns an iterator over all entry IDs known to this constant pool. Implementations should
+   * prefer not to materialize values while iterating; callers can retrieve values via {@link #get(long)}.
+   */
+  default java.util.Iterator<Long> ids() { return java.util.Collections.<Long>emptyIterator(); }
+
+  /** True if the constant pool index is populated and IDs can be iterated. */
+  default boolean isIndexed() { return false; }
+
+  /** Ensure the constant pool index is populated (IDs discoverable) without deserializing values. */
+  default void ensureIndexed() {}
 }
