@@ -65,7 +65,7 @@ public final class JfrPath {
     }
 
     // Aggregation pipeline
-    public sealed interface PipelineOp permits CountOp, StatsOp, QuantilesOp, SketchOp { }
+    public sealed interface PipelineOp permits CountOp, StatsOp, QuantilesOp, SketchOp, LenOp { }
     public static final class CountOp implements PipelineOp { }
     public static final class StatsOp implements PipelineOp {
         public final List<String> valuePath; // optional, if empty: use projection path
@@ -82,5 +82,9 @@ public final class JfrPath {
     public static final class SketchOp implements PipelineOp {
         public final List<String> valuePath; // optional
         public SketchOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class LenOp implements PipelineOp {
+        public final List<String> valuePath; // optional
+        public LenOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
     }
 }

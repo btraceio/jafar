@@ -279,6 +279,7 @@ public final class JfrPathEvaluator {
             case JfrPath.StatsOp s -> aggregateStats(session, query, s.valuePath);
             case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
             case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
+            case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
         };
     }
 
@@ -386,6 +387,56 @@ public final class JfrPathEvaluator {
         out.putAll(stats);
         out.putAll(quants);
         return List.of(out);
+    }
+
+    private List<Map<String, Object>> aggregateLen(JFRSession session, Query query, List<String> valuePathOverride) throws Exception {
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException("len() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        final List<String> path = vpath;
+        java.util.function.Consumer<Object> addLen = (val) -> {
+            if (val == null) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("len", null);
+                out.add(row);
+                return;
+            }
+            Integer len = valueLength(val);
+            if (len == null) {
+                throw new IllegalArgumentException("len() expects string or array/list, got " + val.getClass().getName());
+            }
+            Map<String, Object> row = new HashMap<>();
+            row.put("len", len);
+            out.add(row);
+        };
+        if (query.root == Root.EVENTS) {
+            if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                addLen.accept(val);
+            });
+        } else {
+            // For non-events, leverage evaluateValues with the original query to get a list of values
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) addLen.accept(v);
+        }
+        return out;
+    }
+
+    private static Integer valueLength(Object val) {
+        if (val == null) return null;
+        if (val instanceof CharSequence s) return s.length();
+        if (val instanceof java.util.Collection<?> c) return c.size();
+        Object arr = val;
+        if (arr.getClass().isArray()) return java.lang.reflect.Array.getLength(arr);
+        return null;
     }
 
     private static String pcol(double q) {

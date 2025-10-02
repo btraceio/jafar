@@ -399,6 +399,7 @@ public class CommandDispatcher {
             io.println("  | stats([path])            → min,max,avg,stddev for numeric values");
             io.println("  | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
             io.println("  | sketch([path])           → stats + p50,p90,p99");
+            io.println("  | len([path])              → length of string or list/array attribute");
             io.println("List match modes (arrays/lists): prefix a filter with any: | all: | none:");
             io.println("  e.g., [any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
             io.println("Examples:");
@@ -414,6 +415,8 @@ public class CommandDispatcher {
             io.println("  show cp/jdk.types.Symbol[string~\"find.*\"]");
             io.println("  show cp/jdk.types.Symbol[string=\"java/lang/String\"]/id");
             io.println("  show cp[name~\"jdk\\.types\\..*\"]");
+            io.println("  show cp/jdk.types.Symbol/string | len()");
+            io.println("  show events/jdk.ExecutionSample/stackTrace/frames | len()");
             io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
             io.println("  show metadata/jdk.Thread");
             io.println("  show metadata/jdk.Thread --format json");

@@ -240,6 +240,15 @@ public final class JfrPathParser {
                 expect(')');
             }
             return new JfrPath.SketchOp(valuePath);
+        } else if ("len".equals(name)) {
+            if (peek() == '(') {
+                pos++; skipWs();
+                if (peek() != ')') {
+                    valuePath = parsePathArg();
+                }
+                expect(')');
+            }
+            return new JfrPath.LenOp(valuePath);
         } else {
             throw error("Unknown pipeline function: " + name);
         }

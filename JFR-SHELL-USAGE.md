@@ -108,6 +108,7 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| stats([path])` — Numeric stats: `min`, `max`, `avg`, `stddev`.
 - `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
 - `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
+- `| len([path])` — For attributes: length of a string or list/array. Errors on unsupported types.
 
 Examples:
 - `show events/jdk.FileRead | count()`
@@ -119,6 +120,8 @@ Examples:
 - `show cp/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
 - `show cp/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
 - `show cp[name~"jdk\\.types\\..*"]` (filter CP summary rows)
+- `show cp/jdk.types.Symbol/string | len()` (string length per CP entry)
+- `show events/jdk.ExecutionSample/stackTrace/frames | len()` (list length per event)
 
 ## Completion Hints
 
