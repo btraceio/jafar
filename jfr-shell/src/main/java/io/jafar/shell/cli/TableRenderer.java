@@ -7,7 +7,8 @@ public final class TableRenderer {
     private TableRenderer() {}
 
     public static void render(List<Map<String, Object>> rows, CommandDispatcher.IO io) {
-        if (rows == null || rows.isEmpty()) { io.println("(no rows)"); return; }
+        PagedPrinter pager = PagedPrinter.forIO(io);
+        if (rows == null || rows.isEmpty()) { pager.println("(no rows)"); return; }
         // Compute columns as union of keys from the first N rows (larger sample for CP entries)
         Set<String> cols = new LinkedHashSet<>();
         int sample = Math.min(rows.size(), 200);
@@ -54,12 +55,12 @@ public final class TableRenderer {
             prepared.add(rowCells);
         }
         // Print header
-        printSingleLine(headers, widths, io);
+        printSingleLine(headers, widths, pager);
         // Separator
         StringBuilder sep = new StringBuilder();
         for (int w : widths) { sep.append("+").append("-".repeat(w + 2)); }
         sep.append("+");
-        io.println(sep.toString());
+        pager.println(sep.toString());
         // Rows with multiline support
         for (List<String[]> rowCells : prepared) {
             int maxLines = 1;
@@ -73,33 +74,34 @@ public final class TableRenderer {
                     sb.append("| ").append(pad(v, widths[c])).append(" ");
                 }
                 sb.append("|");
-                io.println(sb.toString());
+                pager.println(sb.toString());
             }
         }
     }
 
     public static void renderValues(List<?> values, CommandDispatcher.IO io) {
-        if (values == null || values.isEmpty()) { io.println("(no values)"); return; }
+        PagedPrinter pager = PagedPrinter.forIO(io);
+        if (values == null || values.isEmpty()) { pager.println("(no values)"); return; }
         // Determine width
         int w = "value".length();
         for (Object v : values) w = Math.max(w, Math.min(80, toCell(v).length()));
         // Header
-        printSingleLine(java.util.List.of("value"), new int[]{w}, io);
+        printSingleLine(java.util.List.of("value"), new int[]{w}, pager);
         String sep = "+" + "-".repeat(w + 2) + "+";
-        io.println(sep);
+        pager.println(sep);
         for (Object v : values) {
-            printSingleLine(java.util.List.of(toCell(v)), new int[]{w}, io);
+            printSingleLine(java.util.List.of(toCell(v)), new int[]{w}, pager);
         }
     }
 
-    private static void printSingleLine(List<String> cols, int[] widths, CommandDispatcher.IO io) {
+    private static void printSingleLine(List<String> cols, int[] widths, PagedPrinter pager) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < cols.size(); i++) {
             String v = truncate(cols.get(i), widths[i]);
             sb.append("| ").append(pad(v, widths[i])).append(" ");
         }
         sb.append("|");
-        io.println(sb.toString());
+        pager.println(sb.toString());
     }
 
     private static String toCell(Object v) {

@@ -116,3 +116,13 @@ Examples:
 - `show events/jdk.FileRead | sketch(path=bytes)`
 - `show metadata/jdk.types.Method/name | count()`
 - `show cp/jdk.types.Symbol | count()`
+- `show cp/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
+- `show cp/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
+- `show cp[name~"jdk\\.types\\..*"]` (filter CP summary rows)
+
+## Completion Hints
+
+- Roots: Tab complete `events/`, `metadata/`, `cp/`, `chunks/`.
+- Under `events/`: event type names; under `metadata/`: all metadata classes.
+- Under `cp/`: constant pool types. After a type, filters operate on CP entry fields (e.g., `string` for `jdk.types.Symbol`).
+- Common flags: `--limit`, `--format json`, `--list-match` values (`any`, `all`, `none`).

@@ -18,26 +18,27 @@ public final class TreeRenderer {
     }
 
     private static void renderMetadata(Map<String, Object> meta, CommandDispatcher.IO io, int depth) {
+        PagedPrinter pager = PagedPrinter.forIO(io);
         String name = String.valueOf(meta.getOrDefault("name", "<unknown>"));
         String superType = String.valueOf(meta.getOrDefault("superType", "<none>"));
-        io.println(indent(depth) + name);
-        io.println(indent(depth + 1) + "superType: " + superType);
+        pager.println(indent(depth) + name);
+        pager.println(indent(depth + 1) + "superType: " + superType);
 
         Object ann = meta.get("classAnnotations");
         if (ann instanceof List<?> a && !a.isEmpty()) {
-            io.println(indent(depth + 1) + "annotations:");
-            for (Object v : a) io.println(indent(depth + 2) + String.valueOf(v));
+            pager.println(indent(depth + 1) + "annotations:");
+            for (Object v : a) pager.println(indent(depth + 2) + String.valueOf(v));
         }
 
         Object settings = meta.get("settings");
         if (settings instanceof List<?> s && !s.isEmpty()) {
-            io.println(indent(depth + 1) + "settings:");
-            for (Object v : s) io.println(indent(depth + 2) + String.valueOf(v));
+            pager.println(indent(depth + 1) + "settings:");
+            for (Object v : s) pager.println(indent(depth + 2) + String.valueOf(v));
         }
 
         Object fbn = meta.get("fieldsByName");
         if (fbn instanceof Map<?,?> fields && !fields.isEmpty()) {
-            io.println(indent(depth + 1) + "fields:");
+            pager.println(indent(depth + 1) + "fields:");
             // Stable iteration order by sorting names
             java.util.List<String> names = new java.util.ArrayList<>();
             for (Object k : fields.keySet()) names.add(String.valueOf(k));
@@ -54,15 +55,15 @@ public final class TreeRenderer {
                     Object dim = fm.get("dimension");
                     int d = (dim instanceof Number) ? ((Number) dim).intValue() : -1;
                     String dimSuffix = d > 0 ? "[]".repeat(d) : "";
-                    io.println(indent(depth + 2) + fname + ": " + type + dimSuffix);
+                    pager.println(indent(depth + 2) + fname + ": " + type + dimSuffix);
                     Object a = fm.get("annotations");
                     if (a instanceof List<?> fa && !fa.isEmpty()) {
-                        io.println(indent(depth + 3) + "annotations:");
-                        for (Object v : fa) io.println(indent(depth + 4) + String.valueOf(v));
-                    }
+                        pager.println(indent(depth + 3) + "annotations:");
+                        for (Object v : fa) pager.println(indent(depth + 4) + String.valueOf(v));
                 }
             }
         }
+    }
     }
 
     /**
@@ -76,7 +77,8 @@ public final class TreeRenderer {
     public static void renderMetadataRecursive(Path recording, String rootType, CommandDispatcher.IO io, int maxDepth) {
         Set<String> pathVisited = new HashSet<>();
         int limit = Math.max(0, maxDepth);
-        renderMetadataRecursive(recording, rootType, io, pathVisited, 0, 0, limit);
+        PagedPrinter pager = PagedPrinter.forIO(io);
+        renderMetadataRecursive(recording, rootType, io, pager, pathVisited, 0, 0, limit);
     }
 
     /**
@@ -93,6 +95,7 @@ public final class TreeRenderer {
             return;
         }
         if (field == null) return;
+        PagedPrinter pager = PagedPrinter.forIO(io);
 
         Object typeObj = field.get("type");
         String fieldType = String.valueOf(typeObj == null ? "?" : typeObj);
@@ -101,22 +104,23 @@ public final class TreeRenderer {
         int dval = (dim instanceof Number) ? ((Number) dim).intValue() : -1;
         String dimSuffix = dval > 0 ? "[]".repeat(dval) : "";
 
-        io.println(fieldName + ": " + fieldType + dimSuffix);
+        pager.println(fieldName + ": " + fieldType + dimSuffix);
         Object a = field.get("annotations");
         if (a instanceof java.util.List<?> fa && !fa.isEmpty()) {
-            io.println(indent(1) + "annotations:");
-            for (Object v : fa) io.println(indent(2) + String.valueOf(v));
+            pager.println(indent(1) + "annotations:");
+            for (Object v : fa) pager.println(indent(2) + String.valueOf(v));
         }
 
         // If we can recurse into the field type, print its metadata subtree under the field
         if (isRecursableType(fieldType) && maxDepth > 0) {
             Set<String> pathVisited = new HashSet<>();
             pathVisited.add(String.valueOf(owner != null ? owner.getOrDefault("name", ownerType) : ownerType));
-            renderMetadataRecursive(recording, fieldType, io, pathVisited, 1, 1, Math.max(0, maxDepth));
+            renderMetadataRecursive(recording, fieldType, io, pager, pathVisited, 1, 1, Math.max(0, maxDepth));
         }
     }
 
     private static void renderMetadataRecursive(Path recording, String typeName, CommandDispatcher.IO io,
+                                                PagedPrinter pager,
                                                 Set<String> pathVisited, int level, int indent, int maxDepth) {
         if (level > maxDepth) {
             // Depth exceeded; do not render deeper
@@ -136,24 +140,24 @@ public final class TreeRenderer {
         // Render this class and inline recurse under each field
         String name = String.valueOf(meta.getOrDefault("name", typeName));
         String superType = String.valueOf(meta.getOrDefault("superType", "<none>"));
-        io.println(indent(indent) + name);
-        io.println(indent(indent + 1) + "superType: " + superType);
+        pager.println(indent(indent) + name);
+        pager.println(indent(indent + 1) + "superType: " + superType);
 
         Object ann = meta.get("classAnnotations");
         if (ann instanceof java.util.List<?> a && !a.isEmpty()) {
-            io.println(indent(indent + 1) + "annotations:");
-            for (Object v : a) io.println(indent(indent + 2) + String.valueOf(v));
+            pager.println(indent(indent + 1) + "annotations:");
+            for (Object v : a) pager.println(indent(indent + 2) + String.valueOf(v));
         }
 
         Object settings = meta.get("settings");
         if (settings instanceof java.util.List<?> s && !s.isEmpty()) {
-            io.println(indent(indent + 1) + "settings:");
-            for (Object v : s) io.println(indent(indent + 2) + String.valueOf(v));
+            pager.println(indent(indent + 1) + "settings:");
+            for (Object v : s) pager.println(indent(indent + 2) + String.valueOf(v));
         }
 
         Object fbn = meta.get("fieldsByName");
         if (fbn instanceof java.util.Map<?,?> fields && !fields.isEmpty()) {
-            io.println(indent(indent + 1) + "fields:");
+            pager.println(indent(indent + 1) + "fields:");
             java.util.List<String> names = new java.util.ArrayList<>();
             for (Object k : fields.keySet()) names.add(String.valueOf(k));
             java.util.Collections.sort(names);
@@ -169,11 +173,11 @@ public final class TreeRenderer {
                     Object dim = fm.get("dimension");
                     int dval = (dim instanceof Number) ? ((Number) dim).intValue() : -1;
                     String dimSuffix = dval > 0 ? "[]".repeat(dval) : "";
-                    io.println(indent(indent + 2) + fname + ": " + fieldType + dimSuffix);
+                    pager.println(indent(indent + 2) + fname + ": " + fieldType + dimSuffix);
                     Object a = fm.get("annotations");
                     if (a instanceof java.util.List<?> fa && !fa.isEmpty()) {
-                        io.println(indent(indent + 3) + "annotations:");
-                        for (Object v : fa) io.println(indent(indent + 4) + String.valueOf(v));
+                        pager.println(indent(indent + 3) + "annotations:");
+                        for (Object v : fa) pager.println(indent(indent + 4) + String.valueOf(v));
                     }
                     if (isRecursableType(fieldType)) {
                         if (pathVisited.contains(fieldType)) {
@@ -181,7 +185,7 @@ public final class TreeRenderer {
                         } else {
                             pathVisited.add(fieldType);
                             // Inline the subtree under this field
-                            renderMetadataRecursive(recording, fieldType, io, pathVisited, level + 1, indent + 3, maxDepth);
+                            renderMetadataRecursive(recording, fieldType, io, pager, pathVisited, level + 1, indent + 3, maxDepth);
                             pathVisited.remove(fieldType);
                         }
                     }

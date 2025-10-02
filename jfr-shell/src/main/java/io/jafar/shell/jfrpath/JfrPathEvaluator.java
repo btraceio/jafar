@@ -93,7 +93,7 @@ public final class JfrPathEvaluator {
         } else if (query.root == Root.CP) {
             if (!query.segments.isEmpty()) {
                 String type = query.segments.get(0);
-                return loadConstantPoolEntries(session.getRecordingPath(), type);
+                return loadConstantPoolEntries(session.getRecordingPath(), type, row -> matchesAll(row, query.predicates));
             } else {
                 return loadConstantPoolSummary(session.getRecordingPath());
             }
@@ -256,7 +256,7 @@ public final class JfrPathEvaluator {
             } else {
                 // projection from entries of specific type
                 String type = query.segments.get(0);
-                List<Map<String, Object>> rows = loadConstantPoolEntries(session.getRecordingPath(), type);
+                List<Map<String, Object>> rows = loadConstantPoolEntries(session.getRecordingPath(), type, r -> matchesAll(r, query.predicates));
                 List<String> proj = query.segments.subList(1, query.segments.size());
                 List<Object> out = new ArrayList<>();
                 for (Map<String, Object> r : rows) {
@@ -627,7 +627,8 @@ public final class JfrPathEvaluator {
         return rows;
     }
 
-    private static List<Map<String, Object>> loadConstantPoolEntries(Path recording, String typeName) throws Exception {
+    private static List<Map<String, Object>> loadConstantPoolEntries(Path recording, String typeName,
+                                                                     java.util.function.Predicate<Map<String,Object>> rowFilter) throws Exception {
         final List<Map<String, Object>> rows = new ArrayList<>();
         final java.util.function.BiConsumer<io.jafar.parser.api.ConstantPool, String> drain = (cp, tn) -> {
             if (!cp.getType().getName().equals(tn)) return;
@@ -638,14 +639,13 @@ public final class JfrPathEvaluator {
                 Object val = cp.get(id);
                 Map<String, Object> row = new HashMap<>();
                 row.put("id", id);
-                row.put("type", tn);
                 if (val instanceof Map<?,?> map) {
                     @SuppressWarnings("unchecked") Map<String,Object> mv = (Map<String,Object>) map;
                     row.putAll(mv);
                 } else {
                     row.put("value", val);
                 }
-                rows.add(row);
+                if (rowFilter == null || rowFilter.test(row)) rows.add(row);
             }
         };
 

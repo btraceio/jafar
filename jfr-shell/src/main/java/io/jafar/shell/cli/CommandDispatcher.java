@@ -411,6 +411,9 @@ public class CommandDispatcher {
             io.println("  show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)");
             io.println("  show metadata/jdk.types.Method/name | count()");
             io.println("  show cp/jdk.types.Symbol | count()");
+            io.println("  show cp/jdk.types.Symbol[string~\"find.*\"]");
+            io.println("  show cp/jdk.types.Symbol[string=\"java/lang/String\"]/id");
+            io.println("  show cp[name~\"jdk\\.types\\..*\"]");
             io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
             io.println("  show metadata/jdk.Thread");
             io.println("  show metadata/jdk.Thread --format json");
@@ -458,7 +461,11 @@ public class CommandDispatcher {
 
     // Very small JSON pretty-printer for Maps/Lists/values
     private static void printJson(Object obj, IO io) {
-        io.println(toJson(obj, 0));
+        String json = toJson(obj, 0);
+        PagedPrinter pager = PagedPrinter.forIO(io);
+        for (String line : json.split("\n", -1)) {
+            pager.println(line);
+        }
     }
 
     private static String toJson(Object obj, int indent) {
