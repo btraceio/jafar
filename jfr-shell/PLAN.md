@@ -170,7 +170,7 @@ Acceptance: pipeline examples work end-to-end; docs/help/completion updated; tes
 M7 — UX polish
 - [ ] JLine completion for commands, options, session ids/aliases, type names.
 - [x] Add `show` option completion including `--list-match` values (any/all/none).
-- [ ] Built-in pager for long outputs; configurable page size.
+- [x] Built-in pager for long outputs; configurable page size via env `JFR_SHELL_PAGE_SIZE`; toggle via `JFR_SHELL_PAGER`.
 - [ ] Contextual `help <command>` with examples.
 Acceptance: smooth interactive experience; help texts up to date.
 
@@ -196,6 +196,16 @@ Acceptance: smooth interactive experience; help texts up to date.
 - 2025-10-02: Launcher: `jfr-cli` enhanced to compute a project hash (covering subprojects and top-level Gradle files) and rebuild the shaded jar when it changes.
 
 - 2025-10-02: Aggregations: implemented pipeline ops `count`, `stats`, `quantiles`, `sketch` for events/metadata/chunks/cp. Added help examples and a new Aggregations section in `JFR-SHELL-USAGE.md`. Enhanced completion to suggest pipeline functions after `|`. Added integration tests using `test-ap.jfr` for counting events and metadata values. All tests green.
+
+- 2025-10-02: Constant pools (follow-up): fixed blank values for `show cp/<type>` (e.g., `jdk.types.Symbol`) by binding deserializers in `MetadataClass.read()` and adding a non-reflective fallback in `MutableConstantPool.get(...)` using `GenericValueReader` + `MapValueBuilder`. Added `ShowConstantPoolSymbolValuesTest`. Also removed redundant `type` column from `show cp/<type>` entry tables.
+
+- 2025-10-02: Paging: introduced `PagedPrinter` and wired it into table, tree, and JSON rendering. Enabled by default in interactive terminals; controllable via `JFR_SHELL_PAGER` and `JFR_SHELL_PAGE_SIZE`. Tests remain unaffected (auto-disabled without console).
+
+- 2025-10-02: CP filtering: `show cp/<type>[field/op/lit]` now filters CP entry rows. Implemented early row filtering and added `ShowConstantPoolFilterTest`. Updated docs/help examples.
+
+- 2025-10-02: JfrPath functions: added `len([path])` (string/list/array), string transforms `uppercase([path])`, `lowercase([path])`, `trim([path])`, and numeric transforms `abs([path])`, `round([path])`. Updated help/docs. Added tests: `JfrPathLenOpTest`, `JfrPathTransformOpsTest`.
+
+- 2025-10-02: Interleaved filters: parser now supports filters after any path segment and prefixes filter paths with the current projection prefix. Examples: `events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace`, `events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize`. Added `JfrPathInterleavedFiltersTest` and updated help/docs.
 
 M8 — Non-interactive subcommands
 - [ ] Picocli subcommands for `show`, `metadata`, `chunks`, `types`.
