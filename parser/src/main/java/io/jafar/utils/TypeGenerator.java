@@ -96,11 +96,18 @@ public final class TypeGenerator {
               if (eventTypeFilter == null || eventTypeFilter.test(et.getName())) {
                 try {
                   Path target = output.resolve("JFR" + getSimpleName(et.getName()) + ".java");
-                  if (overwrite || !Files.exists(target)) {
+                  String typeContent = generateTypeFromEvent(et, generated);
+                  if (!Files.exists(target)) {
                     Files.write(
                         target,
-                        generateTypeFromEvent(et, generated).getBytes(StandardCharsets.UTF_8),
+                        typeContent.getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.CREATE_NEW);
+                  } else if (overwrite) {
+                    Files.write(
+                        target,
+                        typeContent.getBytes(StandardCharsets.UTF_8),
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING);
                   }
                 } catch (IOException e) {
                   throw new RuntimeException(
@@ -149,11 +156,14 @@ public final class TypeGenerator {
       String typeName = f.getTypeName();
       String targetName = isPrimitiveName(typeName) ? typeName : "JFR" + getSimpleName(typeName);
       Path target = output.resolve(targetName + ".java");
-      if (overwrite || !Files.exists(target)) {
+      if (!Files.exists(target)) {
+        Files.write(target, data.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
+      } else if (overwrite) {
         Files.write(
-            output.resolve(targetName + ".java"),
+            target,
             data.getBytes(StandardCharsets.UTF_8),
-            StandardOpenOption.CREATE_NEW);
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING);
       }
     }
   }
@@ -164,7 +174,8 @@ public final class TypeGenerator {
       return null;
     }
 
-    if (generatedTypes.add(typeName)) {
+    boolean added = generatedTypes.add(typeName);
+    if (added) {
       StringBuilder sb = new StringBuilder();
       sb.append("package ").append(pkg).append(";\n");
       sb.append("\n");
@@ -223,11 +234,18 @@ public final class TypeGenerator {
     }
     try {
       Path classFile = output.resolve(getClassName(metadataClass) + ".java");
-      if (overwrite || !Files.exists(classFile)) {
+      String classContent = generateClass(metadataClass);
+      if (!Files.exists(classFile)) {
         Files.write(
             classFile,
-            generateClass(metadataClass).getBytes(StandardCharsets.UTF_8),
+            classContent.getBytes(StandardCharsets.UTF_8),
             StandardOpenOption.CREATE_NEW);
+      } else if (overwrite) {
+        Files.write(
+            classFile,
+            classContent.getBytes(StandardCharsets.UTF_8),
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -252,6 +270,10 @@ public final class TypeGenerator {
       while (fldType.isSimpleType()) {
         List<MetadataField> fl = fldType.getFields();
         fldType = fl.get(0).getType();
+      }
+      // Recursively generate nested types
+      if (!fldType.isPrimitive()) {
+        writeClass(fldType);
       }
       sb.append(getClassName(fldType));
       int dims = Math.max(0, field.getDimension());
