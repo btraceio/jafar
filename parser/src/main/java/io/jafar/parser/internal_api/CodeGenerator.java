@@ -1223,8 +1223,7 @@ final class CodeGenerator {
       }
       mv.visitVarInsn(Opcodes.ALOAD, 0); // [this]
       mv.visitVarInsn(Opcodes.ALOAD, 1); // [this, stream]
-      addFieldLoader(
-          mv, fld, clzName.replace('.', '/'), 1, metadataIdx, lastVarIdx, context); // []
+      addFieldLoader(mv, fld, clzName.replace('.', '/'), 1, metadataIdx, lastVarIdx, context); // []
     }
     mv.visitInsn(Opcodes.RETURN);
     mv.visitMaxs(0, 0);
