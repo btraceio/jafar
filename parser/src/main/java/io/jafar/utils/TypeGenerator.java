@@ -174,8 +174,7 @@ public final class TypeGenerator {
       return null;
     }
 
-    boolean added = generatedTypes.add(typeName);
-    if (added) {
+    if (generatedTypes.add(typeName)) {
       StringBuilder sb = new StringBuilder();
       sb.append("package ").append(pkg).append(";\n");
       sb.append("\n");

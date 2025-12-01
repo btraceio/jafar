@@ -352,15 +352,20 @@ final class CodeGenerator {
   private static void skipArrayRef(VarIndexTracker varTracker, MethodVisitor mv) {
     // stack: [stream]
     int arraySizeIdx = varTracker.allocate();
+    Label l1 = new Label();
+    Label l2 = new Label();
+    Label l3 = new Label();
+    mv.visitInsn(Opcodes.DUP); // [stream, stream]
     mv.visitMethodInsn(
         Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(RecordingStream.class),
         "readVarint",
         Type.getMethodDescriptor(Type.LONG_TYPE),
         false); // [stream, long]
-    mv.visitInsn(Opcodes.L2I);
-    mv.visitVarInsn(Opcodes.ISTORE, arraySizeIdx); // [stream]
-    Label l1 = new Label();
+    mv.visitInsn(Opcodes.L2I); // [stream, int]
+    mv.visitInsn(Opcodes.DUP); // [stream, int, int]
+    mv.visitVarInsn(Opcodes.ISTORE, arraySizeIdx); // [stream, int]
+    mv.visitJumpInsn(Opcodes.IFEQ, l2); // [stream]
     mv.visitLabel(l1);
     mv.visitInsn(Opcodes.DUP); // [stream, stream]
     mv.visitMethodInsn(
@@ -377,6 +382,10 @@ final class CodeGenerator {
     mv.visitVarInsn(Opcodes.ISTORE, arraySizeIdx); // [stream, int]
     mv.visitJumpInsn(Opcodes.IFNE, l1); // [stream]
     mv.visitInsn(Opcodes.POP); // []
+    mv.visitJumpInsn(Opcodes.GOTO, l3);
+    mv.visitLabel(l2); // [stream]
+    mv.visitInsn(Opcodes.POP); // []
+    mv.visitLabel(l3); // []
   }
 
   private static void handleArrayRef(
@@ -583,7 +592,6 @@ final class CodeGenerator {
     mv.visitJumpInsn(Opcodes.IFNE, l1); // [stream]
     mv.visitLabel(l2); // [stream]
     mv.visitInsn(Opcodes.POP); // []
-    mv.visitInsn(Opcodes.RETURN);
   }
 
   private static void skipObjectArray(
