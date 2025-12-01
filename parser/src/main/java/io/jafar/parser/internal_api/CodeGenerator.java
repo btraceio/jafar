@@ -42,6 +42,29 @@ final class CodeGenerator {
   private static final boolean LOGS_ENABLED = false;
   private static final Logger log = LoggerFactory.getLogger(CodeGenerator.class);
 
+  /**
+   * Mutable tracker for local variable indices during bytecode generation. This ensures that nested
+   * recursive calls (e.g., when skipping arrays of complex types with nested arrays) properly
+   * allocate non-overlapping variable slots.
+   */
+  private static final class VarIndexTracker {
+    private int nextVarIdx;
+
+    VarIndexTracker(int initialIdx) {
+      this.nextVarIdx = initialIdx;
+    }
+
+    /** Allocates and returns the next available variable index. */
+    int allocate() {
+      return ++nextVarIdx;
+    }
+
+    /** Returns the current highest allocated variable index (for informational purposes). */
+    int current() {
+      return nextVarIdx;
+    }
+  }
+
   private static void addLog(MethodVisitor mv, String msg) {
     if (LOGS_ENABLED) {
       mv.visitFieldInsn(
@@ -284,19 +307,20 @@ final class CodeGenerator {
     mv.visitEnd();
   }
 
-  static void addFieldSkipper(MethodVisitor mv, MetadataField fld, int streamIdx, int lastVarIdx) {
+  static void addFieldSkipper(
+      MethodVisitor mv, MetadataField fld, int streamIdx, VarIndexTracker varTracker) {
     // stack: [stream]
     if (fld.hasConstantPool()) {
       if (fld.getDimension() > 0) {
-        skipArrayRef(lastVarIdx, mv); // []
+        skipArrayRef(varTracker, mv); // []
       } else {
         skipSimpleRef(mv); // []
       }
     } else {
       if (fld.getDimension() > 0) {
-        skipArrayField(fld, streamIdx, lastVarIdx, mv); // []
+        skipArrayField(fld, streamIdx, varTracker, mv); // []
       } else {
-        skipSimpleField(fld.getType(), streamIdx, lastVarIdx, false, mv); // []
+        skipSimpleField(fld.getType(), streamIdx, varTracker, false, mv); // []
       }
     }
   }
@@ -325,9 +349,9 @@ final class CodeGenerator {
     }
   }
 
-  private static void skipArrayRef(int lastVarIdx, MethodVisitor mv) {
+  private static void skipArrayRef(VarIndexTracker varTracker, MethodVisitor mv) {
     // stack: [stream]
-    int arraySizeIdx = lastVarIdx + 1;
+    int arraySizeIdx = varTracker.allocate();
     mv.visitMethodInsn(
         Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(RecordingStream.class),
@@ -421,11 +445,10 @@ final class CodeGenerator {
   }
 
   private static void skipArrayField(
-      MetadataField fld, int streamIdx, int lastVarIdx, MethodVisitor mv) {
+      MetadataField fld, int streamIdx, VarIndexTracker varTracker, MethodVisitor mv) {
     // stack: [stream]
     String fldTypeName = fld.getType().getName();
-    int arraySizeIdx = lastVarIdx + 1;
-    lastVarIdx = arraySizeIdx;
+    int arraySizeIdx = varTracker.allocate();
 
     Type fldType = null;
     Type dataType = null;
@@ -486,7 +509,7 @@ final class CodeGenerator {
     } else if (fldTypeName.equals("java.lang.String")) {
       skipStringArray(arraySizeIdx, mv); // []
     } else {
-      skipObjectArray(fld.getType(), arraySizeIdx, streamIdx, lastVarIdx, false, mv); // []
+      skipObjectArray(fld.getType(), arraySizeIdx, streamIdx, varTracker, false, mv); // []
     }
   }
 
@@ -567,7 +590,7 @@ final class CodeGenerator {
       MetadataClass fldType,
       int arraySizeIdx,
       int streamIdx,
-      int lastVarIdx,
+      VarIndexTracker varTracker,
       boolean keepStream,
       MethodVisitor mv) {
     // stack: [stream]
@@ -587,7 +610,7 @@ final class CodeGenerator {
     mv.visitVarInsn(Opcodes.ISTORE, arraySizeIdx); // []
     mv.visitVarInsn(Opcodes.ALOAD, streamIdx); // [stream]
     mv.visitLabel(l1);
-    skipSimpleField(fldType, streamIdx, lastVarIdx, true, mv); // [stream]
+    skipSimpleField(fldType, streamIdx, varTracker, true, mv); // [stream]
     mv.visitIincInsn(arraySizeIdx, -1); // [stream]
     mv.visitVarInsn(Opcodes.ILOAD, arraySizeIdx); // [stream, int]
     mv.visitJumpInsn(Opcodes.IFNE, l1); // [stream]
@@ -601,7 +624,11 @@ final class CodeGenerator {
   }
 
   private static void skipSimpleField(
-      MetadataClass fldType, int streamIdx, int lastVarIdx, boolean keepStream, MethodVisitor mv) {
+      MetadataClass fldType,
+      int streamIdx,
+      VarIndexTracker varTracker,
+      boolean keepStream,
+      MethodVisitor mv) {
     // stack: [stream]
     String fldTypeName = fldType.getName();
     switch (fldTypeName) {
@@ -681,7 +708,7 @@ final class CodeGenerator {
     }
     for (MetadataField fld : fldType.getFields()) {
       mv.visitInsn(Opcodes.DUP); // [stream, stream]
-      addFieldSkipper(mv, fld, streamIdx, lastVarIdx); // [stream]
+      addFieldSkipper(mv, fld, streamIdx, varTracker); // [stream]
     }
     if (!keepStream) {
       mv.visitInsn(Opcodes.POP); // []
@@ -1149,8 +1176,9 @@ final class CodeGenerator {
             null);
     mv.visitCode();
     int contextIdx = 2;
-    int meteadataIdx = 3;
-    int lastVarIdx = meteadataIdx; // guard
+    int metadataIdx = 3;
+    int lastVarIdx = metadataIdx; // guard
+    VarIndexTracker varTracker = new VarIndexTracker(metadataIdx);
 
     mv.visitVarInsn(Opcodes.ALOAD, 0);
     mv.visitMethodInsn(
@@ -1179,7 +1207,7 @@ final class CodeGenerator {
         "getMetadataLookup",
         Type.getMethodDescriptor(Type.getType(MetadataLookup.class)),
         false); // [this, ctx, metadata]
-    mv.visitVarInsn(Opcodes.ASTORE, meteadataIdx); // [this, ctx]
+    mv.visitVarInsn(Opcodes.ASTORE, metadataIdx); // [this, ctx]
     mv.visitFieldInsn(
         Opcodes.PUTFIELD,
         clzName.replace('.', '/'),
@@ -1187,17 +1215,16 @@ final class CodeGenerator {
         Type.getDescriptor(TypedParserContext.class)); // []
 
     for (MetadataField fld : allFields) {
-      ;
       if (!appliedFields.contains(fld)) {
         // skip
         mv.visitVarInsn(Opcodes.ALOAD, 1); // [stream]
-        addFieldSkipper(mv, fld, 1, meteadataIdx); // []
+        addFieldSkipper(mv, fld, 1, varTracker); // []
         continue;
       }
       mv.visitVarInsn(Opcodes.ALOAD, 0); // [this]
       mv.visitVarInsn(Opcodes.ALOAD, 1); // [this, stream]
       addFieldLoader(
-          mv, fld, clzName.replace('.', '/'), 1, meteadataIdx, lastVarIdx, context); // []
+          mv, fld, clzName.replace('.', '/'), 1, metadataIdx, lastVarIdx, context); // []
     }
     mv.visitInsn(Opcodes.RETURN);
     mv.visitMaxs(0, 0);
@@ -1239,11 +1266,11 @@ final class CodeGenerator {
             null);
     mv.visitCode();
     int streamIdx = 0;
-    int lastVarIdx = streamIdx;
+    VarIndexTracker varTracker = new VarIndexTracker(streamIdx);
 
     for (MetadataField fld : clz.getFields()) {
       mv.visitVarInsn(Opcodes.ALOAD, streamIdx); // [stream]
-      addFieldSkipper(mv, fld, 0, lastVarIdx); // []
+      addFieldSkipper(mv, fld, streamIdx, varTracker); // []
     }
     mv.visitInsn(Opcodes.RETURN);
     try {
