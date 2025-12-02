@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -41,6 +42,9 @@ final class CodeGenerator {
 
   private static final boolean LOGS_ENABLED = false;
   private static final Logger log = LoggerFactory.getLogger(CodeGenerator.class);
+
+  /** Global counter for generating unique class names across parser instances. */
+  private static final AtomicLong CLASS_COUNTER = new AtomicLong(0);
 
   /**
    * Mutable tracker for local variable indices during bytecode generation. This ensures that nested
@@ -202,6 +206,7 @@ final class CodeGenerator {
     mv.visitMaxs(3, 2);
     mv.visitEnd();
 
+    // Generate accessor method: fldType methodName()
     mv =
         cv.visitMethod(
             Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
@@ -211,26 +216,26 @@ final class CodeGenerator {
             null);
     mv.visitCode();
     Label cpNonNull = new Label();
-    mv.visitVarInsn(Opcodes.ALOAD, 0);
+    mv.visitVarInsn(Opcodes.ALOAD, 0); // [this]
     mv.visitMethodInsn(
         Opcodes.INVOKEVIRTUAL,
         clzName,
         mthdCpName,
         Type.getMethodDescriptor(Type.getType(ConstantPool.class)),
-        false);
-    mv.visitInsn(Opcodes.DUP);
-    mv.visitVarInsn(Opcodes.ASTORE, 1);
+        false); // [cp]
+    mv.visitInsn(Opcodes.DUP); // [cp, cp]
+    mv.visitVarInsn(Opcodes.ASTORE, 1); // [cp] ; local1 = cp
     // Check if CP is null - if so, return null (or empty array for array types)
-    mv.visitJumpInsn(Opcodes.IFNONNULL, cpNonNull);
+    mv.visitJumpInsn(Opcodes.IFNONNULL, cpNonNull); // []
     if (isArray) {
-      mv.visitLdcInsn(0);
-      mv.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(fldType));
+      mv.visitLdcInsn(0); // [0]
+      mv.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(fldType)); // [empty_array]
     } else {
-      mv.visitInsn(Opcodes.ACONST_NULL);
+      mv.visitInsn(Opcodes.ACONST_NULL); // [null]
     }
-    mv.visitInsn(Opcodes.ARETURN);
-    mv.visitLabel(cpNonNull);
-    mv.visitVarInsn(Opcodes.ALOAD, 0);
+    mv.visitInsn(Opcodes.ARETURN); // []
+    mv.visitLabel(cpNonNull); // []
+    mv.visitVarInsn(Opcodes.ALOAD, 0); // [this]
     if (isArray) {
       mv.visitFieldInsn(
           Opcodes.GETFIELD, clzName, fldRefName, "[" + Type.LONG_TYPE.getDescriptor()); // [fld]
@@ -449,6 +454,7 @@ final class CodeGenerator {
   }
 
   private static void skipSimpleRef(MethodVisitor mv) {
+    // stack: [stream]
     mv.visitMethodInsn(
         Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(RecordingStream.class),
@@ -465,7 +471,7 @@ final class CodeGenerator {
         Type.getInternalName(RecordingStream.class),
         "readVarint",
         Type.getMethodDescriptor(Type.LONG_TYPE),
-        false); // [this, long]
+        false); // [this, long_ref]
     mv.visitFieldInsn(
         Opcodes.PUTFIELD, className, fld.getName() + "_ref", Type.LONG_TYPE.getDescriptor()); // []
   }
@@ -1374,7 +1380,7 @@ final class CodeGenerator {
             + "."
             + (target != null ? target.getSimpleName() : clz.getSimpleName())
             + "$"
-            + context.getChunkIndex();
+            + CLASS_COUNTER.incrementAndGet();
     // generate handler class
     ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
     // Generate classes compatible with Java 8+ to support running on JDK 8

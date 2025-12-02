@@ -41,13 +41,15 @@ public final class TypedParserContext extends ParserContext {
     private final String name;
     private final String superType;
     private final List<String> fieldNames;
+    private final Class<?> targetClass;
 
     /**
-     * Constructs a new DeserializerKey from a metadata class.
+     * Constructs a new DeserializerKey from a metadata class and target handler class.
      *
      * @param clz the metadata class to create a key for
+     * @param targetClass the target handler interface class (may be null)
      */
-    public DeserializerKey(MetadataClass clz) {
+    public DeserializerKey(MetadataClass clz, Class<?> targetClass) {
       this.id = clz.getId();
       this.name = clz.getName();
       this.superType = clz.getSuperType();
@@ -55,6 +57,7 @@ public final class TypedParserContext extends ParserContext {
       for (MetadataField field : clz.getFields()) {
         this.fieldNames.add(field.getType().getName() + ":" + field.getName());
       }
+      this.targetClass = targetClass;
     }
 
     /** {@inheritDoc} */
@@ -66,13 +69,14 @@ public final class TypedParserContext extends ParserContext {
       return id == that.id
           && Objects.equals(name, that.name)
           && Objects.equals(superType, that.superType)
-          && Objects.equals(fieldNames, that.fieldNames);
+          && Objects.equals(fieldNames, that.fieldNames)
+          && Objects.equals(targetClass, that.targetClass);
     }
 
     /** {@inheritDoc} */
     @Override
     public int hashCode() {
-      return Objects.hash(id, name, superType, fieldNames);
+      return Objects.hash(id, name, superType, fieldNames, targetClass);
     }
 
     /** {@inheritDoc} */
@@ -89,6 +93,8 @@ public final class TypedParserContext extends ParserContext {
           + '\''
           + ", fieldNames="
           + fieldNames
+          + ", targetClass="
+          + targetClass
           + '}';
     }
   }

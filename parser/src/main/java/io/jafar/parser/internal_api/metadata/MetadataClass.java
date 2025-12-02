@@ -122,16 +122,23 @@ public final class MetadataClass extends AbstractMetadataElement {
   public void bindDeserializer() {
     DESERIALIZER_UPDATER.updateAndGet(
         this,
-        v ->
-            (v == null)
-                ? Optional.ofNullable(getContext().get(DeserializerCache.class))
-                    .map(
-                        c ->
-                            c.computeIfAbsent(
-                                new TypedParserContext.DeserializerKey(MetadataClass.this),
-                                k -> Deserializer.forType(MetadataClass.this)))
-                    .orElse(Deserializer.none())
-                : v);
+        v -> {
+          if (v != null) {
+            return v;
+          }
+          DeserializerCache cache = getContext().get(DeserializerCache.class);
+          if (cache == null) {
+            return Deserializer.none();
+          }
+          // Get target class from context (may be null for untyped parsing)
+          Class<?> targetClass = null;
+          if (getContext() instanceof TypedParserContext) {
+            targetClass = ((TypedParserContext) getContext()).getClassTargetType(getName());
+          }
+          return cache.computeIfAbsent(
+              new TypedParserContext.DeserializerKey(MetadataClass.this, targetClass),
+              k -> Deserializer.forType(MetadataClass.this));
+        });
   }
 
   /**
