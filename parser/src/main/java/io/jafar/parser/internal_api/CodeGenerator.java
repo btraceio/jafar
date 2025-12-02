@@ -210,6 +210,7 @@ final class CodeGenerator {
             null,
             null);
     mv.visitCode();
+    Label cpNonNull = new Label();
     mv.visitVarInsn(Opcodes.ALOAD, 0);
     mv.visitMethodInsn(
         Opcodes.INVOKEVIRTUAL,
@@ -219,6 +220,16 @@ final class CodeGenerator {
         false);
     mv.visitInsn(Opcodes.DUP);
     mv.visitVarInsn(Opcodes.ASTORE, 1);
+    // Check if CP is null - if so, return null (or empty array for array types)
+    mv.visitJumpInsn(Opcodes.IFNONNULL, cpNonNull);
+    if (isArray) {
+      mv.visitLdcInsn(0);
+      mv.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(fldType));
+    } else {
+      mv.visitInsn(Opcodes.ACONST_NULL);
+    }
+    mv.visitInsn(Opcodes.ARETURN);
+    mv.visitLabel(cpNonNull);
     mv.visitVarInsn(Opcodes.ALOAD, 0);
     if (isArray) {
       mv.visitFieldInsn(
@@ -258,14 +269,20 @@ final class CodeGenerator {
       mv.visitJumpInsn(Opcodes.GOTO, l1);
       mv.visitLabel(l2);
     } else {
-      mv.visitFieldInsn(Opcodes.GETFIELD, clzName, fldRefName, Type.LONG_TYPE.getDescriptor());
+      // Stack after label: [this] (from ALOAD 0 above)
+      // Pop this, load in correct order for cp.get(long)
+      mv.visitInsn(Opcodes.POP); // []
+      mv.visitVarInsn(Opcodes.ALOAD, 1); // [cp]
+      mv.visitVarInsn(Opcodes.ALOAD, 0); // [cp, this]
+      mv.visitFieldInsn(
+          Opcodes.GETFIELD, clzName, fldRefName, Type.LONG_TYPE.getDescriptor()); // [cp, long_ref]
       mv.visitMethodInsn(
           Opcodes.INVOKEINTERFACE,
           Type.getInternalName(ConstantPool.class),
           "get",
           Type.getMethodDescriptor(Type.getType(Object.class), Type.LONG_TYPE),
-          true);
-      mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(fldType));
+          true); // [obj]
+      mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(fldType)); // [fldval]
     }
     mv.visitInsn(Opcodes.ARETURN);
     mv.visitMaxs(0, 0);
