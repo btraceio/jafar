@@ -195,9 +195,15 @@ public final class ParsingUtils {
       long limit = neg ? -(Long.MIN_VALUE / POW10_8) : Long.MAX_VALUE / POW10_8;
       if (acc > limit) throw nfe(s);
       acc *= POW10_8;
-      long addLimit = neg ? -(Long.MIN_VALUE + acc) : Long.MAX_VALUE - acc;
-      if (block > addLimit) throw nfe(s);
-      acc += block;
+      if (neg) {
+        // For negative: ensure (acc - block) >= Long.MIN_VALUE
+        // Rearrange to: acc >= Long.MIN_VALUE + block (safe, no overflow)
+        if (acc < Long.MIN_VALUE + block) throw nfe(s);
+        acc -= block;
+      } else {
+        if (block > Long.MAX_VALUE - acc) throw nfe(s);
+        acc += block;
+      }
     }
 
     // tail (0..7 digits)
@@ -214,7 +220,7 @@ public final class ParsingUtils {
         acc = acc * 10 - d;
       }
     }
-    return neg ? -acc : acc;
+    return acc;  // Already has correct sign from accumulation
   }
 
   // SWAR-ish 8-digit block: subtract '0', validate, multiply by powers of 10
@@ -239,7 +245,7 @@ public final class ParsingUtils {
         | (v7 | (9 - v7)) < 0) throw nfe(null);
 
     // dot product with powers of 10 (fits in 32 bits)
-    return (((((v0 * 10 + v1) * 10 + v2) * 10 + v3) * 10 + v4) * 10 + v5) * 10 * 10 + v6 * 10 + v7;
+    return ((((((v0 * 10 + v1) * 10 + v2) * 10 + v3) * 10 + v4) * 10 + v5) * 10 + v6) * 10 + v7;
     // (The above is intentionally simple; JVM fuses mul-adds well.)
   }
 
