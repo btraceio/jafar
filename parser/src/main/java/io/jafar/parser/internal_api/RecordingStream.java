@@ -1,5 +1,6 @@
 package io.jafar.parser.internal_api;
 
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.api.ParserContext;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -166,6 +167,10 @@ public final class RecordingStream implements AutoCloseable {
    */
   public boolean readBoolean() {
     return reader.readBoolean();
+  }
+
+  public String readUTF8() throws IOException {
+    return ParsingUtils.readUTF8(this, context.getStringTypeId());
   }
 
   /**

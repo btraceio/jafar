@@ -220,6 +220,7 @@ public final class TypedParserContext extends ParserContext {
 
   @Override
   public void onMetadataReady() {
+    super.onMetadataReady();
     bindDeserializers();
   }
 

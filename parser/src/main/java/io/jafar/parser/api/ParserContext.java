@@ -23,6 +23,8 @@ public abstract class ParserContext {
   /** Constant pools instance for managing constant pool data during parsing. */
   protected final MutableConstantPools constantPools;
 
+  private long stringTypeId = -1;
+
   /** Index of the current chunk being parsed. */
   private final int chunkIndex;
 
@@ -149,8 +151,15 @@ public abstract class ParserContext {
     return chunkIndex;
   }
 
+  public long getStringTypeId() {
+    return stringTypeId;
+  }
+
   /** Called when metadata is fully available for the current chunk. */
-  public abstract void onMetadataReady();
+  public void onMetadataReady() {
+    stringTypeId = metadataLookup.getClass("java.lang.String").getId();
+  }
+  ;
 
   /** Called when constant pools are fully available for the current chunk. */
   public abstract void onConstantPoolsReady();

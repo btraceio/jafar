@@ -52,7 +52,7 @@ public abstract class Deserializer<T> {
 
         @Override
         public String deserialize(RecordingStream stream) throws Exception {
-          return ParsingUtils.readUTF8(stream);
+          return stream.readUTF8();
         }
       };
 

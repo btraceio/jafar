@@ -5,6 +5,8 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Mutable implementation of MetadataLookup that allows dynamic addition of metadata.
@@ -28,6 +30,8 @@ public final class MutableMetadataLookup implements MetadataLookup {
   /** Map of class IDs to their metadata class instances. */
   private final Long2ObjectMap<MetadataClass> classes = new Long2ObjectOpenHashMap<>();
 
+  private final Map<String, MetadataClass> classesByName = new HashMap<>();
+
   /** {@inheritDoc} */
   @Override
   public String getString(int idx) {
@@ -38,6 +42,11 @@ public final class MutableMetadataLookup implements MetadataLookup {
   @Override
   public MetadataClass getClass(long id) {
     return classes.get(id);
+  }
+
+  @Override
+  public MetadataClass getClass(String name) {
+    return classesByName.get(name);
   }
 
   /**
@@ -52,6 +61,7 @@ public final class MutableMetadataLookup implements MetadataLookup {
     if (rslt == null) {
       rslt = clazz;
       classes.put(id, clazz);
+      classesByName.put(rslt.getName(), clazz);
     }
     return rslt;
   }
@@ -86,5 +96,6 @@ public final class MutableMetadataLookup implements MetadataLookup {
   public void clear() {
     strings = null;
     classes.clear();
+    classesByName.clear();
   }
 }

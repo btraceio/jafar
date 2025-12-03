@@ -88,19 +88,10 @@ public final class CheckpointEvent extends AbstractEvent {
                     .addOrGetConstantPool(stream, typeId, count);
         for (int j = 0; j < count; j++) {
           long id = stream.readVarint();
-          try {
-            //            cpProcessor.onConstantPoolValueStart(clz, id);
-            if (!skip && !constantPool.containsKey(id)) {
-              constantPool.addOffset(id, stream.position());
-            }
-            //            if (vr == null) {
-            clz.skip(stream);
-            //            } else {
-            //              vr.readValue(stream, clz);
-            //            }
-          } finally {
-            //            cpProcessor.onConstantPoolValueEnd(clz, id);
+          if (!skip && !constantPool.containsKey(id)) {
+            constantPool.addOffset(id, stream.position());
           }
+          clz.skip(stream);
         }
       } catch (IOException e) {
         throw e;

@@ -1,7 +1,6 @@
 package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.AbstractEvent;
-import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
@@ -73,7 +72,7 @@ public final class MetadataEvent extends AbstractEvent {
     int stringCnt = (int) stream.readVarint();
     String[] stringConstants = new String[stringCnt];
     for (int stringIdx = 0; stringIdx < stringCnt; stringIdx++) {
-      stringConstants[stringIdx] = ParsingUtils.readUTF8(stream);
+      stringConstants[stringIdx] = stream.readUTF8();
     }
     ((MutableMetadataLookup) stream.getContext().getMetadataLookup())
         .setStringtable(stringConstants);

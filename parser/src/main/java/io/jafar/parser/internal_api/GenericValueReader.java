@@ -1,6 +1,5 @@
 package io.jafar.parser.internal_api;
 
-import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
@@ -117,7 +116,7 @@ public final class GenericValueReader {
         processor.onFloatValue(type, fldName, stream.readFloat());
         break;
       case "java.lang.String":
-        processor.onStringValue(type, fldName, ParsingUtils.readUTF8(stream));
+        processor.onStringValue(type, fldName, stream.readUTF8());
         break;
       default:
         throw new IllegalStateException("Unknown primitive type: " + type);

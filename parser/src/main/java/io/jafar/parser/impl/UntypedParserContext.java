@@ -19,17 +19,6 @@ public class UntypedParserContext extends ParserContext {
   }
 
   /**
-   * Called when metadata is ready for processing.
-   *
-   * <p>This implementation does nothing as untyped parsing doesn't require active metadata
-   * management.
-   */
-  @Override
-  public void onMetadataReady() {
-    // do nothing
-  }
-
-  /**
    * Called when constant pools are ready for processing.
    *
    * <p>This implementation does nothing as untyped parsing doesn't require active constant pool

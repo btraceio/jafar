@@ -25,4 +25,6 @@ public interface MetadataLookup {
    * @return the metadata class for the specified identifier
    */
   MetadataClass getClass(long id);
+
+  MetadataClass getClass(String name);
 }

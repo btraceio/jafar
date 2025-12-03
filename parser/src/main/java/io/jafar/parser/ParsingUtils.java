@@ -1,5 +1,7 @@
 package io.jafar.parser;
 
+import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.ConstantPools;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -52,16 +54,35 @@ public final class ParsingUtils {
    * @return the decoded string, or null if the string is null
    * @throws IOException if an I/O error occurs during reading
    */
-  public static String readUTF8(RecordingStream stream) throws IOException {
+  public static String readUTF8(RecordingStream stream, long stringTypeId) throws IOException {
     byte id = stream.read();
     if (id == 0) {
       return null;
     } else if (id == 1) {
       return "";
     } else if (id == 2) {
-      // string constant
+      // string constant reference
       int ptr = (int) stream.readVarint();
-      return stream.getContext().getMetadataLookup().getString(ptr);
+
+      // Try constant pool first (for JMC Writer compatibility)
+      // JMC Writer stores string field values in java.lang.String constant pools
+      // instead of adding them to the metadata string table
+      ConstantPools constantPools = stream.getContext().getConstantPools();
+      if (stringTypeId == -1) {
+        // lookup from metadata string constants
+        return stream.getContext().getMetadataLookup().getString(ptr);
+      }
+      if (constantPools != null) {
+        // use the type constant pool
+        ConstantPool stringPool = constantPools.getConstantPool(stringTypeId);
+        if (stringPool != null) {
+          Object value = stringPool.get(ptr);
+          if (value instanceof String) {
+            return (String) value;
+          }
+        }
+      }
+      return null;
     } else if (id == 3) {
       // UTF8
       int size = (int) stream.readVarint();

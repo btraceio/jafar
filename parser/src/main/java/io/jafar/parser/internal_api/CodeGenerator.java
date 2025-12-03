@@ -937,10 +937,10 @@ final class CodeGenerator {
     mv.visitVarInsn(Opcodes.ILOAD, arrayCounterIdx); // [this, array, array, int]
     mv.visitVarInsn(Opcodes.ALOAD, streamIdx); // [this, array, array, int, stream]
     mv.visitMethodInsn(
-        Opcodes.INVOKESTATIC,
-        Type.getInternalName(ParsingUtils.class),
+        Opcodes.INVOKEVIRTUAL,
+        Type.getInternalName(RecordingStream.class),
         "readUTF8",
-        Type.getMethodDescriptor(Type.getType(String.class), Type.getType(RecordingStream.class)),
+        Type.getMethodDescriptor(Type.getType(String.class)),
         false); // [this, string]
     mv.visitInsn(Opcodes.AASTORE); // [this, array]
     mv.visitIincInsn(arrayCounterIdx, 1); // [this, array]
@@ -1146,11 +1146,10 @@ final class CodeGenerator {
         }
       case "java.lang.String":
         mv.visitMethodInsn(
-            Opcodes.INVOKESTATIC,
-            Type.getInternalName(ParsingUtils.class),
+            Opcodes.INVOKEVIRTUAL,
+            Type.getInternalName(RecordingStream.class),
             "readUTF8",
-            Type.getMethodDescriptor(
-                Type.getType(String.class), Type.getType(RecordingStream.class)),
+            Type.getMethodDescriptor(Type.getType(String.class)),
             false); // [this, string]
         mv.visitFieldInsn(
             Opcodes.PUTFIELD,

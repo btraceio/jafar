@@ -21,11 +21,11 @@ public class ParsingUtilsFuzzTest {
   void readUTF8KnownTags() throws Exception {
     // id=1 empty
     try (RecordingStream s = streamOf((byte) 1)) {
-      assertEquals("", io.jafar.parser.ParsingUtils.readUTF8(s));
+      assertEquals("", io.jafar.parser.ParsingUtils.readUTF8(s, s.getContext().getStringTypeId()));
     }
     // id=0 null
     try (RecordingStream s = streamOf((byte) 0)) {
-      assertNull(io.jafar.parser.ParsingUtils.readUTF8(s));
+      assertNull(io.jafar.parser.ParsingUtils.readUTF8(s, s.getContext().getStringTypeId()));
     }
   }
 

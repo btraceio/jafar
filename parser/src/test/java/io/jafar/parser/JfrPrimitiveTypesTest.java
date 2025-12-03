@@ -428,10 +428,6 @@ public class JfrPrimitiveTypesTest {
   }
 
   // STRING TESTS
-  // Note: String tests are disabled due to JMC Writer string encoding incompatibility
-  // See ~/Documents/JMC-Writer-API-Issues.md for details
-
-  @Disabled("JMC Writer string encoding incompatible with parser - see JMC-Writer-API-Issues.md")
   @Test
   void parsesStringField_typed() throws Exception {
     Path jfrFile = tempDir.resolve("string.jfr");
@@ -489,7 +485,6 @@ public class JfrPrimitiveTypesTest {
     assertEquals("test string", valueRef.get());
   }
 
-  @Disabled("JMC Writer string encoding incompatible with parser - see JMC-Writer-API-Issues.md")
   @Test
   void parsesNullString_typed() throws Exception {
     Path jfrFile = tempDir.resolve("string-null.jfr");

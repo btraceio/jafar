@@ -1,6 +1,5 @@
 package io.jafar.tools;
 
-import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -307,7 +306,7 @@ public final class Scrubber {
                     long currentPos = stream.position();
                     stream.position(from);
                     try {
-                      skipValue[0] = ParsingUtils.readUTF8(stream);
+                      skipValue[0] = stream.readUTF8();
                     } catch (IOException e) {
                       throw new RuntimeException("Failed to read scrub field value at " + from, e);
                     } finally {
@@ -319,7 +318,7 @@ public final class Scrubber {
                   long currentPos = stream.position();
                   stream.position(from);
                   try {
-                    guardValue[0] = ParsingUtils.readUTF8(stream);
+                    guardValue[0] = stream.readUTF8();
                   } catch (IOException e) {
                     throw new RuntimeException("Failed to read guard field value at " + from, e);
                   } finally {
