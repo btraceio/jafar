@@ -7,11 +7,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Comprehensive tests for ParsingUtils.parseLongSWAR() method.
  *
- * <p>Tests cover:
- * - Negative timezone offsets (the reported bug case)
- * - 8-digit blocks (where the bugs were)
- * - Edge cases (Long.MIN_VALUE, Long.MAX_VALUE)
- * - Overflow detection
+ * <p>Tests cover: - Negative timezone offsets (the reported bug case) - 8-digit blocks (where the
+ * bugs were) - Edge cases (Long.MIN_VALUE, Long.MAX_VALUE) - Overflow detection
  */
 public class ParsingUtilsLongParsingTest {
 

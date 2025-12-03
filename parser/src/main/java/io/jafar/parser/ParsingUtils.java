@@ -220,7 +220,7 @@ public final class ParsingUtils {
         acc = acc * 10 - d;
       }
     }
-    return acc;  // Already has correct sign from accumulation
+    return acc; // Already has correct sign from accumulation
   }
 
   // SWAR-ish 8-digit block: subtract '0', validate, multiply by powers of 10
