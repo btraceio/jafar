@@ -28,12 +28,12 @@ import java.lang.annotation.Target;
  *
  * <p>Example:
  *
- * <pre>{@code
- * @Internal
+ * <pre>
+ * &#64;Internal
  * public class InternalHelper {
  *   // Do not use this class - it may change or be removed
  * }
- * }</pre>
+ * </pre>
  *
  * @since 0.1.0
  */
