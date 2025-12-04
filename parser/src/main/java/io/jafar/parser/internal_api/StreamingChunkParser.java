@@ -147,8 +147,8 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (stream.available() == 0) {
       return;
     }
+    List<Future<Boolean>> results = new ArrayList<>();
     try {
-      List<Future<Boolean>> results = new ArrayList<>();
       listener.onRecordingStart(stream.getContext());
       int chunkCounter = 1;
       while (stream.available() > 0) {
@@ -174,8 +174,12 @@ public final class StreamingChunkParser implements AutoCloseable {
             }
           });
     } catch (EOFException e) {
+      // Cancel any pending tasks before propagating exception
+      results.forEach(f -> f.cancel(true));
       throw new IOException("Invalid buffer encountered during parsing", e);
     } catch (Throwable t) {
+      // Cancel any pending tasks before propagating exception
+      results.forEach(f -> f.cancel(true));
       throw new IOException("Error occurred while parsing JFR recording", t);
     } finally {
       listener.onRecordingEnd(stream.getContext());

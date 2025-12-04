@@ -87,9 +87,9 @@ public class TypedJafarParserTest {
   }
 
   /**
-   * Test to validate that @JfrField annotation supports dual access to constant pool fields:
-   * - Resolved value (the actual object via stackTrace())
-   * - Raw constant pool index (long via stackTraceId())
+   * Test to validate that @JfrField annotation supports dual access to constant pool fields: -
+   * Resolved value (the actual object via stackTrace()) - Raw constant pool index (long via
+   * stackTraceId())
    */
   @Test
   void testDualConstantPoolAccess() throws Exception {
@@ -112,8 +112,7 @@ public class TypedJafarParserTest {
             idToCount.merge(rawId, 1, Integer::sum);
 
             // Test 3: Verify stackTrace has frames
-            assertTrue(
-                stackTrace.frames().length > 0, "StackTrace should have at least one frame");
+            assertTrue(stackTrace.frames().length > 0, "StackTrace should have at least one frame");
           });
 
       parser.run();
