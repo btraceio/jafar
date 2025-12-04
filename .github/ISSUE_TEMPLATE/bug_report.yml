@@ -1,0 +1,133 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in JAFAR
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us diagnose and fix the issue.
+
+  - type: input
+    id: jafar-version
+    attributes:
+      label: JAFAR Version
+      description: Which version of JAFAR are you using?
+      placeholder: "e.g., 0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: jdk-version
+    attributes:
+      label: JDK Version
+      description: Output of `java -version`
+      placeholder: "e.g., OpenJDK 21.0.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: parser-type
+    attributes:
+      label: Parser Type
+      description: Which parser API are you using?
+      options:
+        - TypedJafarParser
+        - UntypedJafarParser
+        - Gradle Plugin
+        - Other/Not Applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what went wrong...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior
+      placeholder: |
+        1. Create a JFR file with...
+        2. Parse it using...
+        3. Observe error...
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: I expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Instead, this happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: stacktrace
+    attributes:
+      label: Stack Trace
+      description: If applicable, paste the full exception stack trace
+      render: text
+      placeholder: |
+        java.lang.NullPointerException: ...
+            at io.jafar.parser...
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code Sample
+      description: Minimal code to reproduce the issue
+      render: java
+      placeholder: |
+        try (TypedJafarParser parser = TypedJafarParser.open("file.jfr")) {
+          parser.handle(MyEvent.class, (event, ctl) -> {
+            // reproduce bug here
+          });
+          parser.run();
+        }
+
+  - type: input
+    id: jfr-file
+    attributes:
+      label: Sample JFR File
+      description: If possible, provide a link to a minimal JFR file that reproduces the issue (use GitHub Gist or file attachment)
+      placeholder: "https://gist.github.com/..."
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem (environment, workarounds tried, etc.)
+      placeholder: Additional information...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have tested with the latest version of JAFAR
+          required: false
+        - label: I can provide a minimal JFR file to reproduce this issue
+          required: false

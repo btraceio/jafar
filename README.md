@@ -1,7 +1,10 @@
-# jafar
-Experimental, fast JFR parser with a small, focused API.
+# JAFAR
 
-Very much a work in progress. The goal is to parse JFR files and extract event data with minimal ceremony.
+Fast, modern JFR (Java Flight Recorder) parser for the JVM with a small, focused API.
+
+**Status**: Early public release (v0.1.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
+
+JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for parsing JFR recordings with minimal ceremony. It emphasizes performance, low allocation, and ease of use.
 
 ## Requirements
 - Java 21+
@@ -281,6 +284,20 @@ java -jar build/libs/jafar-demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/reco
 ```
 
 On an M1 and a ~600MiB JFR, the Jafar parser completes in ~1s vs ~7s with JMC (anecdotal). The stock `jfr` tool may OOM when printing all events.
+
+## Documentation
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[LIMITATIONS.md](LIMITATIONS.md)** - Known limitations and workarounds
+- **[PERFORMANCE.md](PERFORMANCE.md)** - Performance benchmarks and tuning tips
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute to JAFAR
+- **[SECURITY.md](SECURITY.md)** - Security policy and vulnerability reporting
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+To report security vulnerabilities, see [SECURITY.md](SECURITY.md) (do not create public issues).
 
 ## License
 Apache 2.0 (see `LICENSE`).

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/jbachorik/jafar/discussions
+    about: For general discussions, questions, and community support
+  - name: Security Issue
+    url: https://github.com/jbachorik/jafar/blob/main/SECURITY.md
+    about: Report security vulnerabilities privately (DO NOT create public issues)

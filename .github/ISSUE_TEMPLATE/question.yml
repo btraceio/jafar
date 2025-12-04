@@ -1,0 +1,70 @@
+name: Question
+description: Ask a question about using JAFAR
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about using JAFAR? We're here to help!
+
+        **Before asking:**
+        - Check the [README.md](https://github.com/jbachorik/jafar/blob/main/README.md) for basic usage
+        - Review [LIMITATIONS.md](https://github.com/jbachorik/jafar/blob/main/LIMITATIONS.md) for known limitations
+        - Search existing issues and discussions
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What is your question about?
+      options:
+        - Usage / How-to
+        - API Design
+        - Performance
+        - Configuration
+        - Integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I...? Is it possible to...? What's the best way to...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What Have You Tried?
+      description: What approaches have you attempted? What documentation have you checked?
+      placeholder: I tried... I looked at...
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code Sample
+      description: If applicable, show what you're trying to do
+      render: java
+      placeholder: |
+        try (TypedJafarParser parser = TypedJafarParser.open("file.jfr")) {
+          // what I'm trying to do...
+        }
+
+  - type: input
+    id: jafar-version
+    attributes:
+      label: JAFAR Version
+      description: Which version are you using? (if applicable)
+      placeholder: "e.g., 0.1.0"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that might be helpful
+      placeholder: Additional details...

@@ -1,0 +1,91 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for JAFAR
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please fill out the form below to help us understand your needs.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem are you trying to solve? What's the use case?
+      placeholder: I'm frustrated when... I need to be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like this to work? Describe your ideal solution.
+      placeholder: I would like to be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternatives have you considered? What workarounds are you currently using?
+      placeholder: I tried... but... I currently work around this by...
+
+  - type: textarea
+    id: example
+    attributes:
+      label: API Example
+      description: If applicable, show how you'd like the API to look
+      render: java
+      placeholder: |
+        // Example of how the feature would be used
+        try (TypedJafarParser parser = TypedJafarParser.open("file.jfr")) {
+          parser.handle(MyEvent.class, (event, ctl) -> {
+            // use new feature here
+          });
+        }
+
+  - type: dropdown
+    id: breaking-change
+    attributes:
+      label: Breaking Change?
+      description: Would this require breaking changes to the public API?
+      options:
+        - "No - Additive change only"
+        - "Yes - API changes required"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - "Nice to have"
+        - "Important"
+        - "Critical - blocking my use case"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, references, or examples
+      placeholder: Additional information...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this feature hasn't been requested
+          required: true
+        - label: I have checked LIMITATIONS.md to see if this is a known limitation
+          required: true
+        - label: I would be willing to contribute this feature
+          required: false
