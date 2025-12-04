@@ -18,6 +18,14 @@ public interface Control {
     ChunkInfo NONE = new ChunkInfo() {};
 
     /**
+     * The unique chunk id
+     * @return the unique chunk id
+     */
+    default long chunkId() {
+      return 0;
+    }
+
+    /**
      * Chunk start time, as recorded
      *
      * @return the chunk start time or 0 epoch millis if info is not available
