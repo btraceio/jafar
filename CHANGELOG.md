@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.1.0] - 2024-12-04
+
 ### Added
 - **Core typed parser API** - Define Java interfaces annotated with `@JfrType` and `@JfrField` for type-safe JFR event parsing
 - **Core untyped parser API** - Parse JFR events as `Map<String, Object>` without pre-defining interfaces
@@ -50,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
-This is the initial release tracking. Version 0.1.0 will be the first public release.
+This is the first public release of JAFAR.
 
-[Unreleased]: https://github.com/jbachorik/jafar/compare/e696ef4...HEAD
+[Unreleased]: https://github.com/jbachorik/jafar/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jbachorik/jafar/releases/tag/v0.1.0

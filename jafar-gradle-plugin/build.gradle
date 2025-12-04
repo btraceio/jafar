@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.btrace"
-version = "0.0.1-SNAPSHOT"
+version = "0.1.0"
 
 def libraryName = "jafar-gradle-plugin"
 def component_version = version
