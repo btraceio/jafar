@@ -69,6 +69,7 @@ spotless {
 }
 
     nexusPublishing {
+    packageGroup = "io.btrace"
     repositories {
         sonatype {
           // see https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/#configuration
