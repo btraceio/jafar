@@ -22,9 +22,8 @@ import org.openjdk.jmh.infra.Blackhole;
  * <p>This benchmark validates that handler class reuse prevents unbounded metaspace growth by
  * measuring memory usage across multiple parsing iterations.
  *
- * <p>Expected results:
- * - Without reuse: O(N) metaspace growth (N = number of contexts)
- * - With reuse: O(1) metaspace growth (handlers reused)
+ * <p>Expected results: - Without reuse: O(N) metaspace growth (N = number of contexts) - With
+ * reuse: O(1) metaspace growth (handlers reused)
  *
  * <p>Run with: ./gradlew :parser:test --tests "io.jafar.parser.benchmark.MetaspaceBenchmark"
  */

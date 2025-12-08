@@ -27,7 +27,9 @@ import org.openjdk.jmh.infra.Blackhole;
 @OutputTimeUnit(TimeUnit.SECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
-@Fork(value = 1, jvmArgs = {"-Xms2g", "-Xmx2g"})
+@Fork(
+    value = 1,
+    jvmArgs = {"-Xms2g", "-Xmx2g"})
 public class HandlerReuseJITBenchmark {
 
   private Path testFile;

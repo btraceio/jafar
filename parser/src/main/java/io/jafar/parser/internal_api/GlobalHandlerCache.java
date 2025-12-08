@@ -10,8 +10,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * JVM-global singleton cache for sharing generated handler classes across parsing sessions.
  *
  * <p>This cache maps metadata fingerprints to deserializer caches, enabling safe reuse of handler
- * classes when metadata is compatible. Uses an LRU eviction policy with a configurable maximum
- * size to prevent unbounded memory growth.
+ * classes when metadata is compatible. Uses an LRU eviction policy with a configurable maximum size
+ * to prevent unbounded memory growth.
  *
  * <p>Thread-safe for concurrent access from multiple parsing sessions.
  */

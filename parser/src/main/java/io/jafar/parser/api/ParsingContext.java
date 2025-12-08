@@ -12,8 +12,8 @@ import java.nio.file.Path;
  *
  * <p>The parser automatically detects metadata compatibility through fingerprinting and safely
  * reuses generated handler classes across recordings with identical metadata structures. This
- * eliminates metaspace bloat and significantly improves parsing performance through JIT
- * compilation benefits when handlers are reused across multiple parsing sessions.
+ * eliminates metaspace bloat and significantly improves parsing performance through JIT compilation
+ * benefits when handlers are reused across multiple parsing sessions.
  *
  * <p>Handler classes accumulate JIT optimizations with each use, typically achieving 2-3x
  * throughput improvement after warm-up when parsing recordings with compatible metadata.

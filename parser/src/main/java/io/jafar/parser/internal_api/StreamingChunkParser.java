@@ -205,8 +205,7 @@ public final class StreamingChunkParser implements AutoCloseable {
       TypedParserContext typedCtx = (TypedParserContext) ctx;
       TypedParserContextFactory factory = typedCtx.getFactory();
       if (factory != null && typedCtx.getDeserializerCache() == null) {
-        factory.resolveDeserializerCache(
-            header.order, typedCtx.getMetadataLookup(), typedCtx);
+        factory.resolveDeserializerCache(header.order, typedCtx.getMetadataLookup(), typedCtx);
       }
     }
 
