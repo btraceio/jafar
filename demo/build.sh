@@ -1,6 +1,6 @@
 #!/bin/bash
 
 (cd .. && ./gradlew publishToMavenLocal)
-(cd ../jafar-gradle-plugin && ./gradlew publishToMavenLocal)
+(cd ../jafar-gradle-plugin && ./gradlew --refresh-dependencies publishToMavenLocal)
 
-./gradlew build
+./gradlew clean generateJafarTypes build --refresh-dependencies --info --stacktrace

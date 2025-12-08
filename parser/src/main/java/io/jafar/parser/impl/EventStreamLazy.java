@@ -14,32 +14,23 @@ import java.io.IOException;
 import java.util.Map;
 
 /**
- * Abstract base class for event stream processing in JFR recordings.
+ * Event stream with Tier 2 lazy deserialization optimization for benchmarking.
  *
- * <p>This class implements ChunkParserListener and provides a framework for processing JFR events
- * with support for constant pools and value processing.
+ * <p>This class uses {@link LazyMapValueBuilder} which defers HashMap.Node allocations until fields
+ * are accessed. Used to measure performance impact of lazy deserialization pattern.
  */
 @SuppressWarnings("unchecked")
-public abstract class EventStream implements ChunkParserListener {
-  /** The delegate chunk parser listener. */
+public abstract class EventStreamLazy implements ChunkParserListener {
   private final ChunkParserListener delegate;
-
   private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
 
-  /**
-   * Constructs a new EventStream with the specified delegate.
-   *
-   * @param delegate the delegate chunk parser listener
-   */
-  public EventStream(ChunkParserListener delegate) {
+  public EventStreamLazy(ChunkParserListener delegate) {
     this.delegate = delegate;
   }
 
   @Override
   public final boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-    // use this callback to inspect/process metadata registrations
-    return delegate == null
-        || delegate.onMetadata(context, metadata); // can return 'false' to abort processing
+    return delegate == null || delegate.onMetadata(context, metadata);
   }
 
   @Override
@@ -47,12 +38,10 @@ public abstract class EventStream implements ChunkParserListener {
     ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
     context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
 
-    MapValueBuilder builder = new MapValueBuilder(context);
+    LazyMapValueBuilder builder = new LazyMapValueBuilder(context);
     GenericValueReader r = new GenericValueReader(builder);
 
-    // Make sure we hava the generic value reader available
     context.put(GenericValueReader.class, r);
-    // We do this in the untyped parser -> we need 'all accepting' type filter
     context.put(TypeFilter.class, t -> true);
 
     return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
@@ -73,7 +62,7 @@ public abstract class EventStream implements ChunkParserListener {
     ControlImpl ctl = (ControlImpl) control.get();
     try {
       GenericValueReader r = context.get(GenericValueReader.class);
-      MapValueBuilder builder = r != null ? r.getProcessor() : null;
+      LazyMapValueBuilder builder = r != null ? r.getProcessor() : null;
 
       if (builder == null) {
         return !ctl.abortFlag
@@ -90,7 +79,6 @@ public abstract class EventStream implements ChunkParserListener {
         builder.onComplexValueEnd(null, null, eventClz);
         Map<String, Object> value = builder.getRoot();
 
-        // Process event value with parsed data
         onEventValue(eventClz, value, ctl);
       }
     } catch (IOException e) {
@@ -128,15 +116,5 @@ public abstract class EventStream implements ChunkParserListener {
     }
   }
 
-  /**
-   * Called when an event value is processed.
-   *
-   * <p>This method is called for each event value that is successfully parsed and should be
-   * implemented by subclasses to handle the event data.
-   *
-   * @param type the metadata class type of the event
-   * @param value the parsed event value as a map
-   * @param ctl parser {@linkplain Control} object
-   */
   protected abstract void onEventValue(MetadataClass type, Map<String, Object> value, Control ctl);
 }
