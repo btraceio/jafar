@@ -75,9 +75,16 @@ public abstract class EventStream implements ChunkParserListener {
       GenericValueReader r = context.get(GenericValueReader.class);
       MapValueBuilder builder = r != null ? r.getProcessor() : null;
 
+      if (builder == null) {
+        return !ctl.abortFlag
+            && delegate != null
+            && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+      }
+
       MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
       try {
         builder.reset();
+        builder.setEventType(eventClz);
         builder.onComplexValueStart(null, null, eventClz);
         r.readValue(context.get(RecordingStream.class), eventClz);
       } finally {

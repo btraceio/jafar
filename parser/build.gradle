@@ -56,6 +56,16 @@ sourceSets {
         compileClasspath += sourceSets.main.output + configurations.testCompileClasspath
         runtimeClasspath += output + sourceSets.main.runtimeClasspath + configurations.testRuntimeClasspath
     }
+    jmh {
+        java {
+            srcDirs = ["src/main/jmh/java"]
+        }
+        resources {
+            srcDirs = ["src/test/resources"]
+        }
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += output + compileClasspath
+    }
 }
 
 configurations {
@@ -72,6 +82,12 @@ configurations {
         extendsFrom configurations.testImplementation
     }
     test8RuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
+    }
+    jmhImplementation {
+        extendsFrom configurations.testImplementation
+    }
+    jmhRuntimeOnly {
         extendsFrom configurations.testRuntimeOnly
     }
 }
@@ -163,6 +179,11 @@ tasks.register('test8', Test) {
     }
 }
 
+// JMH benchmark compilation - configure the auto-created task
+tasks.named('compileJmhJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
 dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
@@ -178,11 +199,32 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
     // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+
+    // JMH for benchmarks
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 }
 
 test {
     jvmArgs '-Xmx8g', '-Xms1g'
     // Keep default memory settings; platform and reports configured above in tasks.named('test')
+}
+
+// JMH benchmark task
+tasks.register('jmh', JavaExec) {
+    description = 'Runs JMH benchmarks'
+    group = 'verification'
+    dependsOn compileJmhJava, testClasses
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass.set('org.openjdk.jmh.Main')
+    javaLauncher.set(j21LauncherProvider)
+    // Set working directory to project root so benchmark can find test resources
+    workingDir = rootProject.projectDir
+
+    // Allow passing JMH args via -PjmhArgs
+    if (project.hasProperty('jmhArgs')) {
+        setArgs(Arrays.asList(project.jmhArgs.split(' ')))
+    }
 }
 
 tasks.register('sourcesJar', Jar) {
