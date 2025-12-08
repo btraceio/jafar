@@ -152,7 +152,10 @@ public final class TypedParserContext extends ParserContext {
 
     this.typeFilter = typeFilter;
 
-    this.put(TypeFilter.class, typeFilter);
+    // ConcurrentHashMap does not allow null keys, so only put if typeFilter is not null
+    if (typeFilter != null) {
+      this.put(TypeFilter.class, typeFilter);
+    }
     if (deserializerCache != null) {
       this.put(DeserializerCache.class, globalDeserializerCache);
     }
