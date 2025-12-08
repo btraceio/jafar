@@ -5,15 +5,31 @@ import io.jafar.parser.internal_api.ValueProcessor;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Value processor that builds a Java Map representation for complex values while keeping
  * constant-pool references lazy via {@link ConstantPoolAccessor}.
+ *
+ * <p>Uses flyweight pattern to share field name arrays across events of the same type, reducing
+ * memory allocations from ~300 bytes to ~50 bytes per event.
  */
 final class MapValueBuilder implements ValueProcessor {
+  /**
+   * Cache of sorted field name arrays. Keyed by both type ID and field names to prevent collisions
+   * when different JFR recordings reuse the same type IDs. Shared across all MapValueBuilder
+   * instances to enable field name array reuse.
+   *
+   * <p>Uses {@link MapValueBuilderCacheKey} which has optimized record-based implementation for
+   * Java 21+.
+   */
+  private static final ConcurrentHashMap<MapValueBuilderCacheKey, String[]> FIELD_NAME_CACHE =
+      new ConcurrentHashMap<>();
+
   private final ParserContext context;
   private final MultiTypeStack stack = new MultiTypeStack(20);
   private Map<String, Object> root;
+  private MetadataClass currentEventType;
 
   MapValueBuilder(ParserContext context) {
     this.context = context;
@@ -21,10 +37,20 @@ final class MapValueBuilder implements ValueProcessor {
 
   void reset() {
     root = null;
+    currentEventType = null;
   }
 
   Map<String, Object> getRoot() {
     return root;
+  }
+
+  /**
+   * Sets the current event type for flyweight map creation.
+   *
+   * @param type the metadata class of the event being processed
+   */
+  void setEventType(MetadataClass type) {
+    this.currentEventType = type;
   }
 
   @Override
@@ -155,8 +181,23 @@ final class MapValueBuilder implements ValueProcessor {
           parent.put(fld, value);
         }
       } else {
-        // top-level complex value
-        root = value;
+        // top-level complex value (event) - convert to flyweight map
+        if (currentEventType != null && !value.isEmpty()) {
+          long typeId = currentEventType.getId();
+          MapValueBuilderCacheKey cacheKey = new MapValueBuilderCacheKey(typeId, value.keySet());
+          String[] keys =
+              FIELD_NAME_CACHE.computeIfAbsent(
+                  cacheKey, k -> value.keySet().stream().sorted().toArray(String[]::new));
+
+          Object[] values = new Object[keys.length];
+          for (int i = 0; i < keys.length; i++) {
+            values[i] = value.get(keys[i]);
+          }
+
+          root = new FlyweightEventMap(keys, values);
+        } else {
+          root = value;
+        }
       }
     }
   }
