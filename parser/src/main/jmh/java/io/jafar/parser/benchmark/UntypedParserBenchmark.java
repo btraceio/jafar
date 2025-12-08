@@ -3,6 +3,10 @@ package io.jafar.parser.benchmark;
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.impl.EventStreamBaseline;
+import io.jafar.parser.impl.EventStreamLazy;
+import io.jafar.parser.impl.ParsingContextImpl;
+import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -194,5 +198,279 @@ public class UntypedParserBenchmark {
     }
 
     bh.consume(eventCount.get());
+  }
+
+  // ============================================================================
+  // BASELINE BENCHMARKS (without flyweight optimization, using standard HashMap)
+  // ============================================================================
+
+  /**
+   * Baseline benchmark using standard HashMap without flyweight optimization.
+   *
+   * <p>This benchmark measures performance with the original HashMap-based approach, allocating new
+   * HashMap instances and HashMap.Node entries for each event. Use this as a comparison baseline to
+   * measure the impact of the flyweight optimization.
+   *
+   * <p>Expected to show higher allocation rates and lower throughput compared to Tier1.
+   */
+  @Benchmark
+  public void parseUntyped_Baseline(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+    AtomicLong totalFields = new AtomicLong();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamBaseline listener =
+          new EventStreamBaseline(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event.size());
+              totalFields.addAndGet(event.size());
+              eventCount.incrementAndGet();
+
+              // Access fields to ensure map is not optimized away
+              for (Map.Entry<String, Object> entry : event.entrySet()) {
+                bh.consume(entry.getKey());
+                bh.consume(entry.getValue());
+              }
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+    bh.consume(totalFields.get());
+  }
+
+  /**
+   * Baseline allocation profile benchmark.
+   *
+   * <p>Measures allocation rates with standard HashMap approach. Compare with {@link
+   * #allocationProfile()} to quantify memory savings from flyweight pattern.
+   *
+   * <p>Run with: {@code ./gradlew jmh
+   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Baseline -Pjmh.prof=gc}
+   */
+  @Benchmark
+  public void allocationProfile_Baseline(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamBaseline listener =
+          new EventStreamBaseline(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event);
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Baseline benchmark for count-only workload.
+   *
+   * <p>Measures pure parsing overhead with HashMap allocation. Even when not accessing fields, the
+   * HashMap.Node allocations still occur.
+   */
+  @Benchmark
+  public void parseCountOnly_Baseline(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamBaseline listener =
+          new EventStreamBaseline(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  // ============================================================================
+  // TIER 2 BENCHMARKS (Lazy Deserialization)
+  // ============================================================================
+
+  /**
+   * Tier 2 benchmark with lazy deserialization and full field access.
+   *
+   * <p>This benchmark accesses all fields from the lazy event map, which triggers materialization.
+   * Compare with {@link #parseUntyped_Baseline(Blackhole)} to measure overhead of lazy approach.
+   *
+   * <p>Expected: ~10% overhead compared to baseline (due to array + lazy materialization).
+   */
+  @Benchmark
+  public void parseUntyped_Tier2Lazy(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+    AtomicLong totalFields = new AtomicLong();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamLazy listener =
+          new EventStreamLazy(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event.size());
+              totalFields.addAndGet(event.size());
+              eventCount.incrementAndGet();
+
+              // Access all fields to ensure map is not optimized away
+              for (Map.Entry<String, Object> entry : event.entrySet()) {
+                bh.consume(entry.getKey());
+                bh.consume(entry.getValue());
+              }
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+    bh.consume(totalFields.get());
+  }
+
+  /**
+   * Tier 2 benchmark with sparse field access (the sweet spot for lazy deserialization).
+   *
+   * <p>This benchmark only accesses 2 fields per event, which is a common pattern in real-world JFR
+   * analysis (filtering by timestamp, event type, etc.). The lazy map avoids materializing the full
+   * HashMap.
+   *
+   * <p>Expected: 70-80% allocation reduction compared to baseline.
+   */
+  @Benchmark
+  public void sparseFieldAccess_Tier2Lazy(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamLazy listener =
+          new EventStreamLazy(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              // Only access 2 fields - this should avoid HashMap materialization
+              bh.consume(event.get("startTime"));
+              bh.consume(event.get("duration"));
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Tier 2 count-only benchmark.
+   *
+   * <p>Measures pure parsing overhead with lazy map. Since fields are never accessed, the lazy map
+   * provides maximum benefit.
+   *
+   * <p>Expected: Significant allocation reduction compared to baseline (no HashMap.Node allocations
+   * at all).
+   */
+  @Benchmark
+  public void parseCountOnly_Tier2Lazy(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamLazy listener =
+          new EventStreamLazy(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Tier 2 allocation profile benchmark.
+   *
+   * <p>Run with: {@code ./gradlew jmh
+   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Tier2Lazy -Pjmh.prof=gc}
+   *
+   * <p>Compare with {@link #allocationProfile_Baseline(Blackhole)} to quantify memory savings.
+   */
+  @Benchmark
+  public void allocationProfile_Tier2Lazy(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamLazy listener =
+          new EventStreamLazy(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event);
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Tier 2 benchmark with event filtering.
+   *
+   * <p>Tests lazy deserialization with filtering pattern. Only events matching the filter have
+   * their fields accessed.
+   */
+  @Benchmark
+  public void parseWithFiltering_Tier2Lazy(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+    AtomicInteger processedCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamLazy listener =
+          new EventStreamLazy(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              eventCount.incrementAndGet();
+              // Only process specific event types
+              if (type.getName().contains("jdk.")) {
+                for (Object value : event.values()) {
+                  bh.consume(value);
+                }
+                processedCount.incrementAndGet();
+              }
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+    bh.consume(processedCount.get());
   }
 }

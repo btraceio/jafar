@@ -7,15 +7,19 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Value processor that builds a Java Map representation for complex values while keeping
- * constant-pool references lazy via {@link ConstantPoolAccessor}.
+ * Baseline version of MapValueBuilder without flyweight optimization.
+ *
+ * <p>This class is used for benchmarking to measure the performance impact of the flyweight
+ * pattern. It returns standard HashMap instances instead of FlyweightEventMap.
+ *
+ * <p><b>For benchmarking only</b> - produces higher allocations than the optimized version.
  */
-final class MapValueBuilder implements ValueProcessor {
+final class MapValueBuilderBaseline implements ValueProcessor {
   private final ParserContext context;
   private final MultiTypeStack stack = new MultiTypeStack(20);
   private Map<String, Object> root;
 
-  MapValueBuilder(ParserContext context) {
+  MapValueBuilderBaseline(ParserContext context) {
     this.context = context;
   }
 
@@ -155,7 +159,7 @@ final class MapValueBuilder implements ValueProcessor {
           parent.put(fld, value);
         }
       } else {
-        // top-level complex value
+        // top-level complex value (event) - return HashMap directly (baseline, no optimization)
         root = value;
       }
     }
