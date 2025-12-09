@@ -8,17 +8,67 @@ import java.nio.file.Paths;
 import java.util.Map;
 
 /**
- * Untyped JFR parser.
+ * Untyped JFR parser with optimization strategies for different access patterns.
  *
  * <p>Events are exposed as {@code Map<String, Object>} with keys representing field names and
  * values being boxed primitives, {@link String}, inline complex values as {@code Map<String,
  * Object>}, or wrappers such as {@link ArrayType} (arrays) and {@link ComplexType} (complex values,
  * e.g., constant-pool backed references).
  *
- * <p>Example of consuming wrappers:
+ * <h2>Performance Tuning</h2>
+ *
+ * <p>The parser supports optimization strategies via {@link UntypedStrategy} to tune performance
+ * for your access pattern:
+ *
+ * <h3>Sparse Field Access (Default)</h3>
+ *
+ * <p>Best for filtering, sampling, or metadata queries where you access only a few fields per
+ * event:
  *
  * <pre>{@code
- * p.handle((type, value, ctl) -> {
+ * ParsingContext ctx = ParsingContext.create();
+ * // Uses SPARSE_ACCESS strategy by default
+ *
+ * try (UntypedJafarParser parser = ctx.newUntypedParser(file)) {
+ *   parser.handle((type, event, ctl) -> {
+ *     // Access only specific fields efficiently
+ *     long startTime = (Long) event.get("startTime");
+ *     String threadName = (String) event.get("threadName");
+ *
+ *     if (startTime > threshold) {
+ *       System.out.println(threadName);
+ *     }
+ *   });
+ *   parser.run();
+ * }
+ * }</pre>
+ *
+ * <h3>Full Field Iteration</h3>
+ *
+ * <p>Best for bulk export, data conversion, or analytics where you iterate all fields:
+ *
+ * <pre>{@code
+ * ParsingContext ctx = ParsingContext.create();
+ *
+ * // Use FULL_ITERATION for optimal performance when iterating all fields
+ * try (UntypedJafarParser parser =
+ *     ctx.newUntypedParser(file, UntypedStrategy.FULL_ITERATION)) {
+ *   parser.handle((type, event, ctl) -> {
+ *     // Efficiently iterate all fields
+ *     for (Map.Entry<String, Object> entry : event.entrySet()) {
+ *       exportToDuckDB(entry.getKey(), entry.getValue());
+ *     }
+ *   });
+ *   parser.run();
+ * }
+ * }</pre>
+ *
+ * <h2>Working with Complex Types</h2>
+ *
+ * <p>Example of consuming wrappers for nested structures:
+ *
+ * <pre>{@code
+ * parser.handle((type, value, ctl) -> {
  *   Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
  *   if (thread != null) {
  *     Object id = thread.get("javaThreadId");
@@ -41,6 +91,9 @@ import java.util.Map;
  * }</pre>
  *
  * <p>Handlers are invoked synchronously on the parser thread.
+ *
+ * @see UntypedStrategy
+ * @see ParsingContext#newUntypedParser(Path, UntypedStrategy)
  */
 public interface UntypedJafarParser extends JafarParser, AutoCloseable {
   /**
