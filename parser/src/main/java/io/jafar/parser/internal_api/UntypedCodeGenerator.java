@@ -2,6 +2,7 @@ package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.Internal;
 import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.impl.LazyEventMap;
 import io.jafar.parser.impl.LazyMapValueBuilder;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -59,12 +60,24 @@ public final class UntypedCodeGenerator implements Opcodes {
   }
 
   /**
-   * Generates a deserializer for the given event type.
+   * Generates a deserializer for the given event type with default SPARSE_ACCESS strategy.
    *
    * @param eventType the metadata for the event type
    * @return a generated deserializer instance
    */
   public static UntypedEventDeserializer generate(MetadataClass eventType) {
+    return generate(eventType, UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  /**
+   * Generates a deserializer for the given event type with specified strategy.
+   *
+   * @param eventType the metadata for the event type
+   * @param strategy the optimization strategy
+   * @return a generated deserializer instance
+   */
+  public static UntypedEventDeserializer generate(
+      MetadataClass eventType, UntypedStrategy strategy) {
     try {
       String className = generateClassName(eventType);
       ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
@@ -78,10 +91,10 @@ public final class UntypedCodeGenerator implements Opcodes {
           Type.getInternalName(Object.class),
           new String[] {Type.getInternalName(UntypedEventDeserializer.class)});
 
-      // Decide strategy: eager (simple) vs lazy (complex)
-      boolean isSimple = isSimpleEvent(eventType);
+      // Decide strategy: eager (simple) vs lazy (complex) based on strategy and event structure
+      boolean useEager = shouldUseEagerDeserialization(eventType, strategy);
 
-      if (isSimple) {
+      if (useEager) {
         generateEagerDeserializer(cw, className, eventType);
       } else {
         generateLazyDeserializer(cw, className, eventType);
@@ -100,6 +113,36 @@ public final class UntypedCodeGenerator implements Opcodes {
     } catch (Throwable e) {
       log.error("Failed to generate deserializer for {}", eventType.getName(), e);
       throw new RuntimeException("Code generation failed for " + eventType.getName(), e);
+    }
+  }
+
+  /**
+   * Determines whether to use eager HashMap deserialization based on strategy and event structure.
+   *
+   * @param type the event type metadata
+   * @param strategy the optimization strategy
+   * @return true if eager HashMap should be used, false if lazy deserialization should be used
+   */
+  private static boolean shouldUseEagerDeserialization(
+      MetadataClass type, UntypedStrategy strategy) {
+    UntypedStrategy effectiveStrategy = strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
+
+    switch (effectiveStrategy) {
+      case FULL_ITERATION:
+        // Always use eager HashMap for full iteration to avoid materialization overhead
+        return true;
+
+      case SPARSE_ACCESS:
+        // Use hybrid: eager for simple events, lazy for complex events
+        return isSimpleEvent(type);
+
+      case AUTO:
+        // TODO: Implement adaptive logic based on runtime profiling
+        // For now, fall back to SPARSE_ACCESS behavior
+        return isSimpleEvent(type);
+
+      default:
+        return isSimpleEvent(type);
     }
   }
 

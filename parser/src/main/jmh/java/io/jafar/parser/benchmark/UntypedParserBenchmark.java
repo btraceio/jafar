@@ -4,6 +4,7 @@ import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.impl.EventStreamBaseline;
+import io.jafar.parser.impl.EventStreamGenerated;
 import io.jafar.parser.impl.EventStreamLazy;
 import io.jafar.parser.impl.ParsingContextImpl;
 import io.jafar.parser.internal_api.StreamingChunkParser;
@@ -472,5 +473,154 @@ public class UntypedParserBenchmark {
 
     bh.consume(eventCount.get());
     bh.consume(processedCount.get());
+  }
+
+  // ============================================================================
+  // TIER 3 BENCHMARKS (Bytecode Generation)
+  // ============================================================================
+
+  /**
+   * Tier 3 benchmark with bytecode-generated deserializers and full field access.
+   *
+   * <p>This benchmark uses runtime bytecode generation to eliminate ValueProcessor callback
+   * overhead. Generated deserializers implement a hybrid strategy:
+   *
+   * <ul>
+   *   <li>Simple events (≤10 fields): Direct HashMap deserialization
+   *   <li>Complex events (>10 fields): Lazy ArrayPool + LazyEventMap
+   * </ul>
+   *
+   * <p>Expected: 15-25% improvement over Tier 2 Lazy for full field access due to eliminated
+   * callback overhead and optimized deserialization paths.
+   */
+  @Benchmark
+  public void parseUntyped_Tier3Generated(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+    AtomicLong totalFields = new AtomicLong();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamGenerated listener =
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event.size());
+              totalFields.addAndGet(event.size());
+              eventCount.incrementAndGet();
+
+              // Access all fields to ensure map is not optimized away
+              for (Map.Entry<String, Object> entry : event.entrySet()) {
+                bh.consume(entry.getKey());
+                bh.consume(entry.getValue());
+              }
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+    bh.consume(totalFields.get());
+  }
+
+  /**
+   * Tier 3 benchmark with sparse field access (sweet spot for bytecode generation).
+   *
+   * <p>This benchmark only accesses 2 fields per event. With bytecode generation, simple events use
+   * eager HashMap (minimal overhead), while complex events use lazy maps (avoid full
+   * materialization).
+   *
+   * <p>Expected: 60-70% allocation reduction compared to baseline, with 10-20% better throughput
+   * than Tier 2 due to eliminated callback overhead.
+   */
+  @Benchmark
+  public void sparseFieldAccess_Tier3Generated(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamGenerated listener =
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              // Only access 2 fields
+              bh.consume(event.get("startTime"));
+              bh.consume(event.get("duration"));
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Tier 3 count-only benchmark.
+   *
+   * <p>Measures pure parsing overhead with bytecode-generated deserializers. Since fields are never
+   * accessed, lazy maps provide maximum benefit for complex events, while simple events have
+   * minimal HashMap overhead.
+   *
+   * <p>Expected: Significant allocation reduction compared to baseline, comparable to Tier 2 but
+   * with slightly better throughput due to eliminated callback overhead.
+   */
+  @Benchmark
+  public void parseCountOnly_Tier3Generated(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamGenerated listener =
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+  }
+
+  /**
+   * Tier 3 allocation profile benchmark.
+   *
+   * <p>Run with: {@code ./gradlew jmh
+   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Tier3Generated -Pjmh.prof=gc}
+   *
+   * <p>Compare with {@link #allocationProfile_Baseline(Blackhole)} and {@link
+   * #allocationProfile_Tier2Lazy(Blackhole)} to quantify memory savings from bytecode generation
+   * optimization.
+   *
+   * <p>Expected: Allocation rates between Baseline and Tier 2, with best throughput due to
+   * eliminated callback overhead and optimized code paths.
+   */
+  @Benchmark
+  public void allocationProfile_Tier3Generated(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(((ParsingContextImpl) ctx).untypedContextFactory())) {
+      EventStreamGenerated listener =
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event);
+              eventCount.incrementAndGet();
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
   }
 }

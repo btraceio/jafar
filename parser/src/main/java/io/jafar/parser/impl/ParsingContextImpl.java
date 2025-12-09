@@ -3,6 +3,7 @@ package io.jafar.parser.impl;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.TypedJafarParser;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.ParserContextFactory;
 import java.nio.file.Path;
 
@@ -18,9 +19,6 @@ public final class ParsingContextImpl implements ParsingContext {
 
   /** Factory for creating typed parser contexts. */
   private final TypedParserContextFactory typedFactory = new TypedParserContextFactory();
-
-  /** Factory for creating untyped parser contexts. */
-  private final UntypedParserContextFactory untypedFactory = new UntypedParserContextFactory();
 
   /** The start timestamp for tracking uptime. */
   private final long startTs = System.nanoTime();
@@ -38,12 +36,22 @@ public final class ParsingContextImpl implements ParsingContext {
   }
 
   /**
-   * Gets the untyped context factory.
+   * Gets the untyped context factory with default SPARSE_ACCESS strategy.
    *
    * @return the untyped context factory
    */
   public ParserContextFactory untypedContextFactory() {
-    return untypedFactory;
+    return untypedContextFactory(UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  /**
+   * Gets the untyped context factory with specified strategy.
+   *
+   * @param strategy the optimization strategy for event deserialization
+   * @return the untyped context factory
+   */
+  public ParserContextFactory untypedContextFactory(UntypedStrategy strategy) {
+    return new UntypedParserContextFactory(strategy);
   }
 
   @Override
@@ -53,7 +61,12 @@ public final class ParsingContextImpl implements ParsingContext {
 
   @Override
   public UntypedJafarParser newUntypedParser(Path path) {
-    return UntypedJafarParser.open(path, this);
+    return newUntypedParser(path, UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  @Override
+  public UntypedJafarParser newUntypedParser(Path path, UntypedStrategy strategy) {
+    return UntypedJafarParser.open(path, this, strategy);
   }
 
   @Override
