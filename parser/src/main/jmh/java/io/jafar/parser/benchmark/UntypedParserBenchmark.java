@@ -3,6 +3,7 @@ package io.jafar.parser.benchmark;
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.impl.EventStreamBaseline;
 import io.jafar.parser.impl.EventStreamGenerated;
 import io.jafar.parser.impl.EventStreamLazy;
@@ -511,6 +512,60 @@ public class UntypedParserBenchmark {
               eventCount.incrementAndGet();
 
               // Access all fields to ensure map is not optimized away
+              for (Map.Entry<String, Object> entry : event.entrySet()) {
+                bh.consume(entry.getKey());
+                bh.consume(entry.getValue());
+              }
+            }
+          };
+      parser.parse(testFile, listener);
+    }
+
+    bh.consume(eventCount.get());
+    bh.consume(totalFields.get());
+  }
+
+  /**
+   * Tier 3 benchmark with FULL_ITERATION strategy for full field access workloads.
+   *
+   * <p>This benchmark uses {@link UntypedStrategy#FULL_ITERATION} which always generates eager
+   * HashMap deserializers, eliminating LazyEventMap materialization overhead when iterating all
+   * fields.
+   *
+   * <p>Key differences from default Tier3 (SPARSE_ACCESS):
+   *
+   * <ul>
+   *   <li>ALL events use eager HashMap (no LazyEventMap for complex events)
+   *   <li>No materialization overhead on entrySet() calls
+   *   <li>Higher initial allocation, but faster for full iteration
+   * </ul>
+   *
+   * <p>Expected: Match or beat Baseline (~0.514 ops/s) for full field iteration, eliminating the
+   * -6.4% regression observed with default SPARSE_ACCESS strategy.
+   *
+   * <p>Use case: Bulk JFR-to-DuckDB conversion, full data export, analytics where ALL fields are
+   * accessed.
+   */
+  @Benchmark
+  public void parseUntyped_Tier3FullIteration(Blackhole bh) throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+    AtomicInteger eventCount = new AtomicInteger();
+    AtomicLong totalFields = new AtomicLong();
+
+    // Use FULL_ITERATION strategy
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(
+            ((ParsingContextImpl) ctx).untypedContextFactory(UntypedStrategy.FULL_ITERATION))) {
+      EventStreamGenerated listener =
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> event, Control ctl) {
+              bh.consume(event.size());
+              totalFields.addAndGet(event.size());
+              eventCount.incrementAndGet();
+
+              // Full field iteration - this is the use case FULL_ITERATION optimizes for
               for (Map.Entry<String, Object> entry : event.entrySet()) {
                 bh.consume(entry.getKey());
                 bh.consume(entry.getValue());
