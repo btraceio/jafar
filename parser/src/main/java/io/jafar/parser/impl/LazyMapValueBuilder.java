@@ -34,7 +34,7 @@ final class LazyMapValueBuilder implements ValueProcessor {
   }
 
   /** Thread-local array pool for reusable field collection arrays. */
-  private static class ArrayPool {
+  static class ArrayPool {
     // Pre-sized for typical JFR event (10-20 fields)
     private static final int INITIAL_CAPACITY = 24;
 
@@ -158,10 +158,10 @@ final class LazyMapValueBuilder implements ValueProcessor {
     }
     assert value != null;
 
-    // Convert ArrayPool to LazyEventMap
+    // Convert ArrayPool to LazyEventMap (ultra-lazy: arrays allocated on first access)
     if (value instanceof ArrayPool) {
       ArrayPool ap = (ArrayPool) value;
-      Map<String, Object> lazyMap = new LazyEventMap(ap.getKeys(), ap.getValues());
+      Map<String, Object> lazyMap = new LazyEventMap(ap, ap.size);
       value = lazyMap;
     }
 

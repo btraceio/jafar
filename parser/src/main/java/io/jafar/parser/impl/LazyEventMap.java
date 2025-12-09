@@ -9,33 +9,43 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Lazy Map implementation for JFR events (Tier 2 optimization).
+ * Lazy Map implementation for JFR events (Tier 2 optimization with ultra-lazy allocation).
  *
- * <p>This map defers HashMap.Node allocations until fields are actually accessed. Fields are stored
- * in parallel arrays, and the internal HashMap is only created on demand.
+ * <p>This map defers ALL allocations until fields are actually accessed. Arrays are only created
+ * when the map is first used, making count-only workloads allocation-free.
  *
  * <p>Expected benefits:
  *
  * <ul>
+ *   <li>Count-only (no access): Zero allocations (arrays never created)
  *   <li>Sparse access (1-3 fields): 70-80% allocation reduction (no HashMap.Node allocations)
  *   <li>Full iteration: ~10% overhead (one-time HashMap materialization cost)
- *   <li>Medium access (4-7 fields): 30-50% reduction
  * </ul>
  *
  * <p>This optimization targets the common use case where handlers only access a few fields per
- * event (e.g., filtering by timestamp, checking event type).
+ * event (e.g., filtering by timestamp, checking event type), and also handles count-only scenarios
+ * efficiently.
  */
 final class LazyEventMap extends AbstractMap<String, Object> {
-  private final String[] keys;
-  private final Object[] values;
+  // Reference to the ArrayPool to extract arrays on demand
+  private final LazyMapValueBuilder.ArrayPool pool;
+  private final int size;
+
+  // Cached arrays (created on first access)
+  private String[] keys;
+  private Object[] values;
   private Map<String, Object> materializedMap;
 
-  LazyEventMap(String[] keys, Object[] values) {
-    if (keys.length != values.length) {
-      throw new IllegalArgumentException("Keys and values arrays must have the same length");
+  LazyEventMap(LazyMapValueBuilder.ArrayPool pool, int size) {
+    this.pool = pool;
+    this.size = size;
+  }
+
+  private void ensureArrays() {
+    if (keys == null) {
+      keys = pool.getKeys();
+      values = pool.getValues();
     }
-    this.keys = keys;
-    this.values = values;
   }
 
   @Override
@@ -44,8 +54,10 @@ final class LazyEventMap extends AbstractMap<String, Object> {
       return materializedMap.get(key);
     }
 
+    ensureArrays();
+
     // Linear search for sparse access (fast for small field counts)
-    for (int i = 0; i < keys.length; i++) {
+    for (int i = 0; i < size; i++) {
       if (keys[i].equals(key)) {
         return values[i];
       }
@@ -59,8 +71,10 @@ final class LazyEventMap extends AbstractMap<String, Object> {
       return materializedMap.containsKey(key);
     }
 
-    for (String k : keys) {
-      if (k.equals(key)) {
+    ensureArrays();
+
+    for (int i = 0; i < size; i++) {
+      if (keys[i].equals(key)) {
         return true;
       }
     }
@@ -69,7 +83,7 @@ final class LazyEventMap extends AbstractMap<String, Object> {
 
   @Override
   public int size() {
-    return keys.length;
+    return size;
   }
 
   @Override
@@ -85,16 +99,18 @@ final class LazyEventMap extends AbstractMap<String, Object> {
       return materializedMap.keySet();
     }
 
+    ensureArrays();
+
     // Return a set view without materializing the HashMap
     return new AbstractSet<String>() {
       @Override
       public Iterator<String> iterator() {
-        return Arrays.asList(keys).iterator();
+        return Arrays.asList(Arrays.copyOf(keys, size)).iterator();
       }
 
       @Override
       public int size() {
-        return keys.length;
+        return size;
       }
 
       @Override
@@ -106,8 +122,9 @@ final class LazyEventMap extends AbstractMap<String, Object> {
 
   private void materialize() {
     if (materializedMap == null) {
-      materializedMap = new HashMap<>(keys.length);
-      for (int i = 0; i < keys.length; i++) {
+      ensureArrays();
+      materializedMap = new HashMap<>(size);
+      for (int i = 0; i < size; i++) {
         materializedMap.put(keys[i], values[i]);
       }
     }
