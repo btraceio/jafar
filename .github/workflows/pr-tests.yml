@@ -55,8 +55,6 @@ jobs:
       - name: Prepare test resources
         run: bash ./get_resources.sh
 
-      # Composite build resolves the plugin from source; no local publish needed
-
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
           java -version
@@ -65,6 +63,11 @@ jobs:
           else
             ./gradlew --stacktrace --no-daemon build
           fi
+
+      - name: Publish parser to mavenLocal for plugin tests (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          ./gradlew --stacktrace --no-daemon publishToMavenLocal
 
       - name: Plugin unit tests (JDK 21)
         if: matrix.java == '21'

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -100,7 +101,10 @@ public final class TypedParserContext extends ParserContext {
   }
 
   /** Global cache for deserializers. */
-  private final DeserializerCache globalDeserializerCache;
+  private volatile DeserializerCache globalDeserializerCache;
+
+  /** Factory reference for resolving deserializer cache. */
+  private final TypedParserContextFactory factory;
 
   /** Constructs a new TypedParserContext with default settings. */
   public TypedParserContext() {
@@ -110,13 +114,14 @@ public final class TypedParserContext extends ParserContext {
   /**
    * Constructs a new TypedParserContext with the specified deserializer cache.
    *
-   * @param deserializerCache the deserializer cache to use
+   * @param deserializerCache the deserializer cache to use (may be null for delayed resolution)
    */
   TypedParserContext(DeserializerCache deserializerCache) {
     super(0);
 
     this.globalDeserializerCache =
         deserializerCache != null ? deserializerCache : new DeserializerCache.Impl();
+    this.factory = null;
 
     this.typeFilter = null;
 
@@ -131,21 +136,29 @@ public final class TypedParserContext extends ParserContext {
    * @param chunkIndex the chunk index
    * @param metadataLookup the metadata lookup instance
    * @param constantPools the constant pools instance
-   * @param deserializerCache the deserializer cache to use
+   * @param deserializerCache the deserializer cache to use (may be null for delayed resolution)
+   * @param factory the factory for resolving the deserializer cache (may be null)
    */
   TypedParserContext(
       TypeFilter typeFilter,
       int chunkIndex,
       MutableMetadataLookup metadataLookup,
       MutableConstantPools constantPools,
-      DeserializerCache deserializerCache) {
+      DeserializerCache deserializerCache,
+      TypedParserContextFactory factory) {
     super(chunkIndex, metadataLookup, constantPools);
     this.globalDeserializerCache = deserializerCache;
+    this.factory = factory;
 
     this.typeFilter = typeFilter;
 
-    this.put(TypeFilter.class, typeFilter);
-    this.put(DeserializerCache.class, globalDeserializerCache);
+    // ConcurrentHashMap does not allow null keys, so only put if typeFilter is not null
+    if (typeFilter != null) {
+      this.put(TypeFilter.class, typeFilter);
+    }
+    if (deserializerCache != null) {
+      this.put(DeserializerCache.class, globalDeserializerCache);
+    }
   }
 
   /**
@@ -216,6 +229,34 @@ public final class TypedParserContext extends ParserContext {
    */
   public DeserializerCache getDeserializerCache() {
     return globalDeserializerCache;
+  }
+
+  /**
+   * Sets the deserializer cache for this context.
+   *
+   * @param cache the deserializer cache to use
+   */
+  void setDeserializerCache(DeserializerCache cache) {
+    this.globalDeserializerCache = cache;
+    this.put(DeserializerCache.class, cache);
+  }
+
+  /**
+   * Gets the factory associated with this context.
+   *
+   * @return the factory, or null if not set
+   */
+  public TypedParserContextFactory getFactory() {
+    return factory;
+  }
+
+  /**
+   * Gets the set of target event type names for fingerprint computation.
+   *
+   * @return the set of event type names
+   */
+  public Set<String> getTargetEventTypes() {
+    return classTargetTypeMap.keySet();
   }
 
   @Override
