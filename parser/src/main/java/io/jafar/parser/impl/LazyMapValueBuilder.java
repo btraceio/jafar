@@ -21,9 +21,9 @@ import java.util.Map;
  *   <li>No array resizing (pre-sized to typical event field count)
  * </ul>
  */
-final class LazyMapValueBuilder implements ValueProcessor {
+public final class LazyMapValueBuilder implements ValueProcessor {
   // Thread-local reusable arrays for field collection
-  private static final ThreadLocal<ArrayPool> ARRAY_POOL = ThreadLocal.withInitial(ArrayPool::new);
+  public static final ThreadLocal<ArrayPool> ARRAY_POOL = ThreadLocal.withInitial(ArrayPool::new);
 
   private final ParserContext context;
   private final MultiTypeStack stack = new MultiTypeStack(20);
@@ -34,15 +34,15 @@ final class LazyMapValueBuilder implements ValueProcessor {
   }
 
   /** Thread-local array pool for reusable field collection arrays. */
-  static class ArrayPool {
+  public static class ArrayPool {
     // Pre-sized for typical JFR event (10-20 fields)
     private static final int INITIAL_CAPACITY = 24;
 
-    String[] keys = new String[INITIAL_CAPACITY];
-    Object[] values = new Object[INITIAL_CAPACITY];
-    int size = 0;
+    public String[] keys = new String[INITIAL_CAPACITY];
+    public Object[] values = new Object[INITIAL_CAPACITY];
+    public int size = 0;
 
-    void reset() {
+    public void reset() {
       // Clear references to allow GC
       for (int i = 0; i < size; i++) {
         keys[i] = null;
@@ -51,7 +51,7 @@ final class LazyMapValueBuilder implements ValueProcessor {
       size = 0;
     }
 
-    void add(String key, Object value) {
+    public void add(String key, Object value) {
       if (size >= keys.length) {
         // Grow arrays if needed (rare case for events with many fields)
         int newCapacity = keys.length * 2;
