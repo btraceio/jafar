@@ -26,7 +26,7 @@ import java.util.Set;
  * event (e.g., filtering by timestamp, checking event type), and also handles count-only scenarios
  * efficiently.
  */
-final class LazyEventMap extends AbstractMap<String, Object> {
+public final class LazyEventMap extends AbstractMap<String, Object> {
   // Reference to the ArrayPool to extract arrays on demand
   private final LazyMapValueBuilder.ArrayPool pool;
   private final int size;
@@ -36,7 +36,7 @@ final class LazyEventMap extends AbstractMap<String, Object> {
   private Object[] values;
   private Map<String, Object> materializedMap;
 
-  LazyEventMap(LazyMapValueBuilder.ArrayPool pool, int size) {
+  public LazyEventMap(LazyMapValueBuilder.ArrayPool pool, int size) {
     this.pool = pool;
     this.size = size;
   }
