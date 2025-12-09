@@ -102,11 +102,25 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * @throws IllegalArgumentException if {@code context} is not a supported implementation
    */
   static UntypedJafarParser open(Path path, ParsingContext context) {
+    return open(path, context, UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  /**
+   * Start a new parsing session with a shared context and optimization strategy.
+   *
+   * @param path the recording path
+   * @param context the shared context. When recordings are opened with the same context,
+   *     computationally expensive resources may be reused across sessions
+   * @param strategy the optimization strategy for event deserialization
+   * @return the parser instance
+   * @throws IllegalArgumentException if {@code context} is not a supported implementation
+   */
+  static UntypedJafarParser open(Path path, ParsingContext context, UntypedStrategy strategy) {
     if (!(context instanceof ParsingContextImpl)) {
       throw new IllegalArgumentException(
           "parsingContext must be an instance of ParsingContextImpl");
     }
-    return new UntypedJafarParserImpl(path, (ParsingContextImpl) context);
+    return new UntypedJafarParserImpl(path, (ParsingContextImpl) context, strategy);
   }
 
   /**
