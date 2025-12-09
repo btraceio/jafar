@@ -59,11 +59,17 @@ public final class EventIteratorImpl implements EventIterator {
    * @param path the path to the JFR recording file
    * @param context the parsing context to use
    * @param bufferSize the maximum number of events to buffer
+   * @param strategy the optimization strategy for event deserialization
    * @throws IOException if the parser cannot be opened
    */
-  public EventIteratorImpl(Path path, ParsingContext context, int bufferSize) throws IOException {
+  public EventIteratorImpl(
+      Path path,
+      ParsingContext context,
+      int bufferSize,
+      io.jafar.parser.api.UntypedStrategy strategy)
+      throws IOException {
     this.queue = new ArrayBlockingQueue<>(bufferSize);
-    this.parser = UntypedJafarParser.open(path, context);
+    this.parser = io.jafar.parser.api.UntypedJafarParser.open(path, context, strategy);
 
     // Register handler that enqueues events
     parser.handle(
