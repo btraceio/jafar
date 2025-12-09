@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li><b>Simple events</b> (≤10 fields, minimal nesting): Generate eager HashMap-based
  *       deserializers
- *   <li><b>Complex events</b> (>10 fields or deeply nested): Generate lazy deserializers using
+ *   <li><b>Complex events</b> (&gt;10 fields or deeply nested): Generate lazy deserializers using
  *       LazyMapValueBuilder.ArrayPool
  * </ul>
  *

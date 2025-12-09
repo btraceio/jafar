@@ -109,6 +109,7 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
      *
      * @param type the metadata class type of the event
      * @param value the event data as a map of field names to values
+     * @param ctl parser control object for flow control and metadata access
      */
     void handle(MetadataClass type, Map<String, Object> value, Control ctl);
   }

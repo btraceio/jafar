@@ -73,7 +73,7 @@ public enum UntypedStrategy {
    *
    * <ul>
    *   <li>Simple events (≤10 fields): Eager HashMap
-   *   <li>Complex events (>10 fields): Lazy deserialization
+   *   <li>Complex events (&gt;10 fields): Lazy deserialization
    * </ul>
    *
    * <p><b>Best for:</b> Filtering, sampling, metadata queries

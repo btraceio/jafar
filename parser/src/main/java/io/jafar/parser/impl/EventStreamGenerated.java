@@ -27,7 +27,7 @@ import java.util.Map;
  * <ul>
  *   <li>Zero callback overhead (direct bytecode instead of ValueProcessor callbacks)
  *   <li>Simple events (≤10 fields) use eager HashMap deserialization
- *   <li>Complex events (>10 fields) use lazy ArrayPool + LazyEventMap
+ *   <li>Complex events (&gt;10 fields) use lazy ArrayPool + LazyEventMap
  *   <li>Deserializers cached by event type ID for reuse
  * </ul>
  */
