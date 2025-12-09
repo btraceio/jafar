@@ -3,6 +3,7 @@ package io.jafar.parser.impl;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
@@ -84,12 +85,19 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
             && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
       }
 
+      // Get strategy from context (defaults to SPARSE_ACCESS if not set)
+      UntypedStrategy strategy = context.get(UntypedStrategy.class);
+      if (strategy == null) {
+        strategy = UntypedStrategy.SPARSE_ACCESS;
+      }
+      final UntypedStrategy finalStrategy = strategy;
+
       UntypedEventDeserializer deserializer =
           cache.computeIfAbsent(
               typeId,
               id -> {
                 try {
-                  return UntypedCodeGenerator.generate(eventClz);
+                  return UntypedCodeGenerator.generate(eventClz, finalStrategy);
                 } catch (Exception e) {
                   throw new RuntimeException(
                       "Failed to generate deserializer for event type: " + eventClz.getName(), e);
