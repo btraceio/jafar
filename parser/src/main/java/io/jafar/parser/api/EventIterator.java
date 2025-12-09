@@ -108,8 +108,6 @@ public interface EventIterator extends Iterator<JafarRecordedEvent>, AutoCloseab
    * consumer. A larger buffer improves throughput when processing is slower than parsing, but uses
    * more memory. A smaller buffer reduces memory usage but may reduce throughput.
    *
-   * <p>Rule of thumb: Each event requires approximately 2KB of buffer space.
-   *
    * @param path the path to the JFR recording file
    * @param context shared parsing context for metadata reuse
    * @param bufferSize maximum events buffered (higher = more memory, better throughput)
@@ -131,8 +129,6 @@ public interface EventIterator extends Iterator<JafarRecordedEvent>, AutoCloseab
    * <p>The strategy controls deserialization optimization. Use {@link
    * UntypedStrategy#SPARSE_ACCESS} if you access only a few fields per event, or {@link
    * UntypedStrategy#FULL_ITERATION} if you iterate all fields of each event.
-   *
-   * <p>Rule of thumb: Each event requires approximately 2KB of buffer space.
    *
    * @param path the path to the JFR recording file
    * @param context shared parsing context for metadata reuse
