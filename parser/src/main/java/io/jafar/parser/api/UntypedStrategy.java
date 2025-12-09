@@ -13,7 +13,57 @@ package io.jafar.parser.api;
  *   <li>{@link #AUTO} - Auto-detect access pattern (future feature)
  * </ul>
  *
- * @see ParsingContext#setUntypedStrategy(UntypedStrategy)
+ * <h2>How to Choose</h2>
+ *
+ * <p><b>Use {@link #SPARSE_ACCESS} (default) if:</b>
+ *
+ * <ul>
+ *   <li>You access only a few specific fields per event
+ *   <li>You're filtering events based on field values
+ *   <li>You're sampling or extracting metadata
+ *   <li>You call {@code event.get("fieldName")} for specific fields
+ * </ul>
+ *
+ * <p><b>Use {@link #FULL_ITERATION} if:</b>
+ *
+ * <ul>
+ *   <li>You iterate all fields with {@code event.entrySet()}
+ *   <li>You're doing bulk export to databases (DuckDB, PostgreSQL, etc.)
+ *   <li>You're converting JFR to other formats (JSON, CSV, Parquet)
+ *   <li>You're performing analytics that examine all event fields
+ * </ul>
+ *
+ * <p><b>Example - Sparse Access:</b>
+ *
+ * <pre>{@code
+ * // Default strategy - optimized for sparse field access
+ * try (UntypedJafarParser parser = ctx.newUntypedParser(file)) {
+ *   parser.handle((type, event, ctl) -> {
+ *     long time = (Long) event.get("startTime");
+ *     if (time > threshold) {
+ *       String thread = (String) event.get("threadName");
+ *       logger.info("Event at {} on {}", time, thread);
+ *     }
+ *   });
+ * }
+ * }</pre>
+ *
+ * <p><b>Example - Full Iteration:</b>
+ *
+ * <pre>{@code
+ * // FULL_ITERATION strategy - optimized for iterating all fields
+ * try (UntypedJafarParser parser =
+ *     ctx.newUntypedParser(file, UntypedStrategy.FULL_ITERATION)) {
+ *   parser.handle((type, event, ctl) -> {
+ *     for (Map.Entry<String, Object> entry : event.entrySet()) {
+ *       duckdb.insert(entry.getKey(), entry.getValue());
+ *     }
+ *   });
+ * }
+ * }</pre>
+ *
+ * @see ParsingContext#newUntypedParser(Path, UntypedStrategy)
+ * @see UntypedJafarParser
  */
 public enum UntypedStrategy {
   /**
