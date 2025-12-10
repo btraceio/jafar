@@ -39,10 +39,32 @@ public interface ParsingContext {
   /**
    * Creates a new instance of an {@link UntypedJafarParser} for the given path.
    *
+   * <p>Uses {@link UntypedStrategy#SPARSE_ACCESS} by default.
+   *
    * @param path the path to the recording
    * @return a new {@link UntypedJafarParser} instance
    */
   UntypedJafarParser newUntypedParser(Path path);
+
+  /**
+   * Creates a new instance of an {@link UntypedJafarParser} for the given path with a specific
+   * optimization strategy.
+   *
+   * <p>Different access patterns benefit from different deserialization strategies:
+   *
+   * <ul>
+   *   <li>{@link UntypedStrategy#SPARSE_ACCESS} - Optimized for accessing 1-5 fields per event
+   *       (filtering, sampling)
+   *   <li>{@link UntypedStrategy#FULL_ITERATION} - Optimized for iterating all fields (bulk export,
+   *       conversion)
+   *   <li>{@link UntypedStrategy#AUTO} - Auto-detect access pattern (future feature)
+   * </ul>
+   *
+   * @param path the path to the recording
+   * @param strategy the optimization strategy
+   * @return a new {@link UntypedJafarParser} instance
+   */
+  UntypedJafarParser newUntypedParser(Path path, UntypedStrategy strategy);
 
   /**
    * Returns the uptime of the parsing context in nanoseconds.

@@ -12,7 +12,7 @@ import java.util.NoSuchElementException;
  * {@link UntypedJafarParser.EventHandler} approach, eliminating the "effectively final" constraint
  * on variables used within lambda expressions.
  *
- * <p><b>Example usage:</b>
+ * <h2>Basic Usage</h2>
  *
  * <pre>{@code
  * try (EventIterator it = EventIterator.open(recordingPath)) {
@@ -39,6 +39,28 @@ import java.util.NoSuchElementException;
  * }
  * }</pre>
  *
+ * <h2>Performance Tuning</h2>
+ *
+ * <p>The iterator supports optimization strategies via {@link UntypedStrategy}. Use {@link
+ * UntypedStrategy#FULL_ITERATION} if you iterate all fields of each event:
+ *
+ * <pre>{@code
+ * ParsingContext ctx = ParsingContext.create();
+ *
+ * // Use FULL_ITERATION strategy for optimal performance when iterating all fields
+ * try (EventIterator it =
+ *     EventIterator.open(recordingPath, ctx, 1000, UntypedStrategy.FULL_ITERATION)) {
+ *   while (it.hasNext()) {
+ *     JafarRecordedEvent event = it.next();
+ *
+ *     // Efficiently iterate all fields
+ *     for (Map.Entry<String, Object> entry : event.value().entrySet()) {
+ *       processField(entry.getKey(), entry.getValue());
+ *     }
+ *   }
+ * }
+ * }</pre>
+ *
  * <p><b>Threading:</b> This iterator runs single-threaded (disables parallel chunk processing). For
  * maximum throughput in production pipelines, use {@link UntypedJafarParser#handle} instead.
  *
@@ -46,7 +68,10 @@ import java.util.NoSuchElementException;
  * events. Configure a larger buffer for higher throughput at the cost of memory usage.
  *
  * <p><b>Resource management:</b> This iterator must be closed to release resources. Use
- * try-with-resources as shown in the example above.
+ * try-with-resources as shown in the examples above.
+ *
+ * @see UntypedStrategy
+ * @see UntypedJafarParser
  */
 public interface EventIterator extends Iterator<JafarRecordedEvent>, AutoCloseable {
 
@@ -83,8 +108,6 @@ public interface EventIterator extends Iterator<JafarRecordedEvent>, AutoCloseab
    * consumer. A larger buffer improves throughput when processing is slower than parsing, but uses
    * more memory. A smaller buffer reduces memory usage but may reduce throughput.
    *
-   * <p>Rule of thumb: Each event requires approximately 2KB of buffer space.
-   *
    * @param path the path to the JFR recording file
    * @param context shared parsing context for metadata reuse
    * @param bufferSize maximum events buffered (higher = more memory, better throughput)
@@ -93,10 +116,36 @@ public interface EventIterator extends Iterator<JafarRecordedEvent>, AutoCloseab
    * @throws IllegalArgumentException if bufferSize is less than 1
    */
   static EventIterator open(Path path, ParsingContext context, int bufferSize) throws IOException {
+    return open(path, context, bufferSize, UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  /**
+   * Opens a recording with a custom buffer size and optimization strategy.
+   *
+   * <p>The buffer size controls the maximum number of events buffered between the parser and
+   * consumer. A larger buffer improves throughput when processing is slower than parsing, but uses
+   * more memory. A smaller buffer reduces memory usage but may reduce throughput.
+   *
+   * <p>The strategy controls deserialization optimization. Use {@link
+   * UntypedStrategy#SPARSE_ACCESS} if you access only a few fields per event, or {@link
+   * UntypedStrategy#FULL_ITERATION} if you iterate all fields of each event.
+   *
+   * @param path the path to the JFR recording file
+   * @param context shared parsing context for metadata reuse
+   * @param bufferSize maximum events buffered (higher = more memory, better throughput)
+   * @param strategy optimization strategy for event deserialization
+   * @return a new iterator instance
+   * @throws IOException if the recording cannot be opened
+   * @throws IllegalArgumentException if bufferSize is less than 1
+   * @see UntypedStrategy
+   */
+  static EventIterator open(
+      Path path, ParsingContext context, int bufferSize, UntypedStrategy strategy)
+      throws IOException {
     if (bufferSize < 1) {
       throw new IllegalArgumentException("Buffer size must be at least 1");
     }
-    return new io.jafar.parser.impl.EventIteratorImpl(path, context, bufferSize);
+    return new io.jafar.parser.impl.EventIteratorImpl(path, context, bufferSize, strategy);
   }
 
   /**

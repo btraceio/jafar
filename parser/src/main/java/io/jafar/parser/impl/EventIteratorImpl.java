@@ -1,11 +1,14 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.EventIterator;
 import io.jafar.parser.api.JafarRecordedEvent;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedStrategy;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -29,8 +32,7 @@ public final class EventIteratorImpl implements EventIterator {
 
   /** Sentinel value used to signal end-of-stream. */
   private static final JafarRecordedEvent END_MARKER =
-      new JafarRecordedEvent(
-          null, java.util.Collections.emptyMap(), -1, io.jafar.parser.api.Control.ChunkInfo.NONE);
+      new JafarRecordedEvent(null, Collections.emptyMap(), -1, Control.ChunkInfo.NONE);
 
   /** The blocking queue for producer-consumer communication. */
   private final BlockingQueue<JafarRecordedEvent> queue;
@@ -59,11 +61,14 @@ public final class EventIteratorImpl implements EventIterator {
    * @param path the path to the JFR recording file
    * @param context the parsing context to use
    * @param bufferSize the maximum number of events to buffer
+   * @param strategy the optimization strategy for event deserialization
    * @throws IOException if the parser cannot be opened
    */
-  public EventIteratorImpl(Path path, ParsingContext context, int bufferSize) throws IOException {
+  public EventIteratorImpl(
+      Path path, ParsingContext context, int bufferSize, UntypedStrategy strategy)
+      throws IOException {
     this.queue = new ArrayBlockingQueue<>(bufferSize);
-    this.parser = UntypedJafarParser.open(path, context);
+    this.parser = UntypedJafarParser.open(path, context, strategy);
 
     // Register handler that enqueues events
     parser.handle(

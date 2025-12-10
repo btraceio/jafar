@@ -5,6 +5,7 @@ import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.JafarParser;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -55,6 +56,9 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   /** The parsing context for this parser. */
   private final ParsingContext context;
 
+  /** The optimization strategy for event deserialization. */
+  private final UntypedStrategy strategy;
+
   /** The set of registered event handlers. */
   private final Set<EventHandler> handlers;
 
@@ -65,8 +69,20 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
    * @param context the parsing context to use
    */
   public UntypedJafarParserImpl(Path path, ParsingContext context) {
+    this(path, context, UntypedStrategy.SPARSE_ACCESS);
+  }
+
+  /**
+   * Constructs a new UntypedJafarParserImpl for the specified path, context, and strategy.
+   *
+   * @param path the path to the JFR recording file
+   * @param context the parsing context to use
+   * @param strategy the optimization strategy for event deserialization
+   */
+  public UntypedJafarParserImpl(Path path, ParsingContext context, UntypedStrategy strategy) {
     this.path = path;
     this.context = context;
+    this.strategy = strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
     this.handlers = new HashSet<>();
     this.parserListener = null;
   }
@@ -80,6 +96,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   private UntypedJafarParserImpl(UntypedJafarParserImpl other, ChunkParserListener listener) {
     this.path = other.path;
     this.context = other.context;
+    this.strategy = other.strategy;
 
     this.handlers = new HashSet<>(other.handlers);
     this.parserListener = listener;
@@ -94,7 +111,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   @Override
   public void run() throws IOException {
     try (StreamingChunkParser parser =
-        new StreamingChunkParser(((ParsingContextImpl) context).untypedContextFactory())) {
+        new StreamingChunkParser(((ParsingContextImpl) context).untypedContextFactory(strategy))) {
       ChunkParserListener listener =
           new EventStream(parserListener) {
             @Override
