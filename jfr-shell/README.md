@@ -15,11 +15,32 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 
 ## Quick Start
 
-### Build and Run
+### Installation
+
+#### Option 1: JBang (Easiest - No Build Required) ⭐
+
+[JBang](https://jbang.dev) provides the simplest installation - no Java or build tools required!
 
 ```bash
-# Option 1 (Recommended): Standalone Distribution
-# Build a self-contained distribution with bundled JRE - no Java installation required
+# One-time JBang setup (if needed)
+curl -Ls https://sh.jbang.dev | bash -s - app setup
+
+# Run jfr-shell directly
+jbang jfr-shell@btraceio recording.jfr
+
+# Or install as a permanent command
+jbang app install jfr-shell@btraceio
+jfr-shell recording.jfr
+```
+
+See [JBang Usage Guide](../doc/jbang-usage.md) for more options.
+
+#### Option 2: Standalone Distribution (Bundled JRE)
+
+Build a self-contained distribution with bundled JRE:
+
+```bash
+# Build standalone distribution
 ./gradlew :jfr-shell:jlinkDist
 
 # Run the standalone distribution
@@ -28,18 +49,24 @@ jfr-shell/build/jlink/bin/jfr-shell
 # Or create a distributable zip archive (~39MB)
 ./gradlew :jfr-shell:jlinkZip
 # Distribution will be at: jfr-shell/build/distributions/jfr-shell-<version>-standalone.zip
+```
 
-# Option 2: Run directly with Gradle
+#### Option 3: Run with Gradle
+
+```bash
+# Run directly with Gradle
 ./gradlew :jfr-shell:run --console=plain
 
-# Option 3: Build and use fat JAR (requires Java 25+)
+# Open a file immediately
+./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
+```
+
+#### Option 4: Build Fat JAR
+
+```bash
+# Build and use fat JAR (requires Java 25+)
 ./gradlew :jfr-shell:shadowJar
 java -jar jfr-shell/build/libs/jfr-shell-all.jar
-
-# Open a file immediately (works with any option)
-jfr-shell/build/jlink/bin/jfr-shell -f /path/to/recording.jfr
-# Or with Gradle:
-./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
 ```
 
 ### Interactive Session
