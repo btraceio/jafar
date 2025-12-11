@@ -23,7 +23,10 @@ java {
 
 application {
     mainClass = 'io.jafar.shell.Main'
+    // For backward compatibility with shadow plugin
+    applicationName = 'jfr-shell'
 }
+
 
 dependencies {
     implementation project(':parser')
@@ -57,9 +60,130 @@ shadowJar {
     archiveBaseName = libraryName
     archiveVersion = component_version
     archiveClassifier.set('')
-    
+
     // Ensure main class is set
     manifest {
         attributes 'Main-Class': 'io.jafar.shell.Main'
+    }
+}
+
+// Create standalone jlinked distribution
+tasks.register('jlinkDist') {
+    group 'Distribution'
+    description 'Create a jlinked standalone distribution with custom JRE'
+
+    dependsOn shadowJar
+
+    def outputDir = file("${buildDir}/jlink")
+    def jreDir = file("${outputDir}/jre")
+    def binDir = file("${outputDir}/bin")
+    def libDir = file("${outputDir}/lib")
+
+    outputs.dir(outputDir)
+
+    doLast {
+        // Clean output directory
+        project.delete(outputDir)
+        project.mkdir(outputDir)
+        project.mkdir(binDir)
+        project.mkdir(libDir)
+
+        // Find JDK with jmods - prefer Java 25 to match compilation target
+        def javaHome = null
+        def jmodsDir = null
+
+        // First try Java 25 EA (matches compilation target)
+        def java25EA = System.getProperty("user.home") + "/.sdkman/candidates/java/25.ea.33-open"
+        def java25EAJmods = new File("${java25EA}/jmods")
+        if (java25EAJmods.exists()) {
+            javaHome = java25EA
+            jmodsDir = java25EAJmods
+            logger.lifecycle("Using Java 25 EA for jlink (matches compilation target)")
+        } else {
+            // Fallback to current Java home
+            javaHome = System.getProperty("java.home")
+            jmodsDir = new File("${javaHome}/jmods")
+            if (!jmodsDir.exists()) {
+                throw new GradleException("Cannot find JDK with jmods directory. Tried: ${java25EA} and ${javaHome}")
+            }
+            logger.warn("Using ${javaHome} for jlink - may have version mismatch with compiled classes")
+        }
+
+        logger.lifecycle("Using JDK: ${javaHome}")
+        logger.lifecycle("Creating custom JRE with jlink...")
+
+        // Run jlink to create custom JRE
+        def jlinkCmd = [
+            "${javaHome}/bin/jlink",
+            '--module-path', jmodsDir.absolutePath,
+            '--add-modules', 'java.base,java.logging,java.management,jdk.unsupported,jdk.crypto.ec',
+            '--strip-debug',
+            '--compress', '2',
+            '--no-header-files',
+            '--no-man-pages',
+            '--output', jreDir.absolutePath
+        ]
+        def proc = jlinkCmd.execute()
+        proc.waitFor()
+        if (proc.exitValue() != 0) {
+            throw new GradleException("jlink failed: ${proc.errorStream.text}")
+        }
+
+        logger.lifecycle("Custom JRE created at: ${jreDir}")
+
+        // Copy shadow jar
+        project.copy {
+            from(shadowJar.archiveFile)
+            into(libDir)
+            rename { "${libraryName}.jar" }
+        }
+
+        // Create launcher script for Unix/Mac
+        def launcherScript = new File("${binDir}/jfr-shell")
+        launcherScript.text = """#!/bin/sh
+# JFR Shell launcher script
+
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+JFR_HOME="\$(dirname "\$SCRIPT_DIR")"
+JAVA_HOME="\$JFR_HOME/jre"
+
+exec "\$JAVA_HOME/bin/java" -jar "\$JFR_HOME/lib/${libraryName}.jar" "\$@"
+"""
+        launcherScript.setExecutable(true)
+
+        // Create launcher script for Windows
+        def launcherBat = new File("${binDir}/jfr-shell.bat")
+        launcherBat.text = """@echo off
+rem JFR Shell launcher script
+
+setlocal
+
+set SCRIPT_DIR=%~dp0
+set JFR_HOME=%SCRIPT_DIR%..
+set JAVA_HOME=%JFR_HOME%\\jre
+
+"%JAVA_HOME%\\bin\\java" -jar "%JFR_HOME%\\lib\\${libraryName}.jar" %*
+"""
+
+        logger.lifecycle("Standalone distribution created at: ${outputDir}")
+        logger.lifecycle("Run: ${binDir}/jfr-shell")
+    }
+}
+
+// Create zip archive of the jlinked distribution
+tasks.register('jlinkZip', Zip) {
+    group 'Distribution'
+    description 'Create a zip archive of the jlinked distribution'
+
+    dependsOn jlinkDist
+
+    from file("${buildDir}/jlink")
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier = 'standalone'
+    destinationDirectory = file("${buildDir}/distributions")
+
+    doLast {
+        logger.lifecycle("Standalone zip created: ${archiveFile.get().asFile}")
     }
 }

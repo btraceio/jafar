@@ -18,14 +18,27 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 ### Build and Run
 
 ```bash
-# Run directly with Gradle
+# Option 1 (Recommended): Standalone Distribution
+# Build a self-contained distribution with bundled JRE - no Java installation required
+./gradlew :jfr-shell:jlinkDist
+
+# Run the standalone distribution
+jfr-shell/build/jlink/bin/jfr-shell
+
+# Or create a distributable zip archive (~39MB)
+./gradlew :jfr-shell:jlinkZip
+# Distribution will be at: jfr-shell/build/distributions/jfr-shell-<version>-standalone.zip
+
+# Option 2: Run directly with Gradle
 ./gradlew :jfr-shell:run --console=plain
 
-# Or build and use the jar
+# Option 3: Build and use fat JAR (requires Java 25+)
 ./gradlew :jfr-shell:shadowJar
 java -jar jfr-shell/build/libs/jfr-shell-all.jar
 
-# Open a file immediately
+# Open a file immediately (works with any option)
+jfr-shell/build/jlink/bin/jfr-shell -f /path/to/recording.jfr
+# Or with Gradle:
 ./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
 ```
 
@@ -243,8 +256,12 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 
 ## Requirements
 
-- Java 25+
-- Gradle 8+ (for building)
+### Using Standalone Distribution
+- No external dependencies (JRE is bundled)
+
+### Building from Source
+- Java 25+ (for compilation)
+- Gradle 8+ (wrapper included)
 
 ## Development
 
