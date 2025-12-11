@@ -101,21 +101,26 @@ public final class Shell implements AutoCloseable {
 
     private void printHelp() {
         terminal.writer().println("Commands:");
-        terminal.writer().println("  open <path> [--alias NAME]   Open a recording as a new session");
-        terminal.writer().println("  sessions                      List sessions");
-        terminal.writer().println("  use <id|alias>                Switch current session");
-        terminal.writer().println("  info [id|alias]               Show session info");
-        terminal.writer().println("  metadata [--search GLOB|--regex RE] [--refresh]");
-        terminal.writer().println("  show <expr> [--limit N]       Show data via JfrPath (events, metadata, chunks, cp)");
-        terminal.writer().println("  close [id|alias|--all]        Close session(s)");
-        terminal.writer().println("  help                          Show this help");
-        terminal.writer().println("  exit|quit                     Exit shell");
+        terminal.writer().println("  open <path> [--alias NAME]     Open a recording as a new session");
+        terminal.writer().println("  sessions                       List all sessions");
+        terminal.writer().println("  use <id|alias>                 Switch current session");
+        terminal.writer().println("  info [id|alias]                Show session information");
+        terminal.writer().println("  metadata [options]             List and inspect metadata types");
+        terminal.writer().println("  show <expr> [options]          Execute JfrPath queries");
+        terminal.writer().println("  chunks [options]               List chunk information");
+        terminal.writer().println("  chunk <index> show             Show specific chunk details");
+        terminal.writer().println("  cp [<type>] [options]          Browse constant pool entries");
+        terminal.writer().println("  close [id|alias|--all]         Close session(s)");
+        terminal.writer().println("  help [<command>]               Show help (use 'help <command>' for details)");
+        terminal.writer().println("  exit|quit                      Exit shell");
         terminal.writer().println();
-        terminal.writer().println("Examples:");
-        terminal.writer().println("  metadata --search jdk.*");
+        terminal.writer().println("Quick Examples:");
         terminal.writer().println("  show events/jdk.FileRead[bytes>=1000] --limit 5");
-        terminal.writer().println("  show events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
-        terminal.writer().println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
+        terminal.writer().println("  show events/jdk.FileRead | count()");
+        terminal.writer().println("  show events/jdk.ExecutionSample | groupBy(thread/name)");
+        terminal.writer().println("  show metadata/java.lang.Thread --tree");
+        terminal.writer().println();
+        terminal.writer().println("Type 'help show' for JfrPath query syntax and more examples.");
         terminal.flush();
     }
 

@@ -7,12 +7,14 @@ An interactive CLI for exploring Java Flight Recorder (JFR) files: browse metada
 ### Run the shell
 
 ```bash
-# Using the launcher script
-./jfr-cli
+# Interactive mode
+./gradlew :jfr-shell:run --console=plain
 
 # Or pass a file immediately
-./jfr-cli -f /path/to/recording.jfr
+./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
 ```
+
+After building, you can also use the generated scripts in `jfr-shell/build/install/jfr-shell/bin/`.
 
 On startup:
 ```
@@ -37,14 +39,22 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 
 ## Available Commands
 
+### Session Management
 - `open <path> [--alias NAME]`: Open a recording file.
 - `sessions`: List all sessions; marks the current one.
 - `use <id|alias>`: Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
 - `info [<id|alias>]`: Show session information.
-- `show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
+
+### Querying and Browsing
+- `show <expr> [--limit N] [--format table|json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
 - `metadata [--search <glob>|--regex <pat>] [--refresh] [--events-only|--non-events-only] [--primitives] [--summary]`: List types.
 - `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
+- `chunks [--summary] [--range N-M]`: List chunk information.
+- `chunk <index> show`: Show specific chunk details.
+- `cp [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
+
+### Help and Exit
 - `help [<command>]`: Show contextual help.
 - `exit` / `quit`: Exit shell.
 
@@ -194,7 +204,7 @@ For complete operator reference and grammar details, see [doc/jfrpath.md](doc/jf
 - `show events/jdk.FileRead/bytes | sum()`
 - `show events/jdk.FileRead/bytes | stats()`
 - `show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
-- `show events/jdk.FileRead | sketch(path=bytes)`
+- `show events/jdk.FileRead/bytes | sketch()`
 - `show events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
 - `show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
 - `show events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes

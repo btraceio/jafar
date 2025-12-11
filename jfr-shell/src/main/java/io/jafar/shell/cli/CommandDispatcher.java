@@ -393,12 +393,19 @@ public class CommandDispatcher {
 
     private void cmdHelp(List<String> args) {
         if (args.isEmpty()) {
-            io.println("help <command> - show help for a command (e.g., 'help show')");
+            io.println("Available commands:");
+            io.println("  show      - Execute JfrPath queries (events, metadata, chunks, cp)");
+            io.println("  metadata  - List and inspect metadata types");
+            io.println("  chunks    - List chunk information");
+            io.println("  chunk     - Show specific chunk details");
+            io.println("  cp        - Browse constant pool entries");
+            io.println("");
+            io.println("Type 'help <command>' for detailed usage (e.g., 'help show')");
             return;
         }
         String sub = args.get(0).toLowerCase(Locale.ROOT);
         if ("show".equals(sub) || "select".equals(sub)) {
-            io.println("Usage: show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]");
+            io.println("Usage: show <expr> [--limit N] [--format table|json] [--tree] [--depth N] [--list-match any|all|none]");
             io.println("Where <expr> is a JfrPath like:");
             io.println("  events/<type>[field/path op literal][...]");
             io.println("  metadata/<type>[/field][...]   (use --tree [--depth N] for recursive tree)");
@@ -430,39 +437,28 @@ public class CommandDispatcher {
             io.println("    | ceil([path])             → ceil for numbers");
             io.println("    | contains([path], \"s\")  → boolean per row (string contains substring)");
             io.println("    | replace([path], \"a\", \"b\") → string replace occurrences");
-            io.println("List match modes (arrays/lists): prefix a filter with any: | all: | none:");
-            io.println("  e.g., [any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
-            io.println("Examples:");
-            io.println("  show events/jdk.FileRead[bytes>=1000] --limit 5");
-            io.println("  show events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
-            io.println("  show events/jdk.ExecutionSample[stackTrace/truncated=true]");
-            io.println("  show events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
-            io.println("  show events/jdk.FileRead | count()");
-            io.println("  show events/jdk.FileRead/bytes | sum()");
-            io.println("  show events/jdk.FileRead/bytes | stats()");
-            io.println("  show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)");
-            io.println("  show events/jdk.ExecutionSample/thread/name | groupBy(value)");
-            io.println("  show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)");
-            io.println("  show events/jdk.FileRead | top(10, by=bytes)");
-            io.println("  show metadata/jdk.types.Method/name | count()");
-            io.println("  show cp/jdk.types.Symbol | count()");
-            io.println("  show cp/jdk.types.Symbol[string~\"find.*\"]");
-            io.println("  show cp/jdk.types.Symbol[string=\"java/lang/String\"]/id");
-            io.println("  show cp[name~\"jdk\\.types\\..*\"]");
-            io.println("  show events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace");
-            io.println("  show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize");
-            io.println("  show cp/jdk.types.Symbol/string | len()");
-            io.println("  show events/jdk.ExecutionSample/stackTrace/frames | len()");
-            io.println("  show events/jdk.SocketRead[remoteHost~\"10\\.0\\..*\"] --limit 3");
-            io.println("  show metadata/java.lang.Thread");
-            io.println("  show metadata/java.lang.Thread --format json");
-            io.println("  show metadata/jdk.types.StackTrace --tree --depth 2");
-            io.println("  show metadata/jdk.types.Method/fields/name --tree");
-            io.println("  show metadata/jdk.types.Method/fields.name/annotations");
-            io.println("  show metadata/jdk.types.Method/name");
-            io.println("  show chunks/size");
-            io.println("  show cp/name");
-            io.println("  show cp/java.lang.Thread/totalSize");
+            io.println("List match modes (for array/list fields):");
+            io.println("  Prefix filter with any: (default), all:, or none: to control matching");
+            io.println("  Example: [any:stackTrace/frames[matches(method/name/string, \".*Foo.*\")]]");
+            io.println("");
+            io.println("Examples (grouped by use case):");
+            io.println("  Basic event queries:");
+            io.println("    show events/jdk.FileRead[bytes>=1000] --limit 5");
+            io.println("    show events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
+            io.println("  Aggregations:");
+            io.println("    show events/jdk.FileRead | count()");
+            io.println("    show events/jdk.FileRead/bytes | sum()");
+            io.println("    show events/jdk.FileRead/bytes | stats()");
+            io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
+            io.println("    show events/jdk.FileRead | top(10, by=bytes)");
+            io.println("  Metadata:");
+            io.println("    show metadata/java.lang.Thread");
+            io.println("    show metadata/jdk.types.StackTrace --tree --depth 2");
+            io.println("  Constant pools:");
+            io.println("    show cp/jdk.types.Symbol[string~\"java/.*\"]");
+            io.println("  Advanced (interleaved filters, list matching):");
+            io.println("    show events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace[committedSize>1000000]");
+            io.println("    show events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, \".*Foo.*\")]]");
             return;
         }
         if ("metadata".equals(sub) || "types".equals(sub)) {
@@ -496,7 +492,7 @@ public class CommandDispatcher {
             return;
         }
         if ("chunks".equals(sub)) {
-            io.println("Usage: chunks [--summary|--list] [--range N-M]");
+            io.println("Usage: chunks [--summary] [--range N-M]");
             io.println("List chunks in the current recording.");
             io.println("Options:");
             io.println("  --summary      Show aggregate statistics (totalChunks, totalSize, avgSize, minSize, maxSize, compressedCount)");
@@ -510,15 +506,11 @@ public class CommandDispatcher {
             return;
         }
         if ("chunk".equals(sub)) {
-            io.println("Usage: chunk <index> show [--header|--events|--constants]");
+            io.println("Usage: chunk <index> show");
             io.println("Show detailed information about a specific chunk.");
-            io.println("Options:");
-            io.println("  --header       Show chunk header information (default)");
-            io.println("  --events       Show event counts by type (not yet implemented)");
-            io.println("  --constants    Show constant pool references (not yet implemented)");
             io.println("Examples:");
             io.println("  chunk 0 show");
-            io.println("  chunk 2 show --header");
+            io.println("  chunk 2 show");
             io.println("");
             io.println("Displays: index, offset, size, startNanos, duration, compressed");
             return;
