@@ -394,6 +394,9 @@ public final class JfrPathEvaluator {
             case JfrPath.StatsOp s -> aggregateStats(session, query, s.valuePath);
             case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
             case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
+            case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
+            case JfrPath.GroupByOp gb -> aggregateGroupBy(session, query, gb.keyPath, gb.aggFunc, gb.valuePath);
+            case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
             case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
             case JfrPath.UppercaseOp up -> aggregateStringTransform(session, query, up.valuePath, "uppercase");
             case JfrPath.LowercaseOp lo -> aggregateStringTransform(session, query, lo.valuePath, "lowercase");
@@ -511,6 +514,173 @@ public final class JfrPathEvaluator {
         out.putAll(stats);
         out.putAll(quants);
         return List.of(out);
+    }
+
+    private List<Map<String, Object>> aggregateSum(JFRSession session, Query query, List<String> valuePathOverride) throws Exception {
+        List<String> vpath = valuePathOverride;
+        if (vpath == null || vpath.isEmpty()) {
+            if (query.segments.size() < 2) throw new IllegalArgumentException("sum() requires projection or a value path");
+            vpath = query.segments.subList(1, query.segments.size());
+        }
+
+        double sum = 0.0;
+        long count = 0;
+        final List<String> path = vpath;
+
+        if (query.root == Root.EVENTS) {
+            if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
+            String eventType = query.segments.get(0);
+            final double[] s = {0.0};
+            final long[] c = {0};
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+                Object val = Values.get(map, path.toArray());
+                if (val instanceof Number n) {
+                    s[0] += n.doubleValue();
+                    c[0]++;
+                }
+            });
+            sum = s[0];
+            count = c[0];
+        } else {
+            List<Object> vals = evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+            for (Object v : vals) {
+                if (v instanceof Number n) {
+                    sum += n.doubleValue();
+                    count++;
+                }
+            }
+        }
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("sum", sum);
+        out.put("count", count);
+        return List.of(out);
+    }
+
+    private List<Map<String, Object>> aggregateGroupBy(JFRSession session, Query query, List<String> keyPath, String aggFunc, List<String> valuePath) throws Exception {
+        Map<Object, GroupAccumulator> groups = new java.util.LinkedHashMap<>();
+
+        if (query.root == Root.EVENTS) {
+            if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
+            String eventType = query.segments.get(0);
+            source.streamEvents(session.getRecordingPath(), ev -> {
+                if (!eventType.equals(ev.typeName())) return;
+                Map<String, Object> map = ev.value();
+                if (!matchesAll(map, query.predicates)) return;
+
+                Object key = Values.get(map, keyPath.toArray());
+                GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+                if ("count".equals(aggFunc)) {
+                    acc.add(1);
+                } else {
+                    Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                    if (val instanceof Number n) {
+                        acc.add(n.doubleValue());
+                    }
+                }
+            });
+        } else {
+            // For metadata/chunks/cp: materialize rows first
+            List<Map<String, Object>> rows = evaluate(session, new Query(query.root, query.segments, query.predicates));
+            for (Map<String, Object> row : rows) {
+                Object key = Values.get(row, keyPath.toArray());
+                GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+                if ("count".equals(aggFunc)) {
+                    acc.add(1);
+                } else {
+                    Object val = valuePath.isEmpty() ? null : Values.get(row, valuePath.toArray());
+                    if (val instanceof Number n) {
+                        acc.add(n.doubleValue());
+                    }
+                }
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map.Entry<Object, GroupAccumulator> entry : groups.entrySet()) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("key", entry.getKey());
+            row.put(aggFunc, entry.getValue().getResult());
+            result.add(row);
+        }
+
+        return result;
+    }
+
+    private List<Map<String, Object>> aggregateTop(JFRSession session, Query query, int n, List<String> byPath, boolean ascending) throws Exception {
+        // Materialize all rows, then sort and take top N
+        List<Map<String, Object>> rows;
+
+        if (query.segments.size() > 1) {
+            // Value projection: convert to single-column rows
+            List<Object> values = evaluateValues(session, query);
+            rows = values.stream()
+                .map(v -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("value", v);
+                    return m;
+                })
+                .collect(java.util.stream.Collectors.toList());
+        } else {
+            // Full rows
+            rows = evaluate(session, new Query(query.root, query.segments, query.predicates));
+        }
+
+        // Sort by path
+        rows = new ArrayList<>(rows);
+        rows.sort((a, b) -> {
+            Object aVal = Values.get(a, byPath.toArray());
+            Object bVal = Values.get(b, byPath.toArray());
+            int cmp = compareValues(aVal, bVal);
+            return ascending ? cmp : -cmp;
+        });
+
+        // Take top N
+        return rows.subList(0, Math.min(n, rows.size()));
+    }
+
+    // Helper class for groupBy accumulation
+    private static class GroupAccumulator {
+        private final String func;
+        private long count = 0;
+        private double sum = 0.0;
+        private double min = Double.MAX_VALUE;
+        private double max = Double.MIN_VALUE;
+
+        GroupAccumulator(String func) { this.func = func; }
+
+        void add(double value) {
+            count++;
+            sum += value;
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+        }
+
+        Object getResult() {
+            return switch (func) {
+                case "count" -> count;
+                case "sum" -> sum;
+                case "avg" -> count == 0 ? 0.0 : sum / count;
+                case "min" -> count == 0 ? null : min;
+                case "max" -> count == 0 ? null : max;
+                default -> count;
+            };
+        }
+    }
+
+    private static int compareValues(Object a, Object b) {
+        if (a == null && b == null) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        if (a instanceof Number na && b instanceof Number nb) {
+            return Double.compare(na.doubleValue(), nb.doubleValue());
+        }
+        return String.valueOf(a).compareTo(String.valueOf(b));
     }
 
     private List<Map<String, Object>> aggregateLen(JFRSession session, Query query, List<String> valuePathOverride) throws Exception {

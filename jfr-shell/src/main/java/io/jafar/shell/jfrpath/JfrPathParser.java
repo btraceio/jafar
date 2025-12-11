@@ -361,6 +361,74 @@ public final class JfrPathParser {
                 expect(')');
             }
             return new JfrPath.SketchOp(valuePath);
+        } else if ("sum".equals(name)) {
+            if (peek() == '(') {
+                pos++; skipWs();
+                if (peek() != ')') {
+                    valuePath = parsePathArg();
+                }
+                expect(')');
+            }
+            return new JfrPath.SumOp(valuePath);
+        } else if ("groupby".equals(name)) {
+            List<String> keyPath = List.of();
+            String aggFunc = "count";
+            List<String> aggValuePath = List.of();
+            if (peek() == '(') {
+                pos++; skipWs();
+                // First arg is always the key path
+                keyPath = parsePathArg();
+                skipWs();
+                // Parse optional agg= and value= parameters
+                while (peek() == ',') {
+                    pos++; skipWs();
+                    if (startsWithIgnoreCase("agg=")) {
+                        pos += 4;
+                        skipWs();
+                        aggFunc = readIdent().toLowerCase(Locale.ROOT);
+                    } else if (startsWithIgnoreCase("value=")) {
+                        pos += 6;
+                        skipWs();
+                        aggValuePath = parsePathArg();
+                    } else {
+                        throw error("groupBy() expects agg= or value= parameters");
+                    }
+                    skipWs();
+                }
+                expect(')');
+            }
+            return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath);
+        } else if ("top".equals(name)) {
+            int n = 10; // default
+            List<String> byPath = List.of("value");
+            boolean ascending = false;
+            if (peek() == '(') {
+                pos++; skipWs();
+                // First arg is the count
+                Object lit = parseLiteral();
+                if (!(lit instanceof Number)) throw error("top() expects numeric count");
+                n = ((Number) lit).intValue();
+                skipWs();
+                // Parse optional by= and asc= parameters
+                while (peek() == ',') {
+                    pos++; skipWs();
+                    if (startsWithIgnoreCase("by=")) {
+                        pos += 3;
+                        skipWs();
+                        byPath = parsePathArg();
+                    } else if (startsWithIgnoreCase("asc=")) {
+                        pos += 4;
+                        skipWs();
+                        Object boolLit = parseLiteral();
+                        ascending = Boolean.TRUE.equals(boolLit);
+                    } else {
+                        throw error("top() expects by= or asc= parameters");
+                    }
+                    skipWs();
+                }
+                expect(')');
+            }
+            return new JfrPath.TopOp(n, byPath, ascending);
         } else if ("len".equals(name)) {
             if (peek() == '(') {
                 pos++; skipWs();

@@ -413,9 +413,12 @@ public class CommandDispatcher {
             io.println("Pipeline functions (append with '|'):");
             io.println("  Aggregations:");
             io.println("    | count()                  → number of rows/events");
+            io.println("    | sum([path])              → sum of numeric values");
             io.println("    | stats([path])            → min,max,avg,stddev for numeric values");
             io.println("    | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
             io.println("    | sketch([path])           → stats + p50,p90,p99");
+            io.println("    | groupBy(key[, agg=count|sum|avg|min|max, value=path]) → group by key and aggregate");
+            io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
             io.println("  Value transforms (also usable in filters where applicable):");
             io.println("    | len([path])              → length of string or list/array attribute");
             io.println("    | uppercase([path])        → string uppercased");
@@ -435,8 +438,12 @@ public class CommandDispatcher {
             io.println("  show events/jdk.ExecutionSample[stackTrace/truncated=true]");
             io.println("  show events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string~\".*XXX.*\"]");
             io.println("  show events/jdk.FileRead | count()");
+            io.println("  show events/jdk.FileRead/bytes | sum()");
             io.println("  show events/jdk.FileRead/bytes | stats()");
             io.println("  show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)");
+            io.println("  show events/jdk.ExecutionSample/thread/name | groupBy(value)");
+            io.println("  show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)");
+            io.println("  show events/jdk.FileRead | top(10, by=bytes)");
             io.println("  show metadata/jdk.types.Method/name | count()");
             io.println("  show cp/jdk.types.Symbol | count()");
             io.println("  show cp/jdk.types.Symbol[string~\"find.*\"]");

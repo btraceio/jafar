@@ -94,7 +94,7 @@ public class ShellCompleter implements Completer {
                         }
                         // Pipeline function suggestions after a '|'
                         if ("|".equals(prev)) {
-                            for (String v : new String[]{"count()", "stats()", "quantiles(0.5,0.9,0.99)", "sketch()", "len()", "uppercase()", "lowercase()", "trim()", "abs()", "round()", "floor()", "ceil()", "contains(\"\")", "replace(\"\",\"\")"}) {
+                            for (String v : new String[]{"count()", "sum()", "stats()", "quantiles(0.5,0.9,0.99)", "sketch()", "groupBy(key)", "top(10)", "len()", "uppercase()", "lowercase()", "trim()", "abs()", "round()", "floor()", "ceil()", "contains(\"\")", "replace(\"\",\"\")"}) {
                                 if (v.startsWith(w)) candidates.add(new Candidate(v));
                             }
                         }
@@ -102,7 +102,7 @@ public class ShellCompleter implements Completer {
                     // If current token starts with a pipe, suggest full "| fn()" forms
                     if (w.startsWith("|")) {
                         String after = w.substring(1).trim();
-                        for (String v : new String[]{"| count()", "| stats()", "| quantiles(0.5,0.9,0.99)", "| sketch()"}) {
+                        for (String v : new String[]{"| count()", "| sum()", "| stats()", "| quantiles(0.5,0.9,0.99)", "| sketch()", "| groupBy(key)", "| top(10)"}) {
                             String cmp = v.substring(1).trim();
                             if (cmp.startsWith(after)) candidates.add(new Candidate(v));
                         }

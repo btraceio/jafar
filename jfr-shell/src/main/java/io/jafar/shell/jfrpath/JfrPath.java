@@ -130,8 +130,12 @@ public final class JfrPath {
     }
 
     // Aggregation pipeline
-    public sealed interface PipelineOp permits CountOp, StatsOp, QuantilesOp, SketchOp, LenOp, UppercaseOp, LowercaseOp, TrimOp, AbsOp, RoundOp, FloorOp, CeilOp, ContainsOp, ReplaceOp { }
+    public sealed interface PipelineOp permits CountOp, SumOp, StatsOp, QuantilesOp, SketchOp, GroupByOp, TopOp, LenOp, UppercaseOp, LowercaseOp, TrimOp, AbsOp, RoundOp, FloorOp, CeilOp, ContainsOp, ReplaceOp { }
     public static final class CountOp implements PipelineOp { }
+    public static final class SumOp implements PipelineOp {
+        public final List<String> valuePath; // optional, if empty: use projection path
+        public SumOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
     public static final class StatsOp implements PipelineOp {
         public final List<String> valuePath; // optional, if empty: use projection path
         public StatsOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
@@ -147,6 +151,26 @@ public final class JfrPath {
     public static final class SketchOp implements PipelineOp {
         public final List<String> valuePath; // optional
         public SketchOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+    }
+    public static final class GroupByOp implements PipelineOp {
+        public final List<String> keyPath;          // path to group by
+        public final String aggFunc;                // "count", "sum", "avg", "min", "max"
+        public final List<String> valuePath;        // for sum/avg/min/max
+        public GroupByOp(List<String> keyPath, String aggFunc, List<String> valuePath) {
+            this.keyPath = List.copyOf(keyPath);
+            this.aggFunc = aggFunc == null ? "count" : aggFunc;
+            this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+        }
+    }
+    public static final class TopOp implements PipelineOp {
+        public final int n;                          // number of results to return
+        public final List<String> byPath;            // sort key path
+        public final boolean ascending;              // sort order
+        public TopOp(int n, List<String> byPath, boolean ascending) {
+            this.n = n;
+            this.byPath = byPath == null ? List.of("value") : List.copyOf(byPath);
+            this.ascending = ascending;
+        }
     }
     public static final class LenOp implements PipelineOp {
         public final List<String> valuePath; // optional
