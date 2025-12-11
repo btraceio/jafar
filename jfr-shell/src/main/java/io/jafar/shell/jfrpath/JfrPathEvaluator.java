@@ -13,6 +13,8 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.providers.ChunkProvider;
+import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 
 import java.nio.file.Path;
@@ -89,13 +91,29 @@ public final class JfrPathEvaluator {
                 return java.util.Collections.emptyList();
             }
         } else if (query.root == Root.CHUNKS) {
-            return loadChunkRows(session.getRecordingPath());
+            if (!query.segments.isEmpty()) {
+                // show chunks/0 - specific chunk by ID
+                try {
+                    int chunkId = Integer.parseInt(query.segments.get(0));
+                    Map<String, Object> chunk = ChunkProvider.loadChunk(session.getRecordingPath(), chunkId);
+                    if (chunk == null) return java.util.Collections.emptyList();
+                    return matchesAll(chunk, query.predicates) ? java.util.List.of(chunk) : java.util.Collections.emptyList();
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid chunk index: " + query.segments.get(0));
+                }
+            }
+            // show chunks or show chunks[filter]
+            if (query.predicates.isEmpty()) {
+                return ChunkProvider.loadAllChunks(session.getRecordingPath());
+            } else {
+                return ChunkProvider.loadChunks(session.getRecordingPath(), row -> matchesAll(row, query.predicates));
+            }
         } else if (query.root == Root.CP) {
             if (!query.segments.isEmpty()) {
                 String type = query.segments.get(0);
-                return loadConstantPoolEntries(session.getRecordingPath(), type, row -> matchesAll(row, query.predicates));
+                return ConstantPoolProvider.loadEntries(session.getRecordingPath(), type, row -> matchesAll(row, query.predicates));
             } else {
-                return loadConstantPoolSummary(session.getRecordingPath());
+                return ConstantPoolProvider.loadSummary(session.getRecordingPath());
             }
         } else {
             throw new UnsupportedOperationException("Unsupported root: " + query.root);
@@ -236,7 +254,7 @@ public final class JfrPathEvaluator {
             if (query.segments.isEmpty()) {
                 throw new IllegalArgumentException("No projection path provided after 'chunks'");
             }
-            List<Map<String, Object>> rows = loadChunkRows(session.getRecordingPath());
+            List<Map<String, Object>> rows = ChunkProvider.loadAllChunks(session.getRecordingPath());
             List<Object> out = new ArrayList<>();
             for (Map<String, Object> row : rows) {
                 extractWithIndexing(row, query.segments, out);
@@ -245,7 +263,7 @@ public final class JfrPathEvaluator {
         } else if (query.root == Root.CP) {
             if (query.segments.isEmpty()) {
                 // projection from summary rows
-                List<Map<String, Object>> rows = loadConstantPoolSummary(session.getRecordingPath());
+                List<Map<String, Object>> rows = ConstantPoolProvider.loadSummary(session.getRecordingPath());
                 List<Object> out = new ArrayList<>();
                 for (Map<String, Object> r : rows) {
                     Object v = Values.get(r, query.segments.toArray());
@@ -255,7 +273,7 @@ public final class JfrPathEvaluator {
             } else {
                 // projection from entries of specific type
                 String type = query.segments.get(0);
-                List<Map<String, Object>> rows = loadConstantPoolEntries(session.getRecordingPath(), type, r -> matchesAll(r, query.predicates));
+                List<Map<String, Object>> rows = ConstantPoolProvider.loadEntries(session.getRecordingPath(), type, r -> matchesAll(r, query.predicates));
                 List<String> proj = query.segments.subList(1, query.segments.size());
                 List<Object> out = new ArrayList<>();
                 for (Map<String, Object> r : rows) {
@@ -980,120 +998,4 @@ public final class JfrPathEvaluator {
         return MetadataProvider.loadField(recording, typeName, fieldName);
     }
 
-    private static List<Map<String, Object>> loadChunkRows(Path recording) throws Exception {
-        final List<Map<String, Object>> rows = java.util.Collections.synchronizedList(new ArrayList<>());
-        try (StreamingChunkParser parser = new StreamingChunkParser(new UntypedParserContextFactory())) {
-            parser.parse(recording, new ChunkParserListener() {
-                @Override
-                public boolean onChunkStart(ParserContext context, int chunkIndex, io.jafar.parser.internal_api.ChunkHeader header) {
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("index", chunkIndex);
-                    m.put("offset", header.offset);
-                    m.put("size", header.size);
-                    m.put("startNanos", header.startNanos);
-                    m.put("duration", header.duration);
-                    m.put("compressed", header.compressed);
-                    rows.add(m);
-                    return true;
-                }
-
-                @Override
-                public boolean onMetadata(ParserContext context, MetadataEvent metadata) { return true; }
-            });
-        }
-        return rows;
-    }
-
-    private static List<Map<String, Object>> loadConstantPoolSummary(Path recording) throws Exception {
-        final Map<String, Long> sizes = new HashMap<>();
-        try (StreamingChunkParser parser = new StreamingChunkParser(new UntypedParserContextFactory())) {
-            parser.parse(recording, new ChunkParserListener() {
-                @Override
-                public boolean onCheckpoint(ParserContext context, io.jafar.parser.internal_api.CheckpointEvent event) {
-                    context.getConstantPools().pools().forEach(cp -> {
-                        String name = cp.getType().getName();
-                        long count = extractConstantPoolCount(cp);
-                        sizes.merge(name, count, Long::sum);
-                    });
-                    return true;
-                }
-            });
-        }
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map.Entry<String, Long> e : sizes.entrySet()) {
-            Map<String, Object> m = new HashMap<>();
-            m.put("name", e.getKey());
-            m.put("totalSize", e.getValue());
-            rows.add(m);
-        }
-        // sort by size desc
-        rows.sort((a,b) -> Long.compare((long)b.get("totalSize"), (long)a.get("totalSize")));
-        return rows;
-    }
-
-    private static List<Map<String, Object>> loadConstantPoolEntries(Path recording, String typeName,
-                                                                     java.util.function.Predicate<Map<String,Object>> rowFilter) throws Exception {
-        final List<Map<String, Object>> rows = new ArrayList<>();
-        final java.util.function.BiConsumer<io.jafar.parser.api.ConstantPool, String> drain = (cp, tn) -> {
-            if (!cp.getType().getName().equals(tn)) return;
-            try { cp.ensureIndexed(); } catch (Throwable ignore) {}
-            java.util.Iterator<Long> it = cp.ids();
-            while (it.hasNext()) {
-                long id = it.next();
-                Object val = cp.get(id);
-                Map<String, Object> row = new HashMap<>();
-                row.put("id", id);
-                if (val instanceof Map<?,?> map) {
-                    @SuppressWarnings("unchecked") Map<String,Object> mv = (Map<String,Object>) map;
-                    row.putAll(mv);
-                } else {
-                    row.put("value", val);
-                }
-                if (rowFilter == null || rowFilter.test(row)) rows.add(row);
-            }
-        };
-
-        try (StreamingChunkParser parser = new StreamingChunkParser(new UntypedParserContextFactory())) {
-            parser.parse(recording, new ChunkParserListener() {
-                @Override
-                public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
-                    MapValueBuilder mvb = new MapValueBuilder(context);
-                    GenericValueReader reader = new GenericValueReader(mvb);
-                    context.put(GenericValueReader.class, reader);
-                    return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
-                }
-
-                @Override
-                public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                    context.remove(GenericValueReader.class);
-                    return ChunkParserListener.super.onChunkEnd(context, chunkIndex, skipped);
-                }
-
-                @Override
-                public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                    try { context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName)); } catch (Throwable ignore) {}
-                    return true;
-                }
-
-                @Override
-                public boolean onCheckpoint(ParserContext context, io.jafar.parser.internal_api.CheckpointEvent event) {
-                    context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName));
-                    return true;
-                }
-            });
-        }
-        return rows;
-    }
-
-    private static long extractConstantPoolCount(io.jafar.parser.api.ConstantPool cp) {
-        try {
-            Object impl = cp;
-            java.lang.reflect.Field f = impl.getClass().getDeclaredField("offsets");
-            f.setAccessible(true);
-            Object offsets = f.get(impl);
-            try { return (int) offsets.getClass().getMethod("size").invoke(offsets); } catch (Throwable ignore) {}
-        } catch (Throwable ignore) {}
-        // Fallback to size() (may be zero if not materialized yet)
-        return cp.size();
-    }
 }

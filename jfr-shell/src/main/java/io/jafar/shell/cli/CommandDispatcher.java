@@ -5,10 +5,13 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import io.jafar.shell.providers.ChunkProvider;
+import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -94,6 +97,15 @@ public class CommandDispatcher {
                 case "types":
                     io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
                     cmdTypes(args);
+                    return true;
+                case "chunks":
+                    cmdChunks(args);
+                    return true;
+                case "chunk":
+                    cmdChunk(args);
+                    return true;
+                case "cp":
+                    cmdCp(args);
                     return true;
                 default:
                     return false;
@@ -476,6 +488,49 @@ public class CommandDispatcher {
             io.println("    metadata class jdk.types.Method --fields");
             return;
         }
+        if ("chunks".equals(sub)) {
+            io.println("Usage: chunks [--summary|--list] [--range N-M]");
+            io.println("List chunks in the current recording.");
+            io.println("Options:");
+            io.println("  --summary      Show aggregate statistics (totalChunks, totalSize, avgSize, minSize, maxSize, compressedCount)");
+            io.println("  --range N-M    Show chunks from index N to M (inclusive)");
+            io.println("Examples:");
+            io.println("  chunks");
+            io.println("  chunks --summary");
+            io.println("  chunks --range 0-5");
+            io.println("");
+            io.println("Chunks are indexed starting from 0. Each chunk contains a portion of the recording data.");
+            return;
+        }
+        if ("chunk".equals(sub)) {
+            io.println("Usage: chunk <index> show [--header|--events|--constants]");
+            io.println("Show detailed information about a specific chunk.");
+            io.println("Options:");
+            io.println("  --header       Show chunk header information (default)");
+            io.println("  --events       Show event counts by type (not yet implemented)");
+            io.println("  --constants    Show constant pool references (not yet implemented)");
+            io.println("Examples:");
+            io.println("  chunk 0 show");
+            io.println("  chunk 2 show --header");
+            io.println("");
+            io.println("Displays: index, offset, size, startNanos, duration, compressed");
+            return;
+        }
+        if ("cp".equals(sub)) {
+            io.println("Usage: cp [--summary] [<type>] [--range N-M]");
+            io.println("Browse constant pools in the current recording.");
+            io.println("Options:");
+            io.println("  --summary      Show per-type counts only (default when no type specified)");
+            io.println("  --range N-M    Show entries from N to M (inclusive, for specific type)");
+            io.println("Examples:");
+            io.println("  cp");
+            io.println("  cp jdk.types.Symbol");
+            io.println("  cp jdk.types.Method --range 0-100");
+            io.println("");
+            io.println("Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
+            io.println("Use 'show cp/<type>' for more advanced filtering with JfrPath expressions.");
+            return;
+        }
         io.println("No specific help for '" + sub + "'. Try 'help show'.");
     }
 
@@ -700,5 +755,131 @@ public class CommandDispatcher {
         copy.remove("settingsByName");
         copy.remove("fieldCount");
         TableRenderer.render(java.util.List.of(copy), io);
+    }
+
+    /**
+     * chunks [--summary|--list] [--range N-M]
+     * Default: list all chunks
+     */
+    private void cmdChunks(List<String> args) throws Exception {
+        Optional<SessionManager.SessionRef> cur = sessions.current();
+        if (cur.isEmpty()) {
+            io.error("No session open. Use 'open <file>' first.");
+            return;
+        }
+
+        boolean summary = args.contains("--summary");
+        String range = extractOption(new ArrayList<>(args), "--range");
+
+        if (summary) {
+            Map<String, Object> stats = ChunkProvider.getChunkSummary(cur.get().session.getRecordingPath());
+            TableRenderer.render(List.of(stats), io);
+        } else {
+            List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(cur.get().session.getRecordingPath());
+
+            // Apply range filter if provided: --range 0-5
+            if (range != null) {
+                String[] parts = range.split("-");
+                int start = Integer.parseInt(parts[0]);
+                int end = parts.length > 1 ? Integer.parseInt(parts[1]) : start;
+                final int fStart = start;
+                final int fEnd = end;
+                chunks = chunks.stream()
+                    .filter(c -> {
+                        int idx = (int) c.get("index");
+                        return idx >= fStart && idx <= fEnd;
+                    })
+                    .toList();
+            }
+
+            TableRenderer.render(chunks, io);
+        }
+    }
+
+    /**
+     * chunk <index> show [--header|--events|--constants]
+     * Show detailed view of a single chunk
+     */
+    private void cmdChunk(List<String> args) throws Exception {
+        Optional<SessionManager.SessionRef> cur = sessions.current();
+        if (cur.isEmpty()) {
+            io.error("No session open. Use 'open <file>' first.");
+            return;
+        }
+        if (args.isEmpty()) {
+            io.error("Usage: chunk <index> show [--header|--events|--constants]");
+            return;
+        }
+
+        int chunkIndex;
+        try {
+            chunkIndex = Integer.parseInt(args.get(0));
+        } catch (NumberFormatException e) {
+            io.error("Invalid chunk index: " + args.get(0));
+            return;
+        }
+
+        Map<String, Object> chunk = ChunkProvider.loadChunk(cur.get().session.getRecordingPath(), chunkIndex);
+
+        if (chunk == null) {
+            io.error("Chunk " + chunkIndex + " not found");
+            return;
+        }
+
+        // For now, just show header. Future: add event counts, CP refs
+        TableRenderer.render(List.of(chunk), io);
+    }
+
+    /**
+     * cp [--summary] [<kind>] [--range N-M]
+     * cp <kind> [--range N-M]
+     */
+    private void cmdCp(List<String> args) throws Exception {
+        Optional<SessionManager.SessionRef> cur = sessions.current();
+        if (cur.isEmpty()) {
+            io.error("No session open. Use 'open <file>' first.");
+            return;
+        }
+
+        boolean summary = args.contains("--summary");
+        List<String> cleanArgs = new ArrayList<>(args);
+        cleanArgs.remove("--summary");
+
+        String range = extractOption(cleanArgs, "--range");
+
+        if (cleanArgs.isEmpty() || summary) {
+            // cp or cp --summary: show type summary
+            List<Map<String, Object>> summaryRows = ConstantPoolProvider.loadSummary(cur.get().session.getRecordingPath());
+            TableRenderer.render(summaryRows, io);
+        } else {
+            // cp <type>: list entries
+            String typeName = cleanArgs.get(0);
+            List<Map<String, Object>> entries = ConstantPoolProvider.loadEntries(cur.get().session.getRecordingPath(), typeName);
+
+            // Apply range filter if needed
+            if (range != null) {
+                String[] parts = range.split("-");
+                int start = Integer.parseInt(parts[0]);
+                int end = parts.length > 1 ? Integer.parseInt(parts[1]) : entries.size() - 1;
+                entries = entries.subList(Math.max(0, start), Math.min(entries.size(), end + 1));
+            }
+
+            TableRenderer.render(entries, io);
+        }
+    }
+
+    /**
+     * Helper to extract option value from args list.
+     * Modifies the args list by removing the option and its value.
+     */
+    private String extractOption(List<String> args, String optionName) {
+        int idx = args.indexOf(optionName);
+        if (idx >= 0 && idx + 1 < args.size()) {
+            String value = args.get(idx + 1);
+            args.remove(idx + 1);
+            args.remove(idx);
+            return value;
+        }
+        return null;
     }
 }

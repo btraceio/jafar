@@ -15,7 +15,7 @@ import java.util.Locale;
  */
 public class ShellCompleter implements Completer {
     private static final String[] COMMANDS = new String[]{
-            "open", "sessions", "use", "close", "info", "show", "help", "metadata", "exit", "quit"
+            "open", "sessions", "use", "close", "info", "show", "help", "metadata", "chunks", "chunk", "cp", "exit", "quit"
     };
 
     private final SessionManager sessions;
@@ -46,6 +46,9 @@ public class ShellCompleter implements Completer {
                 // Suggest known subtopics
                 candidates.add(new Candidate("show"));
                 candidates.add(new Candidate("metadata"));
+                candidates.add(new Candidate("chunks"));
+                candidates.add(new Candidate("chunk"));
+                candidates.add(new Candidate("cp"));
                 break;
             case "open":
                 // Suggest filenames and option names
@@ -509,6 +512,56 @@ public class ShellCompleter implements Completer {
                 candidates.addAll(sess);
                 if (cmd.equals("close")) {
                     candidates.add(new Candidate("--all"));
+                }
+                break;
+            case "chunks":
+                // Suggest --summary and --range options
+                suggestOptions(line, candidates, new String[]{"--summary", "--range"});
+                break;
+            case "chunk":
+                // Suggest available chunk IDs after 'chunk '
+                if (wordIndex == 1) {
+                    if (sessions.getCurrent().isPresent()) {
+                        try {
+                            List<Integer> ids = sessions.getCurrent().get().session.getAvailableChunkIds();
+                            String cur = line.word();
+                            for (Integer id : ids) {
+                                String idStr = String.valueOf(id);
+                                if (idStr.startsWith(cur)) {
+                                    candidates.add(new Candidate(idStr));
+                                }
+                            }
+                        } catch (Exception ignore) {}
+                    }
+                } else if (wordIndex == 2) {
+                    // Suggest 'show' subcommand
+                    if ("show".startsWith(line.word())) {
+                        candidates.add(new Candidate("show"));
+                    }
+                } else if (wordIndex >= 3) {
+                    // Suggest options for 'chunk N show ...'
+                    suggestOptions(line, candidates, new String[]{"--header", "--events", "--constants"});
+                }
+                break;
+            case "cp":
+                // Suggest CP type names or options
+                if (wordIndex == 1) {
+                    // Could be a type name or an option
+                    suggestOptions(line, candidates, new String[]{"--summary", "--range"});
+                    if (sessions.getCurrent().isPresent()) {
+                        try {
+                            java.util.Set<String> types = sessions.getCurrent().get().session.getAvailableConstantPoolTypes();
+                            String cur = line.word();
+                            for (String t : types) {
+                                if (t.startsWith(cur)) {
+                                    candidates.add(new Candidate(t));
+                                }
+                            }
+                        } catch (Exception ignore) {}
+                    }
+                } else {
+                    // After type name, suggest --range
+                    suggestOptions(line, candidates, new String[]{"--range"});
                 }
                 break;
             default:
