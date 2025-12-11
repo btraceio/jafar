@@ -197,7 +197,7 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| contains([path], "substr")` — Boolean: string contains substring.
 - `| replace([path], "a", "b")` — String replace occurrences of `a` with `b`.
 
-For complete operator reference and grammar details, see [doc/jfrpath.md](doc/jfrpath.md).
+For complete operator reference and grammar details, see [doc/jfrpath.md](jfrpath.md).
 
 **Aggregation Examples:**
 - `show events/jdk.FileRead | count()`

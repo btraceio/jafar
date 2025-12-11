@@ -1,110 +1,265 @@
-# JFR Shell (CLI)
+# JFR Shell
 
-A pure Java, interactive CLI for exploratory analysis of Java Flight Recorder (JFR) files powered by the Jafar parser.
+An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files with a powerful query language.
 
-- Runtime: Java 25
-- Modules used: `parser`, `tools`
-- UI: JLine-based REPL with code completion
-- Args parsing: picocli
+**Quick Links**: [Usage Guide](../JFR-SHELL-USAGE.md) | [JfrPath Reference](../doc/jfrpath.md)
 
-Status: Milestone M1 (multi-session management) complete; early JfrPath with events + metadata support. See `jfr-shell/PLAN.md` for roadmap.
+## Features
 
-## Features (current)
+- **Interactive REPL** with intelligent tab completion
+- **JfrPath query language** for filtering, projection, and aggregation
+- **Multiple output formats**: table (default) and JSON
+- **Multi-session support**: work with multiple recordings simultaneously
+- **Non-interactive mode**: execute queries from command line for scripting/CI
+- **Fast streaming parser**: efficient memory usage, handles large recordings
 
-- Multi-session management:
-  - `open <path> [--alias NAME]`
-  - `sessions`
-  - `use <id|alias>`
-  - `info [id|alias]`
-  - `close [id|alias|--all]`
-- Interactive REPL with code-completion for commands, options, session IDs/aliases
-- Clean design focused on a typed CLI API
+## Quick Start
 
-Planned next milestones include expanded metadata/chunk/constant-pool browsing and richer JfrPath (filters, aggregations, formats).
+### Build and Run
 
-## Build
+```bash
+# Run directly with Gradle
+./gradlew :jfr-shell:run --console=plain
 
-- Build the shaded executable jar:
-  - `./gradlew :jfr-shell:shadowJar`
-- The fat jar is produced at `jfr-shell/build/libs/jfr-shell-<version>.jar`
+# Or build and use the jar
+./gradlew :jfr-shell:shadowJar
+java -jar jfr-shell/build/libs/jfr-shell-all.jar
 
-Requirements:
-- Java 25 toolchain is configured via Gradle toolchains.
+# Open a file immediately
+./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
+```
 
-## Run
-
-- Run the CLI directly from Gradle (plain console recommended):
-  - `./gradlew :jfr-shell:run --console=plain`
-- Or use the fat jar:
-  - `java -jar jfr-shell/build/libs/jfr-shell-<version>.jar`
-- Optional: open a recording on startup:
-  - `java -jar jfr-shell/build/libs/jfr-shell-<version>.jar --file /path/to/recording.jfr`
-
-## Commands (M1)
-
-- `open <path> [--alias NAME]`: Open a JFR file as a new session (sets current)
-- `sessions`: List all sessions; current is marked with `*`
-- `use <id|alias>`: Switch the current session
-- `info [id|alias]`: Show basic session info (file, types discovered, handlers, run status)
-- `close [id|alias|--all]`: Close the current, a specific, or all sessions
-- `help`: Show built-in help
-- `exit` | `quit`: Exit the shell
-
-JfrPath usage (show):
-- `show events/jdk.FileRead[bytes>=1000] --limit 5`
-- `show events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
-- `show events/jdk.SocketRead[remoteHost~"10\.0\..*"] --limit 3`
- - Attribute projection (single-column values):
-   - `show events/jdk.ExecutionSample/sampledThread/javaName --limit 5`
- - Metadata browsing via JfrPath:
-   - `show metadata/java.lang.Thread`
-   - `show metadata/java.lang.Thread/superType`
-
-Code completion hints:
-- Start typing a command and press Tab to complete.
-- For `use`, `info`, and `close`, Tab completes session IDs and aliases; `close` also completes `--all`.
-- For `open`, Tab completes `--alias` option.
- - For `show`, Tab completes roots (`events/`, `metadata/`, `cp/`, `chunks/`) and type names under them.
-
-## Example session
+### Interactive Session
 
 ```
-$ java -jar jfr-shell/build/libs/jfr-shell-<version>.jar
-╔═══════════════════════════════════════╗
-║           JFR Shell (CLI)             ║
-║     Interactive JFR exploration       ║
-╚═══════════════════════════════════════╝
-Type 'help' for commands, 'exit' to quit
+jfr> open recording.jfr
+Opened session #1: recording.jfr
 
-jfr> open /path/to/recording.jfr --alias app
-Opened session #1 (app): /path/to/recording.jfr
-jfr> sessions
-*#1 app - /path/to/recording.jfr
-jfr> info
-Session Information:
-  Recording: /path/to/recording.jfr
-  Event Types: 0
-  Handlers: 0
-  Has Run: false
-jfr> close
-Closed session #1
-jfr> exit
+jfr> show events/jdk.FileRead[bytes>=1000] --limit 5
+| startTime           | duration | path              | bytes  |
++---------------------+----------+-------------------+--------+
+| 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt     | 524288 |
+...
+
+jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
+| key              | count |
++------------------+-------+
+| main             | 15234 |
+| ForkJoinPool-1   | 8923  |
+| GC Thread#0      | 4521  |
+...
+
+jfr> show events/jdk.FileRead | top(10, by=bytes)
+| path                    | bytes    |
++-------------------------+----------+
+| /data/large-file.bin    | 10485760 |
+| /logs/app.log           | 5242880  |
+...
 ```
+
+## Common Use Cases
+
+### Count Events
+
+```bash
+# How many execution samples?
+show events/jdk.ExecutionSample | count()
+
+# How many file reads over 1MB?
+show events/jdk.FileRead[bytes>1048576] | count()
+```
+
+### Analyze Thread Activity
+
+```bash
+# Group execution samples by thread
+show events/jdk.ExecutionSample | groupBy(thread/name)
+
+# Find threads with deep call stacks
+show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 10
+
+# Top threads by sample count
+show events/jdk.ExecutionSample | groupBy(thread/name, agg=count) | top(10, by=count)
+```
+
+### File I/O Analysis
+
+```bash
+# Sum total bytes read
+show events/jdk.FileRead/bytes | sum()
+
+# Statistics on read sizes
+show events/jdk.FileRead/bytes | stats()
+
+# Top 10 files by bytes read
+show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)
+
+# Files read from /tmp
+show events/jdk.FileRead[path~"/tmp/.*"] --limit 20
+```
+
+### GC Analysis
+
+```bash
+# GC events after collection
+show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
+
+# Large committed heap sizes
+show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000000]
+
+# GC pause statistics
+show events/jdk.GarbageCollection/sumOfPauses | stats()
+```
+
+### Metadata Exploration
+
+```bash
+# Browse a type structure
+show metadata/jdk.types.StackTrace --tree --depth 2
+
+# List all fields in a type
+show metadata/jdk.types.Method/fields/name
+
+# Find event types
+metadata --search jdk.* --events-only
+```
+
+### Chunks and Constant Pools
+
+```bash
+# Chunk summary statistics
+chunks --summary
+
+# Browse constant pool symbols
+cp jdk.types.Symbol
+
+# Find specific symbols
+show cp/jdk.types.Symbol[string~"java/lang/.*"]
+```
+
+## Non-Interactive Mode
+
+Execute queries without entering the shell - perfect for scripts and CI pipelines:
+
+```bash
+# Count events
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | count()"
+
+# Get JSON output
+jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json
+
+# Group analysis
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)"
+
+# List event types
+jfr-shell metadata recording.jfr --events-only
+
+# Chunk information
+jfr-shell chunks recording.jfr --summary
+```
+
+Exit codes: 0 for success, 1 for errors (sent to stderr).
+
+## JfrPath Query Language
+
+JfrPath is a concise path-based query language for JFR data:
+
+```
+<root>/<segments>[filters]/<projection> | <aggregation>
+```
+
+### Roots
+- `events/<type>` - Event data (e.g., `events/jdk.FileRead`)
+- `metadata/<type>` - Type metadata (e.g., `metadata/java.lang.Thread`)
+- `chunks` - Chunk information
+- `cp/<type>` - Constant pool entries (e.g., `cp/jdk.types.Symbol`)
+
+### Filters
+
+Simple comparisons:
+```
+[field op value]
+```
+Operators: `=` `!=` `>` `>=` `<` `<=` `~` (regex)
+
+Boolean expressions with functions:
+```
+[contains(path, "substring")]
+[starts_with(path, "prefix")]
+[matches(path, "regex")]
+[exists(path)]
+[empty(path)]
+[between(value, min, max)]
+[len(field)>10]
+```
+
+Logic operators: `and`, `or`, `not`, parentheses
+
+List matching:
+```
+[any:stackTrace/frames[matches(method/name/string, ".*Foo.*")]]
+[all:items[value>100]]
+[none:items[error=true]]
+```
+
+### Aggregations
+
+- `| count()` - Count rows
+- `| sum([path])` - Sum numeric values
+- `| stats([path])` - Min, max, avg, stddev
+- `| groupBy(key[, agg=count|sum|avg|min|max, value=path])` - Group and aggregate
+- `| top(n[, by=path, asc=false])` - Sort and take top N
+- `| quantiles(0.5,0.9,0.99[,path=])` - Percentiles
+- `| sketch([path])` - Stats + p50, p90, p99
+
+### Transforms
+
+- `| len([path])` - String/list length
+- `| uppercase([path])`, `| lowercase([path])`, `| trim([path])`
+- `| abs([path])`, `| round([path])`, `| floor([path])`, `| ceil([path])`
+- `| contains([path], "s")`, `| replace([path], "old", "new")`
+
+See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
+
+## Available Commands
+
+### Session Management
+- `open <path> [--alias NAME]` - Open a recording
+- `sessions` - List all sessions
+- `use <id|alias>` - Switch current session
+- `info [id|alias]` - Show session information
+- `close [id|alias|--all]` - Close session(s)
+
+### Querying
+- `show <expr> [options]` - Execute JfrPath query
+- `metadata [options]` - List/inspect metadata types
+- `chunks [options]` - List chunks
+- `chunk <index> show` - Show chunk details
+- `cp [<type>] [options]` - Browse constant pools
+
+### Help
+- `help [<command>]` - Show help (use `help show` for JfrPath syntax)
+- `exit` / `quit` - Exit shell
+
+## Requirements
+
+- Java 25+
+- Gradle 8+ (for building)
 
 ## Development
 
-- Tests: JUnit 5
-  - `./gradlew :jfr-shell:test`
-- Code style: Java 25, 4 spaces indentation, ~120 column target
-- Keep the public API lean and focused on CLI internals.
+```bash
+# Run tests
+./gradlew :jfr-shell:test
 
-## Roadmap (high level)
+# Build fat jar
+./gradlew :jfr-shell:shadowJar
 
-- M2: Metadata discovery (`metadata` command) with search/refresh; completion for type names
-- M3: Metadata browsing (`metadata ...`)
-- M4: Chunks and constant pools (`chunks`, `chunk`, `cp`)
-- M5/M6: JfrPath query language (filter/project/aggregate) + table/json/csv output
-- M7: UX polish (pager, contextual help, enhanced completion)
-- M8+: Non-interactive subcommands for CI/scripting
+# Run with test recording
+./gradlew :jfr-shell:run --console=plain --args="-f parser/src/test/resources/test-jfr.jfr"
+```
 
-See `jfr-shell/PLAN.md` for detailed milestones and acceptance criteria. This README will be updated alongside each milestone.
+## Documentation
+
+- [JFR-SHELL-USAGE.md](../JFR-SHELL-USAGE.md) - Complete usage guide
+- [doc/jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference
