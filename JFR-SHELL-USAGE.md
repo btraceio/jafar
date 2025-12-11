@@ -50,14 +50,73 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 
 ## Command Line Options
 
+### Interactive Mode (Default)
+
 ```bash
 Usage: jfr-shell [-hqV] [-f=<jfrFile>]
-Interactive JFR CLI
-  -f, --file=<jfrFile>   JFR file to open immediately
+JFR analysis tool with interactive and non-interactive modes
+  -f, --file=<jfrFile>   JFR file to open immediately (interactive mode)
   -h, --help             Show this help message and exit
-  -q, --quiet            Suppress banner
+  -q, --quiet            Suppress banner (interactive mode)
   -V, --version          Print version information and exit
 ```
+
+### Non-Interactive Mode
+
+Execute queries without entering the shell, suitable for scripting and CI/automation:
+
+```bash
+# Show command - Execute JfrPath queries
+jfr-shell show <jfr-file> "<expression>" [options]
+  --limit, -l <N>           Limit number of results
+  --format, -f <format>     Output format: table (default), json
+  --list-match <mode>       List matching mode: any, all, none
+
+# Metadata command - List event types and metadata
+jfr-shell metadata <jfr-file> [options]
+  --search, -s <pattern>    Search pattern
+  --regex, -r               Use regex for search
+  --events-only, -e         Show only event types
+  --summary                 Show summary only
+
+# Chunks command - List chunk information
+jfr-shell chunks <jfr-file> [options]
+  --summary                 Show summary only
+  --format, -f <format>     Output format: table (default), json
+
+# CP command - List constant pool entries
+jfr-shell cp <jfr-file> [options]
+  --type, -t <name>         Constant pool type name
+  --summary                 Show summary only
+  --format, -f <format>     Output format: table (default), json
+```
+
+**Non-Interactive Examples:**
+```bash
+# Count execution samples
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | count()"
+
+# Top 10 files by bytes, JSON output
+jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json
+
+# Group execution samples by thread
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)"
+
+# List event types only
+jfr-shell metadata recording.jfr --events-only
+
+# Chunk summary
+jfr-shell chunks recording.jfr --summary
+
+# Constant pool symbols
+jfr-shell cp recording.jfr --type jdk.types.Symbol
+```
+
+**Exit Codes:**
+- `0` - Success
+- `1` - Error (with message to stderr)
+
+All non-interactive commands execute without prompts, making them suitable for automation and CI pipelines.
 
 ## Metadata Field Paths (mini guide)
 
@@ -112,23 +171,37 @@ is aliased for convenience.
 
 Append pipeline functions with `|` to compute aggregates over results.
 
+**Aggregation Functions:**
 - `| count()` — Count matching rows/events.
+- `| sum([path])` — Sum numeric values. Returns `sum` and `count`.
 - `| stats([path])` — Numeric stats: `min`, `max`, `avg`, `stddev`.
 - `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
 - `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
+- `| groupBy(key[, agg=count|sum|avg|min|max, value=path])` — Group by key and aggregate.
+- `| top(n[, by=path, asc=false])` — Sort and return top N rows (descending by default).
+
+**Value Transform Functions:**
 - `| len([path])` — For attributes: length of a string or list/array. Errors on unsupported types.
 - `| uppercase([path])`, `| lowercase([path])`, `| trim([path])` — String transforms.
 - `| abs([path])`, `| round([path])`, `| floor([path])`, `| ceil([path])` — Numeric transforms.
 - `| contains([path], "substr")` — Boolean: string contains substring.
 - `| replace([path], "a", "b")` — String replace occurrences of `a` with `b`.
 
-Examples:
+For complete operator reference and grammar details, see [doc/jfrpath.md](doc/jfrpath.md).
+
+**Aggregation Examples:**
 - `show events/jdk.FileRead | count()`
+- `show events/jdk.FileRead/bytes | sum()`
 - `show events/jdk.FileRead/bytes | stats()`
 - `show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
 - `show events/jdk.FileRead | sketch(path=bytes)`
+- `show events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
+- `show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
+- `show events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
 - `show metadata/jdk.types.Method/name | count()`
 - `show cp/jdk.types.Symbol | count()`
+
+**Other Examples:**
 - `show cp/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
 - `show cp/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
 - `show cp[name~"jdk\\.types\\..*"]` (filter CP summary rows)
