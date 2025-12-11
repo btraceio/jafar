@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'application'
     id 'com.gradleup.shadow' version '8.3.6'
+    id 'maven-publish'
 }
 
 def libraryName = "jfr-shell"
@@ -185,5 +186,53 @@ tasks.register('jlinkZip', Zip) {
 
     doLast {
         logger.lifecycle("Standalone zip created: ${archiveFile.get().asFile}")
+    }
+}
+
+// Publishing configuration for JBang distribution
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'io.jafar'
+            artifactId = 'jfr-shell'
+            version = component_version
+
+            // Publish the shadow JAR as main artifact
+            artifact shadowJar
+
+            pom {
+                name = 'JFR Shell'
+                description = 'Interactive CLI for exploring and analyzing Java Flight Recorder files'
+                url = 'https://github.com/btraceio/jafar'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'jbachorik'
+                        name = 'Jaroslav Bachorik'
+                        email = 'j.bachorik@gmail.com'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:git://github.com/btraceio/jafar.git'
+                    developerConnection = 'scm:git:ssh://github.com/btraceio/jafar.git'
+                    url = 'https://github.com/btraceio/jafar'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/btraceio/jafar")
+            credentials {
+                username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+                password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }
