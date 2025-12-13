@@ -164,9 +164,9 @@ public final class MetadataField extends AbstractMetadataElement {
   /**
    * Returns field-level JFR metadata annotations declared on this field.
    *
-   * <p>The returned list is an unmodifiable snapshot; it may be empty when the field
-   * has no annotations. Each entry provides access to the annotation type and value via
-   * {@link MetadataAnnotation#getType()} and {@link MetadataAnnotation#getValue()}.
+   * <p>The returned list is an unmodifiable snapshot; it may be empty when the field has no
+   * annotations. Each entry provides access to the annotation type and value via {@link
+   * MetadataAnnotation#getType()} and {@link MetadataAnnotation#getValue()}.
    *
    * @return an unmodifiable list of field annotations (possibly empty)
    */

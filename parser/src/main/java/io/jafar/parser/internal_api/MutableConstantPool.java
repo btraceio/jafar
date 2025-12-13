@@ -94,8 +94,16 @@ public final class MutableConstantPool implements ConstantPool {
     // Prefer a primitive long iterator if available
     return new java.util.Iterator<Long>() {
       final it.unimi.dsi.fastutil.longs.LongIterator it = offsets.keySet().iterator();
-      @Override public boolean hasNext() { return it.hasNext(); }
-      @Override public Long next() { return it.nextLong(); }
+
+      @Override
+      public boolean hasNext() {
+        return it.hasNext();
+      }
+
+      @Override
+      public Long next() {
+        return it.nextLong();
+      }
     };
   }
 

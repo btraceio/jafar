@@ -2,224 +2,354 @@ package io.jafar.shell.jfrpath;
 
 import java.util.List;
 
-/**
- * JfrPath AST model and utilities.
- */
+/** JfrPath AST model and utilities. */
 public final class JfrPath {
-    private JfrPath() {}
+  private JfrPath() {}
 
-    public enum Root { EVENTS, METADATA, CHUNKS, CP }
+  public enum Root {
+    EVENTS,
+    METADATA,
+    CHUNKS,
+    CP
+  }
 
-    public enum Op { EQ, NE, GT, GE, LT, LE, REGEX }
+  public enum Op {
+    EQ,
+    NE,
+    GT,
+    GE,
+    LT,
+    LE,
+    REGEX
+  }
 
-    public enum MatchMode { ANY, ALL, NONE }
+  public enum MatchMode {
+    ANY,
+    ALL,
+    NONE
+  }
 
-    public sealed interface Predicate permits FieldPredicate, ExprPredicate {
-    }
+  public sealed interface Predicate permits FieldPredicate, ExprPredicate {}
 
-    public static final class FieldPredicate implements Predicate {
-        public final List<String> fieldPath; // e.g., ["thread","name"]
-        public final Op op;
-        public final Object literal; // String or Number
-        public final MatchMode matchMode; // list/array matching behavior
+  public static final class FieldPredicate implements Predicate {
+    public final List<String> fieldPath; // e.g., ["thread","name"]
+    public final Op op;
+    public final Object literal; // String or Number
+    public final MatchMode matchMode; // list/array matching behavior
 
-        public FieldPredicate(List<String> fieldPath, Op op, Object literal) {
-            this.fieldPath = List.copyOf(fieldPath);
-            this.op = op;
-            this.literal = literal;
-            this.matchMode = MatchMode.ANY;
-        }
-
-        public FieldPredicate(List<String> fieldPath, Op op, Object literal, MatchMode matchMode) {
-            this.fieldPath = List.copyOf(fieldPath);
-            this.op = op;
-            this.literal = literal;
-            this.matchMode = matchMode == null ? MatchMode.ANY : matchMode;
-        }
-    }
-
-    // Boolean expression-based predicate (for functions, logical ops, comparisons with function/path on LHS)
-    public static final class ExprPredicate implements Predicate {
-        public final BoolExpr expr;
-        public ExprPredicate(BoolExpr expr) { this.expr = expr; }
-    }
-
-    // Boolean expression AST
-    public sealed interface BoolExpr permits CompExpr, FuncBoolExpr, LogicalExpr, NotExpr {}
-
-    // Left-hand value expression for comparisons
-    public sealed interface ValueExpr permits PathRef, FuncValueExpr {}
-
-    public static final class PathRef implements ValueExpr {
-        public final java.util.List<String> path;
-        public PathRef(java.util.List<String> path) { this.path = java.util.List.copyOf(path); }
+    public FieldPredicate(List<String> fieldPath, Op op, Object literal) {
+      this.fieldPath = List.copyOf(fieldPath);
+      this.op = op;
+      this.literal = literal;
+      this.matchMode = MatchMode.ANY;
     }
 
-    public static final class FuncValueExpr implements ValueExpr {
-        public final String name;
-        public final java.util.List<Arg> args;
-        public FuncValueExpr(String name, java.util.List<Arg> args) {
-            this.name = name;
-            this.args = java.util.List.copyOf(args);
-        }
+    public FieldPredicate(List<String> fieldPath, Op op, Object literal, MatchMode matchMode) {
+      this.fieldPath = List.copyOf(fieldPath);
+      this.op = op;
+      this.literal = literal;
+      this.matchMode = matchMode == null ? MatchMode.ANY : matchMode;
+    }
+  }
+
+  // Boolean expression-based predicate (for functions, logical ops, comparisons with function/path
+  // on LHS)
+  public static final class ExprPredicate implements Predicate {
+    public final BoolExpr expr;
+
+    public ExprPredicate(BoolExpr expr) {
+      this.expr = expr;
+    }
+  }
+
+  // Boolean expression AST
+  public sealed interface BoolExpr permits CompExpr, FuncBoolExpr, LogicalExpr, NotExpr {}
+
+  // Left-hand value expression for comparisons
+  public sealed interface ValueExpr permits PathRef, FuncValueExpr {}
+
+  public static final class PathRef implements ValueExpr {
+    public final java.util.List<String> path;
+
+    public PathRef(java.util.List<String> path) {
+      this.path = java.util.List.copyOf(path);
+    }
+  }
+
+  public static final class FuncValueExpr implements ValueExpr {
+    public final String name;
+    public final java.util.List<Arg> args;
+
+    public FuncValueExpr(String name, java.util.List<Arg> args) {
+      this.name = name;
+      this.args = java.util.List.copyOf(args);
+    }
+  }
+
+  public static final class CompExpr implements BoolExpr {
+    public final ValueExpr lhs;
+    public final Op op;
+    public final Object literal;
+
+    public CompExpr(ValueExpr lhs, Op op, Object literal) {
+      this.lhs = lhs;
+      this.op = op;
+      this.literal = literal;
+    }
+  }
+
+  public static final class FuncBoolExpr implements BoolExpr {
+    public final String name;
+    public final java.util.List<Arg> args;
+
+    public FuncBoolExpr(String name, java.util.List<Arg> args) {
+      this.name = name;
+      this.args = java.util.List.copyOf(args);
+    }
+  }
+
+  public static final class LogicalExpr implements BoolExpr {
+    public enum Lop {
+      AND,
+      OR
     }
 
-    public static final class CompExpr implements BoolExpr {
-        public final ValueExpr lhs;
-        public final Op op;
-        public final Object literal;
-        public CompExpr(ValueExpr lhs, Op op, Object literal) {
-            this.lhs = lhs; this.op = op; this.literal = literal;
-        }
+    public final BoolExpr left;
+    public final BoolExpr right;
+    public final Lop op;
+
+    public LogicalExpr(BoolExpr left, BoolExpr right, Lop op) {
+      this.left = left;
+      this.right = right;
+      this.op = op;
+    }
+  }
+
+  public static final class NotExpr implements BoolExpr {
+    public final BoolExpr inner;
+
+    public NotExpr(BoolExpr inner) {
+      this.inner = inner;
+    }
+  }
+
+  // Function argument can be a path or a literal
+  public sealed interface Arg permits PathArg, LiteralArg {}
+
+  public static final class PathArg implements Arg {
+    public final java.util.List<String> path;
+
+    public PathArg(java.util.List<String> path) {
+      this.path = java.util.List.copyOf(path);
+    }
+  }
+
+  public static final class LiteralArg implements Arg {
+    public final Object value;
+
+    public LiteralArg(Object value) {
+      this.value = value;
+    }
+  }
+
+  public static final class Query {
+    public final Root root;
+    public final List<String> segments; // path segments after root
+    public final List<Predicate> predicates;
+    public final List<PipelineOp> pipeline; // optional aggregation pipeline
+
+    public Query(Root root, List<String> segments, List<Predicate> predicates) {
+      this.root = root;
+      this.segments = List.copyOf(segments);
+      this.predicates = List.copyOf(predicates);
+      this.pipeline = List.of();
     }
 
-    public static final class FuncBoolExpr implements BoolExpr {
-        public final String name;
-        public final java.util.List<Arg> args;
-        public FuncBoolExpr(String name, java.util.List<Arg> args) { this.name = name; this.args = java.util.List.copyOf(args); }
+    public Query(
+        Root root, List<String> segments, List<Predicate> predicates, List<PipelineOp> pipeline) {
+      this.root = root;
+      this.segments = List.copyOf(segments);
+      this.predicates = List.copyOf(predicates);
+      this.pipeline = List.copyOf(pipeline);
     }
 
-    public static final class LogicalExpr implements BoolExpr {
-        public enum Lop { AND, OR }
-        public final BoolExpr left;
-        public final BoolExpr right;
-        public final Lop op;
-        public LogicalExpr(BoolExpr left, BoolExpr right, Lop op) { this.left = left; this.right = right; this.op = op; }
+    @Override
+    public String toString() {
+      return "Query{"
+          + root
+          + ":"
+          + String.join("/", segments)
+          + ", filters="
+          + predicates.size()
+          + ", pipe="
+          + pipeline.size()
+          + "}";
     }
+  }
 
-    public static final class NotExpr implements BoolExpr {
-        public final BoolExpr inner;
-        public NotExpr(BoolExpr inner) { this.inner = inner; }
-    }
+  // Aggregation pipeline
+  public sealed interface PipelineOp
+      permits CountOp,
+          SumOp,
+          StatsOp,
+          QuantilesOp,
+          SketchOp,
+          GroupByOp,
+          TopOp,
+          LenOp,
+          UppercaseOp,
+          LowercaseOp,
+          TrimOp,
+          AbsOp,
+          RoundOp,
+          FloorOp,
+          CeilOp,
+          ContainsOp,
+          ReplaceOp {}
 
-    // Function argument can be a path or a literal
-    public sealed interface Arg permits PathArg, LiteralArg {}
-    public static final class PathArg implements Arg {
-        public final java.util.List<String> path;
-        public PathArg(java.util.List<String> path) { this.path = java.util.List.copyOf(path); }
-    }
-    public static final class LiteralArg implements Arg {
-        public final Object value;
-        public LiteralArg(Object value) { this.value = value; }
-    }
+  public static final class CountOp implements PipelineOp {}
 
-    public static final class Query {
-        public final Root root;
-        public final List<String> segments; // path segments after root
-        public final List<Predicate> predicates;
-        public final List<PipelineOp> pipeline; // optional aggregation pipeline
+  public static final class SumOp implements PipelineOp {
+    public final List<String> valuePath; // optional, if empty: use projection path
 
-        public Query(Root root, List<String> segments, List<Predicate> predicates) {
-            this.root = root;
-            this.segments = List.copyOf(segments);
-            this.predicates = List.copyOf(predicates);
-            this.pipeline = List.of();
-        }
+    public SumOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+    }
+  }
 
-        public Query(Root root, List<String> segments, List<Predicate> predicates, List<PipelineOp> pipeline) {
-            this.root = root;
-            this.segments = List.copyOf(segments);
-            this.predicates = List.copyOf(predicates);
-            this.pipeline = List.copyOf(pipeline);
-        }
+  public static final class StatsOp implements PipelineOp {
+    public final List<String> valuePath; // optional, if empty: use projection path
 
-        @Override
-        public String toString() {
-            return "Query{" + root + ":" + String.join("/", segments) + ", filters=" + predicates.size() + ", pipe=" + pipeline.size() + "}";
-        }
+    public StatsOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
+  }
 
-    // Aggregation pipeline
-    public sealed interface PipelineOp permits CountOp, SumOp, StatsOp, QuantilesOp, SketchOp, GroupByOp, TopOp, LenOp, UppercaseOp, LowercaseOp, TrimOp, AbsOp, RoundOp, FloorOp, CeilOp, ContainsOp, ReplaceOp { }
-    public static final class CountOp implements PipelineOp { }
-    public static final class SumOp implements PipelineOp {
-        public final List<String> valuePath; // optional, if empty: use projection path
-        public SumOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  public static final class QuantilesOp implements PipelineOp {
+    public final List<Double> qs; // quantiles in 0..1
+    public final List<String> valuePath; // optional
+
+    public QuantilesOp(List<Double> qs, List<String> valuePath) {
+      this.qs = (qs == null || qs.isEmpty()) ? List.of(0.5, 0.9, 0.99) : List.copyOf(qs);
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class StatsOp implements PipelineOp {
-        public final List<String> valuePath; // optional, if empty: use projection path
-        public StatsOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class SketchOp implements PipelineOp {
+    public final List<String> valuePath; // optional
+
+    public SketchOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class QuantilesOp implements PipelineOp {
-        public final List<Double> qs; // quantiles in 0..1
-        public final List<String> valuePath; // optional
-        public QuantilesOp(List<Double> qs, List<String> valuePath) {
-            this.qs = (qs == null || qs.isEmpty()) ? List.of(0.5, 0.9, 0.99) : List.copyOf(qs);
-            this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
-        }
+  }
+
+  public static final class GroupByOp implements PipelineOp {
+    public final List<String> keyPath; // path to group by
+    public final String aggFunc; // "count", "sum", "avg", "min", "max"
+    public final List<String> valuePath; // for sum/avg/min/max
+
+    public GroupByOp(List<String> keyPath, String aggFunc, List<String> valuePath) {
+      this.keyPath = List.copyOf(keyPath);
+      this.aggFunc = aggFunc == null ? "count" : aggFunc;
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class SketchOp implements PipelineOp {
-        public final List<String> valuePath; // optional
-        public SketchOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class TopOp implements PipelineOp {
+    public final int n; // number of results to return
+    public final List<String> byPath; // sort key path
+    public final boolean ascending; // sort order
+
+    public TopOp(int n, List<String> byPath, boolean ascending) {
+      this.n = n;
+      this.byPath = byPath == null ? List.of("value") : List.copyOf(byPath);
+      this.ascending = ascending;
     }
-    public static final class GroupByOp implements PipelineOp {
-        public final List<String> keyPath;          // path to group by
-        public final String aggFunc;                // "count", "sum", "avg", "min", "max"
-        public final List<String> valuePath;        // for sum/avg/min/max
-        public GroupByOp(List<String> keyPath, String aggFunc, List<String> valuePath) {
-            this.keyPath = List.copyOf(keyPath);
-            this.aggFunc = aggFunc == null ? "count" : aggFunc;
-            this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
-        }
+  }
+
+  public static final class LenOp implements PipelineOp {
+    public final List<String> valuePath; // optional
+
+    public LenOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class TopOp implements PipelineOp {
-        public final int n;                          // number of results to return
-        public final List<String> byPath;            // sort key path
-        public final boolean ascending;              // sort order
-        public TopOp(int n, List<String> byPath, boolean ascending) {
-            this.n = n;
-            this.byPath = byPath == null ? List.of("value") : List.copyOf(byPath);
-            this.ascending = ascending;
-        }
+  }
+
+  public static final class UppercaseOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public UppercaseOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class LenOp implements PipelineOp {
-        public final List<String> valuePath; // optional
-        public LenOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class LowercaseOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public LowercaseOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class UppercaseOp implements PipelineOp {
-        public final List<String> valuePath;
-        public UppercaseOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class TrimOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public TrimOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class LowercaseOp implements PipelineOp {
-        public final List<String> valuePath;
-        public LowercaseOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class AbsOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public AbsOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class TrimOp implements PipelineOp {
-        public final List<String> valuePath;
-        public TrimOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class RoundOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public RoundOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class AbsOp implements PipelineOp {
-        public final List<String> valuePath;
-        public AbsOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class FloorOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public FloorOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class RoundOp implements PipelineOp {
-        public final List<String> valuePath;
-        public RoundOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class CeilOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public CeilOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
-    public static final class FloorOp implements PipelineOp {
-        public final List<String> valuePath;
-        public FloorOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class ContainsOp implements PipelineOp {
+    public final List<String> valuePath;
+    public final String substr;
+
+    public ContainsOp(List<String> valuePath, String substr) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+      this.substr = substr;
     }
-    public static final class CeilOp implements PipelineOp {
-        public final List<String> valuePath;
-        public CeilOp(List<String> valuePath) { this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath); }
+  }
+
+  public static final class ReplaceOp implements PipelineOp {
+    public final List<String> valuePath;
+    public final String target;
+    public final String replacement;
+
+    public ReplaceOp(List<String> valuePath, String target, String replacement) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+      this.target = target;
+      this.replacement = replacement;
     }
-    public static final class ContainsOp implements PipelineOp {
-        public final List<String> valuePath;
-        public final String substr;
-        public ContainsOp(List<String> valuePath, String substr) {
-            this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
-            this.substr = substr;
-        }
-    }
-    public static final class ReplaceOp implements PipelineOp {
-        public final List<String> valuePath;
-        public final String target;
-        public final String replacement;
-        public ReplaceOp(List<String> valuePath, String target, String replacement) {
-            this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
-            this.target = target;
-            this.replacement = replacement;
-        }
-    }
+  }
 }
