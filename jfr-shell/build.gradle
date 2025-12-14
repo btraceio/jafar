@@ -35,15 +35,15 @@ dependencies {
 
     // Command line parsing
     implementation 'info.picocli:picocli:4.7.5'
-    
+
     // JLine for better terminal handling
     implementation 'org.jline:jline-terminal:3.21.0'
     implementation 'org.jline:jline-reader:3.21.0'
-    
+
     // Utilities
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
-    
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
