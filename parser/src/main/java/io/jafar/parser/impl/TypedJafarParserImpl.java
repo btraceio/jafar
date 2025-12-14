@@ -17,6 +17,7 @@ import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CustomByteBuffer;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -178,13 +179,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
         recording,
         new ChunkParserListener() {
           private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+          private Set<String> referencedTypes = null;
 
           @Override
           public void onRecordingStart(ParserContext context) {
-            if (!globalHandlerMap.isEmpty()) {
-              ((TypedParserContext) context)
-                  .setTypeFilter(t -> t != null && globalHandlerMap.containsKey(t.getName()));
-            }
             if (parserListener != null) {
               parserListener.onRecordingStart(context);
             }
@@ -223,6 +221,13 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             }
             TypedParserContext lContext = (TypedParserContext) context;
             Long2ObjectMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
+
+            // Build transitive closure of all types referenced by registered handlers (once per
+            // session)
+            if (!globalHandlerMap.isEmpty() && referencedTypes == null) {
+              referencedTypes = computeReferencedTypes(context, globalHandlerMap.keySet());
+              lContext.setTypeFilter(t -> t != null && referencedTypes.contains(t.getName()));
+            }
 
             // typeClassMap must be fully initialized before trying to resolve/generate the handlers
             for (MetadataClass clz : metadata.getClasses()) {
@@ -294,6 +299,80 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   @Override
   public TypedJafarParserImpl withParserListener(ChunkParserListener listener) {
     return new TypedJafarParserImpl(this, listener);
+  }
+
+  /**
+   * Computes the transitive closure of all types referenced by the given root types.
+   *
+   * <p>This method recursively traverses all fields of the root types to find all types that are
+   * directly or indirectly referenced. This ensures that all necessary types (including simple
+   * types used as field values) are included in the type filter and loaded into constant pools.
+   *
+   * <p><b>Why this is needed:</b> Simple types like jdk.types.Symbol are not directly registered as
+   * event handlers, but are referenced by fields (e.g., jdk.types.Method.name). Without transitive
+   * closure, the type filter would exclude Symbol, its constant pool wouldn't be loaded, and
+   * Method.name would return null.
+   *
+   * <p><b>Nested Simple Types:</b> This handles arbitrarily nested simple types. For example:
+   *
+   * <pre>
+   * jdk.ExecutionSample (registered handler)
+   *   → stackTrace: jdk.types.StackTrace
+   *     → frames[]: jdk.types.StackFrame
+   *       → method: jdk.types.Method
+   *         → name: jdk.types.Symbol (simple type)
+   *           → string: String
+   * </pre>
+   *
+   * The worklist algorithm processes each type and adds all its field types to the queue, ensuring
+   * Symbol and any nested simple types are included in the closure.
+   *
+   * <p><b>Algorithm:</b> Uses a worklist-based breadth-first traversal:
+   *
+   * <ol>
+   *   <li>Start with registered event handler types
+   *   <li>For each type, examine all its fields
+   *   <li>Add each field's type to the worklist (if not already processed)
+   *   <li>Repeat until no new types are discovered
+   * </ol>
+   *
+   * @param context the parser context providing access to metadata
+   * @param rootTypes the set of root type names (typically registered event handlers)
+   * @return the complete set of type names transitively referenced by the root types
+   */
+  private static Set<String> computeReferencedTypes(ParserContext context, Set<String> rootTypes) {
+    Set<String> referencedTypes = new HashSet<>();
+    Set<String> toProcess = new HashSet<>(rootTypes);
+
+    while (!toProcess.isEmpty()) {
+      String typeName = toProcess.iterator().next();
+      toProcess.remove(typeName);
+
+      if (referencedTypes.contains(typeName)) {
+        continue;
+      }
+
+      referencedTypes.add(typeName);
+
+      // Get metadata for this type
+      MetadataClass metadataClass = context.getMetadataLookup().getClass(typeName);
+      if (metadataClass != null) {
+        // Add all field types to processing queue
+        // This recursively includes simple types: if Method has field "name" of type Symbol,
+        // Symbol gets added to toProcess, and then Symbol's field "string" gets processed
+        for (MetadataField field : metadataClass.getFields()) {
+          MetadataClass fieldType = field.getType();
+          if (fieldType != null) {
+            String fieldTypeName = fieldType.getName();
+            if (fieldTypeName != null && !referencedTypes.contains(fieldTypeName)) {
+              toProcess.add(fieldTypeName);
+            }
+          }
+        }
+      }
+    }
+
+    return referencedTypes;
   }
 
   private static CustomByteBuffer openJfrStream(Path jfrFile) {
