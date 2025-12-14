@@ -121,7 +121,8 @@ final class CodeGenerator {
       Class<?> fldType,
       String fldName,
       FieldMapping mapping,
-      boolean generateRefField) {
+      boolean generateRefField,
+      MetadataField originalField) {
     if (fldType == null && !mapping.raw()) {
       // field is never accessed directly, can skip the rest
       return;
@@ -267,8 +268,10 @@ final class CodeGenerator {
           "get",
           Type.getMethodDescriptor(Type.getType(Object.class), Type.LONG_TYPE),
           true); // [array, array, int, obj]
+
       mv.visitTypeInsn(
           Opcodes.CHECKCAST, Type.getInternalName(fldType)); // [array, array, int, fldval]
+
       mv.visitInsn(Opcodes.AASTORE); // [array]
       mv.visitIincInsn(4, 1); // [array]
       mv.visitJumpInsn(Opcodes.GOTO, l1);
@@ -287,6 +290,9 @@ final class CodeGenerator {
           "get",
           Type.getMethodDescriptor(Type.getType(Object.class), Type.LONG_TYPE),
           true); // [obj]
+
+      // Simple types are automatically unwrapped during deserialization,
+      // so the CP already contains the final value (e.g., String, not Symbol)
       mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(fldType)); // [fldval]
     }
     mv.visitInsn(Opcodes.ARETURN);
@@ -1356,6 +1362,38 @@ final class CodeGenerator {
     mv.visitEnd();
   }
 
+  /**
+   * Generates a simple deserializer for a simple type that reads and returns the single field
+   * value.
+   *
+   * @param <T> the type to deserialize
+   * @param clz the metadata class representing the simple type
+   * @param singleField the single field of the simple type
+   * @return a deserializer that reads and returns the single field value
+   */
+  @SuppressWarnings("unchecked")
+  private static <T> Deserializer<T> generateSimpleTypeDeserializer(
+      MetadataClass clz, MetadataField singleField) {
+    // Get the deserializer for the single field type
+    MetadataClass fieldType = singleField.getType();
+    Deserializer<?> fieldDeserializer = Deserializer.forType(fieldType);
+
+    // Return a deserializer that just reads the single field value
+    return (Deserializer<T>)
+        new Deserializer<Object>() {
+          @Override
+          public void skip(RecordingStream stream) throws Exception {
+            fieldDeserializer.skip(stream);
+          }
+
+          @Override
+          public Object deserialize(RecordingStream stream) throws Exception {
+            // Simple type is transparent - just read and return the single field value
+            return fieldDeserializer.deserialize(stream);
+          }
+        };
+  }
+
   @SuppressWarnings("unchecked")
   public static <T> Deserializer<T> generateDeserializer(MetadataClass clz)
       throws JafarSerializationException {
@@ -1369,6 +1407,12 @@ final class CodeGenerator {
       throw new RuntimeException("Unsupported type: " + clz.getName());
     }
     if (target == null) {
+      // For simple types, generate a deserializer that reads all fields and returns the single
+      // field value
+      if (clz.isSimpleType() && clz.getFields().size() == 1) {
+        MetadataField singleField = clz.getFields().get(0);
+        return generateSimpleTypeDeserializer(clz, singleField);
+      }
       // No target mapping requested; generate a skipper-only deserializer
       return new Deserializer.Generated<>(null, null, TypeSkipper.createSkipper(clz));
     }
@@ -1482,6 +1526,9 @@ final class CodeGenerator {
               if (mapping.raw() && isArray) {
                 throw new RuntimeException("CP identity is not supported for arrays");
               }
+              // Use the field's type ID for constant pool lookup
+              // For simple types, the CP is under the simple type's ID,
+              // but the deserializer reads only the inner field value
               handleFieldRef(
                   cw,
                   clzName,
@@ -1490,7 +1537,8 @@ final class CodeGenerator {
                   fldClz,
                   fieldName,
                   mapping,
-                  generateRefField);
+                  generateRefField,
+                  field);
               generateRefField = false;
             } else {
               if (mapping.raw()) {

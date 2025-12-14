@@ -81,6 +81,7 @@ public final class CheckpointEvent extends AbstractEvent {
         }
         int count = (int) stream.readVarint();
         boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
+
         MutableConstantPool constantPool =
             skip
                 ? null
