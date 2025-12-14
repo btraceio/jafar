@@ -1364,17 +1364,42 @@ final class CodeGenerator {
 
   /**
    * Generates a simple deserializer for a simple type that reads and returns the single field
-   * value.
+   * value, unwrapping the simple type wrapper.
+   *
+   * <p>Simple types are JFR types marked with {@code isSimpleType()=true} that contain exactly one
+   * field. They act as transparent wrappers around their single field value. For example,
+   * jdk.types.Symbol is a simple type containing a single "string" field.
+   *
+   * <p><b>Nested Simple Types:</b> This method handles arbitrarily nested simple types through
+   * recursion. When {@code Deserializer.forType(fieldType)} is called on line 1379, if the field
+   * type is also a simple type, it will recursively call this method again, creating a chain of
+   * deserializers that unwrap all layers:
+   *
+   * <pre>
+   * Example: SimpleType1 → SimpleType2 → String
+   * - Deserializer.forType(SimpleType1) calls generateSimpleTypeDeserializer(SimpleType1)
+   * - Which calls Deserializer.forType(SimpleType2) for the single field
+   * - Which calls generateSimpleTypeDeserializer(SimpleType2)
+   * - Which calls Deserializer.forType(String) for its single field
+   * - Final result: reading SimpleType1 directly returns the String value
+   * </pre>
+   *
+   * <p>Real-world example: jdk.types.Method.name is of type jdk.types.Symbol (simple type with one
+   * "string" field). When deserializing Method.name, this creates a Symbol deserializer that
+   * unwraps to return the String directly.
    *
    * @param <T> the type to deserialize
    * @param clz the metadata class representing the simple type
    * @param singleField the single field of the simple type
-   * @return a deserializer that reads and returns the single field value
+   * @return a deserializer that reads and returns the single field value, recursively unwrapping
+   *     nested simple types
    */
   @SuppressWarnings("unchecked")
   private static <T> Deserializer<T> generateSimpleTypeDeserializer(
       MetadataClass clz, MetadataField singleField) {
     // Get the deserializer for the single field type
+    // IMPORTANT: If fieldType is also a simple type, Deserializer.forType() will recursively
+    // call this method again, creating a chain that unwraps all nested simple types
     MetadataClass fieldType = singleField.getType();
     Deserializer<?> fieldDeserializer = Deserializer.forType(fieldType);
 
@@ -1389,6 +1414,7 @@ final class CodeGenerator {
           @Override
           public Object deserialize(RecordingStream stream) throws Exception {
             // Simple type is transparent - just read and return the single field value
+            // For nested simple types, this recursively unwraps all layers
             return fieldDeserializer.deserialize(stream);
           }
         };

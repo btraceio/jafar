@@ -306,7 +306,34 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    *
    * <p>This method recursively traverses all fields of the root types to find all types that are
    * directly or indirectly referenced. This ensures that all necessary types (including simple
-   * types used as field values) are included in the type filter.
+   * types used as field values) are included in the type filter and loaded into constant pools.
+   *
+   * <p><b>Why this is needed:</b> Simple types like jdk.types.Symbol are not directly registered
+   * as event handlers, but are referenced by fields (e.g., jdk.types.Method.name). Without
+   * transitive closure, the type filter would exclude Symbol, its constant pool wouldn't be loaded,
+   * and Method.name would return null.
+   *
+   * <p><b>Nested Simple Types:</b> This handles arbitrarily nested simple types. For example:
+   *
+   * <pre>
+   * jdk.ExecutionSample (registered handler)
+   *   → stackTrace: jdk.types.StackTrace
+   *     → frames[]: jdk.types.StackFrame
+   *       → method: jdk.types.Method
+   *         → name: jdk.types.Symbol (simple type)
+   *           → string: String
+   * </pre>
+   *
+   * The worklist algorithm processes each type and adds all its field types to the queue,
+   * ensuring Symbol and any nested simple types are included in the closure.
+   *
+   * <p><b>Algorithm:</b> Uses a worklist-based breadth-first traversal:
+   * <ol>
+   *   <li>Start with registered event handler types
+   *   <li>For each type, examine all its fields
+   *   <li>Add each field's type to the worklist (if not already processed)
+   *   <li>Repeat until no new types are discovered
+   * </ol>
    *
    * @param context the parser context providing access to metadata
    * @param rootTypes the set of root type names (typically registered event handlers)
@@ -330,6 +357,8 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       MetadataClass metadataClass = context.getMetadataLookup().getClass(typeName);
       if (metadataClass != null) {
         // Add all field types to processing queue
+        // This recursively includes simple types: if Method has field "name" of type Symbol,
+        // Symbol gets added to toProcess, and then Symbol's field "string" gets processed
         for (MetadataField field : metadataClass.getFields()) {
           MetadataClass fieldType = field.getType();
           if (fieldType != null) {
