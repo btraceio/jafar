@@ -104,6 +104,50 @@ The `generateJafarTypes` task generates typed interfaces from JFR metadata:
 - Supports filtering by event type names
 - Configurable output package and directory
 
+### Composite Build Configuration
+
+The project uses Gradle composite builds to ensure the demo project and other consumers always use the latest local source code during development.
+
+**Why this is needed:**
+- The `jafar-gradle-plugin` depends on `jafar-parser`
+- Without composite builds, the plugin would resolve `jafar-parser` from Maven repositories (which may be stale)
+- Composite builds ensure the plugin uses the current local parser source code
+
+**Root project (`settings.gradle`):**
+```gradle
+// Let builds resolve the in-repo Gradle plugin by ID without publishing
+pluginManagement {
+    includeBuild('jafar-gradle-plugin')
+}
+
+// Wire the plugin build to use the in-repo parser project instead of a published module
+includeBuild('jafar-gradle-plugin') {
+    dependencySubstitution {
+        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+    }
+}
+```
+
+**Demo project (`demo/settings.gradle`):**
+```gradle
+// Include the plugin for use
+pluginManagement {
+    includeBuild('../jafar-gradle-plugin')
+}
+
+// Include parent build to get access to parser module
+includeBuild('..') {
+    dependencySubstitution {
+        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+    }
+}
+```
+
+**Important notes:**
+- When modifying parser code, the changes are immediately available to the plugin (no `publishToMavenLocal` needed)
+- If you encounter `StackOverflowError` in `TypeGenerator`, ensure both `/parser/src/main/java/io/jafar/utils/TypeGenerator.java` and `/parser/src/java21/java/io/jafar/utils/TypeGenerator.java` are updated
+- After changing settings.gradle, run `./gradlew --stop` and `rm -rf demo/.gradle/` to clear caches
+
 ### JFR Shell (Interactive Analysis Tool)
 The jfr-shell module provides a Groovy-based interactive environment for JFR analysis:
 - **Session-based**: Open JFR files and maintain analysis state
@@ -128,3 +172,4 @@ jfr> run()
 jfr> threadStats.sort { -it.value }.take(5)
 jfr> export(threadStats, "results.json")
 ```
+- WHen fixing an issue, always check the alternative implementation for other Java versions
