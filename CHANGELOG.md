@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.2.0] - 2024-12-14
+
+### Added
+- **Iterator-style API** - New `ParsingContext.iterateEvents()` method for streaming JFR events without loading entire file into memory (#25)
+- **Metadata fingerprinting** - Handler class reuse across parsing sessions with same metadata fingerprint for improved performance (#26)
+
+### Changed
+- **Multi-tier untyped parser optimization** - Adaptive strategy system automatically switches between optimized and generic parsers based on event complexity (#27)
+
+### Fixed
+- **Typed parser simple type unwrapping** - Fixed null values for simple types like `jdk.types.Symbol` by implementing transitive closure for type filtering (#28)
+
 ## [0.1.0] - 2024-12-04
 
 ### Added
@@ -56,5 +68,6 @@ No unreleased changes yet.
 
 This is the first public release of JAFAR.
 
-[Unreleased]: https://github.com/jbachorik/jafar/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jbachorik/jafar/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jbachorik/jafar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jbachorik/jafar/releases/tag/v0.1.0
