@@ -308,10 +308,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    * directly or indirectly referenced. This ensures that all necessary types (including simple
    * types used as field values) are included in the type filter and loaded into constant pools.
    *
-   * <p><b>Why this is needed:</b> Simple types like jdk.types.Symbol are not directly registered
-   * as event handlers, but are referenced by fields (e.g., jdk.types.Method.name). Without
-   * transitive closure, the type filter would exclude Symbol, its constant pool wouldn't be loaded,
-   * and Method.name would return null.
+   * <p><b>Why this is needed:</b> Simple types like jdk.types.Symbol are not directly registered as
+   * event handlers, but are referenced by fields (e.g., jdk.types.Method.name). Without transitive
+   * closure, the type filter would exclude Symbol, its constant pool wouldn't be loaded, and
+   * Method.name would return null.
    *
    * <p><b>Nested Simple Types:</b> This handles arbitrarily nested simple types. For example:
    *
@@ -324,10 +324,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    *           → string: String
    * </pre>
    *
-   * The worklist algorithm processes each type and adds all its field types to the queue,
-   * ensuring Symbol and any nested simple types are included in the closure.
+   * The worklist algorithm processes each type and adds all its field types to the queue, ensuring
+   * Symbol and any nested simple types are included in the closure.
    *
    * <p><b>Algorithm:</b> Uses a worklist-based breadth-first traversal:
+   *
    * <ol>
    *   <li>Start with registered event handler types
    *   <li>For each type, examine all its fields
