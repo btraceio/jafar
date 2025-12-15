@@ -242,10 +242,8 @@ public final class TypeGenerator {
     }
     String className = metadataClass.getName();
     if (processed.contains(className)) {
-      System.out.println("Skipping already processed class: " + className);
       return;
     }
-    System.out.println("Processing class: " + className);
     processed.add(className);
     try {
       Path classFile = output.resolve(getClassName(metadataClass) + ".java");
