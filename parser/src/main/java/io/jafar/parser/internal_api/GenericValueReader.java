@@ -88,7 +88,7 @@ public final class GenericValueReader {
    * @param fldName the field name
    * @throws IOException if an I/O error occurs during reading
    */
-  private void readSingleValue(RecordingStream stream, MetadataClass type, String fldName)
+  public void readSingleValue(RecordingStream stream, MetadataClass type, String fldName)
       throws IOException {
     switch (type.getName()) {
       case "short":

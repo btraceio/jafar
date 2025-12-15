@@ -7,6 +7,7 @@ import io.jafar.parser.internal_api.MutableConstantPool;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.util.Map;
 import java.util.Objects;
 
@@ -45,6 +46,32 @@ final class ConstantPoolAccessor implements ComplexType {
       try {
         stream.position(offset);
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
+
+        // For simple types, the constant pool stores the unwrapped field value directly
+        // We need to read the field value and wrap it in a map with the field name as key
+        if (clz.isSimpleType() && clz.getFields().size() == 1) {
+          MetadataField singleField = clz.getFields().get(0);
+          MetadataClass fieldType = singleField.getType();
+
+          // Recursively unwrap nested simple types to get the actual field type
+          while (fieldType.isSimpleType() && fieldType.getFields().size() == 1) {
+            fieldType = fieldType.getFields().get(0).getType();
+          }
+
+          MapValueBuilder builder = new MapValueBuilder(context);
+          GenericValueReader r = new GenericValueReader(builder);
+
+          // Read the single field value directly (it's stored unwrapped in the CP)
+          builder.onComplexValueStart(null, null, clz);
+          r.readSingleValue(stream, fieldType, singleField.getName());
+          builder.onComplexValueEnd(null, null, clz);
+
+          v = builder.getRoot();
+          cached = v;
+          return v;
+        }
+
+        // For complex types, read as full object
         MapValueBuilder builder = new MapValueBuilder(context);
         GenericValueReader r = new GenericValueReader(builder);
         builder.onComplexValueStart(null, null, clz);
