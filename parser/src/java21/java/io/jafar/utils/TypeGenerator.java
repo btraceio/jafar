@@ -169,29 +169,42 @@ public final class TypeGenerator {
   }
 
   private void generateFromFile() throws Exception {
+    Set<String> processed = new HashSet<>();
     try (StreamingChunkParser parser = new StreamingChunkParser(new TypedParserContextFactory())) {
       parser.parse(
           jfr,
           new ChunkParserListener() {
             @Override
             public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-              metadata.getClasses().forEach(TypeGenerator.this::writeClass);
+              metadata.getClasses().stream()
+                  .filter(
+                      clz -> {
+                        boolean isEv = isEvent(clz);
+                        boolean passesFilter =
+                            eventTypeFilter == null || eventTypeFilter.test(clz.getName());
+                        return isEv && passesFilter;
+                      })
+                  .forEach(clz -> writeClass(clz, processed));
+              // stop processing
               return false;
             }
           });
     }
   }
 
-  private void writeClass(MetadataClass metadataClass) {
+  private void writeClass(MetadataClass metadataClass, Set<String> processed) {
     if (metadataClass.isPrimitive()) {
       return;
     }
     if (isAnnotation(metadataClass) || isSettingControl(metadataClass)) {
       return;
     }
+    if (!processed.add(metadataClass.getName())) {
+      return;
+    }
     try {
       Path classFile = output.resolve(getClassName(metadataClass) + ".java");
-      String classContent = generateClass(metadataClass);
+      String classContent = generateClass(metadataClass, processed);
       if (!Files.exists(classFile)) {
         Files.writeString(classFile, classContent, StandardOpenOption.CREATE_NEW);
       } else if (overwrite) {
@@ -206,7 +219,7 @@ public final class TypeGenerator {
     }
   }
 
-  private String generateClass(MetadataClass clazz) {
+  private String generateClass(MetadataClass clazz, Set<String> processed) {
     StringBuilder sb = new StringBuilder();
     sb.append("package ").append(pkg).append(";\n");
     sb.append("\n");
@@ -225,8 +238,8 @@ public final class TypeGenerator {
         fldType = fldType.getFields().getFirst().getType();
       }
       // Recursively generate nested types
-      if (!fldType.isPrimitive()) {
-        writeClass(fldType);
+      if (!fldType.isPrimitive() && !processed.contains(fldType.getName())) {
+        writeClass(fldType, processed);
       }
       sb.append(getClassName(fldType));
       sb.append("[]".repeat(Math.max(0, field.getDimension())));
@@ -242,13 +255,17 @@ public final class TypeGenerator {
   }
 
   private String sanitizeFieldName(String fieldName) {
-    switch (fieldName) {
+    String sanitized = fieldName;
+    // Replace dots with underscores (e.g., "_dd.trace.operation" -> "_dd_trace_operation")
+    sanitized = sanitized.replace('.', '_');
+    // Handle Java keywords
+    switch (sanitized) {
       case "class":
         return "clz";
       case "package":
         return "pkg";
       default:
-        return fieldName;
+        return sanitized;
     }
   }
 

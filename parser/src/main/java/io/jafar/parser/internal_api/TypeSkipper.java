@@ -24,6 +24,58 @@ public final class TypeSkipper {
    */
   public static TypeSkipper createSkipper(MetadataClass clz) {
     IntList instructions = new IntArrayList(20);
+
+    // Special case: java.lang.String has 0 fields but needs to skip string data
+    // When used in constant pools, the string data is stored directly
+    if ("java.lang.String".equals(clz.getName())) {
+      instructions.add(Instructions.STRING);
+      return new TypeSkipper(instructions.toIntArray());
+    }
+
+    // Special case: simple types in constant pools store unwrapped field values
+    // The CP entries contain the raw unwrapped type data, not the simple type structure
+    if (clz.isSimpleType() && clz.getFields().size() == 1) {
+      MetadataField singleField = clz.getFields().get(0);
+      MetadataClass fieldType = singleField.getType();
+
+      // Recursively unwrap nested simple types to get the actual field type
+      while (fieldType.isSimpleType() && fieldType.getFields().size() == 1) {
+        fieldType = fieldType.getFields().get(0).getType();
+      }
+
+      // Add skip instruction for the unwrapped type (without CP flag)
+      // because in CP context, the data is already unwrapped
+      String typeName = fieldType.getName();
+      switch (typeName) {
+        case "byte":
+        case "boolean":
+          instructions.add(Instructions.BYTE);
+          break;
+        case "char":
+        case "short":
+        case "int":
+        case "long":
+          instructions.add(Instructions.VARINT);
+          break;
+        case "float":
+          instructions.add(Instructions.FLOAT);
+          break;
+        case "double":
+          instructions.add(Instructions.DOUBLE);
+          break;
+        case "java.lang.String":
+          instructions.add(Instructions.STRING);
+          break;
+        default:
+          // Complex unwrapped type - should not happen for simple types
+          for (MetadataField fld : fieldType.getFields()) {
+            fillSkipper(fld, instructions);
+          }
+          break;
+      }
+      return new TypeSkipper(instructions.toIntArray());
+    }
+
     for (MetadataField fld : clz.getFields()) {
       fillSkipper(fld, instructions);
     }
