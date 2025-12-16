@@ -68,7 +68,8 @@ public class NameCollisionTest {
     // Verify both event types generated distinct files
     assertThat(generatedFiles)
         .contains("JFRJdkExecutionSample.java", "JFRDatadogExecutionSample.java")
-        .as("Should generate distinct class files for jdk.ExecutionSample and datadog.ExecutionSample");
+        .as(
+            "Should generate distinct class files for jdk.ExecutionSample and datadog.ExecutionSample");
 
     // Verify the generated classes have different content
     String jdkContent = Files.readString(typesDir.resolve("JFRJdkExecutionSample.java"));

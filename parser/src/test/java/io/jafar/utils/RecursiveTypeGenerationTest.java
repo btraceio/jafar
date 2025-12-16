@@ -22,11 +22,12 @@ import org.junit.jupiter.api.io.TempDir;
  * TypeGenerator with runtime event types. For example, when generating types for
  * jdk.ExecutionSample, it should recursively generate all dependent types:
  *
- * <p>JFRJdkExecutionSample -> JFRJdkTypesStackTrace (generated) -> JFRJdkTypesStackFrame (MISSING - bug!) -> JFRJdkTypesMethod
- * -> JFRJavaLangClass -> etc.
+ * <p>JFRJdkExecutionSample -> JFRJdkTypesStackTrace (generated) -> JFRJdkTypesStackFrame (MISSING -
+ * bug!) -> JFRJdkTypesMethod -> JFRJavaLangClass -> etc.
  *
- * <p>Note: Type names include the full namespace (e.g., JFRJdkExecutionSample instead of JFRExecutionSample)
- * to avoid collisions when multiple events share the same simple name across different namespaces.
+ * <p>Note: Type names include the full namespace (e.g., JFRJdkExecutionSample instead of
+ * JFRExecutionSample) to avoid collisions when multiple events share the same simple name across
+ * different namespaces.
  */
 public class RecursiveTypeGenerationTest {
 
@@ -208,7 +209,8 @@ public class RecursiveTypeGenerationTest {
    * Helper method to extract JFR type references from generated interface code. Looks for patterns
    * like "JFRTypeName fieldName()" to find referenced types.
    *
-   * Note: With namespace-inclusive naming, types like "jdk.types.StackFrame" become "JFRJdkTypesStackFrame".
+   * <p>Note: With namespace-inclusive naming, types like "jdk.types.StackFrame" become
+   * "JFRJdkTypesStackFrame".
    */
   private Set<String> extractJfrTypeReferences(String content) {
     return content
@@ -217,7 +219,8 @@ public class RecursiveTypeGenerationTest {
         .map(
             line -> {
               String trimmed = line.trim();
-              // Extract type name (e.g., "JFRJdkTypesStackFrame" from "JFRJdkTypesStackFrame frames();")
+              // Extract type name (e.g., "JFRJdkTypesStackFrame" from "JFRJdkTypesStackFrame
+              // frames();")
               int jfrIndex = trimmed.indexOf("JFR");
               int spaceIndex = trimmed.indexOf(' ', jfrIndex);
               if (jfrIndex >= 0 && spaceIndex > jfrIndex) {

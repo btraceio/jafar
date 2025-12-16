@@ -397,8 +397,8 @@ public final class TypeGenerator {
   }
 
   /**
-   * Converts a fully qualified type name to a class name including namespace.
-   * For example: "jdk.ExecutionSample" -> "JFRJdkExecutionSample"
+   * Converts a fully qualified type name to a class name including namespace. For example:
+   * "jdk.ExecutionSample" -> "JFRJdkExecutionSample"
    */
   private static String getClassNameFromFullName(String fullName) {
     // Replace dots with underscores
