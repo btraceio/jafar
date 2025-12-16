@@ -7,14 +7,19 @@ An interactive CLI for exploring Java Flight Recorder (JFR) files: browse metada
 ### Run the shell
 
 ```bash
+# Build the fat jar first
+./gradlew :jfr-shell:shadowJar
+
 # Interactive mode
-./gradlew :jfr-shell:run --console=plain
+java -jar jfr-shell/build/libs/jfr-shell-*.jar
 
 # Or pass a file immediately
-./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
-```
+java -jar jfr-shell/build/libs/jfr-shell-*.jar -f /path/to/recording.jfr
 
-After building, you can also use the generated scripts in `jfr-shell/build/install/jfr-shell/bin/`.
+# Or use the standalone distribution (includes bundled JRE)
+./gradlew :jfr-shell:jlinkDist
+jfr-shell/build/jlink/bin/jfr-shell
+```
 
 On startup:
 ```

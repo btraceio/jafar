@@ -51,17 +51,7 @@ jfr-shell/build/jlink/bin/jfr-shell
 # Distribution will be at: jfr-shell/build/distributions/jfr-shell-<version>-standalone.zip
 ```
 
-#### Option 3: Run with Gradle
-
-```bash
-# Run directly with Gradle
-./gradlew :jfr-shell:run --console=plain
-
-# Open a file immediately
-./gradlew :jfr-shell:run --console=plain --args="-f /path/to/recording.jfr"
-```
-
-#### Option 4: Build Fat JAR
+#### Option 3: Build Fat JAR
 
 ```bash
 # Build and use fat JAR (requires Java 25+)
@@ -300,7 +290,7 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 ./gradlew :jfr-shell:shadowJar
 
 # Run with test recording
-./gradlew :jfr-shell:run --console=plain --args="-f parser/src/test/resources/test-jfr.jfr"
+java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser/src/test/resources/test-jfr.jfr
 ```
 
 ## Documentation
