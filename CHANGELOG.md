@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2024-12-16
+
+### Added
+- **JFR Shell** - New interactive CLI tool for exploring and analyzing JFR recordings with JfrPath query language (#31)
+  - JfrPath query language for navigating events, metadata, chunks, and constant pools
+  - Tab completion, command history, and multi-session management
+  - Aggregations (groupBy, top, sum, stats) and filtering with boolean expressions
+  - Non-interactive mode for scripting and CI integration
+  - JBang distribution support for easy installation
+  - Standalone jlink distribution with bundled JRE
+- **Comprehensive tutorials** - Added detailed tutorials for Typed API, Untyped API, and JFR Shell (#31)
+- **Demo applications** - Added DatadogProfilerDemo showcasing both typed and untyped API usage patterns (#31)
+- **JBang publishing workflow** - Automated GitHub Actions workflow for publishing to JitPack (#31)
+
 ### Changed
-- **TypeGenerator naming convention** - Generated type interfaces now include the full namespace to prevent collisions. For example, `jdk.ExecutionSample` generates `JFRJdkExecutionSample` and `datadog.ExecutionSample` generates `JFRDatadogExecutionSample`. This ensures distinct interfaces when multiple events share the same simple name across different namespaces.
+- **TypeGenerator naming convention** - Generated type interfaces now include the full namespace to prevent collisions. For example, `jdk.ExecutionSample` generates `JFRJdkExecutionSample` and `datadog.ExecutionSample` generates `JFRDatadogExecutionSample`. This ensures distinct interfaces when multiple events share the same simple name across different namespaces (#30)
 
 ### Fixed
 - **Circular type resolution in TypeGenerator** - Fixed infinite recursion when generating types with circular references (#29)
