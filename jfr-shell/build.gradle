@@ -1,6 +1,5 @@
 plugins {
     id 'java'
-    id 'application'
     id 'com.gradleup.shadow' version '8.3.6'
     id 'maven-publish'
 }
@@ -21,13 +20,6 @@ java {
         languageVersion = JavaLanguageVersion.of(25)
     }
 }
-
-application {
-    mainClass = 'io.jafar.shell.Main'
-    // For backward compatibility with shadow plugin
-    applicationName = 'jfr-shell'
-}
-
 
 dependencies {
     implementation project(':parser')
