@@ -94,21 +94,32 @@ public interface SocketRead {
 }
 ```
 
-### Ignoring Fields
+### Adding Helper Methods
 
-Use `@JfrIgnore` to exclude fields you don't need:
+Use `@JfrIgnore` to add custom methods that aren't bound to JFR fields:
 
 ```java
 @JfrType("jdk.ExecutionSample")
 public interface ExecutionSample {
     String state();
+    JFRJdkTypesStackTrace stackTrace();
 
     @JfrIgnore
-    JFRJdkTypesStackTrace stackTrace();  // Won't be populated, always returns null
+    default boolean isRunnable() {
+        return "RUNNABLE".equals(state());  // Helper method, not a JFR field
+    }
+
+    @JfrIgnore
+    default int stackDepth() {
+        JFRJdkTypesStackTrace stack = stackTrace();
+        return stack != null && stack.frames() != null ? stack.frames().length : 0;
+    }
 }
 ```
 
-This improves performance by skipping unnecessary field extraction.
+Without `@JfrIgnore`, the code generator would try to bind these methods to JFR fields, causing errors.
+
+**Note**: To skip deserializing fields you don't need, simply don't declare them in the interface. The parser automatically skips fields that aren't declared.
 
 ### Raw Field Access
 
@@ -386,17 +397,32 @@ parser.withParserListener(new ChunkParserListener() {
 
 ## Performance Tips
 
-### 1. Use @JfrIgnore for Unused Fields
+### 1. Limit Interface to Essential Fields
 
-Skip extraction of fields you don't need:
+Only declare methods for fields you actually need:
 
 ```java
 @JfrType("jdk.ExecutionSample")
 public interface ExecutionSample {
     String state();
+    JFRJavaLangThread eventThread();
+    // Don't declare stackTrace() if you don't need it
+    // Parser will skip deserializing unused fields
+}
+```
+
+Use `@JfrIgnore` to add helper methods without parser binding:
+
+```java
+@JfrType("jdk.ExecutionSample")
+public interface ExecutionSample {
+    String state();
+    JFRJavaLangThread eventThread();
 
     @JfrIgnore
-    JFRJdkTypesStackTrace stackTrace();  // Skip if not needed
+    default boolean isRunnable() {
+        return "RUNNABLE".equals(state());  // Custom logic, not a JFR field
+    }
 }
 ```
 
