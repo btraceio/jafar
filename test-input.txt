@@ -1,6 +1,0 @@
-help
-def x = 5 + 3
-x
-def list = [1, 2, 3]
-list.sum()
-exit
