@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Changed
+- **TypeGenerator naming convention** - Generated type interfaces now include the full namespace to prevent collisions. For example, `jdk.ExecutionSample` generates `JFRJdkExecutionSample` and `datadog.ExecutionSample` generates `JFRDatadogExecutionSample`. This ensures distinct interfaces when multiple events share the same simple name across different namespaces.
+
+### Fixed
+- **Circular type resolution in TypeGenerator** - Fixed infinite recursion when generating types with circular references (#29)
+- **Irregular attribute names** - Fixed handling of field names containing dots (e.g., `_dd.trace.operation`) by sanitizing them to valid Java identifiers (#29)
+- **Type filters in Java 21 TypeGenerator** - Added support for event type filters in Java 21 version of TypeGenerator (#29)
+- **Simple type constant resolution** - Fixed resolution of simple type constants in untyped parser's constant pool accessor (#29)
+- **String type skipping** - Fixed type skipping for strings and simple types in constant pools (#29)
 
 ## [0.2.0] - 2024-12-14
 
