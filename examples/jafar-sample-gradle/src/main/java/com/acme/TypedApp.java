@@ -8,9 +8,9 @@ import io.jafar.parser.api.TypedJafarParser;
 import java.nio.file.Paths;
 
 public class TypedApp {
-  // Minimal typed model for a common event
-  // Note: If using TypeGenerator, this would be generated as JFRJdkExecutionSample
-  // to include the namespace. Here we define it manually with a custom name.
+  // Minimal typed model for a common event.
+  // TypeGenerator would generate this as JFRJdkExecutionSample (with namespace),
+  // but here we define it manually with a simpler custom name for demonstration.
   @JfrType("jdk.ExecutionSample")
   public interface JFRExecutionSample {
     JFRThread sampledThread();
