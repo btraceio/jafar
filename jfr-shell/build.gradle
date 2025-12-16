@@ -218,12 +218,18 @@ publishing {
         }
     }
     repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/btraceio/jafar")
-            credentials {
-                username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
-                password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+        // Only publish to GitHub Packages when credentials are available
+        def ghUser = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+        def ghToken = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+
+        if (ghUser && ghToken) {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/btraceio/jafar")
+                credentials {
+                    username = ghUser
+                    password = ghToken
+                }
             }
         }
     }
