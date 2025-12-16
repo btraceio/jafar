@@ -59,7 +59,8 @@ public final class TypeGenerator {
             et -> {
               if (eventTypeFilter == null || eventTypeFilter.test(et.getName())) {
                 try {
-                  Path target = output.resolve("JFR" + getSimpleName(et.getName()) + ".java");
+                  String className = getClassNameFromFullName(et.getName());
+                  Path target = output.resolve(className + ".java");
                   String typeContent = generateTypeFromEvent(et, generated);
                   if (!Files.exists(target)) {
                     Files.writeString(target, typeContent, StandardOpenOption.CREATE_NEW);
@@ -84,7 +85,8 @@ public final class TypeGenerator {
     sb.append("\n");
     sb.append("import io.jafar.parser.api.*;\n");
     sb.append("@JfrType(\"").append(et.getName()).append("\")\n\n");
-    sb.append("public interface JFR").append(getSimpleName(et.getName())).append(" {\n");
+    String className = getClassNameFromFullName(et.getName());
+    sb.append("public interface ").append(className).append(" {\n");
     et.getFields()
         .forEach(
             field -> {
@@ -98,8 +100,12 @@ public final class TypeGenerator {
               if (!fldName.equals(field.getName())) {
                 sb.append("@JfrField(\"").append(field.getName()).append("\") ");
               }
-              sb.append(isPrimitiveName(field.getTypeName()) ? "" : "JFR")
-                  .append(getSimpleName(field.getTypeName()));
+              String fieldTypeName = field.getTypeName();
+              if (isPrimitiveName(fieldTypeName)) {
+                sb.append(fieldTypeName);
+              } else {
+                sb.append(getClassNameFromFullName(fieldTypeName));
+              }
               if (field.isArray()) {
                 sb.append("[]");
               }
@@ -115,7 +121,7 @@ public final class TypeGenerator {
 
     if (data != null) {
       String typeName = f.getTypeName();
-      String targetName = isPrimitiveName(typeName) ? typeName : "JFR" + getSimpleName(typeName);
+      String targetName = isPrimitiveName(typeName) ? typeName : getClassNameFromFullName(typeName);
       Path target = output.resolve(targetName + ".java");
       if (!Files.exists(target)) {
         Files.writeString(target, data, StandardOpenOption.CREATE_NEW);
@@ -138,7 +144,8 @@ public final class TypeGenerator {
       sb.append("\n");
       sb.append("import io.jafar.parser.api.*;\n");
       sb.append("@JfrType(\"").append(typeName).append("\")\n\n");
-      sb.append("public interface JFR").append(getSimpleName(typeName)).append(" {\n");
+      String className = getClassNameFromFullName(typeName);
+      sb.append("public interface ").append(className).append(" {\n");
       field
           .getFields()
           .forEach(
@@ -153,8 +160,12 @@ public final class TypeGenerator {
                 if (!fldName.equals(subfield.getName())) {
                   sb.append("@JfrField(\"").append(subfield.getName()).append("\") ");
                 }
-                sb.append(isPrimitiveName(subfield.getTypeName()) ? "" : "JFR")
-                    .append(getSimpleName(subfield.getTypeName()));
+                String subfieldTypeName = subfield.getTypeName();
+                if (isPrimitiveName(subfieldTypeName)) {
+                  sb.append(subfieldTypeName);
+                } else {
+                  sb.append(getClassNameFromFullName(subfieldTypeName));
+                }
                 if (subfield.isArray()) {
                   sb.append("[]");
                 }
@@ -251,7 +262,25 @@ public final class TypeGenerator {
   }
 
   private String getClassName(MetadataClass clazz) {
-    return (!clazz.isPrimitive() ? "JFR" : "") + clazz.getSimpleName();
+    if (clazz.isPrimitive()) {
+      return clazz.getSimpleName();
+    }
+
+    // Include namespace to avoid collisions (e.g., jdk.ExecutionSample -> JdkExecutionSample)
+    String fullName = clazz.getName();
+    String className = fullName.replace('.', '_');
+    // Convert to CamelCase: jdk_ExecutionSample -> JdkExecutionSample
+    StringBuilder result = new StringBuilder("JFR");
+    boolean capitalizeNext = true;
+    for (char c : className.toCharArray()) {
+      if (c == '_') {
+        capitalizeNext = true;
+      } else {
+        result.append(capitalizeNext ? Character.toUpperCase(c) : c);
+        capitalizeNext = false;
+      }
+    }
+    return result.toString();
   }
 
   private String sanitizeFieldName(String fieldName) {
@@ -302,6 +331,27 @@ public final class TypeGenerator {
   private static String getSimpleName(String name) {
     int idx = name.lastIndexOf('.');
     return idx == -1 ? name : name.substring(idx + 1);
+  }
+
+  /**
+   * Converts a fully qualified type name to a class name including namespace. For example:
+   * "jdk.ExecutionSample" -> "JFRJdkExecutionSample"
+   */
+  private static String getClassNameFromFullName(String fullName) {
+    // Replace dots with underscores
+    String className = fullName.replace('.', '_');
+    // Convert to CamelCase: jdk_ExecutionSample -> JdkExecutionSample
+    StringBuilder result = new StringBuilder("JFR");
+    boolean capitalizeNext = true;
+    for (char c : className.toCharArray()) {
+      if (c == '_') {
+        capitalizeNext = true;
+      } else {
+        result.append(capitalizeNext ? Character.toUpperCase(c) : c);
+        capitalizeNext = false;
+      }
+    }
+    return result.toString();
   }
 
   private static boolean isPrimitiveName(String name) {

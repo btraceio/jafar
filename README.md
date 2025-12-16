@@ -174,8 +174,8 @@ System.out.println("uptime(ns)=" + ctx.uptime());
 ```java
 AtomicInteger seen = new AtomicInteger();
 try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to.jfr"))) {
-  HandlerRegistration<JFRExecutionSample> reg =
-      p.handle(JFRExecutionSample.class, (e, ctl) -> {
+  HandlerRegistration<JFRJdkExecutionSample> reg =
+      p.handle(JFRJdkExecutionSample.class, (e, ctl) -> {
         if (seen.incrementAndGet() >= 1000) {
           ctl.abort(); // stop without throwing
         }
@@ -219,6 +219,13 @@ p.withParserListener(new ChunkParserListener() {
 Plugin id: `io.btrace.jafar-gradle-plugin`
 
 Adds task `generateJafarTypes` and wires it to `compileJava`. It can generate interfaces for selected JFR types from either the current JVM metadata (default) or a `.jfr` file.
+
+**Generated class naming**: The generator includes the full namespace in generated interface names to avoid collisions. For example:
+- `jdk.ExecutionSample` → `JFRJdkExecutionSample`
+- `datadog.ExecutionSample` → `JFRDatadogExecutionSample`
+- `jdk.gc.HeapSummary` → `JFRJdkGcHeapSummary`
+
+This ensures that events with the same simple name but different namespaces generate distinct interfaces.
 
 ```gradle
 plugins {

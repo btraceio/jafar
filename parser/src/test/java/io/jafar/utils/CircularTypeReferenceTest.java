@@ -76,7 +76,7 @@ public class CircularTypeReferenceTest {
       }
 
       System.out.println("Generated files: " + generatedFiles);
-      assertThat(generatedFiles).contains("JFRCircularEvent.java");
+      assertThat(generatedFiles).contains("JFRTestCircularEvent.java");
     }
   }
 
@@ -110,7 +110,7 @@ public class CircularTypeReferenceTest {
       }
 
       System.out.println("Generated files: " + generatedFiles);
-      assertThat(generatedFiles).contains("JFRLinkedListEvent.java");
+      assertThat(generatedFiles).contains("JFRTestLinkedListEvent.java");
       // Note: NodeA and NodeB may not be generated correctly due to JMC Writer API limitations
       // with forward references. The important thing is that the generator doesn't infinite loop.
     }

@@ -22,8 +22,12 @@ import org.junit.jupiter.api.io.TempDir;
  * TypeGenerator with runtime event types. For example, when generating types for
  * jdk.ExecutionSample, it should recursively generate all dependent types:
  *
- * <p>JFRExecutionSample -> JFRStackTrace (generated) -> JFRStackFrame (MISSING - bug!) -> JFRMethod
- * -> JFRClass -> etc.
+ * <p>JFRJdkExecutionSample -> JFRJdkTypesStackTrace (generated) -> JFRJdkTypesStackFrame (MISSING -
+ * bug!) -> JFRJdkTypesMethod -> JFRJavaLangClass -> etc.
+ *
+ * <p>Note: Type names include the full namespace (e.g., JFRJdkExecutionSample instead of
+ * JFRExecutionSample) to avoid collisions when multiple events share the same simple name across
+ * different namespaces.
  */
 public class RecursiveTypeGenerationTest {
 
@@ -63,34 +67,34 @@ public class RecursiveTypeGenerationTest {
     System.out.println("==> Generated files: " + generatedFiles);
 
     // Primary event type
-    assertThat(generatedFiles).contains("JFRExecutionSample.java");
+    assertThat(generatedFiles).contains("JFRJdkExecutionSample.java");
 
     // Direct dependencies from ExecutionSample
-    assertThat(generatedFiles).contains("JFRThread.java");
-    assertThat(generatedFiles).contains("JFRStackTrace.java");
+    assertThat(generatedFiles).contains("JFRJavaLangThread.java");
+    assertThat(generatedFiles).contains("JFRJdkTypesStackTrace.java");
 
     // Nested dependencies - these are missing due to the bug!
     assertThat(generatedFiles)
         .as("StackTrace references StackFrame, should be generated recursively")
-        .contains("JFRStackFrame.java");
+        .contains("JFRJdkTypesStackFrame.java");
 
     // Read the StackTrace file to verify it references StackFrame
-    Path stackTraceFile = typesDir.resolve("JFRStackTrace.java");
+    Path stackTraceFile = typesDir.resolve("JFRJdkTypesStackTrace.java");
     String stackTraceContent = Files.readString(stackTraceFile);
     assertThat(stackTraceContent)
         .as("StackTrace should reference StackFrame type")
-        .contains("JFRStackFrame");
+        .contains("JFRJdkTypesStackFrame");
 
     // Verify deeper nested dependencies
-    if (generatedFiles.contains("JFRStackFrame.java")) {
-      Path stackFrameFile = typesDir.resolve("JFRStackFrame.java");
+    if (generatedFiles.contains("JFRJdkTypesStackFrame.java")) {
+      Path stackFrameFile = typesDir.resolve("JFRJdkTypesStackFrame.java");
       String stackFrameContent = Files.readString(stackFrameFile);
 
       // StackFrame typically references Method
-      if (stackFrameContent.contains("JFRMethod")) {
+      if (stackFrameContent.contains("JFRJdkTypesMethod")) {
         assertThat(generatedFiles)
             .as("StackFrame references Method, should be generated recursively")
-            .contains("JFRMethod.java");
+            .contains("JFRJdkTypesMethod.java");
       }
     }
   }
@@ -113,10 +117,10 @@ public class RecursiveTypeGenerationTest {
           stream.map(Path::getFileName).map(Path::toString).collect(Collectors.toList());
     }
 
-    assertThat(generatedFiles).contains("JFRSystemProcess.java");
+    assertThat(generatedFiles).contains("JFRJdkSystemProcess.java");
 
     // Verify all referenced types are generated
-    Path systemProcessFile = typesDir.resolve("JFRSystemProcess.java");
+    Path systemProcessFile = typesDir.resolve("JFRJdkSystemProcess.java");
     String content = Files.readString(systemProcessFile);
 
     // Extract all JFR type references from the file
@@ -204,6 +208,9 @@ public class RecursiveTypeGenerationTest {
   /**
    * Helper method to extract JFR type references from generated interface code. Looks for patterns
    * like "JFRTypeName fieldName()" to find referenced types.
+   *
+   * <p>Note: With namespace-inclusive naming, types like "jdk.types.StackFrame" become
+   * "JFRJdkTypesStackFrame".
    */
   private Set<String> extractJfrTypeReferences(String content) {
     return content
@@ -212,7 +219,8 @@ public class RecursiveTypeGenerationTest {
         .map(
             line -> {
               String trimmed = line.trim();
-              // Extract type name (e.g., "JFRStackFrame" from "JFRStackFrame frames();")
+              // Extract type name (e.g., "JFRJdkTypesStackFrame" from "JFRJdkTypesStackFrame
+              // frames();")
               int jfrIndex = trimmed.indexOf("JFR");
               int spaceIndex = trimmed.indexOf(' ', jfrIndex);
               if (jfrIndex >= 0 && spaceIndex > jfrIndex) {
