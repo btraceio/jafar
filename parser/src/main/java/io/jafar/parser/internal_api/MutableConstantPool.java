@@ -2,6 +2,7 @@ package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -57,7 +58,22 @@ public final class MutableConstantPool implements ConstantPool {
         long pos = stream.position();
         try {
           stream.position(offsets.get(id));
-          o = clazz.read(stream);
+          // Prefer typed deserialization if available; otherwise fall back to generic map building
+          Object typed = clazz.read(stream);
+          if (typed != null) {
+            o = typed;
+          } else {
+            GenericValueReader r = stream.getContext().get(GenericValueReader.class);
+            MapValueBuilder builder = (MapValueBuilder) r.getProcessor();
+            builder.onComplexValueStart(null, null, clazz);
+            try {
+              r.readValue(stream, clazz);
+            } catch (java.io.IOException ioe) {
+              throw new RuntimeException(ioe);
+            }
+            builder.onComplexValueEnd(null, null, clazz);
+            o = builder.getRoot();
+          }
           entries.put(id, o);
         } finally {
           stream.position(pos);
@@ -66,6 +82,39 @@ public final class MutableConstantPool implements ConstantPool {
       return o;
     }
     return null;
+  }
+
+  @Override
+  public int entryCount() {
+    return offsets.size();
+  }
+
+  @Override
+  public java.util.Iterator<Long> ids() {
+    // Prefer a primitive long iterator if available
+    return new java.util.Iterator<Long>() {
+      final it.unimi.dsi.fastutil.longs.LongIterator it = offsets.keySet().iterator();
+
+      @Override
+      public boolean hasNext() {
+        return it.hasNext();
+      }
+
+      @Override
+      public Long next() {
+        return it.nextLong();
+      }
+    };
+  }
+
+  @Override
+  public boolean isIndexed() {
+    return !offsets.isEmpty();
+  }
+
+  @Override
+  public void ensureIndexed() {
+    // No-op: offsets are populated during parsing; nothing to do here.
   }
 
   /**

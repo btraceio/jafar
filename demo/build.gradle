@@ -2,7 +2,7 @@ plugins {
     id 'java'
     id 'application'
     // No shadow plugin; define a simple fatJar task compatible with Gradle 9
-    id 'io.btrace.jafar-gradle-plugin' version '0.0.1-SNAPSHOT'
+    id 'io.btrace.jafar-gradle-plugin' version '0.3.0-SNAPSHOT'
 }
 
 repositories {
@@ -48,8 +48,8 @@ tasks.register('fatJar', Jar) {
 tasks.assemble { dependsOn(tasks.named('fatJar')) }
 
 dependencies {
-    implementation 'io.btrace:jafar-parser:0.0.1-SNAPSHOT'
-    implementation 'io.btrace:jafar-tools:0.0.1-SNAPSHOT'
+    implementation 'io.btrace:jafar-parser:0.3.0-SNAPSHOT'
+    implementation 'io.btrace:jafar-tools:0.3.0-SNAPSHOT'
 
     implementation 'it.unimi.dsi:fastutil:8.5.12'
     implementation 'org.jctools:jctools-core:4.0.3'
@@ -61,9 +61,17 @@ test {
 }
 
 generateJafarTypes {
-    overwrite = false
+    overwrite = true
+//    inputFile = file('<some_datadog_profile.jfr>')
     eventTypeFilter {
-        it == 'jdk.ExecutionSample' || it == 'jdk.SystemProcess'
+        it == 'jdk.CPULoad' ||
+        it == 'jdk.ExecutionSample' ||
+        it == 'jdk.GCHeapSummary' ||
+        it == 'jdk.ThreadCPULoad' ||
+        it == 'jdk.SocketRead' ||
+        it == 'jdk.ThreadAllocationStatistics' ||
+        it == 'jdk.VirtualThreadPinned' ||
+        it.startsWith('datadog.')
     }
     targetPackage = 'io.jafar.demo.types'
 }

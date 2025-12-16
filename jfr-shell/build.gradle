@@ -1,0 +1,230 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '8.3.6'
+    id 'maven-publish'
+}
+
+def libraryName = "jfr-shell"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    implementation project(':parser')
+    implementation project(':tools')
+
+    // Command line parsing
+    implementation 'info.picocli:picocli:4.7.5'
+
+    // JLine for better terminal handling
+    implementation 'org.jline:jline-terminal:3.21.0'
+    implementation 'org.jline:jline-reader:3.21.0'
+
+    // Utilities
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+    implementation 'org.slf4j:slf4j-simple:2.0.5'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'org.mockito:mockito-core:5.12.0'
+}
+
+test {
+    useJUnitPlatform()
+    // Enable Byte Buddy experimental support for Java 25 when used by Mockito
+    systemProperty 'net.bytebuddy.experimental', 'true'
+}
+
+shadowJar {
+    group 'Build'
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('')
+
+    // Ensure main class is set
+    manifest {
+        attributes 'Main-Class': 'io.jafar.shell.Main'
+    }
+}
+
+// Create standalone jlinked distribution
+tasks.register('jlinkDist') {
+    group 'Distribution'
+    description 'Create a jlinked standalone distribution with custom JRE'
+
+    dependsOn shadowJar
+
+    def outputDir = file("${buildDir}/jlink")
+    def jreDir = file("${outputDir}/jre")
+    def binDir = file("${outputDir}/bin")
+    def libDir = file("${outputDir}/lib")
+
+    outputs.dir(outputDir)
+
+    doLast {
+        // Clean output directory
+        project.delete(outputDir)
+        project.mkdir(outputDir)
+        project.mkdir(binDir)
+        project.mkdir(libDir)
+
+        // Find JDK with jmods - prefer Java 25 to match compilation target
+        def javaHome = null
+        def jmodsDir = null
+
+        // First try Java 25 EA (matches compilation target)
+        def java25EA = System.getProperty("user.home") + "/.sdkman/candidates/java/25.ea.33-open"
+        def java25EAJmods = new File("${java25EA}/jmods")
+        if (java25EAJmods.exists()) {
+            javaHome = java25EA
+            jmodsDir = java25EAJmods
+            logger.lifecycle("Using Java 25 EA for jlink (matches compilation target)")
+        } else {
+            // Fallback to current Java home
+            javaHome = System.getProperty("java.home")
+            jmodsDir = new File("${javaHome}/jmods")
+            if (!jmodsDir.exists()) {
+                throw new GradleException("Cannot find JDK with jmods directory. Tried: ${java25EA} and ${javaHome}")
+            }
+            logger.warn("Using ${javaHome} for jlink - may have version mismatch with compiled classes")
+        }
+
+        logger.lifecycle("Using JDK: ${javaHome}")
+        logger.lifecycle("Creating custom JRE with jlink...")
+
+        // Run jlink to create custom JRE
+        def jlinkCmd = [
+            "${javaHome}/bin/jlink",
+            '--module-path', jmodsDir.absolutePath,
+            '--add-modules', 'java.base,java.logging,java.management,jdk.unsupported,jdk.crypto.ec',
+            '--strip-debug',
+            '--compress', '2',
+            '--no-header-files',
+            '--no-man-pages',
+            '--output', jreDir.absolutePath
+        ]
+        def proc = jlinkCmd.execute()
+        proc.waitFor()
+        if (proc.exitValue() != 0) {
+            throw new GradleException("jlink failed: ${proc.errorStream.text}")
+        }
+
+        logger.lifecycle("Custom JRE created at: ${jreDir}")
+
+        // Copy shadow jar
+        project.copy {
+            from(shadowJar.archiveFile)
+            into(libDir)
+            rename { "${libraryName}.jar" }
+        }
+
+        // Create launcher script for Unix/Mac
+        def launcherScript = new File("${binDir}/jfr-shell")
+        launcherScript.text = """#!/bin/sh
+# JFR Shell launcher script
+
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+JFR_HOME="\$(dirname "\$SCRIPT_DIR")"
+JAVA_HOME="\$JFR_HOME/jre"
+
+exec "\$JAVA_HOME/bin/java" -jar "\$JFR_HOME/lib/${libraryName}.jar" "\$@"
+"""
+        launcherScript.setExecutable(true)
+
+        // Create launcher script for Windows
+        def launcherBat = new File("${binDir}/jfr-shell.bat")
+        launcherBat.text = """@echo off
+rem JFR Shell launcher script
+
+setlocal
+
+set SCRIPT_DIR=%~dp0
+set JFR_HOME=%SCRIPT_DIR%..
+set JAVA_HOME=%JFR_HOME%\\jre
+
+"%JAVA_HOME%\\bin\\java" -jar "%JFR_HOME%\\lib\\${libraryName}.jar" %*
+"""
+
+        logger.lifecycle("Standalone distribution created at: ${outputDir}")
+        logger.lifecycle("Run: ${binDir}/jfr-shell")
+    }
+}
+
+// Create zip archive of the jlinked distribution
+tasks.register('jlinkZip', Zip) {
+    group 'Distribution'
+    description 'Create a zip archive of the jlinked distribution'
+
+    dependsOn jlinkDist
+
+    from file("${buildDir}/jlink")
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier = 'standalone'
+    destinationDirectory = file("${buildDir}/distributions")
+
+    doLast {
+        logger.lifecycle("Standalone zip created: ${archiveFile.get().asFile}")
+    }
+}
+
+// Publishing configuration for JBang distribution
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'io.jafar'
+            artifactId = 'jfr-shell'
+            version = component_version
+
+            // Publish the shadow JAR as main artifact
+            artifact shadowJar
+
+            pom {
+                name = 'JFR Shell'
+                description = 'Interactive CLI for exploring and analyzing Java Flight Recorder files'
+                url = 'https://github.com/btraceio/jafar'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'jbachorik'
+                        name = 'Jaroslav Bachorik'
+                        email = 'j.bachorik@gmail.com'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:git://github.com/btraceio/jafar.git'
+                    developerConnection = 'scm:git:ssh://github.com/btraceio/jafar.git'
+                    url = 'https://github.com/btraceio/jafar'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/btraceio/jafar")
+            credentials {
+                username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+                password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
+}

@@ -27,3 +27,4 @@ includeBuild('jafar-gradle-plugin') {
 rootProject.name = 'jafar'
 include ':parser'
 include ':tools'
+include ':jfr-shell'

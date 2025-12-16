@@ -1,0 +1,6 @@
+# JitPack configuration for building jfr-shell
+jdk:
+  - openjdk25
+
+install:
+  - ./gradlew :jfr-shell:shadowJar :jfr-shell:publishToMavenLocal -x test

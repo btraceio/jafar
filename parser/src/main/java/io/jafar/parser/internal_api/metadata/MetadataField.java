@@ -161,6 +161,20 @@ public final class MetadataField extends AbstractMetadataElement {
     visitor.visitEnd(this);
   }
 
+  /**
+   * Returns field-level JFR metadata annotations declared on this field.
+   *
+   * <p>The returned list is an unmodifiable snapshot; it may be empty when the field has no
+   * annotations. Each entry provides access to the annotation type and value via {@link
+   * MetadataAnnotation#getType()} and {@link MetadataAnnotation#getValue()}.
+   *
+   * @return an unmodifiable list of field annotations (possibly empty)
+   */
+  public List<MetadataAnnotation> getAnnotations() {
+    return java.util.Collections.unmodifiableList(
+        annotations == null ? java.util.Collections.emptyList() : annotations);
+  }
+
   @Override
   public String toString() {
     return "MetadataField{"

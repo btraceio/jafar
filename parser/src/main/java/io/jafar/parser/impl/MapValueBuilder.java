@@ -10,12 +10,12 @@ import java.util.Map;
  * Value processor that builds a Java Map representation for complex values while keeping
  * constant-pool references lazy via {@link ConstantPoolAccessor}.
  */
-final class MapValueBuilder implements ValueProcessor {
+public final class MapValueBuilder implements ValueProcessor {
   private final ParserContext context;
   private final MultiTypeStack stack = new MultiTypeStack(20);
   private Map<String, Object> root;
 
-  MapValueBuilder(ParserContext context) {
+  public MapValueBuilder(ParserContext context) {
     this.context = context;
   }
 
@@ -23,7 +23,7 @@ final class MapValueBuilder implements ValueProcessor {
     root = null;
   }
 
-  Map<String, Object> getRoot() {
+  public Map<String, Object> getRoot() {
     return root;
   }
 

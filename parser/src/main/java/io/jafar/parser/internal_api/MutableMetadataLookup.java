@@ -24,7 +24,7 @@ public final class MutableMetadataLookup implements MetadataLookup {
    */
   public MutableMetadataLookup() {}
 
-  /** Array of string constants for the current chunk. */
+  /** Array of string constants accumulated across all chunks. */
   private String[] strings;
 
   /** Map of class IDs to their metadata class instances. */
@@ -35,6 +35,12 @@ public final class MutableMetadataLookup implements MetadataLookup {
   /** {@inheritDoc} */
   @Override
   public String getString(int idx) {
+    if (strings == null || idx < 0 || idx >= strings.length) {
+      throw new IllegalArgumentException(
+          String.format(
+              "String index %d out of bounds (string table size: %d)",
+              idx, strings == null ? 0 : strings.length));
+    }
     return strings[idx];
   }
 

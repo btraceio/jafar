@@ -8,10 +8,18 @@
  */
 
 pluginManagement {
+    includeBuild('../jafar-gradle-plugin')
     repositories {
         mavenLocal()
         maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
         gradlePluginPortal()
+    }
+}
+
+// Include parent build to get access to parser module
+includeBuild('..') {
+    dependencySubstitution {
+        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
     }
 }
 
