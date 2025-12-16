@@ -1,6 +1,6 @@
 package io.jafar.demo;
 
-import io.jafar.demo.types.JFRExecutionSample;
+import io.jafar.demo.types.JFRJdkExecutionSample;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.TypedJafarParser;
@@ -65,9 +65,9 @@ public class Main {
       throws Exception {
     ParsingContext parsingContext = ParsingContext.create();
     try (TypedJafarParser p = parsingContext.newTypedParser(file.toPath())) {
-      HandlerRegistration<JFRExecutionSample> h1 =
+      HandlerRegistration<JFRJdkExecutionSample> h1 =
           p.handle(
-              JFRExecutionSample.class,
+              JFRJdkExecutionSample.class,
               (event, ctl) -> {
                 if (event.sampledThread() == null) {
                   throw new RuntimeException();
