@@ -112,19 +112,30 @@ This improves performance by skipping unnecessary field extraction.
 
 ### Raw Field Access
 
-Request raw JFR values instead of converted types:
+Request raw constant pool index instead of deserialized complex type:
 
 ```java
-@JfrType("jdk.FileRead")
-public interface FileRead {
-    @JfrField(value = "startTime", raw = true)
-    long startTimeTicks();  // Returns raw tick value instead of Instant
+@JfrType("jdk.ExecutionSample")
+public interface ExecutionSample {
+    @JfrField(value = "eventThread", raw = true)
+    long eventThreadIndex();  // Returns CP index instead of Thread object
 
-    Instant startTime();     // Normal converted value
+    JFRJavaLangThread eventThread();  // Normal deserialized complex type
+}
+
+@JfrType("jdk.types.StackFrame")
+public interface StackFrame {
+    @JfrField(value = "method", raw = true)
+    long methodIndex();  // Returns CP index for method
+
+    JFRJdkTypesMethod method();  // Normal deserialized method object
 }
 ```
 
-Raw access is useful when you need tick values for custom tick conversion or when you want to avoid object allocation.
+Raw access is useful when:
+- You need to track object identity by CP index
+- You want to avoid deserialization overhead for complex types
+- You're building custom constant pool analysis tools
 
 ## Parsing Events
 
@@ -389,15 +400,15 @@ public interface ExecutionSample {
 }
 ```
 
-### 2. Use Raw Access for Ticks
+### 2. Use Raw Access for Complex Types
 
-Avoid `Instant` allocation when you only need tick values:
+Skip deserialization of complex types when you only need CP indices:
 
 ```java
-@JfrType("jdk.FileRead")
-public interface FileRead {
-    @JfrField(value = "startTime", raw = true)
-    long startTimeTicks();  // Faster, no allocation
+@JfrType("jdk.ExecutionSample")
+public interface ExecutionSample {
+    @JfrField(value = "eventThread", raw = true)
+    long eventThreadIndex();  // Returns CP index, avoids deserialization
 }
 ```
 
