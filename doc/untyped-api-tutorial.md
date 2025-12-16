@@ -598,27 +598,30 @@ Object bytes = Values.get(value, "bytes");
 Object bytes = value.get("bytes");
 ```
 
-### 4. Batch Processing
+### 4. Use Thread-Safe Collections
 
-Queue events for batch processing:
+The parser processes chunks in parallel, so use concurrent collections:
 
 ```java
-BlockingQueue<Map<String, Object>> queue = new LinkedBlockingQueue<>();
+// Good - thread-safe collections
+Map<String, AtomicLong> fileStats = new ConcurrentHashMap<>();
 
 parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
-        queue.offer(new HashMap<>(value));  // Copy for async processing
+        String path = (String) value.get("path");
+        Long bytes = (Long) value.get("bytes");
+
+        if (path != null && bytes != null) {
+            fileStats.computeIfAbsent(path, k -> new AtomicLong())
+                    .addAndGet(bytes);
+        }
     }
 });
 
-// Process in background
-executor.submit(() -> {
-    while (true) {
-        Map<String, Object> event = queue.take();
-        // Heavy processing
-    }
-});
+// Bad - manual threading adds unnecessary overhead
 ```
+
+The parser already parallelizes chunk processing across available cores, so handlers execute concurrently. Use `ConcurrentHashMap`, `AtomicLong`, and other concurrent collections instead of manual synchronization.
 
 ### 5. Filter Early
 

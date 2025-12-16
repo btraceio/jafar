@@ -440,24 +440,27 @@ public interface ExecutionSample {
 
 ### 3. Keep Handlers Fast
 
-Offload heavy work to background threads:
+Keep handler logic simple and fast - the parser already parallelizes chunk processing:
 
 ```java
-ExecutorService executor = Executors.newFixedThreadPool(4);
-BlockingQueue<FileRead> queue = new LinkedBlockingQueue<>();
+// Good - fast inline processing
+Map<String, AtomicLong> stats = new ConcurrentHashMap<>();
 
 parser.handle(FileRead.class, (event, ctl) -> {
-    queue.offer(event);  // Fast enqueue
+    stats.computeIfAbsent(event.path(), k -> new AtomicLong())
+         .addAndGet(event.bytes());
 });
 
-// Process in background
-executor.submit(() -> {
-    while (true) {
-        FileRead event = queue.take();
-        // Heavy processing here
-    }
+// Bad - unnecessary overhead
+ExecutorService executor = Executors.newFixedThreadPool(4);
+parser.handle(FileRead.class, (event, ctl) -> {
+    executor.submit(() -> {
+        // This adds overhead - parser already uses multiple threads
+    });
 });
 ```
+
+The parser processes chunks in parallel across available cores, so handlers execute concurrently. Use thread-safe data structures (like `ConcurrentHashMap`, `AtomicLong`) instead of manual thread management.
 
 ### 4. Reuse ParsingContext
 
