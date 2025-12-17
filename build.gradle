@@ -76,7 +76,11 @@ subprojects {
 
     plugins.withId('com.vanniktech.maven.publish') {
         mavenPublishing {
-            publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
+            // Use legacy OSSRH for snapshots, Central Portal for releases
+            def host = version.toString().endsWith("-SNAPSHOT")
+                ? com.vanniktech.maven.publish.SonatypeHost.DEFAULT
+                : com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL
+            publishToMavenCentral(host, true)
             signAllPublications()
 
             pom {

@@ -88,7 +88,11 @@ publishing {
 
 // Configure vanniktech plugin for Maven Central publishing
 mavenPublishing {
-    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
+    // Use legacy OSSRH for snapshots, Central Portal for releases
+    def host = version.toString().endsWith("-SNAPSHOT")
+        ? com.vanniktech.maven.publish.SonatypeHost.DEFAULT
+        : com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL
+    publishToMavenCentral(host, true)
     signAllPublications()
 
     coordinates("io.btrace", "jafar-gradle-plugin", version.toString())
