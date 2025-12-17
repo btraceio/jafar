@@ -88,8 +88,8 @@ publishing {
 
 // Configure vanniktech plugin for Maven Central publishing
 mavenPublishing {
-    // Central Portal supports both releases and snapshots (requires v0.31.0+)
-    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
+    // v0.35.0+ automatically uses Central Portal (SonatypeHost enum removed)
+    publishToMavenCentral()
     signAllPublications()
 
     coordinates("io.btrace", "jafar-gradle-plugin", version.toString())
