@@ -71,12 +71,15 @@ spotless {
 
 // Configure Central Portal publishing for all subprojects
 subprojects {
+    // Set group for all subprojects BEFORE plugin configuration
+    group = 'io.btrace'
+
     plugins.withId('com.vanniktech.maven.publish') {
         mavenPublishing {
             publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
             signAllPublications()
 
-            coordinates(group.toString(), name, version.toString())
+            coordinates('io.btrace', name, version.toString())
 
             pom {
                 name = project.name

@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(./gradlew:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:vanniktech.github.io)",
+      "WebFetch(domain:discuss.gradle.org)",
+      "WebFetch(domain:docs.gradle.org)",
+      "WebFetch(domain:ncorti.com)",
+      "WebFetch(domain:central.sonatype.com)",
+      "Bash(gh api:*)"
     ],
     "deny": [],
     "ask": []

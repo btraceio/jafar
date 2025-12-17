@@ -57,13 +57,26 @@ jobs:
             exit 1
           fi
 
-      - name: Publish parser to Maven Local first (for gradle plugin dependency)
+      - name: Publish parser to Maven Local (for gradle plugin dependency)
         run: |
-          ./gradlew :parser:jar :parser:sourcesJar :parser:publishToMavenLocal --no-daemon --stacktrace
+          ./gradlew :parser:build :parser:publishToMavenLocal --no-daemon --stacktrace
 
-      - name: Publish all artifacts to Maven Central
+      - name: Publish parser, tools, jfr-shell to Maven Central
         run: |
-          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jafar-gradle-plugin:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
+      - name: Publish gradle plugin to Maven Central and GitHub Packages
+        run: |
+          cd jafar-gradle-plugin
+          ./gradlew publishAllPublicationsToMavenCentralRepository publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALUSERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALPASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
 
   # Build jfr-shell shadow JAR for JitPack
   publish-jfr-shell:
