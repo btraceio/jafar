@@ -78,6 +78,74 @@ java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recor
 ./gradlew :demo:run --args="jafar /path/to/recording.jfr"
 ```
 
+## Release Process
+
+The project uses a fully automated release workflow. See [RELEASING.md](RELEASING.md) for complete details.
+
+### Quick Release Steps
+
+1. **Update versions** in `build.gradle` and `jafar-gradle-plugin/build.gradle` (remove `-SNAPSHOT`)
+2. **Update CHANGELOG.md** with release notes for the new version
+3. **Commit and push** changes to main branch
+4. **Create and push tag**:
+   ```bash
+   git tag -a v0.4.0 -m "Release v0.4.0"
+   git push origin v0.4.0
+   ```
+
+### What Happens Automatically
+
+The release workflow (`.github/workflows/release.yml`) automatically:
+- ✅ Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
+- ✅ Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
+- ✅ Publishes `jfr-shell` to GitHub Packages
+- ✅ Triggers JitPack build and waits for completion
+- ✅ Updates [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog) with new version
+- ✅ Creates GitHub Release with changelog notes
+
+### Version Management
+
+- **Root version**: Defined in `build.gradle` as `project.version="X.Y.Z"`
+- **Subprojects**: Use `rootProject.version` (automatic sync)
+- **Gradle plugin**: Has separate version in `jafar-gradle-plugin/build.gradle`
+- **Development versions**: Use `-SNAPSHOT` suffix (e.g., `0.4.0-SNAPSHOT`)
+
+### Post-Release
+
+After release completes, prepare for next development iteration:
+
+```bash
+# Update to next SNAPSHOT version
+# Edit build.gradle: project.version="0.5.0-SNAPSHOT"
+# Edit jafar-gradle-plugin/build.gradle: version = "0.5.0-SNAPSHOT"
+# Update CHANGELOG.md with [Unreleased] section
+
+git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
+git commit -m "Prepare for next development iteration"
+git push origin main
+```
+
+### Testing Releases
+
+```bash
+# Verify JBang distribution (available immediately)
+jbang --fresh jfr-shell@btraceio --version
+
+# Verify Maven Central (takes ~2 hours to sync)
+# Check: https://central.sonatype.com/artifact/io.btrace/jafar-parser/X.Y.Z
+```
+
+### Manual Release (Emergency Only)
+
+If automated workflow fails:
+```bash
+# Publish to Sonatype
+SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
+
+# Publish jfr-shell to GitHub Packages
+GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
+```
+
 ## Development Notes
 
 ### Parser APIs
