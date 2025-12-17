@@ -129,6 +129,13 @@ public class CommandDispatcher {
       alias = args.get(2);
     }
 
+    // Expand ~ to user home directory
+    if (pathStr.startsWith("~/")) {
+      pathStr = System.getProperty("user.home") + pathStr.substring(1);
+    } else if ("~".equals(pathStr)) {
+      pathStr = System.getProperty("user.home");
+    }
+
     Path path = Paths.get(pathStr);
     SessionManager.SessionRef ref = sessions.open(path, alias);
     io.println(
@@ -723,9 +730,13 @@ public class CommandDispatcher {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile(search);
         types.removeIf(t -> !p.matcher(t).find());
       } else {
-        java.nio.file.PathMatcher m =
-            java.nio.file.FileSystems.getDefault().getPathMatcher("glob:" + search);
-        types.removeIf(t -> !m.matches(java.nio.file.Paths.get(t)));
+        // Convert glob pattern to regex for string matching (not filesystem paths)
+        String globRegex = search
+            .replace(".", "\\.")  // Escape dots
+            .replace("*", ".*")   // * matches any characters
+            .replace("?", ".");   // ? matches single character
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(globRegex);
+        types.removeIf(t -> !p.matcher(t).matches());
       }
     }
     int total = types.size();
