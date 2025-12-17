@@ -3,6 +3,8 @@ package io.jafar.demo;
 import io.jafar.demo.types.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.TypedJafarParser;
+
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -18,12 +20,19 @@ import java.util.stream.Collectors;
 public class DatadogProfilerDemoTyped {
 
   public static void main(String[] args) throws Exception {
+    Path jfrFile;
     if (args.length < 1) {
       System.err.println("Usage: java DatadogProfilerDemoTyped <recording.jfr>");
-      System.exit(1);
+      jfrFile = Path.of("src/test/resources/test-dd.jfr");
+      if (Files.exists(jfrFile)) {
+        System.err.println("Using the default value of " + jfrFile.toAbsolutePath());
+      } else {
+        System.err.println("Use ../get_resources.sh to download the test resources");
+        System.exit(1);
+      }
+    } else {
+      jfrFile = Path.of(args[0]);
     }
-
-    Path jfrFile = Path.of(args[0]);
     System.out.println("=".repeat(80));
     System.out.println("Comprehensive Datadog Profiler Analysis - Typed API");
     System.out.println("=".repeat(80));
