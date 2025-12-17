@@ -86,7 +86,20 @@ jobs:
         run: ./gradlew :jfr-shell:shadowJar --no-daemon
 
       - name: Publish to GitHub Packages
-        run: ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository --no-daemon
+        run: |
+          set +e
+          OUTPUT=$(./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository --no-daemon 2>&1)
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            if echo "$OUTPUT" | grep -q "409.*Conflict"; then
+              echo "⚠️ Version already exists in GitHub Packages (409 Conflict) - skipping"
+              exit 0
+            else
+              echo "$OUTPUT"
+              exit $EXIT_CODE
+            fi
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
