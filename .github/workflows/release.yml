@@ -54,9 +54,9 @@ jobs:
             exit 1
           fi
 
-      - name: Publish parser and tools to Sonatype
+      - name: Publish parser and tools to Sonatype and mavenLocal
         run: |
-          ./gradlew :parser:publish :tools:publish --no-daemon --stacktrace
+          ./gradlew :parser:publish :parser:publishToMavenLocal :tools:publish --no-daemon --stacktrace
 
       - name: Publish gradle plugin to Sonatype
         run: |
