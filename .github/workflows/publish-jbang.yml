@@ -36,7 +36,7 @@ jobs:
         run: ./gradlew :jfr-shell:shadowJar --no-daemon
 
       - name: Publish to GitHub Packages
-        run: ./gradlew :jfr-shell:publish --no-daemon
+        run: ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository --no-daemon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
