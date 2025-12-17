@@ -113,7 +113,8 @@ public class JFRSession implements AutoCloseable {
           });
     } catch (Exception e) {
       // If metadata scanning fails, just continue without types - they'll be available after run()
-      System.err.println("Warning: Failed to scan metadata: " + e.getMessage());
+      System.err.println("Warning: Failed to scan metadata: " + recordingPath);
+      e.printStackTrace();
     }
   }
 
