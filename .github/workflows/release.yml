@@ -57,14 +57,18 @@ jobs:
             exit 1
           fi
 
+      - name: Publish parser to Maven Local (for gradle plugin build)
+        run: |
+          ./gradlew :parser:publishToMavenLocal --no-daemon --stacktrace
+
       - name: Publish parser, tools, and jfr-shell to Maven Central
         run: |
-          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :parser:publishToMavenLocal :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
       - name: Publish gradle plugin to Maven Central
         run: |
           cd jafar-gradle-plugin
-          ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace --refresh-dependencies
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALUSERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALPASSWORD }}
