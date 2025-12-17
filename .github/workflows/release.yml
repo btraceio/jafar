@@ -57,6 +57,10 @@ jobs:
             exit 1
           fi
 
+      - name: Publish parser to Maven Local first (for gradle plugin dependency)
+        run: |
+          ./gradlew :parser:jar :parser:sourcesJar :parser:publishToMavenLocal --no-daemon --stacktrace
+
       - name: Publish all artifacts to Maven Central
         run: |
           ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jafar-gradle-plugin:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
