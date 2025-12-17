@@ -101,8 +101,8 @@ jobs:
           # Update jbang-catalog.json
           sed -i.bak "s|io.btrace:jafar-shell:[^\"]*|io.btrace:jafar-shell:$VERSION|g" jbang-catalog.json
 
-          # Update jfr-shell.java
-          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jfr-shell.java
+          # Update jafar-shell.java
+          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
 
           # Clean up backup files
           rm -f *.bak
@@ -126,8 +126,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add jbang-catalog.json jfr-shell.java
-          if git commit -m "Update jfr-shell to version $VERSION"; then
+          git add jbang-catalog.json jafar-shell.java
+          if git commit -m "Update jafar-shell to version $VERSION"; then
             git push || echo "⚠️ Push failed - update catalog manually at https://github.com/btraceio/jbang-catalog"
           fi
 
