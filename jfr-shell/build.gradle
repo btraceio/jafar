@@ -210,7 +210,7 @@ description = 'Interactive CLI for exploring and analyzing Java Flight Recorder 
 
 // Override artifact name for Maven publishing
 mavenPublishing {
-    coordinates('io.btrace', 'jfr-shell', version.toString())
+    coordinates('io.btrace', 'jafar-shell', version.toString())
 }
 
 // Override publication to use shadow JAR instead of regular JAR
