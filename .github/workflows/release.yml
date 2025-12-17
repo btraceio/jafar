@@ -66,6 +66,13 @@ jobs:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
 
+      - name: Close and release Sonatype staging repositories
+        run: |
+          ./gradlew closeAndReleaseStagingRepositories --no-daemon --stacktrace
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+
   # Publish jfr-shell to GitHub Packages for JBang/JitPack
   publish-jfr-shell:
     needs: prepare
