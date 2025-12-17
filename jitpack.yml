@@ -1,11 +1,11 @@
 # JitPack configuration for building jfr-shell
 jdk:
-  - openjdk25
   - openjdk21
 
 before_install:
-  - sdk install java 21.0.1-open || true
-  - sdk use java 25.0.1-open
+  - sdk install java 21.0.2-open || true
+  - sdk install java 25.0.1-open || true
+  - sdk use java 21.0.2-open
 
 install:
   - ./gradlew :jfr-shell:shadowJar :jfr-shell:publishToMavenLocal -x test
