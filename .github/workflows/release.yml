@@ -154,10 +154,9 @@ jobs:
           exit 1
 
   # Update JBang catalog automatically
-  # NOTE: Disabled - requires PAT with cross-repo write permissions
-  # Manual update needed at: https://github.com/btraceio/jbang-catalog
   update-jbang-catalog:
-    if: false  # Disabled
+    # Only runs if JBANG_CATALOG_PAT secret is available
+    if: ${{ secrets.JBANG_CATALOG_PAT != '' }}
     needs: [prepare, jitpack-build]
     runs-on: ubuntu-latest
     steps:
@@ -165,7 +164,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: btraceio/jbang-catalog
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.JBANG_CATALOG_PAT }}
           path: catalog
 
       - name: Update catalog files
@@ -202,6 +201,7 @@ jobs:
   # Create GitHub Release with notes
   create-release:
     needs: [prepare, publish-maven, publish-jfr-shell, jitpack-build]
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
