@@ -154,7 +154,10 @@ jobs:
           exit 1
 
   # Update JBang catalog automatically
+  # NOTE: Disabled - requires PAT with cross-repo write permissions
+  # Manual update needed at: https://github.com/btraceio/jbang-catalog
   update-jbang-catalog:
+    if: false  # Disabled
     needs: [prepare, jitpack-build]
     runs-on: ubuntu-latest
     steps:
@@ -198,7 +201,7 @@ jobs:
 
   # Create GitHub Release with notes
   create-release:
-    needs: [prepare, publish-maven, publish-jfr-shell, jitpack-build, update-jbang-catalog]
+    needs: [prepare, publish-maven, publish-jfr-shell, jitpack-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
