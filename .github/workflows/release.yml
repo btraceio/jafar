@@ -119,16 +119,18 @@ jobs:
       - name: Trigger JitPack build
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          echo "Triggering JitPack build for version: $VERSION"
+          TAG="${{ needs.prepare.outputs.version_tag }}"
+          echo "Triggering JitPack build for version: $VERSION (tag: $TAG)"
 
-          curl -f -s -o /tmp/jitpack-build.log \
-            "https://jitpack.io/com/github/btraceio/jafar/${{ needs.prepare.outputs.version_tag }}/build.log" || {
-            echo "JitPack build trigger failed. Build log:"
-            cat /tmp/jitpack-build.log
-            exit 1
-          }
-
-          echo "JitPack build triggered successfully"
+          # Trigger the build and capture output
+          if curl -s -o /tmp/jitpack-build.log "https://jitpack.io/com/github/btraceio/jafar/$TAG/build.log"; then
+            echo "JitPack build triggered successfully"
+            echo "Build log preview:"
+            head -50 /tmp/jitpack-build.log
+          else
+            echo "⚠️ Failed to fetch JitPack build log, but build may still be queued"
+            echo "Check status at: https://jitpack.io/com/github/btraceio/jafar/$TAG"
+          fi
 
       - name: Wait for JitPack artifact
         run: |
