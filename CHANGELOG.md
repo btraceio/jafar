@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2025-12-17
+
+### Fixed
+- **Sonatype publishing** - Added automatic close and release of staging repositories to Maven Central
+
 ## [0.3.7] - 2025-12-17
 
 ### Changed
