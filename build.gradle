@@ -1,7 +1,7 @@
 plugins {
     id "com.diffplug.spotless" version "6.11.0"
-    // Use Central Portal Publisher for new Sonatype Central Portal
-    id 'com.vanniktech.maven.publish' version '0.30.0' apply false
+    // Use Central Portal Publisher for new Sonatype Central Portal (0.31.0+ supports snapshots)
+    id 'com.vanniktech.maven.publish' version '0.35.0' apply false
 }
 
 project.version="0.4.0-SNAPSHOT"
@@ -76,10 +76,8 @@ subprojects {
 
     plugins.withId('com.vanniktech.maven.publish') {
         mavenPublishing {
-            // Only publish releases to Central Portal, skip snapshots
-            if (!version.toString().endsWith("-SNAPSHOT")) {
-                publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
-            }
+            // Central Portal supports both releases and snapshots (requires v0.31.0+)
+            publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
             signAllPublications()
 
             pom {
