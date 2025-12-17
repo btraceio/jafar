@@ -59,7 +59,7 @@ jobs:
 
       - name: Publish parser to Maven Local (for gradle plugin dependency)
         run: |
-          ./gradlew :parser:build :parser:publishToMavenLocal --no-daemon --stacktrace
+          ./gradlew :parser:jar :parser:sourcesJar :parser:publishToMavenLocal --no-daemon --stacktrace
 
       - name: Publish parser, tools, jfr-shell to Maven Central
         run: |
