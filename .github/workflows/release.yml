@@ -54,9 +54,9 @@ jobs:
             exit 1
           fi
 
-      - name: Publish parser and tools to Sonatype and mavenLocal
+      - name: Publish parser, tools, and jfr-shell to Sonatype and mavenLocal
         run: |
-          ./gradlew :parser:publish :parser:publishToMavenLocal :tools:publish --no-daemon --stacktrace
+          ./gradlew :parser:publish :parser:publishToMavenLocal :tools:publish :jfr-shell:shadowJar :jfr-shell:publishMavenPublicationToSonatypeRepository --no-daemon --stacktrace
 
       - name: Publish gradle plugin to Sonatype
         run: |
@@ -174,10 +174,10 @@ jobs:
           cd catalog
 
           # Update jbang-catalog.json
-          sed -i.bak "s|io.github.btraceio:jfr-shell:[^\"]*|io.github.btraceio:jfr-shell:$VERSION|g" jbang-catalog.json
+          sed -i.bak "s|io.jafar:jfr-shell:[^\"]*|io.jafar:jfr-shell:$VERSION|g" jbang-catalog.json
 
           # Update jfr-shell.java
-          sed -i.bak "s|//DEPS io.github.btraceio:jfr-shell:.*|//DEPS io.github.btraceio:jfr-shell:$VERSION|g" jfr-shell.java
+          sed -i.bak "s|//DEPS io.jafar:jfr-shell:.*|//DEPS io.jafar:jfr-shell:$VERSION|g" jfr-shell.java
 
           # Clean up backup files
           rm -f *.bak
@@ -250,9 +250,8 @@ jobs:
             const body = `## 🎉 Release ${version} Published Successfully
 
             This release has been published to:
-            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`
+            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.jafar:jfr-shell:${version}\`
             - ✅ GitHub Packages: \`io.jafar:jfr-shell:${version}\`
-            - ✅ JitPack: \`io.github.btraceio.jafar:jfr-shell:${tag}\`
             - ✅ JBang Catalog: Updated to ${version}
 
             ### Usage
@@ -262,8 +261,8 @@ jobs:
             # Using catalog (always latest)
             jbang jfr-shell@btraceio recording.jfr
 
-            # Version pinned via JitPack
-            jbang io.github.btraceio.jafar:jfr-shell:${tag} recording.jfr
+            # Version pinned
+            jbang io.jafar:jfr-shell:${version} recording.jfr
 
             # Install as command
             jbang app install jfr-shell@btraceio
@@ -272,9 +271,17 @@ jobs:
 
             **Via Maven/Gradle:**
             \`\`\`xml
+            <!-- Parser -->
             <dependency>
               <groupId>io.btrace</groupId>
               <artifactId>jafar-parser</artifactId>
+              <version>${version}</version>
+            </dependency>
+
+            <!-- JFR Shell -->
+            <dependency>
+              <groupId>io.jafar</groupId>
+              <artifactId>jfr-shell</artifactId>
               <version>${version}</version>
             </dependency>
             \`\`\`

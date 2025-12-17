@@ -58,12 +58,11 @@ git push origin v0.4.0
 ```
 
 **This triggers the automated release workflow** which will:
-1. ✅ Publish `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
+1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
 2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
-3. ✅ Publish `jfr-shell` to GitHub Packages
-4. ✅ Trigger JitPack build for `io.github.btraceio.jafar:jfr-shell:v0.4.0`
-5. ✅ Automatically update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
-6. ✅ Create GitHub Release with changelog notes
+3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
+4. ✅ Automatically update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
+5. ✅ Create GitHub Release with changelog notes
 
 ### 5. Monitor Release Workflow
 
