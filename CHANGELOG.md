@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2025-12-17
+
+### Changed
+- **Removed JitPack publishing** - All artifacts now published exclusively to Maven Central and GitHub Packages
+- **Artifact naming consistency** - Renamed `jfr-shell` to `jafar-shell` for consistency with other artifacts
+- **JBang catalog improvements** - Updated to use Maven Central instead of JitPack, automatic updates on release
+
 ## [0.3.10] - 2025-12-17
 
 ### Changed
