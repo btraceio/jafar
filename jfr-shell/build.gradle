@@ -181,9 +181,23 @@ tasks.register('jlinkZip', Zip) {
     }
 }
 
+// Create sources and javadoc JARs (required for Maven Central)
+tasks.register('sourcesJar', Jar) {
+    from sourceSets.main.allJava
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("sources")
+    archiveVersion.set(component_version)
+}
+
+tasks.register('javadocJar', Jar) {
+    dependsOn javadoc
+    from javadoc.destinationDir
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("javadoc")
+    archiveVersion.set(component_version)
+}
+
 // Publishing configuration for JBang distribution
-// Note: jfr-shell is excluded from Sonatype publishing in CI (see .github/workflows/ci.yml)
-// It publishes to GitHub Packages for JBang distribution instead
 publishing {
     publications {
         maven(MavenPublication) {
@@ -193,6 +207,9 @@ publishing {
 
             // Publish the shadow JAR as main artifact
             artifact shadowJar
+            // Add sources and javadoc (required for Maven Central)
+            artifact sourcesJar
+            artifact javadocJar
 
             pom {
                 name = 'JFR Shell'
