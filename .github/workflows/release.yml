@@ -54,21 +54,14 @@ jobs:
             exit 1
           fi
 
-      - name: Publish parser, tools, and jfr-shell to Sonatype and mavenLocal
+      - name: Publish parser, tools, and jfr-shell to Sonatype
         run: |
-          ./gradlew :parser:publish :parser:publishToMavenLocal :tools:publish :jfr-shell:shadowJar :jfr-shell:publishMavenPublicationToSonatypeRepository --no-daemon --stacktrace
+          ./gradlew :parser:publishToSonatype :parser:publishToMavenLocal :tools:publishToSonatype :jfr-shell:shadowJar :jfr-shell:publishMavenPublicationToSonatypeRepository closeAndReleaseSonatypeStagingRepository --no-daemon --stacktrace
 
       - name: Publish gradle plugin to Sonatype
         run: |
           cd jafar-gradle-plugin
-          ./gradlew publish --no-daemon --stacktrace
-        env:
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-
-      - name: Close and release Sonatype staging repositories
-        run: |
-          ./gradlew closeAndReleaseStagingRepositories --no-daemon --stacktrace
+          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository --no-daemon --stacktrace
         env:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
