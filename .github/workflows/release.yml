@@ -155,16 +155,15 @@ jobs:
 
   # Update JBang catalog automatically
   update-jbang-catalog:
-    # Only runs if JBANG_CATALOG_PAT secret is available
-    if: ${{ secrets.JBANG_CATALOG_PAT != '' }}
     needs: [prepare, jitpack-build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout jbang-catalog
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: btraceio/jbang-catalog
-          token: ${{ secrets.JBANG_CATALOG_PAT }}
+          token: ${{ secrets.JBANG_CATALOG_PAT || secrets.GITHUB_TOKEN }}
           path: catalog
 
       - name: Update catalog files
@@ -187,16 +186,25 @@ jobs:
           git diff
 
       - name: Commit and push catalog updates
+        continue-on-error: true
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
+
+          if [ ! -d catalog ]; then
+            echo "⚠️ Catalog checkout failed - skipping update"
+            echo "Add JBANG_CATALOG_PAT secret to enable automatic catalog updates"
+            exit 0
+          fi
+
           cd catalog
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add jbang-catalog.json jfr-shell.java
-          git commit -m "Update jfr-shell to version $VERSION" || exit 0
-          git push
+          if git commit -m "Update jfr-shell to version $VERSION"; then
+            git push || echo "⚠️ Push failed - update catalog manually at https://github.com/btraceio/jbang-catalog"
+          fi
 
   # Create GitHub Release with notes
   create-release:
