@@ -48,7 +48,10 @@ group = 'io.btrace'
 version = component_version
 description = 'JFR (Java Flight Recorder) manipulation tools'
 
-// vanniktech plugin will auto-publish java components with sources and javadoc
+// Override artifact name for Maven publishing
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-tools', version.toString())
+}
 
 // Apply code generation plugin only when its tasks are explicitly requested.
 if (gradle.startParameter.taskNames.any { it.contains('generateJafarTypes') }) {

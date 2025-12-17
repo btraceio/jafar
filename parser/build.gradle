@@ -246,6 +246,9 @@ group = 'io.btrace'
 version = component_version
 description = 'JFR (Java Flight Recorder) parser library with multi-version JAR support'
 
-// vanniktech plugin will auto-publish java components with sources and javadoc
+// Override artifact name for Maven publishing
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-parser', version.toString())
+}
 
 // No shadow jar for parser; consumers may shade as needed

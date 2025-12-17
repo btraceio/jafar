@@ -79,8 +79,6 @@ subprojects {
             publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
             signAllPublications()
 
-            coordinates('io.btrace', name, version.toString())
-
             pom {
                 name = project.name
                 description = project.description ?: "Part of the JAFAR project"

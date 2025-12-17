@@ -208,7 +208,10 @@ group = 'io.btrace'
 version = component_version
 description = 'Interactive CLI for exploring and analyzing Java Flight Recorder files'
 
-// vanniktech plugin will handle signing and POM metadata via root configuration
+// Override artifact name for Maven publishing
+mavenPublishing {
+    coordinates('io.btrace', 'jfr-shell', version.toString())
+}
 
 // Override publication to use shadow JAR instead of regular JAR
 afterEvaluate {
