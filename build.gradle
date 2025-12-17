@@ -68,7 +68,7 @@ spotless {
     }
 }
 
-    nexusPublishing {
+nexusPublishing {
     packageGroup = "io.btrace"
     repositories {
         sonatype {

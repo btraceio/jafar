@@ -26,6 +26,6 @@ jobs:
           java-version: "21.0.3"
       - name: Publish
         run: |
-          ./gradlew publish publishToMavenLocal --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
+          ./gradlew publish publishToMavenLocal -x :jfr-shell:publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
           cd jafar-gradle-plugin
           ./gradlew publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
