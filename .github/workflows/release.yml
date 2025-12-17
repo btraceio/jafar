@@ -78,77 +78,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
 
-  # Build jfr-shell shadow JAR for JitPack
-  publish-jfr-shell:
-    needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-
-      - name: Build shadow JAR
-        run: ./gradlew :jfr-shell:shadowJar --no-daemon
-
-      - name: Upload shadow JAR as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: jfr-shell-jar
-          path: jfr-shell/build/libs/jfr-shell-*.jar
-          retention-days: 30
-
-  # Trigger JitPack build and wait for completion
-  jitpack-build:
-    needs: [prepare, publish-jfr-shell]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger JitPack build
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TAG="${{ needs.prepare.outputs.version_tag }}"
-          echo "Triggering JitPack build for version: $VERSION (tag: $TAG)"
-
-          # Trigger the build and capture output
-          if curl -s -o /tmp/jitpack-build.log "https://jitpack.io/com/github/btraceio/jafar/$TAG/build.log"; then
-            echo "JitPack build triggered successfully"
-            echo "Build log preview:"
-            head -50 /tmp/jitpack-build.log
-          else
-            echo "⚠️ Failed to fetch JitPack build log, but build may still be queued"
-            echo "Check status at: https://jitpack.io/com/github/btraceio/jafar/$TAG"
-          fi
-
-      - name: Wait for JitPack artifact
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TAG="${{ needs.prepare.outputs.version_tag }}"
-          echo "Waiting for JitPack artifact to be available..."
-
-          # Wait up to 10 minutes for artifact
-          for i in {1..60}; do
-            if curl -f -s -I "https://jitpack.io/com/github/btraceio/jafar/$TAG/jafar-$TAG.pom" > /dev/null; then
-              echo "✓ JitPack artifact is available!"
-              echo "Maven coordinate: io.github.btraceio.jafar:jfr-shell:$TAG"
-              exit 0
-            fi
-            echo "Attempt $i/60: Waiting for artifact..."
-            sleep 10
-          done
-
-          echo "⚠ Warning: JitPack artifact not available after 10 minutes"
-          echo "Check status at: https://jitpack.io/com/github/btraceio/jafar/$TAG"
-          exit 1
-
   # Update JBang catalog automatically
   update-jbang-catalog:
-    needs: [prepare, jitpack-build]
+    needs: [prepare, publish-maven]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout jbang-catalog
@@ -201,7 +133,7 @@ jobs:
 
   # Create GitHub Release with notes
   create-release:
-    needs: [prepare, publish-maven, publish-jfr-shell, jitpack-build]
+    needs: [prepare, publish-maven]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
@@ -243,8 +175,8 @@ jobs:
             const body = `## 🎉 Release ${version} Published Successfully
 
             This release has been published to:
-            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`
-            - ✅ GitHub Packages: \`io.btrace:jafar-shell:${version}\`
+            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
+            - ✅ GitHub Packages: \`io.btrace:jafar-gradle-plugin:${version}\` (available immediately while waiting for Maven Central approval)
             - ✅ JBang Catalog: Updated to ${version}
 
             ### Usage
@@ -254,7 +186,7 @@ jobs:
             # Using catalog (always latest)
             jbang jfr-shell@btraceio recording.jfr
 
-            # Version pinned
+            # Version pinned (from Maven Central)
             jbang io.btrace:jafar-shell:${version} recording.jfr
 
             # Install as command
@@ -279,8 +211,16 @@ jobs:
             </dependency>
             \`\`\`
 
+            **Gradle Plugin:**
+            \`\`\`gradle
+            plugins {
+              id 'io.btrace.jafar-gradle-plugin' version '${version}'
+            }
+            \`\`\`
+
             ### Links
-            - 📦 [JitPack Build](https://jitpack.io/com/github/btraceio/jafar/${tag})
+            - 📦 [Maven Central](https://central.sonatype.com/artifact/io.btrace/jafar-parser/${version})
+            - 📦 [GitHub Packages](https://github.com/btraceio/jafar/packages)
             - 📚 [Documentation](https://github.com/btraceio/jafar#readme)
             - 🔖 [Changelog](https://github.com/btraceio/jafar/blob/${tag}/CHANGELOG.md)`;
 
