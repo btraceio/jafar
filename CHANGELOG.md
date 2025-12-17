@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2025-12-17
+
+### Fixed
+- **Maven Central compliance** - Added sources and javadoc JARs to jfr-shell (required for Maven Central validation)
+- **Sonatype publishing** - Fixed close and release to run in same Gradle invocation
+
 ## [0.3.8] - 2025-12-17
 
 ### Fixed
