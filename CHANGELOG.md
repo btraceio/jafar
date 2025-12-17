@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2025-12-17
+
+### Changed
+- **JFR Shell publishing** - Now published to Maven Central (io.jafar:jfr-shell) for public JBang access
+- **JBang catalog** - Updated to use correct Maven coordinates (io.jafar:jfr-shell instead of io.github.btraceio)
+
 ## [0.3.6] - 2025-12-17
 
 ### Added
