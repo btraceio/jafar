@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-17
+
+### Added
+- **Automated release workflow** - Complete CI/CD pipeline for publishing releases (#32)
+  - Single-command release process triggered by version tags
+  - Automatic publishing to Maven Central, GitHub Packages, and JitPack
+  - Automatic JBang catalog updates
+  - GitHub Release creation with changelog extraction
+
+### Changed
+- **Gradle toolchain auto-provisioning** - Added Foojay resolver for automatic JDK downloads
+  - Fixes JitPack builds requiring multiple Java versions
+  - Enables seamless multi-module builds with different Java requirements
+
+### Fixed
+- **GitHub Packages publishing** - Use specific publication task to avoid Sonatype credential conflicts
+- **CI workflow separation** - Snapshot publishing (main branch) now separate from release publishing (tags)
+
 ## [0.3.0] - 2024-12-16
 
 ### Added
