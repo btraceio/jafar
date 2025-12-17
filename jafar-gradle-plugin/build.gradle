@@ -1,12 +1,11 @@
 plugins {
     id 'java-gradle-plugin'
     id 'groovy'
-    id 'maven-publish'
-    id 'io.github.gradle-nexus.publish-plugin' version '2.0.0'
+    id 'com.vanniktech.maven.publish' version '0.30.0'
 }
 
 group = "io.btrace"
-version = "0.3.9"
+version = "0.3.10"
 
 def libraryName = "jafar-gradle-plugin"
 def component_version = version
@@ -71,26 +70,36 @@ tasks.register('javadocJar', Jar) {
     from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
-publishing {
-    publications {
-        pluginMaven(MavenPublication) {
-            artifactId = "jafar-gradle-plugin" // Set your custom artifact ID
+description = 'Gradle plugin for generating JFR type interfaces from recordings'
+
+// Configure vanniktech plugin for Gradle plugin publishing
+mavenPublishing {
+    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, true)
+    signAllPublications()
+
+    coordinates("io.btrace", "jafar-gradle-plugin", version.toString())
+
+    pom {
+        name = "jafar-gradle-plugin"
+        description = project.description
+        url = 'https://github.com/btraceio/jafar'
+        licenses {
+            license {
+                name = 'The Apache License, Version 2.0'
+                url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+            }
         }
-    }
-}
-
-nexusPublishing {
-    repositories {
-        sonatype {
-            // see https://github.com/gradle-nexus/publish-plugin#publishing-to-maven-central-via-sonatype-central
-            // For official documentation:
-            // staging repo publishing https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/#configuration
-            // snapshot publishing https://central.sonatype.org/publish/publish-portal-snapshots/#publishing-via-other-methods
-            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
-
-            username = project.hasProperty("sonatype.user") ? project.property("sonatype.user") : System.getenv("SONATYPE_USERNAME")
-            password = project.hasProperty("sonatype.password") ? project.property("sonatype.password") : System.getenv("SONATYPE_PASSWORD")
+        developers {
+            developer {
+                id = 'jbachorik'
+                name = 'Jaroslav Bachorik'
+                email = 'j.bachorik@gmail.com'
+            }
+        }
+        scm {
+            connection = 'scm:git:git://github.com/btraceio/jafar.git'
+            developerConnection = 'scm:git:ssh://github.com/btraceio/jafar.git'
+            url = 'https://github.com/btraceio/jafar'
         }
     }
 }

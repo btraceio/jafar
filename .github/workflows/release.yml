@@ -32,8 +32,11 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     env:
-      SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralUsername }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralPassword }}
+      ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKey }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKeyId }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKeyPassword }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,17 +57,14 @@ jobs:
             exit 1
           fi
 
-      - name: Publish parser, tools, and jfr-shell to Sonatype
+      - name: Publish parser, tools, and jfr-shell to Maven Central
         run: |
-          ./gradlew :parser:publishToSonatype :parser:publishToMavenLocal :tools:publishToSonatype :jfr-shell:shadowJar :jfr-shell:publishMavenPublicationToSonatypeRepository closeAndReleaseSonatypeStagingRepository --no-daemon --stacktrace
+          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :parser:publishToMavenLocal :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
-      - name: Publish gradle plugin to Sonatype
+      - name: Publish gradle plugin to Maven Central
         run: |
           cd jafar-gradle-plugin
-          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository --no-daemon --stacktrace
-        env:
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
   # Publish jfr-shell to GitHub Packages for JBang/JitPack
   publish-jfr-shell:

@@ -1,6 +1,6 @@
 plugins {
     id 'java'
-    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
     id "io.github.goooler.shadow" version "8.1.8"
 }
 
@@ -44,19 +44,11 @@ tasks.register('javadocJar', Jar) {
     from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
-publishing {
-  publications {
-    assembled(MavenPublication) { publication ->
-      publication.groupId = 'io.btrace'
-      publication.artifactId = libraryName
-      publication.version = component_version
+group = 'io.btrace'
+version = component_version
+description = 'JFR (Java Flight Recorder) manipulation tools'
 
-      publication.artifact jar
-      publication.artifact sourcesJar
-      publication.artifact javadocJar
-    }
-  }
-}
+// vanniktech plugin will auto-publish java components with sources and javadoc
 
 // Apply code generation plugin only when its tasks are explicitly requested.
 if (gradle.startParameter.taskNames.any { it.contains('generateJafarTypes') }) {

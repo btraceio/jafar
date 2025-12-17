@@ -1,7 +1,6 @@
 plugins {
     id 'java'
-    id 'maven-publish'
-    // shadow not used for parser to avoid conflicts during publish
+    id 'com.vanniktech.maven.publish'
 }
 
 def libraryName="jafar-parser"
@@ -243,17 +242,10 @@ tasks.register('javadocJar', Jar) {
     from(layout.buildDirectory.dir("docs/javadoc"))
 }
 
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            groupId = 'io.btrace'
-            artifactId = 'jafar-parser'
-            version = component_version
-            from components.java
-            artifact sourcesJar
-            artifact javadocJar
-        }
-    }
-}
+group = 'io.btrace'
+version = component_version
+description = 'JFR (Java Flight Recorder) parser library with multi-version JAR support'
+
+// vanniktech plugin will auto-publish java components with sources and javadoc
 
 // No shadow jar for parser; consumers may shade as needed

@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'com.gradleup.shadow' version '8.3.6'
     id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
 }
 
 def libraryName = "jfr-shell"
@@ -203,80 +204,25 @@ tasks.register('javadocJar', Jar) {
     archiveVersion.set(component_version)
 }
 
-// Publishing configuration for JBang distribution
-publishing {
-    publications {
-        maven(MavenPublication) {
-            groupId = 'io.btrace'
-            artifactId = 'jfr-shell'
-            version = component_version
+group = 'io.btrace'
+version = component_version
+description = 'Interactive CLI for exploring and analyzing Java Flight Recorder files'
 
-            // Publish the shadow JAR as main artifact
-            artifact shadowJar
-            // Add sources and javadoc (required for Maven Central)
-            artifact sourcesJar
-            artifact javadocJar
+// vanniktech plugin will handle signing and POM metadata via root configuration
 
-            pom {
-                name = 'JFR Shell'
-                description = 'Interactive CLI for exploring and analyzing Java Flight Recorder files'
-                url = 'https://github.com/btraceio/jafar'
-                licenses {
-                    license {
-                        name = 'The Apache License, Version 2.0'
-                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                    }
+// Override publication to use shadow JAR instead of regular JAR
+afterEvaluate {
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                // Remove default JAR artifacts
+                artifacts.clear()
+                // Use shadow JAR as main artifact
+                artifact(shadowJar) {
+                    classifier = ''
                 }
-                developers {
-                    developer {
-                        id = 'jbachorik'
-                        name = 'Jaroslav Bachorik'
-                        email = 'j.bachorik@gmail.com'
-                    }
-                }
-                scm {
-                    connection = 'scm:git:git://github.com/btraceio/jafar.git'
-                    developerConnection = 'scm:git:ssh://github.com/btraceio/jafar.git'
-                    url = 'https://github.com/btraceio/jafar'
-                }
-            }
-        }
-    }
-    repositories {
-        // Publish to Maven Local for local testing
-        mavenLocal()
-
-        // Publish to GitHub Packages only when explicitly requested (e.g., during releases)
-        // This prevents automatic publishing during CI snapshot builds
-        def ghUser = System.getenv("GITHUB_ACTOR")
-        def ghToken = System.getenv("GITHUB_TOKEN")
-
-        if (ghUser && ghToken) {
-            maven {
-                name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/btraceio/jafar")
-                credentials {
-                    username = ghUser
-                    password = ghToken
-                }
-            }
-        }
-
-        // Publish to Sonatype for public Maven Central access (for JBang)
-        def sonatypeUser = project.hasProperty("sonatype.user") ? project.property("sonatype.user") : System.getenv("SONATYPE_USERNAME")
-        def sonatypePassword = project.hasProperty("sonatype.password") ? project.property("sonatype.password") : System.getenv("SONATYPE_PASSWORD")
-
-        if (sonatypeUser && sonatypePassword) {
-            maven {
-                name = "sonatype"
-                def isSnapshot = component_version.endsWith("-SNAPSHOT")
-                url = isSnapshot ?
-                    uri("https://central.sonatype.com/repository/maven-snapshots/") :
-                    uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
-                credentials {
-                    username = sonatypeUser
-                    password = sonatypePassword
-                }
+                artifact(sourcesJar)
+                artifact(javadocJar)
             }
         }
     }

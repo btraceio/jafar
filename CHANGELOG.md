@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2025-12-17
+
+### Changed
+- **Publishing system migration** - Switched from legacy OSSRH (nexus-publish plugin) to new Sonatype Central Portal (vanniktech maven-publish plugin)
+- **Automatic signing** - All artifacts are now automatically signed with GPG
+- **Complete POM metadata** - All publications now include required Maven Central metadata (license, developers, SCM)
+
 ## [0.3.9] - 2025-12-17
 
 ### Fixed
