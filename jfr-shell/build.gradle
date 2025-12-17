@@ -187,7 +187,7 @@ tasks.register('jlinkZip', Zip) {
 publishing {
     publications {
         maven(MavenPublication) {
-            groupId = 'io.jafar'
+            groupId = 'io.btrace'
             artifactId = 'jfr-shell'
             version = component_version
 
@@ -239,7 +239,7 @@ publishing {
             }
         }
 
-        // Publish to Sonatype for JBang public access
+        // Publish to Sonatype for public Maven Central access (for JBang)
         def sonatypeUser = project.hasProperty("sonatype.user") ? project.property("sonatype.user") : System.getenv("SONATYPE_USERNAME")
         def sonatypePassword = project.hasProperty("sonatype.password") ? project.property("sonatype.password") : System.getenv("SONATYPE_PASSWORD")
 
