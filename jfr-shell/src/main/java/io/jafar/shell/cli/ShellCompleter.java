@@ -141,7 +141,9 @@ public class ShellCompleter implements Completer {
                     "floor()",
                     "ceil()",
                     "contains(\"\")",
-                    "replace(\"\",\"\")"
+                    "replace(\"\",\"\")",
+                    "decorateByTime(eventType, fields=)",
+                    "decorateByKey(eventType, key=, decoratorKey=, fields=)"
                   }) {
                 if (v.startsWith(w)) candidates.add(new Candidate(v));
               }
@@ -158,7 +160,9 @@ public class ShellCompleter implements Completer {
                   "| quantiles(0.5,0.9,0.99)",
                   "| sketch()",
                   "| groupBy(key)",
-                  "| top(10)"
+                  "| top(10)",
+                  "| decorateByTime(eventType, fields=)",
+                  "| decorateByKey(eventType, key=, decoratorKey=, fields=)"
                 }) {
               String cmp = v.substring(1).trim();
               if (cmp.startsWith(after)) candidates.add(new Candidate(v));
@@ -243,6 +247,12 @@ public class ShellCompleter implements Completer {
             candidates.add(new Candidate("contains(\"\")"));
           } else if (lw.startsWith("replace(")) {
             candidates.add(new Candidate("replace(\"\",\"\")"));
+          } else if (lw.startsWith("decoratebytime(")) {
+            // Smart completion for decorateByTime
+            completeDecorateByTime(w, lw, line, candidates);
+          } else if (lw.startsWith("decoratebykey(")) {
+            // Smart completion for decorateByKey
+            completeDecorateByKey(w, lw, line, candidates);
           }
           if (w.startsWith("events/")) {
             // Suggest event types or fields under event types
@@ -726,5 +736,123 @@ public class ShellCompleter implements Completer {
 
   private static Candidate noSpace(String value) {
     return new Candidate(value, value, null, null, null, null, false);
+  }
+
+  private void completeDecorateByTime(
+      String w, String lw, ParsedLine line, List<Candidate> candidates) {
+    // decorateByTime(eventType, fields=field1,field2, threadPath=path, decoratorThreadPath=path)
+    if (!sessions.getCurrent().isPresent()) return;
+
+    // Extract what's inside the parentheses
+    int openParen = lw.indexOf('(');
+    if (openParen < 0) return;
+    String inside = w.substring(openParen + 1);
+
+    // Check if we're at the first parameter (decorator event type)
+    if (!inside.contains(",") && !inside.contains("=")) {
+      // Suggest event types
+      for (String t : sessions.getCurrent().get().session.getAvailableEventTypes()) {
+        String suggestion = w.substring(0, openParen + 1) + t;
+        if (suggestion.toLowerCase(Locale.ROOT).startsWith(lw)) {
+          candidates.add(new Candidate(suggestion));
+        }
+      }
+      return;
+    }
+
+    // Check if we're completing a parameter name
+    if (inside.endsWith(",") || inside.endsWith("(") || inside.matches(".*,\\s*[a-z]*$")) {
+      for (String param : new String[] {"fields=", "threadPath=", "decoratorThreadPath="}) {
+        String suggestion = w + (w.endsWith(",") || w.endsWith("(") ? " " : "") + param;
+        candidates.add(new Candidate(suggestion));
+      }
+      return;
+    }
+
+    // Check if we're completing field names after "fields="
+    if (inside.contains("fields=")) {
+      completeDecoratorFields(w, lw, inside, candidates, "fields=");
+    }
+  }
+
+  private void completeDecorateByKey(
+      String w, String lw, ParsedLine line, List<Candidate> candidates) {
+    // decorateByKey(eventType, key=path, decoratorKey=path, fields=field1,field2)
+    if (!sessions.getCurrent().isPresent()) return;
+
+    int openParen = lw.indexOf('(');
+    if (openParen < 0) return;
+    String inside = w.substring(openParen + 1);
+
+    // Check if we're at the first parameter (decorator event type)
+    if (!inside.contains(",") && !inside.contains("=")) {
+      // Suggest event types
+      for (String t : sessions.getCurrent().get().session.getAvailableEventTypes()) {
+        String suggestion = w.substring(0, openParen + 1) + t;
+        if (suggestion.toLowerCase(Locale.ROOT).startsWith(lw)) {
+          candidates.add(new Candidate(suggestion));
+        }
+      }
+      return;
+    }
+
+    // Check if we're completing a parameter name
+    if (inside.endsWith(",") || inside.endsWith("(") || inside.matches(".*,\\s*[a-z]*$")) {
+      for (String param : new String[] {"key=", "decoratorKey=", "fields="}) {
+        String suggestion = w + (w.endsWith(",") || w.endsWith("(") ? " " : "") + param;
+        candidates.add(new Candidate(suggestion));
+      }
+      return;
+    }
+
+    // Check if we're completing field names after "key=", "decoratorKey=", or "fields="
+    if (inside.contains("key=") && !inside.contains("decoratorKey=")) {
+      completeDecoratorFields(w, lw, inside, candidates, "key=");
+    } else if (inside.contains("decoratorKey=")) {
+      completeDecoratorFields(w, lw, inside, candidates, "decoratorKey=");
+    } else if (inside.contains("fields=")) {
+      completeDecoratorFields(w, lw, inside, candidates, "fields=");
+    }
+  }
+
+  private void completeDecoratorFields(
+      String w, String lw, String inside, List<Candidate> candidates, String paramName) {
+    if (!sessions.getCurrent().isPresent()) return;
+
+    // Find the decorator event type (first parameter)
+    int firstComma = inside.indexOf(',');
+    if (firstComma < 0) return;
+    String decoratorType = inside.substring(0, firstComma).trim();
+
+    // Load metadata for the decorator type
+    try {
+      var meta =
+          io.jafar.shell.providers.MetadataProvider.loadClass(
+              sessions.getCurrent().get().session.getRecordingPath(), decoratorType);
+      if (meta != null) {
+        Object fbn = meta.get("fieldsByName");
+        if (fbn instanceof java.util.Map<?, ?> m) {
+          for (Object k : m.keySet()) {
+            String fieldName = String.valueOf(k);
+            // Find where to insert the suggestion
+            int paramIdx = w.indexOf(paramName);
+            if (paramIdx >= 0) {
+              String afterParam = w.substring(paramIdx + paramName.length());
+              // Check if we're after the last comma in a field list
+              int lastComma = afterParam.lastIndexOf(',');
+              String prefix = w.substring(0, paramIdx + paramName.length());
+              if (lastComma >= 0) {
+                prefix = w.substring(0, paramIdx + paramName.length() + lastComma + 1);
+              }
+              String suggestion = prefix + fieldName;
+              if (suggestion.toLowerCase(Locale.ROOT).startsWith(lw.substring(0, prefix.length()))) {
+                candidates.add(new Candidate(suggestion));
+              }
+            }
+          }
+        }
+      }
+    } catch (Exception ignore) {
+    }
   }
 }
