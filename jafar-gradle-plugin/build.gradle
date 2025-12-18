@@ -72,15 +72,18 @@ tasks.register('javadocJar', Jar) {
 
 description = 'Gradle plugin for generating JFR type interfaces from recordings'
 
-// Publish to both Maven Central and GitHub Packages
+// Publish to both Maven Central and GitHub Packages (releases only for GitHub Packages)
 publishing {
     repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/btraceio/jafar")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                password = System.getenv("GITHUB_TOKEN")
+        // Only publish to GitHub Packages for releases (not snapshots)
+        if (!version.toString().endsWith("-SNAPSHOT")) {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/btraceio/jafar")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
             }
         }
     }
