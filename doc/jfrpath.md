@@ -326,6 +326,102 @@ events/jdk.FileRead/bytes | top(5)                         # Top 5 values
 events/jdk.FileRead | top(10, by=bytes, asc=true)         # Bottom 10 by bytes (ascending)
 ```
 
+### Decorate By Time
+```
+| decorateByTime(decoratorEventType, fields=field1,field2[, threadPath=..., decoratorThreadPath=...])
+```
+
+Decorate events with information from time-overlapping events on the same thread.
+
+**Use Cases**: Correlate events that occur during the same time period (e.g., execution samples during monitor waits, allocations during GC phases).
+
+**Parameters**:
+- `decoratorEventType` - Event type to use as decorator (quoted string)
+- `fields` - Comma-separated list of fields to extract from decorator
+- `threadPath` - Optional: path to thread ID in primary event (default: `eventThread/javaThreadId`)
+- `decoratorThreadPath` - Optional: path to thread ID in decorator (default: `eventThread/javaThreadId`)
+
+**Overlap Logic**: Events overlap if their time ranges intersect:
+```
+primaryStart < decoratorEnd && primaryEnd > decoratorStart
+```
+
+**Decorator Field Access**: Decorated fields are accessed using `$decorator.` prefix:
+```
+$decorator.fieldName
+```
+
+**Examples**:
+```
+# Find execution samples during monitor waits
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+
+# Correlate allocations with GC phases
+events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name,duration)
+
+# Execution samples during I/O operations
+events/jdk.ExecutionSample | decorateByTime(jdk.SocketWrite, fields=host,port,bytesWritten)
+
+# Access decorator fields
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorEnter, fields=monitorClass)
+  | groupBy($decorator.monitorClass)
+```
+
+### Decorate By Key
+```
+| decorateByKey(decoratorEventType, key=keyPath, decoratorKey=decoratorKeyPath, fields=field1,field2)
+```
+
+Decorate events using correlation keys derived from event fields.
+
+**Use Cases**: Join events with shared identifiers (e.g., request tracing, correlation by thread or custom IDs).
+
+**Parameters**:
+- `decoratorEventType` - Event type to use as decorator (quoted string)
+- `key` - Path to correlation key in primary event
+- `decoratorKey` - Path to correlation key in decorator event
+- `fields` - Comma-separated list of fields to extract from decorator
+
+**Decorator Field Access**: Decorated fields are accessed using `$decorator.` prefix:
+```
+$decorator.fieldName
+```
+
+**Examples**:
+```
+# Correlate execution samples with request context by thread ID
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                            key=sampledThread/javaThreadId,
+                                            decoratorKey=thread/javaThreadId,
+                                            fields=requestId,endpoint,userId)
+
+# Join file reads with thread metadata
+events/jdk.FileRead | decorateByKey(jdk.ThreadStart,
+                                     key=eventThread/javaThreadId,
+                                     decoratorKey=thread/javaThreadId,
+                                     fields=javaName,group)
+
+# Group execution samples by request endpoint
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                            key=sampledThread/javaThreadId,
+                                            decoratorKey=thread/javaThreadId,
+                                            fields=endpoint)
+  | groupBy($decorator.endpoint)
+
+# Access decorator fields in filters
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                            key=sampledThread/javaThreadId,
+                                            decoratorKey=thread/javaThreadId,
+                                            fields=endpoint,requestId)
+  | top(10, by=$decorator.requestId)
+```
+
+**Notes**:
+- If no decorator matches, `$decorator.` fields will be `null`
+- Multiple decorators matching the same event: first match is used
+- Only requested fields from decorator are accessible
+- Memory-efficient: decorator fields are lazily accessed
+
 ## Value Transform Functions
 
 Transform individual values (can also be used in filters where applicable):
@@ -505,6 +601,19 @@ show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 5
 
 # GC events after GC
 show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
+
+# Monitor contention analysis: samples during lock waits
+show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+
+# Request tracing: correlate samples with request context
+show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                                  key=sampledThread/javaThreadId,
+                                                  decoratorKey=thread/javaThreadId,
+                                                  fields=requestId,endpoint)
+
+# GC impact: allocations during GC phases
+show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
 ### Metadata Examples

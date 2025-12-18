@@ -627,9 +627,137 @@ public final class JfrPathParser {
         expect(')');
       }
       return new JfrPath.ReplaceOp(valuePath, target, repl);
+    } else if ("decoratebytime".equals(name)) {
+      return parseDecorateByTime();
+    } else if ("decoratebykey".equals(name)) {
+      return parseDecorateByKey();
     } else {
       throw error("Unknown pipeline function: " + name);
     }
+  }
+
+  private JfrPath.DecorateByTimeOp parseDecorateByTime() {
+    expect('(');
+    skipWs();
+
+    // First arg: decorator event type (identifier like jdk.ExecutionSample)
+    String decoratorType = parseEventTypeName();
+    skipWs();
+
+    List<String> decoratorFields = List.of();
+    List<String> threadPathPrimary = null;
+    List<String> threadPathDecorator = null;
+
+    // Parse named parameters: fields=..., threadPath=..., decoratorThreadPath=...
+    while (peek() == ',') {
+      pos++; // ,
+      skipWs();
+
+      if (startsWithIgnoreCase("fields=")) {
+        pos += 7; // fields=
+        skipWs();
+        decoratorFields = parseFieldList();
+      } else if (startsWithIgnoreCase("threadPath=")) {
+        pos += 11; // threadPath=
+        skipWs();
+        threadPathPrimary = parsePathArg();
+      } else if (startsWithIgnoreCase("decoratorThreadPath=")) {
+        pos += 20; // decoratorThreadPath=
+        skipWs();
+        threadPathDecorator = parsePathArg();
+      } else {
+        throw error("decorateByTime expects fields=, threadPath=, or decoratorThreadPath=");
+      }
+      skipWs();
+    }
+
+    expect(')');
+    return new JfrPath.DecorateByTimeOp(
+        decoratorType, decoratorFields, threadPathPrimary, threadPathDecorator);
+  }
+
+  private JfrPath.DecorateByKeyOp parseDecorateByKey() {
+    expect('(');
+    skipWs();
+
+    // First arg: decorator event type (identifier like jdk.ExecutionSample)
+    String decoratorType = parseEventTypeName();
+    skipWs();
+
+    JfrPath.KeyExpr primaryKey = null;
+    JfrPath.KeyExpr decoratorKey = null;
+    List<String> decoratorFields = List.of();
+
+    // Parse key=..., decoratorKey=..., fields=...
+    while (peek() == ',') {
+      pos++;
+      skipWs();
+
+      if (startsWithIgnoreCase("key=")) {
+        pos += 4;
+        skipWs();
+        primaryKey = parseKeyExpr();
+      } else if (startsWithIgnoreCase("decoratorKey=")) {
+        pos += 13;
+        skipWs();
+        decoratorKey = parseKeyExpr();
+      } else if (startsWithIgnoreCase("fields=")) {
+        pos += 7;
+        skipWs();
+        decoratorFields = parseFieldList();
+      } else {
+        throw error("decorateByKey expects key=, decoratorKey=, or fields=");
+      }
+      skipWs();
+    }
+
+    expect(')');
+
+    if (primaryKey == null || decoratorKey == null) {
+      throw error("decorateByKey requires both key= and decoratorKey=");
+    }
+
+    return new JfrPath.DecorateByKeyOp(decoratorType, primaryKey, decoratorKey, decoratorFields);
+  }
+
+  private String parseEventTypeName() {
+    // Parse event type name like "jdk.ExecutionSample" or "datadog.Endpoint"
+    // This allows dots in the identifier, similar to how event types are parsed in the main path
+    int start = pos;
+    while (!eof()) {
+      char c = (char) peek();
+      if (Character.isLetterOrDigit(c) || c == '.' || c == '_' || c == '$' || c == '-') {
+        pos++;
+      } else {
+        break;
+      }
+    }
+    if (pos == start) {
+      throw error("Expected event type name");
+    }
+    return input.substring(start, pos);
+  }
+
+  private List<String> parseFieldList() {
+    List<String> fields = new ArrayList<>();
+    while (!eof() && peek() != ',' && peek() != ')') {
+      String field = readIdent();
+      if (field.isEmpty()) break;
+      fields.add(field);
+      skipWs();
+      if (peek() == ',') {
+        pos++; // ,
+        skipWs();
+        if (peek() == ')' || peek() == ',') break; // trailing comma or end of params
+      } else break;
+    }
+    return fields;
+  }
+
+  private JfrPath.KeyExpr parseKeyExpr() {
+    // For v1: simple path only
+    List<String> path = parsePathArg();
+    return new JfrPath.PathKeyExpr(path);
   }
 
   private List<String> parsePathArg() {

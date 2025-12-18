@@ -205,7 +205,9 @@ public final class JfrPath {
           FloorOp,
           CeilOp,
           ContainsOp,
-          ReplaceOp {}
+          ReplaceOp,
+          DecorateByTimeOp,
+          DecorateByKeyOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -350,6 +352,61 @@ public final class JfrPath {
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
       this.target = target;
       this.replacement = replacement;
+    }
+  }
+
+  // Key expression for correlation-based decoration
+  public sealed interface KeyExpr permits PathKeyExpr {}
+
+  public static final class PathKeyExpr implements KeyExpr {
+    public final List<String> path;
+
+    public PathKeyExpr(List<String> path) {
+      this.path = List.copyOf(path);
+    }
+  }
+
+  // Time-range decoration: decorate events that overlap temporally on same thread
+  public static final class DecorateByTimeOp implements PipelineOp {
+    public final String decoratorEventType;
+    public final List<String> decoratorFields;
+    public final List<String> threadPathPrimary;
+    public final List<String> threadPathDecorator;
+
+    public DecorateByTimeOp(
+        String decoratorEventType,
+        List<String> decoratorFields,
+        List<String> threadPathPrimary,
+        List<String> threadPathDecorator) {
+      this.decoratorEventType = decoratorEventType;
+      this.decoratorFields = decoratorFields == null ? List.of() : List.copyOf(decoratorFields);
+      this.threadPathPrimary =
+          threadPathPrimary == null
+              ? List.of("eventThread", "javaThreadId")
+              : List.copyOf(threadPathPrimary);
+      this.threadPathDecorator =
+          threadPathDecorator == null
+              ? List.of("eventThread", "javaThreadId")
+              : List.copyOf(threadPathDecorator);
+    }
+  }
+
+  // Correlation-based decoration: decorate events with matching correlation keys
+  public static final class DecorateByKeyOp implements PipelineOp {
+    public final String decoratorEventType;
+    public final KeyExpr primaryKey;
+    public final KeyExpr decoratorKey;
+    public final List<String> decoratorFields;
+
+    public DecorateByKeyOp(
+        String decoratorEventType,
+        KeyExpr primaryKey,
+        KeyExpr decoratorKey,
+        List<String> decoratorFields) {
+      this.decoratorEventType = decoratorEventType;
+      this.primaryKey = primaryKey;
+      this.decoratorKey = decoratorKey;
+      this.decoratorFields = decoratorFields == null ? List.of() : List.copyOf(decoratorFields);
     }
   }
 }

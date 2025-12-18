@@ -292,8 +292,42 @@ java -jar build/libs/jafar-demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/reco
 
 On an M1 and a ~600MiB JFR, the Jafar parser completes in ~1s vs ~7s with JMC (anecdotal). The stock `jfr` tool may OOM when printing all events.
 
+## JFR Shell
+
+JAFAR includes `jfr-shell`, an interactive CLI for exploring and analyzing JFR files with a powerful query language. See **[jfr-shell/README.md](jfr-shell/README.md)** for features and installation.
+
+### Key Features
+
+- **Interactive REPL** with intelligent tab completion
+- **JfrPath query language** for filtering, projection, and aggregation
+- **Event decoration** for correlating and joining events (time-based and key-based)
+- **Multiple output formats**: table and JSON
+- **Multi-session support**: work with multiple recordings simultaneously
+- **Non-interactive mode**: execute queries from command line for scripting/CI
+
+### Quick Example
+
+```bash
+# Install via JBang (easiest)
+jbang app install jfr-shell@btraceio
+
+# Open and analyze a recording
+jfr-shell recording.jfr
+
+jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> show events/jdk.FileRead | top(10, by=bytes)
+
+# Event decoration: correlate samples with lock waits
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+```
+
+See **[Event Decoration and Joining](doc/jfr-shell-tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
+
 ## Documentation
 
+- **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
+- **[doc/jfr-shell-tutorial.md](doc/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
+- **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
 - **[LIMITATIONS.md](LIMITATIONS.md)** - Known limitations and workarounds
 - **[PERFORMANCE.md](PERFORMANCE.md)** - Performance benchmarks and tuning tips

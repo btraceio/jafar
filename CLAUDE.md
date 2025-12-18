@@ -20,6 +20,7 @@ Key architectural components:
 - `TypedJafarParser`: Strongly-typed API using annotated interfaces (@JfrType, @JfrField)
 - `UntypedJafarParser`: Map-based lightweight parsing API
 - `ParsingContext`: Reusable context for sharing expensive resources across sessions
+- `JfrPath`: Query language for jfr-shell with event decoration/joining capabilities
 
 ## Build Commands
 
@@ -217,12 +218,20 @@ includeBuild('..') {
 - After changing settings.gradle, run `./gradlew --stop` and `rm -rf demo/.gradle/` to clear caches
 
 ### JFR Shell (Interactive Analysis Tool)
-The jfr-shell module provides a Groovy-based interactive environment for JFR analysis:
+The jfr-shell module provides a powerful interactive environment for JFR analysis:
 - **Session-based**: Open JFR files and maintain analysis state
-- **Typed API Integration**: Uses generated interfaces for type-safe event handling
-- **Groovy Scripting**: Full Groovy language support for complex analytics
-- **Built-in Commands**: `help`, `info`, `types`, `open()`, `handle()`, `run()`, `export()`
-- **Script Examples**: Pre-built templates in `jfr-shell/src/main/resources/examples/`
+- **JfrPath Query Language**: Concise path-based queries with filtering, aggregation, and transformations
+- **Event Decoration**: Join/correlate events by time overlap or correlation keys
+- **Built-in Commands**: `show`, `metadata`, `chunks`, `cp`, `open`, `sessions`, `info`, `help`
+- **Multiple Output Formats**: Table (default) and JSON
+- **Example Scripts**: Pre-built analysis examples in `jfr-shell/src/main/resources/examples/`
+
+**New Feature: Event Decoration**
+- `decorateByTime()`: Join events that overlap temporally on same thread (e.g., samples during lock waits)
+- `decorateByKey()`: Join events with matching correlation keys (e.g., request tracing by thread ID)
+- Decorator fields accessed via `$decorator.` prefix
+- Memory-efficient lazy evaluation
+- Examples: monitor contention analysis, request tracing, GC impact assessment
 
 #### JFR Shell Usage:
 ```bash
