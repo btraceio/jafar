@@ -731,10 +731,11 @@ public class CommandDispatcher {
         types.removeIf(t -> !p.matcher(t).find());
       } else {
         // Convert glob pattern to regex for string matching (not filesystem paths)
-        String globRegex = search
-            .replace(".", "\\.")  // Escape dots
-            .replace("*", ".*")   // * matches any characters
-            .replace("?", ".");   // ? matches single character
+        String globRegex =
+            search
+                .replace(".", "\\.") // Escape dots
+                .replace("*", ".*") // * matches any characters
+                .replace("?", "."); // ? matches single character
         java.util.regex.Pattern p = java.util.regex.Pattern.compile(globRegex);
         types.removeIf(t -> !p.matcher(t).matches());
       }
