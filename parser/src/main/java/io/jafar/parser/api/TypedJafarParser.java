@@ -95,10 +95,14 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
   /**
    * Registers a build-time generated handler factory for a specific event type.
    *
+   * <p><b>Note:</b> Manual registration is <b>optional</b>. The parser automatically discovers and
+   * registers factories via {@link java.util.ServiceLoader}. Only use this method if you need to
+   * register factories programmatically or override auto-discovered factories.
+   *
    * <p>Build-time generated handlers avoid runtime bytecode generation overhead. The factory
    * provides thread-local cached handler instances, reducing allocations during parsing.
    *
-   * <p>When a factory is registered, the parser will:
+   * <p>When a factory is registered (manually or via ServiceLoader), the parser will:
    *
    * <ol>
    *   <li>Call {@link HandlerFactory#bind} when recording metadata becomes available
@@ -108,6 +112,7 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    * @param <T> the handler interface type
    * @param factory the build-time generated handler factory
    * @see HandlerFactory
+   * @see java.util.ServiceLoader
    */
   <T> void registerFactory(HandlerFactory<T> factory);
 }

@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.Set;
 
 /**
@@ -121,6 +122,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.globalHandlerMap = new HashMap<>();
     this.factoryMap = new HashMap<>();
     this.parserListener = null;
+
+    // Auto-discover and register build-time generated factories via ServiceLoader
+    discoverFactories();
   }
 
   private TypedJafarParserImpl(TypedJafarParserImpl other, ChunkParserListener listener) {
@@ -324,6 +328,25 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       handlerMap.clear();
       globalHandlerMap.clear();
       factoryMap.clear();
+    }
+  }
+
+  /**
+   * Auto-discovers and registers build-time generated factories via ServiceLoader.
+   *
+   * <p>This method loads all implementations of {@link HandlerFactory} found on the classpath via
+   * ServiceLoader and registers them automatically. If no factories are found, the parser will fall
+   * back to runtime bytecode generation for handlers.
+   */
+  private void discoverFactories() {
+    try {
+      ServiceLoader<HandlerFactory> loader = ServiceLoader.load(HandlerFactory.class);
+      for (HandlerFactory<?> factory : loader) {
+        registerFactory(factory);
+      }
+    } catch (Exception e) {
+      // If ServiceLoader fails (e.g., no factories available), fall back to runtime generation
+      // This is expected behavior when build-time generation is not configured
     }
   }
 

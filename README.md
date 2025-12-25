@@ -129,8 +129,9 @@ JAFAR now supports **build-time handler generation** via annotation processor, p
 1. **Compile-time**: Annotation processor scans `@JfrType` interfaces and generates:
    - Handler implementation classes
    - Factory classes with thread-local caching
+   - ServiceLoader registration (META-INF/services)
 
-2. **Runtime**: Register factories with parser, handlers are reused via thread-local cache
+2. **Runtime**: Parser auto-discovers factories via ServiceLoader, handlers are reused via thread-local cache
 
 ### Usage
 
@@ -198,13 +199,11 @@ public interface JFRThread {
 
 **Note:** Annotation processor only processes **top-level interfaces**. Nested/inner classes with `@JfrType` are skipped and use runtime generation instead.
 
-#### 3. Register Factories and Parse
+#### 3. Parse Events (Factories Auto-Discovered)
 
 ```java
 try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recording.jfr"))) {
-    // Register build-time generated factories
-    p.registerFactory(new JFRExecutionSampleFactory());
-    p.registerFactory(new JFRThreadFactory());
+    // Factories automatically discovered via ServiceLoader - no registration needed!
 
     // Handle events (uses thread-local cached handlers)
     p.handle(JFRExecutionSample.class, (event, ctl) -> {
@@ -217,6 +216,8 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
     p.run();
 }
 ```
+
+**That's it!** The annotation processor generates factories and registers them via ServiceLoader. No manual registration required.
 
 ### Runtime Generation (Default)
 

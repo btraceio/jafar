@@ -45,6 +45,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private Filer filer;
   private Messager messager;
+  private final Set<String> generatedFactories = new HashSet<>();
 
   @Override
   public synchronized void init(ProcessingEnvironment processingEnv) {
@@ -67,6 +68,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   @Override
   public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+    // Process @JfrType annotated interfaces
     for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
       if (element.getKind() != ElementKind.INTERFACE) {
         messager.printMessage(
@@ -89,12 +91,25 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
       try {
         generateHandler(typeElement);
-        generateFactory(typeElement);
+        String factoryClassName = generateFactory(typeElement);
+        generatedFactories.add(factoryClassName);
       } catch (IOException e) {
         messager.printMessage(
             Diagnostic.Kind.ERROR, "Failed to generate handler: " + e.getMessage(), element);
       }
     }
+
+    // In the final processing round, generate ServiceLoader registration
+    if (roundEnv.processingOver() && !generatedFactories.isEmpty()) {
+      try {
+        generateServiceLoaderRegistration();
+      } catch (IOException e) {
+        messager.printMessage(
+            Diagnostic.Kind.ERROR,
+            "Failed to generate ServiceLoader registration: " + e.getMessage());
+      }
+    }
+
     return true;
   }
 
@@ -262,7 +277,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
     }
   }
 
-  private void generateFactory(TypeElement interfaceElement) throws IOException {
+  private String generateFactory(TypeElement interfaceElement) throws IOException {
     String packageName = getPackageName(interfaceElement);
     String interfaceName = interfaceElement.getSimpleName().toString();
     String handlerName = interfaceName + "Handler";
@@ -366,6 +381,27 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
       out.println("}");
     }
+
+    return qualifiedName;
+  }
+
+  /** Generates META-INF/services/io.jafar.parser.api.HandlerFactory file for ServiceLoader. */
+  private void generateServiceLoaderRegistration() throws IOException {
+    javax.tools.FileObject serviceFile =
+        filer.createResource(
+            javax.tools.StandardLocation.CLASS_OUTPUT,
+            "",
+            "META-INF/services/io.jafar.parser.api.HandlerFactory");
+
+    try (PrintWriter out = new PrintWriter(serviceFile.openWriter())) {
+      for (String factoryClassName : generatedFactories) {
+        out.println(factoryClassName);
+      }
+    }
+
+    messager.printMessage(
+        Diagnostic.Kind.NOTE,
+        "Generated ServiceLoader registration for " + generatedFactories.size() + " factories");
   }
 
   private List<FieldInfo> extractFields(TypeElement interfaceElement) {

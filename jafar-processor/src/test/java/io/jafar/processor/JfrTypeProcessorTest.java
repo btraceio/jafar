@@ -652,4 +652,54 @@ class JfrTypeProcessorTest {
         .contentsAsUtf8String()
         .doesNotContain("private String format");
   }
+
+  @Test
+  void generatesServiceLoaderRegistration() {
+    JavaFileObject event1 =
+        JavaFileObjects.forSourceString(
+            "test.JFREvent1",
+            """
+                package test;
+
+                import io.jafar.parser.api.JfrType;
+
+                @JfrType("jdk.Event1")
+                public interface JFREvent1 {
+                    long timestamp();
+                }
+                """);
+
+    JavaFileObject event2 =
+        JavaFileObjects.forSourceString(
+            "test.JFREvent2",
+            """
+                package test;
+
+                import io.jafar.parser.api.JfrType;
+
+                @JfrType("jdk.Event2")
+                public interface JFREvent2 {
+                    long timestamp();
+                }
+                """);
+
+    Compilation compilation =
+        javac().withProcessors(new JfrTypeProcessor()).compile(event1, event2);
+
+    assertThat(compilation).succeeded();
+
+    // Verify ServiceLoader registration file is generated
+    assertThat(compilation)
+        .generatedFile(
+            javax.tools.StandardLocation.CLASS_OUTPUT,
+            "META-INF/services/io.jafar.parser.api.HandlerFactory")
+        .contentsAsUtf8String()
+        .contains("test.JFREvent1Factory");
+    assertThat(compilation)
+        .generatedFile(
+            javax.tools.StandardLocation.CLASS_OUTPUT,
+            "META-INF/services/io.jafar.parser.api.HandlerFactory")
+        .contentsAsUtf8String()
+        .contains("test.JFREvent2Factory");
+  }
 }

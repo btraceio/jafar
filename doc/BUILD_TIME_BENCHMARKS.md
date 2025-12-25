@@ -167,7 +167,6 @@ Measures time to parse immediately after JVM startup:
 1. **Build time overhead**: Annotation processor adds ~1-2s to compilation
 2. **Generated code size**: ~5-10KB per event type (negligible for most applications)
 3. **Requires compilation**: Cannot handle JFR events discovered at runtime
-4. **Manual factory registration**: Must call `registerFactory()` for each type
 
 ### When to Use Build-Time Generation:
 - ✅ Known event types at compile time
@@ -211,12 +210,11 @@ public interface JFRThread {
 //    - JFRExecutionSampleFactory (implements HandlerFactory<JFRExecutionSample>)
 //    - JFRThreadHandler (implements JFRThread)
 //    - JFRThreadFactory (implements HandlerFactory<JFRThread>)
+//    - META-INF/services/io.jafar.parser.api.HandlerFactory (ServiceLoader registration)
 
 // 3. Use in parsing code
 try (TypedJafarParser parser = ctx.newTypedParser(jfrFile)) {
-    // Register build-time generated factories
-    parser.registerFactory(new JFRExecutionSampleFactory());
-    parser.registerFactory(new JFRThreadFactory());
+    // Factories auto-discovered via ServiceLoader - no registration needed!
 
     // Handle events (uses thread-local cached handlers)
     parser.handle(JFRExecutionSample.class, (event, ctl) -> {
