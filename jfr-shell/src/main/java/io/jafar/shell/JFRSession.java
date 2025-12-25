@@ -253,7 +253,7 @@ public class JFRSession implements AutoCloseable {
             public boolean onCheckpoint(
                 ParserContext context, io.jafar.parser.internal_api.CheckpointEvent event) {
               context.getConstantPools().pools().forEach(cp -> out.add(cp.getType().getName()));
-              return false; // stop after first checkpoint
+              return true; // continue to ALL checkpoints to discover all CP types
             }
           });
     } catch (Exception ignore) {

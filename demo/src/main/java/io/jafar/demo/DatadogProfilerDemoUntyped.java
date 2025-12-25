@@ -3,7 +3,6 @@ package io.jafar.demo;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.Values;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;

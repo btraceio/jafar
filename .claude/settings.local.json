@@ -12,7 +12,10 @@
       "WebFetch(domain:docs.gradle.org)",
       "WebFetch(domain:ncorti.com)",
       "WebFetch(domain:central.sonatype.com)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(jfr-shell/build/jlink/bin/jfr-shell:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

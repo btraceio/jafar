@@ -11,9 +11,10 @@ This tutorial teaches you how to use JFR Shell, an interactive CLI for exploring
 6. [Metadata Exploration](#metadata-exploration)
 7. [Aggregations and Statistics](#aggregations-and-statistics)
 8. [Advanced Queries](#advanced-queries)
-9. [Multi-Session Management](#multi-session-management)
-10. [Non-Interactive Mode](#non-interactive-mode)
-11. [Real-World Examples](#real-world-examples)
+9. [Event Decoration and Joining](#event-decoration-and-joining)
+10. [Multi-Session Management](#multi-session-management)
+11. [Non-Interactive Mode](#non-interactive-mode)
+12. [Real-World Examples](#real-world-examples)
 
 ## Installation
 
@@ -451,6 +452,379 @@ jfr> show events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
 jfr> show events/jdk.FileRead[bytes>1000] | groupBy(path) | top(10, by=count)
 ```
 
+## Event Decoration and Joining
+
+Event decoration (also known as event joining or enrichment) allows you to correlate and combine information from different JFR event types. This powerful feature enables advanced analysis scenarios like request tracing, contention analysis, and GC impact assessment.
+
+### Introduction
+
+JFR recordings contain many different event types (execution samples, I/O operations, GC events, etc.). These events are related but captured independently. Event decoration lets you combine information from related events to gain deeper insights.
+
+### When to Use Decoration
+
+Use decoration when you need to:
+- **Correlate events by time**: "What was the application doing during this GC phase?"
+- **Correlate events by identifier**: "Which endpoint generated these execution samples?"
+- **Enrich analysis**: Add context from one event type to another
+- **Cross-reference**: Link events that share common attributes
+
+### Decoration Concepts
+
+#### Two Decoration Types
+
+1. **Time-Based (`decorateByTime`)**: Correlates events that overlap in time on the same thread
+2. **Key-Based (`decorateByKey`)**: Correlates events sharing a correlation key (e.g., thread ID, request ID)
+
+#### Decorator vs Primary Events
+
+- **Primary Event**: The main event type you're analyzing (e.g., `jdk.ExecutionSample`)
+- **Decorator Event**: The event type providing additional context (e.g., `jdk.JavaMonitorWait`)
+- **Decorated Event**: The result - primary event with decorator fields accessible
+
+#### The `$decorator.` Prefix
+
+Decorator fields are accessed using the `$decorator.` prefix to avoid naming conflicts:
+
+```bash
+# Primary event field
+stackTrace
+
+# Decorator event field
+$decorator.monitorClass
+```
+
+### Time-Based Decoration
+
+#### Syntax
+
+```bash
+events/PrimaryType | decorateByTime(DecoratorType, fields=field1,field2,...)
+```
+
+#### How It Works
+
+1. **Pass 1**: Collect all decorator events with their time ranges (`startTime` to `startTime + duration`)
+2. **Pass 2**: For each primary event, find decorators with overlapping time ranges on the same thread
+3. **Result**: Primary events wrapped with matching decorator information
+
+#### Time Overlap Logic
+
+Events overlap if their time ranges intersect:
+
+```
+primaryStart < decoratorEnd AND primaryEnd > decoratorStart
+```
+
+For events without duration, duration is treated as 0 (point in time).
+
+#### Example: Monitor Contention
+
+Find execution samples that occur during monitor waits:
+
+```bash
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+```
+
+**Interpretation**:
+- Events with `$decorator.monitorClass`: Sample occurred during a lock wait
+- Events with null `$decorator.monitorClass`: Sample occurred outside any lock wait
+
+#### Thread Filtering
+
+By default, decoration requires matching thread IDs:
+- Primary event: `eventThread/javaThreadId`
+- Decorator event: `eventThread/javaThreadId`
+
+Custom thread paths can be specified:
+
+```bash
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,
+                                                       fields=monitorClass,
+                                                       threadPath=sampledThread/javaThreadId,
+                                                       decoratorThreadPath=eventThread/javaThreadId)
+```
+
+#### Common Time-Based Use Cases
+
+| Primary Event | Decorator Event | Use Case |
+|--------------|-----------------|----------|
+| `jdk.ExecutionSample` | `jdk.JavaMonitorWait` | Thread contention analysis |
+| `jdk.ExecutionSample` | `jdk.GCPhase` | CPU activity during GC |
+| `jdk.ObjectAllocationSample` | `jdk.GCPhase` | Allocations during GC |
+| `jdk.FileRead` | `jdk.JavaMonitorEnter` | I/O during lock acquisition |
+| `jdk.SocketWrite` | `jdk.ThreadPark` | Network I/O during thread parking |
+
+### Key-Based Decoration
+
+#### Syntax
+
+```bash
+events/PrimaryType | decorateByKey(DecoratorType,
+                                   key=primaryKeyPath,
+                                   decoratorKey=decoratorKeyPath,
+                                   fields=field1,field2,...)
+```
+
+#### How It Works
+
+1. **Pass 1**: Collect all decorator events and index by their correlation key
+2. **Pass 2**: For each primary event, compute its correlation key and lookup matching decorator
+3. **Result**: Primary events wrapped with matching decorator information
+
+#### Correlation Keys
+
+Correlation keys are extracted from event fields using path expressions:
+
+```bash
+# Simple path
+key=eventThread/javaThreadId
+
+# Nested path
+key=stackTrace/frames/0/method/name
+```
+
+#### Example: Request Tracing
+
+Correlate execution samples with request context using thread IDs:
+
+```bash
+jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                                      key=sampledThread/javaThreadId,
+                                                      decoratorKey=thread/javaThreadId,
+                                                      fields=requestId,endpoint)
+```
+
+**Result**: Execution samples now have `$decorator.requestId` and `$decorator.endpoint` fields.
+
+#### Common Key-Based Use Cases
+
+| Primary Event | Decorator Event | Correlation Key | Use Case |
+|--------------|-----------------|-----------------|----------|
+| `jdk.ExecutionSample` | Custom `RequestStart` | Thread ID | Request tracing |
+| `jdk.FileRead` | `jdk.ThreadStart` | Thread ID | Thread metadata |
+| `jdk.SocketWrite` | Custom `ConnectionOpen` | Connection ID | Network tracing |
+| Any event | Custom `TransactionBegin` | Transaction ID | Distributed tracing |
+
+### Accessing Decorator Fields
+
+#### In Projections
+
+```bash
+# Project both primary and decorator fields
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+  | top(10, by=$decorator.monitorClass)
+```
+
+#### In Aggregations
+
+```bash
+# Group by decorator field
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name)
+
+# Sum with decorator field
+jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=sum, value=allocationSize)
+```
+
+#### Handling Null Values
+
+If no decorator matches a primary event, `$decorator.*` fields are `null`:
+
+```bash
+# Count events with and without decorators
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+  | groupBy(exists($decorator.monitorClass))
+```
+
+### Real-World Decoration Examples
+
+#### Example 1: Identify Contention Hotspots
+
+**Goal**: Find which locks cause the most thread contention.
+
+```bash
+# Step 1: Count samples by monitor class
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+  | groupBy($decorator.monitorClass, agg=count)
+  | top(10, by=count)
+```
+
+**Interpretation**: Monitors with high sample counts are contention hotspots.
+
+#### Example 2: Endpoint Performance Profile
+
+**Goal**: Understand CPU usage by API endpoint.
+
+```bash
+# Assuming custom RequestStart event with 'endpoint' field
+jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                                      key=sampledThread/javaThreadId,
+                                                      decoratorKey=thread/javaThreadId,
+                                                      fields=endpoint)
+  | groupBy($decorator.endpoint, agg=count)
+  | top(10, by=count)
+```
+
+**Interpretation**: Endpoints with high sample counts consume more CPU.
+
+#### Example 3: GC Impact on Allocations
+
+**Goal**: Measure allocation pressure during different GC phases.
+
+```bash
+jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=sum, value=allocationSize)
+```
+
+**Interpretation**: High allocations during concurrent phases may affect GC efficiency.
+
+#### Example 4: I/O During Lock Contention
+
+**Goal**: Identify if file I/O happens during lock waits (anti-pattern).
+
+```bash
+jfr> show events/jdk.FileRead | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+```
+
+**Interpretation**: File reads with non-null `$decorator.monitorClass` occur during lock waits.
+
+#### Example 5: Execution Samples During GC Phases
+
+```bash
+# During GC phases
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name,duration)
+
+# Group samples by GC phase
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name)
+
+# Allocations during GC
+jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=sum, value=allocationSize)
+
+# File I/O during GC
+jfr> show events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=sum, value=bytes)
+```
+
+#### Example 6: Thread Behavior During GC
+
+```bash
+# Threads active during concurrent mark
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy(sampledThread/javaName, $decorator.name)
+
+# Lock contention during GC
+jfr> show events/jdk.JavaMonitorWait | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name, agg=count)
+```
+
+### Best Practices
+
+#### Choosing Decoration Type
+
+Use **decorateByTime** when:
+- Events have temporal relationships (start/end times)
+- You care about "what happened during this period"
+- Both event types have thread context
+- Example: Samples during GC, I/O during locks
+
+Use **decorateByKey** when:
+- Events share explicit identifiers
+- Temporal overlap doesn't matter
+- You have custom correlation IDs
+- Example: Request tracing, transaction tracking
+
+#### Field Selection
+
+Only request fields you need:
+
+```bash
+# Good: Only request needed fields
+fields=requestId,endpoint
+
+# Avoid: Requesting all fields (more memory)
+fields=requestId,endpoint,userId,headers,queryParams,cookies
+```
+
+#### Memory Considerations
+
+Decoration requires collecting all decorator events in memory:
+
+- **Small decorator sets** (< 100K events): No issue
+- **Large decorator sets** (> 1M events): May consume significant memory
+- **Mitigation**: Use filters to reduce decorator event count
+
+```bash
+# Filter decorators before decorating
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait[duration>1000000],
+                                                       fields=monitorClass)
+```
+
+#### Thread Safety
+
+Decoration is thread-safe by default:
+- Time-based: Only matches events on the same thread
+- Key-based: Specify appropriate thread path as correlation key
+
+For cross-thread correlation, use custom correlation IDs instead of thread IDs.
+
+### Troubleshooting
+
+#### All decorator fields are null
+
+**Possible causes**:
+1. No decorator events in recording
+2. Decorator events don't overlap with primary events
+3. Thread IDs don't match (time-based)
+4. Correlation keys don't match (key-based)
+
+**Debug**:
+```bash
+# Check decorator event count
+jfr> show events/DecoratorType | count()
+
+# Check thread IDs
+jfr> show events/PrimaryType/threadPath
+jfr> show events/DecoratorType/decoratorThreadPath
+```
+
+#### Performance is slow
+
+**Possible causes**:
+1. Very large decorator event set (> 1M events)
+2. Complex correlation key extraction
+
+**Mitigations**:
+- Filter decorators to reduce set size
+- Use simpler correlation keys
+- Consider sampling primary events
+
+#### Unexpected decorator matches
+
+**Possible causes**:
+1. Time range overlap logic (overlaps are inclusive)
+2. Multiple decorators match (first is used)
+3. Thread ID collision
+
+**Debug**:
+- Check event timestamps and durations
+- Examine thread IDs for collisions
+- Use `--limit` to inspect sample results
+
+### Summary
+
+Event decoration enables powerful cross-event analysis:
+
+- **`decorateByTime`**: Time-based correlation on same thread
+- **`decorateByKey`**: Identifier-based correlation
+- **`$decorator.`**: Access decorator fields
+- **Memory-efficient**: Lazy field access, selective field extraction
+- **Flexible**: Works with any event types
+
+See the [JfrPath Reference](jfrpath.md) for complete syntax details and [examples/](../jfr-shell/src/main/resources/examples/) for more use cases.
+
 ## Multi-Session Management
 
 Work with multiple recordings simultaneously:
@@ -672,19 +1046,63 @@ jfr> show events/jdk.SocketRead[address~".*postgres.*"] | groupBy(address) | top
 
 ### Tab Completion
 
-Use tab to autocomplete:
-- Command names
-- Event type names
-- Field names
-- File paths
+JFR Shell provides comprehensive tab completion throughout the query language. Press Tab at any point to see available completions:
 
+**Command and Root Completion:**
+```bash
+jfr> sh<TAB>                    # Commands: show, sessions
+jfr> show <TAB>                 # Roots: events/, metadata/, cp/, chunks/
+jfr> show chunks/<TAB>          # Chunk IDs: chunks/1, chunks/2, chunks/3
+```
+
+**Event Type and Field Path Completion:**
 ```bash
 jfr> show events/jdk.Exe<TAB>
 jdk.ExecutionSample  jdk.ExecuteVMOperation
 
-jfr> show events/jdk.ExecutionSample/thr<TAB>
-thread
+jfr> show events/jdk.ExecutionSample/<TAB>
+startTime  duration  stackTrace  sampledThread  state
+
+jfr> show events/jdk.ExecutionSample/sampledThread/<TAB>
+javaThreadId  osThreadId  javaName  osName  group
 ```
+
+**Metadata Subproperty Completion:**
+```bash
+jfr> show metadata/jdk.ExecutionSample/<TAB>
+fields  settings  annotations
+```
+
+**Filter Completion (inside [...]):**
+```bash
+jfr> show events/jdk.FileRead[<TAB>
+# Field names: path, bytes, duration, startTime
+# Filter functions: contains(, exists(, startsWith(, endsWith(
+
+jfr> show events/jdk.FileRead[bytes<TAB>
+# Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
+
+jfr> show events/jdk.FileRead[bytes > 1000 <TAB>
+# Logical operators: &&, ||
+```
+
+**Pipeline Operator Completion:**
+```bash
+jfr> show events/jdk.ExecutionSample | <TAB>
+count()  sum(  groupBy(  top(  stats(  quantiles(  sketch(  select(
+decorateByTime(  decorateByKey(  len(  uppercase(  lowercase(
+
+jfr> show events/jdk.ExecutionSample | groupBy(<TAB>
+# Field names for function parameters
+```
+
+**Option Completion:**
+```bash
+jfr> show events/jdk.FileRead --<TAB>
+--limit  --format  --tree  --depth  --list-match
+```
+
+Completion is context-aware and suggests only valid options for the current position in the query.
 
 ### Command History
 
@@ -736,6 +1154,7 @@ jfr> show events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | 
 
 ## Next Steps
 
+- Master [Event Decoration](#event-decoration-and-joining) for advanced correlation analysis
 - Learn the [Typed API](typed-api-tutorial.md) for programmatic parsing
 - Explore the [Untyped API](untyped-api-tutorial.md) for flexible parsing
 - Read [JfrPath Reference](jfrpath.md) for complete syntax

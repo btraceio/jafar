@@ -50,4 +50,63 @@ class JfrPathParserTest {
       fail("Unexpected predicate type: " + pred2.getClass());
     }
   }
+
+  @Test
+  void parsesSelectWithSingleField() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | select(startTime)");
+    assertEquals(JfrPath.Root.EVENTS, q.root);
+    assertEquals(1, q.segments.size());
+    assertEquals("jdk.ExecutionSample", q.segments.get(0));
+    assertEquals(1, q.pipeline.size());
+
+    var op = q.pipeline.get(0);
+    assertTrue(op instanceof JfrPath.SelectOp);
+    var selectOp = (JfrPath.SelectOp) op;
+    assertEquals(1, selectOp.fieldPaths.size());
+    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths.get(0));
+  }
+
+  @Test
+  void parsesSelectWithMultipleFields() {
+    var q =
+        JfrPathParser.parse("events/jdk.ExecutionSample | select(startTime, duration, stackTrace)");
+    assertEquals(1, q.pipeline.size());
+
+    var op = q.pipeline.get(0);
+    assertTrue(op instanceof JfrPath.SelectOp);
+    var selectOp = (JfrPath.SelectOp) op;
+    assertEquals(3, selectOp.fieldPaths.size());
+    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths.get(0));
+    assertEquals(java.util.List.of("duration"), selectOp.fieldPaths.get(1));
+    assertEquals(java.util.List.of("stackTrace"), selectOp.fieldPaths.get(2));
+  }
+
+  @Test
+  void parsesSelectWithNestedPaths() {
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | select(eventThread/javaThreadId, eventThread/name)");
+    assertEquals(1, q.pipeline.size());
+
+    var op = q.pipeline.get(0);
+    assertTrue(op instanceof JfrPath.SelectOp);
+    var selectOp = (JfrPath.SelectOp) op;
+    assertEquals(2, selectOp.fieldPaths.size());
+    assertEquals(java.util.List.of("eventThread", "javaThreadId"), selectOp.fieldPaths.get(0));
+    assertEquals(java.util.List.of("eventThread", "name"), selectOp.fieldPaths.get(1));
+  }
+
+  @Test
+  void parsesSelectAfterOtherPipelineOps() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | groupBy(path) | select(key, value)");
+    assertEquals(2, q.pipeline.size());
+
+    assertTrue(q.pipeline.get(0) instanceof JfrPath.GroupByOp);
+    assertTrue(q.pipeline.get(1) instanceof JfrPath.SelectOp);
+
+    var selectOp = (JfrPath.SelectOp) q.pipeline.get(1);
+    assertEquals(2, selectOp.fieldPaths.size());
+    assertEquals(java.util.List.of("key"), selectOp.fieldPaths.get(0));
+    assertEquals(java.util.List.of("value"), selectOp.fieldPaths.get(1));
+  }
 }

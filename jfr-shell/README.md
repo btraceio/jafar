@@ -249,6 +249,29 @@ List matching:
 - `| abs([path])`, `| round([path])`, `| floor([path])`, `| ceil([path])`
 - `| contains([path], "s")`, `| replace([path], "old", "new")`
 
+### Event Decoration (Joining)
+
+- `| decorateByTime(DecoratorType, fields=...)` - Join events by time overlap on same thread
+- `| decorateByKey(DecoratorType, key=..., decoratorKey=..., fields=...)` - Join events by correlation key
+
+Decorator fields accessed with `$decorator.fieldName` prefix.
+
+**Examples:**
+```bash
+# Monitor contention: execution samples during lock waits
+show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+
+# Request tracing: correlate samples with request context
+show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+                                                  key=sampledThread/javaThreadId,
+                                                  decoratorKey=thread/javaThreadId,
+                                                  fields=requestId,endpoint)
+
+# Group by decorator field
+show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+  | groupBy($decorator.name)
+```
+
 See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 
 ## Available Commands
