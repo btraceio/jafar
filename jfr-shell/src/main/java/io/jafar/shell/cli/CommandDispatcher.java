@@ -441,6 +441,14 @@ public class CommandDispatcher {
       io.println("  chunk     - Show specific chunk details");
       io.println("  cp        - Browse constant pool entries");
       io.println("");
+      io.println("Tab completion:");
+      io.println("  Press Tab at any point for context-aware suggestions:");
+      io.println("  - Query roots: events/, metadata/, cp/, chunks/");
+      io.println("  - Event types, field paths, and nested fields");
+      io.println("  - Filter operators, functions, and logical operators");
+      io.println("  - Pipeline operators and function parameters");
+      io.println("  - Command options (--limit, --format, etc.)");
+      io.println("");
       io.println("Type 'help <command>' for detailed usage (e.g., 'help show')");
       return;
     }

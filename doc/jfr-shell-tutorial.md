@@ -1046,19 +1046,63 @@ jfr> show events/jdk.SocketRead[address~".*postgres.*"] | groupBy(address) | top
 
 ### Tab Completion
 
-Use tab to autocomplete:
-- Command names
-- Event type names
-- Field names
-- File paths
+JFR Shell provides comprehensive tab completion throughout the query language. Press Tab at any point to see available completions:
 
+**Command and Root Completion:**
+```bash
+jfr> sh<TAB>                    # Commands: show, sessions
+jfr> show <TAB>                 # Roots: events/, metadata/, cp/, chunks/
+jfr> show chunks/<TAB>          # Chunk IDs: chunks/1, chunks/2, chunks/3
+```
+
+**Event Type and Field Path Completion:**
 ```bash
 jfr> show events/jdk.Exe<TAB>
 jdk.ExecutionSample  jdk.ExecuteVMOperation
 
-jfr> show events/jdk.ExecutionSample/thr<TAB>
-thread
+jfr> show events/jdk.ExecutionSample/<TAB>
+startTime  duration  stackTrace  sampledThread  state
+
+jfr> show events/jdk.ExecutionSample/sampledThread/<TAB>
+javaThreadId  osThreadId  javaName  osName  group
 ```
+
+**Metadata Subproperty Completion:**
+```bash
+jfr> show metadata/jdk.ExecutionSample/<TAB>
+fields  settings  annotations
+```
+
+**Filter Completion (inside [...]):**
+```bash
+jfr> show events/jdk.FileRead[<TAB>
+# Field names: path, bytes, duration, startTime
+# Filter functions: contains(, exists(, startsWith(, endsWith(
+
+jfr> show events/jdk.FileRead[bytes<TAB>
+# Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
+
+jfr> show events/jdk.FileRead[bytes > 1000 <TAB>
+# Logical operators: &&, ||
+```
+
+**Pipeline Operator Completion:**
+```bash
+jfr> show events/jdk.ExecutionSample | <TAB>
+count()  sum(  groupBy(  top(  stats(  quantiles(  sketch(  select(
+decorateByTime(  decorateByKey(  len(  uppercase(  lowercase(
+
+jfr> show events/jdk.ExecutionSample | groupBy(<TAB>
+# Field names for function parameters
+```
+
+**Option Completion:**
+```bash
+jfr> show events/jdk.FileRead --<TAB>
+--limit  --format  --tree  --depth  --list-match
+```
+
+Completion is context-aware and suggests only valid options for the current position in the query.
 
 ### Command History
 

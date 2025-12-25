@@ -11,6 +11,7 @@ import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -442,7 +443,77 @@ public final class JfrPathEvaluator {
           session, query, rp.valuePath, rp.target, rp.replacement);
       case JfrPath.DecorateByTimeOp dt -> evaluateDecorateByTime(session, query, dt);
       case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
+      case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
     };
+  }
+
+  private List<Map<String, Object>> evaluateSelect(
+      JFRSession session, Query query, JfrPath.SelectOp op) throws Exception {
+    if (op.fieldPaths.isEmpty()) {
+      throw new IllegalArgumentException("select() requires at least one field");
+    }
+
+    // Get the base result set (evaluate prior pipeline operations if any)
+    List<Map<String, Object>> baseResults;
+
+    // Find index of current select operation in pipeline
+    int selectIndex = -1;
+    for (int i = 0; i < query.pipeline.size(); i++) {
+      if (query.pipeline.get(i) == op) {
+        selectIndex = i;
+        break;
+      }
+    }
+
+    if (selectIndex == 0) {
+      // No prior pipeline operations, evaluate base query
+      Query baseQuery = new Query(query.root, query.segments, query.predicates, List.of());
+      baseResults = evaluate(session, baseQuery);
+    } else {
+      // Evaluate all prior pipeline operations
+      List<JfrPath.PipelineOp> priorOps = query.pipeline.subList(0, selectIndex);
+      Query baseQuery = new Query(query.root, query.segments, query.predicates, priorOps);
+      baseResults = evaluate(session, baseQuery);
+    }
+
+    // Project only the selected fields
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : baseResults) {
+      Map<String, Object> projected = new LinkedHashMap<>();
+      for (List<String> fieldPath : op.fieldPaths) {
+        if (fieldPath.isEmpty()) continue;
+
+        // Get the value at this field path
+        Object value = Values.get(row, fieldPath.toArray());
+
+        // Build nested structure if field path has multiple segments
+        if (fieldPath.size() == 1) {
+          projected.put(fieldPath.get(0), value);
+        } else {
+          // For nested paths like eventThread/javaThreadId, create nested maps
+          Map<String, Object> current = projected;
+          for (int i = 0; i < fieldPath.size() - 1; i++) {
+            String segment = fieldPath.get(i);
+            if (!current.containsKey(segment)) {
+              current.put(segment, new LinkedHashMap<String, Object>());
+            }
+            Object next = current.get(segment);
+            if (next instanceof Map) {
+              @SuppressWarnings("unchecked")
+              Map<String, Object> nextMap = (Map<String, Object>) next;
+              current = nextMap;
+            } else {
+              // Path conflict - can't navigate further
+              break;
+            }
+          }
+          current.put(fieldPath.get(fieldPath.size() - 1), value);
+        }
+      }
+      result.add(projected);
+    }
+
+    return result;
   }
 
   private List<Map<String, Object>> aggregateCount(JFRSession session, Query query)

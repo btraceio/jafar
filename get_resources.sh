@@ -53,3 +53,6 @@ fi
 if [ ! -f "$PARSER_RES_DIR/test-jfr.jfr" ]; then
   cp -f "$JFR_FILE" "$PARSER_RES_DIR/test-jfr.jfr"
 fi
+if [ ! -f "$PARSER_RES_DIR/test-dd.jfr" ]; then
+  cp -f "$JFR_FILE" "$PARSER_RES_DIR/test-dd.jfr"
+fi

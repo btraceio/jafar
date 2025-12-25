@@ -631,6 +631,8 @@ public final class JfrPathParser {
       return parseDecorateByTime();
     } else if ("decoratebykey".equals(name)) {
       return parseDecorateByKey();
+    } else if ("select".equals(name)) {
+      return parseSelect();
     } else {
       throw error("Unknown pipeline function: " + name);
     }
@@ -774,6 +776,30 @@ public final class JfrPathParser {
     }
     if (fp.isEmpty()) throw error("Expected path");
     return fp;
+  }
+
+  private JfrPath.SelectOp parseSelect() {
+    expect('(');
+    skipWs();
+
+    List<List<String>> fieldPaths = new ArrayList<>();
+    while (!eof() && peek() != ')') {
+      // Parse field path (e.g., "eventThread/javaThreadId" or "stackTrace")
+      List<String> path = parsePathArg();
+      fieldPaths.add(path);
+      skipWs();
+      if (peek() == ',') {
+        pos++;
+        skipWs();
+      }
+    }
+    expect(')');
+
+    if (fieldPaths.isEmpty()) {
+      throw error("select() requires at least one field");
+    }
+
+    return new JfrPath.SelectOp(fieldPaths);
   }
 
   private void expect(char c) {

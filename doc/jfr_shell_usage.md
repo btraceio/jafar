@@ -225,9 +225,34 @@ For complete operator reference and grammar details, see [doc/jfrpath.md](jfrpat
 - `show cp/jdk.types.Symbol/string | len()` (string length per CP entry)
 - `show events/jdk.ExecutionSample/stackTrace/frames | len()` (list length per event)
 
-## Completion Hints
+## Tab Completion
 
-- Roots: Tab complete `events/`, `metadata/`, `cp/`, `chunks/`.
-- Under `events/`: event type names; under `metadata/`: all metadata classes.
-- Under `cp/`: constant pool types. After a type, filters operate on CP entry fields (e.g., `string` for `jdk.types.Symbol`).
-- Common flags: `--limit`, `--format json`, `--list-match` values (`any`, `all`, `none`).
+JFR Shell provides intelligent context-aware tab completion throughout the query language:
+
+**Query Roots:**
+- `events/` — Event type completion
+- `metadata/` — Metadata type completion
+- `cp/` — Constant pool type completion
+- `chunks/` — Chunk ID completion (e.g., `chunks/1`, `chunks/2`)
+
+**Path Navigation:**
+- After `events/<Type>/` — Field names for the event type
+- After `metadata/<Type>/` — Subproperties: `fields`, `settings`, `annotations`
+- Nested paths — Field names of nested types (e.g., `sampledThread/javaName`)
+
+**Filter Predicates (`[...]`):**
+- After `[` — Field names and filter functions (`contains(`, `exists(`, `startsWith(`, `endsWith(`)
+- After field name — Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `~`, `contains`, `startsWith`, `endsWith`, `matches`
+- After condition — Logical operators: `&&`, `||`
+- After logical operator — Field names for next condition
+
+**Pipeline Operators (`|`):**
+- After `|` — Aggregation functions: `count()`, `sum(`, `groupBy(`, `top(`, `stats(`, `quantiles(`, `sketch(`
+- Transform functions: `select(`, `len(`, `uppercase(`, `lowercase(`, `trim(`
+- Decoration functions: `decorateByTime(`, `decorateByKey(`
+- Inside functions — Field names as parameters
+
+**Command Options:**
+- After `--` — Available options: `--limit`, `--format`, `--tree`, `--depth`, `--list-match`
+
+Press Tab at any point to see context-appropriate suggestions.

@@ -207,7 +207,8 @@ public final class JfrPath {
           ContainsOp,
           ReplaceOp,
           DecorateByTimeOp,
-          DecorateByKeyOp {}
+          DecorateByKeyOp,
+          SelectOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -407,6 +408,15 @@ public final class JfrPath {
       this.primaryKey = primaryKey;
       this.decoratorKey = decoratorKey;
       this.decoratorFields = decoratorFields == null ? List.of() : List.copyOf(decoratorFields);
+    }
+  }
+
+  /** select(field1,field2,...) - Project only specified fields from events */
+  public static final class SelectOp implements PipelineOp {
+    public final List<List<String>> fieldPaths;
+
+    public SelectOp(List<List<String>> fieldPaths) {
+      this.fieldPaths = fieldPaths == null ? List.of() : List.copyOf(fieldPaths);
     }
   }
 }
