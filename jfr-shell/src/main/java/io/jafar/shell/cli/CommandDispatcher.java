@@ -1316,38 +1316,61 @@ public class CommandDispatcher {
       return;
     }
 
-    // Treat as JfrPath query - evaluate to detect scalar vs collection
+    // Treat as JfrPath query
     Optional<SessionManager.SessionRef> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
       return;
     }
 
-    // Parse and evaluate the query
+    // Parse the query (but don't evaluate yet)
     JfrPath.Query query;
-    Object result;
     try {
       query = JfrPathParser.parse(exprPart);
-      JfrPathEvaluator evaluator = new JfrPathEvaluator();
-      result = evaluator.evaluate(cur.get().session, query);
     } catch (Exception e) {
       io.error("Invalid query: " + e.getMessage());
       return;
     }
 
-    // Check if result is a single scalar value
-    Object scalarValue = extractScalarIfSingle(result);
-    if (scalarValue != null) {
-      store.set(varName, new ScalarValue(scalarValue));
-      io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+    // Use static analysis to determine if query produces a scalar
+    if (isDefinitelyScalar(query)) {
+      // Scalar-producing query: evaluate immediately and store as scalar
+      try {
+        JfrPathEvaluator evaluator = new JfrPathEvaluator();
+        Object result = evaluator.evaluate(cur.get().session, query);
+        Object scalarValue = extractScalarIfSingle(result);
+        if (scalarValue != null) {
+          store.set(varName, new ScalarValue(scalarValue));
+          io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+        } else {
+          // Fallback: store as lazy (shouldn't happen for scalar queries)
+          LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+          lqv.setCachedResult(result);
+          store.set(varName, lqv);
+          io.println("Set " + varName + " = lazy[" + exprPart + "]");
+        }
+      } catch (Exception e) {
+        io.error("Query evaluation failed: " + e.getMessage());
+      }
     } else {
-      // Store as lazy with pre-cached result
+      // Non-scalar query: store as lazy (not evaluated until accessed)
       LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
-      lqv.setCachedResult(result);
       store.set(varName, lqv);
-      int size = result instanceof List<?> list ? list.size() : 1;
-      io.println("Set " + varName + " = lazy[" + exprPart + "] (" + size + " rows)");
+      io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");
     }
+  }
+
+  /**
+   * Determines if a query will definitely produce a single scalar value based on static analysis
+   * of its pipeline operators. Only queries ending with count or sum are considered scalar.
+   */
+  private boolean isDefinitelyScalar(JfrPath.Query query) {
+    if (query.pipeline == null || query.pipeline.isEmpty()) {
+      return false; // No pipeline = produces rows, not scalar
+    }
+    // Check the last operator in the pipeline
+    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
+    return lastOp instanceof JfrPath.CountOp || lastOp instanceof JfrPath.SumOp;
   }
 
   private void cmdVars(List<String> args) {
