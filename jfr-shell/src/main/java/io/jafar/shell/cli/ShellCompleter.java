@@ -17,6 +17,10 @@ import io.jafar.shell.cli.completion.completers.OptionCompleter;
 import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
 import io.jafar.shell.core.SessionManager;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Locale;
 import org.jline.reader.Candidate;
@@ -30,15 +34,20 @@ import org.jline.reader.ParsedLine;
  */
 public class ShellCompleter implements Completer {
 
+  private static final Path SCRIPTS_DIR =
+      Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
+
   private final SessionManager sessions;
+  private final CommandDispatcher dispatcher;
   private final CompletionContextAnalyzer analyzer;
   private final MetadataService metadata;
   private final List<ContextCompleter> completers;
   private final org.jline.reader.impl.completer.FileNameCompleter fileCompleter =
       new org.jline.reader.impl.completer.FileNameCompleter();
 
-  public ShellCompleter(SessionManager sessions) {
+  public ShellCompleter(SessionManager sessions, CommandDispatcher dispatcher) {
     this.sessions = sessions;
+    this.dispatcher = dispatcher;
     this.analyzer = new CompletionContextAnalyzer();
     this.metadata = new MetadataService(sessions);
 
@@ -137,6 +146,9 @@ public class ShellCompleter implements Completer {
       case "use" -> completeUse(candidates);
       case "close" -> completeClose(candidates);
       case "cp" -> completeCp(line, candidates);
+      case "script" -> completeScript(reader, line, candidates, words, wordIndex);
+      case "unset", "invalidate" -> completeVariableName(line, candidates);
+      case "record" -> completeRecord(line, candidates, wordIndex);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -241,6 +253,86 @@ public class ShellCompleter implements Completer {
     for (String opt : options) {
       if (opt.startsWith(partial)) {
         candidates.add(new Candidate(opt));
+      }
+    }
+  }
+
+  private void completeScript(
+      LineReader reader,
+      ParsedLine line,
+      List<Candidate> candidates,
+      List<String> words,
+      int wordIndex) {
+    if (wordIndex == 1) {
+      // After "script " - suggest subcommands
+      String partial = line.word();
+      for (String sub : new String[] {"list", "run"}) {
+        if (sub.startsWith(partial)) {
+          candidates.add(new Candidate(sub));
+        }
+      }
+      // Also allow file path completion
+      if (reader != null) {
+        fileCompleter.complete(reader, line, candidates);
+      }
+    } else if (wordIndex == 2 && "run".equalsIgnoreCase(words.get(1))) {
+      // After "script run " - list scripts from ~/.jfr-shell/scripts
+      listScriptsFromDirectory(line.word(), candidates);
+    } else if (wordIndex >= 2
+        && !"list".equalsIgnoreCase(words.get(1))
+        && !"run".equalsIgnoreCase(words.get(1))) {
+      // After "script <path> " - file completion for args
+      if (reader != null) {
+        fileCompleter.complete(reader, line, candidates);
+      }
+    }
+  }
+
+  private void listScriptsFromDirectory(String partial, List<Candidate> candidates) {
+    if (!Files.exists(SCRIPTS_DIR)) {
+      return;
+    }
+    try (var stream = Files.list(SCRIPTS_DIR)) {
+      stream
+          .filter(p -> p.toString().endsWith(".jfrs"))
+          .map(p -> p.getFileName().toString())
+          .map(name -> name.substring(0, name.length() - 5)) // Remove .jfrs
+          .filter(name -> name.startsWith(partial))
+          .forEach(name -> candidates.add(new Candidate(name)));
+    } catch (IOException ignore) {
+    }
+  }
+
+  private void completeVariableName(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word();
+    // Get variable names from global store
+    if (dispatcher != null) {
+      for (String name : dispatcher.getGlobalStore().names()) {
+        if (name.startsWith(partial)) {
+          candidates.add(new Candidate(name));
+        }
+      }
+    }
+    // Also from current session store
+    sessions
+        .getCurrent()
+        .ifPresent(
+            ref -> {
+              for (String name : ref.variables.names()) {
+                if (name.startsWith(partial)) {
+                  candidates.add(new Candidate(name));
+                }
+              }
+            });
+  }
+
+  private void completeRecord(ParsedLine line, List<Candidate> candidates, int wordIndex) {
+    if (wordIndex == 1) {
+      String partial = line.word();
+      for (String sub : new String[] {"start", "stop", "status"}) {
+        if (sub.startsWith(partial)) {
+          candidates.add(new Candidate(sub));
+        }
       }
     }
   }

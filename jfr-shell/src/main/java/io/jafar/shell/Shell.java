@@ -42,15 +42,7 @@ public final class Shell implements AutoCloseable {
     } catch (Exception ignore) {
     }
     this.history = new DefaultHistory();
-    java.util.Map<String, Object> vars = new java.util.HashMap<>();
-    vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
-    this.lineReader =
-        LineReaderBuilder.builder()
-            .terminal(terminal)
-            .variables(vars)
-            .history(history)
-            .completer(new ShellCompleter(sessions))
-            .build();
+    // Create dispatcher first so it can be passed to ShellCompleter
     this.dispatcher =
         new CommandDispatcher(
             sessions,
@@ -74,6 +66,15 @@ public final class Shell implements AutoCloseable {
               }
             },
             current -> {});
+    java.util.Map<String, Object> vars = new java.util.HashMap<>();
+    vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
+    this.lineReader =
+        LineReaderBuilder.builder()
+            .terminal(terminal)
+            .variables(vars)
+            .history(history)
+            .completer(new ShellCompleter(sessions, dispatcher))
+            .build();
   }
 
   public void run() {
