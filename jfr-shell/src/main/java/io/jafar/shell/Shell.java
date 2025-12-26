@@ -21,6 +21,9 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 public final class Shell implements AutoCloseable {
+  private static final Path SCRIPTS_DIR =
+      Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
+
   private final Terminal terminal;
   private final LineReader lineReader;
   private final SessionManager sessions;
@@ -232,27 +235,146 @@ public final class Shell implements AutoCloseable {
   private void handleScriptCommand(String input) {
     String[] parts = input.split("\\s+");
     if (parts.length < 2) {
-      terminal.writer().println("Usage: script <path> [arg1] [arg2] ...");
+      printScriptUsage();
+      return;
+    }
+
+    String subCommand = parts[1].toLowerCase();
+
+    switch (subCommand) {
+      case "list":
+        listScripts();
+        return;
+      case "run":
+        if (parts.length < 3) {
+          terminal.writer().println("Usage: script run <name> [arg1] [arg2] ...");
+          terminal.flush();
+          return;
+        }
+        runScriptByName(parts, 2);
+        return;
+      default:
+        // Backward compatibility: treat as path
+        runScriptByPath(parts, 1);
+    }
+  }
+
+  private void printScriptUsage() {
+    terminal.writer().println("Usage:");
+    terminal.writer().println("  script list                    List available scripts");
+    terminal
+        .writer()
+        .println("  script run <name> [args...]    Run script by name from scripts dir");
+    terminal.writer().println("  script <path> [args...]        Run script by full path");
+    terminal.writer().println();
+    terminal.writer().println("Scripts directory: " + SCRIPTS_DIR);
+    terminal.flush();
+  }
+
+  private void listScripts() {
+    if (!Files.exists(SCRIPTS_DIR)) {
+      terminal.writer().println("Scripts directory does not exist: " + SCRIPTS_DIR);
+      terminal.writer().println("Create it and add .jfrs scripts to use 'script run <name>'");
       terminal.flush();
       return;
     }
 
-    String scriptPath = parts[1];
-    List<String> arguments = new ArrayList<>();
-
-    // Collect positional arguments
-    for (int i = 2; i < parts.length; i++) {
-      arguments.add(parts[i]);
-    }
-
     try {
-      Path path = Paths.get(scriptPath);
-      if (!Files.exists(path)) {
-        terminal.writer().println("Error: Script file not found: " + scriptPath);
+      List<Path> scripts =
+          Files.list(SCRIPTS_DIR).filter(p -> p.toString().endsWith(".jfrs")).sorted().toList();
+
+      if (scripts.isEmpty()) {
+        terminal.writer().println("No scripts found in: " + SCRIPTS_DIR);
+        terminal.writer().println("Add .jfrs script files to this directory");
         terminal.flush();
         return;
       }
 
+      terminal.writer().println("Available scripts in " + SCRIPTS_DIR + ":");
+      terminal.writer().println();
+      for (Path script : scripts) {
+        String name = script.getFileName().toString();
+        String baseName = name.substring(0, name.length() - 5); // Remove .jfrs
+        String description = getScriptDescription(script);
+        if (description != null) {
+          terminal.writer().printf("  %-25s %s%n", baseName, description);
+        } else {
+          terminal.writer().println("  " + baseName);
+        }
+      }
+      terminal.writer().println();
+      terminal.writer().println("Run with: script run <name> [args...]");
+      terminal.flush();
+    } catch (IOException e) {
+      terminal.writer().println("Error listing scripts: " + e.getMessage());
+      terminal.flush();
+    }
+  }
+
+  private String getScriptDescription(Path script) {
+    try {
+      List<String> lines = Files.readAllLines(script);
+      for (String line : lines) {
+        line = line.trim();
+        if (line.isEmpty()) continue;
+        if (line.startsWith("#!")) continue; // Skip shebang
+        if (line.startsWith("#")) {
+          // First comment line is the description
+          String desc = line.substring(1).trim();
+          if (!desc.isEmpty() && !desc.toLowerCase().startsWith("arguments:")) {
+            return desc;
+          }
+        } else {
+          break; // Stop at first non-comment line
+        }
+      }
+    } catch (IOException ignore) {
+    }
+    return null;
+  }
+
+  private void runScriptByName(String[] parts, int nameIndex) {
+    String scriptName = parts[nameIndex];
+    List<String> arguments = new ArrayList<>();
+    for (int i = nameIndex + 1; i < parts.length; i++) {
+      arguments.add(parts[i]);
+    }
+
+    // Resolve script path
+    Path scriptPath = SCRIPTS_DIR.resolve(scriptName + ".jfrs");
+    if (!Files.exists(scriptPath)) {
+      // Try without adding extension
+      scriptPath = SCRIPTS_DIR.resolve(scriptName);
+      if (!Files.exists(scriptPath)) {
+        terminal.writer().println("Script not found: " + scriptName);
+        terminal.writer().println("Use 'script list' to see available scripts");
+        terminal.flush();
+        return;
+      }
+    }
+
+    executeScript(scriptPath, arguments);
+  }
+
+  private void runScriptByPath(String[] parts, int pathIndex) {
+    String scriptPathStr = parts[pathIndex];
+    List<String> arguments = new ArrayList<>();
+    for (int i = pathIndex + 1; i < parts.length; i++) {
+      arguments.add(parts[i]);
+    }
+
+    Path scriptPath = Paths.get(scriptPathStr);
+    if (!Files.exists(scriptPath)) {
+      terminal.writer().println("Error: Script file not found: " + scriptPathStr);
+      terminal.flush();
+      return;
+    }
+
+    executeScript(scriptPath, arguments);
+  }
+
+  private void executeScript(Path scriptPath, List<String> arguments) {
+    try {
       ScriptRunner runner =
           new ScriptRunner(
               dispatcher,
@@ -277,7 +399,7 @@ public final class Shell implements AutoCloseable {
               },
               arguments);
 
-      ScriptRunner.ExecutionResult result = runner.execute(path);
+      ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
       if (result.hasErrors()) {
         terminal.writer().println("\nScript completed with errors:");
@@ -336,10 +458,9 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  endif                          End conditional block");
     terminal.writer().println();
     terminal.writer().println("Scripting:");
-    terminal.writer().println("  script <path> [arg1] [arg2]... Execute a script file");
-    terminal
-        .writer()
-        .println("                                 Use arguments with $1, $2, $@ in script");
+    terminal.writer().println("  script list                    List available scripts");
+    terminal.writer().println("  script run <name> [args...]    Run script by name");
+    terminal.writer().println("  script <path> [args...]        Run script by full path");
     terminal
         .writer()
         .println("  record start [path]            Start recording commands to script");
@@ -358,9 +479,9 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  show events/jdk.ExecutionSample | groupBy(thread/name)");
     terminal.writer().println();
     terminal.writer().println("Scripting Examples:");
-    terminal.writer().println("  record start my-analysis.jfrs");
-    terminal.writer().println("  script my-analysis.jfrs /path/to/file.jfr");
-    terminal.writer().println("  script - /path/to/file.jfr < analysis.jfrs");
+    terminal.writer().println("  script list                             List available scripts");
+    terminal.writer().println("  script run basic-analysis /tmp/app.jfr  Run script by name");
+    terminal.writer().println("  script /path/to/analysis.jfrs arg1      Run script by path");
     terminal.writer().println();
     terminal.writer().println("For more info:");
     terminal.writer().println("  Type 'help show' for JfrPath query syntax");

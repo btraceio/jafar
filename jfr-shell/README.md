@@ -286,12 +286,31 @@ See [Scripting Guide](../doc/jfr-shell-scripting.md#conditionals) for complete r
 
 JFR Shell supports powerful scripting capabilities for automating analysis workflows.
 
+### Scripts Directory
+
+Store reusable scripts in `~/.jfr-shell/scripts` and run them by name:
+
+```bash
+# List available scripts
+jfr> script list
+Available scripts in ~/.jfr-shell/scripts:
+
+  basic-analysis           Comprehensive recording overview
+  thread-profiling         Detailed thread analysis
+
+Run with: script run <name> [args...]
+
+# Run a script by name
+jfr> script run basic-analysis /tmp/app.jfr
+```
+
 ### Script Execution
 
 Create reusable analysis scripts with variable substitution:
 
 **analysis.jfrs:**
 ```bash
+# Comprehensive file I/O analysis
 # Arguments: recording, min_bytes, top_n
 
 open $1
@@ -300,12 +319,9 @@ show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=c
 close
 ```
 
-**Execute:**
+**Execute by path:**
 ```bash
-jfr-shell script analysis.jfrs \
-  /tmp/app.jfr \
-  1000 \
-  10
+jfr-shell script analysis.jfrs /tmp/app.jfr 1000 10
 ```
 
 ### Command Recording
@@ -473,7 +489,9 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `endif` - End conditional block
 
 ### Scripting
-- `script <path> [arg]...` - Execute a script file
+- `script list` - List available scripts in `~/.jfr-shell/scripts`
+- `script run <name> [args...]` - Run script by name
+- `script <path> [args...]` - Run script by full path
 - `record start [path]` - Start recording commands
 - `record stop` - Stop recording
 - `record status` - Show recording status

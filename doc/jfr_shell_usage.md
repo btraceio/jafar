@@ -73,6 +73,14 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `else`: Else branch.
 - `endif`: End conditional block.
 
+### Scripting
+- `script list`: List available scripts in `~/.jfr-shell/scripts`.
+- `script run <name> [args...]`: Run script by name from scripts directory.
+- `script <path> [args...]`: Run script by full path.
+- `record start [path]`: Start recording commands to a script file.
+- `record stop`: Stop recording and save the script.
+- `record status`: Show current recording status.
+
 ### Help and Exit
 - `help [<command>]`: Show contextual help.
 - `exit` / `quit`: Exit shell.

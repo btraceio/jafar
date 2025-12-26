@@ -507,23 +507,53 @@ endif          # Error: endif without if
 
 ## Executing Scripts
 
-### From File
+### Scripts Directory
 
-Execute a script file directly with positional arguments:
+JFR Shell maintains a scripts directory at `~/.jfr-shell/scripts` where you can store reusable scripts. Scripts in this directory can be run by name without specifying the full path.
+
+### Listing Available Scripts
+
+List all scripts in the scripts directory:
 
 ```bash
-jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
+jfr> script list
+Available scripts in /Users/user/.jfr-shell/scripts:
+
+  basic-analysis           Comprehensive recording overview
+  thread-profiling         Detailed thread analysis
+  gc-analysis              GC pause and heap statistics
+
+Run with: script run <name> [args...]
 ```
 
-### From Stdin
+The first comment line in each script (after the shebang) is shown as the description.
 
-Read script from stdin using `-` as the path:
+### Running Scripts by Name
+
+Run a script from the scripts directory by name (without the `.jfrs` extension):
 
 ```bash
-# Pipe from file
-cat script.jfrs | jfr-shell script - /path/to/file.jfr
+jfr> script run basic-analysis /tmp/app.jfr
+jfr> script run thread-profiling /tmp/app.jfr 20
+```
 
-# Pipe from heredoc
+### Running Scripts by Path
+
+Run a script by specifying the full path:
+
+```bash
+jfr> script /path/to/script.jfrs arg1 arg2 arg3
+```
+
+### From Command Line
+
+Execute scripts directly from the command line:
+
+```bash
+# Run by path
+jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
+
+# From stdin
 jfr-shell script - /tmp/app.jfr <<'EOF'
 open $1
 show events/jdk.ExecutionSample | count()
@@ -532,15 +562,6 @@ EOF
 
 # Redirect from file
 jfr-shell script - /tmp/app.jfr < analysis.jfrs
-```
-
-### Interactive Mode
-
-Execute scripts from within an interactive session:
-
-```bash
-$ jfr-shell
-jfr> script /path/to/script.jfrs /tmp/app.jfr
 ```
 
 ### Error Handling
