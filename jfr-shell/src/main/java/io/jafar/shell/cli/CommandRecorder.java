@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 
@@ -60,7 +61,7 @@ public class CommandRecorder {
 
     if (path == null) {
       Files.createDirectories(defaultRecordingDir);
-      String timestamp = java.time.LocalDateTime.now().format(TIMESTAMP_FORMATTER);
+      String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
       path = defaultRecordingDir.resolve("session-" + timestamp + ".jfrs");
     }
 

@@ -42,6 +42,7 @@ public class JFRSession implements AutoCloseable {
   private final AtomicLong totalEvents = new AtomicLong(0);
   private final AtomicInteger handlerCount = new AtomicInteger(0);
   private boolean hasRun = false;
+  private volatile boolean closed = false;
 
   public JFRSession(Path recordingPath, ParsingContext parsingContext) throws IOException {
     this.recordingPath = recordingPath;
@@ -350,8 +351,14 @@ public class JFRSession implements AutoCloseable {
     return "JFRSession[" + recordingPath + "]";
   }
 
+  /** Returns whether this session has been closed. */
+  public boolean isClosed() {
+    return closed;
+  }
+
   @Override
   public void close() throws Exception {
+    closed = true;
     // Clean up all registrations
     for (HandlerRegistration<?> registration : registrations) {
       registration.destroy(parser);

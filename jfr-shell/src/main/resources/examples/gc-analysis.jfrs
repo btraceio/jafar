@@ -1,4 +1,4 @@
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # GC Analysis Script
 #
 # This script provides comprehensive garbage collection analysis, including:
@@ -8,17 +8,17 @@
 # - Memory allocation rates
 #
 # Usage:
-#   jfr-shell script gc-analysis.jfrs --var recording=/path/to/recording.jfr
+#   jfr-shell script gc-analysis.jfrs /path/to/recording.jfr
 #
 # Or with shebang (make executable first):
 #   chmod +x gc-analysis.jfrs
-#   ./gc-analysis.jfrs recording=/path/to/recording.jfr
+#   ./gc-analysis.jfrs /path/to/recording.jfr
 #
-# Variables:
-#   recording - Path to the JFR recording file to analyze
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
 
 # Open the recording
-open ${recording}
+open $1
 
 # GC pause time statistics
 show events/jdk.GarbageCollection | stats(duration)

@@ -2,6 +2,10 @@ package io.jafar.shell.cli;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.VariableStore.LazyQueryValue;
+import io.jafar.shell.core.VariableStore.ScalarValue;
+import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -34,6 +38,7 @@ public class CommandDispatcher {
   private final SessionManager sessions;
   private final IO io;
   private final SessionChangeListener listener;
+  private final VariableStore globalStore;
 
   @FunctionalInterface
   public interface JfrSelector {
@@ -43,15 +48,30 @@ public class CommandDispatcher {
   private final JfrSelector selector;
 
   public CommandDispatcher(SessionManager sessions, IO io, SessionChangeListener listener) {
-    this(sessions, io, listener, null);
+    this(sessions, io, listener, null, null);
   }
 
   public CommandDispatcher(
       SessionManager sessions, IO io, SessionChangeListener listener, JfrSelector selector) {
+    this(sessions, io, listener, selector, null);
+  }
+
+  public CommandDispatcher(
+      SessionManager sessions,
+      IO io,
+      SessionChangeListener listener,
+      JfrSelector selector,
+      VariableStore globalStore) {
     this.sessions = sessions;
     this.io = io;
     this.listener = listener;
     this.selector = selector;
+    this.globalStore = globalStore != null ? globalStore : new VariableStore();
+  }
+
+  /** Returns the global variable store. */
+  public VariableStore getGlobalStore() {
+    return globalStore;
   }
 
   public boolean dispatch(String line) {
@@ -108,6 +128,22 @@ public class CommandDispatcher {
           return true;
         case "cp":
           cmdCp(args);
+          return true;
+        case "set":
+        case "let":
+          cmdSet(args, line);
+          return true;
+        case "vars":
+          cmdVars(args);
+          return true;
+        case "unset":
+          cmdUnset(args);
+          return true;
+        case "echo":
+          cmdEcho(args, line);
+          return true;
+        case "invalidate":
+          cmdInvalidate(args);
           return true;
         default:
           return false;
@@ -303,6 +339,13 @@ public class CommandDispatcher {
       return;
     }
     String expr = String.join(" ", tokens);
+
+    // Substitute variables if present
+    if (VariableSubstitutor.hasVariables(expr)) {
+      VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+      expr = sub.substitute(expr);
+    }
+
     // Evaluate
     if (selector != null) {
       List<java.util.Map<String, Object>> rows = selector.select(cur.get().session, expr);
@@ -440,6 +483,13 @@ public class CommandDispatcher {
       io.println("  chunks    - List chunk information");
       io.println("  chunk     - Show specific chunk details");
       io.println("  cp        - Browse constant pool entries");
+      io.println("");
+      io.println("Variable commands:");
+      io.println("  set       - Set a variable (scalar or lazy query)");
+      io.println("  vars      - List all defined variables");
+      io.println("  unset     - Remove a variable");
+      io.println("  echo      - Print text with variable substitution");
+      io.println("  invalidate - Clear cached result for lazy variable");
       io.println("");
       io.println("Tab completion:");
       io.println("  Press Tab at any point for context-aware suggestions:");
@@ -587,6 +637,64 @@ public class CommandDispatcher {
       io.println(
           "Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
       io.println("Use 'show cp/<type>' for more advanced filtering with JfrPath expressions.");
+      return;
+    }
+    if ("set".equals(sub) || "let".equals(sub)) {
+      io.println("Usage: set [--global] <name> = <value|expression>");
+      io.println("Store a variable value. Values can be:");
+      io.println("  - Literal strings: set name = \"hello\"");
+      io.println("  - Numbers: set count = 42");
+      io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global  Store in global scope (persists across sessions)");
+      io.println("");
+      io.println("Lazy queries are not evaluated until accessed via ${var} substitution.");
+      io.println("Results are cached after first evaluation. Use 'invalidate' to clear cache.");
+      io.println("");
+      io.println("Examples:");
+      io.println("  set threshold = 1000");
+      io.println("  set bigReads = events/jdk.FileRead[bytes>${threshold}]");
+      io.println("  set --global myPattern = \".*Exception.*\"");
+      return;
+    }
+    if ("vars".equals(sub)) {
+      io.println("Usage: vars [--global|--session|--all]");
+      io.println("List defined variables.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global   Show only global variables");
+      io.println("  --session  Show only session variables");
+      io.println("  --all      Show all (default)");
+      return;
+    }
+    if ("unset".equals(sub)) {
+      io.println("Usage: unset <name> [--global]");
+      io.println("Remove a variable.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global  Remove from global scope specifically");
+      return;
+    }
+    if ("echo".equals(sub)) {
+      io.println("Usage: echo <text>");
+      io.println("Print text with variable substitution.");
+      io.println("");
+      io.println("Variable syntax:");
+      io.println("  ${var}           - Scalar value or first value from result set");
+      io.println("  ${var.size}      - Row count for lazy query results");
+      io.println("  ${var.field}     - Field from first row");
+      io.println("  ${var[N].field}  - Field from row N (0-indexed)");
+      io.println("");
+      io.println("Examples:");
+      io.println("  echo Found ${bigReads.size} large file reads");
+      io.println("  echo First read was ${bigReads[0].bytes} bytes");
+      return;
+    }
+    if ("invalidate".equals(sub)) {
+      io.println("Usage: invalidate <name>");
+      io.println("Clear the cached result for a lazy variable.");
+      io.println("Next access will re-evaluate the query.");
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
@@ -1023,6 +1131,190 @@ public class CommandDispatcher {
       args.remove(idx + 1);
       args.remove(idx);
       return value;
+    }
+    return null;
+  }
+
+  // ---- Variable commands ----
+
+  private void cmdSet(List<String> args, String fullLine) throws Exception {
+    // Parse: set [--global] name = expression
+    // Find '=' in full line
+    int cmdEnd = fullLine.indexOf(' ');
+    if (cmdEnd < 0) {
+      io.error("Usage: set [--global] <name> = <expression|value>");
+      return;
+    }
+    String rest = fullLine.substring(cmdEnd + 1).trim();
+
+    boolean isGlobal = rest.startsWith("--global ");
+    if (isGlobal) {
+      rest = rest.substring(9).trim();
+    }
+
+    int eqPos = rest.indexOf('=');
+    if (eqPos < 0) {
+      io.error("Usage: set [--global] <name> = <expression|value>");
+      return;
+    }
+
+    String varName = rest.substring(0, eqPos).trim();
+    String exprPart = rest.substring(eqPos + 1).trim();
+
+    if (varName.isEmpty()) {
+      io.error("Variable name cannot be empty");
+      return;
+    }
+    if (!varName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+      io.error("Invalid variable name: " + varName);
+      return;
+    }
+
+    VariableStore store = getTargetStore(isGlobal);
+
+    // Check for literal string value
+    if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
+      String literal = exprPart.substring(1, exprPart.length() - 1);
+      store.set(varName, new ScalarValue(literal));
+      io.println("Set " + varName + " = \"" + literal + "\"");
+      return;
+    }
+
+    // Check for numeric literal
+    if (exprPart.matches("-?\\d+(\\.\\d+)?")) {
+      Number num = exprPart.contains(".") ? Double.parseDouble(exprPart) : Long.parseLong(exprPart);
+      store.set(varName, new ScalarValue(num));
+      io.println("Set " + varName + " = " + num);
+      return;
+    }
+
+    // Treat as JfrPath query - create lazy value
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open for query evaluation");
+      return;
+    }
+
+    // Parse the query to validate it
+    JfrPath.Query query;
+    try {
+      query = JfrPathParser.parse(exprPart);
+    } catch (Exception e) {
+      io.error("Invalid query: " + e.getMessage());
+      return;
+    }
+
+    store.set(varName, new LazyQueryValue(query, cur.get(), exprPart));
+    io.println("Set " + varName + " = lazy[" + exprPart + "]");
+  }
+
+  private void cmdVars(List<String> args) {
+    boolean showGlobal = args.isEmpty() || args.contains("--global") || args.contains("--all");
+    boolean showSession = args.isEmpty() || args.contains("--session") || args.contains("--all");
+
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+
+    if (showGlobal && !globalStore.isEmpty()) {
+      io.println("Global variables:");
+      for (String name : globalStore.names()) {
+        Value val = globalStore.get(name);
+        io.println("  " + name + " = " + val.describe());
+      }
+    }
+
+    if (showSession && cur.isPresent() && !cur.get().variables.isEmpty()) {
+      io.println("Session variables (session #" + cur.get().id + "):");
+      for (String name : cur.get().variables.names()) {
+        Value val = cur.get().variables.get(name);
+        io.println("  " + name + " = " + val.describe());
+      }
+    }
+
+    if (globalStore.isEmpty() && (cur.isEmpty() || cur.get().variables.isEmpty())) {
+      io.println("No variables defined");
+    }
+  }
+
+  private void cmdUnset(List<String> args) {
+    if (args.isEmpty()) {
+      io.error("Usage: unset <name> [--global]");
+      return;
+    }
+
+    String varName = args.get(0);
+    boolean isGlobal = args.contains("--global");
+
+    VariableStore store = getTargetStore(isGlobal);
+    if (store.remove(varName)) {
+      io.println("Removed " + varName);
+    } else {
+      // Try the other store if not found
+      VariableStore other = isGlobal ? getSessionStore() : globalStore;
+      if (other != null && other.remove(varName)) {
+        io.println("Removed " + varName);
+      } else {
+        io.error("Variable not found: " + varName);
+      }
+    }
+  }
+
+  private void cmdEcho(List<String> args, String fullLine) throws Exception {
+    // Extract everything after 'echo '
+    int cmdEnd = fullLine.indexOf(' ');
+    if (cmdEnd < 0) {
+      io.println("");
+      return;
+    }
+    String text = fullLine.substring(cmdEnd + 1);
+
+    // Substitute variables
+    VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+    String result = sub.substitute(text);
+    io.println(result);
+  }
+
+  private void cmdInvalidate(List<String> args) {
+    if (args.isEmpty()) {
+      io.error("Usage: invalidate <name>");
+      return;
+    }
+
+    String varName = args.get(0);
+    Value val = resolveVariable(varName);
+
+    if (val == null) {
+      io.error("Variable not found: " + varName);
+      return;
+    }
+
+    if (val instanceof LazyQueryValue lqv) {
+      lqv.invalidate();
+      io.println("Invalidated cache for " + varName);
+    } else {
+      io.error("Variable " + varName + " is not a lazy value");
+    }
+  }
+
+  private VariableStore getTargetStore(boolean global) {
+    if (global) {
+      return globalStore;
+    }
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    return cur.isPresent() ? cur.get().variables : globalStore;
+  }
+
+  private VariableStore getSessionStore() {
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    return cur.isPresent() ? cur.get().variables : null;
+  }
+
+  private Value resolveVariable(String name) {
+    VariableStore sessionStore = getSessionStore();
+    if (sessionStore != null && sessionStore.contains(name)) {
+      return sessionStore.get(name);
+    }
+    if (globalStore.contains(name)) {
+      return globalStore.get(name);
     }
     return null;
   }

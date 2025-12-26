@@ -59,6 +59,14 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `chunk <index> show`: Show specific chunk details.
 - `cp [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
 
+### Variables
+- `set [--global] <name> = <value>`: Set a variable (scalar or lazy query).
+- `let [--global] <name> = <value>`: Alias for `set`.
+- `vars [--global|--session]`: List defined variables.
+- `unset <name>`: Remove a variable.
+- `echo <text>`: Print text with `${var}` substitution.
+- `invalidate <name>`: Clear cached lazy variable result.
+
 ### Help and Exit
 - `help [<command>]`: Show contextual help.
 - `exit` / `quit`: Exit shell.
@@ -157,6 +165,7 @@ is aliased for convenience.
 - Table or JSON output (`--format json`)
 - Metadata browsing: class/fields/annotations/settings
 - Recursive metadata trees (`--tree`, `--depth N`), including field-focused trees
+- Variables with lazy query evaluation and caching
 - Helpful completion and contextual `help`
 
 ## JfrPath Essentials

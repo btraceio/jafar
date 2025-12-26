@@ -1,4 +1,4 @@
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Thread Profiling Script
 #
 # This script provides detailed thread-level profiling information, including:
@@ -8,33 +8,33 @@
 # - Thread-specific CPU usage patterns
 #
 # Usage:
-#   jfr-shell script thread-profiling.jfrs --var recording=/path/to/recording.jfr --var top_n=10
+#   jfr-shell script thread-profiling.jfrs /path/to/recording.jfr 10
 #
 # Or with shebang (make executable first):
 #   chmod +x thread-profiling.jfrs
-#   ./thread-profiling.jfrs recording=/path/to/recording.jfr top_n=10
+#   ./thread-profiling.jfrs /path/to/recording.jfr 10
 #
-# Variables:
-#   recording - Path to the JFR recording file to analyze
-#   top_n     - Number of top results to display (default: 10)
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
+#   $2 - Number of top results to display (default: 10)
 
 # Open the recording
-open ${recording}
+open $1
 
 # Top threads by execution sample count
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 # Thread allocation statistics
-show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top(${top_n}, by=sum(allocated))
+show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
 
 # Monitor contention by thread
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
+show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
 
 # Thread sleep events
-show events/jdk.ThreadSleep | groupBy(thread/javaName) | top(${top_n}, by=sum(time))
+show events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
 
 # Thread park events (blocking operations)
-show events/jdk.ThreadPark | groupBy(parkedClass/name) | top(${top_n}, by=count)
+show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
 
 # Close the session
 close

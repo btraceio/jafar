@@ -65,13 +65,13 @@ Create `analysis-with-vars.jfrs`:
 
 ```bash
 # Analysis script with variables
-# Variables: recording, top_n
+# Arguments: recording, top_n
 
-open ${recording}
+open $1
 
 show events/jdk.ExecutionSample | count()
 
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 close
 ```
@@ -80,8 +80,8 @@ close
 
 ```bash
 jfr-shell script analysis-with-vars.jfrs \
-  --var recording=/path/to/recording.jfr \
-  --var top_n=10
+  /path/to/recording.jfr \
+  10
 ```
 
 ### Try Different Values
@@ -89,13 +89,13 @@ jfr-shell script analysis-with-vars.jfrs \
 ```bash
 # Show top 20 threads
 jfr-shell script analysis-with-vars.jfrs \
-  --var recording=/path/to/recording.jfr \
-  --var top_n=20
+  /path/to/recording.jfr \
+  20
 
 # Analyze a different recording
 jfr-shell script analysis-with-vars.jfrs \
-  --var recording=/path/to/another-recording.jfr \
-  --var top_n=5
+  /path/to/another-recording.jfr \
+  5
 ```
 
 ### Benefits of Variables
@@ -109,7 +109,7 @@ jfr-shell script analysis-with-vars.jfrs \
 ### Method 1: Direct Execution (What We've Done)
 
 ```bash
-jfr-shell script script.jfrs --var key=value
+jfr-shell script script.jfrs value
 ```
 
 ### Method 2: From Stdin
@@ -117,13 +117,13 @@ jfr-shell script script.jfrs --var key=value
 Pipe the script content:
 
 ```bash
-cat analysis.jfrs | jfr-shell script - --var recording=/tmp/app.jfr
+cat analysis.jfrs | jfr-shell script - /tmp/app.jfr
 ```
 
 Or use redirection:
 
 ```bash
-jfr-shell script - --var recording=/tmp/app.jfr < analysis.jfrs
+jfr-shell script - /tmp/app.jfr < analysis.jfrs
 ```
 
 ### Method 3: Shebang (Direct Execution)
@@ -133,11 +133,11 @@ Make your script directly executable!
 **Step 1:** Add shebang to `executable-analysis.jfrs`:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Executable JFR analysis script
-# Variables: recording
+# Arguments: recording
 
-open ${recording}
+open $1
 show events/jdk.ExecutionSample | count()
 close
 ```
@@ -162,7 +162,7 @@ You can run scripts while in an interactive session:
 
 ```bash
 $ jfr-shell
-jfr> script analysis.jfrs --var recording=/tmp/app.jfr
+jfr> script analysis.jfrs /tmp/app.jfr
 ...output...
 jfr> # Continue with more interactive commands
 ```
@@ -177,7 +177,7 @@ Create `risky-analysis.jfrs`:
 
 ```bash
 # This script might fail if events don't exist
-open ${recording}
+open $1
 
 # Common event (usually present)
 show events/jdk.ExecutionSample | count()
@@ -194,7 +194,7 @@ close
 ### Fail-Fast Mode (Default)
 
 ```bash
-jfr-shell script risky-analysis.jfrs --var recording=/tmp/app.jfr
+jfr-shell script risky-analysis.jfrs /tmp/app.jfr
 ```
 
 If `com.example.CustomEvent` doesn't exist, the script stops and you'll see:
@@ -210,7 +210,7 @@ Script execution failed. 2/5 commands executed successfully.
 
 ```bash
 jfr-shell script risky-analysis.jfrs \
-  --var recording=/tmp/app.jfr \
+  /tmp/app.jfr \
   --continue-on-error
 ```
 
@@ -235,7 +235,7 @@ Let's create a comprehensive analysis template you can reuse.
 ### Create `comprehensive-analysis.jfrs`:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Comprehensive JFR Analysis Template
 #
 # Analyzes: CPU, Memory, I/O, GC, Threading
@@ -243,23 +243,23 @@ Let's create a comprehensive analysis template you can reuse.
 # Usage:
 #   ./comprehensive-analysis.jfrs recording=/path/to/file.jfr top_n=10
 #
-# Variables:
+# Arguments:
 #   recording - Path to JFR recording file (required)
 #   top_n     - Number of top results to display (default: 10)
 
 # Open recording
-open ${recording}
+open $1
 
 # === Recording Info ===
 info
 
 # === CPU Analysis ===
 show events/jdk.ExecutionSample | count()
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 # === Memory Analysis ===
 show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
-show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(${top_n}, by=sum(allocationSize))
+show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
 
 # === I/O Analysis ===
 show events/jdk.FileRead | sum(bytes)
@@ -269,11 +269,11 @@ show events/jdk.SocketWrite | sum(bytes)
 
 # === GC Analysis ===
 show events/jdk.GarbageCollection | stats(duration)
-show events/jdk.GarbageCollection | groupBy(name) | top(${top_n}, by=count)
+show events/jdk.GarbageCollection | groupBy(name) | top($2, by=count)
 
 # === Threading Analysis ===
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
-show events/jdk.ThreadPark | groupBy(parkedClass/name) | top(${top_n}, by=count)
+show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
 
 # Close
 close
@@ -316,17 +316,17 @@ Let's create a script to detect performance regressions.
 ### Create `perf-regression-check.jfrs`:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Performance Regression Check
 #
 # Checks if key metrics are within acceptable thresholds
 #
-# Variables:
+# Arguments:
 #   recording           - JFR recording to analyze
 #   max_gc_pause_ms    - Maximum acceptable GC pause (milliseconds)
 #   max_alloc_rate_mb  - Maximum allocation rate (MB/sec)
 
-open ${recording}
+open $1
 
 # Check GC pause times
 show events/jdk.GarbageCollection | stats(duration)
@@ -386,12 +386,12 @@ Create a script that:
 <summary>Solution</summary>
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording, min_bytes
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: recording, min_bytes
 
-open ${recording}
+open $1
 
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit 20
+show events/jdk.FileRead[bytes>=$2] --limit 20
 show events/jdk.FileRead | sum(bytes)
 show events/jdk.FileWrite | sum(bytes)
 
@@ -415,14 +415,14 @@ Create a script that:
 <summary>Solution</summary>
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: baseline, current
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: baseline, current
 
-open ${baseline} --alias baseline
+open $1 --alias baseline
 use baseline
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
-open ${current} --alias current
+open $2 --alias current
 use current
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
@@ -446,10 +446,10 @@ Create a script with continue-on-error that:
 <summary>Solution</summary>
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: recording
 
-open ${recording}
+open $1
 
 # Standard events (usually present)
 show events/jdk.ExecutionSample | count()

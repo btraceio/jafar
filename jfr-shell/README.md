@@ -8,9 +8,10 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
-- **Scripting support**: record, save, and replay analysis workflows ⭐ NEW
-- **Variable substitution**: parameterize scripts for reusability ⭐ NEW
-- **Shebang support**: make scripts directly executable ⭐ NEW
+- **Variables**: store scalars and lazy query results with `${var}` substitution ⭐ NEW
+- **Scripting support**: record, save, and replay analysis workflows
+- **Positional parameters**: parameterize scripts for reusability
+- **Shebang support**: make scripts directly executable
 - **Multiple output formats**: table (default) and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
 - **Non-interactive mode**: execute queries from command line for scripting/CI
@@ -193,6 +194,53 @@ jfr-shell chunks recording.jfr --summary
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 
+## Variables
+
+Store and reuse values in your analysis sessions with `${var}` substitution.
+
+### Scalar Variables
+
+```bash
+jfr> set threshold = 1000
+jfr> set limit = 10
+jfr> show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+```
+
+### Lazy Query Variables
+
+Store queries for on-demand evaluation with caching:
+
+```bash
+jfr> set fileReads = events/jdk.FileRead[bytes>=1000]
+jfr> set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+
+# Access results
+jfr> echo "Found ${fileReads.size} large file reads"
+jfr> echo "Top thread: ${stats[0].sampledThread/javaName}"
+```
+
+### Variable Scopes
+
+```bash
+# Session-scoped (default) - cleared when session closes
+jfr> set myvar = "value"
+
+# Global - persists across all sessions
+jfr> set --global myvar = "value"
+```
+
+### Variable Commands
+
+```bash
+jfr> vars                    # List all variables
+jfr> vars --session          # List session variables only
+jfr> unset myvar             # Remove variable
+jfr> invalidate data         # Clear lazy variable cache
+jfr> echo "Value: ${myvar}"  # Print with substitution
+```
+
+See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) for complete reference.
+
 ## Scripting
 
 JFR Shell supports powerful scripting capabilities for automating analysis workflows.
@@ -203,20 +251,20 @@ Create reusable analysis scripts with variable substitution:
 
 **analysis.jfrs:**
 ```bash
-# Variables: recording, min_bytes, top_n
+# Arguments: recording, min_bytes, top_n
 
-open ${recording}
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=count)
 close
 ```
 
 **Execute:**
 ```bash
 jfr-shell script analysis.jfrs \
-  --var recording=/tmp/app.jfr \
-  --var min_bytes=1000 \
-  --var top_n=10
+  /tmp/app.jfr \
+  1000 \
+  10
 ```
 
 ### Command Recording
@@ -244,10 +292,10 @@ Make scripts directly executable:
 
 **analyze.jfrs:**
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: recording
 
-open ${recording}
+open $1
 show events/jdk.ExecutionSample | count()
 close
 ```
@@ -370,8 +418,15 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `chunk <index> show` - Show chunk details
 - `cp [<type>] [options]` - Browse constant pools
 
+### Variables
+- `set [--global] <name> = <value>` - Set variable (scalar or lazy query)
+- `vars [--global|--session]` - List variables
+- `unset <name>` - Remove a variable
+- `echo <text>` - Print with `${var}` substitution
+- `invalidate <name>` - Clear cached lazy variable
+
 ### Scripting
-- `script <path> [--var k=v]...` - Execute a script file
+- `script <path> [arg]...` - Execute a script file
 - `record start [path]` - Start recording commands
 - `record stop` - Stop recording
 - `record status` - Show recording status

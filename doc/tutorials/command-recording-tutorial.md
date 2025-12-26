@@ -191,20 +191,20 @@ show events/jdk.FileRead[bytes>=1000] --limit 10
 Edit the file to use variables:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Thread Analysis Script
 # Converted from recorded session on 2025-12-26
 #
 # Usage:
 #   ./thread-analysis.jfrs recording=/path/to/file.jfr top_n=5 min_bytes=1000
 #
-# Variables:
+# Arguments:
 #   recording  - Path to JFR recording file
 #   top_n      - Number of top threads to show
 #   min_bytes  - Minimum bytes for file read filter
 
 # Open recording
-open ${recording}
+open $1
 
 # Count execution samples
 show events/jdk.ExecutionSample | count()
@@ -333,7 +333,7 @@ jfr-shell script issue-123-diagnosis.jfrs
 Or convert to parameterized version for their recordings:
 
 ```bash
-# Edit to use ${recording} variable
+# Edit to use $1 variable
 vim issue-123-diagnosis.jfrs
 
 # Run on their recording
@@ -457,7 +457,7 @@ jfr-scripts/
 Edit recorded scripts to add comprehensive headers:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Thread Contention Analysis
 #
 # Purpose:
@@ -469,7 +469,7 @@ Edit recorded scripts to add comprehensive headers:
 # Usage:
 #   ./thread-contention.jfrs recording=/path/to/file.jfr top_n=10
 #
-# Variables:
+# Arguments:
 #   recording - JFR recording file path
 #   top_n     - Number of top results to show
 

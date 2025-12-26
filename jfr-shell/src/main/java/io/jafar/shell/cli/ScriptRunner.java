@@ -5,32 +5,32 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes JFR shell script files with variable substitution.
+ * Executes JFR shell script files with positional parameter substitution.
  *
  * <p>Scripts are line-based text files containing shell commands and JfrPath queries. Lines
- * starting with '#' are comments. Variables in the form ${varname} are substituted with values
- * provided via the constructor.
+ * starting with '#' are comments. Positional parameters ($1, $2, etc.) are substituted with values
+ * provided via the constructor. Use $@ to expand all parameters.
  *
  * <p>Example script:
  *
  * <pre>
  * # Analysis script
- * open ${recording_path}
- * show events/jdk.FileRead[bytes>=${threshold}] --limit 10
+ * # Usage: script analysis.jfrs /path/to/recording.jfr 1000
+ * open $1
+ * show events/jdk.FileRead[bytes>=$2] --limit 10
  * close
  * </pre>
  */
 public class ScriptRunner {
-  private static final Pattern VAR_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}");
+  private static final Pattern VAR_PATTERN = Pattern.compile("\\$(\\d+|@)");
 
   private final CommandDispatcher dispatcher;
   private final CommandDispatcher.IO io;
-  private final Map<String, String> variables;
+  private final List<String> arguments;
   private boolean continueOnError;
 
   /**
@@ -38,13 +38,13 @@ public class ScriptRunner {
    *
    * @param dispatcher command dispatcher for executing commands
    * @param io IO interface for output
-   * @param variables variable map for substitution
+   * @param arguments positional arguments for substitution ($1, $2, etc.)
    */
   public ScriptRunner(
-      CommandDispatcher dispatcher, CommandDispatcher.IO io, Map<String, String> variables) {
+      CommandDispatcher dispatcher, CommandDispatcher.IO io, List<String> arguments) {
     this.dispatcher = dispatcher;
     this.io = io;
-    this.variables = variables;
+    this.arguments = arguments;
     this.continueOnError = false;
   }
 
@@ -123,23 +123,36 @@ public class ScriptRunner {
   }
 
   /**
-   * Substitutes variables in a line.
+   * Substitutes positional parameters in a line.
    *
-   * @param line line with potential variable references
-   * @return line with variables substituted
-   * @throws IllegalArgumentException if a referenced variable is undefined
+   * @param line line with potential parameter references ($1, $2, $@, etc.)
+   * @return line with parameters substituted
+   * @throws IllegalArgumentException if a referenced parameter is out of bounds
    */
   private String substituteVariables(String line) {
     StringBuffer result = new StringBuffer();
     Matcher matcher = VAR_PATTERN.matcher(line);
 
     while (matcher.find()) {
-      String varName = matcher.group(1);
-      String value = variables.get(varName);
+      String varRef = matcher.group(1);
+      String value;
 
-      if (value == null) {
-        throw new IllegalArgumentException(
-            "Undefined variable: " + varName + ". Define with --var " + varName + "=value");
+      if ("@".equals(varRef)) {
+        // $@ expands to all arguments space-separated
+        value = String.join(" ", arguments);
+      } else {
+        // $1, $2, etc. - positional parameter (1-indexed)
+        int index = Integer.parseInt(varRef) - 1;
+        if (index < 0 || index >= arguments.size()) {
+          throw new IllegalArgumentException(
+              "Positional parameter $"
+                  + varRef
+                  + " out of bounds. "
+                  + "Script has "
+                  + arguments.size()
+                  + " argument(s).");
+        }
+        value = arguments.get(index);
       }
 
       matcher.appendReplacement(result, Matcher.quoteReplacement(value));

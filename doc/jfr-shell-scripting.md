@@ -6,7 +6,9 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 
 - [Overview](#overview)
 - [Script File Format](#script-file-format)
-- [Variable Substitution](#variable-substitution)
+- [Positional Parameters](#positional-parameters)
+- [Variables](#variables)
+- [Conditionals](#conditionals)
 - [Executing Scripts](#executing-scripts)
 - [Recording Commands](#recording-commands)
 - [Shebang Support](#shebang-support)
@@ -17,7 +19,7 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 
 JFR Shell scripts (`.jfrs` extension) are plain text files containing sequences of shell commands and JfrPath queries. Scripts support:
 
-- **Variable substitution** - Parameterize scripts with `${variable}` syntax
+- **Positional parameters** - Parameterize scripts with bash-style `$1`, `$2`, `$@` syntax
 - **Comments** - Document your scripts with `#` comments
 - **All shell commands** - Use any command available in interactive mode
 - **Error handling** - Continue-on-error mode for robust scripts
@@ -48,81 +50,269 @@ close
 
 By convention, JFR Shell scripts use the `.jfrs` extension (JFR Shell Script).
 
-## Variable Substitution
+## Positional Parameters
 
-Scripts support variable substitution using `${variable_name}` syntax. Variables make scripts reusable across different recordings, thresholds, and parameters.
+Scripts support bash-style positional parameter substitution using `$1`, `$2`, `$@` syntax. Positional parameters make scripts reusable across different recordings, thresholds, and parameters.
 
-### Variable Syntax
-
-```bash
-# Use ${varname} anywhere in a command
-open ${recording}
-
-show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
-
-# Variables work in any part of the command
-show events/${event_type} | count()
-```
-
-### Defining Variables
-
-Variables are passed via the `--var` option when executing the script:
+### Parameter Syntax
 
 ```bash
-# Single variable
-jfr-shell script analysis.jfrs --var recording=/path/to/file.jfr
+# Use $1, $2, etc. anywhere in a command
+open $1
 
-# Multiple variables
-jfr-shell script analysis.jfrs \
-  --var recording=/path/to/file.jfr \
-  --var threshold=1000 \
-  --var limit=100
+show events/jdk.FileRead[bytes>=$2] --limit $3
+
+# $@ expands to all parameters space-separated
+show events/$1 | count()
 ```
 
-### Undefined Variables
+### Passing Parameters
 
-If a script references an undefined variable, execution fails with a clear error message:
+Parameters are passed as positional arguments after the script path:
+
+```bash
+# Single parameter
+jfr-shell script analysis.jfrs /path/to/file.jfr
+
+# Multiple parameters
+jfr-shell script analysis.jfrs /tmp/app.jfr 1000 100
+```
+
+Parameters are positional (like bash):
+- `$1` = first argument
+- `$2` = second argument
+- `$3` = third argument, etc.
+- `$@` = all arguments space-separated
+
+### Out-of-Bounds Parameters
+
+If a script references a parameter that wasn't provided, execution fails with a clear error message:
 
 ```
-Error on line 3: Undefined variable: recording
-  Command: open ${recording}
-  Hint: Define with --var recording=/path/to/file.jfr
+Error on line 3: Positional parameter $1 out of bounds. Script has 0 argument(s).
+  Command: open $1
 ```
 
-### Example with Variables
+### Example with Parameters
 
 **script.jfrs:**
 ```bash
 # Configurable analysis script
-# Variables: recording, min_bytes, top_n
+# Arguments: $1=recording, $2=min_bytes, $3=top_n
 
-open ${recording}
+open $1
 
 # Show large file reads
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+show events/jdk.FileRead[bytes>=$2] --limit $3
 
 # Thread analysis
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=count)
 
 close
 ```
 
 **Execution:**
 ```bash
-jfr-shell script script.jfrs \
-  --var recording=/tmp/app.jfr \
-  --var min_bytes=1024 \
-  --var top_n=20
+jfr-shell script script.jfrs /tmp/app.jfr 1024 20
+```
+
+## Variables
+
+JFR Shell supports variables for storing and reusing values in your analysis. Variables can hold scalar values (strings, numbers) or lazily-evaluated query results.
+
+### Variable Types
+
+**Scalar Variables** store immediate values:
+```bash
+set threshold = 1000
+set filename = "/tmp/output.txt"
+set limit = 20
+```
+
+**Lazy Query Variables** store JfrPath queries that are evaluated on-demand:
+```bash
+set fileReads = events/jdk.FileRead
+set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+set eventCount = events/jdk.FileRead | count()
+```
+
+Lazy variables preserve memory by not materializing results until accessed. They also cache results for subsequent accesses.
+
+### Variable Scopes
+
+Variables can be session-scoped (default) or global:
+
+```bash
+# Session-scoped (cleared when session closes)
+set myvar = "value"
+
+# Global (persists across all sessions)
+set --global myvar = "value"
+```
+
+### Setting Variables
+
+Use the `set` command (or its alias `let`):
+
+```bash
+# Scalar values
+set name = "my-analysis"
+set threshold = 1000
+let limit = 25
+
+# Lazy query (assigned when RHS contains JfrPath expression)
+set reads = events/jdk.FileRead[bytes>=1000]
+set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+```
+
+The `=` sign is required but spaces around it are flexible:
+```bash
+set x = 10       # OK
+set x=10         # OK
+set x= 10        # OK
+```
+
+### Using Variables
+
+Variables are accessed using `${varname}` syntax:
+
+```bash
+# Simple substitution
+echo "Threshold is: ${threshold}"
+
+# In JfrPath queries
+show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+
+# Access query result fields
+set count = events/jdk.FileRead | count()
+echo "Found ${count.count} file read events"
+```
+
+#### Advanced Substitution Syntax
+
+For structured results, access nested fields and array elements:
+
+```bash
+# Access a field from result
+${varname.fieldname}
+
+# Access array element
+${varname[0]}
+
+# Access field from array element
+${varname[0].fieldname}
+
+# Size of lazy variable result
+${varname.size}
+```
+
+Example:
+```bash
+set threads = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
+echo "Top thread: ${threads[0].sampledThread/javaName}"
+echo "Sample count: ${threads[0].count}"
+echo "Total groups: ${threads.size}"
+```
+
+### Listing Variables
+
+Use the `vars` command to list defined variables:
+
+```bash
+# List all variables
+vars
+
+# List only session variables
+vars --session
+
+# List only global variables
+vars --global
+```
+
+Output shows variable type and value/description:
+```
+Session variables:
+  threshold = 1000 (scalar)
+  fileReads = events/jdk.FileRead (lazy query, not evaluated)
+  stats = events/jdk.ExecutionSample | groupBy(...) (lazy query, cached: 15 items)
+
+Global variables:
+  defaultLimit = 20 (scalar)
+```
+
+### Removing Variables
+
+Use the `unset` command:
+
+```bash
+unset myvar
+unset --global globalvar
+```
+
+### Cache Management
+
+Lazy query variables cache their results after first evaluation. Use `invalidate` to clear the cache and force re-evaluation:
+
+```bash
+set data = events/jdk.FileRead | count()
+echo ${data.count}    # Evaluates and caches
+# ... do something that might affect results ...
+invalidate data       # Clear cache
+echo ${data.count}    # Re-evaluates
+```
+
+### Echo Command
+
+Print text with variable substitution:
+
+```bash
+echo "Analysis for ${filename}"
+echo "Found ${count.count} events exceeding ${threshold} bytes"
+echo "Top ${limit} results:"
+```
+
+### Complete Example
+
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Parameterized analysis with variables
+# Arguments: $1=recording, $2=threshold
+
+open $1
+
+# Set configuration variables
+set threshold = $2
+set limit = 10
+
+# Store lazy queries
+set fileReads = events/jdk.FileRead[bytes>=${threshold}]
+set readCount = events/jdk.FileRead[bytes>=${threshold}] | count()
+
+echo "=== File Read Analysis ==="
+echo "Threshold: ${threshold} bytes"
+echo "Events found: ${readCount.count}"
+
+# Show results if any found
+show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+
+# Thread analysis with caching
+set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+echo ""
+echo "=== Top 5 Threads by Samples ==="
+echo "Thread count: ${threadStats.size}"
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+
+close
 ```
 
 ## Executing Scripts
 
 ### From File
 
-Execute a script file directly:
+Execute a script file directly with positional arguments:
 
 ```bash
-jfr-shell script /path/to/script.jfrs --var key=value
+jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
 ```
 
 ### From Stdin
@@ -131,17 +321,17 @@ Read script from stdin using `-` as the path:
 
 ```bash
 # Pipe from file
-cat script.jfrs | jfr-shell script - --var recording=/path/to/file.jfr
+cat script.jfrs | jfr-shell script - /path/to/file.jfr
 
 # Pipe from heredoc
-jfr-shell script - --var file=/tmp/app.jfr <<'EOF'
-open ${file}
+jfr-shell script - /tmp/app.jfr <<'EOF'
+open $1
 show events/jdk.ExecutionSample | count()
 close
 EOF
 
 # Redirect from file
-jfr-shell script - --var recording=/tmp/app.jfr < analysis.jfrs
+jfr-shell script - /tmp/app.jfr < analysis.jfrs
 ```
 
 ### Interactive Mode
@@ -150,7 +340,7 @@ Execute scripts from within an interactive session:
 
 ```bash
 $ jfr-shell
-jfr> script /path/to/script.jfrs --var recording=/tmp/app.jfr
+jfr> script /path/to/script.jfrs /tmp/app.jfr
 ```
 
 ### Error Handling
@@ -159,10 +349,10 @@ By default, script execution stops on the first error (fail-fast mode). Use `--c
 
 ```bash
 # Stop on first error (default)
-jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr
+jfr-shell script analysis.jfrs /tmp/app.jfr
 
 # Continue on errors
-jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr --continue-on-error
+jfr-shell script analysis.jfrs /tmp/app.jfr --continue-on-error
 ```
 
 When errors occur, you'll see a detailed report:
@@ -249,7 +439,7 @@ jfr-shell script /tmp/my-analysis.jfrs
 
 ### Converting to Parameterized Scripts
 
-Recorded scripts often contain hardcoded paths. Convert them to parameterized scripts by replacing paths with variables:
+Recorded scripts often contain hardcoded paths. Convert them to parameterized scripts by replacing paths with positional parameters:
 
 **Original recorded script:**
 ```bash
@@ -259,17 +449,14 @@ show events/jdk.FileRead[bytes>=1000] --limit 10
 
 **Parameterized version:**
 ```bash
-# Variables: recording, threshold, limit
-open ${recording}
-show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+# Arguments: $1=recording, $2=threshold, $3=limit
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 **Usage:**
 ```bash
-jfr-shell script analysis.jfrs \
-  --var recording=/Users/john/recordings/prod-app-20251226.jfr \
-  --var threshold=1000 \
-  --var limit=10
+jfr-shell script analysis.jfrs /Users/john/recordings/prod-app-20251226.jfr 1000 10
 ```
 
 ## Shebang Support
@@ -281,7 +468,7 @@ JFR Shell scripts can be made directly executable using Unix shebang notation. T
 Add this line at the top of your script:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 ```
 
 This tells the shell to execute the script using JBang's jfr-shell distribution.
@@ -291,10 +478,10 @@ This tells the shell to execute the script using JBang's jfr-shell distribution.
 ```bash
 # Add shebang to script
 cat > analyze.jfrs <<'EOF'
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording
 
-open ${recording}
+open $1
 show events/jdk.ExecutionSample | count()
 close
 EOF
@@ -303,25 +490,25 @@ EOF
 chmod +x analyze.jfrs
 
 # Run directly
-./analyze.jfrs recording=/tmp/app.jfr
+./analyze.jfrs /tmp/app.jfr
 ```
 
-### Shebang Variable Passing
+### Shebang Parameter Passing
 
-Variables are passed as positional arguments after the script name:
+Parameters are passed as positional arguments after the script name:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 
-# This script expects: recording, threshold, limit
-open ${recording}
-show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+# This script expects: $1=recording, $2=threshold, $3=limit
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 Execute with:
 
 ```bash
-./script.jfrs recording=/tmp/app.jfr threshold=1000 limit=10
+./script.jfrs /tmp/app.jfr 1000 10
 ```
 
 ### Requirements
@@ -340,10 +527,10 @@ JFR Shell includes several example scripts in `jfr-shell/src/main/resources/exam
 Comprehensive recording overview including metadata, top threads, I/O, and GC statistics.
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording
 
-open ${recording}
+open $1
 info
 metadata --summary
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
@@ -355,11 +542,11 @@ close
 
 **Usage:**
 ```bash
-jfr-shell script basic-analysis.jfrs --var recording=/tmp/app.jfr
+jfr-shell script basic-analysis.jfrs /tmp/app.jfr
 
 # Or with shebang:
 chmod +x basic-analysis.jfrs
-./basic-analysis.jfrs recording=/tmp/app.jfr
+./basic-analysis.jfrs /tmp/app.jfr
 ```
 
 ### thread-profiling.jfrs
@@ -367,22 +554,20 @@ chmod +x basic-analysis.jfrs
 Detailed thread analysis including execution samples, allocations, contention, and blocking operations.
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording, top_n
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording, $2=top_n
 
-open ${recording}
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
-show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top(${top_n}, by=sum(allocated))
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
-show events/jdk.ThreadSleep | groupBy(thread/javaName) | top(${top_n}, by=sum(time))
+open $1
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
+show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+show events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
 close
 ```
 
 **Usage:**
 ```bash
-jfr-shell script thread-profiling.jfrs \
-  --var recording=/tmp/app.jfr \
-  --var top_n=15
+jfr-shell script thread-profiling.jfrs /tmp/app.jfr 15
 ```
 
 ### gc-analysis.jfrs
@@ -390,10 +575,10 @@ jfr-shell script thread-profiling.jfrs \
 Comprehensive GC analysis including pause times, heap utilization, and allocation patterns.
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
-# Variables: recording
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording
 
-open ${recording}
+open $1
 show events/jdk.GarbageCollection | stats(duration)
 show events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
 show events/jdk.GCHeapSummary | stats(heapUsed)
@@ -406,32 +591,34 @@ close
 
 ### 1. Add Clear Headers
 
-Start scripts with a comment header explaining purpose, usage, and variables:
+Start scripts with a comment header explaining purpose, usage, and parameters:
 
 ```bash
-#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
 # Performance Analysis Script
 #
 # Analyzes CPU hotspots, memory allocations, and I/O patterns
 #
 # Usage:
-#   jfr-shell script perf-analysis.jfrs --var recording=/path/to/file.jfr --var limit=20
+#   jfr-shell script perf-analysis.jfrs /path/to/file.jfr 20
 #
-# Variables:
-#   recording - Path to JFR recording file
-#   limit     - Number of top results to display (default: 20)
+# Arguments:
+#   $1 - Path to JFR recording file
+#   $2 - Number of top results to display (default: 20)
 ```
 
-### 2. Use Meaningful Variable Names
+### 2. Use Meaningful Parameter Descriptions
 
 ```bash
 # Good
-open ${recording_path}
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${max_results}
+# Arguments: $1=recording_path, $2=min_bytes, $3=max_results
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
 
-# Bad
-open ${f}
-show events/jdk.FileRead[bytes>=${x}] --limit ${n}
+# Less clear (but sometimes acceptable for simple scripts)
+# Arguments: $1=file, $2=threshold, $3=limit
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 ### 3. Group Related Operations
@@ -440,7 +627,7 @@ Use comments to section your script:
 
 ```bash
 # Session setup
-open ${recording}
+open $1
 info
 
 # CPU Analysis
@@ -459,10 +646,10 @@ close
 Document recommended default values in comments:
 
 ```bash
-# Variables:
-#   recording       - Path to JFR recording (required)
-#   min_duration_ms - Minimum operation duration in ms (default: 100)
-#   top_n           - Number of results to show (default: 10)
+# Arguments:
+#   $1 - Path to JFR recording (required)
+#   $2 - Minimum operation duration in ms (default: 100)
+#   $3 - Number of results to show (default: 10)
 ```
 
 ### 5. Test with Different Recordings
@@ -471,9 +658,9 @@ Test your scripts with various recordings to ensure robustness:
 
 ```bash
 # Test with different event profiles
-jfr-shell script analysis.jfrs --var recording=test-light.jfr
-jfr-shell script analysis.jfrs --var recording=test-full.jfr
-jfr-shell script analysis.jfrs --var recording=prod-snapshot.jfr
+jfr-shell script analysis.jfrs test-light.jfr
+jfr-shell script analysis.jfrs test-full.jfr
+jfr-shell script analysis.jfrs prod-snapshot.jfr
 ```
 
 ### 6. Use Continue-on-Error for Exploratory Scripts
@@ -481,9 +668,7 @@ jfr-shell script analysis.jfrs --var recording=prod-snapshot.jfr
 When analyzing unknown recordings, use `--continue-on-error` to handle missing event types gracefully:
 
 ```bash
-jfr-shell script exploratory-analysis.jfrs \
-  --var recording=/tmp/unknown.jfr \
-  --continue-on-error
+jfr-shell script exploratory-analysis.jfrs /tmp/unknown.jfr --continue-on-error
 ```
 
 ### 7. Version Control Your Scripts
@@ -540,13 +725,13 @@ Include concrete usage examples in script comments:
 # Examples:
 #
 # Basic usage:
-#   ./analyze.jfrs recording=/tmp/app.jfr
+#   ./analyze.jfrs /tmp/app.jfr
 #
 # With custom thresholds:
-#   ./analyze.jfrs recording=/tmp/app.jfr min_bytes=10000 top_n=50
+#   ./analyze.jfrs /tmp/app.jfr 10000 50
 #
 # Analyze multiple recordings:
-#   for f in *.jfr; do ./analyze.jfrs recording=$f; done
+#   for f in *.jfr; do ./analyze.jfrs "$f"; done
 ```
 
 ## Troubleshooting
@@ -563,15 +748,15 @@ jfr-shell script /absolute/path/to/script.jfrs
 jfr-shell script ./relative/path/script.jfrs
 ```
 
-### Undefined Variable Error
+### Out-of-Bounds Parameter Error
 
 ```bash
-Error on line 3: Undefined variable: recording
+Error on line 3: Positional parameter $1 out of bounds. Script has 0 argument(s).
 ```
 
-**Solution:** Pass all required variables:
+**Solution:** Pass all required parameters:
 ```bash
-jfr-shell script analysis.jfrs --var recording=/path/to/file.jfr
+jfr-shell script analysis.jfrs /path/to/file.jfr
 ```
 
 ### Shebang Not Working
@@ -582,20 +767,20 @@ jfr-shell script analysis.jfrs --var recording=/path/to/file.jfr
 
 **Solutions:**
 - Verify JBang is installed: `jbang version`
-- Check shebang line: `#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var`
+- Check shebang line: `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
 - Ensure script is executable: `chmod +x script.jfrs`
-- Try explicit path: `jbang jfr-shell@btraceio script script.jfrs --var recording=/tmp/app.jfr`
+- Try explicit path: `jbang jfr-shell@btraceio script script.jfrs /tmp/app.jfr`
 
 ### Script Fails Silently
 
 If a script appears to do nothing, check for:
 - Missing `open` command before queries
-- Incorrect variable names
+- Missing positional parameters
 - Event types not present in recording
 
 Use `--continue-on-error` to see all errors:
 ```bash
-jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr --continue-on-error
+jfr-shell script analysis.jfrs /tmp/app.jfr --continue-on-error
 ```
 
 ## Advanced Techniques
@@ -605,15 +790,15 @@ jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr --continue-on-error
 Compare multiple recordings in a single script:
 
 ```bash
-# Variables: baseline, current
+# Arguments: $1=baseline, $2=current
 
 # Analyze baseline
-open ${baseline} --alias baseline
+open $1 --alias baseline
 use baseline
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # Analyze current
-open ${current} --alias current
+open $2 --alias current
 use current
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
@@ -623,9 +808,7 @@ close --all
 
 **Usage:**
 ```bash
-jfr-shell script compare.jfrs \
-  --var baseline=/tmp/v1.0.jfr \
-  --var current=/tmp/v2.0.jfr
+jfr-shell script compare.jfrs /tmp/v1.0.jfr /tmp/v2.0.jfr
 ```
 
 ### Conditional Logic with Continue-on-Error
@@ -634,7 +817,7 @@ Use continue-on-error to implement optional analysis:
 
 ```bash
 # Core analysis (always runs)
-open ${recording}
+open $1
 show events/jdk.ExecutionSample | count()
 
 # Optional analyses (may not have these events)
@@ -646,7 +829,7 @@ close
 
 Execute with:
 ```bash
-jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr --continue-on-error
+jfr-shell script analysis.jfrs /tmp/app.jfr --continue-on-error
 ```
 
 ### Dynamic Event Type Analysis
@@ -654,10 +837,10 @@ jfr-shell script analysis.jfrs --var recording=/tmp/app.jfr --continue-on-error
 Analyze events by pattern:
 
 ```bash
-# Variables: recording, event_pattern
+# Arguments: $1=recording, $2=event_pattern
 
-open ${recording}
-metadata --search ${event_pattern}
+open $1
+metadata --search $2
 # Note: Can't dynamically use search results in show commands yet
 # This is a future enhancement
 close
@@ -681,8 +864,8 @@ java -XX:StartFlightRecording:filename=$RECORDING,duration=60s -jar app.jar
 
 # Analyze recording
 jfr-shell script performance-check.jfrs \
-  --var recording=$RECORDING \
-  --var threshold=$THRESHOLD_MS \
+  $RECORDING \
+  $THRESHOLD_MS \
   > analysis-report.txt
 
 # Check for performance regressions
@@ -696,12 +879,12 @@ fi
 
 ```bash
 # performance-check.jfrs
-# Variables: recording, max_gc_pause_ms
+# Arguments: $1=recording, $2=max_gc_pause_ms
 
-open ${recording}
+open $1
 
 show events/jdk.GarbageCollection | stats(duration)
-# Add logic to check if max duration > ${max_gc_pause_ms}
+# Add logic to check if max duration > $2
 # Output: REGRESSION if threshold exceeded
 
 close

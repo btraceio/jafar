@@ -2,11 +2,16 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.CommandRecorder;
+import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -70,7 +75,7 @@ public final class Shell implements AutoCloseable {
 
   public void run() {
     printBanner();
-    io.jafar.shell.cli.CommandRecorder recorder = new io.jafar.shell.cli.CommandRecorder();
+    CommandRecorder recorder = new CommandRecorder();
 
     while (running) {
       try {
@@ -167,7 +172,7 @@ public final class Shell implements AutoCloseable {
     terminal.flush();
   }
 
-  private void handleRecordCommand(String input, io.jafar.shell.cli.CommandRecorder recorder) {
+  private void handleRecordCommand(String input, CommandRecorder recorder) {
     String[] parts = input.split("\\s+", 3);
     if (parts.length < 2) {
       terminal.writer().println("Usage: record start [path] | record stop | record status");
@@ -179,7 +184,7 @@ public final class Shell implements AutoCloseable {
     try {
       switch (subCommand) {
         case "start":
-          java.nio.file.Path path = parts.length > 2 ? java.nio.file.Paths.get(parts[2]) : null;
+          Path path = parts.length > 2 ? Paths.get(parts[2]) : null;
           recorder.start(path);
           terminal.writer().println("Recording started: " + recorder.getCurrentRecordingPath());
           break;
@@ -207,34 +212,29 @@ public final class Shell implements AutoCloseable {
   private void handleScriptCommand(String input) {
     String[] parts = input.split("\\s+");
     if (parts.length < 2) {
-      terminal.writer().println("Usage: script <path> [--var key=value]...");
+      terminal.writer().println("Usage: script <path> [arg1] [arg2] ...");
       terminal.flush();
       return;
     }
 
     String scriptPath = parts[1];
-    java.util.Map<String, String> variables = new java.util.HashMap<>();
+    List<String> arguments = new ArrayList<>();
 
-    // Parse --var options
-    for (int i = 2; i < parts.length; i += 2) {
-      if ("--var".equals(parts[i]) && i + 1 < parts.length) {
-        String[] varParts = parts[i + 1].split("=", 2);
-        if (varParts.length == 2) {
-          variables.put(varParts[0], varParts[1]);
-        }
-      }
+    // Collect positional arguments
+    for (int i = 2; i < parts.length; i++) {
+      arguments.add(parts[i]);
     }
 
     try {
-      java.nio.file.Path path = java.nio.file.Paths.get(scriptPath);
-      if (!java.nio.file.Files.exists(path)) {
+      Path path = Paths.get(scriptPath);
+      if (!Files.exists(path)) {
         terminal.writer().println("Error: Script file not found: " + scriptPath);
         terminal.flush();
         return;
       }
 
-      io.jafar.shell.cli.ScriptRunner runner =
-          new io.jafar.shell.cli.ScriptRunner(
+      ScriptRunner runner =
+          new ScriptRunner(
               dispatcher,
               new CommandDispatcher.IO() {
                 @Override
@@ -255,13 +255,13 @@ public final class Shell implements AutoCloseable {
                   terminal.flush();
                 }
               },
-              variables);
+              arguments);
 
-      io.jafar.shell.cli.ScriptRunner.ExecutionResult result = runner.execute(path);
+      ScriptRunner.ExecutionResult result = runner.execute(path);
 
       if (result.hasErrors()) {
         terminal.writer().println("\nScript completed with errors:");
-        for (io.jafar.shell.cli.ScriptRunner.ScriptError error : result.getErrors()) {
+        for (ScriptRunner.ScriptError error : result.getErrors()) {
           terminal.writer().println(error);
         }
         terminal
@@ -300,11 +300,20 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  chunk <index> show             Show specific chunk details");
     terminal.writer().println("  cp [<type>] [options]          Browse constant pool entries");
     terminal.writer().println();
-    terminal.writer().println("Scripting:");
-    terminal.writer().println("  script <path> [--var k=v]...   Execute a script file");
+    terminal.writer().println("Variables:");
     terminal
         .writer()
-        .println("                                 Use variables with ${varname} in script");
+        .println("  set [--global] <name> = <val>  Set variable (scalar or lazy query)");
+    terminal.writer().println("  vars [--global|--session]      List variables");
+    terminal.writer().println("  unset <name>                   Remove variable");
+    terminal.writer().println("  echo <text>                    Print with ${var} substitution");
+    terminal.writer().println("  invalidate <name>              Clear cached lazy variable");
+    terminal.writer().println();
+    terminal.writer().println("Scripting:");
+    terminal.writer().println("  script <path> [arg1] [arg2]... Execute a script file");
+    terminal
+        .writer()
+        .println("                                 Use arguments with $1, $2, $@ in script");
     terminal
         .writer()
         .println("  record start [path]            Start recording commands to script");
@@ -324,8 +333,8 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Scripting Examples:");
     terminal.writer().println("  record start my-analysis.jfrs");
-    terminal.writer().println("  script my-analysis.jfrs --var recording=/path/to/file.jfr");
-    terminal.writer().println("  script - --var file=/path/to.jfr < analysis.jfrs");
+    terminal.writer().println("  script my-analysis.jfrs /path/to/file.jfr");
+    terminal.writer().println("  script - /path/to/file.jfr < analysis.jfrs");
     terminal.writer().println();
     terminal.writer().println("For more info:");
     terminal.writer().println("  Type 'help show' for JfrPath query syntax");
@@ -336,6 +345,10 @@ public final class Shell implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
+    try {
+      dispatcher.getGlobalStore().clear(); // Release global variables
+    } catch (Exception ignore) {
+    }
     try {
       sessions.closeAll();
     } catch (Exception ignore) {

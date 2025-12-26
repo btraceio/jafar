@@ -5,29 +5,29 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ScriptRunnerTest {
 
   @Test
-  void testVariableSubstitution(@TempDir Path tempDir) throws IOException {
-    // Create a simple script with variable substitution
+  void testPositionalParameterSubstitution(@TempDir Path tempDir) throws IOException {
+    // Create a simple script with positional parameter substitution
     Path scriptPath = tempDir.resolve("test.jfrs");
     Files.writeString(
         scriptPath,
         """
         # Comment line
 
-        # Use variable
-        test ${var1} ${var2}
+        # Use positional parameters
+        test $1 $2
         """);
 
-    Map<String, String> variables = new HashMap<>();
-    variables.put("var1", "value1");
-    variables.put("var2", "value2");
+    List<String> arguments = new ArrayList<>();
+    arguments.add("value1");
+    arguments.add("value2");
 
     StringBuilder capturedCommands = new StringBuilder();
     CommandDispatcher mockDispatcher =
@@ -51,7 +51,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, variables);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -60,9 +60,53 @@ class ScriptRunnerTest {
   }
 
   @Test
-  void testUndefinedVariable(@TempDir Path tempDir) throws IOException {
+  void testAllParametersExpansion(@TempDir Path tempDir) throws IOException {
+    // Test $@ expansion
     Path scriptPath = tempDir.resolve("test.jfrs");
-    Files.writeString(scriptPath, "test ${undefined}\n");
+    Files.writeString(scriptPath, """
+        # Test all parameters
+        test $@
+        """);
+
+    List<String> arguments = new ArrayList<>();
+    arguments.add("arg1");
+    arguments.add("arg2");
+    arguments.add("arg3");
+
+    StringBuilder capturedCommands = new StringBuilder();
+    CommandDispatcher mockDispatcher =
+        new CommandDispatcher(null, null, null) {
+          @Override
+          public boolean dispatch(String line) {
+            capturedCommands.append(line).append("\n");
+            return true;
+          }
+        };
+
+    CommandDispatcher.IO mockIO =
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {}
+
+          @Override
+          public void printf(String fmt, Object... args) {}
+
+          @Override
+          public void error(String s) {}
+        };
+
+    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
+
+    assertEquals(1, result.getSuccessCount());
+    assertEquals(0, result.getErrors().size());
+    assertEquals("test arg1 arg2 arg3\n", capturedCommands.toString());
+  }
+
+  @Test
+  void testOutOfBoundsParameter(@TempDir Path tempDir) throws IOException {
+    Path scriptPath = tempDir.resolve("test.jfrs");
+    Files.writeString(scriptPath, "test $1 $2\n");
 
     CommandDispatcher mockDispatcher =
         new CommandDispatcher(null, null, null) {
@@ -84,12 +128,13 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new HashMap<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
     assertEquals(1, result.getErrors().size());
-    assertTrue(result.getErrors().get(0).getMessage().contains("Undefined variable: undefined"));
+    assertTrue(
+        result.getErrors().get(0).getMessage().contains("Positional parameter $1 out of bounds"));
   }
 
   @Test
@@ -128,7 +173,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new HashMap<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(2, result.getSuccessCount());
@@ -171,7 +216,7 @@ class ScriptRunnerTest {
         };
 
     // Test with continueOnError = true
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new HashMap<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
     runner.setContinueOnError(true);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
@@ -181,7 +226,7 @@ class ScriptRunnerTest {
 
     // Test with continueOnError = false (default)
     commandCount[0] = 0;
-    ScriptRunner runner2 = new ScriptRunner(mockDispatcher, mockIO, new HashMap<>());
+    ScriptRunner runner2 = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
     ScriptRunner.ExecutionResult result2 = runner2.execute(scriptPath);
 
     assertEquals(1, result2.getSuccessCount());

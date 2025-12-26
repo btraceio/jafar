@@ -2,10 +2,15 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -271,10 +276,11 @@ public class Main implements Callable<Integer> {
         defaultValue = "-")
     private String scriptPath;
 
-    @CommandLine.Option(
-        names = {"--var", "-v"},
-        description = "Variable: key=value (repeatable)")
-    private java.util.Map<String, String> variables = new java.util.HashMap<>();
+    @CommandLine.Parameters(
+        index = "1..*",
+        arity = "0..*",
+        description = "Positional arguments for script ($1, $2, etc.)")
+    private List<String> arguments = new ArrayList<>();
 
     @CommandLine.Option(
         names = {"--continue-on-error"},
@@ -337,16 +343,14 @@ public class Main implements Callable<Integer> {
               }
             };
 
-        io.jafar.shell.cli.ScriptRunner runner =
-            new io.jafar.shell.cli.ScriptRunner(dispatcher, scriptIO, variables);
+        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
         runner.setContinueOnError(continueOnError);
 
-        io.jafar.shell.cli.ScriptRunner.ExecutionResult result;
+        ScriptRunner.ExecutionResult result;
         if (fromStdin) {
           // Read from stdin
-          java.util.List<String> lines = new java.util.ArrayList<>();
-          try (java.io.BufferedReader reader =
-              new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
+          List<String> lines = new ArrayList<>();
+          try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
@@ -365,7 +369,7 @@ public class Main implements Callable<Integer> {
         // Handle errors
         if (result.hasErrors()) {
           System.err.println("\nScript completed with errors:");
-          for (io.jafar.shell.cli.ScriptRunner.ScriptError error : result.getErrors()) {
+          for (ScriptRunner.ScriptError error : result.getErrors()) {
             System.err.println(error);
           }
           System.err.println(
