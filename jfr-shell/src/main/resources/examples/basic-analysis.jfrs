@@ -20,20 +20,26 @@
 # Open the recording
 open $1
 
-# Display recording information
+echo "=== Recording Info ==="
 info
 
-# Show metadata summary
+echo
+echo "=== Metadata Summary ==="
 metadata --summary
 
-# Top 10 threads by execution sample count
+echo
+echo "=== Top 10 Threads by Execution Samples ==="
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 
-# File I/O summary
+echo
+echo "=== File I/O Summary ==="
+echo "Bytes Read:"
 show events/jdk.FileRead | sum(bytes)
+echo "Bytes Written:"
 show events/jdk.FileWrite | sum(bytes)
 
-# GC statistics
+echo
+echo "=== GC Statistics ==="
 show events/jdk.GarbageCollection | stats(duration)
 
 # Close the session

@@ -20,28 +20,35 @@
 # Open the recording
 open $1
 
-# GC pause time statistics
+echo "=== GC Pause Time Statistics ==="
 show events/jdk.GarbageCollection | stats(duration)
 
-# GC events by type
+echo
+echo "=== GC Events by Type ==="
 show events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
 
-# Heap summary statistics before/after GC
+echo
+echo "=== Heap Summary Statistics (Before/After GC) ==="
 show events/jdk.GCHeapSummary | stats(heapUsed)
 
-# Longest GC pauses
+echo
+echo "=== Longest GC Pauses ==="
 show events/jdk.GarbageCollection --limit 10
 
-# Object allocation statistics by class
+echo
+echo "=== Object Allocation by Class ==="
 show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
 
-# Total allocated memory
+echo
+echo "=== Total Allocated Memory ==="
 show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 
-# Young generation collection statistics
+echo
+echo "=== Young Generation Collection Statistics ==="
 show events/jdk.YoungGarbageCollection | stats(duration)
 
-# Old generation collection statistics
+echo
+echo "=== Old Generation Collection Statistics ==="
 show events/jdk.OldGarbageCollection | stats(duration)
 
 # Close the session

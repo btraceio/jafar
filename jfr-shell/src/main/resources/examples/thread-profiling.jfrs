@@ -21,19 +21,23 @@
 # Open the recording
 open $1
 
-# Top threads by execution sample count
+echo "=== Top Threads by Execution Sample Count ==="
 show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
-# Thread allocation statistics
-show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
+echo
+echo "=== Thread Allocation Statistics ==="
+show events/jdk.ThreadAllocationStatistics | groupBy(eentThread/javaName) | top($2, by=sum(allocated))
 
-# Monitor contention by thread
+echo
+echo "=== Monitor Contention by Class ==="
 show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
 
-# Thread sleep events
-show events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
+echo
+echo "=== Thread Sleep Events ==="
+show events/jdk.ThreadSleep | groupBy(eventthread/javaName) | top($2, by=sum(time))
 
-# Thread park events (blocking operations)
+echo
+echo "=== Thread Park Events (Blocking Operations) ==="
 show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
 
 # Close the session

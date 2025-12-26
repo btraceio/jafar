@@ -365,7 +365,69 @@ public class CommandDispatcher {
           "Usage: show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]");
       return;
     }
-    String expr = String.join(" ", tokens);
+    // Extract expression from fullLine to preserve pipe operators that get lost in tokenization
+    String expr;
+    int showIdx = fullLine.indexOf("show");
+    if (showIdx >= 0) {
+      String afterShow = fullLine.substring(showIdx + 4).trim();
+      // Remove options from the beginning/end while preserving the core expression
+      expr = afterShow
+          .replaceAll("--limit\\s+\\d+", "")
+          .replaceAll("--format\\s+\\S+", "")
+          .replaceAll("--tree", "")
+          .replaceAll("--depth\\s+\\d+", "")
+          .replaceAll("--list-match\\s+\\S+", "")
+          .trim();
+    } else {
+      expr = String.join(" ", tokens);
+    }
+
+    // Check for piping from lazy variable: ${var} | pipeline
+    java.util.regex.Pattern varPipePattern =
+        java.util.regex.Pattern.compile("^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}\\s*\\|(.+)$");
+    java.util.regex.Matcher varPipeMatcher = varPipePattern.matcher(expr.trim());
+    if (varPipeMatcher.matches()) {
+      String varName = varPipeMatcher.group(1);
+      String pipelinePart = varPipeMatcher.group(2).trim();
+
+      // Look up the variable
+      Value val = null;
+      if (getSessionStore() != null && getSessionStore().contains(varName)) {
+        val = getSessionStore().get(varName);
+      } else if (globalStore.contains(varName)) {
+        val = globalStore.get(varName);
+      }
+
+      if (val instanceof LazyQueryValue lqv) {
+        try {
+          // Get cached result
+          Object cached = lqv.get();
+          if (cached instanceof List<?> cachedList) {
+            @SuppressWarnings("unchecked")
+            List<java.util.Map<String, Object>> rows =
+                (List<java.util.Map<String, Object>>) cachedList;
+
+            // Parse the pipeline part using a dummy expression
+            String dummyExpr = "events/_dummy | " + pipelinePart;
+            var dummyQuery = JfrPathParser.parse(dummyExpr);
+            if (dummyQuery.pipeline != null && !dummyQuery.pipeline.isEmpty()) {
+              var eval = new JfrPathEvaluator(listMatchMode);
+              rows = eval.applyToRows(rows, dummyQuery.pipeline);
+              if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+              if ("json".equalsIgnoreCase(format)) {
+                printJson(rows, io);
+              } else {
+                TableRenderer.render(rows, io);
+              }
+              return;
+            }
+          }
+        } catch (Exception e) {
+          io.error("Error piping from variable: " + e.getMessage());
+          return;
+        }
+      }
+    }
 
     // Substitute variables if present
     if (VariableSubstitutor.hasVariables(expr)) {
@@ -1254,27 +1316,53 @@ public class CommandDispatcher {
       return;
     }
 
-    // Treat as JfrPath query - create lazy value
+    // Treat as JfrPath query - evaluate to detect scalar vs collection
     Optional<SessionManager.SessionRef> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
       return;
     }
 
-    // Parse the query to validate it
+    // Parse and evaluate the query
     JfrPath.Query query;
+    Object result;
     try {
       query = JfrPathParser.parse(exprPart);
+      JfrPathEvaluator evaluator = new JfrPathEvaluator();
+      result = evaluator.evaluate(cur.get().session, query);
     } catch (Exception e) {
       io.error("Invalid query: " + e.getMessage());
       return;
     }
 
-    store.set(varName, new LazyQueryValue(query, cur.get(), exprPart));
-    io.println("Set " + varName + " = lazy[" + exprPart + "]");
+    // Check if result is a single scalar value
+    Object scalarValue = extractScalarIfSingle(result);
+    if (scalarValue != null) {
+      store.set(varName, new ScalarValue(scalarValue));
+      io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+    } else {
+      // Store as lazy with pre-cached result
+      LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+      lqv.setCachedResult(result);
+      store.set(varName, lqv);
+      int size = result instanceof List<?> list ? list.size() : 1;
+      io.println("Set " + varName + " = lazy[" + exprPart + "] (" + size + " rows)");
+    }
   }
 
   private void cmdVars(List<String> args) {
+    // Handle --info <name> flag
+    int infoIdx = args.indexOf("--info");
+    if (infoIdx >= 0) {
+      if (infoIdx + 1 >= args.size()) {
+        io.error("Usage: vars --info <name>");
+        return;
+      }
+      String name = args.get(infoIdx + 1);
+      showVariableInfo(name);
+      return;
+    }
+
     boolean showGlobal = args.isEmpty() || args.contains("--global") || args.contains("--all");
     boolean showSession = args.isEmpty() || args.contains("--session") || args.contains("--all");
 
@@ -1298,6 +1386,46 @@ public class CommandDispatcher {
 
     if (globalStore.isEmpty() && (cur.isEmpty() || cur.get().variables.isEmpty())) {
       io.println("No variables defined");
+    }
+  }
+
+  private void showVariableInfo(String name) {
+    // Check session variables first, then global
+    Value val = null;
+    String scope = null;
+
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    if (cur.isPresent() && cur.get().variables.contains(name)) {
+      val = cur.get().variables.get(name);
+      scope = "session #" + cur.get().id;
+    } else if (globalStore.contains(name)) {
+      val = globalStore.get(name);
+      scope = "global";
+    }
+
+    if (val == null) {
+      io.error("Variable not found: " + name);
+      return;
+    }
+
+    io.println("Variable: " + name);
+    io.println("Scope: " + scope);
+
+    if (val instanceof LazyQueryValue lqv) {
+      io.println("Type: lazy query");
+      io.println("Source: " + lqv.getQueryString());
+      io.println("Cached: " + (lqv.isCached() ? "yes" : "no"));
+      if (lqv.isCached()) {
+        try {
+          int size = lqv.size();
+          io.println("Rows: " + size);
+        } catch (Exception e) {
+          io.println("Rows: error - " + e.getMessage());
+        }
+      }
+    } else if (val instanceof ScalarValue sv) {
+      io.println("Type: scalar");
+      io.println("Value: " + sv.describe());
     }
   }
 
@@ -1383,6 +1511,47 @@ public class CommandDispatcher {
       return globalStore.get(name);
     }
     return null;
+  }
+
+  /**
+   * Extracts a scalar value if the result is a single-row, single-column result. Returns null if
+   * the result is a collection or multi-column row.
+   */
+  @SuppressWarnings("unchecked")
+  private Object extractScalarIfSingle(Object result) {
+    if (result == null) {
+      return null;
+    }
+    // Direct scalar types
+    if (result instanceof String || result instanceof Number || result instanceof Boolean) {
+      return result;
+    }
+    // Check for single-row, single-column list
+    if (result instanceof List<?> list) {
+      if (list.size() == 1) {
+        Object item = list.get(0);
+        if (item instanceof Map<?, ?> map) {
+          if (map.size() == 1) {
+            // Single row, single column - extract the value
+            return ((Map<String, Object>) map).values().iterator().next();
+          }
+        } else {
+          // Single non-map item
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  private String formatScalarValue(Object value) {
+    if (value == null) {
+      return "null";
+    }
+    if (value instanceof String) {
+      return "\"" + value + "\"";
+    }
+    return value.toString();
   }
 
   // ---- Conditional handling ----

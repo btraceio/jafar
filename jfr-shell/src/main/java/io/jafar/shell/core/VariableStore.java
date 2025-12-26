@@ -98,6 +98,14 @@ public final class VariableStore {
       }
     }
 
+    /** Sets the cached result directly (used for eager evaluation). */
+    public void setCachedResult(Object result) {
+      synchronized (this) {
+        this.cachedResult = result;
+        this.evaluated = true;
+      }
+    }
+
     /** Returns whether the result has been cached. */
     public boolean isCached() {
       return evaluated;

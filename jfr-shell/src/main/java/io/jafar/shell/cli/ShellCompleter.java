@@ -149,6 +149,7 @@ public class ShellCompleter implements Completer {
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);
       case "unset", "invalidate" -> completeVariableName(line, candidates);
       case "record" -> completeRecord(line, candidates, wordIndex);
+      case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -301,6 +302,26 @@ public class ShellCompleter implements Completer {
           .forEach(name -> candidates.add(new Candidate(name)));
     } catch (IOException ignore) {
     }
+  }
+
+  /**
+   * Completes set/let commands. After "set name = ", uses JfrPath completion for the value
+   * expression.
+   */
+  private void completeSetCommand(
+      ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
+    // "set name = expr" -> words[0]=set, words[1]=name, words[2]=, words[3]=expr
+    // After "=" (wordIndex >= 3), use JfrPath completion
+    if (wordIndex >= 3 && words.size() > 2 && "=".equals(words.get(2))) {
+      completeWithFramework(line, candidates);
+    } else if (wordIndex == 2) {
+      // Suggest "=" after variable name
+      String partial = line.word();
+      if ("".equals(partial) || "=".startsWith(partial)) {
+        candidates.add(new Candidate("="));
+      }
+    }
+    // wordIndex 1 is variable name - no completion needed
   }
 
   private void completeVariableName(ParsedLine line, List<Candidate> candidates) {
