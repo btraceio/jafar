@@ -134,7 +134,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>(other.chunkTypeClassMap);
     this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
     this.factoryMap = new HashMap<>(other.factoryMap);
-    this.factoriesBound = other.factoriesBound;
+    this.factoriesBound = false;
     this.closed = other.closed;
     this.parserListener = listener;
   }
