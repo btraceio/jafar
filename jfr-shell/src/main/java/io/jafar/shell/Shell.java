@@ -376,6 +376,18 @@ public final class Shell implements AutoCloseable {
 
   private void executeScript(Path scriptPath, List<String> arguments) {
     try {
+      // Auto-bind current session's JFR file as first argument if session is active
+      List<String> effectiveArgs = new ArrayList<>(arguments);
+      sessions
+          .getCurrent()
+          .ifPresent(
+              ref -> {
+                Path recordingPath = ref.session.getRecordingPath();
+                effectiveArgs.add(0, recordingPath.toString());
+                terminal.writer().println("Using session recording: " + recordingPath);
+                terminal.flush();
+              });
+
       ScriptRunner runner =
           new ScriptRunner(
               dispatcher,
@@ -398,7 +410,7 @@ public final class Shell implements AutoCloseable {
                   terminal.flush();
                 }
               },
-              arguments);
+              effectiveArgs);
 
       ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 

@@ -24,7 +24,7 @@ class ShellCompleterFilterFunctionsTest {
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
 
-    ShellCompleter completer = new ShellCompleter(sessions);
+    ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> cands = new ArrayList<>();
 
     var pl = new ShellCompleterTest.SimpleParsedLine("show events/jdk.ExecutionSample[");
@@ -44,7 +44,7 @@ class ShellCompleterFilterFunctionsTest {
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
 
-    ShellCompleter completer = new ShellCompleter(sessions);
+    ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> cands = new ArrayList<>();
 
     var pl = new ShellCompleterTest.SimpleParsedLine("show metadata/jdk.ExecutionSample[");

@@ -24,7 +24,7 @@ class ShellCompleterFilterJfrPathTest {
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
 
-    ShellCompleter completer = new ShellCompleter(sessions);
+    ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> cands = new ArrayList<>();
 
     // simulate typing up to a nested path inside the filter
@@ -47,7 +47,7 @@ class ShellCompleterFilterJfrPathTest {
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
 
-    ShellCompleter completer = new ShellCompleter(sessions);
+    ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> cands = new ArrayList<>();
 
     // simulate typing a list-mode prefix then expecting fields after any:
@@ -71,7 +71,7 @@ class ShellCompleterFilterJfrPathTest {
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
 
-    ShellCompleter completer = new ShellCompleter(sessions);
+    ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> cands = new ArrayList<>();
 
     // simulate typing nested path after list prefix

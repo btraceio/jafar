@@ -75,7 +75,7 @@ class ShellCompleterTest {
     SessionManager sm = new SessionManager(ctx, factory);
     sm.open(Path.of("/tmp/one.jfr"), "one");
 
-    ShellCompleter completer = new ShellCompleter(sm);
+    ShellCompleter completer = new ShellCompleter(sm, null);
     List<Candidate> cands = new ArrayList<>();
 
     completer.complete(null, new SimpleParsedLine("o"), cands);
