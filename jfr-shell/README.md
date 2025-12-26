@@ -8,6 +8,9 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
+- **Scripting support**: record, save, and replay analysis workflows ⭐ NEW
+- **Variable substitution**: parameterize scripts for reusability ⭐ NEW
+- **Shebang support**: make scripts directly executable ⭐ NEW
 - **Multiple output formats**: table (default) and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
 - **Non-interactive mode**: execute queries from command line for scripting/CI
@@ -190,6 +193,83 @@ jfr-shell chunks recording.jfr --summary
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 
+## Scripting
+
+JFR Shell supports powerful scripting capabilities for automating analysis workflows.
+
+### Script Execution
+
+Create reusable analysis scripts with variable substitution:
+
+**analysis.jfrs:**
+```bash
+# Variables: recording, min_bytes, top_n
+
+open ${recording}
+show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+close
+```
+
+**Execute:**
+```bash
+jfr-shell script analysis.jfrs \
+  --var recording=/tmp/app.jfr \
+  --var min_bytes=1000 \
+  --var top_n=10
+```
+
+### Command Recording
+
+Record your interactive commands for later replay:
+
+```bash
+jfr> record start analysis.jfrs
+Recording started: analysis.jfrs
+
+jfr> open /tmp/app.jfr
+jfr> show events/jdk.ExecutionSample | count()
+jfr> show events/jdk.FileRead | sum(bytes)
+
+jfr> record stop
+Recording stopped: analysis.jfrs
+
+# Replay the recorded script
+$ jfr-shell script analysis.jfrs
+```
+
+### Shebang Support
+
+Make scripts directly executable:
+
+**analyze.jfrs:**
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script - --var
+# Variables: recording
+
+open ${recording}
+show events/jdk.ExecutionSample | count()
+close
+```
+
+```bash
+chmod +x analyze.jfrs
+./analyze.jfrs recording=/tmp/app.jfr
+```
+
+### Example Scripts
+
+Check `jfr-shell/src/main/resources/examples/` for ready-to-use scripts:
+- `basic-analysis.jfrs` - Recording overview, threads, I/O, GC
+- `thread-profiling.jfrs` - Detailed thread analysis
+- `gc-analysis.jfrs` - Comprehensive GC statistics
+
+### Documentation
+
+- [Scripting Guide](../doc/jfr-shell-scripting.md) - Complete scripting reference
+- [Script Execution Tutorial](../doc/tutorials/script-execution-tutorial.md) - Learn by example
+- [Command Recording Tutorial](../doc/tutorials/command-recording-tutorial.md) - Record and replay workflows
+
 ## JfrPath Query Language
 
 JfrPath is a concise path-based query language for JFR data:
@@ -289,6 +369,12 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show chunk details
 - `cp [<type>] [options]` - Browse constant pools
+
+### Scripting
+- `script <path> [--var k=v]...` - Execute a script file
+- `record start [path]` - Start recording commands
+- `record stop` - Stop recording
+- `record status` - Show recording status
 
 ### Help
 - `help [<command>]` - Show help (use `help show` for JfrPath syntax)

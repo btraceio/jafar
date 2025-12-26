@@ -454,6 +454,7 @@ JAFAR includes `jfr-shell`, an interactive CLI for exploring and analyzing JFR f
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
+- **Scripting support**: record, save, and replay analysis workflows with variable substitution ⭐ NEW
 - **Event decoration** for correlating and joining events (time-based and key-based)
 - **Multiple output formats**: table and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
@@ -479,9 +480,15 @@ See **[Event Decoration and Joining](doc/jfr-shell-tutorial.md#event-decoration-
 
 ## Documentation
 
+### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
 - **[doc/jfr-shell-tutorial.md](doc/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
+- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
+- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
+- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
+
+### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
 - **[LIMITATIONS.md](LIMITATIONS.md)** - Known limitations and workarounds
 - **[PERFORMANCE.md](PERFORMANCE.md)** - Performance benchmarks and tuning tips
