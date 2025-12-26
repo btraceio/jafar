@@ -79,12 +79,32 @@ public final class Shell implements AutoCloseable {
 
     while (running) {
       try {
-        String input = lineReader.readLine("jfr> ");
+        // Adjust prompt based on conditional nesting depth
+        String prompt;
+        if (dispatcher.getConditionalState().inConditional()) {
+          int depth = dispatcher.getConditionalState().depth();
+          prompt = "...(" + depth + ")> ";
+        } else {
+          prompt = "jfr> ";
+        }
+
+        String input = lineReader.readLine(prompt);
         if (input == null || input.isBlank()) continue;
         input = input.trim();
 
         // Built-ins
         if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+          // Warn about unclosed conditionals
+          if (dispatcher.getConditionalState().inConditional()) {
+            terminal
+                .writer()
+                .println(
+                    "Warning: "
+                        + dispatcher.getConditionalState().depth()
+                        + " unclosed conditional block(s)");
+            terminal.flush();
+            dispatcher.getConditionalState().reset();
+          }
           if (recorder.isRecording()) {
             try {
               recorder.stop();
@@ -308,6 +328,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  unset <name>                   Remove variable");
     terminal.writer().println("  echo <text>                    Print with ${var} substitution");
     terminal.writer().println("  invalidate <name>              Clear cached lazy variable");
+    terminal.writer().println();
+    terminal.writer().println("Conditionals:");
+    terminal.writer().println("  if <condition>                 Start conditional block");
+    terminal.writer().println("  elif <condition>               Else-if branch");
+    terminal.writer().println("  else                           Else branch");
+    terminal.writer().println("  endif                          End conditional block");
     terminal.writer().println();
     terminal.writer().println("Scripting:");
     terminal.writer().println("  script <path> [arg1] [arg2]... Execute a script file");

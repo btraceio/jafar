@@ -305,6 +305,206 @@ show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=co
 close
 ```
 
+## Conditionals
+
+JFR Shell supports block-based conditionals (`if`/`elif`/`else`/`endif`) for controlling script execution flow based on conditions.
+
+### Syntax
+
+```bash
+if <condition>
+  # commands executed if condition is true
+elif <condition>
+  # commands executed if previous conditions were false and this is true
+else
+  # commands executed if all conditions were false
+endif
+```
+
+### Condition Expressions
+
+Conditions support comparisons, arithmetic, logical operators, and built-in functions.
+
+#### Comparisons
+
+```bash
+if ${count} == 0
+if ${value} != "error"
+if ${bytes} > 1000
+if ${threshold} >= 100
+if ${size} < 50
+if ${limit} <= 10
+```
+
+#### Arithmetic
+
+```bash
+if ${a} + ${b} > 100
+if ${var.size} * 2 <= ${limit}
+if ${total} / ${count} > 50
+```
+
+#### Logical Operators
+
+```bash
+if ${a} > 0 && ${b} > 0
+if ${a} == 0 || ${b} == 0
+if !${flag}
+if (${a} > 0 && ${b} > 0) || ${c} == 1
+```
+
+#### Built-in Functions
+
+```bash
+# Check if a variable exists
+if exists(myvar)
+
+# Check if a variable is empty (doesn't exist, null, or empty string/result)
+if empty(results)
+
+# Negation
+if !exists(optionalVar)
+if !empty(data)
+```
+
+### Interactive Mode
+
+In interactive mode, the prompt changes to show nesting depth:
+
+```
+jfr> if ${count} > 0
+...(1)>   echo "Found events"
+...(1)>   if ${count} > 100
+...(2)>     echo "That's a lot!"
+...(2)>   endif
+...(1)> else
+...(1)>   echo "No events found"
+...(1)> endif
+jfr>
+```
+
+### Complete Examples
+
+#### Checking Query Results
+
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording
+
+open $1
+
+set fileReads = events/jdk.FileRead | count()
+
+if ${fileReads.count} > 0
+  echo "Found ${fileReads.count} file read events"
+
+  if ${fileReads.count} > 1000
+    echo "Warning: High number of file reads detected!"
+  elif ${fileReads.count} > 100
+    echo "Moderate file I/O activity"
+  else
+    echo "Light file I/O activity"
+  endif
+
+  show events/jdk.FileRead | top(10, by=bytes)
+else
+  echo "No file read events in this recording"
+endif
+
+close
+```
+
+#### Conditional Analysis
+
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: $1=recording, $2=analysis_type
+
+open $1
+
+if ${2} == "cpu"
+  echo "=== CPU Analysis ==="
+  show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+elif ${2} == "io"
+  echo "=== I/O Analysis ==="
+  show events/jdk.FileRead | sum(bytes)
+  show events/jdk.FileWrite | sum(bytes)
+elif ${2} == "gc"
+  echo "=== GC Analysis ==="
+  show events/jdk.GarbageCollection | stats(duration)
+else
+  echo "Unknown analysis type: ${2}"
+  echo "Supported: cpu, io, gc"
+endif
+
+close
+```
+
+#### Using exists() and empty()
+
+```bash
+# Check if optional configuration exists
+set threshold = 1000
+if exists(custom_threshold)
+  set threshold = ${custom_threshold}
+endif
+
+# Process only if results are not empty
+set results = events/jdk.FileRead[bytes>=${threshold}]
+if !empty(results)
+  echo "Found ${results.size} events exceeding threshold"
+  show events/jdk.FileRead[bytes>=${threshold}] --limit 20
+else
+  echo "No events exceed the threshold of ${threshold} bytes"
+endif
+```
+
+### Nesting
+
+Conditionals can be nested to arbitrary depth:
+
+```bash
+if ${a} > 0
+  if ${b} > 0
+    if ${c} > 0
+      echo "All positive"
+    else
+      echo "c is not positive"
+    endif
+  else
+    echo "b is not positive"
+  endif
+else
+  echo "a is not positive"
+endif
+```
+
+### Error Handling
+
+#### Unclosed Conditionals
+
+If you exit the shell with unclosed conditionals, a warning is displayed:
+
+```
+jfr> if ${x} > 0
+...(1)> exit
+Warning: 1 unclosed conditional block(s)
+Goodbye!
+```
+
+#### Mismatched Keywords
+
+```bash
+# Error: elif without if
+elif ${x} > 0  # Error: elif without if
+
+# Error: else without if
+else           # Error: else without if
+
+# Error: endif without if
+endif          # Error: endif without if
+```
+
 ## Executing Scripts
 
 ### From File

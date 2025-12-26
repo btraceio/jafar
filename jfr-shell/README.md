@@ -9,6 +9,7 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
 - **Variables**: store scalars and lazy query results with `${var}` substitution ⭐ NEW
+- **Conditionals**: if/elif/else/endif for control flow ⭐ NEW
 - **Scripting support**: record, save, and replay analysis workflows
 - **Positional parameters**: parameterize scripts for reusability
 - **Shebang support**: make scripts directly executable
@@ -241,6 +242,46 @@ jfr> echo "Value: ${myvar}"  # Print with substitution
 
 See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) for complete reference.
 
+## Conditionals
+
+Control script flow with if/elif/else/endif blocks:
+
+```bash
+jfr> set count = events/jdk.FileRead | count()
+jfr> if ${count.count} > 0
+...(1)>   echo "Found ${count.count} file reads"
+...(1)>   if ${count.count} > 100
+...(2)>     echo "That's a lot!"
+...(2)>   endif
+...(1)> else
+...(1)>   echo "No file reads found"
+...(1)> endif
+```
+
+### Condition Expressions
+
+```bash
+# Comparisons
+if ${x} == 0
+if ${value} != "error"
+if ${bytes} > 1000
+
+# Arithmetic
+if ${a} + ${b} > 100
+
+# Logical operators
+if ${a} > 0 && ${b} > 0
+if ${x} == 0 || ${y} == 0
+if !${flag}
+
+# Built-in functions
+if exists(myvar)
+if empty(results)
+if !empty(data)
+```
+
+See [Scripting Guide](../doc/jfr-shell-scripting.md#conditionals) for complete reference.
+
 ## Scripting
 
 JFR Shell supports powerful scripting capabilities for automating analysis workflows.
@@ -424,6 +465,12 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `unset <name>` - Remove a variable
 - `echo <text>` - Print with `${var}` substitution
 - `invalidate <name>` - Clear cached lazy variable
+
+### Conditionals
+- `if <condition>` - Start conditional block
+- `elif <condition>` - Else-if branch
+- `else` - Else branch
+- `endif` - End conditional block
 
 ### Scripting
 - `script <path> [arg]...` - Execute a script file

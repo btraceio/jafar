@@ -39,6 +39,7 @@ public class CommandDispatcher {
   private final IO io;
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
+  private final ConditionalState conditionalState = new ConditionalState();
 
   @FunctionalInterface
   public interface JfrSelector {
@@ -74,6 +75,11 @@ public class CommandDispatcher {
     return globalStore;
   }
 
+  /** Returns the conditional state for tracking if-blocks. */
+  public ConditionalState getConditionalState() {
+    return conditionalState;
+  }
+
   public boolean dispatch(String line) {
     String[] parts = line.trim().split("\\s+");
     if (parts.length == 0 || parts[0].isEmpty()) return true;
@@ -82,6 +88,27 @@ public class CommandDispatcher {
     List<String> args = Arrays.asList(parts).subList(1, parts.length);
 
     try {
+      // Handle conditional keywords - these must be processed even in inactive branches
+      if ("if".equals(cmd)) {
+        return handleIf(line);
+      }
+      if ("elif".equals(cmd)) {
+        return handleElif(line);
+      }
+      if ("else".equals(cmd)) {
+        conditionalState.handleElse();
+        return true;
+      }
+      if ("endif".equals(cmd)) {
+        conditionalState.exitIf();
+        return true;
+      }
+
+      // Skip command if in inactive conditional branch
+      if (!conditionalState.isActive()) {
+        return true; // Command "handled" (skipped)
+      }
+
       switch (cmd) {
         case "open":
           cmdOpen(args);
@@ -491,6 +518,12 @@ public class CommandDispatcher {
       io.println("  echo      - Print text with variable substitution");
       io.println("  invalidate - Clear cached result for lazy variable");
       io.println("");
+      io.println("Conditionals:");
+      io.println("  if        - Start conditional block");
+      io.println("  elif      - Else-if branch");
+      io.println("  else      - Else branch");
+      io.println("  endif     - End conditional block");
+      io.println("");
       io.println("Tab completion:");
       io.println("  Press Tab at any point for context-aware suggestions:");
       io.println("  - Query roots: events/, metadata/, cp/, chunks/");
@@ -695,6 +728,39 @@ public class CommandDispatcher {
       io.println("Usage: invalidate <name>");
       io.println("Clear the cached result for a lazy variable.");
       io.println("Next access will re-evaluate the query.");
+      return;
+    }
+    if ("if".equals(sub) || "elif".equals(sub) || "else".equals(sub) || "endif".equals(sub)) {
+      io.println("Conditional execution with if/elif/else/endif blocks.");
+      io.println("");
+      io.println("Syntax:");
+      io.println("  if <condition>");
+      io.println("    <commands>");
+      io.println("  elif <condition>");
+      io.println("    <commands>");
+      io.println("  else");
+      io.println("    <commands>");
+      io.println("  endif");
+      io.println("");
+      io.println("Condition expressions:");
+      io.println("  Comparisons: ==, !=, >, >=, <, <=");
+      io.println("  Logical: && (and), || (or), ! (not)");
+      io.println("  Arithmetic: +, -, *, /");
+      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Grouping: parentheses ( )");
+      io.println("");
+      io.println("Examples:");
+      io.println("  if ${count.count} > 0");
+      io.println("    echo Found ${count.count} events");
+      io.println("  endif");
+      io.println("");
+      io.println("  if exists(myVar) && ${myVar.size} > 100");
+      io.println("    echo Large result set");
+      io.println("  elif ${myVar.size} > 0");
+      io.println("    echo Small result set");
+      io.println("  else");
+      io.println("    echo Empty result");
+      io.println("  endif");
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
@@ -1317,5 +1383,46 @@ public class CommandDispatcher {
       return globalStore.get(name);
     }
     return null;
+  }
+
+  // ---- Conditional handling ----
+
+  private boolean handleIf(String line) throws Exception {
+    // Extract condition after "if "
+    String condition = line.length() > 2 ? line.substring(2).trim() : "";
+    if (condition.isEmpty()) {
+      throw new IllegalArgumentException("if requires a condition");
+    }
+
+    // Only evaluate if we're in an active branch
+    boolean result = false;
+    if (conditionalState.isActive() || !conditionalState.inConditional()) {
+      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+      result = evaluator.evaluate(condition);
+    }
+    conditionalState.enterIf(result);
+    return true;
+  }
+
+  private boolean handleElif(String line) throws Exception {
+    // Extract condition after "elif "
+    String condition = line.length() > 4 ? line.substring(4).trim() : "";
+    if (condition.isEmpty()) {
+      throw new IllegalArgumentException("elif requires a condition");
+    }
+
+    // Only evaluate if needed (previous branches failed and parent is active)
+    boolean result = false;
+    // We need to check if we should evaluate - only if no branch taken yet
+    // The state machine handles this, but we need the parent's active state
+    int depth = conditionalState.depth();
+    if (depth > 0) {
+      // Check if we need to evaluate by temporarily looking at state
+      // If condition is needed, it will be used; if branch already taken, it's ignored
+      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+      result = evaluator.evaluate(condition);
+    }
+    conditionalState.handleElif(result);
+    return true;
   }
 }

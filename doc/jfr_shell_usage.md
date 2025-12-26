@@ -67,6 +67,12 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `echo <text>`: Print text with `${var}` substitution.
 - `invalidate <name>`: Clear cached lazy variable result.
 
+### Conditionals
+- `if <condition>`: Start conditional block.
+- `elif <condition>`: Else-if branch.
+- `else`: Else branch.
+- `endif`: End conditional block.
+
 ### Help and Exit
 - `help [<command>]`: Show contextual help.
 - `exit` / `quit`: Exit shell.
@@ -166,6 +172,7 @@ is aliased for convenience.
 - Metadata browsing: class/fields/annotations/settings
 - Recursive metadata trees (`--tree`, `--depth N`), including field-focused trees
 - Variables with lazy query evaluation and caching
+- Conditionals (if/elif/else/endif) for control flow
 - Helpful completion and contextual `help`
 
 ## JfrPath Essentials

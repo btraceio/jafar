@@ -59,8 +59,7 @@ public final class ConditionalState {
       throw new IllegalStateException("elif without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN
-        || current.state == BranchState.CONDITION_MET) {
+    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
       // A branch already executed, skip this elif
       stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
     } else {
@@ -79,8 +78,7 @@ public final class ConditionalState {
       throw new IllegalStateException("else without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN
-        || current.state == BranchState.CONDITION_MET) {
+    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
       // A branch already executed, skip else
       stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
     } else {

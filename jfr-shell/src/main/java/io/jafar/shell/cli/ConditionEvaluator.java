@@ -195,8 +195,10 @@ public final class ConditionEvaluator {
     }
 
     // Number
-    if (Character.isDigit(peek()) || (peek() == '-' && pos + 1 < input.length()
-        && Character.isDigit(input.charAt(pos + 1)))) {
+    if (Character.isDigit(peek())
+        || (peek() == '-'
+            && pos + 1 < input.length()
+            && Character.isDigit(input.charAt(pos + 1)))) {
       return parseNumber();
     }
 
@@ -281,14 +283,15 @@ public final class ConditionEvaluator {
       if (peek() == '\\' && pos + 1 < input.length()) {
         pos++;
         char escaped = input.charAt(pos++);
-        sb.append(switch (escaped) {
-          case 'n' -> '\n';
-          case 't' -> '\t';
-          case 'r' -> '\r';
-          case '"' -> '"';
-          case '\\' -> '\\';
-          default -> escaped;
-        });
+        sb.append(
+            switch (escaped) {
+              case 'n' -> '\n';
+              case 't' -> '\t';
+              case 'r' -> '\r';
+              case '"' -> '"';
+              case '\\' -> '\\';
+              default -> escaped;
+            });
       } else {
         sb.append(input.charAt(pos++));
       }
