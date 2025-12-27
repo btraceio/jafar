@@ -237,7 +237,6 @@ public interface JFRExecutionSample {
 
 // 2. Use in parsing code (handlers generated automatically)
 try (TypedJafarParser parser = ctx.newTypedParser(jfrFile)) {
-    // No factory registration needed
     // Handler generated via ASM on first use, cached globally
 
     parser.handle(JFRExecutionSample.class, (event, ctl) -> {
@@ -316,10 +315,9 @@ Build-time handler generation provides:
 - **Stable metaspace usage** (no growth with context churn)
 - **GraalVM native image support** (future-proof)
 
-The trade-off is minimal: slightly longer build time and manual factory registration. For performance-critical applications, the benefits far outweigh the costs.
+The trade-off is minimal: slightly longer build time. For performance-critical applications, the benefits far outweigh the costs.
 
 ## See Also
 
 - [Annotation Processor Implementation](../jafar-processor/README.md)
-- [Handler Factory API](../parser/src/main/java/io/jafar/parser/api/HandlerFactory.java)
 - [Typed Parser Documentation](../parser/README.md#typed-api)

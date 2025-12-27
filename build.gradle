@@ -33,6 +33,7 @@ spotless {
             exclude '**/.vscode/**'
             exclude '**/.gradle/**'
             exclude '**/build/**'
+            exclude '**/resources/templates/**'  // Exclude template files
         }
         googleJavaFormat('1.17.0')
         trimTrailingWhitespace()

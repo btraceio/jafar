@@ -43,15 +43,63 @@ import javax.tools.JavaFileObject;
 @AutoService(Processor.class)
 public class JfrTypeProcessor extends AbstractProcessor {
 
+  // Inline templates for code generation snippets
+  private static final String STATIC_FIELD_TEMPLATE =
+      "  /** Type ID for %s constant pool. Bound at runtime. */\n"
+          + "  private static volatile long %s = -1L;\n\n";
+
+  private static final String INSTANCE_FIELD_CP_TEMPLATE = "  private long %s_cpRef;\n";
+  private static final String INSTANCE_FIELD_TEMPLATE = "  private %s %s;\n";
+
+  private static final String BIND_BODY_TEMPLATE =
+      "    MetadataClass %sClass = metadata.getClass(\"%s\");\n"
+          + "    if (%sClass != null) {\n"
+          + "      %s = %sClass.getId();\n"
+          + "    }\n";
+
+  private static final String SWITCH_CASE_CP_TEMPLATE =
+      "        case \"%s\":\n"
+          + "          this.%s_cpRef = stream.readVarint();\n"
+          + "          break;\n";
+
+  private static final String SWITCH_CASE_TEMPLATE =
+      "        case \"%s\":\n" + "          this.%s = %s;\n" + "          break;\n";
+
+  private static final String RESET_FIELD_CP_TEMPLATE = "    this.%s_cpRef = 0L;\n";
+  private static final String RESET_FIELD_PRIMITIVE_TEMPLATE = "    this.%s = %s;\n";
+  private static final String RESET_FIELD_OBJECT_TEMPLATE = "    this.%s = null;\n";
+
+  private static final String GETTER_CP_TEMPLATE =
+      "  @Override\n"
+          + "  public %s %s() {\n"
+          + "    if (%s == -1L || constantPools == null) {\n"
+          + "      return null;\n"
+          + "    }\n"
+          + "    return (%s) constantPools.getConstantPool(%s).get(%s_cpRef);\n"
+          + "  }\n\n";
+
+  private static final String GETTER_TEMPLATE =
+      "  @Override\n" + "  public %s %s() {\n" + "    return this.%s;\n" + "  }\n\n";
+
   private Filer filer;
   private Messager messager;
   private final Set<String> generatedFactories = new HashSet<>();
+  private TemplateEngine handlerTemplate;
+  private TemplateEngine factoryTemplate;
 
   @Override
   public synchronized void init(ProcessingEnvironment processingEnv) {
     super.init(processingEnv);
     this.filer = processingEnv.getFiler();
     this.messager = processingEnv.getMessager();
+
+    // Load templates
+    try {
+      this.handlerTemplate = new TemplateEngine("templates/HandlerTemplate.java");
+      this.factoryTemplate = new TemplateEngine("templates/FactoryTemplate.java");
+    } catch (IOException e) {
+      messager.printMessage(Diagnostic.Kind.ERROR, "Failed to load templates: " + e.getMessage());
+    }
   }
 
   @Override
@@ -124,156 +172,31 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
     List<FieldInfo> fields = extractFields(interfaceElement);
 
+    // Generate handler code from template
+    String handlerCode =
+        handlerTemplate
+            .builder()
+            .set("PACKAGE", packageName)
+            .set("INTERFACE_NAME", interfaceName)
+            .set("HANDLER_NAME", handlerName)
+            .set("JFR_TYPE_NAME", jfrTypeName)
+            .set("STATIC_TYPE_ID_FIELDS", buildStaticTypeIdFields(fields))
+            .set("INSTANCE_FIELDS", buildInstanceFields(fields))
+            .set("BIND_BODY", buildBindBody(fields))
+            .set("SWITCH_CASES", buildSwitchCases(fields))
+            .set("RESET_FIELDS", buildResetFields(fields))
+            .set("GETTER_METHODS", buildGetterMethods(fields))
+            .render();
+
+    // Remove package declaration if in default package
+    if (packageName.isEmpty()) {
+      handlerCode = handlerCode.replaceFirst("package ;\n\n", "");
+    }
+
+    // Write generated code to file
     JavaFileObject sourceFile = filer.createSourceFile(qualifiedName, interfaceElement);
     try (PrintWriter out = new PrintWriter(sourceFile.openWriter())) {
-      // Package declaration
-      if (!packageName.isEmpty()) {
-        out.println("package " + packageName + ";");
-        out.println();
-      }
-
-      // Imports
-      out.println("import io.jafar.parser.api.ConstantPools;");
-      out.println("import io.jafar.parser.api.MetadataLookup;");
-      out.println("import io.jafar.parser.internal_api.RecordingStream;");
-      out.println("import io.jafar.parser.internal_api.TypeSkipper;");
-      out.println("import io.jafar.parser.internal_api.metadata.MetadataClass;");
-      out.println("import io.jafar.parser.internal_api.metadata.MetadataField;");
-      out.println("import java.io.IOException;");
-      out.println("import java.util.List;");
-      out.println();
-
-      // Class declaration - no @JfrType annotation on impl to avoid re-processing
-      out.println("/**");
-      out.println(" * Generated handler implementation for {@link " + interfaceName + "}.");
-      out.println(" * JFR type: " + jfrTypeName);
-      out.println(" */");
-      out.println("public final class " + handlerName + " implements " + interfaceName + " {");
-      out.println();
-
-      // Static type ID fields for constant pool resolution
-      Set<String> cpTypes = new HashSet<>();
-      for (FieldInfo field : fields) {
-        if (field.needsConstantPool) {
-          cpTypes.add(field.cpTypeName);
-        }
-      }
-      for (String cpType : cpTypes) {
-        String fieldName = cpTypeIdFieldName(cpType);
-        out.println("  /** Type ID for " + cpType + " constant pool. Bound at runtime. */");
-        out.println("  private static volatile long " + fieldName + " = -1L;");
-        out.println();
-      }
-
-      // Instance fields
-      out.println("  // Instance fields for event data");
-      out.println("  private ConstantPools constantPools;");
-      for (FieldInfo field : fields) {
-        if (field.needsConstantPool) {
-          out.println("  private long " + field.fieldName + "_cpRef;");
-        } else {
-          out.println("  private " + field.javaType + " " + field.fieldName + ";");
-        }
-      }
-      out.println();
-
-      // Bind method
-      out.println("  /**");
-      out.println("   * Binds type IDs from the recording metadata.");
-      out.println("   * Must be called before using handlers with a new recording.");
-      out.println("   */");
-      out.println("  public static void bind(MetadataLookup metadata) {");
-      for (String cpType : cpTypes) {
-        String fieldName = cpTypeIdFieldName(cpType);
-        out.println(
-            "    MetadataClass "
-                + sanitizeVarName(cpType)
-                + "Class = metadata.getClass(\""
-                + cpType
-                + "\");");
-        out.println("    if (" + sanitizeVarName(cpType) + "Class != null) {");
-        out.println("      " + fieldName + " = " + sanitizeVarName(cpType) + "Class.getId();");
-        out.println("    }");
-      }
-      out.println("  }");
-      out.println();
-
-      // Read method
-      out.println("  /**");
-      out.println("   * Reads event data from the stream.");
-      out.println("   * @param stream the recording stream positioned at event data");
-      out.println("   * @param metadata the metadata class for this event type");
-      out.println("   * @param constantPools the constant pools for resolving references");
-      out.println("   * @throws IOException if reading fails");
-      out.println("   */");
-      out.println(
-          "  public void read(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) throws IOException {");
-      out.println("    this.constantPools = constantPools;");
-      out.println("    List<MetadataField> metaFields = metadata.getFields();");
-      out.println("    for (MetadataField metaField : metaFields) {");
-      out.println("      String fieldName = metaField.getName();");
-      out.println("      switch (fieldName) {");
-
-      for (FieldInfo field : fields) {
-        out.println("        case \"" + field.jfrFieldName + "\":");
-        if (field.needsConstantPool) {
-          out.println("          this." + field.fieldName + "_cpRef = stream.readVarint();");
-        } else {
-          out.println("          this." + field.fieldName + " = " + generateReadCode(field) + ";");
-        }
-        out.println("          break;");
-      }
-
-      out.println("        default:");
-      out.println("          TypeSkipper.skip(metaField, stream);");
-      out.println("          break;");
-      out.println("      }");
-      out.println("    }");
-      out.println("  }");
-      out.println();
-
-      // Reset method for reuse
-      out.println("  /** Resets instance fields for reuse. */");
-      out.println("  public void reset() {");
-      out.println("    this.constantPools = null;");
-      for (FieldInfo field : fields) {
-        if (field.needsConstantPool) {
-          out.println("    this." + field.fieldName + "_cpRef = 0L;");
-        } else if (field.isPrimitive) {
-          out.println(
-              "    this." + field.fieldName + " = " + getDefaultValue(field.javaType) + ";");
-        } else {
-          out.println("    this." + field.fieldName + " = null;");
-        }
-      }
-      out.println("  }");
-      out.println();
-
-      // Getter methods (interface implementation)
-      for (FieldInfo field : fields) {
-        out.println("  @Override");
-        out.println("  public " + field.returnType + " " + field.methodName + "() {");
-        if (field.needsConstantPool) {
-          String cpTypeIdField = cpTypeIdFieldName(field.cpTypeName);
-          out.println("    if (" + cpTypeIdField + " == -1L || constantPools == null) {");
-          out.println("      return null;");
-          out.println("    }");
-          out.println(
-              "    return ("
-                  + field.returnType
-                  + ") constantPools.getConstantPool("
-                  + cpTypeIdField
-                  + ").get("
-                  + field.fieldName
-                  + "_cpRef);");
-        } else {
-          out.println("    return this." + field.fieldName + ";");
-        }
-        out.println("  }");
-        out.println();
-      }
-
-      out.println("}");
+      out.print(handlerCode);
     }
   }
 
@@ -287,99 +210,26 @@ public class JfrTypeProcessor extends AbstractProcessor {
     JfrType jfrType = interfaceElement.getAnnotation(JfrType.class);
     String jfrTypeName = jfrType.value();
 
+    // Generate factory code from template
+    String factoryCode =
+        factoryTemplate
+            .builder()
+            .set("PACKAGE", packageName)
+            .set("INTERFACE_NAME", interfaceName)
+            .set("HANDLER_NAME", handlerName)
+            .set("FACTORY_NAME", factoryName)
+            .set("JFR_TYPE_NAME", jfrTypeName)
+            .render();
+
+    // Remove package declaration if in default package
+    if (packageName.isEmpty()) {
+      factoryCode = factoryCode.replaceFirst("package ;\n\n", "");
+    }
+
+    // Write generated code to file
     JavaFileObject sourceFile = filer.createSourceFile(qualifiedName, interfaceElement);
     try (PrintWriter out = new PrintWriter(sourceFile.openWriter())) {
-      // Package declaration
-      if (!packageName.isEmpty()) {
-        out.println("package " + packageName + ";");
-        out.println();
-      }
-
-      // Imports
-      out.println("import io.jafar.parser.api.ConstantPools;");
-      out.println("import io.jafar.parser.api.HandlerFactory;");
-      out.println("import io.jafar.parser.api.MetadataLookup;");
-      out.println("import io.jafar.parser.internal_api.RecordingStream;");
-      out.println("import io.jafar.parser.internal_api.metadata.MetadataClass;");
-      out.println();
-
-      // Class declaration - implements HandlerFactory<InterfaceType>
-      out.println("/**");
-      out.println(" * Generated factory for {@link " + handlerName + "}.");
-      out.println(" * Provides thread-local cached handler instances for reduced allocations.");
-      out.println(" * JFR type: " + jfrTypeName);
-      out.println(" */");
-      out.println(
-          "public final class "
-              + factoryName
-              + " implements HandlerFactory<"
-              + interfaceName
-              + "> {");
-      out.println();
-
-      // Thread-local cache - instance field for thread safety
-      out.println("  /** Thread-local cache for handler instances. */");
-      out.println("  private final ThreadLocal<" + handlerName + "> cache =");
-      out.println("      ThreadLocal.withInitial(" + handlerName + "::new);");
-      out.println();
-
-      // Public constructor
-      out.println("  /** Creates a new factory instance. */");
-      out.println("  public " + factoryName + "() {}");
-      out.println();
-
-      // Bind method (implements HandlerFactory)
-      out.println("  /**");
-      out.println("   * {@inheritDoc}");
-      out.println("   */");
-      out.println("  @Override");
-      out.println("  public void bind(MetadataLookup metadata) {");
-      out.println("    " + handlerName + ".bind(metadata);");
-      out.println("  }");
-      out.println();
-
-      // Get method (implements HandlerFactory)
-      out.println("  /**");
-      out.println("   * {@inheritDoc}");
-      out.println("   */");
-      out.println("  @Override");
-      out.println(
-          "  public "
-              + interfaceName
-              + " get(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) {");
-      out.println("    " + handlerName + " handler = cache.get();");
-      out.println("    handler.reset();");
-      out.println("    try {");
-      out.println("      handler.read(stream, metadata, constantPools);");
-      out.println("    } catch (java.io.IOException e) {");
-      out.println("      throw new RuntimeException(\"Failed to read event data\", e);");
-      out.println("    }");
-      out.println("    return handler;");
-      out.println("  }");
-      out.println();
-
-      // Get JFR type name (implements HandlerFactory)
-      out.println("  /**");
-      out.println("   * {@inheritDoc}");
-      out.println("   */");
-      out.println("  @Override");
-      out.println("  public String getJfrTypeName() {");
-      out.println("    return \"" + jfrTypeName + "\";");
-      out.println("  }");
-      out.println();
-
-      // Get interface class (implements HandlerFactory)
-      out.println("  /**");
-      out.println("   * {@inheritDoc}");
-      out.println("   */");
-      out.println("  @Override");
-      out.println("  @SuppressWarnings(\"unchecked\")");
-      out.println("  public Class<" + interfaceName + "> getInterfaceClass() {");
-      out.println("    return " + interfaceName + ".class;");
-      out.println("  }");
-      out.println();
-
-      out.println("}");
+      out.print(factoryCode);
     }
 
     return qualifiedName;
@@ -402,6 +252,172 @@ public class JfrTypeProcessor extends AbstractProcessor {
     messager.printMessage(
         Diagnostic.Kind.NOTE,
         "Generated ServiceLoader registration for " + generatedFactories.size() + " factories");
+  }
+
+  // --- Template application methods (single item) ---
+
+  /** Generates a static type ID field declaration for constant pool resolution. */
+  private String staticFieldDeclaration(String cpType) {
+    String fieldName = cpTypeIdFieldName(cpType);
+    return String.format(STATIC_FIELD_TEMPLATE, cpType, fieldName);
+  }
+
+  /** Generates an instance field declaration for constant pool reference. */
+  private String instanceFieldCpDeclaration(String fieldName) {
+    return String.format(INSTANCE_FIELD_CP_TEMPLATE, fieldName);
+  }
+
+  /** Generates an instance field declaration. */
+  private String instanceFieldDeclaration(String javaType, String fieldName) {
+    return String.format(INSTANCE_FIELD_TEMPLATE, javaType, fieldName);
+  }
+
+  /** Generates bind method body for a constant pool type. */
+  private String bindStatement(String cpType) {
+    String fieldName = cpTypeIdFieldName(cpType);
+    String varName = sanitizeVarName(cpType);
+    return String.format(BIND_BODY_TEMPLATE, varName, cpType, varName, fieldName, varName);
+  }
+
+  /** Generates a switch case for constant pool field reading. */
+  private String switchCaseCp(String jfrFieldName, String fieldName) {
+    return String.format(SWITCH_CASE_CP_TEMPLATE, jfrFieldName, fieldName);
+  }
+
+  /** Generates a switch case for direct field reading. */
+  private String switchCase(String jfrFieldName, String fieldName, String readCode) {
+    return String.format(SWITCH_CASE_TEMPLATE, jfrFieldName, fieldName, readCode);
+  }
+
+  /** Generates reset statement for constant pool reference field. */
+  private String resetFieldCp(String fieldName) {
+    return String.format(RESET_FIELD_CP_TEMPLATE, fieldName);
+  }
+
+  /** Generates reset statement for primitive field. */
+  private String resetFieldPrimitive(String fieldName, String javaType) {
+    return String.format(RESET_FIELD_PRIMITIVE_TEMPLATE, fieldName, getDefaultValue(javaType));
+  }
+
+  /** Generates reset statement for object field. */
+  private String resetFieldObject(String fieldName) {
+    return String.format(RESET_FIELD_OBJECT_TEMPLATE, fieldName);
+  }
+
+  /** Generates getter method for constant pool field. */
+  private String getterMethodCp(
+      String returnType, String methodName, String cpTypeName, String fieldName) {
+    String cpTypeIdField = cpTypeIdFieldName(cpTypeName);
+    return String.format(
+        GETTER_CP_TEMPLATE,
+        returnType,
+        methodName,
+        cpTypeIdField,
+        returnType,
+        cpTypeIdField,
+        fieldName);
+  }
+
+  /** Generates getter method for direct field. */
+  private String getterMethod(String returnType, String methodName, String fieldName) {
+    return String.format(GETTER_TEMPLATE, returnType, methodName, fieldName);
+  }
+
+  // --- Build methods (aggregate multiple items) ---
+
+  /** Builds static type ID fields for constant pool resolution. */
+  private String buildStaticTypeIdFields(List<FieldInfo> fields) {
+    Set<String> cpTypes = new HashSet<>();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        cpTypes.add(field.cpTypeName);
+      }
+    }
+
+    if (cpTypes.isEmpty()) {
+      return "";
+    }
+
+    StringBuilder sb = new StringBuilder();
+    for (String cpType : cpTypes) {
+      sb.append(staticFieldDeclaration(cpType));
+    }
+    return sb.toString();
+  }
+
+  /** Builds instance field declarations. */
+  private String buildInstanceFields(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        sb.append(instanceFieldCpDeclaration(field.fieldName));
+      } else {
+        sb.append(instanceFieldDeclaration(field.javaType, field.fieldName));
+      }
+    }
+    return sb.toString();
+  }
+
+  /** Builds the bind method body. */
+  private String buildBindBody(List<FieldInfo> fields) {
+    Set<String> cpTypes = new HashSet<>();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        cpTypes.add(field.cpTypeName);
+      }
+    }
+
+    if (cpTypes.isEmpty()) {
+      return "";
+    }
+
+    StringBuilder sb = new StringBuilder();
+    for (String cpType : cpTypes) {
+      sb.append(bindStatement(cpType));
+    }
+    return sb.toString();
+  }
+
+  /** Builds switch cases for field reading. */
+  private String buildSwitchCases(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        sb.append(switchCaseCp(field.jfrFieldName, field.fieldName));
+      } else {
+        sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
+      }
+    }
+    return sb.toString();
+  }
+
+  /** Builds field reset statements. */
+  private String buildResetFields(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        sb.append(resetFieldCp(field.fieldName));
+      } else if (field.isPrimitive) {
+        sb.append(resetFieldPrimitive(field.fieldName, field.javaType));
+      } else {
+        sb.append(resetFieldObject(field.fieldName));
+      }
+    }
+    return sb.toString();
+  }
+
+  /** Builds getter method implementations. */
+  private String buildGetterMethods(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool) {
+        sb.append(
+            getterMethodCp(field.returnType, field.methodName, field.cpTypeName, field.fieldName));
+      } else {
+        sb.append(getterMethod(field.returnType, field.methodName, field.fieldName));
+      }
+    }
+    return sb.toString();
   }
 
   private List<FieldInfo> extractFields(TypeElement interfaceElement) {
