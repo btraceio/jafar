@@ -1,6 +1,7 @@
 package io.jafar.parser.impl;
 
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.HandlerFactory;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.JFRHandler;
 import io.jafar.parser.api.JafarConfigurationException;
@@ -30,6 +31,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.Set;
 
 /**
@@ -97,6 +99,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   /** Global map of event type names to handler classes. */
   private final Map<String, Class<?>> globalHandlerMap;
 
+  /** Map of interface classes to their build-time generated factories. */
+  private final Map<Class<?>, HandlerFactory<?>> factoryMap;
+
+  /** Whether build-time factories have been bound to the current recording. */
+  private volatile boolean factoriesBound = false;
+
   /** Whether this parser has been closed. */
   private boolean closed = false;
 
@@ -112,7 +120,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.handlerMap = new HashMap<>();
     this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>();
     this.globalHandlerMap = new HashMap<>();
+    this.factoryMap = new HashMap<>();
     this.parserListener = null;
+
+    // Auto-discover and register build-time generated factories via ServiceLoader
+    discoverFactories();
   }
 
   private TypedJafarParserImpl(TypedJafarParserImpl other, ChunkParserListener listener) {
@@ -121,6 +133,8 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.handlerMap = new HashMap<>(other.handlerMap);
     this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>(other.chunkTypeClassMap);
     this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
+    this.factoryMap = new HashMap<>(other.factoryMap);
+    this.factoriesBound = false;
     this.closed = other.closed;
     this.parserListener = listener;
   }
@@ -222,6 +236,29 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             TypedParserContext lContext = (TypedParserContext) context;
             Long2ObjectMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
 
+            // Bind build-time factories once per recording
+            if (!factoryMap.isEmpty() && !factoriesBound) {
+              synchronized (TypedJafarParserImpl.this) {
+                if (!factoriesBound) {
+                  // First, bind factories for type ID resolution
+                  for (HandlerFactory<?> factory : factoryMap.values()) {
+                    factory.bind(context.getMetadataLookup());
+                  }
+
+                  // Then inject factories into corresponding MetadataClass instances
+                  for (Map.Entry<Class<?>, HandlerFactory<?>> entry : factoryMap.entrySet()) {
+                    String jfrTypeName = entry.getValue().getJfrTypeName();
+                    MetadataClass metadataClass = context.getMetadataLookup().getClass(jfrTypeName);
+                    if (metadataClass != null) {
+                      metadataClass.bindFactory(entry.getValue());
+                    }
+                  }
+
+                  factoriesBound = true;
+                }
+              }
+            }
+
             // Build transitive closure of all types referenced by registered handlers (once per
             // session)
             if (!globalHandlerMap.isEmpty() && referencedTypes == null) {
@@ -259,14 +296,17 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             if (!(context instanceof TypedParserContext)) {
               throw new RuntimeException("Invalid context");
             }
-            Long2ObjectMap<Class<?>> typeClassMap =
-                ((TypedParserContext) context).getClassTypeMap();
+            TypedParserContext typedContext = (TypedParserContext) context;
+            Long2ObjectMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
             Class<?> typeClz = typeClassMap.get(typeId);
             if (typeClz != null) {
               if (handlerMap.containsKey(typeClz)) {
                 RecordingStream stream = context.get(RecordingStream.class);
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
+
+                // MetadataClass.read() handles both factory and deserializer paths
                 Object deserialized = clz.read(stream);
+
                 ControlImpl ctrl = (ControlImpl) control.get();
                 for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
                   handler.handle(deserialized, ctrl);
@@ -292,7 +332,40 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       chunkTypeClassMap.clear();
       handlerMap.clear();
       globalHandlerMap.clear();
+      factoryMap.clear();
     }
+  }
+
+  /**
+   * Auto-discovers and registers build-time generated factories via ServiceLoader.
+   *
+   * <p>This method loads all implementations of {@link HandlerFactory} found on the classpath via
+   * ServiceLoader and registers them automatically. If no factories are found, the parser will fall
+   * back to runtime bytecode generation for handlers.
+   */
+  private void discoverFactories() {
+    try {
+      ServiceLoader<HandlerFactory> loader = ServiceLoader.load(HandlerFactory.class);
+      for (HandlerFactory<?> factory : loader) {
+        registerFactory(factory);
+      }
+    } catch (Exception e) {
+      // If ServiceLoader fails (e.g., no factories available), fall back to runtime generation
+      // This is expected behavior when build-time generation is not configured
+    }
+  }
+
+  @Override
+  public <T> void registerFactory(HandlerFactory<T> factory) {
+    if (factory == null) {
+      throw new IllegalArgumentException("factory cannot be null");
+    }
+    Class<T> interfaceClass = factory.getInterfaceClass();
+    factoryMap.put(interfaceClass, factory);
+
+    // Also add to globalHandlerMap for type filtering
+    String jfrTypeName = factory.getJfrTypeName();
+    globalHandlerMap.put(jfrTypeName, interfaceClass);
   }
 
   @SuppressWarnings("unchecked")

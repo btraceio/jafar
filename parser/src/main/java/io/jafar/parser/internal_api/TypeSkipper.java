@@ -17,6 +17,30 @@ import java.util.List;
  */
 public final class TypeSkipper {
   /**
+   * Skips over a single field's data in the stream.
+   *
+   * @param field the metadata field to skip
+   * @param stream the recording stream to skip over
+   * @throws IOException if an I/O error occurs during skipping
+   */
+  public static void skip(MetadataField field, RecordingStream stream) throws IOException {
+    MetadataClass fieldType = field.getType();
+    if (fieldType != null) {
+      int dimension = field.getDimension();
+      if (dimension > 0) {
+        int count = (int) stream.readVarint();
+        for (int i = 0; i < count; i++) {
+          fieldType.skip(stream); // Use cached skipper from MetadataClass
+        }
+      } else if (field.hasConstantPool()) {
+        stream.readVarint(); // skip CP reference
+      } else {
+        fieldType.skip(stream); // Use cached skipper from MetadataClass
+      }
+    }
+  }
+
+  /**
    * Creates a TypeSkipper for the specified metadata class.
    *
    * @param clz the metadata class to create a skipper for

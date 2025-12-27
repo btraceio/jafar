@@ -202,6 +202,9 @@ dependencies {
     // JMH for benchmarks
     jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
     jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+
+    // Jafar annotation processor for build-time handler generation
+    jmhAnnotationProcessor project(':jafar-processor')
 }
 
 test {

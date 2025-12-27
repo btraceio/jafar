@@ -1,5 +1,7 @@
 package io.jafar.parser.internal_api.metadata;
 
+import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.HandlerFactory;
 import io.jafar.parser.impl.TypedParserContext;
 import io.jafar.parser.internal_api.Deserializer;
 import io.jafar.parser.internal_api.DeserializerCache;
@@ -83,6 +85,13 @@ public final class MetadataClass extends AbstractMetadataElement {
 
   private volatile TypeSkipper typeSkipper;
 
+  /** The build-time generated factory associated with this class. */
+  private volatile HandlerFactory<?> factory;
+
+  @SuppressWarnings("rawtypes")
+  private static final AtomicReferenceFieldUpdater<MetadataClass, HandlerFactory> FACTORY_UPDATER =
+      AtomicReferenceFieldUpdater.newUpdater(MetadataClass.class, HandlerFactory.class, "factory");
+
   /**
    * Constructs a new MetadataClass from the recording stream and event.
    *
@@ -138,6 +147,26 @@ public final class MetadataClass extends AbstractMetadataElement {
               new TypedParserContext.DeserializerKey(MetadataClass.this, targetClass),
               k -> Deserializer.forType(MetadataClass.this));
         });
+  }
+
+  /**
+   * Binds a build-time generated factory to this class.
+   *
+   * <p>If a factory is bound, it takes precedence over runtime deserializers.
+   *
+   * @param handlerFactory the factory to bind
+   */
+  public void bindFactory(HandlerFactory<?> handlerFactory) {
+    FACTORY_UPDATER.set(this, handlerFactory);
+  }
+
+  /**
+   * Gets the bound factory, if any.
+   *
+   * @return the factory, or null if none is bound
+   */
+  public HandlerFactory<?> getFactory() {
+    return factory;
   }
 
   /**
@@ -314,8 +343,19 @@ public final class MetadataClass extends AbstractMetadataElement {
    */
   @SuppressWarnings("unchecked")
   public <T> T read(RecordingStream stream) {
-    // Ensure a deserializer is available; some call sites (e.g., constant pool access)
-    // may invoke read() before any handler binds the deserializer.
+    // Check if build-time factory is available (priority path)
+    HandlerFactory<?> f = factory;
+    if (f != null) {
+      try {
+        // Factory path: get ConstantPools from context automatically
+        ConstantPools constantPools = getContext().getConstantPools();
+        return (T) f.get(stream, this, constantPools);
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+    // Fall back to runtime deserializer path
     Deserializer<?> d = getDeserializer();
     if (d == null) {
       return null;
