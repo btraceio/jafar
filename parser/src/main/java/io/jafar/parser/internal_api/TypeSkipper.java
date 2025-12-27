@@ -26,17 +26,16 @@ public final class TypeSkipper {
   public static void skip(MetadataField field, RecordingStream stream) throws IOException {
     MetadataClass fieldType = field.getType();
     if (fieldType != null) {
-      TypeSkipper skipper = createSkipper(fieldType);
       int dimension = field.getDimension();
       if (dimension > 0) {
         int count = (int) stream.readVarint();
         for (int i = 0; i < count; i++) {
-          skipper.skip(stream);
+          fieldType.skip(stream); // Use cached skipper from MetadataClass
         }
       } else if (field.hasConstantPool()) {
         stream.readVarint(); // skip CP reference
       } else {
-        skipper.skip(stream);
+        fieldType.skip(stream); // Use cached skipper from MetadataClass
       }
     }
   }
