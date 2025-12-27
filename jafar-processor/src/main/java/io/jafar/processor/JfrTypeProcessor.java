@@ -49,6 +49,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "  private static volatile long %s = -1L;\n\n";
 
   private static final String INSTANCE_FIELD_CP_TEMPLATE = "  private long %s_cpRef;\n";
+  private static final String INSTANCE_FIELD_CP_ARRAY_TEMPLATE = "  private long[] %s_cpRef;\n";
   private static final String INSTANCE_FIELD_TEMPLATE = "  private %s %s;\n";
 
   private static final String BIND_BODY_TEMPLATE =
@@ -61,6 +62,36 @@ public class JfrTypeProcessor extends AbstractProcessor {
       "        case \"%s\":\n"
           + "          this.%s_cpRef = stream.readVarint();\n"
           + "          break;\n";
+
+  private static final String SWITCH_CASE_CP_ARRAY_TEMPLATE =
+      "        case \"%s\": {\n"
+          + "          int count = (int) stream.readVarint();\n"
+          + "          this.%s_cpRef = new long[count];\n"
+          + "          for (int i = 0; i < count; i++) {\n"
+          + "            this.%s_cpRef[i] = stream.readVarint();\n"
+          + "          }\n"
+          + "          break;\n"
+          + "        }\n";
+
+  private static final String SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE =
+      "        case \"%s\": {\n"
+          + "          int count = (int) stream.readVarint();\n"
+          + "          this.%s = new %s[count];\n"
+          + "          for (int i = 0; i < count; i++) {\n"
+          + "            this.%s[i] = %s;\n"
+          + "          }\n"
+          + "          break;\n"
+          + "        }\n";
+
+  private static final String SWITCH_CASE_STRING_ARRAY_TEMPLATE =
+      "        case \"%s\": {\n"
+          + "          int count = (int) stream.readVarint();\n"
+          + "          this.%s = new String[count];\n"
+          + "          for (int i = 0; i < count; i++) {\n"
+          + "            this.%s[i] = stream.readUTF8();\n"
+          + "          }\n"
+          + "          break;\n"
+          + "        }\n";
 
   private static final String SWITCH_CASE_TEMPLATE =
       "        case \"%s\":\n" + "          this.%s = %s;\n" + "          break;\n";
@@ -76,6 +107,19 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "      return null;\n"
           + "    }\n"
           + "    return (%s) constantPools.getConstantPool(%s).get(%s_cpRef);\n"
+          + "  }\n\n";
+
+  private static final String GETTER_CP_ARRAY_TEMPLATE =
+      "  @Override\n"
+          + "  public %s[] %s() {\n"
+          + "    if (%s == -1L || constantPools == null || this.%s_cpRef == null) {\n"
+          + "      return null;\n"
+          + "    }\n"
+          + "    %s[] result = new %s[this.%s_cpRef.length];\n"
+          + "    for (int i = 0; i < this.%s_cpRef.length; i++) {\n"
+          + "      result[i] = (%s) constantPools.getConstantPool(%s).get(this.%s_cpRef[i]);\n"
+          + "    }\n"
+          + "    return result;\n"
           + "  }\n\n";
 
   private static final String GETTER_TEMPLATE =
@@ -267,6 +311,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
     return String.format(INSTANCE_FIELD_CP_TEMPLATE, fieldName);
   }
 
+  /** Generates an instance field declaration for constant pool reference array. */
+  private String instanceFieldCpArrayDeclaration(String fieldName) {
+    return String.format(INSTANCE_FIELD_CP_ARRAY_TEMPLATE, fieldName);
+  }
+
   /** Generates an instance field declaration. */
   private String instanceFieldDeclaration(String javaType, String fieldName) {
     return String.format(INSTANCE_FIELD_TEMPLATE, javaType, fieldName);
@@ -287,6 +336,23 @@ public class JfrTypeProcessor extends AbstractProcessor {
   /** Generates a switch case for direct field reading. */
   private String switchCase(String jfrFieldName, String fieldName, String readCode) {
     return String.format(SWITCH_CASE_TEMPLATE, jfrFieldName, fieldName, readCode);
+  }
+
+  /** Generates a switch case for constant pool array reading. */
+  private String switchCaseCpArray(String jfrFieldName, String fieldName) {
+    return String.format(SWITCH_CASE_CP_ARRAY_TEMPLATE, jfrFieldName, fieldName, fieldName);
+  }
+
+  /** Generates a switch case for primitive array reading. */
+  private String switchCasePrimitiveArray(
+      String jfrFieldName, String fieldName, String elementType, String readCode) {
+    return String.format(
+        SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE, jfrFieldName, fieldName, elementType, fieldName, readCode);
+  }
+
+  /** Generates a switch case for String array reading. */
+  private String switchCaseStringArray(String jfrFieldName, String fieldName) {
+    return String.format(SWITCH_CASE_STRING_ARRAY_TEMPLATE, jfrFieldName, fieldName, fieldName);
   }
 
   /** Generates reset statement for constant pool reference field. */
@@ -314,6 +380,25 @@ public class JfrTypeProcessor extends AbstractProcessor {
         methodName,
         cpTypeIdField,
         returnType,
+        cpTypeIdField,
+        fieldName);
+  }
+
+  /** Generates getter method for constant pool array field. */
+  private String getterMethodCpArray(
+      String elementType, String methodName, String cpTypeName, String fieldName) {
+    String cpTypeIdField = cpTypeIdFieldName(cpTypeName);
+    return String.format(
+        GETTER_CP_ARRAY_TEMPLATE,
+        elementType,
+        methodName,
+        cpTypeIdField,
+        fieldName,
+        elementType,
+        elementType,
+        fieldName,
+        fieldName,
+        elementType,
         cpTypeIdField,
         fieldName);
   }
@@ -350,7 +435,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
     StringBuilder sb = new StringBuilder();
     for (FieldInfo field : fields) {
       if (field.needsConstantPool) {
-        sb.append(instanceFieldCpDeclaration(field.fieldName));
+        if (field.isArray) {
+          sb.append(instanceFieldCpArrayDeclaration(field.fieldName));
+        } else {
+          sb.append(instanceFieldCpDeclaration(field.fieldName));
+        }
       } else {
         sb.append(instanceFieldDeclaration(field.javaType, field.fieldName));
       }
@@ -382,10 +471,28 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private String buildSwitchCases(List<FieldInfo> fields) {
     StringBuilder sb = new StringBuilder();
     for (FieldInfo field : fields) {
-      if (field.needsConstantPool) {
-        sb.append(switchCaseCp(field.jfrFieldName, field.fieldName));
+      if (field.isArray) {
+        // Array handling
+        if (field.needsConstantPool) {
+          // Array of complex types - read count + loop of CP refs
+          sb.append(switchCaseCpArray(field.jfrFieldName, field.fieldName));
+        } else if (field.elementType.equals("String")) {
+          // String array - read count + loop of UTF-8 strings
+          sb.append(switchCaseStringArray(field.jfrFieldName, field.fieldName));
+        } else {
+          // Primitive array - read count + loop of primitives
+          String readCode = generateReadCode(field);
+          sb.append(
+              switchCasePrimitiveArray(
+                  field.jfrFieldName, field.fieldName, field.elementType, readCode));
+        }
       } else {
-        sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
+        // Non-array handling
+        if (field.needsConstantPool) {
+          sb.append(switchCaseCp(field.jfrFieldName, field.fieldName));
+        } else {
+          sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
+        }
       }
     }
     return sb.toString();
@@ -411,8 +518,16 @@ public class JfrTypeProcessor extends AbstractProcessor {
     StringBuilder sb = new StringBuilder();
     for (FieldInfo field : fields) {
       if (field.needsConstantPool) {
-        sb.append(
-            getterMethodCp(field.returnType, field.methodName, field.cpTypeName, field.fieldName));
+        if (field.isArray) {
+          // CP array - resolve long[] to object array
+          sb.append(
+              getterMethodCpArray(
+                  field.elementType, field.methodName, field.cpTypeName, field.fieldName));
+        } else {
+          // Single CP reference
+          sb.append(
+              getterMethodCp(field.returnType, field.methodName, field.cpTypeName, field.fieldName));
+        }
       } else {
         sb.append(getterMethod(field.returnType, field.methodName, field.fieldName));
       }
@@ -485,14 +600,32 @@ public class JfrTypeProcessor extends AbstractProcessor {
       ArrayType arrayType = (ArrayType) type;
       TypeMirror componentType = arrayType.getComponentType();
       field.isArray = true;
+
       if (componentType.getKind().isPrimitive()) {
+        // Primitive array (int[], long[], etc.) - inline encoding
         field.needsConstantPool = false;
-        field.javaType = type.toString();
-      } else {
-        // Array of complex types - needs constant pool
-        field.needsConstantPool = true;
-        field.cpTypeName = getJfrTypeName(componentType);
-        field.javaType = "long"; // Store CP ref
+        field.elementIsPrimitive = true;
+        field.elementType = componentType.toString();
+        field.javaType = type.toString(); // Keep as int[], long[], etc.
+      } else if (componentType.getKind() == TypeKind.DECLARED) {
+        DeclaredType declaredComponentType = (DeclaredType) componentType;
+        TypeElement componentElement = (TypeElement) declaredComponentType.asElement();
+        String componentName = componentElement.getQualifiedName().toString();
+
+        if (componentName.equals("java.lang.String")) {
+          // String array - inline UTF-8 encoding
+          field.needsConstantPool = false;
+          field.elementIsPrimitive = false;
+          field.elementType = "String";
+          field.javaType = "String[]";
+        } else {
+          // Array of complex types - CP reference array
+          field.needsConstantPool = true;
+          field.elementIsPrimitive = false;
+          field.cpTypeName = getJfrTypeName(componentType);
+          field.elementType = componentName; // Store element type for getter
+          field.javaType = "long[]"; // Store as array of CP refs
+        }
       }
     } else if (kind == TypeKind.DECLARED) {
       DeclaredType declaredType = (DeclaredType) type;
@@ -554,27 +687,33 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private String generateReadCode(FieldInfo field) {
     // Note: RecordingStream uses readVarint() for all varint-encoded integers
-    if (field.javaType.equals("long")) {
+    String typeToRead = field.isArray ? field.elementType : field.javaType;
+    return generateReadCodeForType(typeToRead);
+  }
+
+  private String generateReadCodeForType(String javaType) {
+    // Note: RecordingStream uses readVarint() for all varint-encoded integers
+    if (javaType.equals("long")) {
       return "stream.readVarint()";
-    } else if (field.javaType.equals("int")) {
+    } else if (javaType.equals("int")) {
       return "(int) stream.readVarint()";
-    } else if (field.javaType.equals("short")) {
+    } else if (javaType.equals("short")) {
       return "(short) stream.readVarint()";
-    } else if (field.javaType.equals("byte")) {
+    } else if (javaType.equals("byte")) {
       return "(byte) stream.readVarint()";
-    } else if (field.javaType.equals("boolean")) {
+    } else if (javaType.equals("boolean")) {
       return "stream.readBoolean()";
-    } else if (field.javaType.equals("char")) {
+    } else if (javaType.equals("char")) {
       return "(char) stream.readVarint()";
-    } else if (field.javaType.equals("float")) {
+    } else if (javaType.equals("float")) {
       return "stream.readFloat()";
-    } else if (field.javaType.equals("double")) {
+    } else if (javaType.equals("double")) {
       return "stream.readDouble()";
-    } else if (field.javaType.equals("String")) {
+    } else if (javaType.equals("String")) {
       return "stream.readUTF8()";
     } else {
       // Complex type - should be handled by constant pool path
-      return "null /* unsupported type: " + field.javaType + " */";
+      return "null /* unsupported type: " + javaType + " */";
     }
   }
 
@@ -613,5 +752,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
     boolean needsConstantPool;
     String cpTypeName;
     boolean isRaw;
+    // Array-specific fields
+    String elementType; // Element type name (e.g., "int", "String", "JFRStackFrame")
+    boolean elementIsPrimitive;
   }
 }
