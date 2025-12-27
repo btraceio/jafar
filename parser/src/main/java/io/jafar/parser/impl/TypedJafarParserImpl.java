@@ -240,9 +240,20 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             if (!factoryMap.isEmpty() && !factoriesBound) {
               synchronized (TypedJafarParserImpl.this) {
                 if (!factoriesBound) {
+                  // First, bind factories for type ID resolution
                   for (HandlerFactory<?> factory : factoryMap.values()) {
                     factory.bind(context.getMetadataLookup());
                   }
+
+                  // Then inject factories into corresponding MetadataClass instances
+                  for (Map.Entry<Class<?>, HandlerFactory<?>> entry : factoryMap.entrySet()) {
+                    String jfrTypeName = entry.getValue().getJfrTypeName();
+                    MetadataClass metadataClass = context.getMetadataLookup().getClass(jfrTypeName);
+                    if (metadataClass != null) {
+                      metadataClass.bindFactory(entry.getValue());
+                    }
+                  }
+
                   factoriesBound = true;
                 }
               }
@@ -293,14 +304,8 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 RecordingStream stream = context.get(RecordingStream.class);
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
 
-                // Use factory if available, otherwise use runtime-generated deserializer
-                Object deserialized;
-                HandlerFactory<?> factory = factoryMap.get(typeClz);
-                if (factory != null) {
-                  deserialized = factory.get(stream, clz, typedContext.getConstantPools());
-                } else {
-                  deserialized = clz.read(stream);
-                }
+                // MetadataClass.read() handles both factory and deserializer paths
+                Object deserialized = clz.read(stream);
 
                 ControlImpl ctrl = (ControlImpl) control.get();
                 for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
