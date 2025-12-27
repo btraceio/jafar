@@ -508,7 +508,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
     StringBuilder sb = new StringBuilder();
     for (FieldInfo field : fields) {
       if (field.needsConstantPool) {
-        sb.append(resetFieldCp(field.fieldName));
+        if (field.isArray) {
+          // CP array field: reset to null
+          sb.append(resetFieldObject(field.fieldName + "_cpRef"));
+        } else {
+          // Single CP ref: reset to 0L
+          sb.append(resetFieldCp(field.fieldName));
+        }
       } else if (field.isPrimitive) {
         sb.append(resetFieldPrimitive(field.fieldName, field.javaType));
       } else {

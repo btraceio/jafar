@@ -811,11 +811,25 @@ class JfrTypeProcessorTest {
         .contentsAsUtf8String()
         .contains("STACKFRAME_TYPE_ID");
 
-    // Verify handler has CP reference field for the array
+    // Verify handler has CP reference array field for the array
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("private long frames_cpRef");
+        .contains("private long[] frames_cpRef");
+
+    // Verify array reading in switch case (count + loop)
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("int count = (int) stream.readVarint()");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("this.frames_cpRef = new long[count]");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("this.frames_cpRef[i] = stream.readVarint()");
 
     // Verify getter resolves from constant pool with array type
     assertThat(compilation)
@@ -829,7 +843,7 @@ class JfrTypeProcessorTest {
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("get(frames_cpRef)");
+        .contains("get(this.frames_cpRef[i])");
 
     // Verify bind method sets up the type ID
     assertThat(compilation)
@@ -842,10 +856,14 @@ class JfrTypeProcessorTest {
         .contentsAsUtf8String()
         .contains("STACKFRAME_TYPE_ID = jdk_types_StackFrameClass.getId()");
 
-    // Verify cast to array type in getter
+    // Verify array creation and loop in getter
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("(test.JFRStackFrame[])");
+        .contains("test.JFRStackFrame[] result = new test.JFRStackFrame[");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("for (int i = 0; i < this.frames_cpRef.length; i++)");
   }
 }
