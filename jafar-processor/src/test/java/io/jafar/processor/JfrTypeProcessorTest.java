@@ -835,7 +835,8 @@ class JfrTypeProcessorTest {
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("MetadataClass jdk_types_StackFrameClass = metadata.getClass(\"jdk.types.StackFrame\");");
+        .contains(
+            "MetadataClass jdk_types_StackFrameClass = metadata.getClass(\"jdk.types.StackFrame\");");
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()

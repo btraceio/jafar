@@ -347,7 +347,12 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private String switchCasePrimitiveArray(
       String jfrFieldName, String fieldName, String elementType, String readCode) {
     return String.format(
-        SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE, jfrFieldName, fieldName, elementType, fieldName, readCode);
+        SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE,
+        jfrFieldName,
+        fieldName,
+        elementType,
+        fieldName,
+        readCode);
   }
 
   /** Generates a switch case for String array reading. */
@@ -526,7 +531,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
         } else {
           // Single CP reference
           sb.append(
-              getterMethodCp(field.returnType, field.methodName, field.cpTypeName, field.fieldName));
+              getterMethodCp(
+                  field.returnType, field.methodName, field.cpTypeName, field.fieldName));
         }
       } else {
         sb.append(getterMethod(field.returnType, field.methodName, field.fieldName));

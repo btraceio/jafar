@@ -89,10 +89,8 @@ public final class MetadataClass extends AbstractMetadataElement {
   private volatile HandlerFactory<?> factory;
 
   @SuppressWarnings("rawtypes")
-  private static final AtomicReferenceFieldUpdater<MetadataClass, HandlerFactory>
-      FACTORY_UPDATER =
-          AtomicReferenceFieldUpdater.newUpdater(
-              MetadataClass.class, HandlerFactory.class, "factory");
+  private static final AtomicReferenceFieldUpdater<MetadataClass, HandlerFactory> FACTORY_UPDATER =
+      AtomicReferenceFieldUpdater.newUpdater(MetadataClass.class, HandlerFactory.class, "factory");
 
   /**
    * Constructs a new MetadataClass from the recording stream and event.
