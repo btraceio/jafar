@@ -702,4 +702,149 @@ class JfrTypeProcessorTest {
         .contentsAsUtf8String()
         .contains("test.JFREvent2Factory");
   }
+
+  @Test
+  void handlesPrimitiveArrayFields() {
+    JavaFileObject source =
+        JavaFileObjects.forSourceString(
+            "test.JFRPrimitiveArrayEvent",
+            """
+                package test;
+
+                import io.jafar.parser.api.JfrType;
+
+                @JfrType("jdk.PrimitiveArrayEvent")
+                public interface JFRPrimitiveArrayEvent {
+                    long timestamp();
+                    byte[] byteArray();
+                    int[] intArray();
+                    long[] longArray();
+                }
+                """);
+
+    Compilation compilation = javac().withProcessors(new JfrTypeProcessor()).compile(source);
+
+    assertThat(compilation).succeeded();
+
+    // Verify handler has fields for primitive arrays
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("private byte[] byteArray");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("private int[] intArray");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("private long[] longArray");
+
+    // Verify handler has getters for primitive arrays
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("public byte[] byteArray()");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("public int[] intArray()");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .contains("public long[] longArray()");
+
+    // Verify primitive arrays don't use constant pool
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .doesNotContain("BYTEARRAY_TYPE_ID");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .doesNotContain("INTARRAY_TYPE_ID");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
+        .contentsAsUtf8String()
+        .doesNotContain("LONGARRAY_TYPE_ID");
+  }
+
+  @Test
+  void handlesComplexTypeArrayFields() {
+    JavaFileObject frameInterface =
+        JavaFileObjects.forSourceString(
+            "test.JFRStackFrame",
+            """
+                package test;
+
+                import io.jafar.parser.api.JfrType;
+
+                @JfrType("jdk.types.StackFrame")
+                public interface JFRStackFrame {
+                    int lineNumber();
+                }
+                """);
+
+    JavaFileObject eventSource =
+        JavaFileObjects.forSourceString(
+            "test.JFRStackTraceEvent",
+            """
+                package test;
+
+                import io.jafar.parser.api.JfrType;
+
+                @JfrType("jdk.StackTraceEvent")
+                public interface JFRStackTraceEvent {
+                    long timestamp();
+                    JFRStackFrame[] frames();
+                }
+                """);
+
+    Compilation compilation =
+        javac().withProcessors(new JfrTypeProcessor()).compile(frameInterface, eventSource);
+
+    assertThat(compilation).succeeded();
+
+    // Verify handler uses constant pool for complex type arrays
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("STACKFRAME_TYPE_ID");
+
+    // Verify handler has CP reference field for the array
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("private long frames_cpRef");
+
+    // Verify getter resolves from constant pool with array type
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("public test.JFRStackFrame[] frames()");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("constantPools.getConstantPool(STACKFRAME_TYPE_ID)");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("get(frames_cpRef)");
+
+    // Verify bind method sets up the type ID
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("MetadataClass jdk_types_StackFrameClass = metadata.getClass(\"jdk.types.StackFrame\");");
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("STACKFRAME_TYPE_ID = jdk_types_StackFrameClass.getId()");
+
+    // Verify cast to array type in getter
+    assertThat(compilation)
+        .generatedSourceFile("test.JFRStackTraceEventHandler")
+        .contentsAsUtf8String()
+        .contains("(test.JFRStackFrame[])");
+  }
 }
