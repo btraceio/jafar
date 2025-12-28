@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-12-28
+
+### Added
+- **Build-time handler generation** - New annotation processor for compile-time handler generation as alternative to runtime bytecode generation (#33)
+  - 85% allocation reduction with equivalent throughput
+  - ServiceLoader auto-discovery of generated factories
+  - Thread-local caching for reduced allocations
+  - Backward compatible with runtime generation fallback
+  - New `jafar-processor` module with annotation processor
+  - New `HandlerFactory<T>` interface for factory pattern
+- **Event decoration query language** - JFR Shell now supports joining and correlating events (#32)
+  - `decorateByTime()` for temporal event joins on same thread
+  - `decorateByKey()` for correlation by matching keys
+  - Decorator fields accessible via `$decorator.` prefix
+  - Memory-efficient lazy evaluation
+
+### Changed
+- **JFR Shell completion framework redesign** - Reduced ShellCompleter from 1300+ lines to ~220 lines using Strategy pattern (#32)
+  - 12 specialized completers for different contexts
+  - Centralized CompletionContextAnalyzer for testable context detection
+  - MetadataService with caching for metadata lookups
+  - Support for chunk IDs, metadata subprops, nested filter paths
+  - 41 comprehensive completion tests
+
+### Fixed
+- **Metadata search** - Improved error reporting for metadata scan failures
+- **Tilde expansion** - Fixed path expansion for user home directory
+
 ## [0.3.12] - 2025-12-17
 
 ### Changed
