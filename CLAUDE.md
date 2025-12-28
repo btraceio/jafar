@@ -249,4 +249,7 @@ jfr> run()
 jfr> threadStats.sort { -it.value }.take(5)
 jfr> export(threadStats, "results.json")
 ```
-- WHen fixing an issue, always check the alternative implementation for other Java versions
+
+## Rules
+- When fixing an issue, always check the alternative implementation for other Java versions
+- When adding or modifying features, always update user documentation, help and tutorials
