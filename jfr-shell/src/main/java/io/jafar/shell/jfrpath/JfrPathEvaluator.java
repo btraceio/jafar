@@ -1828,7 +1828,8 @@ public final class JfrPathEvaluator {
     double sum = 0;
     String key = path.isEmpty() ? "value" : String.join("/", path);
     for (Map<String, Object> row : rows) {
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof Number num) {
         sum += num.doubleValue();
       }
@@ -1841,7 +1842,8 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> applyStats(List<Map<String, Object>> rows, List<String> path) {
     StatsAgg agg = new StatsAgg();
     for (Map<String, Object> row : rows) {
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof Number num) {
         agg.add(num.doubleValue());
       }
@@ -1865,7 +1867,10 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> applyGroupBy(
-      List<Map<String, Object>> rows, List<String> keyPath, String aggFunc, List<String> valuePath) {
+      List<Map<String, Object>> rows,
+      List<String> keyPath,
+      String aggFunc,
+      List<String> valuePath) {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
     for (Map<String, Object> row : rows) {
@@ -1875,9 +1880,10 @@ public final class JfrPathEvaluator {
       if ("count".equals(aggFunc)) {
         acc.add(0); // Just increment count
       } else {
-        Object val = valuePath.isEmpty()
-            ? row.values().iterator().next()
-            : Values.get(row, valuePath.toArray());
+        Object val =
+            valuePath.isEmpty()
+                ? row.values().iterator().next()
+                : Values.get(row, valuePath.toArray());
         if (val instanceof Number num) {
           acc.add(num.doubleValue());
         }
@@ -1898,7 +1904,8 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, List<String> path, List<Double> qs) {
     List<Double> values = new ArrayList<>();
     for (Map<String, Object> row : rows) {
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof Number num) {
         values.add(num.doubleValue());
       }
@@ -1917,7 +1924,8 @@ public final class JfrPathEvaluator {
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map<String, Object> row : rows) {
       Map<String, Object> out = new LinkedHashMap<>(row);
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       int len = 0;
       if (val instanceof String s) {
         len = s.length();
@@ -1933,12 +1941,15 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> applyStringTransform(
-      List<Map<String, Object>> rows, List<String> path, java.util.function.Function<String, String> transform) {
+      List<Map<String, Object>> rows,
+      List<String> path,
+      java.util.function.Function<String, String> transform) {
     List<Map<String, Object>> result = new ArrayList<>();
     String key = path.isEmpty() ? null : String.join("/", path);
     for (Map<String, Object> row : rows) {
       Map<String, Object> out = new LinkedHashMap<>(row);
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof String s) {
         String transformed = transform.apply(s);
         if (key != null) {
@@ -1954,12 +1965,15 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> applyNumberTransform(
-      List<Map<String, Object>> rows, List<String> path, java.util.function.DoubleUnaryOperator transform) {
+      List<Map<String, Object>> rows,
+      List<String> path,
+      java.util.function.DoubleUnaryOperator transform) {
     List<Map<String, Object>> result = new ArrayList<>();
     String key = path.isEmpty() ? null : String.join("/", path);
     for (Map<String, Object> row : rows) {
       Map<String, Object> out = new LinkedHashMap<>(row);
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof Number num) {
         double transformed = transform.applyAsDouble(num.doubleValue());
         if (key != null) {
@@ -1978,7 +1992,8 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, List<String> path, String substr) {
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map<String, Object> row : rows) {
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof String s && s.contains(substr)) {
         result.add(row);
       }
@@ -1992,7 +2007,8 @@ public final class JfrPathEvaluator {
     String key = path.isEmpty() ? null : String.join("/", path);
     for (Map<String, Object> row : rows) {
       Map<String, Object> out = new LinkedHashMap<>(row);
-      Object val = path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof String s) {
         String replaced = s.replace(target, replacement);
         if (key != null) {

@@ -371,13 +371,14 @@ public class CommandDispatcher {
     if (showIdx >= 0) {
       String afterShow = fullLine.substring(showIdx + 4).trim();
       // Remove options from the beginning/end while preserving the core expression
-      expr = afterShow
-          .replaceAll("--limit\\s+\\d+", "")
-          .replaceAll("--format\\s+\\S+", "")
-          .replaceAll("--tree", "")
-          .replaceAll("--depth\\s+\\d+", "")
-          .replaceAll("--list-match\\s+\\S+", "")
-          .trim();
+      expr =
+          afterShow
+              .replaceAll("--limit\\s+\\d+", "")
+              .replaceAll("--format\\s+\\S+", "")
+              .replaceAll("--tree", "")
+              .replaceAll("--depth\\s+\\d+", "")
+              .replaceAll("--list-match\\s+\\S+", "")
+              .trim();
     } else {
       expr = String.join(" ", tokens);
     }
@@ -1361,8 +1362,8 @@ public class CommandDispatcher {
   }
 
   /**
-   * Determines if a query will definitely produce a single scalar value based on static analysis
-   * of its pipeline operators. Only queries ending with count or sum are considered scalar.
+   * Determines if a query will definitely produce a single scalar value based on static analysis of
+   * its pipeline operators. Only queries ending with count or sum are considered scalar.
    */
   private boolean isDefinitelyScalar(JfrPath.Query query) {
     if (query.pipeline == null || query.pipeline.isEmpty()) {
