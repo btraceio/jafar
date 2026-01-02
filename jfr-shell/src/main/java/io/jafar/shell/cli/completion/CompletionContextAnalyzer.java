@@ -2,14 +2,19 @@ package io.jafar.shell.cli.completion;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Pattern;
 import org.jline.reader.ParsedLine;
 
 /**
  * Analyzes the input line and cursor position to determine the completion context. This is the
  * single source of truth for context detection - all logic is isolated here.
+ *
+ * <p>Uses token-based parsing to accurately identify completion contexts independent of JLine3's
+ * word splitting behavior.
  */
 public class CompletionContextAnalyzer {
 
@@ -20,6 +25,9 @@ public class CompletionContextAnalyzer {
   private static final Pattern FUNCTION_PATTERN =
       Pattern.compile(
           "(sum|groupBy|select|top|decorateByTime|decorateByKey)\\s*\\(", Pattern.CASE_INSENSITIVE);
+
+  // Tokenizer for JfrPath expressions
+  private final JfrPathTokenizer tokenizer = new JfrPathTokenizer();
 
   /** Analyze the input line to determine completion context. */
   public CompletionContext analyze(ParsedLine line) {
@@ -68,8 +76,9 @@ public class CompletionContextAnalyzer {
     }
 
     // For 'show' command - most complex case
+    // Use token-based analysis for accurate detection
     if ("show".equals(command)) {
-      return analyzeShowContext(line);
+      return analyzeShowContextWithTokens(line);
     }
 
     // For 'metadata' command
@@ -152,6 +161,75 @@ public class CompletionContextAnalyzer {
         .type(CompletionContextType.COMMAND_OPTION)
         .command("show")
         .partialInput(currentWord)
+        .fullLine(fullLine)
+        .cursor(cursor)
+        .build();
+  }
+
+  /**
+   * Analyze context for 'show' command using token-based parsing.
+   *
+   * <p>This method tokenizes the line and uses token patterns to determine context, independent of
+   * JLine3's word splitting behavior.
+   */
+  private CompletionContext analyzeShowContextWithTokens(ParsedLine line) {
+    String fullLine = line.line();
+    int cursor = line.cursor();
+
+    // Tokenize the entire line
+    List<Token> tokens = tokenizer.tokenize(fullLine);
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+
+    if (cursorToken == null) {
+      // Fallback to option completion
+      return CompletionContext.builder()
+          .type(CompletionContextType.COMMAND_OPTION)
+          .command("show")
+          .partialInput(line.word())
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Find if cursor is inside brackets (filter context)
+    if (isInsideBrackets(tokens, cursor)) {
+      return analyzeFilterContextFromTokens(tokens, cursor, fullLine);
+    }
+
+    // Find if cursor is inside parentheses (function context)
+    if (isInsideParentheses(tokens, cursor)) {
+      return analyzeFunctionContextFromTokens(tokens, cursor, fullLine);
+    }
+
+    // Check if after pipe operator
+    if (isAfterPipeToken(tokens, cursorToken)) {
+      return analyzePipelineContextFromTokens(tokens, cursor, fullLine);
+    }
+
+    // Check if typing a path (events/, metadata/, etc.)
+    PathInfo pathInfo = analyzePathFromTokens(tokens, cursor);
+    if (pathInfo != null) {
+      return buildPathContext(pathInfo, fullLine, cursor);
+    }
+
+    // Default: ROOT or COMMAND_OPTION
+    // If there are no slashes and we're just after "show", it's ROOT
+    // This handles both "show " and "show eve" cases
+    boolean hasSlash = tokens.stream().anyMatch(t -> t.type() == TokenType.SLASH);
+    if (!hasSlash) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.ROOT)
+          .command("show")
+          .partialInput(extractPartialInput(cursorToken, cursor))
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    return CompletionContext.builder()
+        .type(CompletionContextType.COMMAND_OPTION)
+        .command("show")
+        .partialInput(line.word())
         .fullLine(fullLine)
         .cursor(cursor)
         .build();
@@ -766,6 +844,509 @@ public class CompletionContextAnalyzer {
     }
     return segments;
   }
+
+  // ========== Token-based helper methods ==========
+
+  /** Check if cursor is inside square brackets [...]. */
+  private boolean isInsideBrackets(List<Token> tokens, int cursor) {
+    int bracketDepth = 0;
+    for (Token token : tokens) {
+      if (token.start() >= cursor) {
+        break;
+      }
+      if (token.type() == TokenType.BRACKET_OPEN) {
+        bracketDepth++;
+      } else if (token.type() == TokenType.BRACKET_CLOSE) {
+        bracketDepth--;
+      }
+    }
+    return bracketDepth > 0;
+  }
+
+  /** Check if cursor is inside parentheses (...). */
+  private boolean isInsideParentheses(List<Token> tokens, int cursor) {
+    int parenDepth = 0;
+    for (Token token : tokens) {
+      if (token.start() >= cursor) {
+        break;
+      }
+      if (token.type() == TokenType.PAREN_OPEN) {
+        parenDepth++;
+      } else if (token.type() == TokenType.PAREN_CLOSE) {
+        parenDepth--;
+      }
+    }
+    return parenDepth > 0;
+  }
+
+  /** Check if cursor is after a pipe token. */
+  private boolean isAfterPipeToken(List<Token> tokens, Token cursorToken) {
+    if (cursorToken.type() == TokenType.PIPE) {
+      return true;
+    }
+
+    // Find previous non-whitespace token
+    int cursorIdx = tokens.indexOf(cursorToken);
+    for (int i = cursorIdx - 1; i >= 0; i--) {
+      Token prev = tokens.get(i);
+      if (prev.type() == TokenType.WHITESPACE) {
+        continue;
+      }
+      return prev.type() == TokenType.PIPE;
+    }
+    return false;
+  }
+
+  /** Check if tokens only contain command and whitespace. */
+  private boolean hasOnlyCommandAndWhitespace(List<Token> tokens) {
+    boolean foundCommand = false;
+    for (Token token : tokens) {
+      if (token.type() == TokenType.EOF) {
+        break;
+      }
+      if (token.type() == TokenType.WHITESPACE) {
+        continue;
+      }
+      if (!foundCommand && token.type() == TokenType.IDENTIFIER) {
+        foundCommand = true;
+        continue;
+      }
+      // Found something other than command and whitespace
+      return false;
+    }
+    return foundCommand;
+  }
+
+  /** Extract partial input from cursor token. */
+  private String extractPartialInput(Token cursorToken, int cursor) {
+    if (cursorToken == null || cursorToken.type() == TokenType.EOF) {
+      return "";
+    }
+
+    // Structural tokens indicate we're at the start of a new segment
+    if (cursorToken.type() == TokenType.SLASH
+        || cursorToken.type() == TokenType.PIPE
+        || cursorToken.type() == TokenType.BRACKET_OPEN
+        || cursorToken.type() == TokenType.PAREN_OPEN
+        || cursorToken.type() == TokenType.WHITESPACE) {
+      return "";
+    }
+
+    if (cursorToken.type() == TokenType.IDENTIFIER) {
+      // Return portion up to cursor
+      int relativePos = cursor - cursorToken.start();
+      if (relativePos > 0 && relativePos <= cursorToken.value().length()) {
+        return cursorToken.value().substring(0, relativePos);
+      }
+    }
+    return cursorToken.value();
+  }
+
+  /** Analyze filter context from tokens. */
+  private CompletionContext analyzeFilterContextFromTokens(
+      List<Token> tokens, int cursor, String fullLine) {
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+    String partial = extractPartialInput(cursorToken, cursor);
+
+    // Extract rootType, eventType, and field path from the path before the bracket
+    // Example: "show events/jdk.ExecutionSample/stackTrace["
+    //   rootType = "events"
+    //   eventType = "jdk.ExecutionSample"
+    //   fieldPath = ["stackTrace"]
+    String rootType = null;
+    String eventType = null;
+    List<String> fieldPath = new ArrayList<>();
+
+    // Find bracket position
+    int bracketIndex = -1;
+    for (int i = 0; i < tokens.size(); i++) {
+      if (tokens.get(i).type() == TokenType.BRACKET_OPEN && tokens.get(i).start() < cursor) {
+        bracketIndex = i;
+        break;
+      }
+    }
+
+    if (bracketIndex >= 0) {
+      // Parse path backwards from bracket, collecting all identifiers
+      List<String> identifiers = new ArrayList<>();
+      for (int i = bracketIndex - 1; i >= 0; i--) {
+        Token t = tokens.get(i);
+
+        if (t.type() == TokenType.IDENTIFIER) {
+          String value = t.value();
+          // Check if this is a root type
+          if (value.equals("events") || value.equals("metadata") || value.equals("cp")) {
+            rootType = value;
+            break; // Found root, stop parsing
+          }
+          // Collect identifier (we're going backwards, so they're in reverse order)
+          identifiers.add(value);
+        }
+      }
+
+      // Now assign identifiers correctly:
+      // When going backwards, we collected: ["stackTrace", "jdk.ExecutionSample"]
+      // The LAST item is the event type (closest to root)
+      // The REST are the field path in reverse order
+      if (!identifiers.isEmpty()) {
+        eventType = identifiers.get(identifiers.size() - 1);
+        for (int i = identifiers.size() - 2; i >= 0; i--) {
+          fieldPath.add(identifiers.get(i));
+        }
+      }
+    }
+
+    // Build extras map with nestedPath and filterContent
+    Map<String, String> extras = new HashMap<>();
+
+    // Add nestedPath if we have a field path
+    if (!fieldPath.isEmpty()) {
+      // FilterFieldCompleter expects "nestedPath" in format "field1/field2/" with trailing slash
+      StringBuilder nestedPath = new StringBuilder();
+      for (String field : fieldPath) {
+        nestedPath.append(field).append("/");
+      }
+      extras.put("nestedPath", nestedPath.toString());
+    }
+
+    // Add filterContent (everything between '[' and cursor)
+    if (bracketIndex >= 0) {
+      Token bracketToken = tokens.get(bracketIndex);
+      String filterContent = fullLine.substring(bracketToken.end(), cursor);
+      extras.put("filterContent", filterContent);
+    }
+
+    // Determine filter context type by looking at tokens before cursor
+    // FILTER_FIELD: after '[' or after '&&' or '||'
+    // FILTER_OPERATOR: after identifier (field name) + whitespace
+    // FILTER_LOGICAL: after complete condition (field operator value)
+
+    Token lastNonWhitespace = null;
+    Token secondLastNonWhitespace = null;
+    for (Token t : tokens) {
+      if (t.start() >= cursor) break;
+      if (t.type() != TokenType.WHITESPACE && t.type() != TokenType.EOF) {
+        secondLastNonWhitespace = lastNonWhitespace;
+        lastNonWhitespace = t;
+      }
+    }
+
+    if (lastNonWhitespace == null) {
+      // Empty filter
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_FIELD)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // After '[', '&&', '||' -> FILTER_FIELD
+    if (lastNonWhitespace.type() == TokenType.BRACKET_OPEN
+        || lastNonWhitespace.type() == TokenType.AND
+        || lastNonWhitespace.type() == TokenType.OR) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_FIELD)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // After identifier with whitespace -> could be FILTER_OPERATOR
+    if (cursorToken != null
+        && cursorToken.type() == TokenType.WHITESPACE
+        && lastNonWhitespace.type() == TokenType.IDENTIFIER) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_OPERATOR)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // After a value (number, string, identifier) following an operator -> FILTER_LOGICAL
+    boolean hasOperator = false;
+    for (Token t : tokens) {
+      if (t.start() >= cursor) break;
+      if (t.type() == TokenType.GT
+          || t.type() == TokenType.LT
+          || t.type() == TokenType.EQUALS
+          || t.type() == TokenType.DOUBLE_EQUALS
+          || t.type() == TokenType.NOT_EQUALS
+          || t.type() == TokenType.GTE
+          || t.type() == TokenType.LTE
+          || t.type() == TokenType.TILDE) {
+        hasOperator = true;
+      }
+    }
+
+    if (hasOperator
+        && (lastNonWhitespace.type() == TokenType.NUMBER
+            || lastNonWhitespace.type() == TokenType.STRING_LITERAL
+            || lastNonWhitespace.type() == TokenType.IDENTIFIER)) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_LOGICAL)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // Default to FILTER_FIELD if typing identifier
+    if (cursorToken != null && cursorToken.type() == TokenType.IDENTIFIER) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_FIELD)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // Fallback
+    return CompletionContext.builder()
+        .type(CompletionContextType.FILTER_FIELD)
+        .command("show")
+        .rootType(rootType)
+        .eventType(eventType)
+        .fieldPath(fieldPath)
+        .partialInput(partial)
+        .fullLine(fullLine)
+        .cursor(cursor)
+        .extras(extras)
+        .build();
+  }
+
+  /** Analyze function context from tokens. */
+  private CompletionContext analyzeFunctionContextFromTokens(
+      List<Token> tokens, int cursor, String fullLine) {
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+    String partial = extractPartialInput(cursorToken, cursor);
+
+    // Find function name (identifier before opening paren)
+    String functionName = null;
+    int parenIndex = -1;
+    for (int i = 0; i < tokens.size(); i++) {
+      if (tokens.get(i).type() == TokenType.PAREN_OPEN && tokens.get(i).start() < cursor) {
+        parenIndex = i;
+        // Look backward for function name
+        for (int j = i - 1; j >= 0; j--) {
+          if (tokens.get(j).type() == TokenType.IDENTIFIER) {
+            functionName = tokens.get(j).value();
+            break;
+          }
+        }
+      }
+    }
+
+    // Extract eventType from the path before the pipe
+    String eventType = null;
+    for (int i = 0; i < tokens.size(); i++) {
+      Token t = tokens.get(i);
+      if (t.type() == TokenType.PIPE && t.start() < cursor) {
+        // Look backward for event type (identifier after slash, before pipe)
+        for (int j = i - 1; j >= 0; j--) {
+          Token prev = tokens.get(j);
+          if (prev.type() == TokenType.IDENTIFIER && j > 0) {
+            Token beforePrev = tokens.get(j - 1);
+            if (beforePrev.type() == TokenType.SLASH) {
+              eventType = prev.value();
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // Count commas between paren and cursor to determine parameter index
+    int paramIndex = 0;
+    if (parenIndex >= 0) {
+      for (int i = parenIndex + 1; i < tokens.size(); i++) {
+        if (tokens.get(i).start() >= cursor) break;
+        if (tokens.get(i).type() == TokenType.COMMA) {
+          paramIndex++;
+        }
+      }
+    }
+
+    // Special case: top() function's first parameter is a number, not a field
+    // Return UNKNOWN to avoid suggesting fields
+    if ("top".equals(functionName) && paramIndex == 0) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.UNKNOWN)
+          .command("show")
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    return CompletionContext.builder()
+        .type(CompletionContextType.FUNCTION_PARAM)
+        .command("show")
+        .eventType(eventType)
+        .functionName(functionName)
+        .parameterIndex(paramIndex)
+        .partialInput(partial)
+        .fullLine(fullLine)
+        .cursor(cursor)
+        .build();
+  }
+
+  /** Analyze pipeline context from tokens. */
+  private CompletionContext analyzePipelineContextFromTokens(
+      List<Token> tokens, int cursor, String fullLine) {
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+    String partial = extractPartialInput(cursorToken, cursor);
+
+    // Extract eventType from the path before the pipe
+    String eventType = null;
+    for (int i = 0; i < tokens.size(); i++) {
+      Token t = tokens.get(i);
+      if (t.type() == TokenType.PIPE && t.start() < cursor) {
+        // Look backward for event type (identifier after slash, before pipe)
+        for (int j = i - 1; j >= 0; j--) {
+          Token prev = tokens.get(j);
+          if (prev.type() == TokenType.IDENTIFIER && j > 0) {
+            Token beforePrev = tokens.get(j - 1);
+            if (beforePrev.type() == TokenType.SLASH) {
+              eventType = prev.value();
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    return CompletionContext.builder()
+        .type(CompletionContextType.PIPELINE_OPERATOR)
+        .command("show")
+        .eventType(eventType)
+        .partialInput(partial)
+        .fullLine(fullLine)
+        .cursor(cursor)
+        .build();
+  }
+
+  /** Analyze path from tokens (events/, metadata/, etc.). */
+  private PathInfo analyzePathFromTokens(List<Token> tokens, int cursor) {
+    // Walk tokens to find root (events, metadata, cp) and path segments
+    // Don't process IDENTIFIER tokens where cursor is at or inside them (still typing)
+    // DO process structural tokens (SLASH, etc.) even if cursor is at their end
+    String rootType = null;
+    String eventType = null;
+    List<String> fieldPath = new ArrayList<>();
+    boolean afterSlash = false;
+
+    for (Token token : tokens) {
+      // For IDENTIFIER tokens, skip if cursor is inside or at the end (still typing)
+      // For other tokens (SLASH, WHITESPACE, etc.), process even if cursor is at end
+      if (token.type() == TokenType.IDENTIFIER && token.containsCursor(cursor)) {
+        break;
+      }
+      if (token.start() >= cursor) {
+        break;
+      }
+
+      switch (token.type()) {
+        case IDENTIFIER -> {
+          if (rootType == null
+              && (token.value().equals("events")
+                  || token.value().equals("metadata")
+                  || token.value().equals("cp")
+                  || token.value().equals("chunks"))) {
+            rootType = token.value();
+          } else if (rootType != null && eventType == null && afterSlash) {
+            eventType = token.value();
+            afterSlash = false;
+          } else if (eventType != null && afterSlash) {
+            fieldPath.add(token.value());
+            afterSlash = false;
+          }
+        }
+        case SLASH -> afterSlash = true;
+        default -> {}
+      }
+    }
+
+    if (rootType != null) {
+      return new PathInfo(rootType, eventType, fieldPath);
+    }
+    return null;
+  }
+
+  /** Build context from path info. */
+  private CompletionContext buildPathContext(PathInfo pathInfo, String fullLine, int cursor) {
+    List<Token> tokens = tokenizer.tokenize(fullLine);
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+    String partial = extractPartialInput(cursorToken, cursor);
+
+    if (pathInfo.eventType == null) {
+      // Special handling for chunks - after "chunks/", we complete chunk IDs
+      if ("chunks".equals(pathInfo.rootType)) {
+        return CompletionContext.builder()
+            .type(CompletionContextType.CHUNK_ID)
+            .command("show")
+            .rootType(pathInfo.rootType)
+            .partialInput(partial)
+            .fullLine(fullLine)
+            .cursor(cursor)
+            .build();
+      }
+
+      // Still typing event type
+      return CompletionContext.builder()
+          .type(CompletionContextType.EVENT_TYPE)
+          .command("show")
+          .rootType(pathInfo.rootType)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Typing field path
+    return CompletionContext.builder()
+        .type(CompletionContextType.FIELD_PATH)
+        .command("show")
+        .rootType(pathInfo.rootType)
+        .eventType(pathInfo.eventType)
+        .fieldPath(pathInfo.fieldPath)
+        .partialInput(partial)
+        .fullLine(fullLine)
+        .cursor(cursor)
+        .build();
+  }
+
+  /** Path information extracted from tokens. */
+  private record PathInfo(String rootType, String eventType, List<String> fieldPath) {}
 
   // ========== Internal position classes ==========
 

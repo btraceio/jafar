@@ -77,10 +77,13 @@ public class ShellCompleter implements Completer {
     int wordIndex = line.wordIndex();
 
     if (DEBUG) {
-      System.err.println("[COMPLETION DEBUG] line='" + line.line() + "' cursor=" + line.cursor());
-      System.err.println("[COMPLETION DEBUG] words=" + words + " wordIndex=" + wordIndex);
-      System.err.println(
-          "[COMPLETION DEBUG] word()='" + line.word() + "' wordCursor=" + line.wordCursor());
+      System.err.println("=== COMPLETION DEBUG ===");
+      System.err.println("  line():       '" + line.line() + "'");
+      System.err.println("  cursor():     " + line.cursor());
+      System.err.println("  word():       '" + line.word() + "'");
+      System.err.println("  wordCursor(): " + line.wordCursor());
+      System.err.println("  wordIndex():  " + wordIndex);
+      System.err.println("  words():      " + words);
     }
 
     // Handle empty line or first word - use framework
@@ -120,15 +123,37 @@ public class ShellCompleter implements Completer {
   private void completeWithFramework(ParsedLine line, List<Candidate> candidates) {
     CompletionContext ctx = analyzer.analyze(line);
 
+    if (DEBUG) {
+      System.err.println("  --- Context Analysis ---");
+      System.err.println("  detected:     " + ctx.type());
+      System.err.println(
+          "  eventType:    " + (ctx.eventType() != null ? ctx.eventType() : "(none)"));
+      System.err.println("  partial:      '" + ctx.partialInput() + "'");
+      System.err.println("  fieldPath:    " + ctx.fieldPath());
+      System.err.println("  command:      " + (ctx.command() != null ? ctx.command() : "(none)"));
+      System.err.println("========================");
+    }
+
     // Find a completer that can handle this context
     for (ContextCompleter completer : completers) {
       if (completer.canHandle(ctx)) {
         completer.complete(ctx, metadata, candidates);
+        if (DEBUG) {
+          System.err.println("  Completer:    " + completer.getClass().getSimpleName());
+          System.err.println("  Candidates:   " + candidates.size());
+          if (!candidates.isEmpty()) {
+            System.err.println(
+                "  First 5:      " + candidates.stream().limit(5).map(c -> c.value()).toList());
+          }
+        }
         return;
       }
     }
 
     // No completer found - this is okay for UNKNOWN contexts
+    if (DEBUG) {
+      System.err.println("  No completer found for context: " + ctx.type());
+    }
   }
 
   /** Complete commands other than 'show' using simple logic. */

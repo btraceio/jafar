@@ -29,6 +29,17 @@ public class FieldPathCompleter implements ContextCompleter {
     String partial = ctx.partialInput();
     List<String> path = ctx.fieldPath();
 
+    // Special handling for metadata root type
+    if ("metadata".equals(ctx.rootType()) && path.isEmpty()) {
+      // After "metadata/Type/", suggest "fields" as a special segment
+      String prefix = buildPrefix(ctx);
+      if ("fields".startsWith(partial)) {
+        String value = prefix + "fields";
+        candidates.add(new Candidate(value, "fields", null, null, null, null, true));
+      }
+      return;
+    }
+
     // Get field names at the current path level
     List<String> fieldNames = metadata.getNestedFieldNames(eventType, path);
 
