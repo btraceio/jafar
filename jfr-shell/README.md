@@ -2,7 +2,7 @@
 
 An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files with a powerful query language.
 
-**Quick Links**: [Usage Guide](../JFR-SHELL-USAGE.md) | [JfrPath Reference](../doc/jfrpath.md)
+**Quick Links**: [Usage Guide](../doc/jfr_shell_usage.md) | [JfrPath Reference](../doc/jfrpath.md)
 
 ## Features
 
@@ -524,5 +524,5 @@ java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser/src/test/resources/test
 
 ## Documentation
 
-- [JFR-SHELL-USAGE.md](../JFR-SHELL-USAGE.md) - Complete usage guide
-- [doc/jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference
+- [jfr_shell_usage.md](../doc/jfr_shell_usage.md) - Complete usage guide
+- [jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference
