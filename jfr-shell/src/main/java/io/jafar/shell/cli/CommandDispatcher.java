@@ -2,6 +2,10 @@ package io.jafar.shell.cli;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.VariableStore.LazyQueryValue;
+import io.jafar.shell.core.VariableStore.ScalarValue;
+import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -34,6 +38,8 @@ public class CommandDispatcher {
   private final SessionManager sessions;
   private final IO io;
   private final SessionChangeListener listener;
+  private final VariableStore globalStore;
+  private final ConditionalState conditionalState = new ConditionalState();
 
   @FunctionalInterface
   public interface JfrSelector {
@@ -43,15 +49,35 @@ public class CommandDispatcher {
   private final JfrSelector selector;
 
   public CommandDispatcher(SessionManager sessions, IO io, SessionChangeListener listener) {
-    this(sessions, io, listener, null);
+    this(sessions, io, listener, null, null);
   }
 
   public CommandDispatcher(
       SessionManager sessions, IO io, SessionChangeListener listener, JfrSelector selector) {
+    this(sessions, io, listener, selector, null);
+  }
+
+  public CommandDispatcher(
+      SessionManager sessions,
+      IO io,
+      SessionChangeListener listener,
+      JfrSelector selector,
+      VariableStore globalStore) {
     this.sessions = sessions;
     this.io = io;
     this.listener = listener;
     this.selector = selector;
+    this.globalStore = globalStore != null ? globalStore : new VariableStore();
+  }
+
+  /** Returns the global variable store. */
+  public VariableStore getGlobalStore() {
+    return globalStore;
+  }
+
+  /** Returns the conditional state for tracking if-blocks. */
+  public ConditionalState getConditionalState() {
+    return conditionalState;
   }
 
   public boolean dispatch(String line) {
@@ -62,6 +88,27 @@ public class CommandDispatcher {
     List<String> args = Arrays.asList(parts).subList(1, parts.length);
 
     try {
+      // Handle conditional keywords - these must be processed even in inactive branches
+      if ("if".equals(cmd)) {
+        return handleIf(line);
+      }
+      if ("elif".equals(cmd)) {
+        return handleElif(line);
+      }
+      if ("else".equals(cmd)) {
+        conditionalState.handleElse();
+        return true;
+      }
+      if ("endif".equals(cmd)) {
+        conditionalState.exitIf();
+        return true;
+      }
+
+      // Skip command if in inactive conditional branch
+      if (!conditionalState.isActive()) {
+        return true; // Command "handled" (skipped)
+      }
+
       switch (cmd) {
         case "open":
           cmdOpen(args);
@@ -108,6 +155,22 @@ public class CommandDispatcher {
           return true;
         case "cp":
           cmdCp(args);
+          return true;
+        case "set":
+        case "let":
+          cmdSet(args, line);
+          return true;
+        case "vars":
+          cmdVars(args);
+          return true;
+        case "unset":
+          cmdUnset(args);
+          return true;
+        case "echo":
+          cmdEcho(args, line);
+          return true;
+        case "invalidate":
+          cmdInvalidate(args);
           return true;
         default:
           return false;
@@ -302,7 +365,77 @@ public class CommandDispatcher {
           "Usage: show <expr> [--limit N] [--format json] [--tree] [--depth N] [--list-match any|all|none]");
       return;
     }
-    String expr = String.join(" ", tokens);
+    // Extract expression from fullLine to preserve pipe operators that get lost in tokenization
+    String expr;
+    int showIdx = fullLine.indexOf("show");
+    if (showIdx >= 0) {
+      String afterShow = fullLine.substring(showIdx + 4).trim();
+      // Remove options from the beginning/end while preserving the core expression
+      expr =
+          afterShow
+              .replaceAll("--limit\\s+\\d+", "")
+              .replaceAll("--format\\s+\\S+", "")
+              .replaceAll("--tree", "")
+              .replaceAll("--depth\\s+\\d+", "")
+              .replaceAll("--list-match\\s+\\S+", "")
+              .trim();
+    } else {
+      expr = String.join(" ", tokens);
+    }
+
+    // Check for piping from lazy variable: ${var} | pipeline
+    java.util.regex.Pattern varPipePattern =
+        java.util.regex.Pattern.compile("^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}\\s*\\|(.+)$");
+    java.util.regex.Matcher varPipeMatcher = varPipePattern.matcher(expr.trim());
+    if (varPipeMatcher.matches()) {
+      String varName = varPipeMatcher.group(1);
+      String pipelinePart = varPipeMatcher.group(2).trim();
+
+      // Look up the variable
+      Value val = null;
+      if (getSessionStore() != null && getSessionStore().contains(varName)) {
+        val = getSessionStore().get(varName);
+      } else if (globalStore.contains(varName)) {
+        val = globalStore.get(varName);
+      }
+
+      if (val instanceof LazyQueryValue lqv) {
+        try {
+          // Get cached result
+          Object cached = lqv.get();
+          if (cached instanceof List<?> cachedList) {
+            @SuppressWarnings("unchecked")
+            List<java.util.Map<String, Object>> rows =
+                (List<java.util.Map<String, Object>>) cachedList;
+
+            // Parse the pipeline part using a dummy expression
+            String dummyExpr = "events/_dummy | " + pipelinePart;
+            var dummyQuery = JfrPathParser.parse(dummyExpr);
+            if (dummyQuery.pipeline != null && !dummyQuery.pipeline.isEmpty()) {
+              var eval = new JfrPathEvaluator(listMatchMode);
+              rows = eval.applyToRows(rows, dummyQuery.pipeline);
+              if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+              if ("json".equalsIgnoreCase(format)) {
+                printJson(rows, io);
+              } else {
+                TableRenderer.render(rows, io);
+              }
+              return;
+            }
+          }
+        } catch (Exception e) {
+          io.error("Error piping from variable: " + e.getMessage());
+          return;
+        }
+      }
+    }
+
+    // Substitute variables if present
+    if (VariableSubstitutor.hasVariables(expr)) {
+      VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+      expr = sub.substitute(expr);
+    }
+
     // Evaluate
     if (selector != null) {
       List<java.util.Map<String, Object>> rows = selector.select(cur.get().session, expr);
@@ -440,6 +573,19 @@ public class CommandDispatcher {
       io.println("  chunks    - List chunk information");
       io.println("  chunk     - Show specific chunk details");
       io.println("  cp        - Browse constant pool entries");
+      io.println("");
+      io.println("Variable commands:");
+      io.println("  set       - Set a variable (scalar or lazy query)");
+      io.println("  vars      - List all defined variables");
+      io.println("  unset     - Remove a variable");
+      io.println("  echo      - Print text with variable substitution");
+      io.println("  invalidate - Clear cached result for lazy variable");
+      io.println("");
+      io.println("Conditionals:");
+      io.println("  if        - Start conditional block");
+      io.println("  elif      - Else-if branch");
+      io.println("  else      - Else branch");
+      io.println("  endif     - End conditional block");
       io.println("");
       io.println("Tab completion:");
       io.println("  Press Tab at any point for context-aware suggestions:");
@@ -587,6 +733,97 @@ public class CommandDispatcher {
       io.println(
           "Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
       io.println("Use 'show cp/<type>' for more advanced filtering with JfrPath expressions.");
+      return;
+    }
+    if ("set".equals(sub) || "let".equals(sub)) {
+      io.println("Usage: set [--global] <name> = <value|expression>");
+      io.println("Store a variable value. Values can be:");
+      io.println("  - Literal strings: set name = \"hello\"");
+      io.println("  - Numbers: set count = 42");
+      io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global  Store in global scope (persists across sessions)");
+      io.println("");
+      io.println("Lazy queries are not evaluated until accessed via ${var} substitution.");
+      io.println("Results are cached after first evaluation. Use 'invalidate' to clear cache.");
+      io.println("");
+      io.println("Examples:");
+      io.println("  set threshold = 1000");
+      io.println("  set bigReads = events/jdk.FileRead[bytes>${threshold}]");
+      io.println("  set --global myPattern = \".*Exception.*\"");
+      return;
+    }
+    if ("vars".equals(sub)) {
+      io.println("Usage: vars [--global|--session|--all]");
+      io.println("List defined variables.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global   Show only global variables");
+      io.println("  --session  Show only session variables");
+      io.println("  --all      Show all (default)");
+      return;
+    }
+    if ("unset".equals(sub)) {
+      io.println("Usage: unset <name> [--global]");
+      io.println("Remove a variable.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --global  Remove from global scope specifically");
+      return;
+    }
+    if ("echo".equals(sub)) {
+      io.println("Usage: echo <text>");
+      io.println("Print text with variable substitution.");
+      io.println("");
+      io.println("Variable syntax:");
+      io.println("  ${var}           - Scalar value or first value from result set");
+      io.println("  ${var.size}      - Row count for lazy query results");
+      io.println("  ${var.field}     - Field from first row");
+      io.println("  ${var[N].field}  - Field from row N (0-indexed)");
+      io.println("");
+      io.println("Examples:");
+      io.println("  echo Found ${bigReads.size} large file reads");
+      io.println("  echo First read was ${bigReads[0].bytes} bytes");
+      return;
+    }
+    if ("invalidate".equals(sub)) {
+      io.println("Usage: invalidate <name>");
+      io.println("Clear the cached result for a lazy variable.");
+      io.println("Next access will re-evaluate the query.");
+      return;
+    }
+    if ("if".equals(sub) || "elif".equals(sub) || "else".equals(sub) || "endif".equals(sub)) {
+      io.println("Conditional execution with if/elif/else/endif blocks.");
+      io.println("");
+      io.println("Syntax:");
+      io.println("  if <condition>");
+      io.println("    <commands>");
+      io.println("  elif <condition>");
+      io.println("    <commands>");
+      io.println("  else");
+      io.println("    <commands>");
+      io.println("  endif");
+      io.println("");
+      io.println("Condition expressions:");
+      io.println("  Comparisons: ==, !=, >, >=, <, <=");
+      io.println("  Logical: && (and), || (or), ! (not)");
+      io.println("  Arithmetic: +, -, *, /");
+      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Grouping: parentheses ( )");
+      io.println("");
+      io.println("Examples:");
+      io.println("  if ${count.count} > 0");
+      io.println("    echo Found ${count.count} events");
+      io.println("  endif");
+      io.println("");
+      io.println("  if exists(myVar) && ${myVar.size} > 100");
+      io.println("    echo Large result set");
+      io.println("  elif ${myVar.size} > 0");
+      io.println("    echo Small result set");
+      io.println("  else");
+      io.println("    echo Empty result");
+      io.println("  endif");
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
@@ -1025,5 +1262,360 @@ public class CommandDispatcher {
       return value;
     }
     return null;
+  }
+
+  // ---- Variable commands ----
+
+  private void cmdSet(List<String> args, String fullLine) throws Exception {
+    // Parse: set [--global] name = expression
+    // Find '=' in full line
+    int cmdEnd = fullLine.indexOf(' ');
+    if (cmdEnd < 0) {
+      io.error("Usage: set [--global] <name> = <expression|value>");
+      return;
+    }
+    String rest = fullLine.substring(cmdEnd + 1).trim();
+
+    boolean isGlobal = rest.startsWith("--global ");
+    if (isGlobal) {
+      rest = rest.substring(9).trim();
+    }
+
+    int eqPos = rest.indexOf('=');
+    if (eqPos < 0) {
+      io.error("Usage: set [--global] <name> = <expression|value>");
+      return;
+    }
+
+    String varName = rest.substring(0, eqPos).trim();
+    String exprPart = rest.substring(eqPos + 1).trim();
+
+    if (varName.isEmpty()) {
+      io.error("Variable name cannot be empty");
+      return;
+    }
+    if (!varName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+      io.error("Invalid variable name: " + varName);
+      return;
+    }
+
+    VariableStore store = getTargetStore(isGlobal);
+
+    // Check for literal string value
+    if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
+      String literal = exprPart.substring(1, exprPart.length() - 1);
+      store.set(varName, new ScalarValue(literal));
+      io.println("Set " + varName + " = \"" + literal + "\"");
+      return;
+    }
+
+    // Check for numeric literal
+    if (exprPart.matches("-?\\d+(\\.\\d+)?")) {
+      Number num = exprPart.contains(".") ? Double.parseDouble(exprPart) : Long.parseLong(exprPart);
+      store.set(varName, new ScalarValue(num));
+      io.println("Set " + varName + " = " + num);
+      return;
+    }
+
+    // Treat as JfrPath query
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open for query evaluation");
+      return;
+    }
+
+    // Parse the query (but don't evaluate yet)
+    JfrPath.Query query;
+    try {
+      query = JfrPathParser.parse(exprPart);
+    } catch (Exception e) {
+      io.error("Invalid query: " + e.getMessage());
+      return;
+    }
+
+    // Use static analysis to determine if query produces a scalar
+    if (isDefinitelyScalar(query)) {
+      // Scalar-producing query: evaluate immediately and store as scalar
+      try {
+        JfrPathEvaluator evaluator = new JfrPathEvaluator();
+        Object result = evaluator.evaluate(cur.get().session, query);
+        Object scalarValue = extractScalarIfSingle(result);
+        if (scalarValue != null) {
+          store.set(varName, new ScalarValue(scalarValue));
+          io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+        } else {
+          // Fallback: store as lazy (shouldn't happen for scalar queries)
+          LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+          lqv.setCachedResult(result);
+          store.set(varName, lqv);
+          io.println("Set " + varName + " = lazy[" + exprPart + "]");
+        }
+      } catch (Exception e) {
+        io.error("Query evaluation failed: " + e.getMessage());
+      }
+    } else {
+      // Non-scalar query: store as lazy (not evaluated until accessed)
+      LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+      store.set(varName, lqv);
+      io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");
+    }
+  }
+
+  /**
+   * Determines if a query will definitely produce a single scalar value based on static analysis of
+   * its pipeline operators. Only queries ending with count or sum are considered scalar.
+   */
+  private boolean isDefinitelyScalar(JfrPath.Query query) {
+    if (query.pipeline == null || query.pipeline.isEmpty()) {
+      return false; // No pipeline = produces rows, not scalar
+    }
+    // Check the last operator in the pipeline
+    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
+    return lastOp instanceof JfrPath.CountOp || lastOp instanceof JfrPath.SumOp;
+  }
+
+  private void cmdVars(List<String> args) {
+    // Handle --info <name> flag
+    int infoIdx = args.indexOf("--info");
+    if (infoIdx >= 0) {
+      if (infoIdx + 1 >= args.size()) {
+        io.error("Usage: vars --info <name>");
+        return;
+      }
+      String name = args.get(infoIdx + 1);
+      showVariableInfo(name);
+      return;
+    }
+
+    boolean showGlobal = args.isEmpty() || args.contains("--global") || args.contains("--all");
+    boolean showSession = args.isEmpty() || args.contains("--session") || args.contains("--all");
+
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+
+    if (showGlobal && !globalStore.isEmpty()) {
+      io.println("Global variables:");
+      for (String name : globalStore.names()) {
+        Value val = globalStore.get(name);
+        io.println("  " + name + " = " + val.describe());
+      }
+    }
+
+    if (showSession && cur.isPresent() && !cur.get().variables.isEmpty()) {
+      io.println("Session variables (session #" + cur.get().id + "):");
+      for (String name : cur.get().variables.names()) {
+        Value val = cur.get().variables.get(name);
+        io.println("  " + name + " = " + val.describe());
+      }
+    }
+
+    if (globalStore.isEmpty() && (cur.isEmpty() || cur.get().variables.isEmpty())) {
+      io.println("No variables defined");
+    }
+  }
+
+  private void showVariableInfo(String name) {
+    // Check session variables first, then global
+    Value val = null;
+    String scope = null;
+
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    if (cur.isPresent() && cur.get().variables.contains(name)) {
+      val = cur.get().variables.get(name);
+      scope = "session #" + cur.get().id;
+    } else if (globalStore.contains(name)) {
+      val = globalStore.get(name);
+      scope = "global";
+    }
+
+    if (val == null) {
+      io.error("Variable not found: " + name);
+      return;
+    }
+
+    io.println("Variable: " + name);
+    io.println("Scope: " + scope);
+
+    if (val instanceof LazyQueryValue lqv) {
+      io.println("Type: lazy query");
+      io.println("Source: " + lqv.getQueryString());
+      io.println("Cached: " + (lqv.isCached() ? "yes" : "no"));
+      if (lqv.isCached()) {
+        try {
+          int size = lqv.size();
+          io.println("Rows: " + size);
+        } catch (Exception e) {
+          io.println("Rows: error - " + e.getMessage());
+        }
+      }
+    } else if (val instanceof ScalarValue sv) {
+      io.println("Type: scalar");
+      io.println("Value: " + sv.describe());
+    }
+  }
+
+  private void cmdUnset(List<String> args) {
+    if (args.isEmpty()) {
+      io.error("Usage: unset <name> [--global]");
+      return;
+    }
+
+    String varName = args.get(0);
+    boolean isGlobal = args.contains("--global");
+
+    VariableStore store = getTargetStore(isGlobal);
+    if (store.remove(varName)) {
+      io.println("Removed " + varName);
+    } else {
+      // Try the other store if not found
+      VariableStore other = isGlobal ? getSessionStore() : globalStore;
+      if (other != null && other.remove(varName)) {
+        io.println("Removed " + varName);
+      } else {
+        io.error("Variable not found: " + varName);
+      }
+    }
+  }
+
+  private void cmdEcho(List<String> args, String fullLine) throws Exception {
+    // Extract everything after 'echo '
+    int cmdEnd = fullLine.indexOf(' ');
+    if (cmdEnd < 0) {
+      io.println("");
+      return;
+    }
+    String text = fullLine.substring(cmdEnd + 1);
+
+    // Substitute variables
+    VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+    String result = sub.substitute(text);
+    io.println(result);
+  }
+
+  private void cmdInvalidate(List<String> args) {
+    if (args.isEmpty()) {
+      io.error("Usage: invalidate <name>");
+      return;
+    }
+
+    String varName = args.get(0);
+    Value val = resolveVariable(varName);
+
+    if (val == null) {
+      io.error("Variable not found: " + varName);
+      return;
+    }
+
+    if (val instanceof LazyQueryValue lqv) {
+      lqv.invalidate();
+      io.println("Invalidated cache for " + varName);
+    } else {
+      io.error("Variable " + varName + " is not a lazy value");
+    }
+  }
+
+  private VariableStore getTargetStore(boolean global) {
+    if (global) {
+      return globalStore;
+    }
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    return cur.isPresent() ? cur.get().variables : globalStore;
+  }
+
+  private VariableStore getSessionStore() {
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    return cur.isPresent() ? cur.get().variables : null;
+  }
+
+  private Value resolveVariable(String name) {
+    VariableStore sessionStore = getSessionStore();
+    if (sessionStore != null && sessionStore.contains(name)) {
+      return sessionStore.get(name);
+    }
+    if (globalStore.contains(name)) {
+      return globalStore.get(name);
+    }
+    return null;
+  }
+
+  /**
+   * Extracts a scalar value if the result is a single-row, single-column result. Returns null if
+   * the result is a collection or multi-column row.
+   */
+  @SuppressWarnings("unchecked")
+  private Object extractScalarIfSingle(Object result) {
+    if (result == null) {
+      return null;
+    }
+    // Direct scalar types
+    if (result instanceof String || result instanceof Number || result instanceof Boolean) {
+      return result;
+    }
+    // Check for single-row, single-column list
+    if (result instanceof List<?> list) {
+      if (list.size() == 1) {
+        Object item = list.get(0);
+        if (item instanceof Map<?, ?> map) {
+          if (map.size() == 1) {
+            // Single row, single column - extract the value
+            return ((Map<String, Object>) map).values().iterator().next();
+          }
+        } else {
+          // Single non-map item
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  private String formatScalarValue(Object value) {
+    if (value == null) {
+      return "null";
+    }
+    if (value instanceof String) {
+      return "\"" + value + "\"";
+    }
+    return value.toString();
+  }
+
+  // ---- Conditional handling ----
+
+  private boolean handleIf(String line) throws Exception {
+    // Extract condition after "if "
+    String condition = line.length() > 2 ? line.substring(2).trim() : "";
+    if (condition.isEmpty()) {
+      throw new IllegalArgumentException("if requires a condition");
+    }
+
+    // Only evaluate if we're in an active branch
+    boolean result = false;
+    if (conditionalState.isActive() || !conditionalState.inConditional()) {
+      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+      result = evaluator.evaluate(condition);
+    }
+    conditionalState.enterIf(result);
+    return true;
+  }
+
+  private boolean handleElif(String line) throws Exception {
+    // Extract condition after "elif "
+    String condition = line.length() > 4 ? line.substring(4).trim() : "";
+    if (condition.isEmpty()) {
+      throw new IllegalArgumentException("elif requires a condition");
+    }
+
+    // Only evaluate if needed (previous branches failed and parent is active)
+    boolean result = false;
+    // We need to check if we should evaluate - only if no branch taken yet
+    // The state machine handles this, but we need the parent's active state
+    int depth = conditionalState.depth();
+    if (depth > 0) {
+      // Check if we need to evaluate by temporarily looking at state
+      // If condition is needed, it will be used; if branch already taken, it's ignored
+      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+      result = evaluator.evaluate(condition);
+    }
+    conditionalState.handleElif(result);
+    return true;
   }
 }

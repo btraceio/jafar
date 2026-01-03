@@ -26,7 +26,7 @@ class ShellCompleterSelectRootsTest {
     SessionManager sm = new SessionManager(ctx, factory);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
-    ShellCompleter completer = new ShellCompleter(sm);
+    ShellCompleter completer = new ShellCompleter(sm, null);
     List<Candidate> cands = new ArrayList<>();
     ShellCompleterTest.SimpleParsedLine pl = new ShellCompleterTest.SimpleParsedLine("show ");
     completer.complete(null, pl, cands);

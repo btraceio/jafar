@@ -28,7 +28,7 @@ class ShellCompleterFunctionParametersTest {
     ParsingContext ctx = ParsingContext.create();
     SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
     sessions.open(jfr, null);
-    completer = new ShellCompleter(sessions);
+    completer = new ShellCompleter(sessions, null);
   }
 
   @Test

@@ -422,6 +422,57 @@ events/jdk.ExecutionSample | decorateByKey(RequestStart,
 - Only requested fields from decorator are accessible
 - Memory-efficient: decorator fields are lazily accessed
 
+### Select
+```
+| select(field1, field2, ...)
+```
+
+Project specific fields from events, filtering out all other fields.
+
+**Use Cases**: Reduce output to only relevant fields, control JSON output structure, focus analysis on specific attributes.
+
+**Parameters**:
+- `field1, field2, ...` - Comma-separated list of field paths to include in output
+- Supports nested fields using `/` syntax (e.g., `eventThread/javaThreadId`)
+
+**Behavior**:
+- Only specified fields are included in the output
+- Nested fields preserve their parent structure
+- Works with filters and other query operations
+- Multiple fields from the same nested object can be selected individually
+
+**Examples**:
+```
+# Select single field
+events/jdk.ExecutionSample | select(startTime)
+
+# Select multiple top-level fields
+events/jdk.FileRead | select(path, bytes)
+
+# Select nested field (preserves parent structure)
+events/jdk.ExecutionSample | select(eventThread/javaThreadId)
+
+# Select multiple nested fields from same parent
+events/jdk.ExecutionSample | select(eventThread/javaThreadId, eventThread/name)
+
+# Combine with filters
+events/jdk.FileRead[bytes>1000] | select(path, bytes)
+
+# Select decorator fields
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+  | select(startTime, $decorator.monitorClass)
+```
+
+**Output Structure**:
+When selecting nested fields like `eventThread/javaThreadId`, the output preserves the nested structure:
+```json
+{
+  "eventThread": {
+    "javaThreadId": 42
+  }
+}
+```
+
 ## Value Transform Functions
 
 Transform individual values (can also be used in filters where applicable):

@@ -73,7 +73,7 @@ class ShellOpenFileCompletionTest {
 
     SessionManager sm =
         new SessionManager(ParsingContext.create(), (p, c) -> Mockito.mock(JFRSession.class));
-    ShellCompleter completer = new ShellCompleter(sm);
+    ShellCompleter completer = new ShellCompleter(sm, null);
     List<Candidate> cands = new ArrayList<>();
     LineReader reader = Mockito.mock(LineReader.class);
 

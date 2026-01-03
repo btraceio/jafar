@@ -1,0 +1,55 @@
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# GC Analysis Script
+#
+# This script provides comprehensive garbage collection analysis, including:
+# - GC pause time statistics
+# - Heap size trends and utilization
+# - GC configuration and behavior
+# - Memory allocation rates
+#
+# Usage:
+#   jfr-shell script gc-analysis.jfrs /path/to/recording.jfr
+#
+# Or with shebang (make executable first):
+#   chmod +x gc-analysis.jfrs
+#   ./gc-analysis.jfrs /path/to/recording.jfr
+#
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
+
+# Open the recording
+open $1
+
+echo "=== GC Pause Time Statistics ==="
+show events/jdk.GarbageCollection | stats(duration)
+
+echo
+echo "=== GC Events by Type ==="
+show events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
+
+echo
+echo "=== Heap Summary Statistics (Before/After GC) ==="
+show events/jdk.GCHeapSummary | stats(heapUsed)
+
+echo
+echo "=== Longest GC Pauses ==="
+show events/jdk.GarbageCollection --limit 10
+
+echo
+echo "=== Object Allocation by Class ==="
+show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+
+echo
+echo "=== Total Allocated Memory ==="
+show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+
+echo
+echo "=== Young Generation Collection Statistics ==="
+show events/jdk.YoungGarbageCollection | stats(duration)
+
+echo
+echo "=== Old Generation Collection Statistics ==="
+show events/jdk.OldGarbageCollection | stats(duration)
+
+# Close the session
+close

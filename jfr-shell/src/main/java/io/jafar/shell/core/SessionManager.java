@@ -16,11 +16,13 @@ public class SessionManager {
     public final int id;
     public final String alias;
     public final JFRSession session;
+    public final VariableStore variables;
 
     public SessionRef(int id, String alias, JFRSession session) {
       this.id = id;
       this.alias = alias;
       this.session = session;
+      this.variables = new VariableStore();
     }
   }
 
@@ -100,6 +102,7 @@ public class SessionManager {
     SessionRef ref = byId.remove(id);
     if (ref != null) {
       if (ref.alias != null) byAlias.remove(ref.alias);
+      ref.variables.clear(); // Release all session variables
       ref.session.close();
     }
     if (Objects.equals(currentId, id)) {

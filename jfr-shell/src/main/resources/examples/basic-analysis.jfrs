@@ -1,0 +1,46 @@
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Basic JFR Analysis Script
+#
+# This script provides a comprehensive overview of a JFR recording, including:
+# - Recording metadata and statistics
+# - Top execution samples by thread
+# - File I/O summary
+# - GC statistics
+#
+# Usage:
+#   jfr-shell script basic-analysis.jfrs /path/to/recording.jfr
+#
+# Or with shebang (make executable first):
+#   chmod +x basic-analysis.jfrs
+#   ./basic-analysis.jfrs /path/to/recording.jfr
+#
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
+
+# Open the recording
+open $1
+
+echo "=== Recording Info ==="
+info
+
+echo
+echo "=== Metadata Summary ==="
+metadata --summary
+
+echo
+echo "=== Top 10 Threads by Execution Samples ==="
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+
+echo
+echo "=== File I/O Summary ==="
+echo "Bytes Read:"
+show events/jdk.FileRead | sum(bytes)
+echo "Bytes Written:"
+show events/jdk.FileWrite | sum(bytes)
+
+echo
+echo "=== GC Statistics ==="
+show events/jdk.GarbageCollection | stats(duration)
+
+# Close the session
+close

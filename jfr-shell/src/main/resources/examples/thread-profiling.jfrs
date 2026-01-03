@@ -1,0 +1,44 @@
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Thread Profiling Script
+#
+# This script provides detailed thread-level profiling information, including:
+# - Execution samples grouped by thread and stack trace
+# - Thread allocation statistics
+# - Thread contention analysis
+# - Thread-specific CPU usage patterns
+#
+# Usage:
+#   jfr-shell script thread-profiling.jfrs /path/to/recording.jfr 10
+#
+# Or with shebang (make executable first):
+#   chmod +x thread-profiling.jfrs
+#   ./thread-profiling.jfrs /path/to/recording.jfr 10
+#
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
+#   $2 - Number of top results to display (default: 10)
+
+# Open the recording
+open $1
+
+echo "=== Top Threads by Execution Sample Count ==="
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+
+echo
+echo "=== Thread Allocation Statistics ==="
+show events/jdk.ThreadAllocationStatistics | groupBy(eentThread/javaName) | top($2, by=sum(allocated))
+
+echo
+echo "=== Monitor Contention by Class ==="
+show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+
+echo
+echo "=== Thread Sleep Events ==="
+show events/jdk.ThreadSleep | groupBy(eventthread/javaName) | top($2, by=sum(time))
+
+echo
+echo "=== Thread Park Events (Blocking Operations) ==="
+show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
+
+# Close the session
+close

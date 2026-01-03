@@ -10,6 +10,8 @@ import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1752,5 +1754,272 @@ public final class JfrPathEvaluator {
   public Map<String, Object> loadFieldMetadata(Path recording, String typeName, String fieldName)
       throws Exception {
     return MetadataProvider.loadField(recording, typeName, fieldName);
+  }
+
+  /**
+   * Applies pipeline operators to an existing list of rows. This allows post-processing cached
+   * results from lazy variables without re-evaluating the original query.
+   *
+   * @param rows the input rows
+   * @param pipeline the pipeline operators to apply
+   * @return the processed result
+   */
+  @SuppressWarnings("unchecked")
+  public List<Map<String, Object>> applyToRows(
+      List<Map<String, Object>> rows, List<JfrPath.PipelineOp> pipeline) {
+    if (pipeline == null || pipeline.isEmpty()) {
+      return rows;
+    }
+
+    List<Map<String, Object>> result = new ArrayList<>(rows);
+
+    for (JfrPath.PipelineOp op : pipeline) {
+      result = applySingleOp(result, op);
+    }
+
+    return result;
+  }
+
+  private List<Map<String, Object>> applySingleOp(
+      List<Map<String, Object>> rows, JfrPath.PipelineOp op) {
+    return switch (op) {
+      case JfrPath.TopOp top -> applyTop(rows, top.n, top.byPath, top.ascending);
+      case JfrPath.CountOp c -> applyCount(rows);
+      case JfrPath.SumOp sum -> applySum(rows, sum.valuePath);
+      case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
+      case JfrPath.SelectOp sel -> applySelect(rows, sel);
+      case JfrPath.GroupByOp gb -> applyGroupBy(rows, gb.keyPath, gb.aggFunc, gb.valuePath);
+      case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
+      case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
+      case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
+      case JfrPath.LowercaseOp lo -> applyStringTransform(rows, lo.valuePath, String::toLowerCase);
+      case JfrPath.TrimOp tr -> applyStringTransform(rows, tr.valuePath, String::trim);
+      case JfrPath.AbsOp ab -> applyNumberTransform(rows, ab.valuePath, Math::abs);
+      case JfrPath.RoundOp ro -> applyNumberTransform(rows, ro.valuePath, Math::round);
+      case JfrPath.FloorOp fl -> applyNumberTransform(rows, fl.valuePath, Math::floor);
+      case JfrPath.CeilOp ce -> applyNumberTransform(rows, ce.valuePath, Math::ceil);
+      case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
+      case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
+      default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
+    };
+  }
+
+  private List<Map<String, Object>> applyTop(
+      List<Map<String, Object>> rows, int n, List<String> byPath, boolean ascending) {
+    if (rows.isEmpty()) return rows;
+    List<Map<String, Object>> sorted = new ArrayList<>(rows);
+    sorted.sort(
+        (a, b) -> {
+          Object aVal = Values.get(a, byPath.toArray());
+          Object bVal = Values.get(b, byPath.toArray());
+          int cmp = compareValues(aVal, bVal);
+          return ascending ? cmp : -cmp;
+        });
+    return sorted.subList(0, Math.min(n, sorted.size()));
+  }
+
+  private List<Map<String, Object>> applyCount(List<Map<String, Object>> rows) {
+    Map<String, Object> row = new HashMap<>();
+    row.put("count", (long) rows.size());
+    return List.of(row);
+  }
+
+  private List<Map<String, Object>> applySum(List<Map<String, Object>> rows, List<String> path) {
+    double sum = 0;
+    String key = path.isEmpty() ? "value" : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number num) {
+        sum += num.doubleValue();
+      }
+    }
+    Map<String, Object> result = new HashMap<>();
+    result.put("sum(" + key + ")", sum);
+    return List.of(result);
+  }
+
+  private List<Map<String, Object>> applyStats(List<Map<String, Object>> rows, List<String> path) {
+    StatsAgg agg = new StatsAgg();
+    for (Map<String, Object> row : rows) {
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number num) {
+        agg.add(num.doubleValue());
+      }
+    }
+    return List.of(agg.toRow());
+  }
+
+  private List<Map<String, Object>> applySelect(
+      List<Map<String, Object>> rows, JfrPath.SelectOp op) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Map<String, Object> selected = new LinkedHashMap<>();
+      for (List<String> fieldPath : op.fieldPaths) {
+        String key = String.join("/", fieldPath);
+        Object val = Values.get(row, fieldPath.toArray());
+        selected.put(key, val);
+      }
+      result.add(selected);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyGroupBy(
+      List<Map<String, Object>> rows,
+      List<String> keyPath,
+      String aggFunc,
+      List<String> valuePath) {
+    Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+
+    for (Map<String, Object> row : rows) {
+      Object keyVal = Values.get(row, keyPath.toArray());
+      GroupAccumulator acc = groups.computeIfAbsent(keyVal, k -> new GroupAccumulator(aggFunc));
+
+      if ("count".equals(aggFunc)) {
+        acc.add(0); // Just increment count
+      } else {
+        Object val =
+            valuePath.isEmpty()
+                ? row.values().iterator().next()
+                : Values.get(row, valuePath.toArray());
+        if (val instanceof Number num) {
+          acc.add(num.doubleValue());
+        }
+      }
+    }
+
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (var entry : groups.entrySet()) {
+      Map<String, Object> out = new LinkedHashMap<>();
+      out.put("key", entry.getKey());
+      out.put(aggFunc, entry.getValue().getResult());
+      result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyQuantiles(
+      List<Map<String, Object>> rows, List<String> path, List<Double> qs) {
+    List<Double> values = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number num) {
+        values.add(num.doubleValue());
+      }
+    }
+    Collections.sort(values);
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("count", (long) values.size());
+    for (double q : qs) {
+      result.put(pcol(q), quantileNearestRank(values, q));
+    }
+    return List.of(result);
+  }
+
+  private List<Map<String, Object>> applyLen(List<Map<String, Object>> rows, List<String> path) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      int len = 0;
+      if (val instanceof String s) {
+        len = s.length();
+      } else if (val instanceof Collection<?> c) {
+        len = c.size();
+      } else if (val != null && val.getClass().isArray()) {
+        len = java.lang.reflect.Array.getLength(val);
+      }
+      out.put("len", len);
+      result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyStringTransform(
+      List<Map<String, Object>> rows,
+      List<String> path,
+      java.util.function.Function<String, String> transform) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof String s) {
+        String transformed = transform.apply(s);
+        if (key != null) {
+          out.put(key, transformed);
+        } else if (!row.isEmpty()) {
+          String firstKey = row.keySet().iterator().next();
+          out.put(firstKey, transformed);
+        }
+      }
+      result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyNumberTransform(
+      List<Map<String, Object>> rows,
+      List<String> path,
+      java.util.function.DoubleUnaryOperator transform) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number num) {
+        double transformed = transform.applyAsDouble(num.doubleValue());
+        if (key != null) {
+          out.put(key, transformed);
+        } else if (!row.isEmpty()) {
+          String firstKey = row.keySet().iterator().next();
+          out.put(firstKey, transformed);
+        }
+      }
+      result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyContains(
+      List<Map<String, Object>> rows, List<String> path, String substr) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof String s && s.contains(substr)) {
+        result.add(row);
+      }
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyReplace(
+      List<Map<String, Object>> rows, List<String> path, String target, String replacement) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof String s) {
+        String replaced = s.replace(target, replacement);
+        if (key != null) {
+          out.put(key, replaced);
+        } else if (!row.isEmpty()) {
+          String firstKey = row.keySet().iterator().next();
+          out.put(firstKey, replaced);
+        }
+      }
+      result.add(out);
+    }
+    return result;
   }
 }

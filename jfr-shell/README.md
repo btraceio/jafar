@@ -2,12 +2,17 @@
 
 An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files with a powerful query language.
 
-**Quick Links**: [Usage Guide](../JFR-SHELL-USAGE.md) | [JfrPath Reference](../doc/jfrpath.md)
+**Quick Links**: [Usage Guide](../doc/jfr_shell_usage.md) | [JfrPath Reference](../doc/jfrpath.md)
 
 ## Features
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
+- **Variables**: store scalars and lazy query results with `${var}` substitution ⭐ NEW
+- **Conditionals**: if/elif/else/endif for control flow ⭐ NEW
+- **Scripting support**: record, save, and replay analysis workflows
+- **Positional parameters**: parameterize scripts for reusability
+- **Shebang support**: make scripts directly executable
 - **Multiple output formats**: table (default) and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
 - **Non-interactive mode**: execute queries from command line for scripting/CI
@@ -190,6 +195,186 @@ jfr-shell chunks recording.jfr --summary
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 
+## Variables
+
+Store and reuse values in your analysis sessions with `${var}` substitution.
+
+### Scalar Variables
+
+```bash
+jfr> set threshold = 1000
+jfr> set limit = 10
+jfr> show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+```
+
+### Lazy Query Variables
+
+Store queries for on-demand evaluation with caching:
+
+```bash
+jfr> set fileReads = events/jdk.FileRead[bytes>=1000]
+jfr> set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+
+# Access results
+jfr> echo "Found ${fileReads.size} large file reads"
+jfr> echo "Top thread: ${stats[0].sampledThread/javaName}"
+```
+
+### Variable Scopes
+
+```bash
+# Session-scoped (default) - cleared when session closes
+jfr> set myvar = "value"
+
+# Global - persists across all sessions
+jfr> set --global myvar = "value"
+```
+
+### Variable Commands
+
+```bash
+jfr> vars                    # List all variables
+jfr> vars --session          # List session variables only
+jfr> unset myvar             # Remove variable
+jfr> invalidate data         # Clear lazy variable cache
+jfr> echo "Value: ${myvar}"  # Print with substitution
+```
+
+See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) for complete reference.
+
+## Conditionals
+
+Control script flow with if/elif/else/endif blocks:
+
+```bash
+jfr> set count = events/jdk.FileRead | count()
+jfr> if ${count.count} > 0
+...(1)>   echo "Found ${count.count} file reads"
+...(1)>   if ${count.count} > 100
+...(2)>     echo "That's a lot!"
+...(2)>   endif
+...(1)> else
+...(1)>   echo "No file reads found"
+...(1)> endif
+```
+
+### Condition Expressions
+
+```bash
+# Comparisons
+if ${x} == 0
+if ${value} != "error"
+if ${bytes} > 1000
+
+# Arithmetic
+if ${a} + ${b} > 100
+
+# Logical operators
+if ${a} > 0 && ${b} > 0
+if ${x} == 0 || ${y} == 0
+if !${flag}
+
+# Built-in functions
+if exists(myvar)
+if empty(results)
+if !empty(data)
+```
+
+See [Scripting Guide](../doc/jfr-shell-scripting.md#conditionals) for complete reference.
+
+## Scripting
+
+JFR Shell supports powerful scripting capabilities for automating analysis workflows.
+
+### Scripts Directory
+
+Store reusable scripts in `~/.jfr-shell/scripts` and run them by name:
+
+```bash
+# List available scripts
+jfr> script list
+Available scripts in ~/.jfr-shell/scripts:
+
+  basic-analysis           Comprehensive recording overview
+  thread-profiling         Detailed thread analysis
+
+Run with: script run <name> [args...]
+
+# Run a script by name
+jfr> script run basic-analysis /tmp/app.jfr
+```
+
+### Script Execution
+
+Create reusable analysis scripts with variable substitution:
+
+**analysis.jfrs:**
+```bash
+# Comprehensive file I/O analysis
+# Arguments: recording, min_bytes, top_n
+
+open $1
+show events/jdk.FileRead[bytes>=$2] --limit $3
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=count)
+close
+```
+
+**Execute by path:**
+```bash
+jfr-shell script analysis.jfrs /tmp/app.jfr 1000 10
+```
+
+### Command Recording
+
+Record your interactive commands for later replay:
+
+```bash
+jfr> record start analysis.jfrs
+Recording started: analysis.jfrs
+
+jfr> open /tmp/app.jfr
+jfr> show events/jdk.ExecutionSample | count()
+jfr> show events/jdk.FileRead | sum(bytes)
+
+jfr> record stop
+Recording stopped: analysis.jfrs
+
+# Replay the recorded script
+$ jfr-shell script analysis.jfrs
+```
+
+### Shebang Support
+
+Make scripts directly executable:
+
+**analyze.jfrs:**
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Arguments: recording
+
+open $1
+show events/jdk.ExecutionSample | count()
+close
+```
+
+```bash
+chmod +x analyze.jfrs
+./analyze.jfrs recording=/tmp/app.jfr
+```
+
+### Example Scripts
+
+Check `jfr-shell/src/main/resources/examples/` for ready-to-use scripts:
+- `basic-analysis.jfrs` - Recording overview, threads, I/O, GC
+- `thread-profiling.jfrs` - Detailed thread analysis
+- `gc-analysis.jfrs` - Comprehensive GC statistics
+
+### Documentation
+
+- [Scripting Guide](../doc/jfr-shell-scripting.md) - Complete scripting reference
+- [Script Execution Tutorial](../doc/tutorials/script-execution-tutorial.md) - Learn by example
+- [Command Recording Tutorial](../doc/tutorials/command-recording-tutorial.md) - Record and replay workflows
+
 ## JfrPath Query Language
 
 JfrPath is a concise path-based query language for JFR data:
@@ -290,6 +475,27 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `chunk <index> show` - Show chunk details
 - `cp [<type>] [options]` - Browse constant pools
 
+### Variables
+- `set [--global] <name> = <value>` - Set variable (scalar or lazy query)
+- `vars [--global|--session]` - List variables
+- `unset <name>` - Remove a variable
+- `echo <text>` - Print with `${var}` substitution
+- `invalidate <name>` - Clear cached lazy variable
+
+### Conditionals
+- `if <condition>` - Start conditional block
+- `elif <condition>` - Else-if branch
+- `else` - Else branch
+- `endif` - End conditional block
+
+### Scripting
+- `script list` - List available scripts in `~/.jfr-shell/scripts`
+- `script run <name> [args...]` - Run script by name
+- `script <path> [args...]` - Run script by full path
+- `record start [path]` - Start recording commands
+- `record stop` - Stop recording
+- `record status` - Show recording status
+
 ### Help
 - `help [<command>]` - Show help (use `help show` for JfrPath syntax)
 - `exit` / `quit` - Exit shell
@@ -318,5 +524,5 @@ java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser/src/test/resources/test
 
 ## Documentation
 
-- [JFR-SHELL-USAGE.md](../JFR-SHELL-USAGE.md) - Complete usage guide
-- [doc/jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference
+- [jfr_shell_usage.md](../doc/jfr_shell_usage.md) - Complete usage guide
+- [jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference

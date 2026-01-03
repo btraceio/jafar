@@ -12,9 +12,31 @@ import org.jline.reader.Candidate;
 public class CommandCompleter implements ContextCompleter {
 
   private static final String[] COMMANDS = {
-    "open", "sessions", "use", "close", "info",
-    "show", "help", "metadata", "chunks", "chunk",
-    "cp", "exit", "quit"
+    "open",
+    "sessions",
+    "use",
+    "close",
+    "info",
+    "show",
+    "metadata",
+    "chunks",
+    "chunk",
+    "cp",
+    "set",
+    "let",
+    "vars",
+    "unset",
+    "echo",
+    "invalidate", // Variables
+    "if",
+    "elif",
+    "else",
+    "endif", // Conditionals
+    "script",
+    "record", // Scripting
+    "help",
+    "exit",
+    "quit"
   };
 
   @Override

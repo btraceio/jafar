@@ -2,10 +2,15 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -18,7 +23,8 @@ import picocli.CommandLine;
       Main.ShowCommand.class,
       Main.MetadataCommand.class,
       Main.ChunksCommand.class,
-      Main.CpCommand.class
+      Main.CpCommand.class,
+      Main.ScriptCommand.class
     })
 public class Main implements Callable<Integer> {
   @CommandLine.Option(
@@ -259,6 +265,130 @@ public class Main implements Callable<Integer> {
       }
 
       return executeNonInteractive(cmd.toString());
+    }
+  }
+
+  @CommandLine.Command(name = "script", description = "Execute a script file or from stdin")
+  static class ScriptCommand implements Callable<Integer> {
+    @CommandLine.Parameters(
+        index = "0",
+        description = "Path to script file (use '-' for stdin)",
+        defaultValue = "-")
+    private String scriptPath;
+
+    @CommandLine.Parameters(
+        index = "1..*",
+        arity = "0..*",
+        description = "Positional arguments for script ($1, $2, etc.)")
+    private List<String> arguments = new ArrayList<>();
+
+    @CommandLine.Option(
+        names = {"--continue-on-error"},
+        description = "Continue execution on command failures")
+    private boolean continueOnError;
+
+    @Override
+    public Integer call() {
+      // Check if reading from stdin
+      boolean fromStdin = "-".equals(scriptPath);
+      Path path = fromStdin ? null : Paths.get(scriptPath);
+
+      if (!fromStdin && !Files.exists(path)) {
+        System.err.println("Error: Script file not found: " + scriptPath);
+        return 1;
+      }
+
+      try {
+        ParsingContext ctx = ParsingContext.create();
+        SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+        StringBuilder output = new StringBuilder();
+        StringBuilder errors = new StringBuilder();
+
+        CommandDispatcher dispatcher =
+            new CommandDispatcher(
+                sessions,
+                new CommandDispatcher.IO() {
+                  @Override
+                  public void println(String s) {
+                    output.append(s).append("\n");
+                  }
+
+                  @Override
+                  public void printf(String fmt, Object... args) {
+                    output.append(String.format(fmt, args));
+                  }
+
+                  @Override
+                  public void error(String s) {
+                    errors.append(s).append("\n");
+                  }
+                },
+                current -> {});
+
+        CommandDispatcher.IO scriptIO =
+            new CommandDispatcher.IO() {
+              @Override
+              public void println(String s) {
+                System.out.println(s);
+              }
+
+              @Override
+              public void printf(String fmt, Object... args) {
+                System.out.printf(fmt, args);
+              }
+
+              @Override
+              public void error(String s) {
+                System.err.println(s);
+              }
+            };
+
+        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
+        runner.setContinueOnError(continueOnError);
+
+        ScriptRunner.ExecutionResult result;
+        if (fromStdin) {
+          // Read from stdin
+          List<String> lines = new ArrayList<>();
+          try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+              lines.add(line);
+            }
+          }
+          result = runner.execute(lines);
+        } else {
+          result = runner.execute(path);
+        }
+
+        // Print captured output
+        if (output.length() > 0) {
+          System.out.print(output.toString());
+        }
+
+        // Handle errors
+        if (result.hasErrors()) {
+          System.err.println("\nScript completed with errors:");
+          for (ScriptRunner.ScriptError error : result.getErrors()) {
+            System.err.println(error);
+          }
+          System.err.println(
+              String.format(
+                  "\nExecuted %d/%d commands successfully.",
+                  result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+          return 1;
+        }
+
+        if (result.getSuccessCount() > 0) {
+          System.out.println(
+              "\nScript executed successfully: " + result.getSuccessCount() + " commands");
+        }
+
+        return 0;
+      } catch (Exception e) {
+        System.err.println("Script execution failed: " + e.getMessage());
+        return 1;
+      }
     }
   }
 }

@@ -59,6 +59,28 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `chunk <index> show`: Show specific chunk details.
 - `cp [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
 
+### Variables
+- `set [--global] <name> = <value>`: Set a variable (scalar or lazy query).
+- `let [--global] <name> = <value>`: Alias for `set`.
+- `vars [--global|--session]`: List defined variables.
+- `unset <name>`: Remove a variable.
+- `echo <text>`: Print text with `${var}` substitution.
+- `invalidate <name>`: Clear cached lazy variable result.
+
+### Conditionals
+- `if <condition>`: Start conditional block.
+- `elif <condition>`: Else-if branch.
+- `else`: Else branch.
+- `endif`: End conditional block.
+
+### Scripting
+- `script list`: List available scripts in `~/.jfr-shell/scripts`.
+- `script run <name> [args...]`: Run script by name from scripts directory.
+- `script <path> [args...]`: Run script by full path.
+- `record start [path]`: Start recording commands to a script file.
+- `record stop`: Stop recording and save the script.
+- `record status`: Show current recording status.
+
 ### Help and Exit
 - `help [<command>]`: Show contextual help.
 - `exit` / `quit`: Exit shell.
@@ -157,6 +179,8 @@ is aliased for convenience.
 - Table or JSON output (`--format json`)
 - Metadata browsing: class/fields/annotations/settings
 - Recursive metadata trees (`--tree`, `--depth N`), including field-focused trees
+- Variables with lazy query evaluation and caching
+- Conditionals (if/elif/else/endif) for control flow
 - Helpful completion and contextual `help`
 
 ## JfrPath Essentials
