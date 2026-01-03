@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-03
+
+### Added
+- **JFR Shell scripting support** - Full scripting capabilities for automated JFR analysis (#34)
+  - Variable system with type inference (numbers, strings, lists, maps, booleans, null)
+  - Conditional execution (`if/elif/else/endif`) with boolean expressions and nested conditions
+  - Command recording (`record/endrecord`) for creating reusable command sequences
+  - Script execution with `.jfrs` files and embedded example scripts
+  - Variable substitution using `$variable` or `${variable}` syntax
+  - Non-interactive mode enhancements for scripting and CI integration
+  - Example scripts: `basic-analysis.jfrs`, `gc-analysis.jfrs`, `thread-profiling.jfrs`
+  - Comprehensive scripting documentation and tutorials
+
+### Changed
+- **JfrPath completion** - Enhanced completion for scripting variables and control flow
+- **Shell state management** - Added variable store and conditional state tracking
+
 ## [0.4.0] - 2025-12-28
 
 ### Added
