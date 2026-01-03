@@ -17,8 +17,8 @@ import java.util.List;
  * <p>This validator analyzes generated queries and determines what completion context should be
  * produced, then compares against the actual context returned by CompletionContextAnalyzer.
  *
- * <p>The validation logic mirrors the analyzer's token-based parsing to independently determine
- * the expected context type.
+ * <p>The validation logic mirrors the analyzer's token-based parsing to independently determine the
+ * expected context type.
  */
 public class CompletionContextValidator {
 
@@ -64,10 +64,7 @@ public class CompletionContextValidator {
     // Validate context type
     if (actual.type() != expected.contextType()) {
       result.addError(
-          "Context type mismatch: expected "
-              + expected.contextType()
-              + ", got "
-              + actual.type());
+          "Context type mismatch: expected " + expected.contextType() + ", got " + actual.type());
     }
 
     // Validate event type (if applicable)
@@ -99,8 +96,7 @@ public class CompletionContextValidator {
     if (expected.functionName() != null) {
       String actualFunction = (String) actual.extras().get("functionName");
       if (actualFunction == null) {
-        result.addWarning(
-            "Expected function name '" + expected.functionName() + "' but got null");
+        result.addWarning("Expected function name '" + expected.functionName() + "' but got null");
       } else if (!expected.functionName().equals(actualFunction)) {
         result.addWarning(
             "Function name mismatch: expected '"

@@ -11,9 +11,7 @@ import io.jafar.shell.cli.completion.Token;
  */
 public record CursorPosition(int position, PositionType type, Token token) {
 
-  /**
-   * Types of cursor positions for completion testing.
-   */
+  /** Types of cursor positions for completion testing. */
   public enum PositionType {
     /** At the start of a token */
     TOKEN_START,

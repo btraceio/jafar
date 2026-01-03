@@ -3,10 +3,10 @@
  *
  * <h2>Overview</h2>
  *
- * <p>This package provides comprehensive property-based testing for the jfr-shell completion system.
- * It automatically generates thousands of JfrPath expressions with strategic cursor positions to
- * discover missing completion scenarios and validate completion behavior across all syntax
- * variations.
+ * <p>This package provides comprehensive property-based testing for the jfr-shell completion
+ * system. It automatically generates thousands of JfrPath expressions with strategic cursor
+ * positions to discover missing completion scenarios and validate completion behavior across all
+ * syntax variations.
  *
  * <h2>Key Components</h2>
  *
@@ -17,9 +17,8 @@
  *       completion contexts and candidates are correct
  *   <li><b>Models</b> ({@link io.jafar.shell.cli.completion.property.models}): Data structures for
  *       representing generated queries and validation results
- *   <li><b>Tests</b> ({@link
- *       io.jafar.shell.cli.completion.property.PropertyBasedCompletionTests}): 30+ property tests
- *       covering all completion scenarios
+ *   <li><b>Tests</b> ({@link io.jafar.shell.cli.completion.property.PropertyBasedCompletionTests}):
+ *       30+ property tests covering all completion scenarios
  * </ul>
  *
  * <h2>Design Principles</h2>

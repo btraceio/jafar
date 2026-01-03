@@ -1,7 +1,6 @@
 package io.jafar.shell.cli.completion.property.validators;
 
 import io.jafar.shell.cli.completion.CompletionContext;
-import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.property.models.ValidationResult;
 import java.util.List;
@@ -11,12 +10,9 @@ import org.jline.reader.Candidate;
 /**
  * Validates that completion candidates are appropriate for the given context.
  *
- * <p>This validator checks that:
- * - Candidates match the completion context type
- * - Field names exist in metadata
- * - Operators are valid
- * - Function names are recognized
- * - Candidates match any partial input
+ * <p>This validator checks that: - Candidates match the completion context type - Field names exist
+ * in metadata - Operators are valid - Function names are recognized - Candidates match any partial
+ * input
  */
 public class CandidateValidator {
 
@@ -85,9 +81,7 @@ public class CandidateValidator {
 
   // ==================== Context-Specific Validators ====================
 
-  /**
-   * Validates root candidates (events, metadata, cp, chunks).
-   */
+  /** Validates root candidates (events, metadata, cp, chunks). */
   private void validateRootCandidates(List<Candidate> candidates, ValidationResult result) {
     Set<String> validRoots = Set.of("events", "metadata", "cp", "chunks");
 
@@ -104,9 +98,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates event type candidates.
-   */
+  /** Validates event type candidates. */
   private void validateEventTypeCandidates(
       List<Candidate> candidates, CompletionContext context, ValidationResult result) {
 
@@ -138,9 +130,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates field path candidates.
-   */
+  /** Validates field path candidates. */
   private void validateFieldPathCandidates(
       List<Candidate> candidates, CompletionContext context, ValidationResult result) {
 
@@ -190,9 +180,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates filter field candidates.
-   */
+  /** Validates filter field candidates. */
   private void validateFilterFieldCandidates(
       List<Candidate> candidates, CompletionContext context, ValidationResult result) {
 
@@ -200,9 +188,7 @@ public class CandidateValidator {
     validateFieldPathCandidates(candidates, context, result);
   }
 
-  /**
-   * Validates filter operator candidates.
-   */
+  /** Validates filter operator candidates. */
   private void validateFilterOperatorCandidates(
       List<Candidate> candidates, ValidationResult result) {
 
@@ -216,9 +202,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates filter logical operator candidates.
-   */
+  /** Validates filter logical operator candidates. */
   private void validateFilterLogicalCandidates(
       List<Candidate> candidates, ValidationResult result) {
 
@@ -232,17 +216,32 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates pipeline operator candidates.
-   */
+  /** Validates pipeline operator candidates. */
   private void validatePipelineOperatorCandidates(
       List<Candidate> candidates, ValidationResult result) {
 
     Set<String> validFunctions =
         Set.of(
-            "count", "sum", "groupBy", "top", "stats", "quantiles", "select", "sketch",
-            "len", "uppercase", "lowercase", "trim", "abs", "round", "floor", "ceil",
-            "contains", "replace", "decorateByTime", "decorateByKey");
+            "count",
+            "sum",
+            "groupBy",
+            "top",
+            "stats",
+            "quantiles",
+            "select",
+            "sketch",
+            "len",
+            "uppercase",
+            "lowercase",
+            "trim",
+            "abs",
+            "round",
+            "floor",
+            "ceil",
+            "contains",
+            "replace",
+            "decorateByTime",
+            "decorateByKey");
 
     for (Candidate c : candidates) {
       String functionName = extractFunctionName(c.value());
@@ -256,9 +255,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates function parameter candidates.
-   */
+  /** Validates function parameter candidates. */
   private void validateFunctionParamCandidates(
       List<Candidate> candidates, CompletionContext context, ValidationResult result) {
 
@@ -292,9 +289,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates chunk ID candidates.
-   */
+  /** Validates chunk ID candidates. */
   private void validateChunkIdCandidates(List<Candidate> candidates, ValidationResult result) {
     List<Integer> validChunks = metadata.getChunkIds();
 
@@ -316,9 +311,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates command option candidates.
-   */
+  /** Validates command option candidates. */
   private void validateCommandOptionCandidates(
       List<Candidate> candidates, ValidationResult result) {
 
@@ -329,9 +322,7 @@ public class CandidateValidator {
     }
   }
 
-  /**
-   * Validates metadata subproperty candidates (e.g., "fields").
-   */
+  /** Validates metadata subproperty candidates (e.g., "fields"). */
   private void validateMetadataSubpropCandidates(
       List<Candidate> candidates, ValidationResult result) {
 
@@ -348,9 +339,7 @@ public class CandidateValidator {
 
   // ==================== Universal Validators ====================
 
-  /**
-   * Validates that candidates match the partial input from context.
-   */
+  /** Validates that candidates match the partial input from context. */
   private void validatePartialMatch(
       List<Candidate> candidates, CompletionContext context, ValidationResult result) {
 
@@ -378,9 +367,7 @@ public class CandidateValidator {
 
   // ==================== Extraction Helpers ====================
 
-  /**
-   * Extracts root type from a candidate value.
-   */
+  /** Extracts root type from a candidate value. */
   private String extractRoot(String value) {
     if (value.contains("/")) {
       return value.substring(0, value.indexOf("/"));
@@ -388,9 +375,7 @@ public class CandidateValidator {
     return value;
   }
 
-  /**
-   * Extracts type name from a candidate value (after first slash).
-   */
+  /** Extracts type name from a candidate value (after first slash). */
   private String extractTypeName(String value) {
     if (!value.contains("/")) {
       return value;
@@ -402,9 +387,7 @@ public class CandidateValidator {
     return afterRoot;
   }
 
-  /**
-   * Extracts field name from a candidate value (after last slash).
-   */
+  /** Extracts field name from a candidate value (after last slash). */
   private String extractFieldName(String value) {
     if (value.contains("/")) {
       return value.substring(value.lastIndexOf("/") + 1);
@@ -412,9 +395,7 @@ public class CandidateValidator {
     return value;
   }
 
-  /**
-   * Extracts function name from a candidate value (before opening paren).
-   */
+  /** Extracts function name from a candidate value (before opening paren). */
   private String extractFunctionName(String value) {
     if (value.contains("(")) {
       return value.substring(0, value.indexOf("("));
@@ -422,9 +403,7 @@ public class CandidateValidator {
     return value;
   }
 
-  /**
-   * Extracts the relevant portion of a candidate for matching against partial input.
-   */
+  /** Extracts the relevant portion of a candidate for matching against partial input. */
   private String extractRelevantPortion(String value) {
     // For paths, extract the last segment
     if (value.contains("/")) {

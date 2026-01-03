@@ -13,12 +13,9 @@ import org.jline.reader.Candidate;
  * <p>These are context-independent rules that apply regardless of what's being completed. Invariant
  * violations indicate fundamental problems with the completion system.
  *
- * <p>Invariants include:
- * - No duplicate candidates
- * - All candidates match partial input (when applicable)
- * - Completion always returns non-null lists
- * - Context type determination is deterministic
- * - No empty candidate values
+ * <p>Invariants include: - No duplicate candidates - All candidates match partial input (when
+ * applicable) - Completion always returns non-null lists - Context type determination is
+ * deterministic - No empty candidate values
  */
 public class CompletionInvariants {
 
@@ -185,21 +182,14 @@ public class CompletionInvariants {
 
     if (context1.type() != context2.type()) {
       result.addError(
-          "Non-deterministic context type: "
-              + context1.type()
-              + " vs "
-              + context2.type());
+          "Non-deterministic context type: " + context1.type() + " vs " + context2.type());
     }
 
     // Event type should also be deterministic
     if (context1.eventType() != null && context2.eventType() != null) {
       if (!context1.eventType().equals(context2.eventType())) {
         result.addWarning(
-            "Event type differs: '"
-                + context1.eventType()
-                + "' vs '"
-                + context2.eventType()
-                + "'");
+            "Event type differs: '" + context1.eventType() + "' vs '" + context2.eventType() + "'");
       }
     }
   }
@@ -212,19 +202,15 @@ public class CompletionInvariants {
    * @param candidates the list of candidates
    * @param result validation result to add warnings to
    */
-  public void checkReasonableCandidateCount(
-      List<Candidate> candidates, ValidationResult result) {
+  public void checkReasonableCandidateCount(List<Candidate> candidates, ValidationResult result) {
 
     int count = candidates.size();
 
     if (count > 200) {
       result.addWarning(
-          "Very large candidate count ("
-              + count
-              + ") - consider filtering or limiting results");
+          "Very large candidate count (" + count + ") - consider filtering or limiting results");
     } else if (count == 0) {
-      result.addWarning(
-          "No candidates returned - verify this is expected for the context");
+      result.addWarning("No candidates returned - verify this is expected for the context");
     }
   }
 
@@ -236,14 +222,18 @@ public class CompletionInvariants {
    * @param candidates the list of candidates
    * @param result validation result to add warnings to
    */
-  public void checkCandidateDisplayStrings(
-      List<Candidate> candidates, ValidationResult result) {
+  public void checkCandidateDisplayStrings(List<Candidate> candidates, ValidationResult result) {
 
     for (Candidate c : candidates) {
       String display = c.displ();
       if (display != null) {
         if (display.length() > 100) {
-          result.addWarning("Very long display string (" + display.length() + " chars): " + display.substring(0, 50) + "...");
+          result.addWarning(
+              "Very long display string ("
+                  + display.length()
+                  + " chars): "
+                  + display.substring(0, 50)
+                  + "...");
         }
         if (display.isEmpty()) {
           result.addWarning("Empty display string for candidate: " + c.value());

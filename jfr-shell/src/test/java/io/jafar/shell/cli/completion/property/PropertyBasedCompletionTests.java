@@ -37,8 +37,8 @@ import org.jline.reader.ParsedLine;
  * to discover missing completion scenarios and validate completion behavior across all syntax
  * variations.
  *
- * <p>The test framework uses real JFR metadata from test-ap.jfr to ensure generated expressions
- * use valid event types and field names.
+ * <p>The test framework uses real JFR metadata from test-ap.jfr to ensure generated expressions use
+ * valid event types and field names.
  */
 @PropertyDefaults(tries = 1000, shrinking = ShrinkingMode.FULL)
 public class PropertyBasedCompletionTests {
@@ -137,9 +137,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Arbitrary Providers ====================
 
-  /**
-   * Provides valid JfrPath expressions with strategic cursor positions.
-   */
+  /** Provides valid JfrPath expressions with strategic cursor positions. */
   @Provide
   Arbitrary<GeneratedQuery> validQueries() {
     return expressionGenerator
@@ -149,15 +147,11 @@ public class PropertyBasedCompletionTests {
               List<CursorPosition> positions = cursorStrategy.generatePositions(expr);
               return Arbitraries.of(positions)
                   .map(
-                      pos ->
-                          new GeneratedQuery(
-                              expr, pos.position(), pos.type(), metadataService));
+                      pos -> new GeneratedQuery(expr, pos.position(), pos.type(), metadataService));
             });
   }
 
-  /**
-   * Provides simple expressions (no filters or pipelines).
-   */
+  /** Provides simple expressions (no filters or pipelines). */
   @Provide
   Arbitrary<GeneratedQuery> simpleQueries() {
     return expressionGenerator
@@ -167,15 +161,11 @@ public class PropertyBasedCompletionTests {
               List<CursorPosition> positions = cursorStrategy.generatePositions(expr);
               return Arbitraries.of(positions)
                   .map(
-                      pos ->
-                          new GeneratedQuery(
-                              expr, pos.position(), pos.type(), metadataService));
+                      pos -> new GeneratedQuery(expr, pos.position(), pos.type(), metadataService));
             });
   }
 
-  /**
-   * Provides invalid JfrPath expressions for negative testing.
-   */
+  /** Provides invalid JfrPath expressions for negative testing. */
   @Provide
   Arbitrary<GeneratedQuery> invalidQueries() {
     return expressionGenerator
@@ -185,9 +175,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Universal Invariant Tests ====================
 
-  /**
-   * Property: Completion never throws exceptions, even for arbitrary input.
-   */
+  /** Property: Completion never throws exceptions, even for arbitrary input. */
   @Property
   void completionNeverThrows(@ForAll String arbitraryInput) {
     assertDoesNotThrow(
@@ -196,18 +184,14 @@ public class PropertyBasedCompletionTests {
         });
   }
 
-  /**
-   * Property: Completion always returns non-null list.
-   */
+  /** Property: Completion always returns non-null list. */
   @Property
   void completionReturnsNonNullList(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
     assertNotNull(candidates, "Completion must never return null");
   }
 
-  /**
-   * Property: No duplicate candidates.
-   */
+  /** Property: No duplicate candidates. */
   @Property
   void noDuplicateCandidates(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -216,9 +200,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(result.isValid(), result.getReport());
   }
 
-  /**
-   * Property: All candidates have non-empty values.
-   */
+  /** Property: All candidates have non-empty values. */
   @Property
   void candidatesHaveNonEmptyValues(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -227,9 +209,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(result.isValid(), result.getReport());
   }
 
-  /**
-   * Property: Context type determination is deterministic.
-   */
+  /** Property: Context type determination is deterministic. */
   @Property
   void contextTypeIsDeterministic(@ForAll("validQueries") GeneratedQuery query) {
     CompletionContext ctx1 = analyzeContext(query);
@@ -242,9 +222,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Initial Property Tests ====================
 
-  /**
-   * Property: Completion at the start should suggest all root types.
-   */
+  /** Property: Completion at the start should suggest all root types. */
   @Property
   void rootCompletionSuggestsAllRoots() {
     GeneratedQuery query = GeneratedQuery.atStart("", metadataService);
@@ -258,9 +236,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Context-Specific Property Tests ====================
 
-  /**
-   * Property: Simple expressions produce valid completions.
-   */
+  /** Property: Simple expressions produce valid completions. */
   @Property
   void simpleExpressionsProduceValidCompletions(@ForAll("simpleQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -269,13 +245,15 @@ public class PropertyBasedCompletionTests {
     // Check all invariants
     ValidationResult invariantResult = invariants.checkAllInvariants(context, candidates);
     if (!invariantResult.isValid()) {
-      fail("Invariant violations for query: " + query.describe() + "\n" + invariantResult.getReport());
+      fail(
+          "Invariant violations for query: "
+              + query.describe()
+              + "\n"
+              + invariantResult.getReport());
     }
   }
 
-  /**
-   * Property: Candidates match partial input.
-   */
+  /** Property: Candidates match partial input. */
   @Property
   void candidatesMatchPartialInput(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -289,9 +267,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(result.isValid(), "Errors: " + result.getReport());
   }
 
-  /**
-   * Property: Invalid expressions don't crash completion.
-   */
+  /** Property: Invalid expressions don't crash completion. */
   @Property(tries = 500)
   void invalidExpressionsDontCrash(@ForAll("invalidQueries") GeneratedQuery query) {
     assertDoesNotThrow(
@@ -302,9 +278,7 @@ public class PropertyBasedCompletionTests {
         "Completion crashed on invalid query: " + query.describe());
   }
 
-  /**
-   * Property: Reasonable candidate counts.
-   */
+  /** Property: Reasonable candidate counts. */
   @Property
   void reasonableCandidateCounts(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -322,9 +296,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Validation-Based Property Tests ====================
 
-  /**
-   * Property: Candidates are appropriate for their context.
-   */
+  /** Property: Candidates are appropriate for their context. */
   @Property(tries = 500)
   void candidatesMatchContext(@ForAll("simpleQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -345,9 +317,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: All invariants hold for generated queries.
-   */
+  /** Property: All invariants hold for generated queries. */
   @Property(tries = 500)
   void allInvariantsHold(@ForAll("validQueries") GeneratedQuery query) {
     List<Candidate> candidates = invokeCompletion(query);
@@ -368,9 +338,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Filter Completion Property Tests ====================
 
-  /**
-   * Property: Filter field completion suggests valid fields for the event type.
-   */
+  /** Property: Filter field completion suggests valid fields for the event type. */
   @Property(tries = 300)
   void filterFieldCompletionSuggestsValidFields() {
     // Test completion inside filter brackets after opening [
@@ -379,7 +347,8 @@ public class PropertyBasedCompletionTests {
     int cursor = expr.length();
 
     List<Candidate> candidates = completeAt(expr, cursor);
-    CompletionContext context = analyzeContext(GeneratedQuery.atPosition(expr, cursor, metadataService));
+    CompletionContext context =
+        analyzeContext(GeneratedQuery.atPosition(expr, cursor, metadataService));
 
     // Should suggest fields for this event type
     List<String> validFields = metadataService.getFieldNames(eventType);
@@ -393,7 +362,10 @@ public class PropertyBasedCompletionTests {
               .filter(
                   c -> {
                     String value = c.value();
-                    String fieldName = value.contains("[") ? value.substring(value.lastIndexOf("[") + 1).trim() : value.trim();
+                    String fieldName =
+                        value.contains("[")
+                            ? value.substring(value.lastIndexOf("[") + 1).trim()
+                            : value.trim();
                     // Also handle function completions like "contains("
                     if (fieldName.contains("(")) {
                       return true; // Functions are valid suggestions in filters
@@ -408,9 +380,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: Filter operator completion after field name suggests all operators.
-   */
+  /** Property: Filter operator completion after field name suggests all operators. */
   @Property(tries = 300)
   void filterOperatorCompletionAfterFieldName() {
     // Test completion after field name in filter
@@ -427,9 +397,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(containsCandidate(candidates, "<"), "Should suggest <");
   }
 
-  /**
-   * Property: Filter logical operator completion after condition suggests && and ||.
-   */
+  /** Property: Filter logical operator completion after condition suggests && and ||. */
   @Property(tries = 300)
   void filterLogicalCompletionAfterCondition() {
     // Test completion after complete condition
@@ -445,9 +413,7 @@ public class PropertyBasedCompletionTests {
     // Note: "]" may or may not be suggested depending on completer implementation
   }
 
-  /**
-   * Property: Nested field paths in filters are handled correctly.
-   */
+  /** Property: Nested field paths in filters are handled correctly. */
   @Property(tries = 300)
   void nestedFieldPathsInFiltersHandled() {
     // Test completion with nested field paths
@@ -463,9 +429,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Pipeline Completion Property Tests ====================
 
-  /**
-   * Property: Pipeline operator completion after pipe suggests all functions.
-   */
+  /** Property: Pipeline operator completion after pipe suggests all functions. */
   @Property(tries = 300)
   void pipelineOperatorCompletionSuggestsAllFunctions() {
     // Test completion after pipe operator
@@ -489,9 +453,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(containsCandidate(candidates, "decorateByKey"), "Should suggest decorateByKey");
   }
 
-  /**
-   * Property: Function parameter completion suggests valid fields.
-   */
+  /** Property: Function parameter completion suggests valid fields. */
   @Property(tries = 300)
   void functionParameterCompletionSuggestsFields() {
     // Test completion inside function parameters
@@ -508,9 +470,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: Transform operators are available after pipe.
-   */
+  /** Property: Transform operators are available after pipe. */
   @Property(tries = 300)
   void transformOperatorsAvailableAfterPipe() {
     // Test that transform functions appear in pipeline completions
@@ -528,9 +488,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Decorator Completion Property Tests ====================
 
-  /**
-   * Property: decorateByTime function has correct signature in completion.
-   */
+  /** Property: decorateByTime function has correct signature in completion. */
   @Property(tries = 200)
   void decorateByTimeHasCorrectSignature() {
     // Test that decorateByTime appears with correct signature
@@ -545,9 +503,7 @@ public class PropertyBasedCompletionTests {
     assertTrue(foundDecorator, "Should suggest decorateByTime");
   }
 
-  /**
-   * Property: decorateByKey function parameters are validated.
-   */
+  /** Property: decorateByKey function parameters are validated. */
   @Property(tries = 200)
   void decorateByKeyParametersValid() {
     // Test that decorateByKey appears in completions
@@ -557,18 +513,16 @@ public class PropertyBasedCompletionTests {
     List<Candidate> candidates = completeAt(expr, cursor);
 
     // Should find decorateByKey
-    boolean foundDecorator =
-        candidates.stream().anyMatch(c -> c.value().contains("decorateByKey"));
+    boolean foundDecorator = candidates.stream().anyMatch(c -> c.value().contains("decorateByKey"));
     assertTrue(foundDecorator, "Should suggest decorateByKey");
   }
 
-  /**
-   * Property: Decorated fields (with $decorator prefix) are accessible after decoration.
-   */
+  /** Property: Decorated fields (with $decorator prefix) are accessible after decoration. */
   @Property(tries = 200)
   void decoratedFieldsAccessible() {
     // Test completion for decorated fields
-    String expr = "events/jdk.ExecutionSample | decorateByTime(\"jdk.JavaMonitorEnter\") | $decorator.";
+    String expr =
+        "events/jdk.ExecutionSample | decorateByTime(\"jdk.JavaMonitorEnter\") | $decorator.";
     int cursor = expr.length();
 
     List<Candidate> candidates = completeAt(expr, cursor);
@@ -580,9 +534,7 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Edge Case Property Tests ====================
 
-  /**
-   * Property: Very long field paths are handled gracefully.
-   */
+  /** Property: Very long field paths are handled gracefully. */
   @Property(tries = 200)
   void veryLongPathsHandledGracefully(@ForAll @IntRange(min = 5, max = 10) int depth) {
     // Build a path with many levels
@@ -601,9 +553,7 @@ public class PropertyBasedCompletionTests {
         "Should handle deep paths gracefully");
   }
 
-  /**
-   * Property: Cursor in middle of token is handled correctly.
-   */
+  /** Property: Cursor in middle of token is handled correctly. */
   @Property(tries = 300)
   void cursorInMiddleOfTokenHandled() {
     // Test completion with cursor in middle of identifier
@@ -618,9 +568,7 @@ public class PropertyBasedCompletionTests {
         "Should handle cursor in middle of token");
   }
 
-  /**
-   * Property: Whitespace-only and empty input handled correctly.
-   */
+  /** Property: Whitespace-only and empty input handled correctly. */
   @Property(tries = 200)
   void emptyAndWhitespaceHandled(@ForAll @StringLength(max = 10) @Whitespace String whitespace) {
     assertDoesNotThrow(
@@ -631,9 +579,7 @@ public class PropertyBasedCompletionTests {
         "Should handle whitespace gracefully");
   }
 
-  /**
-   * Property: Completion after metadata root suggests metadata types.
-   */
+  /** Property: Completion after metadata root suggests metadata types. */
   @Property(tries = 200)
   void metadataCompletionSuggestsTypes() {
     String expr = "metadata/";
@@ -665,9 +611,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: Completion after cp root suggests constant pool types.
-   */
+  /** Property: Completion after cp root suggests constant pool types. */
   @Property(tries = 200)
   void cpCompletionSuggestsTypes() {
     String expr = "cp/";
@@ -682,9 +626,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: Chunk ID completion suggests valid chunk IDs.
-   */
+  /** Property: Chunk ID completion suggests valid chunk IDs. */
   @Property(tries = 200)
   void chunkIdCompletionSuggestsValidIds() {
     String expr = "chunks/";
@@ -699,9 +641,7 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /**
-   * Property: Field path with slashes is parsed correctly.
-   */
+  /** Property: Field path with slashes is parsed correctly. */
   @Property(tries = 300)
   void fieldPathWithSlashesParsedCorrectly() {
     String eventType = "jdk.ExecutionSample";
@@ -711,7 +651,8 @@ public class PropertyBasedCompletionTests {
     assertDoesNotThrow(
         () -> {
           List<Candidate> candidates = completeAt(expr, cursor);
-          CompletionContext context = analyzeContext(GeneratedQuery.atPosition(expr, cursor, metadataService));
+          CompletionContext context =
+              analyzeContext(GeneratedQuery.atPosition(expr, cursor, metadataService));
 
           // Should identify as field path context
           assertNotNull(context);
@@ -719,9 +660,7 @@ public class PropertyBasedCompletionTests {
         "Should parse field paths with trailing slashes");
   }
 
-  /**
-   * Property: Special characters in field names don't crash completion.
-   */
+  /** Property: Special characters in field names don't crash completion. */
   @Property(tries = 200)
   void specialCharactersInFieldNamesDontCrash(
       @ForAll @Chars({'$', '_', '.', '-'}) char specialChar) {

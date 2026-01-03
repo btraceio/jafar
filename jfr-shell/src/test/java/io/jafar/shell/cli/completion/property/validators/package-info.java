@@ -11,8 +11,8 @@
  *
  * <ul>
  *   <li>{@link io.jafar.shell.cli.completion.property.validators.CompletionContextValidator}:
- *       Validates that completion contexts match expected values based on query structure and cursor
- *       position
+ *       Validates that completion contexts match expected values based on query structure and
+ *       cursor position
  *   <li>{@link io.jafar.shell.cli.completion.property.validators.CandidateValidator}: Validates
  *       that completion candidates are appropriate for the given context (e.g., only valid fields
  *       suggested)
@@ -67,9 +67,8 @@
  *
  * <h2>Validation Results</h2>
  *
- * <p>All validators return {@link
- * io.jafar.shell.cli.completion.property.models.ValidationResult} objects that accumulate errors
- * and warnings:
+ * <p>All validators return {@link io.jafar.shell.cli.completion.property.models.ValidationResult}
+ * objects that accumulate errors and warnings:
  *
  * <ul>
  *   <li><b>Errors</b>: Serious violations that indicate bugs (e.g., wrong context type, invalid

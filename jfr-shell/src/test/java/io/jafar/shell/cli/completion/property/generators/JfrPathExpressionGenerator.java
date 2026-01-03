@@ -5,7 +5,6 @@ import java.util.List;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
 import net.jqwik.api.Combinators;
-import net.jqwik.api.Tuple;
 
 /**
  * Composite generator for complete JfrPath expressions.
@@ -32,19 +31,14 @@ public class JfrPathExpressionGenerator {
   /**
    * Generates valid JfrPath expressions.
    *
-   * <p>Produces expressions like:
-   * - "events/jdk.ExecutionSample"
-   * - "events/jdk.ExecutionSample/sampledThread"
-   * - "events/jdk.ExecutionSample[startTime > 0]"
-   * - "events/jdk.ExecutionSample | count()"
-   * - "metadata/Class/fields"
+   * <p>Produces expressions like: - "events/jdk.ExecutionSample" -
+   * "events/jdk.ExecutionSample/sampledThread" - "events/jdk.ExecutionSample[startTime > 0]" -
+   * "events/jdk.ExecutionSample | count()" - "metadata/Class/fields"
    *
    * @return arbitrary generating valid JfrPath expressions
    */
   public Arbitrary<String> validJfrPathExpression() {
-    return rootExpression()
-        .flatMap(this::optionallyAddFilter)
-        .flatMap(this::optionallyAddPipeline);
+    return rootExpression().flatMap(this::optionallyAddFilter).flatMap(this::optionallyAddPipeline);
   }
 
   /**
@@ -75,12 +69,12 @@ public class JfrPathExpressionGenerator {
   private Arbitrary<String> rootExpression() {
     return Arbitraries.oneOf(
         eventsExpression(),
-        eventsExpression(),  // 2x weight
-        eventsExpression(),  // 3x weight
-        eventsExpression(),  // 4x weight
-        eventsExpression(),  // 5x weight
+        eventsExpression(), // 2x weight
+        eventsExpression(), // 3x weight
+        eventsExpression(), // 4x weight
+        eventsExpression(), // 5x weight
         metadataExpression(),
-        metadataExpression(),  // 2x weight
+        metadataExpression(), // 2x weight
         cpExpression(),
         chunksExpression());
   }
@@ -88,10 +82,8 @@ public class JfrPathExpressionGenerator {
   /**
    * Generates events expressions with optional field paths.
    *
-   * <p>Examples:
-   * - "events/jdk.ExecutionSample"
-   * - "events/jdk.ExecutionSample/sampledThread"
-   * - "events/jdk.ExecutionSample/sampledThread/javaThreadId"
+   * <p>Examples: - "events/jdk.ExecutionSample" - "events/jdk.ExecutionSample/sampledThread" -
+   * "events/jdk.ExecutionSample/sampledThread/javaThreadId"
    *
    * @return arbitrary generating events expressions
    */
@@ -102,17 +94,17 @@ public class JfrPathExpressionGenerator {
                 Arbitraries.oneOf(
                     // 50%: Just event type
                     Arbitraries.just("events/" + type),
-                    Arbitraries.just("events/" + type),  // 2x
-                    Arbitraries.just("events/" + type),  // 3x
-                    Arbitraries.just("events/" + type),  // 4x
-                    Arbitraries.just("events/" + type),  // 5x
+                    Arbitraries.just("events/" + type), // 2x
+                    Arbitraries.just("events/" + type), // 3x
+                    Arbitraries.just("events/" + type), // 4x
+                    Arbitraries.just("events/" + type), // 5x
                     // 30%: Event type + single field
                     JfrPathComponentGenerators.fieldName(type, metadata)
                         .map(field -> "events/" + type + "/" + field),
                     JfrPathComponentGenerators.fieldName(type, metadata)
-                        .map(field -> "events/" + type + "/" + field),  // 2x
+                        .map(field -> "events/" + type + "/" + field), // 2x
                     JfrPathComponentGenerators.fieldName(type, metadata)
-                        .map(field -> "events/" + type + "/" + field),  // 3x
+                        .map(field -> "events/" + type + "/" + field), // 3x
                     // 20%: Event type + nested path
                     JfrPathComponentGenerators.nestedFieldPath(type, 3, metadata)
                         .map(
@@ -129,16 +121,13 @@ public class JfrPathExpressionGenerator {
                                 return "events/" + type;
                               }
                               return "events/" + type + "/" + String.join("/", path);
-                            })));  // 2x
+                            }))); // 2x
   }
 
   /**
    * Generates metadata expressions.
    *
-   * <p>Examples:
-   * - "metadata/Class"
-   * - "metadata/Class/fields"
-   * - "metadata/Method/fields"
+   * <p>Examples: - "metadata/Class" - "metadata/Class/fields" - "metadata/Method/fields"
    *
    * @return arbitrary generating metadata expressions
    */
@@ -148,18 +137,16 @@ public class JfrPathExpressionGenerator {
             type ->
                 Arbitraries.oneOf(
                     Arbitraries.just("metadata/" + type),
-                    Arbitraries.just("metadata/" + type),  // 2x
-                    Arbitraries.just("metadata/" + type),  // 3x
+                    Arbitraries.just("metadata/" + type), // 2x
+                    Arbitraries.just("metadata/" + type), // 3x
                     Arbitraries.just("metadata/" + type + "/fields"),
-                    Arbitraries.just("metadata/" + type + "/fields")));  // 2x
+                    Arbitraries.just("metadata/" + type + "/fields"))); // 2x
   }
 
   /**
    * Generates constant pool expressions.
    *
-   * <p>Examples:
-   * - "cp/Class"
-   * - "cp/Package/name"
+   * <p>Examples: - "cp/Class" - "cp/Package/name"
    *
    * @return arbitrary generating cp expressions
    */
@@ -169,30 +156,27 @@ public class JfrPathExpressionGenerator {
             type ->
                 Arbitraries.oneOf(
                     Arbitraries.just("cp/" + type),
-                    Arbitraries.just("cp/" + type),  // 2x
-                    Arbitraries.just("cp/" + type),  // 3x
+                    Arbitraries.just("cp/" + type), // 2x
+                    Arbitraries.just("cp/" + type), // 3x
                     JfrPathComponentGenerators.fieldName(type, metadata)
                         .map(field -> "cp/" + type + "/" + field),
                     JfrPathComponentGenerators.fieldName(type, metadata)
-                        .map(field -> "cp/" + type + "/" + field)));  // 2x
+                        .map(field -> "cp/" + type + "/" + field))); // 2x
   }
 
   /**
    * Generates chunks expressions.
    *
-   * <p>Examples:
-   * - "chunks"
-   * - "chunks/0"
-   * - "chunks/1"
+   * <p>Examples: - "chunks" - "chunks/0" - "chunks/1"
    *
    * @return arbitrary generating chunks expressions
    */
   private Arbitrary<String> chunksExpression() {
     return Arbitraries.oneOf(
         Arbitraries.just("chunks"),
-        Arbitraries.just("chunks"),  // 2x weight
+        Arbitraries.just("chunks"), // 2x weight
         JfrPathComponentGenerators.chunkId(metadata).map(id -> "chunks/" + id),
-        JfrPathComponentGenerators.chunkId(metadata).map(id -> "chunks/" + id),  // 2x weight
+        JfrPathComponentGenerators.chunkId(metadata).map(id -> "chunks/" + id), // 2x weight
         JfrPathComponentGenerators.chunkId(metadata).map(id -> "chunks/" + id)); // 3x weight
   }
 
@@ -212,14 +196,14 @@ public class JfrPathExpressionGenerator {
 
     return Arbitraries.oneOf(
         simpleFilter(expr),
-        simpleFilter(expr),  // 2x
-        simpleFilter(expr),  // 3x
-        simpleFilter(expr),  // 4x
+        simpleFilter(expr), // 2x
+        simpleFilter(expr), // 3x
+        simpleFilter(expr), // 4x
         complexFilter(expr),
-        complexFilter(expr),  // 2x
-        Arbitraries.just(expr),  // no filter
-        Arbitraries.just(expr),  // 2x
-        Arbitraries.just(expr),  // 3x
+        complexFilter(expr), // 2x
+        Arbitraries.just(expr), // no filter
+        Arbitraries.just(expr), // 2x
+        Arbitraries.just(expr), // 3x
         Arbitraries.just(expr)); // 4x
   }
 
@@ -286,14 +270,14 @@ public class JfrPathExpressionGenerator {
   private Arbitrary<String> optionallyAddPipeline(String expr) {
     return Arbitraries.oneOf(
         pipelineOperator(expr),
-        pipelineOperator(expr),  // 2x
-        pipelineOperator(expr),  // 3x
-        Arbitraries.just(expr),  // no pipeline
-        Arbitraries.just(expr),  // 2x
-        Arbitraries.just(expr),  // 3x
-        Arbitraries.just(expr),  // 4x
-        Arbitraries.just(expr),  // 5x
-        Arbitraries.just(expr),  // 6x
+        pipelineOperator(expr), // 2x
+        pipelineOperator(expr), // 3x
+        Arbitraries.just(expr), // no pipeline
+        Arbitraries.just(expr), // 2x
+        Arbitraries.just(expr), // 3x
+        Arbitraries.just(expr), // 4x
+        Arbitraries.just(expr), // 5x
+        Arbitraries.just(expr), // 6x
         Arbitraries.just(expr)); // 7x
   }
 
@@ -309,12 +293,12 @@ public class JfrPathExpressionGenerator {
     // Choose operator type
     return Arbitraries.oneOf(
         Arbitraries.just(expr + " | count()"),
-        Arbitraries.just(expr + " | count()"),  // 2x
-        Arbitraries.just(expr + " | count()"),  // 3x
+        Arbitraries.just(expr + " | count()"), // 2x
+        Arbitraries.just(expr + " | count()"), // 3x
         sumOperator(expr, eventType),
-        sumOperator(expr, eventType),  // 2x
+        sumOperator(expr, eventType), // 2x
         groupByOperator(expr, eventType),
-        groupByOperator(expr, eventType),  // 2x
+        groupByOperator(expr, eventType), // 2x
         topOperator(expr, eventType),
         selectOperator(expr, eventType),
         transformOperator(expr),
@@ -404,17 +388,15 @@ public class JfrPathExpressionGenerator {
    * @return arbitrary generating transform operator
    */
   private Arbitrary<String> transformOperator(String expr) {
-    return JfrPathComponentGenerators.transformFunction()
-        .map(fn -> expr + " | " + fn + "()");
+    return JfrPathComponentGenerators.transformFunction().map(fn -> expr + " | " + fn + "()");
   }
 
   /**
    * Generates a decorator operator (decorateByTime or decorateByKey).
    *
-   * <p>Examples:
-   * - "events/jdk.ExecutionSample | decorateByTime("jdk.JavaMonitorEnter", fields=address)"
-   * - "events/jdk.ExecutionSample | decorateByKey("jdk.JavaMonitorEnter", key=eventThread,
-   * decoratorKey=eventThread, fields=address)"
+   * <p>Examples: - "events/jdk.ExecutionSample | decorateByTime("jdk.JavaMonitorEnter",
+   * fields=address)" - "events/jdk.ExecutionSample | decorateByKey("jdk.JavaMonitorEnter",
+   * key=eventThread, decoratorKey=eventThread, fields=address)"
    *
    * @param expr the base expression
    * @param eventType the event type (may be null)
@@ -442,16 +424,10 @@ public class JfrPathExpressionGenerator {
     return Combinators.combine(
             JfrPathComponentGenerators.eventTypes(metadata),
             JfrPathComponentGenerators.eventTypes(metadata)
-                .flatMap(
-                    type -> JfrPathComponentGenerators.fieldList(type, 1, 2, metadata)))
+                .flatMap(type -> JfrPathComponentGenerators.fieldList(type, 1, 2, metadata)))
         .as(
             (decoratorType, fields) ->
-                expr
-                    + " | decorateByTime(\""
-                    + decoratorType
-                    + "\", fields="
-                    + fields
-                    + ")");
+                expr + " | decorateByTime(\"" + decoratorType + "\", fields=" + fields + ")");
   }
 
   /**
@@ -467,7 +443,10 @@ public class JfrPathExpressionGenerator {
               List<String> fields = metadata.getFieldNames(decoratorType);
               if (fields.isEmpty()) {
                 return Arbitraries.just(
-                    expr + " | decorateByKey(\"" + decoratorType + "\", key=id, decoratorKey=id, fields=name)");
+                    expr
+                        + " | decorateByKey(\""
+                        + decoratorType
+                        + "\", key=id, decoratorKey=id, fields=name)");
               }
 
               return Combinators.combine(

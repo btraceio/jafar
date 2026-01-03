@@ -252,7 +252,8 @@ public class CursorPositionStrategy {
       case "PIPELINE_OPERATOR":
         // After '|'
         for (int i = 0; i < expression.length(); i++) {
-          if (expression.charAt(i) == '|' && (i + 1 >= expression.length() || expression.charAt(i + 1) != '|')) {
+          if (expression.charAt(i) == '|'
+              && (i + 1 >= expression.length() || expression.charAt(i + 1) != '|')) {
             positions.add(new CursorPosition(i + 1, PositionType.STRUCTURAL, null));
           }
         }

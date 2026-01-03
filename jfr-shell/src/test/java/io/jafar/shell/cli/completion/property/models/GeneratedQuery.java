@@ -64,8 +64,7 @@ public record GeneratedQuery(
    * @return a GeneratedQuery with cursor at end
    */
   public static GeneratedQuery atEnd(String expression, MetadataService metadata) {
-    return new GeneratedQuery(
-        expression, expression.length(), PositionType.TOKEN_END, metadata);
+    return new GeneratedQuery(expression, expression.length(), PositionType.TOKEN_END, metadata);
   }
 
   /**

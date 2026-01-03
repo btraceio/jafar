@@ -2,10 +2,6 @@ package io.jafar.shell.cli.completion.property.generators;
 
 import io.jafar.shell.cli.completion.MetadataService;
 import net.jqwik.api.Arbitrary;
-import net.jqwik.api.providers.ArbitraryProvider;
-import net.jqwik.api.providers.TypeUsage;
-import java.util.List;
-import java.util.Set;
 
 /**
  * Convenience providers for common patterns in property tests.

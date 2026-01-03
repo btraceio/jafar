@@ -11,9 +11,9 @@ import net.jqwik.api.Arbitrary;
 /**
  * Atomic generators for individual JfrPath components.
  *
- * <p>These generators create the building blocks for JfrPath expressions: roots, event types,
- * field names, operators, functions, and values. They use real metadata from the test JFR file to
- * ensure generated expressions are valid.
+ * <p>These generators create the building blocks for JfrPath expressions: roots, event types, field
+ * names, operators, functions, and values. They use real metadata from the test JFR file to ensure
+ * generated expressions are valid.
  */
 public class JfrPathComponentGenerators {
 
@@ -179,8 +179,7 @@ public class JfrPathComponentGenerators {
    * @return arbitrary generating filter function names
    */
   public static Arbitrary<String> filterFunction() {
-    return Arbitraries.of(
-        "contains", "startsWith", "endsWith", "matches", "exists", "empty");
+    return Arbitraries.of("contains", "startsWith", "endsWith", "matches", "exists", "empty");
   }
 
   /**
@@ -200,7 +199,15 @@ public class JfrPathComponentGenerators {
    */
   public static Arbitrary<String> transformFunction() {
     return Arbitraries.of(
-        "len", "uppercase", "lowercase", "trim", "abs", "round", "floor", "ceil", "contains",
+        "len",
+        "uppercase",
+        "lowercase",
+        "trim",
+        "abs",
+        "round",
+        "floor",
+        "ceil",
+        "contains",
         "replace");
   }
 
@@ -219,8 +226,7 @@ public class JfrPathComponentGenerators {
    * @return arbitrary generating any pipeline function name
    */
   public static Arbitrary<String> pipelineFunction() {
-    return Arbitraries.oneOf(
-        aggregationFunction(), transformFunction(), decoratorFunction());
+    return Arbitraries.oneOf(aggregationFunction(), transformFunction(), decoratorFunction());
   }
 
   // ==================== Value Generators ====================
@@ -272,11 +278,7 @@ public class JfrPathComponentGenerators {
    * @return arbitrary generating any kind of literal
    */
   public static Arbitrary<String> anyLiteral() {
-    return Arbitraries.oneOf(
-        stringLiteral(),
-        numericLiteral(),
-        floatLiteral(),
-        booleanLiteral());
+    return Arbitraries.oneOf(stringLiteral(), numericLiteral(), floatLiteral(), booleanLiteral());
   }
 
   // ==================== List Match Prefix Generators ====================
