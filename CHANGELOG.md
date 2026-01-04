@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-04
+
+### Added
+- **Expression support in select()** - Computed field expressions with arithmetic, string operations, and functions (#37)
+  - Arithmetic operators: `+`, `-`, `*`, `/`
+  - String concatenation: `+`
+  - String templates: `"${field} text ${expr}"` for cleaner string interpolation
+  - Built-in functions: `if()`, `upper()`, `lower()`, `substring()`, `length()`, `coalesce()`
+  - Expression AST with BinExpr, FuncExpr, FieldRef, Literal, StringTemplate
+  - Examples: `select(bytes / 1024 as kb)`, `select("${path} (${bytes} bytes)" as info)`
+- **Multi-event type queries** - Query multiple event types simultaneously (#37)
+  - Pipe-separated syntax: `events/(Type1|Type2|Type3)`
+  - Works with all query operations (filters, aggregations, select)
+  - Tab completion for multiple event types
+  - Examples: `events/(jdk.FileRead|jdk.FileWrite) | count()`
+- **CSV output format** - Export-friendly format with session-level setting (#37)
+  - `set output csv` to set CSV as default format
+  - CSV format with proper escaping and quoting
+  - Override per-query with `--format` flag
+- **Nested field projection** - Better handling of nested fields in select() (#37)
+  - Nested fields preserve parent structure in output
+  - Leaf segment used as column name for flat projections
+  - Tab completion for nested fields in select()
+
+### Changed
+- **JFR Shell UX improvements** - Various completion and pager fixes (#37)
+  - Fixed completion for `decorateByTime()` and `decorateByKey()` functions
+  - Fixed script command hanging on pager prompts
+  - Added filesystem completion for `record start` command
+  - Added type IDs to metadata views
+
 ## [0.5.0] - 2026-01-03
 
 ### Added
