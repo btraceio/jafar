@@ -256,7 +256,8 @@ public final class JfrPathParser {
         seg.append(input, b, pos);
       }
       segs.add(seg.toString());
-      if (peek() == '/') {
+      // Accept both / and . as path separators for nested field access
+      if (peek() == '/' || peek() == '.') {
         pos++;
         continue;
       }
@@ -768,7 +769,8 @@ public final class JfrPathParser {
       String seg = readIdent();
       if (seg.isEmpty()) break;
       fp.add(seg);
-      if (peek() == '/') {
+      // Accept both / and . as path separators for nested field access
+      if (peek() == '/' || peek() == '.') {
         pos++;
         continue;
       }

@@ -26,17 +26,59 @@ public class FunctionParamCompleter implements ContextCompleter {
       return;
     }
 
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput();
     String functionName = ctx.functionName();
 
-    // Get field names for this event type
-    List<String> fieldNames = metadata.getFieldNames(eventType);
+    // Check if partial contains a path separator (nested field navigation)
+    // Support both slash (/) and dot (.) notation
+    List<String> pathSegments = new java.util.ArrayList<>();
+    String lastSegment = partial;
 
+    // Parse the path: "name/value" or "name.value" -> ["name"], partial="value"
+    if (partial.contains("/") || partial.contains(".")) {
+      // Split on both separators
+      String[] parts = partial.split("[/.]");
+      if (parts.length > 0) {
+        // All but the last are complete path segments
+        for (int i = 0; i < parts.length - 1; i++) {
+          if (!parts[i].isEmpty()) {
+            pathSegments.add(parts[i]);
+          }
+        }
+        // Last part is what we're completing (could be empty after trailing separator)
+        lastSegment = parts[parts.length - 1];
+
+        // If partial ends with separator, the last segment is complete too
+        if (partial.endsWith("/") || partial.endsWith(".")) {
+          if (!lastSegment.isEmpty()) {
+            pathSegments.add(lastSegment);
+          }
+          lastSegment = "";
+        }
+      }
+    }
+
+    // Get field names at the appropriate nesting level
+    List<String> fieldNames =
+        pathSegments.isEmpty()
+            ? metadata.getFieldNames(eventType)
+            : metadata.getNestedFieldNames(eventType, pathSegments);
+
+    // Build completion prefix from the path segments
+    String prefix = "";
+    if (!pathSegments.isEmpty()) {
+      // Use the same separator that was used in the original input
+      char separator = partial.contains("/") ? '/' : '.';
+      prefix = String.join(String.valueOf(separator), pathSegments) + separator;
+    }
+
+    String lowerLastSegment = lastSegment.toLowerCase();
     for (String fieldName : fieldNames) {
-      if (fieldName.toLowerCase().startsWith(partial)) {
+      if (fieldName.toLowerCase().startsWith(lowerLastSegment)) {
         // Use noSpace to not add trailing space after field name
         // This allows typing comma for multiple fields in select()
-        candidates.add(noSpace(fieldName));
+        String value = prefix + fieldName;
+        candidates.add(noSpace(value));
       }
     }
   }

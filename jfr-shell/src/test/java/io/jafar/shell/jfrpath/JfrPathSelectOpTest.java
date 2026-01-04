@@ -89,13 +89,10 @@ class JfrPathSelectOpTest {
     List<Map<String, Object>> out = eval.evaluate(session, q);
 
     assertEquals(1, out.size());
-    assertTrue(out.get(0).containsKey("eventThread"));
-    assertTrue(out.get(0).get("eventThread") instanceof Map);
-
-    @SuppressWarnings("unchecked")
-    Map<String, Object> eventThread = (Map<String, Object>) out.get(0).get("eventThread");
-    assertEquals(42L, eventThread.get("javaThreadId"));
-    assertFalse(eventThread.containsKey("name"));
+    // With flattened select, leaf segment becomes the column name
+    assertTrue(out.get(0).containsKey("javaThreadId"));
+    assertEquals(42L, out.get(0).get("javaThreadId"));
+    assertFalse(out.get(0).containsKey("name"));
   }
 
   @Test
@@ -123,13 +120,76 @@ class JfrPathSelectOpTest {
     List<Map<String, Object>> out = eval.evaluate(session, q);
 
     assertEquals(1, out.size());
-    assertTrue(out.get(0).containsKey("eventThread"));
+    // With flattened select, leaf segments become column names
+    assertTrue(out.get(0).containsKey("javaThreadId"));
+    assertTrue(out.get(0).containsKey("name"));
+    assertEquals(42L, out.get(0).get("javaThreadId"));
+    assertEquals("main", out.get(0).get("name"));
+    assertFalse(out.get(0).containsKey("osName"));
+  }
 
-    @SuppressWarnings("unchecked")
-    Map<String, Object> eventThread = (Map<String, Object>) out.get(0).get("eventThread");
-    assertEquals(42L, eventThread.get("javaThreadId"));
-    assertEquals("main", eventThread.get("name"));
-    assertFalse(eventThread.containsKey("osName"));
+  @Test
+  void selectsNestedFieldsWithDotNotation() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample",
+                      Map.of(
+                          "startTime",
+                          1000L,
+                          "eventThread",
+                          Map.of("javaThreadId", 42L, "name", "main"))));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    // Test dot notation as alternative to slash notation
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | select(eventThread.javaThreadId)");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals(1, out.size());
+    // With flattened select, leaf segment becomes the column name
+    assertTrue(out.get(0).containsKey("javaThreadId"));
+    assertEquals(42L, out.get(0).get("javaThreadId"));
+    assertFalse(out.get(0).containsKey("name"));
+  }
+
+  @Test
+  void selectsMixedSlashAndDotNotation() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample",
+                      Map.of(
+                          "startTime",
+                          1000L,
+                          "eventThread",
+                          Map.of("javaThreadId", 42L, "name", "main", "osName", "Thread-0"))));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    // Mix slash and dot notation in same query
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | select(eventThread.javaThreadId, eventThread/name)");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals(1, out.size());
+    // With flattened select, leaf segments become column names
+    assertTrue(out.get(0).containsKey("javaThreadId"));
+    assertTrue(out.get(0).containsKey("name"));
+    assertEquals(42L, out.get(0).get("javaThreadId"));
+    assertEquals("main", out.get(0).get("name"));
+    assertFalse(out.get(0).containsKey("osName"));
   }
 
   // Note: Pipeline chaining with multiple operations is not yet fully supported

@@ -488,29 +488,10 @@ public final class JfrPathEvaluator {
         // Get the value at this field path
         Object value = Values.get(row, fieldPath.toArray());
 
-        // Build nested structure if field path has multiple segments
-        if (fieldPath.size() == 1) {
-          projected.put(fieldPath.get(0), value);
-        } else {
-          // For nested paths like eventThread/javaThreadId, create nested maps
-          Map<String, Object> current = projected;
-          for (int i = 0; i < fieldPath.size() - 1; i++) {
-            String segment = fieldPath.get(i);
-            if (!current.containsKey(segment)) {
-              current.put(segment, new LinkedHashMap<String, Object>());
-            }
-            Object next = current.get(segment);
-            if (next instanceof Map) {
-              @SuppressWarnings("unchecked")
-              Map<String, Object> nextMap = (Map<String, Object>) next;
-              current = nextMap;
-            } else {
-              // Path conflict - can't navigate further
-              break;
-            }
-          }
-          current.put(fieldPath.get(fieldPath.size() - 1), value);
-        }
+        // Use the leaf segment as the column name for simpler output
+        // E.g., select(name/value) creates {value: "..."} not {name: {value: "..."}}
+        String columnName = fieldPath.get(fieldPath.size() - 1);
+        projected.put(columnName, value);
       }
       result.add(projected);
     }
