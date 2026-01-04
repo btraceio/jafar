@@ -37,6 +37,7 @@ public class JFRSession implements AutoCloseable {
   private final Set<String> allMetadataTypes = new HashSet<>();
   private final Set<String> nonPrimitiveMetadataTypes = new HashSet<>();
   private final Set<String> primitiveMetadataTypes = new HashSet<>();
+  private final Map<String, Long> metadataTypeIds = new HashMap<>();
   private java.util.List<Integer> cachedChunkIds;
   private Set<String> cpTypes; // lazily discovered
   private final AtomicLong totalEvents = new AtomicLong(0);
@@ -60,6 +61,7 @@ public class JFRSession implements AutoCloseable {
             // Collect event and metadata types when metadata becomes available
             for (MetadataClass clazz : metadata.getClasses()) {
               allMetadataTypes.add(clazz.getName());
+              metadataTypeIds.put(clazz.getName(), clazz.getId());
               if (!clazz.isPrimitive()) {
                 nonPrimitiveMetadataTypes.add(clazz.getName());
               } else {
@@ -96,6 +98,7 @@ public class JFRSession implements AutoCloseable {
               for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
               for (MetadataClass clazz : metadata.getClasses()) {
                 allMetadataTypes.add(clazz.getName());
+                metadataTypeIds.put(clazz.getName(), clazz.getId());
                 if (!clazz.isPrimitive()) {
                   nonPrimitiveMetadataTypes.add(clazz.getName());
                 } else {
@@ -210,6 +213,11 @@ public class JFRSession implements AutoCloseable {
   /** Get all primitive metadata class names. */
   public Set<String> getPrimitiveMetadataTypes() {
     return Collections.unmodifiableSet(primitiveMetadataTypes);
+  }
+
+  /** Get map of metadata type names to their type IDs. */
+  public Map<String, Long> getMetadataTypeIds() {
+    return Collections.unmodifiableMap(metadataTypeIds);
   }
 
   /** Get available chunk ids (indices) discovered by scanning headers). */

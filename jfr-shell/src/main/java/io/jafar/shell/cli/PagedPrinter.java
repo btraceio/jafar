@@ -73,6 +73,14 @@ final class PagedPrinter {
   }
 
   private static boolean decideEnabled() {
+    // Check system property first (allows ScriptCommand to disable paging)
+    String prop = System.getProperty("jfr.shell.pager");
+    if (prop != null) {
+      String v = prop.trim().toLowerCase();
+      if (v.equals("0") || v.equals("off") || v.equals("false")) return false;
+      if (v.equals("1") || v.equals("on") || v.equals("true")) return true;
+    }
+    // Check environment variable
     String env = System.getenv("JFR_SHELL_PAGER");
     if (env != null) {
       String v = env.trim().toLowerCase();

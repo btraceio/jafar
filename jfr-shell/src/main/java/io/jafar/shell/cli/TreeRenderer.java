@@ -20,7 +20,9 @@ public final class TreeRenderer {
     PagedPrinter pager = PagedPrinter.forIO(io);
     String name = String.valueOf(meta.getOrDefault("name", "<unknown>"));
     String superType = String.valueOf(meta.getOrDefault("superType", "<none>"));
-    pager.println(indent(depth) + name);
+    Object idObj = meta.get("id");
+    String id = idObj != null ? String.valueOf(idObj) : "<unknown>";
+    pager.println(indent(depth) + name + " (id: " + id + ")");
     pager.println(indent(depth + 1) + "superType: " + superType);
 
     Object ann = meta.get("classAnnotations");

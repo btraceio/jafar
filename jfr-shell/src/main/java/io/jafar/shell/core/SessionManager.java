@@ -17,6 +17,7 @@ public class SessionManager {
     public final String alias;
     public final JFRSession session;
     public final VariableStore variables;
+    public String outputFormat = "table";
 
     public SessionRef(int id, String alias, JFRSession session) {
       this.id = id;

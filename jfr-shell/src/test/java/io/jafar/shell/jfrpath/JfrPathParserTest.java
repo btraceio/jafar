@@ -62,8 +62,8 @@ class JfrPathParserTest {
     var op = q.pipeline.get(0);
     assertTrue(op instanceof JfrPath.SelectOp);
     var selectOp = (JfrPath.SelectOp) op;
-    assertEquals(1, selectOp.fieldPaths.size());
-    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths.get(0));
+    assertEquals(1, selectOp.fieldPaths().size());
+    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths().get(0));
   }
 
   @Test
@@ -75,10 +75,10 @@ class JfrPathParserTest {
     var op = q.pipeline.get(0);
     assertTrue(op instanceof JfrPath.SelectOp);
     var selectOp = (JfrPath.SelectOp) op;
-    assertEquals(3, selectOp.fieldPaths.size());
-    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths.get(0));
-    assertEquals(java.util.List.of("duration"), selectOp.fieldPaths.get(1));
-    assertEquals(java.util.List.of("stackTrace"), selectOp.fieldPaths.get(2));
+    assertEquals(3, selectOp.fieldPaths().size());
+    assertEquals(java.util.List.of("startTime"), selectOp.fieldPaths().get(0));
+    assertEquals(java.util.List.of("duration"), selectOp.fieldPaths().get(1));
+    assertEquals(java.util.List.of("stackTrace"), selectOp.fieldPaths().get(2));
   }
 
   @Test
@@ -91,9 +91,9 @@ class JfrPathParserTest {
     var op = q.pipeline.get(0);
     assertTrue(op instanceof JfrPath.SelectOp);
     var selectOp = (JfrPath.SelectOp) op;
-    assertEquals(2, selectOp.fieldPaths.size());
-    assertEquals(java.util.List.of("eventThread", "javaThreadId"), selectOp.fieldPaths.get(0));
-    assertEquals(java.util.List.of("eventThread", "name"), selectOp.fieldPaths.get(1));
+    assertEquals(2, selectOp.fieldPaths().size());
+    assertEquals(java.util.List.of("eventThread", "javaThreadId"), selectOp.fieldPaths().get(0));
+    assertEquals(java.util.List.of("eventThread", "name"), selectOp.fieldPaths().get(1));
   }
 
   @Test
@@ -105,8 +105,8 @@ class JfrPathParserTest {
     assertTrue(q.pipeline.get(1) instanceof JfrPath.SelectOp);
 
     var selectOp = (JfrPath.SelectOp) q.pipeline.get(1);
-    assertEquals(2, selectOp.fieldPaths.size());
-    assertEquals(java.util.List.of("key"), selectOp.fieldPaths.get(0));
-    assertEquals(java.util.List.of("value"), selectOp.fieldPaths.get(1));
+    assertEquals(2, selectOp.fieldPaths().size());
+    assertEquals(java.util.List.of("key"), selectOp.fieldPaths().get(0));
+    assertEquals(java.util.List.of("value"), selectOp.fieldPaths().get(1));
   }
 }

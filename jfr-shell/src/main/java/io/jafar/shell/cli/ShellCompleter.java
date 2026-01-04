@@ -6,6 +6,7 @@ import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.completers.ChunkIdCompleter;
 import io.jafar.shell.cli.completion.completers.CommandCompleter;
+import io.jafar.shell.cli.completion.completers.DecoratorFunctionCompleter;
 import io.jafar.shell.cli.completion.completers.EventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.FieldPathCompleter;
 import io.jafar.shell.cli.completion.completers.FilterFieldCompleter;
@@ -64,6 +65,7 @@ public class ShellCompleter implements Completer {
             new FilterOperatorCompleter(),
             new FilterLogicalCompleter(),
             new PipelineOperatorCompleter(),
+            new DecoratorFunctionCompleter(),
             new FunctionParamCompleter(),
             new OptionCompleter());
   }
@@ -173,7 +175,7 @@ public class ShellCompleter implements Completer {
       case "cp" -> completeCp(line, candidates);
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);
       case "unset", "invalidate" -> completeVariableName(line, candidates);
-      case "record" -> completeRecord(line, candidates, wordIndex);
+      case "record" -> completeRecord(reader, line, candidates, wordIndex, words);
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       default -> {
         // Default: suggest options
@@ -372,13 +374,24 @@ public class ShellCompleter implements Completer {
             });
   }
 
-  private void completeRecord(ParsedLine line, List<Candidate> candidates, int wordIndex) {
+  private void completeRecord(
+      LineReader reader,
+      ParsedLine line,
+      List<Candidate> candidates,
+      int wordIndex,
+      List<String> words) {
     if (wordIndex == 1) {
+      // Complete subcommands: start, stop, status
       String partial = line.word();
       for (String sub : new String[] {"start", "stop", "status"}) {
         if (sub.startsWith(partial)) {
           candidates.add(new Candidate(sub));
         }
+      }
+    } else if (wordIndex == 2 && words.size() >= 2 && "start".equalsIgnoreCase(words.get(1))) {
+      // After "record start " - provide filesystem completion for the path parameter
+      if (reader != null) {
+        fileCompleter.complete(reader, line, candidates);
       }
     }
   }

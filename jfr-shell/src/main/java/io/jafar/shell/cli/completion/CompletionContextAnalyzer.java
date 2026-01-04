@@ -18,8 +18,10 @@ import org.jline.reader.ParsedLine;
  */
 public class CompletionContextAnalyzer {
 
-  // Functions that take field parameters
-  private static final String[] FIELD_FUNCTIONS = {"sum", "groupBy", "select", "top"};
+  // Functions that take field parameters (including decorator functions with special handling)
+  private static final String[] FIELD_FUNCTIONS = {
+    "sum", "groupBy", "select", "top", "decorateByTime", "decorateByKey"
+  };
 
   // Pattern to match function calls: funcName(
   private static final Pattern FUNCTION_PATTERN =
@@ -433,6 +435,7 @@ public class CompletionContextAnalyzer {
         .partialInput(partial)
         .fullLine(fullLine)
         .cursor(cursor)
+        .extras(Map.of("functionParams", params))
         .build();
   }
 
@@ -1145,9 +1148,6 @@ public class CompletionContextAnalyzer {
   /** Analyze function context from tokens. */
   private CompletionContext analyzeFunctionContextFromTokens(
       List<Token> tokens, int cursor, String fullLine) {
-    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
-    String partial = extractPartialInput(cursorToken, cursor);
-
     // Find function name (identifier before opening paren)
     String functionName = null;
     int parenIndex = -1;
@@ -1184,15 +1184,26 @@ public class CompletionContextAnalyzer {
       }
     }
 
-    // Count commas between paren and cursor to determine parameter index
+    // Count commas and find last comma position between paren and cursor
     int paramIndex = 0;
+    int lastCommaPos = -1;
     if (parenIndex >= 0) {
       for (int i = parenIndex + 1; i < tokens.size(); i++) {
         if (tokens.get(i).start() >= cursor) break;
         if (tokens.get(i).type() == TokenType.COMMA) {
           paramIndex++;
+          lastCommaPos = i;
         }
       }
+    }
+
+    // Extract parameter partial by concatenating tokens from last comma (or paren) to cursor
+    // This gives us the full parameter string like "stackTrace/" instead of just the cursor token
+    String partial = "";
+    if (parenIndex >= 0) {
+      int startPos =
+          lastCommaPos >= 0 ? tokens.get(lastCommaPos).end() : tokens.get(parenIndex).end();
+      partial = fullLine.substring(startPos, cursor).trim();
     }
 
     // Special case: top() function's first parameter is a number, not a field

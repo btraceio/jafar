@@ -34,14 +34,36 @@ public final class JfrPathParser {
           default -> throw error("Unknown root: " + rootTok);
         };
     if (peek() == '/') pos++;
+
+    // Check for multi-event type syntax: events/(type1|type2|...)
+    List<String> eventTypes = new ArrayList<>();
+    boolean isMultiType = false;
+
+    if (root == Root.EVENTS || root == Root.METADATA || root == Root.CP) {
+      if (peek() == '(') {
+        eventTypes = parseMultiEventType();
+        isMultiType = eventTypes.size() > 1;
+      } else {
+        String type = readUntil('/', '[', ' ', '|');
+        if (!type.isEmpty()) eventTypes.add(type);
+      }
+    }
+
     List<String> segments = new ArrayList<>();
+    if (!eventTypes.isEmpty()) {
+      segments.add(eventTypes.get(0)); // backward compat
+    }
+
     List<Predicate> preds = new ArrayList<>();
     // Interleave segments and filters: a/b[c>0]/d[e=1]
     while (!eof()) {
       if (peek() == '|' || Character.isWhitespace((char) peek())) break;
       if (peek() != '[') {
-        String seg = readUntil('/', '[', ' ', '|');
-        if (!seg.isEmpty()) segments.add(seg);
+        // For multi-type queries, we already consumed the type list
+        if (!isMultiType || segments.size() > 0) {
+          String seg = readUntil('/', '[', ' ', '|');
+          if (!seg.isEmpty()) segments.add(seg);
+        }
       }
       // consume zero or more filters after the current segment, prefixing their paths
       while (!eof() && peek() == '[') {
@@ -78,7 +100,44 @@ public final class JfrPathParser {
     }
     skipWs();
     if (!eof()) throw error("Trailing characters at position " + pos);
+
+    // Return multi-type query if detected, otherwise use legacy constructor
+    if (isMultiType) {
+      return new Query(root, eventTypes, preds, pipeline, true);
+    }
     return new Query(root, segments, preds, pipeline);
+  }
+
+  private List<String> parseMultiEventType() {
+    expect('(');
+    List<String> types = new ArrayList<>();
+
+    while (!eof() && peek() != ')') {
+      skipWs();
+      String type = parseEventTypeName();
+      if (type.isEmpty()) {
+        if (peek() == '|') throw error("Empty event type before pipe separator");
+        if (peek() == ')') throw error("Empty event type before closing parenthesis");
+        throw error("Expected event type name");
+      }
+      types.add(type);
+      skipWs();
+
+      if (peek() == '|') {
+        pos++; // consume pipe
+        skipWs();
+        if (peek() == '|') throw error("Consecutive pipe separators not allowed");
+        if (peek() == ')') throw error("Empty event type after pipe separator");
+      } else if (peek() == ')') {
+        break;
+      } else if (!eof()) {
+        throw error("Expected '|' or ')' after event type, got '" + (char) peek() + "'");
+      }
+    }
+
+    expect(')');
+    if (types.isEmpty()) throw error("Empty event type list");
+    return types;
   }
 
   private Predicate parsePredicate() {
@@ -256,7 +315,8 @@ public final class JfrPathParser {
         seg.append(input, b, pos);
       }
       segs.add(seg.toString());
-      if (peek() == '/') {
+      // Accept both / and . as path separators for nested field access
+      if (peek() == '/' || peek() == '.') {
         pos++;
         continue;
       }
@@ -768,7 +828,8 @@ public final class JfrPathParser {
       String seg = readIdent();
       if (seg.isEmpty()) break;
       fp.add(seg);
-      if (peek() == '/') {
+      // Accept both / and . as path separators for nested field access
+      if (peek() == '/' || peek() == '.') {
         pos++;
         continue;
       }
@@ -782,11 +843,10 @@ public final class JfrPathParser {
     expect('(');
     skipWs();
 
-    List<List<String>> fieldPaths = new ArrayList<>();
+    List<JfrPath.SelectItem> items = new ArrayList<>();
     while (!eof() && peek() != ')') {
-      // Parse field path (e.g., "eventThread/javaThreadId" or "stackTrace")
-      List<String> path = parsePathArg();
-      fieldPaths.add(path);
+      JfrPath.SelectItem item = parseSelectItem();
+      items.add(item);
       skipWs();
       if (peek() == ',') {
         pos++;
@@ -795,11 +855,405 @@ public final class JfrPathParser {
     }
     expect(')');
 
-    if (fieldPaths.isEmpty()) {
+    if (items.isEmpty()) {
       throw error("select() requires at least one field");
     }
 
-    return new JfrPath.SelectOp(fieldPaths);
+    return new JfrPath.SelectOp(items);
+  }
+
+  private JfrPath.SelectItem parseSelectItem() {
+    int start = pos;
+
+    // Try to detect if this is an expression or simple field path
+    boolean isExpression = detectExpression();
+
+    if (isExpression) {
+      // Parse full expression
+      JfrPath.Expr expr = parseExpression();
+      skipWs();
+
+      // 'as' is required for expressions
+      if (!matchKeyword("as")) {
+        throw error("Expression selections require 'as alias' clause");
+      }
+      skipWs();
+
+      String alias = readIdentifier();
+      if (alias.isEmpty()) {
+        throw error("Expected alias after 'as'");
+      }
+
+      return new JfrPath.ExpressionSelection(expr, alias);
+    } else {
+      // Parse as simple field path
+      List<String> fieldPath = parsePathArg();
+      skipWs();
+
+      // 'as' is optional for simple fields
+      String alias = null;
+      if (matchKeyword("as")) {
+        skipWs();
+        alias = readIdentifier();
+        if (alias.isEmpty()) {
+          throw error("Expected alias after 'as'");
+        }
+      }
+
+      return new JfrPath.FieldSelection(fieldPath, alias);
+    }
+  }
+
+  private boolean detectExpression() {
+    // Look ahead to detect expression patterns
+    // Simpler approach: scan for expression indicators
+    int saved = pos;
+    try {
+      skipWs();
+
+      // Check for opening parenthesis (grouped expression)
+      if (peek() == '(') {
+        return true;
+      }
+
+      // Check for literal (number or string)
+      char first = (char) peek();
+      if (Character.isDigit(first) || first == '"' || first == '\'') {
+        return true;
+      }
+
+      // Scan forward looking for expression indicators
+      // Stop at comma or closing paren (end of select item)
+      int depth = 0;
+      while (!eof()) {
+        char c = (char) peek();
+
+        if (c == '(' && depth == 0) {
+          // Check if this is a function call or grouped expression
+          // Back up to see if preceded by identifier
+          int checkPos = pos - 1;
+          while (checkPos >= saved && Character.isWhitespace(input.charAt(checkPos))) {
+            checkPos--;
+          }
+          if (checkPos >= saved
+              && (Character.isLetterOrDigit(input.charAt(checkPos))
+                  || input.charAt(checkPos) == '_')) {
+            // Preceded by identifier - it's a function call
+            return true;
+          }
+          // Parenthesis not preceded by identifier - grouped expression
+          return true;
+        }
+
+        if (c == '(') depth++;
+        if (c == ')') {
+          depth--;
+          if (depth < 0) break; // End of select item
+        }
+        if (c == ',' && depth == 0) break; // End of select item
+
+        // Look for arithmetic operators (except division which might be path separator)
+        if (depth == 0 && (c == '+' || c == '-' || c == '*')) {
+          return true;
+        }
+
+        // Look for division: `/` followed by whitespace or digit indicates arithmetic
+        if (depth == 0 && c == '/') {
+          int nextPos = pos + 1;
+          if (nextPos < input.length()) {
+            char next = input.charAt(nextPos);
+            if (Character.isWhitespace(next)
+                || Character.isDigit(next)
+                || next == '('
+                || next == '"'
+                || next == '\'') {
+              return true; // Arithmetic division
+            }
+          }
+        }
+
+        pos++;
+      }
+
+      return false;
+    } finally {
+      pos = saved; // Reset position
+    }
+  }
+
+  private JfrPath.Expr parseExpression() {
+    return parseAdditiveExpr();
+  }
+
+  private JfrPath.Expr parseAdditiveExpr() {
+    JfrPath.Expr left = parseMultiplicativeExpr();
+
+    while (!eof()) {
+      skipWs();
+      JfrPath.Op op = null;
+      if (peek() == '+') {
+        op = JfrPath.Op.PLUS;
+        pos++;
+      } else if (peek() == '-') {
+        op = JfrPath.Op.MINUS;
+        pos++;
+      } else {
+        break;
+      }
+
+      skipWs();
+      JfrPath.Expr right = parseMultiplicativeExpr();
+      left = new JfrPath.BinExpr(op, left, right);
+    }
+
+    return left;
+  }
+
+  private JfrPath.Expr parseMultiplicativeExpr() {
+    JfrPath.Expr left = parsePrimaryExpr();
+
+    while (!eof()) {
+      skipWs();
+      JfrPath.Op op = null;
+      if (peek() == '*') {
+        op = JfrPath.Op.MULT;
+        pos++;
+      } else if (peek() == '/') {
+        int saved = pos;
+        pos++;
+        skipWs();
+        // Check it's not a path separator by looking if followed by letter (field name)
+        // Path separators are followed by field names (letters), not numbers
+        if (!Character.isLetter((char) peek())) {
+          op = JfrPath.Op.DIV;
+        } else {
+          pos = saved; // It's a path separator, not division
+          break;
+        }
+      } else {
+        break;
+      }
+
+      if (op != null) {
+        skipWs();
+        JfrPath.Expr right = parsePrimaryExpr();
+        left = new JfrPath.BinExpr(op, left, right);
+      }
+    }
+
+    return left;
+  }
+
+  private JfrPath.Expr parsePrimaryExpr() {
+    skipWs();
+
+    // Parenthesized expression
+    if (peek() == '(') {
+      pos++;
+      JfrPath.Expr expr = parseExpression();
+      skipWs();
+      expect(')');
+      return expr;
+    }
+
+    // String literal or template
+    if (peek() == '"' || peek() == '\'') {
+      return parseStringLiteralOrTemplate();
+    }
+
+    // Number literal
+    if (Character.isDigit((char) peek())
+        || (peek() == '-' && Character.isDigit((char) peekAhead(1)))) {
+      return new JfrPath.Literal(parseNumberLiteral());
+    }
+
+    // Function call or field reference
+    int identifierStart = pos; // Save position before reading identifier
+    String identifier = readIdentifier();
+    if (identifier.isEmpty()) {
+      throw error("Expected expression");
+    }
+    skipWs();
+
+    if (peek() == '(') {
+      // Function call
+      return parseFunctionCall(identifier);
+    } else {
+      // Field reference - need to parse full path
+      pos = identifierStart; // Reset to start of identifier
+      List<String> fieldPath = parsePathArg();
+      return new JfrPath.FieldRef(fieldPath);
+    }
+  }
+
+  private JfrPath.FuncExpr parseFunctionCall(String funcName) {
+    expect('(');
+    List<JfrPath.Expr> args = new ArrayList<>();
+
+    skipWs();
+    while (!eof() && peek() != ')') {
+      args.add(parseExpression());
+      skipWs();
+      if (peek() == ',') {
+        pos++;
+        skipWs();
+      }
+    }
+
+    expect(')');
+    return new JfrPath.FuncExpr(funcName, args);
+  }
+
+  private JfrPath.Expr parseStringLiteralOrTemplate() {
+    char quote = (char) peek();
+    int startPos = pos;
+
+    // First pass: parse the string and check if it contains ${...}
+    String rawString = parseStringLiteral();
+
+    // Check if the string contains ${...} patterns
+    boolean hasTemplates = rawString.contains("${");
+    if (!hasTemplates) {
+      // Simple string literal
+      return new JfrPath.Literal(rawString);
+    }
+
+    // Parse as string template
+    List<String> parts = new ArrayList<>();
+    List<JfrPath.Expr> expressions = new ArrayList<>();
+
+    StringBuilder currentPart = new StringBuilder();
+    int i = 0;
+    while (i < rawString.length()) {
+      if (i < rawString.length() - 1
+          && rawString.charAt(i) == '$'
+          && rawString.charAt(i + 1) == '{') {
+        // Found ${, save current part and parse expression
+        parts.add(currentPart.toString());
+        currentPart = new StringBuilder();
+
+        // Find matching }
+        i += 2; // Skip ${
+        int exprStart = i;
+        int braceCount = 1;
+        while (i < rawString.length() && braceCount > 0) {
+          if (rawString.charAt(i) == '{') {
+            braceCount++;
+          } else if (rawString.charAt(i) == '}') {
+            braceCount--;
+          }
+          i++;
+        }
+
+        if (braceCount != 0) {
+          throw error("Unclosed ${ in string template");
+        }
+
+        // Parse the expression inside ${...}
+        String exprText = rawString.substring(exprStart, i - 1);
+        JfrPath.Expr expr = parseEmbeddedExpression(exprText);
+        expressions.add(expr);
+      } else {
+        currentPart.append(rawString.charAt(i));
+        i++;
+      }
+    }
+
+    // Add final part
+    parts.add(currentPart.toString());
+
+    if (expressions.isEmpty()) {
+      // No expressions found, return as literal
+      return new JfrPath.Literal(rawString);
+    }
+
+    return new JfrPath.StringTemplate(parts, expressions);
+  }
+
+  private JfrPath.Expr parseEmbeddedExpression(String exprText) {
+    // Create a temporary parser for the embedded expression
+    JfrPathParser exprParser = new JfrPathParser(exprText);
+    return exprParser.parseExpression();
+  }
+
+  private String parseStringLiteral() {
+    char quote = (char) peek();
+    expect(quote);
+
+    StringBuilder sb = new StringBuilder();
+    while (!eof() && peek() != quote) {
+      char c = (char) peek();
+      pos++;
+      if (c == '\\' && !eof()) {
+        char next = (char) peek();
+        pos++;
+        switch (next) {
+          case 'n' -> sb.append('\n');
+          case 't' -> sb.append('\t');
+          case '\\' -> sb.append('\\');
+          case '"' -> sb.append('"');
+          case '\'' -> sb.append('\'');
+          default -> sb.append(next);
+        }
+      } else {
+        sb.append(c);
+      }
+    }
+
+    expect(quote);
+    return sb.toString();
+  }
+
+  private Object parseNumberLiteral() {
+    int start = pos;
+
+    if (peek() == '-') {
+      pos++;
+    }
+
+    boolean hasDecimal = false;
+    while (!eof() && (Character.isDigit((char) peek()) || peek() == '.')) {
+      if (peek() == '.') {
+        if (hasDecimal) break; // Second decimal point, stop
+        hasDecimal = true;
+      }
+      pos++;
+    }
+
+    String numStr = input.substring(start, pos);
+    try {
+      if (hasDecimal) {
+        return Double.parseDouble(numStr);
+      } else {
+        return Long.parseLong(numStr);
+      }
+    } catch (NumberFormatException e) {
+      throw error("Invalid number: " + numStr);
+    }
+  }
+
+  private int peekAhead(int offset) {
+    int idx = pos + offset;
+    return (idx >= 0 && idx < input.length()) ? input.charAt(idx) : -1;
+  }
+
+  private boolean matchKeyword(String keyword) {
+    int saved = pos;
+    skipWs();
+    String token = readIdentifier();
+    if (keyword.equalsIgnoreCase(token)) {
+      return true;
+    }
+    pos = saved;
+    return false;
+  }
+
+  private String readIdentifier() {
+    int start = pos;
+    while (!eof() && (Character.isLetterOrDigit((char) peek()) || peek() == '_' || peek() == '-')) {
+      pos++;
+    }
+    return input.substring(start, pos);
   }
 
   private void expect(char c) {

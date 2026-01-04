@@ -427,6 +427,42 @@ List matching:
 - `| quantiles(0.5,0.9,0.99[,path=])` - Percentiles
 - `| sketch([path])` - Stats + p50, p90, p99
 
+### Field Projection with Expressions
+
+- `| select(field1, field2, ...)` - Project specific fields
+- `| select(field as alias)` - Rename fields
+- `| select(expr as alias)` - Computed expressions
+
+**Expressions support**:
+- Arithmetic: `+` `-` `*` `/`
+- String concatenation: `+`
+- String templates: `"text ${expr} more text"`
+- Functions: `if()`, `upper()`, `lower()`, `substring()`, `length()`, `coalesce()`
+
+**Examples:**
+```bash
+# Simple field selection
+show events/jdk.FileRead | select(path, bytes)
+
+# Computed expressions
+show events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+show events/jdk.FileRead | select(path + ' (' + bytes + ')' as description)
+
+# String templates (cleaner syntax)
+show events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+show events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+
+# Mixed fields and expressions
+show events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+
+# Built-in functions
+show events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
+show events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
+
+# Functions in templates
+show events/jdk.FileRead | select("File: ${upper(path)}" as info)
+```
+
 ### Transforms
 
 - `| len([path])` - String/list length

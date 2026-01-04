@@ -30,6 +30,10 @@ class MetadataProviderTest {
     assertEquals("jdk.types.Method", meta.get("name"));
     // minimal presence check; avoid assuming full structure varies by file
 
+    // Verify type ID is present
+    assertNotNull(meta.get("id"), "Type ID should be present");
+    assertTrue(meta.get("id") instanceof Long, "Type ID should be a Long");
+
     // Verify well-known field is present
     Map<String, Object> field = MetadataProvider.loadField(jfr, "jdk.types.Method", "name");
     assertNotNull(field, "Field 'name' metadata should be present");
@@ -44,6 +48,10 @@ class MetadataProviderTest {
     assertNotNull(meta, "jdk.types.Method metadata should be present");
     assertEquals("jdk.types.Method", meta.get("name"));
     // minimal presence check; avoid assuming full structure varies by file
+
+    // Verify type ID is present
+    assertNotNull(meta.get("id"), "Type ID should be present");
+    assertTrue(meta.get("id") instanceof Long, "Type ID should be a Long");
   }
 
   @Test

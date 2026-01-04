@@ -289,6 +289,9 @@ public class Main implements Callable<Integer> {
 
     @Override
     public Integer call() {
+      // Disable pager in script mode to prevent blocking on "-- more --" prompts
+      System.setProperty("jfr.shell.pager", "off");
+
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
       Path path = fromStdin ? null : Paths.get(scriptPath);

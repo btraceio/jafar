@@ -58,20 +58,40 @@ public final class JfrPathEvaluator {
       return evaluateAggregate(session, query);
     }
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) {
+      if (query.eventTypes.isEmpty()) {
         throw new IllegalArgumentException("Expected event type segment after 'events/'");
       }
-      String eventType = query.segments.get(0);
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       List<Map<String, Object>> out = new ArrayList<>();
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName)) return; // filter type
-            Map<String, Object> map = ev.value;
-            if (matchesAll(map, query.predicates)) {
-              out.add(Values.resolvedShallow(map));
-            }
-          });
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName)) return;
+              Map<String, Object> map = ev.value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+              }
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName)) return;
+              Map<String, Object> map = ev.value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+              }
+            });
+      }
       return out;
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty()) {
@@ -128,25 +148,47 @@ public final class JfrPathEvaluator {
     if (query.root != Root.EVENTS || limit == null) {
       return evaluate(session, query);
     }
-    if (query.segments.isEmpty()) {
+    if (query.eventTypes.isEmpty()) {
       throw new IllegalArgumentException("Expected event type segment after 'events/'");
     }
-    String eventType = query.segments.get(0);
+
+    // Validate event types exist
+    validateEventTypes(session, query.eventTypes);
+
     List<Map<String, Object>> out = new ArrayList<>();
     try (UntypedJafarParser p =
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
-      p.handle(
-          (type, value, ctl) -> {
-            if (!eventType.equals(type.getName())) return;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) value;
-            if (matchesAll(map, query.predicates)) {
-              out.add(Values.resolvedShallow(map));
-              if (out.size() >= limit) {
-                ctl.abort();
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        p.handle(
+            (type, value, ctl) -> {
+              if (!typeSet.contains(type.getName())) return;
+              @SuppressWarnings("unchecked")
+              Map<String, Object> map = (Map<String, Object>) value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+                if (out.size() >= limit) {
+                  ctl.abort();
+                }
               }
-            }
-          });
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        p.handle(
+            (type, value, ctl) -> {
+              if (!eventType.equals(type.getName())) return;
+              @SuppressWarnings("unchecked")
+              Map<String, Object> map = (Map<String, Object>) value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+                if (out.size() >= limit) {
+                  ctl.abort();
+                }
+              }
+            });
+      }
       p.run();
     }
     return out;
@@ -451,7 +493,7 @@ public final class JfrPathEvaluator {
 
   private List<Map<String, Object>> evaluateSelect(
       JFRSession session, Query query, JfrPath.SelectOp op) throws Exception {
-    if (op.fieldPaths.isEmpty()) {
+    if (op.items.isEmpty()) {
       throw new IllegalArgumentException("select() requires at least one field");
     }
 
@@ -478,59 +520,251 @@ public final class JfrPathEvaluator {
       baseResults = evaluate(session, baseQuery);
     }
 
-    // Project only the selected fields
+    // Project selected fields and evaluate expressions
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map<String, Object> row : baseResults) {
       Map<String, Object> projected = new LinkedHashMap<>();
-      for (List<String> fieldPath : op.fieldPaths) {
-        if (fieldPath.isEmpty()) continue;
 
-        // Get the value at this field path
-        Object value = Values.get(row, fieldPath.toArray());
+      for (JfrPath.SelectItem item : op.items) {
+        String columnName = item.outputName();
+        Object value;
 
-        // Build nested structure if field path has multiple segments
-        if (fieldPath.size() == 1) {
-          projected.put(fieldPath.get(0), value);
+        if (item instanceof JfrPath.FieldSelection fieldSel) {
+          // Simple field path
+          value = Values.get(row, fieldSel.fieldPath.toArray());
+        } else if (item instanceof JfrPath.ExpressionSelection exprSel) {
+          // Evaluate expression
+          value = evaluateExpression(exprSel.expression, row);
         } else {
-          // For nested paths like eventThread/javaThreadId, create nested maps
-          Map<String, Object> current = projected;
-          for (int i = 0; i < fieldPath.size() - 1; i++) {
-            String segment = fieldPath.get(i);
-            if (!current.containsKey(segment)) {
-              current.put(segment, new LinkedHashMap<String, Object>());
-            }
-            Object next = current.get(segment);
-            if (next instanceof Map) {
-              @SuppressWarnings("unchecked")
-              Map<String, Object> nextMap = (Map<String, Object>) next;
-              current = nextMap;
-            } else {
-              // Path conflict - can't navigate further
-              break;
-            }
-          }
-          current.put(fieldPath.get(fieldPath.size() - 1), value);
+          throw new IllegalStateException("Unknown SelectItem type: " + item.getClass());
         }
+
+        projected.put(columnName, value);
       }
+
       result.add(projected);
     }
 
     return result;
   }
 
+  // Expression evaluator for computed fields in select()
+  private Object evaluateExpression(JfrPath.Expr expr, Map<String, Object> row) {
+    if (expr instanceof JfrPath.Literal lit) {
+      return lit.value;
+    }
+
+    if (expr instanceof JfrPath.FieldRef fieldRef) {
+      return Values.get(row, fieldRef.fieldPath.toArray());
+    }
+
+    if (expr instanceof JfrPath.BinExpr binExpr) {
+      Object left = evaluateExpression(binExpr.left, row);
+      Object right = evaluateExpression(binExpr.right, row);
+      return evaluateBinaryOp(binExpr.op, left, right);
+    }
+
+    if (expr instanceof JfrPath.FuncExpr funcExpr) {
+      return evaluateFunction(funcExpr.funcName, funcExpr.args, row);
+    }
+
+    if (expr instanceof JfrPath.StringTemplate template) {
+      return evaluateStringTemplate(template, row);
+    }
+
+    throw new IllegalArgumentException("Unknown expression type: " + expr.getClass());
+  }
+
+  private String evaluateStringTemplate(JfrPath.StringTemplate template, Map<String, Object> row) {
+    StringBuilder result = new StringBuilder();
+
+    // Invariant: parts.size() == expressions.size() + 1
+    // Interleave parts and evaluated expressions
+    for (int i = 0; i < template.expressions.size(); i++) {
+      result.append(template.parts.get(i));
+      Object value = evaluateExpression(template.expressions.get(i), row);
+      result.append(value == null ? "" : String.valueOf(value));
+    }
+    // Append final part
+    result.append(template.parts.get(template.parts.size() - 1));
+
+    return result.toString();
+  }
+
+  private Object evaluateBinaryOp(JfrPath.Op op, Object left, Object right) {
+    switch (op) {
+      case PLUS:
+        // String concatenation or numeric addition
+        if (left instanceof String || right instanceof String) {
+          return String.valueOf(left) + String.valueOf(right);
+        }
+        return addNumbers(left, right);
+
+      case MINUS:
+        return subtractNumbers(left, right);
+
+      case MULT:
+        return multiplyNumbers(left, right);
+
+      case DIV:
+        return divideNumbers(left, right);
+
+      default:
+        throw new IllegalArgumentException("Unsupported binary operator in expression: " + op);
+    }
+  }
+
+  private double addNumbers(Object a, Object b) {
+    return toNumber(a) + toNumber(b);
+  }
+
+  private double subtractNumbers(Object a, Object b) {
+    return toNumber(a) - toNumber(b);
+  }
+
+  private double multiplyNumbers(Object a, Object b) {
+    return toNumber(a) * toNumber(b);
+  }
+
+  private double divideNumbers(Object a, Object b) {
+    double divisor = toNumber(b);
+    if (divisor == 0) {
+      return Double.NaN;
+    }
+    return toNumber(a) / divisor;
+  }
+
+  private double toNumber(Object obj) {
+    if (obj == null) return 0.0;
+    if (obj instanceof Number n) return n.doubleValue();
+    if (obj instanceof String s) {
+      try {
+        return Double.parseDouble(s);
+      } catch (NumberFormatException e) {
+        return 0.0;
+      }
+    }
+    return 0.0;
+  }
+
+  private Object evaluateFunction(
+      String funcName, List<JfrPath.Expr> args, Map<String, Object> row) {
+    switch (funcName.toLowerCase()) {
+      case "if":
+        return evalIf(args, row);
+      case "substring":
+        return evalSubstring(args, row);
+      case "upper":
+        return evalUpper(args, row);
+      case "lower":
+        return evalLower(args, row);
+      case "length":
+        return evalLength(args, row);
+      case "coalesce":
+        return evalCoalesce(args, row);
+      default:
+        throw new IllegalArgumentException("Unknown function: " + funcName);
+    }
+  }
+
+  private Object evalIf(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 3) {
+      throw new IllegalArgumentException(
+          "if() requires 3 arguments: condition, trueValue, falseValue");
+    }
+
+    Object condition = evaluateExpression(args.get(0), row);
+    boolean isTrue = toBoolean(condition);
+
+    return evaluateExpression(isTrue ? args.get(1) : args.get(2), row);
+  }
+
+  private Object evalSubstring(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() < 2 || args.size() > 3) {
+      throw new IllegalArgumentException(
+          "substring() requires 2-3 arguments: string, start, [length]");
+    }
+
+    String str = String.valueOf(evaluateExpression(args.get(0), row));
+    int start = ((Number) evaluateExpression(args.get(1), row)).intValue();
+
+    if (args.size() == 3) {
+      int length = ((Number) evaluateExpression(args.get(2), row)).intValue();
+      return str.substring(start, Math.min(start + length, str.length()));
+    } else {
+      return str.substring(start);
+    }
+  }
+
+  private Object evalUpper(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 1) {
+      throw new IllegalArgumentException("upper() requires 1 argument");
+    }
+    return String.valueOf(evaluateExpression(args.get(0), row)).toUpperCase();
+  }
+
+  private Object evalLower(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 1) {
+      throw new IllegalArgumentException("lower() requires 1 argument");
+    }
+    return String.valueOf(evaluateExpression(args.get(0), row)).toLowerCase();
+  }
+
+  private Object evalLength(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 1) {
+      throw new IllegalArgumentException("length() requires 1 argument");
+    }
+    return String.valueOf(evaluateExpression(args.get(0), row)).length();
+  }
+
+  private Object evalCoalesce(List<JfrPath.Expr> args, Map<String, Object> row) {
+    for (JfrPath.Expr arg : args) {
+      Object value = evaluateExpression(arg, row);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private boolean toBoolean(Object obj) {
+    if (obj == null) return false;
+    if (obj instanceof Boolean b) return b;
+    if (obj instanceof Number n) return n.doubleValue() != 0;
+    if (obj instanceof String s) return !s.isEmpty();
+    return true;
+  }
+
   private List<Map<String, Object>> aggregateCount(JFRSession session, Query query)
       throws Exception {
     long count = 0;
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       final long[] c = new long[1];
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            if (matchesAll(ev.value(), query.predicates)) c[0]++;
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+            });
+      }
       count = c[0];
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty())
@@ -567,17 +801,35 @@ public final class JfrPathEvaluator {
     }
     StatsAgg agg = new StatsAgg();
     if (query.root == Root.EVENTS) {
-      String eventType = query.segments.get(0);
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       List<String> path = vpath;
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            if (val instanceof Number n) agg.add(n.doubleValue());
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) agg.add(n.doubleValue());
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) agg.add(n.doubleValue());
+            });
+      }
     } else {
       // For non-events: derive rows or values then apply
       List<Object> vals;
@@ -666,22 +918,45 @@ public final class JfrPathEvaluator {
     final List<String> path = vpath;
 
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       final double[] s = {0.0};
       final long[] c = {0};
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            if (val instanceof Number n) {
-              s[0] += n.doubleValue();
-              c[0]++;
-            }
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) {
+                s[0] += n.doubleValue();
+                c[0]++;
+              }
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) {
+                s[0] += n.doubleValue();
+                c[0]++;
+              }
+            });
+      }
       sum = s[0];
       count = c[0];
     } else {
@@ -707,27 +982,59 @@ public final class JfrPathEvaluator {
     Map<Object, GroupAccumulator> groups = new java.util.LinkedHashMap<>();
 
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
 
-            Object key = Values.get(map, keyPath.toArray());
-            GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
 
-            if ("count".equals(aggFunc)) {
-              acc.add(1);
-            } else {
-              Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
-              if (val instanceof Number n) {
-                acc.add(n.doubleValue());
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object key = Values.get(map, keyPath.toArray());
+              GroupAccumulator acc =
+                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+              if ("count".equals(aggFunc)) {
+                acc.add(1);
+              } else {
+                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                if (val instanceof Number n) {
+                  acc.add(n.doubleValue());
+                }
               }
-            }
-          });
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object key = Values.get(map, keyPath.toArray());
+              GroupAccumulator acc =
+                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+              if ("count".equals(aggFunc)) {
+                acc.add(1);
+              } else {
+                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                if (val instanceof Number n) {
+                  acc.add(n.doubleValue());
+                }
+              }
+            });
+      }
     } else {
       // For metadata/chunks/cp: materialize rows first
       List<Map<String, Object>> rows =
@@ -864,17 +1171,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addLen.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addLen.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addLen.accept(val);
+            });
+      }
     } else {
       // For non-events, leverage evaluateValues with the original query to get a list of values
       List<Object> vals =
@@ -928,17 +1255,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addTransformed.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      }
     } else {
       List<Object> vals =
           evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -993,17 +1340,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addTransformed.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      }
     } else {
       List<Object> vals =
           evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -1430,6 +1797,8 @@ public final class JfrPathEvaluator {
       case LT -> compareNum(actual, lit) < 0;
       case LE -> compareNum(actual, lit) <= 0;
       case REGEX -> String.valueOf(actual).matches(String.valueOf(lit));
+      case PLUS, MINUS, MULT, DIV -> throw new IllegalArgumentException(
+          "Arithmetic operators not supported in comparisons");
     };
   }
 
@@ -1736,6 +2105,73 @@ public final class JfrPathEvaluator {
     }
   }
 
+  /**
+   * Validates that all requested event types exist in the recording. Throws
+   * IllegalArgumentException with a helpful error message if any type is not found. If event type
+   * information is not available from the session, validation is skipped.
+   */
+  private void validateEventTypes(JFRSession session, List<String> requestedTypes)
+      throws Exception {
+    Set<String> availableTypes = session.getAvailableEventTypes();
+
+    // Skip validation if event type information is not available
+    if (availableTypes == null || availableTypes.isEmpty()) {
+      return;
+    }
+
+    for (String requestedType : requestedTypes) {
+      if (!availableTypes.contains(requestedType)) {
+        String suggestion = findClosestMatch(requestedType, availableTypes);
+        if (suggestion != null) {
+          throw new IllegalArgumentException(
+              "Event type '" + requestedType + "' not found. Did you mean '" + suggestion + "'?");
+        }
+        throw new IllegalArgumentException("Event type '" + requestedType + "' not found");
+      }
+    }
+  }
+
+  /**
+   * Finds the closest matching event type using prefix matching and Levenshtein distance.
+   *
+   * @return closest match or null if no good match found
+   */
+  private String findClosestMatch(String requested, Set<String> available) {
+    // Prefix matching first
+    for (String avail : available) {
+      if (avail.startsWith(requested) || requested.startsWith(avail)) {
+        return avail;
+      }
+    }
+
+    // Levenshtein distance fallback (max 3 edits)
+    int minDist = Integer.MAX_VALUE;
+    String closest = null;
+    for (String avail : available) {
+      int dist = levenshteinDistance(requested, avail);
+      if (dist < minDist && dist <= 3) {
+        minDist = dist;
+        closest = avail;
+      }
+    }
+    return closest;
+  }
+
+  /** Calculates Levenshtein distance between two strings. */
+  private int levenshteinDistance(String s1, String s2) {
+    int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+    for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
+    for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
+
+    for (int i = 1; i <= s1.length(); i++) {
+      for (int j = 1; j <= s2.length(); j++) {
+        int cost = s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1;
+        dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
+      }
+    }
+    return dp[s1.length()][s2.length()];
+  }
+
   /** Default EventSource that streams all events untyped from a recording. */
   static final class DefaultEventSource implements EventSource {
     @Override
@@ -1856,11 +2292,23 @@ public final class JfrPathEvaluator {
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map<String, Object> row : rows) {
       Map<String, Object> selected = new LinkedHashMap<>();
-      for (List<String> fieldPath : op.fieldPaths) {
-        String key = String.join("/", fieldPath);
-        Object val = Values.get(row, fieldPath.toArray());
-        selected.put(key, val);
+
+      for (JfrPath.SelectItem item : op.items) {
+        String columnName = item.outputName(); // Use consistent naming with evaluateSelect
+        Object value;
+
+        if (item instanceof JfrPath.FieldSelection fieldSel) {
+          value = Values.get(row, fieldSel.fieldPath.toArray());
+        } else if (item instanceof JfrPath.ExpressionSelection exprSel) {
+          // Evaluate expression
+          value = evaluateExpression(exprSel.expression, row);
+        } else {
+          throw new IllegalStateException("Unknown SelectItem type");
+        }
+
+        selected.put(columnName, value);
       }
+
       result.add(selected);
     }
     return result;
