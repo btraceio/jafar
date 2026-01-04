@@ -110,7 +110,7 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 }
 ```
 
-## Build-Time Handler Generation (NEW)
+## Build-Time Handler Generation
 
 JAFAR now supports **build-time handler generation** via annotation processor, providing massive performance benefits for production applications.
 
