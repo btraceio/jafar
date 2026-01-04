@@ -39,7 +39,15 @@ public class OptionCompleter implements ContextCompleter {
   private static final Map<String, String[]> OPTION_VALUES =
       Map.of(
           "--list-match", new String[] {"any", "all", "none"},
-          "--format", new String[] {"table", "json"});
+          "--format", new String[] {"table", "json", "csv"});
+
+  // Subcommands for specific commands
+  private static final Map<String, String[]> COMMAND_SUBCOMMANDS =
+      Map.of("set", new String[] {"output"}, "let", new String[] {"output"});
+
+  // Values for subcommands
+  private static final Map<String, String[]> SUBCOMMAND_VALUES =
+      Map.of("output", new String[] {"table", "json", "csv"});
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
@@ -53,7 +61,13 @@ public class OptionCompleter implements ContextCompleter {
     if (ctx.type() == CompletionContextType.OPTION_VALUE) {
       completeOptionValue(ctx, candidates);
     } else {
-      completeOption(ctx, candidates);
+      // Check if we should complete subcommands for set/let commands
+      String command = ctx.command();
+      if (("set".equals(command) || "let".equals(command)) && isSubcommandContext(ctx)) {
+        completeSubcommand(ctx, candidates);
+      } else {
+        completeOption(ctx, candidates);
+      }
     }
   }
 
@@ -78,6 +92,49 @@ public class OptionCompleter implements ContextCompleter {
       for (String value : values) {
         if (value.startsWith(partial)) {
           candidates.add(new Candidate(value));
+        }
+      }
+    }
+  }
+
+  private boolean isSubcommandContext(CompletionContext ctx) {
+    // Check if we're completing right after "set" or "let" (first token after command)
+    String fullLine = ctx.fullLine();
+    if (fullLine == null) return false;
+
+    String[] tokens = fullLine.split("\\s+");
+    // tokens[0] is command, tokens[1] (if exists) might be subcommand or start of "output"
+    // We want to complete subcommands when:
+    // 1. "set " or "let " with cursor after space
+    // 2. "set o" or "let o" - partial subcommand name
+    return tokens.length <= 2 || (tokens.length == 3 && "output".startsWith(tokens[1]));
+  }
+
+  private void completeSubcommand(CompletionContext ctx, List<Candidate> candidates) {
+    String partial = ctx.partialInput();
+    String command = ctx.command();
+    String fullLine = ctx.fullLine();
+
+    String[] subcommands = COMMAND_SUBCOMMANDS.getOrDefault(command, new String[] {});
+
+    // Check if we're completing the subcommand name or its value
+    String[] tokens = fullLine.split("\\s+");
+
+    if (tokens.length == 2 || (tokens.length == 3 && tokens[2].isEmpty())) {
+      // Complete subcommand name: "set " or "set o"
+      for (String sub : subcommands) {
+        if (sub.startsWith(partial)) {
+          candidates.add(new Candidate(sub));
+        }
+      }
+    } else if (tokens.length >= 3 && "output".equals(tokens[1])) {
+      // Complete subcommand value: "set output " or "set output t"
+      String[] values = SUBCOMMAND_VALUES.get("output");
+      if (values != null) {
+        for (String value : values) {
+          if (value.startsWith(partial)) {
+            candidates.add(new Candidate(value));
+          }
         }
       }
     }
