@@ -18,8 +18,10 @@ import org.jline.reader.ParsedLine;
  */
 public class CompletionContextAnalyzer {
 
-  // Functions that take field parameters
-  private static final String[] FIELD_FUNCTIONS = {"sum", "groupBy", "select", "top"};
+  // Functions that take field parameters (including decorator functions with special handling)
+  private static final String[] FIELD_FUNCTIONS = {
+    "sum", "groupBy", "select", "top", "decorateByTime", "decorateByKey"
+  };
 
   // Pattern to match function calls: funcName(
   private static final Pattern FUNCTION_PATTERN =
@@ -433,6 +435,7 @@ public class CompletionContextAnalyzer {
         .partialInput(partial)
         .fullLine(fullLine)
         .cursor(cursor)
+        .extras(Map.of("functionParams", params))
         .build();
   }
 

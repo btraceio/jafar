@@ -6,6 +6,7 @@ import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.completers.ChunkIdCompleter;
 import io.jafar.shell.cli.completion.completers.CommandCompleter;
+import io.jafar.shell.cli.completion.completers.DecoratorFunctionCompleter;
 import io.jafar.shell.cli.completion.completers.EventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.FieldPathCompleter;
 import io.jafar.shell.cli.completion.completers.FilterFieldCompleter;
@@ -64,6 +65,7 @@ public class ShellCompleter implements Completer {
             new FilterOperatorCompleter(),
             new FilterLogicalCompleter(),
             new PipelineOperatorCompleter(),
+            new DecoratorFunctionCompleter(),
             new FunctionParamCompleter(),
             new OptionCompleter());
   }
