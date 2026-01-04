@@ -1018,7 +1018,11 @@ public class CommandDispatcher {
             + ", non-events="
             + nonEventsCnt
             + "]:");
-    for (String t : types) io.println("  " + t);
+    for (String t : types) {
+      Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+      String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
+      io.println("  " + idStr + " - " + t);
+    }
   }
 
   private void cmdMetadataClass(List<String> args) {

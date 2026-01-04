@@ -11,6 +11,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,7 +39,8 @@ public final class MetadataProvider {
               for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
               MetadataClass clazz = byName.get(typeName);
               if (clazz != null) {
-                Map<String, Object> meta = new HashMap<>();
+                Map<String, Object> meta = new LinkedHashMap<>();
+                meta.put("id", clazz.getId());
                 meta.put("name", clazz.getName());
                 meta.put("superType", clazz.getSuperType());
                 try {
