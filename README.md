@@ -140,8 +140,8 @@ JAFAR now supports **build-time handler generation** via annotation processor, p
 **Gradle:**
 ```gradle
 dependencies {
-    implementation 'io.btrace:jafar-parser:0.1.0'
-    annotationProcessor 'io.btrace:jafar-processor:0.1.0'
+    implementation 'io.btrace:jafar-parser:0.6.0'
+    annotationProcessor 'io.btrace:jafar-processor:0.6.0'
 }
 ```
 
@@ -151,7 +151,7 @@ dependencies {
     <dependency>
         <groupId>io.btrace</groupId>
         <artifactId>jafar-parser</artifactId>
-        <version>0.1.0</version>
+        <version>0.6.0</version>
     </dependency>
 </dependencies>
 
@@ -165,7 +165,7 @@ dependencies {
                     <path>
                         <groupId>io.btrace</groupId>
                         <artifactId>jafar-processor</artifactId>
-                        <version>0.1.0</version>
+                        <version>0.6.0</version>
                     </path>
                 </annotationProcessorPaths>
             </configuration>
