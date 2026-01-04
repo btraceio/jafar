@@ -1201,7 +1201,8 @@ public class CompletionContextAnalyzer {
     // This gives us the full parameter string like "stackTrace/" instead of just the cursor token
     String partial = "";
     if (parenIndex >= 0) {
-      int startPos = lastCommaPos >= 0 ? tokens.get(lastCommaPos).end() : tokens.get(parenIndex).end();
+      int startPos =
+          lastCommaPos >= 0 ? tokens.get(lastCommaPos).end() : tokens.get(parenIndex).end();
       partial = fullLine.substring(startPos, cursor).trim();
     }
 

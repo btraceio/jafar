@@ -424,24 +424,27 @@ events/jdk.ExecutionSample | decorateByKey(RequestStart,
 
 ### Select
 ```
-| select(field1, field2, ...)
+| select(field1, field2, expr1 as alias1, ...)
 ```
 
-Project specific fields from events, filtering out all other fields.
+Project specific fields from events, filtering out all other fields. Supports both simple field paths and computed expressions.
 
-**Use Cases**: Reduce output to only relevant fields, control JSON output structure, focus analysis on specific attributes.
+**Use Cases**: Reduce output to only relevant fields, compute derived values, transform data, control JSON output structure, focus analysis on specific attributes.
 
 **Parameters**:
-- `field1, field2, ...` - Comma-separated list of field paths to include in output
+- `field` - Simple field path to include in output
+- `field as alias` - Field path with custom output name
+- `expression as alias` - Computed expression (requires alias)
 - Supports nested fields using `/` syntax (e.g., `eventThread/javaThreadId`)
 
 **Behavior**:
-- Only specified fields are included in the output
-- Nested fields preserve their parent structure
+- Only specified fields/expressions are included in the output
+- Simple fields use leaf segment as column name (or alias if provided)
+- Expressions require `as alias` clause
 - Works with filters and other query operations
-- Multiple fields from the same nested object can be selected individually
+- Expressions are evaluated per row
 
-**Examples**:
+**Simple Field Selection**:
 ```
 # Select single field
 events/jdk.ExecutionSample | select(startTime)
@@ -449,29 +452,157 @@ events/jdk.ExecutionSample | select(startTime)
 # Select multiple top-level fields
 events/jdk.FileRead | select(path, bytes)
 
-# Select nested field (preserves parent structure)
-events/jdk.ExecutionSample | select(eventThread/javaThreadId)
-
-# Select multiple nested fields from same parent
+# Select nested fields
 events/jdk.ExecutionSample | select(eventThread/javaThreadId, eventThread/name)
+
+# Field with alias
+events/jdk.ExecutionSample | select(eventThread/javaThreadId as threadId)
 
 # Combine with filters
 events/jdk.FileRead[bytes>1000] | select(path, bytes)
 
 # Select decorator fields
-events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | select(startTime, $decorator.monitorClass)
 ```
 
-**Output Structure**:
-When selecting nested fields like `eventThread/javaThreadId`, the output preserves the nested structure:
-```json
-{
-  "eventThread": {
-    "javaThreadId": 42
-  }
-}
+**Computed Expressions**:
+
+Expressions support arithmetic operations, string concatenation, and built-in functions.
+
+**Arithmetic Operators**:
+- `+` - Addition or string concatenation
+- `-` - Subtraction
+- `*` - Multiplication
+- `/` - Division
+
 ```
+# Convert bytes to kilobytes
+events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+
+# Calculate throughput
+events/jdk.FileRead | select(bytes / duration as bytesPerNs)
+
+# Multiply duration by 1000
+events/jdk.FileRead | select(duration * 1000 as micros)
+
+# Complex arithmetic
+events/jdk.FileRead | select((bytes * count) / 1024 as totalKb)
+```
+
+**String Concatenation**:
+```
+# Build descriptive string
+events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+
+# Combine fields
+events/jdk.ExecutionSample | select(thread/name + ' [' + thread/javaThreadId + ']' as threadInfo)
+
+# Format output
+events/jdk.FileRead | select('File: ' + path as label)
+```
+
+**String Templates**:
+
+String templates provide a cleaner syntax for string interpolation using `${...}` embedded expressions:
+
+```
+# Simple field interpolation
+events/jdk.FileRead | select("File: ${path}" as description)
+
+# Multiple expressions in one template
+events/jdk.FileRead | select("${path} (${bytes} bytes)" as info)
+
+# Arithmetic in templates
+events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+
+# Functions in templates
+events/jdk.FileRead | select("File: ${upper(path)} - ${bytes} bytes" as info)
+
+# Nested fields in templates
+events/jdk.ExecutionSample | select("Thread ${eventThread/name} (ID: ${eventThread/javaThreadId})" as threadInfo)
+
+# Mix templates with regular fields
+events/jdk.FileRead | select(path, "${bytes / 1024} KB" as sizeKb)
+```
+
+Templates are equivalent to string concatenation but more readable:
+- `"${path} (${bytes} bytes)"` is the same as `path + ' (' + bytes + ' bytes)'`
+- Use double quotes for templates: `"${expr}"`
+- Any expression can be embedded in `${...}`
+- Null values render as empty strings
+
+**Built-in Functions**:
+
+**if(condition, trueValue, falseValue)** - Conditional expression
+```
+events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
+events/jdk.FileRead | select(if(duration, 'slow', 'fast') as speed)
+```
+
+**upper(string)** - Convert to uppercase
+```
+events/jdk.FileRead | select(upper(path) as upperPath)
+events/jdk.ExecutionSample | select(upper(thread/name) as threadName)
+```
+
+**lower(string)** - Convert to lowercase
+```
+events/jdk.FileRead | select(lower(path) as lowerPath)
+```
+
+**substring(string, start[, length])** - Extract substring
+```
+events/jdk.FileRead | select(substring(path, 0, 20) as shortPath)
+events/jdk.FileRead | select(substring(path, 5) as pathTail)
+events/jdk.FileRead | select(substring(path, 0, 10) as prefix)
+```
+
+**length(string)** - Get string length
+```
+events/jdk.FileRead | select(length(path) as pathLength)
+events/jdk.ExecutionSample | select(length(thread/name) as nameLen)
+```
+
+**coalesce(value1, value2, ...)** - Return first non-null value
+```
+events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
+events/jdk.ExecutionSample | select(coalesce(thread/name, thread/osName, 'unnamed') as name)
+```
+
+**Mixed Fields and Expressions**:
+```
+# Simple fields with computed expressions
+events/jdk.FileRead | select(path, bytes / 1024 as kb, duration)
+
+# Multiple expressions and fields
+events/jdk.FileRead | select(
+    path as file,
+    bytes / 1024 as kilobytes,
+    if(bytes, 'large', 'small') as sizeCategory,
+    duration * 1000 as microseconds
+)
+
+# Transform and compute
+events/jdk.ExecutionSample | select(
+    startTime,
+    upper(thread/name) as threadName,
+    thread/javaThreadId as tid,
+    length(stackTrace/frames) as stackDepth
+)
+```
+
+**Expression Evaluation**:
+- Field references in expressions access the current row's data
+- Arithmetic operations convert values to numbers (null becomes 0)
+- String concatenation converts all values to strings
+- Division by zero returns NaN
+- Functions receive evaluated arguments
+
+**Column Naming**:
+- Simple fields: Use leaf segment name (e.g., `javaThreadId` from `eventThread/javaThreadId`)
+- Aliased fields: Use the specified alias
+- Expressions: Must provide alias (e.g., `bytes / 1024 as kb`)
 
 ## Value Transform Functions
 

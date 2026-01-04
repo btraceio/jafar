@@ -109,7 +109,7 @@ class JfrPathMultiEventTest {
     assertEquals(1, q.pipeline.size());
     assertTrue(q.pipeline.get(0) instanceof JfrPath.SelectOp);
     var selectOp = (JfrPath.SelectOp) q.pipeline.get(0);
-    assertEquals(2, selectOp.fieldPaths.size());
+    assertEquals(2, selectOp.fieldPaths().size());
   }
 
   @Test
@@ -122,8 +122,7 @@ class JfrPathMultiEventTest {
   void throwsOnTrailingPipe() {
     var ex =
         assertThrows(
-            IllegalArgumentException.class,
-            () -> JfrPathParser.parse("events/(jdk.FileRead|)"));
+            IllegalArgumentException.class, () -> JfrPathParser.parse("events/(jdk.FileRead|)"));
     assertTrue(ex.getMessage().contains("Empty event type after pipe separator"));
   }
 

@@ -13,8 +13,8 @@ import org.jline.reader.Candidate;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for nested field completion in select() and other function parameters.
- * Verifies that typing "select(stackTrace/<TAB>" completes to fields within the stackTrace type.
+ * Tests for nested field completion in select() and other function parameters. Verifies that typing
+ * "select(stackTrace/<TAB>" completes to fields within the stackTrace type.
  */
 class ShellCompleterNestedFieldTest {
 

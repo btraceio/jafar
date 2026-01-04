@@ -206,6 +206,71 @@ is aliased for convenience.
   - `show metadata/java.lang.Thread` (class overview)
   - `show metadata/jdk.types.Method/name` (single value)
 
+## Field Projection
+
+Project specific fields from events and build computed expressions with the `select()` operator.
+
+**Basic Syntax:**
+- `| select(field1, field2, ...)` — Project specific fields, filtering out all others.
+- `| select(field as alias)` — Rename fields with optional alias.
+- `| select(expr as alias)` — Computed expressions (alias required).
+
+**Expression Support:**
+
+Expressions can include arithmetic operators, string concatenation, string templates, and built-in functions:
+
+- **Arithmetic Operators:** `+`, `-`, `*`, `/`
+- **String Concatenation:** `+` (when either operand is a string)
+- **String Templates:** `"text ${expr} more text"` — Interpolate expressions in strings
+- **Built-in Functions:**
+  - `if(condition, trueValue, falseValue)` — Conditional expression
+  - `upper(string)` — Convert to uppercase
+  - `lower(string)` — Convert to lowercase
+  - `substring(string, start[, length])` — Extract substring
+  - `length(string)` — Get string length
+  - `coalesce(value1, value2, ...)` — Return first non-null value
+
+**Field Projection Examples:**
+```bash
+# Simple field selection
+show events/jdk.FileRead | select(path, bytes)
+
+# Convert bytes to kilobytes
+show events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+
+# Build descriptive string (concatenation)
+show events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+
+# Build descriptive string (template - cleaner)
+show events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+
+# String template with arithmetic
+show events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+
+# Mixed fields and expressions
+show events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+
+# String functions
+show events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
+
+# Conditional expressions
+show events/jdk.FileRead | select(if(bytes > 1000, 'large', 'small') as size)
+
+# Complex expressions with coalesce
+show events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
+
+# Field aliasing
+show events/jdk.ExecutionSample | select(sampledThread/javaName as thread)
+```
+
+**Expression Evaluation:**
+- Null field references return null and propagate through expressions
+- Division by zero returns NaN
+- String concatenation takes precedence: `"bytes: " + 1024` → `"bytes: 1024"`
+- Type coercion for arithmetic: strings and objects convert to numbers where needed
+
+For complete grammar and operator reference, see [doc/jfrpath.md](jfrpath.md).
+
 ## Aggregations
 
 Append pipeline functions with `|` to compute aggregates over results.

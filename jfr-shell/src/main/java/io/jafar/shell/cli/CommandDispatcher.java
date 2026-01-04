@@ -651,6 +651,20 @@ public class CommandDispatcher {
       io.println(
           "    | groupBy(key[, agg=count|sum|avg|min|max, value=path]) → group by key and aggregate");
       io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
+      io.println("  Field projection:");
+      io.println("    | select(field1, field2, ...) → project specific fields");
+      io.println("    | select(field as alias)      → rename fields");
+      io.println("    | select(expr as alias)       → computed expressions (alias required)");
+      io.println("      Expressions support:");
+      io.println("        - Arithmetic: +, -, *, /");
+      io.println("        - String concat: + (when operand is string)");
+      io.println("        - String templates: \"text ${expr} more text\"");
+      io.println("        - Functions: if(), upper(), lower(), substring(), length(), coalesce()");
+      io.println("      Examples:");
+      io.println("        | select(path, bytes / 1024 as kb)");
+      io.println("        | select(path + ' (' + bytes + ')' as description)");
+      io.println("        | select(\"${path} (${bytes} bytes)\" as description)");
+      io.println("        | select(if(bytes > 1000, 'large', 'small') as size)");
       io.println("  Value transforms (also usable in filters where applicable):");
       io.println("    | len([path])              → length of string or list/array attribute");
       io.println("    | uppercase([path])        → string uppercased");
@@ -676,6 +690,9 @@ public class CommandDispatcher {
       io.println("    show events/jdk.FileRead/bytes | stats()");
       io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println("    show events/jdk.FileRead | top(10, by=bytes)");
+      io.println("  Field projection:");
+      io.println("    show events/jdk.FileRead | select(path, bytes / 1024 as kilobytes)");
+      io.println("    show events/jdk.FileRead | select(\"${path} (${bytes} bytes)\" as info)");
       io.println("  Metadata:");
       io.println("    show metadata/java.lang.Thread");
       io.println("    show metadata/jdk.types.StackTrace --tree --depth 2");

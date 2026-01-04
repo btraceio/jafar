@@ -469,6 +469,58 @@ Usage:
 ```
 </details>
 
+### Exercise 4: Field Projection with Expressions
+
+Create a script that uses computed expressions to transform and format output:
+- Shows file I/O with sizes in human-readable format (KB/MB)
+- Computes I/O throughput (bytes per microsecond)
+- Adds conditional labels for small/medium/large operations
+
+<details>
+<summary>Solution</summary>
+
+```bash
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# File I/O Analysis with Computed Fields
+# Arguments: recording
+
+open $1
+
+# File reads with computed fields
+show events/jdk.FileRead | select(
+  path,
+  bytes / 1024 as kilobytes,
+  if(bytes > 1048576, 'large', if(bytes > 1024, 'medium', 'small')) as size_category,
+  duration / 1000 as milliseconds
+) --limit 20
+
+# Summarize with expressions
+show events/jdk.FileRead | select(
+  bytes / 1024 as kb,
+  duration
+) | stats(kb)
+
+# Group with computed keys
+show events/jdk.FileRead | select(
+  if(bytes > 1048576, '>1MB', if(bytes > 10240, '>10KB', '<10KB')) as category,
+  path
+) | groupBy(category)
+
+close
+```
+
+Usage:
+```bash
+./computed-fields-analysis.jfrs recording=/tmp/app.jfr
+```
+
+This demonstrates:
+- Arithmetic expressions: `bytes / 1024`
+- Nested conditionals: `if(condition, if(...))`
+- String functions and concatenation
+- Using computed fields in aggregations
+</details>
+
 ## Summary
 
 You've learned to:

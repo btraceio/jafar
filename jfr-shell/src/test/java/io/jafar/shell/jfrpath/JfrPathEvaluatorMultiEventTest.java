@@ -25,11 +25,14 @@ class JfrPathEvaluatorMultiEventTest {
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/b.txt", "bytes", 200)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/b.txt", "bytes", 200)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.SocketRead", Map.of("host", "example.com", "bytes", 300)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.SocketRead", Map.of("host", "example.com", "bytes", 300)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -45,20 +48,23 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryRespectsFilters() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/b.txt", "bytes", 1500)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/b.txt", "bytes", 1500)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/c.txt", "bytes", 200)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/c.txt", "bytes", 200)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/d.txt", "bytes", 2000)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/d.txt", "bytes", 2000)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -80,14 +86,10 @@ class JfrPathEvaluatorMultiEventTest {
     var src =
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 100)));
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("bytes", 200)));
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 150)));
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.SocketRead", Map.of("bytes", 300)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 100)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("bytes", 200)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 150)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.SocketRead", Map.of("bytes", 300)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -102,18 +104,14 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryWorksWithSum() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 100)));
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("bytes", 200)));
-              consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 150)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 100)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("bytes", 200)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 150)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -128,18 +126,20 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryWorksWithGroupBy() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 100)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/a.txt", "bytes", 200)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/a.txt", "bytes", 200)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/b.txt", "bytes", 150)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/b.txt", "bytes", 150)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -149,14 +149,10 @@ class JfrPathEvaluatorMultiEventTest {
     assertEquals(2, out.size());
 
     // Find the groups
-    Map<String, Object> groupA = out.stream()
-        .filter(m -> "/tmp/a.txt".equals(m.get("key")))
-        .findFirst()
-        .orElseThrow();
-    Map<String, Object> groupB = out.stream()
-        .filter(m -> "/tmp/b.txt".equals(m.get("key")))
-        .findFirst()
-        .orElseThrow();
+    Map<String, Object> groupA =
+        out.stream().filter(m -> "/tmp/a.txt".equals(m.get("key"))).findFirst().orElseThrow();
+    Map<String, Object> groupB =
+        out.stream().filter(m -> "/tmp/b.txt".equals(m.get("key"))).findFirst().orElseThrow();
 
     assertEquals(2L, groupA.get("count"));
     assertEquals(1L, groupB.get("count"));
@@ -166,8 +162,7 @@ class JfrPathEvaluatorMultiEventTest {
   void throwsWhenEventTypeNotFound() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -187,8 +182,7 @@ class JfrPathEvaluatorMultiEventTest {
   void providesHelpfulSuggestionForTypo() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -232,8 +226,7 @@ class JfrPathEvaluatorMultiEventTest {
   void singleTypeInParenthesesStillWorks() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -254,20 +247,23 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventWithComplexFiltersAndPipeline() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
-        .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
             (recording, consumer) -> {
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 1500)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/a.txt", "bytes", 1500)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/b.txt", "bytes", 2000)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/b.txt", "bytes", 2000)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/c.txt", "bytes", 500)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileRead", Map.of("path", "/tmp/c.txt", "bytes", 500)));
               consumer.accept(
-                  new JfrPathEvaluator.Event("jdk.FileWrite", Map.of("path", "/tmp/d.txt", "bytes", 2500)));
+                  new JfrPathEvaluator.Event(
+                      "jdk.FileWrite", Map.of("path", "/tmp/d.txt", "bytes", 2500)));
             };
 
     var eval = new JfrPathEvaluator(src);
