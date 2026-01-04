@@ -34,14 +34,36 @@ public final class JfrPathParser {
           default -> throw error("Unknown root: " + rootTok);
         };
     if (peek() == '/') pos++;
+
+    // Check for multi-event type syntax: events/(type1|type2|...)
+    List<String> eventTypes = new ArrayList<>();
+    boolean isMultiType = false;
+
+    if (root == Root.EVENTS || root == Root.METADATA || root == Root.CP) {
+      if (peek() == '(') {
+        eventTypes = parseMultiEventType();
+        isMultiType = eventTypes.size() > 1;
+      } else {
+        String type = readUntil('/', '[', ' ', '|');
+        if (!type.isEmpty()) eventTypes.add(type);
+      }
+    }
+
     List<String> segments = new ArrayList<>();
+    if (!eventTypes.isEmpty()) {
+      segments.add(eventTypes.get(0)); // backward compat
+    }
+
     List<Predicate> preds = new ArrayList<>();
     // Interleave segments and filters: a/b[c>0]/d[e=1]
     while (!eof()) {
       if (peek() == '|' || Character.isWhitespace((char) peek())) break;
       if (peek() != '[') {
-        String seg = readUntil('/', '[', ' ', '|');
-        if (!seg.isEmpty()) segments.add(seg);
+        // For multi-type queries, we already consumed the type list
+        if (!isMultiType || segments.size() > 0) {
+          String seg = readUntil('/', '[', ' ', '|');
+          if (!seg.isEmpty()) segments.add(seg);
+        }
       }
       // consume zero or more filters after the current segment, prefixing their paths
       while (!eof() && peek() == '[') {
@@ -78,7 +100,44 @@ public final class JfrPathParser {
     }
     skipWs();
     if (!eof()) throw error("Trailing characters at position " + pos);
+
+    // Return multi-type query if detected, otherwise use legacy constructor
+    if (isMultiType) {
+      return new Query(root, eventTypes, preds, pipeline, true);
+    }
     return new Query(root, segments, preds, pipeline);
+  }
+
+  private List<String> parseMultiEventType() {
+    expect('(');
+    List<String> types = new ArrayList<>();
+
+    while (!eof() && peek() != ')') {
+      skipWs();
+      String type = parseEventTypeName();
+      if (type.isEmpty()) {
+        if (peek() == '|') throw error("Empty event type before pipe separator");
+        if (peek() == ')') throw error("Empty event type before closing parenthesis");
+        throw error("Expected event type name");
+      }
+      types.add(type);
+      skipWs();
+
+      if (peek() == '|') {
+        pos++; // consume pipe
+        skipWs();
+        if (peek() == '|') throw error("Consecutive pipe separators not allowed");
+        if (peek() == ')') throw error("Empty event type after pipe separator");
+      } else if (peek() == ')') {
+        break;
+      } else if (!eof()) {
+        throw error("Expected '|' or ')' after event type, got '" + (char) peek() + "'");
+      }
+    }
+
+    expect(')');
+    if (types.isEmpty()) throw error("Empty event type list");
+    return types;
   }
 
   private Predicate parsePredicate() {

@@ -58,20 +58,40 @@ public final class JfrPathEvaluator {
       return evaluateAggregate(session, query);
     }
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) {
+      if (query.eventTypes.isEmpty()) {
         throw new IllegalArgumentException("Expected event type segment after 'events/'");
       }
-      String eventType = query.segments.get(0);
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       List<Map<String, Object>> out = new ArrayList<>();
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName)) return; // filter type
-            Map<String, Object> map = ev.value;
-            if (matchesAll(map, query.predicates)) {
-              out.add(Values.resolvedShallow(map));
-            }
-          });
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName)) return;
+              Map<String, Object> map = ev.value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+              }
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName)) return;
+              Map<String, Object> map = ev.value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+              }
+            });
+      }
       return out;
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty()) {
@@ -128,25 +148,47 @@ public final class JfrPathEvaluator {
     if (query.root != Root.EVENTS || limit == null) {
       return evaluate(session, query);
     }
-    if (query.segments.isEmpty()) {
+    if (query.eventTypes.isEmpty()) {
       throw new IllegalArgumentException("Expected event type segment after 'events/'");
     }
-    String eventType = query.segments.get(0);
+
+    // Validate event types exist
+    validateEventTypes(session, query.eventTypes);
+
     List<Map<String, Object>> out = new ArrayList<>();
     try (UntypedJafarParser p =
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
-      p.handle(
-          (type, value, ctl) -> {
-            if (!eventType.equals(type.getName())) return;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) value;
-            if (matchesAll(map, query.predicates)) {
-              out.add(Values.resolvedShallow(map));
-              if (out.size() >= limit) {
-                ctl.abort();
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        p.handle(
+            (type, value, ctl) -> {
+              if (!typeSet.contains(type.getName())) return;
+              @SuppressWarnings("unchecked")
+              Map<String, Object> map = (Map<String, Object>) value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+                if (out.size() >= limit) {
+                  ctl.abort();
+                }
               }
-            }
-          });
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        p.handle(
+            (type, value, ctl) -> {
+              if (!eventType.equals(type.getName())) return;
+              @SuppressWarnings("unchecked")
+              Map<String, Object> map = (Map<String, Object>) value;
+              if (matchesAll(map, query.predicates)) {
+                out.add(Values.resolvedShallow(map));
+                if (out.size() >= limit) {
+                  ctl.abort();
+                }
+              }
+            });
+      }
       p.run();
     }
     return out;
@@ -503,15 +545,32 @@ public final class JfrPathEvaluator {
       throws Exception {
     long count = 0;
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       final long[] c = new long[1];
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            if (matchesAll(ev.value(), query.predicates)) c[0]++;
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+            });
+      }
       count = c[0];
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty())
@@ -548,17 +607,35 @@ public final class JfrPathEvaluator {
     }
     StatsAgg agg = new StatsAgg();
     if (query.root == Root.EVENTS) {
-      String eventType = query.segments.get(0);
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       List<String> path = vpath;
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            if (val instanceof Number n) agg.add(n.doubleValue());
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) agg.add(n.doubleValue());
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) agg.add(n.doubleValue());
+            });
+      }
     } else {
       // For non-events: derive rows or values then apply
       List<Object> vals;
@@ -647,22 +724,45 @@ public final class JfrPathEvaluator {
     final List<String> path = vpath;
 
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
       final double[] s = {0.0};
       final long[] c = {0};
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            if (val instanceof Number n) {
-              s[0] += n.doubleValue();
-              c[0]++;
-            }
-          });
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) {
+                s[0] += n.doubleValue();
+                c[0]++;
+              }
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              if (val instanceof Number n) {
+                s[0] += n.doubleValue();
+                c[0]++;
+              }
+            });
+      }
       sum = s[0];
       count = c[0];
     } else {
@@ -688,27 +788,59 @@ public final class JfrPathEvaluator {
     Map<Object, GroupAccumulator> groups = new java.util.LinkedHashMap<>();
 
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
 
-            Object key = Values.get(map, keyPath.toArray());
-            GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
 
-            if ("count".equals(aggFunc)) {
-              acc.add(1);
-            } else {
-              Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
-              if (val instanceof Number n) {
-                acc.add(n.doubleValue());
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object key = Values.get(map, keyPath.toArray());
+              GroupAccumulator acc =
+                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+              if ("count".equals(aggFunc)) {
+                acc.add(1);
+              } else {
+                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                if (val instanceof Number n) {
+                  acc.add(n.doubleValue());
+                }
               }
-            }
-          });
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object key = Values.get(map, keyPath.toArray());
+              GroupAccumulator acc =
+                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+
+              if ("count".equals(aggFunc)) {
+                acc.add(1);
+              } else {
+                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                if (val instanceof Number n) {
+                  acc.add(n.doubleValue());
+                }
+              }
+            });
+      }
     } else {
       // For metadata/chunks/cp: materialize rows first
       List<Map<String, Object>> rows =
@@ -845,17 +977,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addLen.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addLen.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addLen.accept(val);
+            });
+      }
     } else {
       // For non-events, leverage evaluateValues with the original query to get a list of values
       List<Object> vals =
@@ -909,17 +1061,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addTransformed.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      }
     } else {
       List<Object> vals =
           evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -974,17 +1146,37 @@ public final class JfrPathEvaluator {
           out.add(row);
         };
     if (query.root == Root.EVENTS) {
-      if (query.segments.isEmpty()) throw new IllegalArgumentException("events root requires type");
-      String eventType = query.segments.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
-            Object val = Values.get(map, path.toArray());
-            addTransformed.accept(val);
-          });
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+
+      // Validate event types exist
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        // Multi-type query: use Set for O(1) lookup
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      } else {
+        // Single-type query: use direct comparison (faster)
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              Object val = Values.get(map, path.toArray());
+              addTransformed.accept(val);
+            });
+      }
     } else {
       List<Object> vals =
           evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -1715,6 +1907,77 @@ public final class JfrPathEvaluator {
       }
       return size;
     }
+  }
+
+  /**
+   * Validates that all requested event types exist in the recording. Throws
+   * IllegalArgumentException with a helpful error message if any type is not found. If event type
+   * information is not available from the session, validation is skipped.
+   */
+  private void validateEventTypes(JFRSession session, List<String> requestedTypes)
+      throws Exception {
+    Set<String> availableTypes = session.getAvailableEventTypes();
+
+    // Skip validation if event type information is not available
+    if (availableTypes == null || availableTypes.isEmpty()) {
+      return;
+    }
+
+    for (String requestedType : requestedTypes) {
+      if (!availableTypes.contains(requestedType)) {
+        String suggestion = findClosestMatch(requestedType, availableTypes);
+        if (suggestion != null) {
+          throw new IllegalArgumentException(
+              "Event type '"
+                  + requestedType
+                  + "' not found. Did you mean '"
+                  + suggestion
+                  + "'?");
+        }
+        throw new IllegalArgumentException("Event type '" + requestedType + "' not found");
+      }
+    }
+  }
+
+  /**
+   * Finds the closest matching event type using prefix matching and Levenshtein distance.
+   *
+   * @return closest match or null if no good match found
+   */
+  private String findClosestMatch(String requested, Set<String> available) {
+    // Prefix matching first
+    for (String avail : available) {
+      if (avail.startsWith(requested) || requested.startsWith(avail)) {
+        return avail;
+      }
+    }
+
+    // Levenshtein distance fallback (max 3 edits)
+    int minDist = Integer.MAX_VALUE;
+    String closest = null;
+    for (String avail : available) {
+      int dist = levenshteinDistance(requested, avail);
+      if (dist < minDist && dist <= 3) {
+        minDist = dist;
+        closest = avail;
+      }
+    }
+    return closest;
+  }
+
+  /** Calculates Levenshtein distance between two strings. */
+  private int levenshteinDistance(String s1, String s2) {
+    int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+    for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
+    for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
+
+    for (int i = 1; i <= s1.length(); i++) {
+      for (int j = 1; j <= s2.length(); j++) {
+        int cost = s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1;
+        dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
+      }
+    }
+    return dp[s1.length()][s2.length()];
   }
 
   /** Default EventSource that streams all events untyped from a recording. */

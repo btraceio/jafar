@@ -154,13 +154,17 @@ public final class JfrPath {
 
   public static final class Query {
     public final Root root;
-    public final List<String> segments; // path segments after root
+    public final List<String> segments; // path segments after root (kept for backward compat)
+    public final List<String> eventTypes; // event types for multi-type queries
+    public final boolean isMultiType; // true if eventTypes.size() > 1
     public final List<Predicate> predicates;
     public final List<PipelineOp> pipeline; // optional aggregation pipeline
 
     public Query(Root root, List<String> segments, List<Predicate> predicates) {
       this.root = root;
       this.segments = List.copyOf(segments);
+      this.eventTypes = segments.isEmpty() ? List.of() : List.of(segments.get(0));
+      this.isMultiType = false;
       this.predicates = List.copyOf(predicates);
       this.pipeline = List.of();
     }
@@ -169,6 +173,23 @@ public final class JfrPath {
         Root root, List<String> segments, List<Predicate> predicates, List<PipelineOp> pipeline) {
       this.root = root;
       this.segments = List.copyOf(segments);
+      this.eventTypes = segments.isEmpty() ? List.of() : List.of(segments.get(0));
+      this.isMultiType = false;
+      this.predicates = List.copyOf(predicates);
+      this.pipeline = List.copyOf(pipeline);
+    }
+
+    // Constructor for multi-type queries
+    public Query(
+        Root root,
+        List<String> eventTypes,
+        List<Predicate> predicates,
+        List<PipelineOp> pipeline,
+        boolean isMultiType) {
+      this.root = root;
+      this.eventTypes = List.copyOf(eventTypes);
+      this.isMultiType = eventTypes.size() > 1;
+      this.segments = eventTypes.isEmpty() ? List.of() : List.of(eventTypes.get(0));
       this.predicates = List.copyOf(predicates);
       this.pipeline = List.copyOf(pipeline);
     }
@@ -178,7 +199,7 @@ public final class JfrPath {
       return "Query{"
           + root
           + ":"
-          + String.join("/", segments)
+          + (isMultiType ? "(" + String.join("|", eventTypes) + ")" : String.join("/", segments))
           + ", filters="
           + predicates.size()
           + ", pipe="
