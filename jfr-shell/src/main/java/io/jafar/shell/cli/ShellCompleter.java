@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -478,7 +479,7 @@ public class ShellCompleter implements Completer {
 
         // Navigate to the parent map
         Object parent = mapValue.getField(parentPath);
-        if (parent instanceof java.util.Map<?, ?> parentMap) {
+        if (parent instanceof Map<?, ?> parentMap) {
           suggestMapKeys(parentMap, currentLevel, prefix, candidates);
         }
       } else {
@@ -506,15 +507,13 @@ public class ShellCompleter implements Completer {
    * @param candidates list to add completions to
    */
   private void suggestMapKeys(
-      java.util.Map<?, ?> map, String partial, String prefix, List<Candidate> candidates) {
+      Map<?, ?> map, String partial, String prefix, List<Candidate> candidates) {
     for (Object key : map.keySet()) {
       String keyStr = String.valueOf(key);
       if (keyStr.startsWith(partial)) {
         Object value = map.get(key);
         String description =
-            value instanceof java.util.Map
-                ? "nested map"
-                : value != null ? value.toString() : "null";
+            value instanceof Map ? "nested map" : value != null ? value.toString() : "null";
         candidates.add(
             new Candidate(prefix + keyStr, prefix + keyStr, null, description, null, null, false));
       }

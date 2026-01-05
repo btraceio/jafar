@@ -4,6 +4,7 @@ import io.jafar.shell.core.SessionManager.SessionRef;
 import io.jafar.shell.jfrpath.JfrPath.Query;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.lang.ref.WeakReference;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,7 +58,7 @@ public final class VariableStore {
     public MapValue {
       // Ensure immutability - create defensive copy
       // Use Collections.unmodifiableMap instead of Map.copyOf to support null values
-      value = java.util.Collections.unmodifiableMap(new java.util.HashMap<>(value));
+      value = Collections.unmodifiableMap(new HashMap<>(value));
     }
 
     @Override

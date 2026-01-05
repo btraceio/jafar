@@ -5,6 +5,8 @@ import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
+import java.util.Collection;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -157,10 +159,10 @@ public final class VariableSubstitutor {
         String restPath = parts.length > 1 ? parts[1] : null;
 
         Object extracted = lqv.extract(idx, firstField);
-        if (restPath != null && extracted instanceof java.util.Map) {
+        if (restPath != null && extracted instanceof Map) {
           // Navigate nested map structure
           @SuppressWarnings("unchecked")
-          java.util.Map<String, Object> map = (java.util.Map<String, Object>) extracted;
+          Map<String, Object> map = (Map<String, Object>) extracted;
           extracted = navigateMap(map, restPath);
         }
         return extracted == null ? "" : String.valueOf(extracted);
@@ -180,7 +182,7 @@ public final class VariableSubstitutor {
    * @param path the path (e.g., "a.b.c")
    * @return the value at the path, or null if not found
    */
-  private Object navigateMap(java.util.Map<String, Object> map, String path) {
+  private Object navigateMap(Map<String, Object> map, String path) {
     if (map == null || path == null || path.isEmpty()) {
       return null;
     }
@@ -189,11 +191,11 @@ public final class VariableSubstitutor {
     Object current = map;
 
     for (String part : parts) {
-      if (!(current instanceof java.util.Map)) {
+      if (!(current instanceof Map)) {
         return null;
       }
       @SuppressWarnings("unchecked")
-      java.util.Map<String, Object> currentMap = (java.util.Map<String, Object>) current;
+      Map<String, Object> currentMap = (Map<String, Object>) current;
       current = currentMap.get(part);
       if (current == null) {
         return null;
@@ -210,10 +212,10 @@ public final class VariableSubstitutor {
    * @return formatted string representation
    */
   private String formatValue(Object value) {
-    if (value instanceof java.util.Map) {
+    if (value instanceof Map) {
       // Format map as simple string (not full JSON)
       return value.toString();
-    } else if (value instanceof java.util.Collection || value.getClass().isArray()) {
+    } else if (value instanceof Collection || value.getClass().isArray()) {
       return String.valueOf(value);
     } else {
       return String.valueOf(value);

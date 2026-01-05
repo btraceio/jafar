@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -56,7 +57,7 @@ class MapVariablesTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           Mockito.when(s.getRecordingPath()).thenReturn(path);
-          Mockito.when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of());
+          Mockito.when(s.getAvailableEventTypes()).thenReturn(Set.of());
           Mockito.when(s.getHandlerCount()).thenReturn(0);
           Mockito.when(s.hasRun()).thenReturn(false);
           return s;
