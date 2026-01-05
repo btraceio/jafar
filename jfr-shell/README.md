@@ -8,7 +8,8 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
-- **Variables**: store scalars and lazy query results with `${var}` substitution ⭐ NEW
+- **Variables**: scalars, maps, and lazy query results with `${var}` substitution ⭐ NEW
+- **Map variables**: structured data storage with nested field access ⭐ NEW
 - **Conditionals**: if/elif/else/endif for control flow ⭐ NEW
 - **Scripting support**: record, save, and replay analysis workflows
 - **Positional parameters**: parameterize scripts for reusability
@@ -207,6 +208,38 @@ jfr> set limit = 10
 jfr> show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
 ```
 
+### Map Variables ⭐ NEW
+
+Store structured configuration data with nested field access:
+
+```bash
+# Create maps with JSON-like syntax
+jfr> set config = {"threshold": 1000, "enabled": true, "pattern": ".*Error.*"}
+jfr> echo "Threshold: ${config.threshold}"
+Threshold: 1000
+
+# Nested maps for organization
+jfr> set db = {"host": "localhost", "port": 5432, "credentials": {"user": "admin"}}
+jfr> echo "Connecting to ${db.host}:${db.port} as ${db.credentials.user}"
+Connecting to localhost:5432 as admin
+
+# Use in queries
+jfr> show events/jdk.FileRead[bytes>=${config.threshold}]
+
+# Get map size
+jfr> echo "Config has ${config.size} entries"
+Config has 3 entries
+```
+
+**Supported value types:**
+- Strings: `{"name": "test"}`
+- Numbers: `{"count": 42, "ratio": 3.14}`
+- Booleans: `{"enabled": true}`
+- Null: `{"optional": null}`
+- Nested maps: `{"db": {"host": "localhost"}}`
+
+**Tab completion:** Use Tab key to complete map field names in `${var.` expressions.
+
 ### Lazy Query Variables
 
 Store queries for on-demand evaluation with caching:
@@ -227,7 +260,7 @@ jfr> echo "Top thread: ${stats[0].sampledThread/javaName}"
 jfr> set myvar = "value"
 
 # Global - persists across all sessions
-jfr> set --global myvar = "value"
+jfr> set --global config = {"key": "value"}
 ```
 
 ### Variable Commands
@@ -235,12 +268,13 @@ jfr> set --global myvar = "value"
 ```bash
 jfr> vars                    # List all variables
 jfr> vars --session          # List session variables only
+jfr> vars --info config      # Show detailed info for a variable
 jfr> unset myvar             # Remove variable
 jfr> invalidate data         # Clear lazy variable cache
 jfr> echo "Value: ${myvar}"  # Print with substitution
 ```
 
-See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) for complete reference.
+See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) and [Map Variables Tutorial](../doc/map-variables.md) for complete reference.
 
 ## Conditionals
 
@@ -512,10 +546,10 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `cp [<type>] [options]` - Browse constant pools
 
 ### Variables
-- `set [--global] <name> = <value>` - Set variable (scalar or lazy query)
-- `vars [--global|--session]` - List variables
+- `set [--global] <name> = <value>` - Set variable (scalar, map, or lazy query)
+- `vars [--global|--session] [--info <name>]` - List variables or show detailed info
 - `unset <name>` - Remove a variable
-- `echo <text>` - Print with `${var}` substitution
+- `echo <text>` - Print with `${var}` substitution (supports nested: `${var.field.subfield}`)
 - `invalidate <name>` - Clear cached lazy variable
 
 ### Conditionals

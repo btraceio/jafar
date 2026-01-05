@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -175,8 +176,10 @@ public class ShellCompleter implements Completer {
       case "cp" -> completeCp(line, candidates);
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);
       case "unset", "invalidate" -> completeVariableName(line, candidates);
+      case "vars" -> completeVarsCommand(line, candidates, words, wordIndex);
       case "record" -> completeRecord(reader, line, candidates, wordIndex, words);
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
+      case "echo" -> completeEchoCommand(line, candidates);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -333,14 +336,27 @@ public class ShellCompleter implements Completer {
 
   /**
    * Completes set/let commands. After "set name = ", uses JfrPath completion for the value
-   * expression.
+   * expression or suggests map literal syntax.
    */
   private void completeSetCommand(
       ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
     // "set name = expr" -> words[0]=set, words[1]=name, words[2]=, words[3]=expr
-    // After "=" (wordIndex >= 3), use JfrPath completion
+    // After "=" (wordIndex >= 3), check for map literal or use JfrPath completion
     if (wordIndex >= 3 && words.size() > 2 && "=".equals(words.get(2))) {
-      completeWithFramework(line, candidates);
+      String currentWord = line.word();
+
+      // If user is typing a map literal, provide hints
+      if (currentWord.startsWith("{")) {
+        suggestMapLiteralSyntax(currentWord, candidates);
+      } else {
+        // Suggest map literal start or use JfrPath completion
+        if (currentWord.isEmpty() || "{".startsWith(currentWord)) {
+          candidates.add(
+              new Candidate(
+                  "{", "{", null, "map literal - {\"key\": value, ...}", null, null, false));
+        }
+        completeWithFramework(line, candidates);
+      }
     } else if (wordIndex == 2) {
       // Suggest "=" after variable name
       String partial = line.word();
@@ -349,6 +365,225 @@ public class ShellCompleter implements Completer {
       }
     }
     // wordIndex 1 is variable name - no completion needed
+  }
+
+  /**
+   * Suggests map literal syntax completions based on the current partial input.
+   *
+   * @param partial current partial map literal
+   * @param candidates list to add completions to
+   */
+  private void suggestMapLiteralSyntax(String partial, List<Candidate> candidates) {
+    // Don't overwhelm with suggestions - just provide helpful examples
+    if (partial.equals("{")) {
+      // Just opened brace - suggest common patterns
+      candidates.add(
+          new Candidate(
+              "{\"key\": \"value\"}",
+              "{\"key\": \"value\"}",
+              null,
+              "simple map with string value",
+              null,
+              null,
+              false));
+      candidates.add(
+          new Candidate(
+              "{\"count\": 0}",
+              "{\"count\": 0}",
+              null,
+              "map with numeric value",
+              null,
+              null,
+              false));
+      candidates.add(
+          new Candidate(
+              "{\"enabled\": true}",
+              "{\"enabled\": true}",
+              null,
+              "map with boolean value",
+              null,
+              null,
+              false));
+      candidates.add(new Candidate("{}", "{}", null, "empty map", null, null, false));
+    }
+  }
+
+  /**
+   * Completes echo command with variable substitution support. Detects ${var.field} patterns and
+   * suggests map keys when completing nested field access.
+   */
+  private void completeEchoCommand(ParsedLine line, List<Candidate> candidates) {
+    String currentWord = line.word();
+
+    // Find the last occurrence of ${ in the current word
+    int varStart = currentWord.lastIndexOf("${");
+    if (varStart >= 0) {
+      // Extract the variable reference part
+      String varRef = currentWord.substring(varStart + 2); // Skip "${
+
+      // Check if there's a dot for field access
+      int dotIndex = varRef.indexOf('.');
+      if (dotIndex > 0) {
+        // User is typing ${varName.field...
+        String varName = varRef.substring(0, dotIndex);
+        String fieldPath = varRef.substring(dotIndex + 1);
+
+        // Try to find the variable and complete its fields
+        completeMapFields(varName, fieldPath, currentWord, varStart, candidates);
+      } else if (dotIndex == 0) {
+        // User typed "${." - invalid, no suggestions
+      } else {
+        // User is typing ${varName (no dot yet)
+        // Suggest variable names
+        completeVariableNamesInSubstitution(varRef, currentWord, varStart, candidates);
+      }
+    }
+  }
+
+  /**
+   * Completes map field names for a variable in substitution context.
+   *
+   * @param varName the variable name
+   * @param fieldPath the partial field path being typed (after the last dot)
+   * @param fullWord the full word being completed
+   * @param varStart position where ${ starts in fullWord
+   * @param candidates list to add completions to
+   */
+  private void completeMapFields(
+      String varName, String fieldPath, String fullWord, int varStart, List<Candidate> candidates) {
+    // Get the variable value from stores
+    io.jafar.shell.core.VariableStore.Value value = null;
+
+    // Check session store first
+    var currentSession = sessions.getCurrent();
+    if (currentSession.isPresent() && currentSession.get().variables.contains(varName)) {
+      value = currentSession.get().variables.get(varName);
+    }
+
+    // Check global store if not found in session
+    if (value == null && dispatcher != null && dispatcher.getGlobalStore().contains(varName)) {
+      value = dispatcher.getGlobalStore().get(varName);
+    }
+
+    if (value instanceof io.jafar.shell.core.VariableStore.MapValue mapValue) {
+      // Find the last dot to determine which level we're completing
+      int lastDot = fieldPath.lastIndexOf('.');
+      String currentLevel;
+      String prefix;
+
+      if (lastDot >= 0) {
+        // Nested field access like "db.host" - get the parent map
+        String parentPath = fieldPath.substring(0, lastDot);
+        currentLevel = fieldPath.substring(lastDot + 1);
+        prefix = fullWord.substring(0, varStart + 2) + varName + "." + parentPath + ".";
+
+        // Navigate to the parent map
+        Object parent = mapValue.getField(parentPath);
+        if (parent instanceof Map<?, ?> parentMap) {
+          suggestMapKeys(parentMap, currentLevel, prefix, candidates);
+        }
+      } else {
+        // Top-level field access
+        currentLevel = fieldPath;
+        prefix = fullWord.substring(0, varStart + 2) + varName + ".";
+        suggestMapKeys(mapValue.value(), currentLevel, prefix, candidates);
+      }
+
+      // Always suggest .size property
+      if ("size".startsWith(currentLevel) && !currentLevel.equals("size")) {
+        candidates.add(
+            new Candidate(
+                prefix + "size", prefix + "size", null, "map entry count", null, null, false));
+      }
+    }
+  }
+
+  /**
+   * Suggests map keys that match the partial input.
+   *
+   * @param map the map to get keys from
+   * @param partial the partial key being typed
+   * @param prefix the prefix to add before each key
+   * @param candidates list to add completions to
+   */
+  private void suggestMapKeys(
+      Map<?, ?> map, String partial, String prefix, List<Candidate> candidates) {
+    for (Object key : map.keySet()) {
+      String keyStr = String.valueOf(key);
+      if (keyStr.startsWith(partial)) {
+        Object value = map.get(key);
+        String description =
+            value instanceof Map ? "nested map" : value != null ? value.toString() : "null";
+        candidates.add(
+            new Candidate(prefix + keyStr, prefix + keyStr, null, description, null, null, false));
+      }
+    }
+  }
+
+  /**
+   * Completes variable names in substitution context (after ${).
+   *
+   * @param partial the partial variable name
+   * @param fullWord the full word being completed
+   * @param varStart position where ${ starts
+   * @param candidates list to add completions to
+   */
+  private void completeVariableNamesInSubstitution(
+      String partial, String fullWord, int varStart, List<Candidate> candidates) {
+    String prefix = fullWord.substring(0, varStart + 2); // Everything up to and including "${
+
+    // Get variable names from global store
+    if (dispatcher != null) {
+      for (String name : dispatcher.getGlobalStore().names()) {
+        if (name.startsWith(partial)) {
+          candidates.add(
+              new Candidate(
+                  prefix + name, prefix + name, null, "global variable", null, null, false));
+        }
+      }
+    }
+
+    // Also from current session store
+    sessions
+        .getCurrent()
+        .ifPresent(
+            ref -> {
+              for (String name : ref.variables.names()) {
+                if (name.startsWith(partial)) {
+                  candidates.add(
+                      new Candidate(
+                          prefix + name,
+                          prefix + name,
+                          null,
+                          "session variable",
+                          null,
+                          null,
+                          false));
+                }
+              }
+            });
+  }
+
+  /**
+   * Completes vars command with options and variable names.
+   *
+   * @param line the parsed line
+   * @param candidates list to add completions to
+   * @param words the words in the line
+   * @param wordIndex the current word index
+   */
+  private void completeVarsCommand(
+      ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
+    // Check if --info flag is present
+    boolean hasInfo = words.stream().anyMatch(w -> "--info".equals(w));
+
+    if (hasInfo && wordIndex > words.indexOf("--info")) {
+      // After --info, suggest variable names
+      completeVariableName(line, candidates);
+    } else {
+      // Suggest options
+      suggestOptions(line, candidates, new String[] {"--global", "--session", "--all", "--info"});
+    }
   }
 
   private void completeVariableName(ParsedLine line, List<Candidate> candidates) {

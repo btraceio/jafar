@@ -60,11 +60,11 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `cp [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
 
 ### Variables
-- `set [--global] <name> = <value>`: Set a variable (scalar or lazy query).
+- `set [--global] <name> = <value>`: Set a variable (scalar, map, or lazy query).
 - `let [--global] <name> = <value>`: Alias for `set`.
-- `vars [--global|--session]`: List defined variables.
+- `vars [--global|--session] [--info <name>]`: List variables or show detailed info.
 - `unset <name>`: Remove a variable.
-- `echo <text>`: Print text with `${var}` substitution.
+- `echo <text>`: Print text with `${var}` substitution (supports nested fields: `${var.field.subfield}`).
 - `invalidate <name>`: Clear cached lazy variable result.
 
 ### Conditionals
