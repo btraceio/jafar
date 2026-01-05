@@ -54,6 +54,17 @@ final class PagedPrinter {
   private boolean promptMore() {
     // Non-interactive fallback: do not block
     if (System.console() == null) return true;
+
+    // Additional safety: re-check the pager property to handle cases where
+    // it might have been set after PagedPrinter was created
+    String prop = System.getProperty("jfr.shell.pager");
+    if (prop != null) {
+      String v = prop.trim().toLowerCase();
+      if (v.equals("0") || v.equals("off") || v.equals("false")) {
+        return true; // Don't prompt, continue showing output
+      }
+    }
+
     try {
       io.printf("-- more -- (Enter: next, q: quit) ");
       int ch = System.in.read();

@@ -326,7 +326,10 @@ public class Main implements Callable<Integer> {
                     errors.append(s).append("\n");
                   }
                 },
-                current -> {});
+                current -> {},
+                null,
+                null,
+                false); // Suppress informational messages in script mode
 
         CommandDispatcher.IO scriptIO =
             new CommandDispatcher.IO() {

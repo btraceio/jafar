@@ -40,6 +40,7 @@ public class CommandDispatcher {
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
   private final ConditionalState conditionalState = new ConditionalState();
+  private final boolean verbose;
 
   @FunctionalInterface
   public interface JfrSelector {
@@ -49,12 +50,12 @@ public class CommandDispatcher {
   private final JfrSelector selector;
 
   public CommandDispatcher(SessionManager sessions, IO io, SessionChangeListener listener) {
-    this(sessions, io, listener, null, null);
+    this(sessions, io, listener, null, null, true);
   }
 
   public CommandDispatcher(
       SessionManager sessions, IO io, SessionChangeListener listener, JfrSelector selector) {
-    this(sessions, io, listener, selector, null);
+    this(sessions, io, listener, selector, null, true);
   }
 
   public CommandDispatcher(
@@ -63,11 +64,40 @@ public class CommandDispatcher {
       SessionChangeListener listener,
       JfrSelector selector,
       VariableStore globalStore) {
+    this(sessions, io, listener, selector, globalStore, true);
+  }
+
+  public CommandDispatcher(
+      SessionManager sessions,
+      IO io,
+      SessionChangeListener listener,
+      JfrSelector selector,
+      VariableStore globalStore,
+      boolean verbose) {
     this.sessions = sessions;
     this.io = io;
     this.listener = listener;
     this.selector = selector;
     this.globalStore = globalStore != null ? globalStore : new VariableStore();
+    this.verbose = verbose || isVerboseEnabled();
+  }
+
+  /**
+   * Check if verbose mode is enabled via system property or environment variable. This allows
+   * runtime control of verbosity for debugging.
+   */
+  private static boolean isVerboseEnabled() {
+    String prop = System.getProperty("jfr.shell.verbose");
+    if (prop != null) {
+      String v = prop.trim().toLowerCase();
+      return v.equals("1") || v.equals("on") || v.equals("true");
+    }
+    String env = System.getenv("JFR_SHELL_VERBOSE");
+    if (env != null) {
+      String v = env.trim().toLowerCase();
+      return v.equals("1") || v.equals("on") || v.equals("true");
+    }
+    return false;
   }
 
   /** Returns the global variable store. */
@@ -129,7 +159,9 @@ public class CommandDispatcher {
           cmdShow(args, line);
           return true;
         case "select":
-          io.println("Note: 'select' is deprecated. Use 'show' instead.");
+          if (verbose) {
+            io.println("Note: 'select' is deprecated. Use 'show' instead.");
+          }
           cmdShow(args, line);
           return true;
         case "help":
@@ -144,7 +176,9 @@ public class CommandDispatcher {
           }
           return true;
         case "types":
-          io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
+          if (verbose) {
+            io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
+          }
           cmdTypes(args);
           return true;
         case "chunks":
@@ -201,12 +235,14 @@ public class CommandDispatcher {
 
     Path path = Paths.get(pathStr);
     SessionManager.SessionRef ref = sessions.open(path, alias);
-    io.println(
-        "Opened session #"
-            + ref.id
-            + (ref.alias != null ? " (" + ref.alias + ")" : "")
-            + ": "
-            + ref.session.getRecordingPath());
+    if (verbose) {
+      io.println(
+          "Opened session #"
+              + ref.id
+              + (ref.alias != null ? " (" + ref.alias + ")" : "")
+              + ": "
+              + ref.session.getRecordingPath());
+    }
     listener.onCurrentSessionChanged(ref);
   }
 
@@ -251,15 +287,19 @@ public class CommandDispatcher {
         return;
       }
       sessions.close(String.valueOf(cur.get().id));
-      io.println("Closed session #" + cur.get().id);
+      if (verbose) {
+        io.println("Closed session #" + cur.get().id);
+      }
     } else if (args.size() == 1 && "--all".equals(args.get(0))) {
       sessions.closeAll();
-      io.println("Closed all sessions");
+      if (verbose) {
+        io.println("Closed all sessions");
+      }
     } else {
       String key = args.get(0);
       boolean ok = sessions.close(key);
       if (!ok) io.error("No such session: " + key);
-      else io.println("Closed session " + key);
+      else if (verbose) io.println("Closed session " + key);
     }
     sessions.current().ifPresent(listener::onCurrentSessionChanged);
   }
@@ -1411,7 +1451,9 @@ public class CommandDispatcher {
     if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
       String literal = exprPart.substring(1, exprPart.length() - 1);
       store.set(varName, new ScalarValue(literal));
-      io.println("Set " + varName + " = \"" + literal + "\"");
+      if (verbose) {
+        io.println("Set " + varName + " = \"" + literal + "\"");
+      }
       return;
     }
 
@@ -1419,7 +1461,9 @@ public class CommandDispatcher {
     if (exprPart.matches("-?\\d+(\\.\\d+)?")) {
       Number num = exprPart.contains(".") ? Double.parseDouble(exprPart) : Long.parseLong(exprPart);
       store.set(varName, new ScalarValue(num));
-      io.println("Set " + varName + " = " + num);
+      if (verbose) {
+        io.println("Set " + varName + " = " + num);
+      }
       return;
     }
 
@@ -1448,13 +1492,17 @@ public class CommandDispatcher {
         Object scalarValue = extractScalarIfSingle(result);
         if (scalarValue != null) {
           store.set(varName, new ScalarValue(scalarValue));
-          io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+          if (verbose) {
+            io.println("Set " + varName + " = " + formatScalarValue(scalarValue));
+          }
         } else {
           // Fallback: store as lazy (shouldn't happen for scalar queries)
           LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
           lqv.setCachedResult(result);
           store.set(varName, lqv);
-          io.println("Set " + varName + " = lazy[" + exprPart + "]");
+          if (verbose) {
+            io.println("Set " + varName + " = lazy[" + exprPart + "]");
+          }
         }
       } catch (Exception e) {
         io.error("Query evaluation failed: " + e.getMessage());
@@ -1463,7 +1511,9 @@ public class CommandDispatcher {
       // Non-scalar query: store as lazy (not evaluated until accessed)
       LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
       store.set(varName, lqv);
-      io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");
+      if (verbose) {
+        io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");
+      }
     }
   }
 
@@ -1493,7 +1543,9 @@ public class CommandDispatcher {
     }
 
     cur.get().outputFormat = format;
-    io.println("Output format set to: " + format);
+    if (verbose) {
+      io.println("Output format set to: " + format);
+    }
   }
 
   /**
@@ -1599,12 +1651,16 @@ public class CommandDispatcher {
 
     VariableStore store = getTargetStore(isGlobal);
     if (store.remove(varName)) {
-      io.println("Removed " + varName);
+      if (verbose) {
+        io.println("Removed " + varName);
+      }
     } else {
       // Try the other store if not found
       VariableStore other = isGlobal ? getSessionStore() : globalStore;
       if (other != null && other.remove(varName)) {
-        io.println("Removed " + varName);
+        if (verbose) {
+          io.println("Removed " + varName);
+        }
       } else {
         io.error("Variable not found: " + varName);
       }
@@ -1642,7 +1698,9 @@ public class CommandDispatcher {
 
     if (val instanceof LazyQueryValue lqv) {
       lqv.invalidate();
-      io.println("Invalidated cache for " + varName);
+      if (verbose) {
+        io.println("Invalidated cache for " + varName);
+      }
     } else {
       io.error("Variable " + varName + " is not a lazy value");
     }
