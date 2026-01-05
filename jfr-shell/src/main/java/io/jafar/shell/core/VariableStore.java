@@ -69,7 +69,7 @@ public final class VariableStore {
      * Gets a nested field value using dot-notation path.
      *
      * @param path field path (e.g., "db.host" or "config.timeout")
-     * @return the value at the path, or null if not found
+     * @return the value at the path, or null if not found or if any intermediate field is null
      */
     public Object getField(String path) {
       String[] parts = path.split("\\.");
@@ -131,8 +131,8 @@ public final class VariableStore {
 
         if (val instanceof Map<?, ?> nestedMap) {
           sb.append(formatMap(nestedMap, depth + 1, maxDepth));
-        } else if (val instanceof String) {
-          sb.append("\"").append(val).append("\"");
+        } else if (val instanceof String str) {
+          sb.append("\"").append(escapeString(str)).append("\"");
         } else if (val == null) {
           sb.append("null");
         } else {
@@ -143,6 +143,28 @@ public final class VariableStore {
       }
 
       sb.append("}");
+      return sb.toString();
+    }
+
+    /**
+     * Escapes special characters in a string for display.
+     *
+     * @param str the string to escape
+     * @return escaped string
+     */
+    private String escapeString(String str) {
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < str.length(); i++) {
+        char c = str.charAt(i);
+        switch (c) {
+          case '"' -> sb.append("\\\"");
+          case '\\' -> sb.append("\\\\");
+          case '\n' -> sb.append("\\n");
+          case '\r' -> sb.append("\\r");
+          case '\t' -> sb.append("\\t");
+          default -> sb.append(c);
+        }
+      }
       return sb.toString();
     }
   }

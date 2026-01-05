@@ -212,15 +212,19 @@ jfr> show events/jdk.ExecutionSample
 
 ### Environment-Specific Settings
 
-Switch between dev/prod configurations:
+Define environment configurations and switch between them:
 
 ```bash
 jfr> set dev = {"log_level": "DEBUG", "timeout": 30, "retries": 3}
 jfr> set prod = {"log_level": "ERROR", "timeout": 10, "retries": 5}
 
-# Use dev settings
-jfr> set env = ${dev}
-jfr> echo "Using timeout: ${env.timeout}s with ${env.retries} retries"
+# Use dev settings directly
+jfr> echo "Dev timeout: ${dev.timeout}s with ${dev.retries} retries"
+Dev timeout: 30s with 3 retries
+
+# Use prod settings
+jfr> echo "Prod timeout: ${prod.timeout}s with ${prod.retries} retries"
+Prod timeout: 10s with 5 retries
 ```
 
 ### Building Custom Reports
@@ -228,18 +232,22 @@ jfr> echo "Using timeout: ${env.timeout}s with ${env.retries} retries"
 Create structured summary data:
 
 ```bash
+# Store query results first
 jfr> set reads = events/jdk.FileRead
 jfr> set total = events/jdk.FileRead/bytes | sum()
 
-# Build report structure
+# Build report structure with literal values
 jfr> set report = {
-...>   "total_reads": ${reads.size},
-...>   "total_bytes": ${total.sum},
+...>   "total_reads": 42,
+...>   "total_bytes": 524288,
 ...>   "timestamp": "2024-01-15"
 ...> }
 
+# Access report fields
 jfr> echo "Report: ${report.total_reads} reads, ${report.total_bytes} bytes on ${report.timestamp}"
 ```
+
+**Note:** Expression interpolation in map literals (e.g., `{"count": ${reads.size}}`) is not yet supported. This feature is planned for Phase 2. For now, use literal values in maps and access query results separately.
 
 ### Path Templates
 

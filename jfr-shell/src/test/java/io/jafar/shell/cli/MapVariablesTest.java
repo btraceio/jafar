@@ -186,6 +186,17 @@ class MapVariablesTest {
   }
 
   @Test
+  void accessFieldThroughNullValue() throws Exception {
+    dispatcher.dispatch("set config = {\"data\": null, \"valid\": \"value\"}");
+    io.clear();
+    dispatcher.dispatch("echo Nested: ${config.data.nested}");
+    String output = io.text();
+    assertTrue(
+        output.contains("Nested: "), "Should return empty string when traversing through null");
+    assertFalse(output.contains("null"), "Should not show 'null' for path through null field");
+  }
+
+  @Test
   void mapSizeProperty() throws Exception {
     dispatcher.dispatch("set config = {\"a\": 1, \"b\": 2, \"c\": 3}");
     io.clear();
@@ -224,7 +235,9 @@ class MapVariablesTest {
     dispatcher.dispatch("vars");
     String output = io.text();
     assertTrue(output.contains("config"), "Should show config variable");
-    // Note: The internal representation may vary, but it should not crash
+    assertTrue(
+        output.contains("\\\\") || output.contains("\\n"),
+        "Should escape special characters in display");
   }
 
   @Test

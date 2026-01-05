@@ -1681,7 +1681,10 @@ public class CommandDispatcher {
         if (ch == '"') {
           consume();
           return sb.toString();
-        } else if (ch == '\\' && pos + 1 < input.length()) {
+        } else if (ch == '\\') {
+          if (pos + 1 >= input.length()) {
+            throw error("Lone backslash at end of string");
+          }
           consume();
           char escaped = input.charAt(pos);
           switch (escaped) {
@@ -1707,16 +1710,27 @@ public class CommandDispatcher {
         consume();
       }
 
+      int digitStart = pos;
       while (pos < input.length() && Character.isDigit(peek())) {
         consume();
+      }
+
+      // Validate at least one digit after optional minus sign
+      if (pos == digitStart) {
+        throw error("Expected digit after minus sign");
       }
 
       boolean isDouble = false;
       if (pos < input.length() && peek() == '.') {
         isDouble = true;
         consume();
+        int decimalStart = pos;
         while (pos < input.length() && Character.isDigit(peek())) {
           consume();
+        }
+        // Validate at least one digit after decimal point
+        if (pos == decimalStart) {
+          throw error("Expected digit after decimal point");
         }
       }
 
@@ -1731,9 +1745,15 @@ public class CommandDispatcher {
     private Boolean parseBoolean() {
       if (input.startsWith("true", pos)) {
         pos += 4;
+        if (!isDelimiter(pos)) {
+          throw error("Invalid boolean literal - expected delimiter after 'true'");
+        }
         return true;
       } else if (input.startsWith("false", pos)) {
         pos += 5;
+        if (!isDelimiter(pos)) {
+          throw error("Invalid boolean literal - expected delimiter after 'false'");
+        }
         return false;
       }
       throw error("Expected 'true' or 'false'");
@@ -1742,9 +1762,26 @@ public class CommandDispatcher {
     private Object parseNull() {
       if (input.startsWith("null", pos)) {
         pos += 4;
+        if (!isDelimiter(pos)) {
+          throw error("Invalid null literal - expected delimiter after 'null'");
+        }
         return null;
       }
       throw error("Expected 'null'");
+    }
+
+    /**
+     * Checks if the position is at a valid delimiter (comma, closing brace, or end of input).
+     *
+     * @param position the position to check
+     * @return true if at a delimiter
+     */
+    private boolean isDelimiter(int position) {
+      if (position >= input.length()) {
+        return true; // End of input
+      }
+      char c = input.charAt(position);
+      return c == ',' || c == '}' || Character.isWhitespace(c);
     }
 
     private char peek() {
