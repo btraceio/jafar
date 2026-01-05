@@ -17,7 +17,7 @@ import java.util.Set;
 public final class VariableStore {
 
   /** A variable value that can be retrieved and released. */
-  public sealed interface Value permits ScalarValue, LazyQueryValue {
+  public sealed interface Value permits ScalarValue, LazyQueryValue, MapValue {
     /**
      * Gets the value. For lazy values, this triggers evaluation.
      *
@@ -45,6 +45,105 @@ public final class VariableStore {
       if (value == null) return "null";
       if (value instanceof String) return "\"" + value + "\"";
       return value.toString();
+    }
+  }
+
+  /**
+   * Immutable map value for structured data storage. Maps can contain nested maps, scalars, and
+   * collections. Used for configuration management, custom report structures, and variable
+   * namespacing.
+   */
+  public record MapValue(Map<String, Object> value) implements Value {
+    public MapValue {
+      // Ensure immutability - create defensive copy
+      // Use Collections.unmodifiableMap instead of Map.copyOf to support null values
+      value = java.util.Collections.unmodifiableMap(new java.util.HashMap<>(value));
+    }
+
+    @Override
+    public Object get() {
+      return value;
+    }
+
+    /**
+     * Gets a nested field value using dot-notation path.
+     *
+     * @param path field path (e.g., "db.host" or "config.timeout")
+     * @return the value at the path, or null if not found
+     */
+    public Object getField(String path) {
+      String[] parts = path.split("\\.");
+      Object current = value;
+
+      for (String part : parts) {
+        if (!(current instanceof Map<?, ?> map)) {
+          return null;
+        }
+        current = map.get(part);
+        if (current == null) {
+          return null;
+        }
+      }
+
+      return current;
+    }
+
+    @Override
+    public String describe() {
+      return "map" + formatMap(value, 0, 2);
+    }
+
+    /**
+     * Formats a map for display with limited depth to avoid overwhelming output.
+     *
+     * @param map the map to format
+     * @param depth current nesting depth
+     * @param maxDepth maximum nesting depth before truncation
+     * @return formatted string representation
+     */
+    private String formatMap(Map<?, ?> map, int depth, int maxDepth) {
+      if (map.isEmpty()) {
+        return "{}";
+      }
+
+      if (depth >= maxDepth) {
+        return "{...}";
+      }
+
+      StringBuilder sb = new StringBuilder("{");
+      boolean first = true;
+      int count = 0;
+      final int maxEntries = 5; // Show at most 5 entries at each level
+
+      for (Map.Entry<?, ?> entry : map.entrySet()) {
+        if (count >= maxEntries) {
+          sb.append(", ...");
+          break;
+        }
+
+        if (!first) {
+          sb.append(", ");
+        }
+        first = false;
+
+        sb.append(entry.getKey()).append("=");
+        Object val = entry.getValue();
+
+        if (val instanceof Map<?, ?> nestedMap) {
+          sb.append(formatMap(nestedMap, depth + 1, maxDepth));
+        } else if (val instanceof String) {
+          sb.append("\"").append(val).append("\"");
+        } else if (val == null) {
+          sb.append("null");
+        } else {
+          sb.append(val);
+        }
+
+        count++;
+      }
+
+      sb.append("}");
+      return sb.toString();
     }
   }
 

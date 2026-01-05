@@ -827,10 +827,21 @@ public class CommandDispatcher {
       io.println("Store a variable value. Values can be:");
       io.println("  - Literal strings: set name = \"hello\"");
       io.println("  - Numbers: set count = 42");
+      io.println("  - Map literals: set config = {\"key\": \"value\", \"count\": 42}");
       io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
       io.println("");
       io.println("Options:");
       io.println("  --global  Store in global scope (persists across sessions)");
+      io.println("");
+      io.println("Map Variables:");
+      io.println("Maps use JSON-like syntax and support:");
+      io.println("  - String values: {\"name\": \"test\"}");
+      io.println("  - Numbers: {\"count\": 42, \"ratio\": 3.14}");
+      io.println("  - Booleans: {\"enabled\": true}");
+      io.println("  - Null values: {\"optional\": null}");
+      io.println("  - Nested maps: {\"db\": {\"host\": \"localhost\", \"port\": 5432}}");
+      io.println("  - Access nested fields: ${config.db.host}");
+      io.println("  - Get map size: ${config.size}");
       io.println("");
       io.println("Lazy queries are not evaluated until accessed via ${var} substitution.");
       io.println("Results are cached after first evaluation. Use 'invalidate' to clear cache.");
@@ -843,6 +854,8 @@ public class CommandDispatcher {
       io.println("Examples:");
       io.println("  set threshold = 1000");
       io.println("  set bigReads = events/jdk.FileRead[bytes>${threshold}]");
+      io.println("  set config = {\"threshold\": 1000, \"pattern\": \".*Error.*\"}");
+      io.println("  echo Threshold: ${config.threshold}");
       io.println("  set --global myPattern = \".*Exception.*\"");
       io.println("  set output json        # Switch to JSON output");
       io.println("  set output csv         # Export-friendly CSV");
@@ -871,14 +884,17 @@ public class CommandDispatcher {
       io.println("Print text with variable substitution.");
       io.println("");
       io.println("Variable syntax:");
-      io.println("  ${var}           - Scalar value or first value from result set");
-      io.println("  ${var.size}      - Row count for lazy query results");
-      io.println("  ${var.field}     - Field from first row");
-      io.println("  ${var[N].field}  - Field from row N (0-indexed)");
+      io.println("  ${var}              - Scalar value or first value from result set");
+      io.println("  ${var.size}         - Row count for lazy queries, entry count for maps");
+      io.println("  ${var.field}        - Field from first row or map value");
+      io.println("  ${var.a.b.c}        - Nested field access (multi-level)");
+      io.println("  ${var[N].field}     - Field from row N (0-indexed)");
+      io.println("  ${var[N].a.b}       - Nested field from specific row");
       io.println("");
       io.println("Examples:");
       io.println("  echo Found ${bigReads.size} large file reads");
       io.println("  echo First read was ${bigReads[0].bytes} bytes");
+      io.println("  echo Database: ${config.db.host}:${config.db.port}");
       return;
     }
     if ("invalidate".equals(sub)) {
@@ -1447,6 +1463,21 @@ public class CommandDispatcher {
 
     VariableStore store = getTargetStore(isGlobal);
 
+    // Check for map literal
+    if (exprPart.startsWith("{")) {
+      try {
+        Map<String, Object> map = parseMapLiteral(exprPart);
+        store.set(varName, new VariableStore.MapValue(map));
+        if (verbose) {
+          io.println("Set " + varName + " = " + new VariableStore.MapValue(map).describe());
+        }
+        return;
+      } catch (Exception e) {
+        io.error("Invalid map literal: " + e.getMessage());
+        return;
+      }
+    }
+
     // Check for literal string value
     if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
       String literal = exprPart.substring(1, exprPart.length() - 1);
@@ -1549,6 +1580,196 @@ public class CommandDispatcher {
   }
 
   /**
+   * Parses a map literal in JSON-like syntax: {"key": value, "nested": {...}} Supports: strings,
+   * numbers, booleans, null, nested maps
+   *
+   * @param input map literal string starting with { and ending with }
+   * @return parsed map
+   * @throws IllegalArgumentException if syntax is invalid
+   */
+  private Map<String, Object> parseMapLiteral(String input) {
+    MapLiteralParser parser = new MapLiteralParser(input);
+    return parser.parseMap();
+  }
+
+  /** Simple recursive-descent parser for map literals */
+  private static class MapLiteralParser {
+    private final String input;
+    private int pos = 0;
+
+    MapLiteralParser(String input) {
+      this.input = input.trim();
+    }
+
+    Map<String, Object> parseMap() {
+      skipWs();
+      if (peek() != '{') {
+        throw error("Expected '{'");
+      }
+      consume(); // {
+
+      Map<String, Object> map = new java.util.LinkedHashMap<>();
+      skipWs();
+
+      if (peek() == '}') {
+        consume();
+        return map;
+      }
+
+      while (true) {
+        skipWs();
+
+        // Parse key (must be string)
+        if (peek() != '"') {
+          throw error("Expected string key");
+        }
+        String key = parseString();
+
+        skipWs();
+        if (peek() != ':') {
+          throw error("Expected ':' after key");
+        }
+        consume();
+
+        skipWs();
+        Object value = parseValue();
+        map.put(key, value);
+
+        skipWs();
+        char next = peek();
+        if (next == '}') {
+          consume();
+          break;
+        } else if (next == ',') {
+          consume();
+        } else {
+          throw error("Expected ',' or '}'");
+        }
+      }
+
+      return map;
+    }
+
+    private Object parseValue() {
+      skipWs();
+      char ch = peek();
+
+      if (ch == '"') {
+        return parseString();
+      } else if (ch == '{') {
+        return parseMap();
+      } else if (ch == 't' || ch == 'f') {
+        return parseBoolean();
+      } else if (ch == 'n') {
+        return parseNull();
+      } else if (ch == '-' || Character.isDigit(ch)) {
+        return parseNumber();
+      } else {
+        throw error("Unexpected character: " + ch);
+      }
+    }
+
+    private String parseString() {
+      if (peek() != '"') {
+        throw error("Expected '\"'");
+      }
+      consume(); // opening "
+
+      StringBuilder sb = new StringBuilder();
+      while (pos < input.length()) {
+        char ch = input.charAt(pos);
+        if (ch == '"') {
+          consume();
+          return sb.toString();
+        } else if (ch == '\\' && pos + 1 < input.length()) {
+          consume();
+          char escaped = input.charAt(pos);
+          switch (escaped) {
+            case 'n' -> sb.append('\n');
+            case 't' -> sb.append('\t');
+            case 'r' -> sb.append('\r');
+            case '"' -> sb.append('"');
+            case '\\' -> sb.append('\\');
+            default -> throw error("Invalid escape: \\" + escaped);
+          }
+          consume();
+        } else {
+          sb.append(ch);
+          consume();
+        }
+      }
+      throw error("Unterminated string");
+    }
+
+    private Number parseNumber() {
+      int start = pos;
+      if (peek() == '-') {
+        consume();
+      }
+
+      while (pos < input.length() && Character.isDigit(peek())) {
+        consume();
+      }
+
+      boolean isDouble = false;
+      if (pos < input.length() && peek() == '.') {
+        isDouble = true;
+        consume();
+        while (pos < input.length() && Character.isDigit(peek())) {
+          consume();
+        }
+      }
+
+      String numStr = input.substring(start, pos);
+      try {
+        return isDouble ? Double.parseDouble(numStr) : Long.parseLong(numStr);
+      } catch (NumberFormatException e) {
+        throw error("Invalid number: " + numStr);
+      }
+    }
+
+    private Boolean parseBoolean() {
+      if (input.startsWith("true", pos)) {
+        pos += 4;
+        return true;
+      } else if (input.startsWith("false", pos)) {
+        pos += 5;
+        return false;
+      }
+      throw error("Expected 'true' or 'false'");
+    }
+
+    private Object parseNull() {
+      if (input.startsWith("null", pos)) {
+        pos += 4;
+        return null;
+      }
+      throw error("Expected 'null'");
+    }
+
+    private char peek() {
+      if (pos >= input.length()) {
+        throw error("Unexpected end of input");
+      }
+      return input.charAt(pos);
+    }
+
+    private void consume() {
+      pos++;
+    }
+
+    private void skipWs() {
+      while (pos < input.length() && Character.isWhitespace(input.charAt(pos))) {
+        pos++;
+      }
+    }
+
+    private IllegalArgumentException error(String message) {
+      return new IllegalArgumentException(message + " at position " + pos);
+    }
+  }
+
+  /**
    * Determines if a query will definitely produce a single scalar value based on static analysis of
    * its pipeline operators. Only queries ending with count or sum are considered scalar.
    */
@@ -1634,6 +1855,10 @@ public class CommandDispatcher {
           io.println("Rows: error - " + e.getMessage());
         }
       }
+    } else if (val instanceof VariableStore.MapValue mv) {
+      io.println("Type: map");
+      io.println("Size: " + mv.value().size() + " entries");
+      io.println("Structure: " + mv.describe());
     } else if (val instanceof ScalarValue sv) {
       io.println("Type: scalar");
       io.println("Value: " + sv.describe());

@@ -138,6 +138,15 @@ set eventCount = events/jdk.FileRead | count()
 
 Lazy variables preserve memory by not materializing results until accessed. They also cache results for subsequent accesses.
 
+**Map Variables** store structured data with nested field access (⭐ NEW):
+```bash
+set config = {"threshold": 1000, "enabled": true, "pattern": ".*Error.*"}
+set db = {"host": "localhost", "port": 5432, "credentials": {"user": "admin"}}
+set paths = {"logs": "/var/log/.*", "temp": "/tmp/.*", "home": "/home/.*"}
+```
+
+Maps use JSON-like syntax and support strings, numbers, booleans, null, and nested maps. See [Map Variables Tutorial](map-variables.md) for complete reference.
+
 ### Variable Scopes
 
 Variables can be session-scoped (default) or global:
@@ -196,22 +205,33 @@ For structured results, access nested fields and array elements:
 # Access a field from result
 ${varname.fieldname}
 
+# Access nested fields (multi-level)
+${varname.field.subfield.deeply.nested}
+
 # Access array element
 ${varname[0]}
 
 # Access field from array element
 ${varname[0].fieldname}
 
-# Size of lazy variable result
+# Size property (works for lazy results and maps)
 ${varname.size}
 ```
 
-Example:
+**Query result example:**
 ```bash
 set threads = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
 echo "Top thread: ${threads[0].sampledThread/javaName}"
 echo "Sample count: ${threads[0].count}"
 echo "Total groups: ${threads.size}"
+```
+
+**Map variable example:**
+```bash
+set config = {"threshold": 1000, "db": {"host": "localhost", "port": 5432}}
+echo "Threshold: ${config.threshold}"
+echo "Database: ${config.db.host}:${config.db.port}"
+echo "Config size: ${config.size} entries"
 ```
 
 ### Listing Variables
@@ -227,17 +247,30 @@ vars --session
 
 # List only global variables
 vars --global
+
+# Show detailed info for a specific variable
+vars --info config
 ```
 
 Output shows variable type and value/description:
 ```
 Session variables:
   threshold = 1000 (scalar)
+  config = map{threshold=1000, enabled=true, pattern=".*Error.*"} (map)
   fileReads = events/jdk.FileRead (lazy query, not evaluated)
   stats = events/jdk.ExecutionSample | groupBy(...) (lazy query, cached: 15 items)
 
 Global variables:
   defaultLimit = 20 (scalar)
+```
+
+**Detailed variable info:**
+```bash
+jfr> vars --info config
+Variable: config
+Type: map
+Size: 3 entries
+Structure: map{threshold=1000, enabled=true, pattern=".*Error.*"}
 ```
 
 ### Removing Variables
