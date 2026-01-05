@@ -357,8 +357,6 @@ Current implementation is **Phase 1** of map variables. Future phases may includ
 - **Phase 2**: Expression interpolation in map values (`{"total": ${reads.size}}`)
 - **Phase 3**: Map operations (merge, filter, transform) and pipeline integration
 
-See the [implementation plan](../.claude/plans/piped-plotting-thimble.md) for details.
-
 ## See Also
 
 - [Scripting Guide](jfr-shell-scripting.md#variables) - Using maps in scripts
