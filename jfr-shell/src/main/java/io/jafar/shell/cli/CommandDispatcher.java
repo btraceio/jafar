@@ -706,6 +706,12 @@ public class CommandDispatcher {
       io.println("        | select(path + ' (' + bytes + ')' as description)");
       io.println("        | select(\"${path} (${bytes} bytes)\" as description)");
       io.println("        | select(if(bytes > 1000, 'large', 'small') as size)");
+      io.println(
+          "    | toMap(keyField, valueField) → convert rows to map (last value wins for duplicates)");
+      io.println("      Examples:");
+      io.println(
+          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
+      io.println("        echo CPU engine: ${config.cpuEngine}");
       io.println("  Value transforms (also usable in filters where applicable):");
       io.println("    | len([path])              → length of string or list/array attribute");
       io.println("    | uppercase([path])        → string uppercased");
@@ -1539,6 +1545,37 @@ public class CommandDispatcher {
       } catch (Exception e) {
         io.error("Query evaluation failed: " + e.getMessage());
       }
+    } else if (isDefinitelyMap(query)) {
+      // Map-producing query: evaluate and store as MapValue
+      try {
+        JfrPathEvaluator evaluator = new JfrPathEvaluator();
+        Object result = evaluator.evaluate(cur.get().session, query);
+
+        // Extract map from single-element list result
+        if (result instanceof List<?> list && list.size() == 1) {
+          Object first = list.get(0);
+          if (first instanceof Map<?, ?> map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> mapResult = (Map<String, Object>) map;
+            store.set(varName, new VariableStore.MapValue(mapResult));
+            if (verbose) {
+              io.println(
+                  "Set " + varName + " = " + new VariableStore.MapValue(mapResult).describe());
+            }
+            return;
+          }
+        }
+
+        // Fallback: store as lazy if not a clean map result
+        LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+        lqv.setCachedResult(result);
+        store.set(varName, lqv);
+        if (verbose) {
+          io.println("Set " + varName + " = lazy[" + exprPart + "]");
+        }
+      } catch (Exception e) {
+        io.error("Query evaluation failed: " + e.getMessage());
+      }
     } else {
       // Non-scalar query: store as lazy (not evaluated until accessed)
       LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
@@ -1818,6 +1855,19 @@ public class CommandDispatcher {
     // Check the last operator in the pipeline
     JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
     return lastOp instanceof JfrPath.CountOp || lastOp instanceof JfrPath.SumOp;
+  }
+
+  /**
+   * Determines if a query will definitely produce a map result. Currently only toMap() produces a
+   * map.
+   */
+  private boolean isDefinitelyMap(JfrPath.Query query) {
+    if (query.pipeline == null || query.pipeline.isEmpty()) {
+      return false;
+    }
+    // Check the last operator in the pipeline
+    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
+    return lastOp instanceof JfrPath.ToMapOp;
   }
 
   private void cmdVars(List<String> args) {

@@ -488,6 +488,7 @@ public final class JfrPathEvaluator {
       case JfrPath.DecorateByTimeOp dt -> evaluateDecorateByTime(session, query, dt);
       case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
       case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
+      case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
     };
   }
 
@@ -546,6 +547,36 @@ public final class JfrPathEvaluator {
     }
 
     return result;
+  }
+
+  private List<Map<String, Object>> evaluateToMap(
+      JFRSession session, Query query, JfrPath.ToMapOp op) throws Exception {
+
+    // Get the base result set (evaluate prior pipeline operations if any)
+    List<Map<String, Object>> baseResults;
+
+    // Find index of current toMap operation in pipeline
+    int toMapIndex = -1;
+    for (int i = 0; i < query.pipeline.size(); i++) {
+      if (query.pipeline.get(i) == op) {
+        toMapIndex = i;
+        break;
+      }
+    }
+
+    if (toMapIndex == 0) {
+      // No prior pipeline operations, evaluate base query
+      Query baseQuery = new Query(query.root, query.segments, query.predicates, List.of());
+      baseResults = evaluate(session, baseQuery);
+    } else {
+      // Evaluate all prior pipeline operations
+      List<JfrPath.PipelineOp> priorOps = query.pipeline.subList(0, toMapIndex);
+      Query baseQuery = new Query(query.root, query.segments, query.predicates, priorOps);
+      baseResults = evaluate(session, baseQuery);
+    }
+
+    // Apply toMap transformation
+    return applyToMap(baseResults, op.keyField, op.valueField);
   }
 
   // Expression evaluator for computed fields in select()
@@ -2236,6 +2267,7 @@ public final class JfrPathEvaluator {
       case JfrPath.CeilOp ce -> applyNumberTransform(rows, ce.valuePath, Math::ceil);
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
+      case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }
@@ -2469,5 +2501,31 @@ public final class JfrPathEvaluator {
       result.add(out);
     }
     return result;
+  }
+
+  private List<Map<String, Object>> applyToMap(
+      List<Map<String, Object>> rows, List<String> keyField, List<String> valueField) {
+
+    Map<String, Object> resultMap = new LinkedHashMap<>();
+
+    for (Map<String, Object> row : rows) {
+      // Extract key and value from row
+      Object keyObj = Values.get(row, keyField.toArray());
+      Object valueObj = Values.get(row, valueField.toArray());
+
+      // Skip rows with missing key field
+      if (keyObj == null) {
+        continue;
+      }
+
+      // Convert key to string for consistency and safety
+      String key = String.valueOf(keyObj);
+
+      // Store in map (last value wins for duplicate keys)
+      resultMap.put(key, valueObj);
+    }
+
+    // Return as single-row list containing the map
+    return List.of(resultMap);
   }
 }

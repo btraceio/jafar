@@ -1,6 +1,7 @@
 package io.jafar.shell.jfrpath;
 
 import java.util.List;
+import java.util.Objects;
 
 /** JfrPath AST model and utilities. */
 public final class JfrPath {
@@ -298,7 +299,8 @@ public final class JfrPath {
           ReplaceOp,
           DecorateByTimeOp,
           DecorateByKeyOp,
-          SelectOp {}
+          SelectOp,
+          ToMapOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -557,6 +559,40 @@ public final class JfrPath {
           .filter(item -> item instanceof FieldSelection)
           .map(item -> ((FieldSelection) item).fieldPath)
           .toList();
+    }
+  }
+
+  /** toMap(keyField, valueField) - Convert rows to map using specified key and value fields */
+  public static final class ToMapOp implements PipelineOp {
+    public final List<String> keyField;
+    public final List<String> valueField;
+
+    public ToMapOp(List<String> keyField, List<String> valueField) {
+      if (keyField == null || keyField.isEmpty()) {
+        throw new IllegalArgumentException("toMap requires non-empty keyField");
+      }
+      if (valueField == null || valueField.isEmpty()) {
+        throw new IllegalArgumentException("toMap requires non-empty valueField");
+      }
+      this.keyField = List.copyOf(keyField);
+      this.valueField = List.copyOf(valueField);
+    }
+
+    @Override
+    public String toString() {
+      return "toMap(" + String.join("/", keyField) + ", " + String.join("/", valueField) + ")";
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof ToMapOp that)) return false;
+      return keyField.equals(that.keyField) && valueField.equals(that.valueField);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(keyField, valueField);
     }
   }
 }

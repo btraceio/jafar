@@ -693,6 +693,8 @@ public final class JfrPathParser {
       return parseDecorateByKey();
     } else if ("select".equals(name)) {
       return parseSelect();
+    } else if ("tomap".equals(name)) {
+      return parseToMap();
     } else {
       throw error("Unknown pipeline function: " + name);
     }
@@ -860,6 +862,30 @@ public final class JfrPathParser {
     }
 
     return new JfrPath.SelectOp(items);
+  }
+
+  private JfrPath.ToMapOp parseToMap() {
+    expect('(');
+    skipWs();
+
+    // First argument: key field path
+    List<String> keyField = parsePathArg();
+    skipWs();
+
+    // Require comma separator
+    if (peek() != ',') {
+      throw error("toMap() requires two arguments: toMap(keyField, valueField)");
+    }
+    pos++; // consume comma
+    skipWs();
+
+    // Second argument: value field path
+    List<String> valueField = parsePathArg();
+    skipWs();
+
+    expect(')');
+
+    return new JfrPath.ToMapOp(keyField, valueField);
   }
 
   private JfrPath.SelectItem parseSelectItem() {

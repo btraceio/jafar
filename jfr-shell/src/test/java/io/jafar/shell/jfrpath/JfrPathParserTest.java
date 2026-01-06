@@ -109,4 +109,43 @@ class JfrPathParserTest {
     assertEquals(java.util.List.of("key"), selectOp.fieldPaths().get(0));
     assertEquals(java.util.List.of("value"), selectOp.fieldPaths().get(1));
   }
+
+  @Test
+  void parsesToMapWithSimpleFields() {
+    var q =
+        JfrPathParser.parse("events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
+    assertEquals(2, q.pipeline.size());
+
+    var op = q.pipeline.get(1);
+    assertTrue(op instanceof JfrPath.ToMapOp);
+    var toMapOp = (JfrPath.ToMapOp) op;
+    assertEquals(java.util.List.of("name"), toMapOp.keyField);
+    assertEquals(java.util.List.of("value"), toMapOp.valueField);
+  }
+
+  @Test
+  void parsesToMapWithNestedFields() {
+    var q = JfrPathParser.parse("events/X | toMap(thread/name, duration)");
+    assertEquals(1, q.pipeline.size());
+
+    var op = q.pipeline.get(0);
+    assertTrue(op instanceof JfrPath.ToMapOp);
+    var toMapOp = (JfrPath.ToMapOp) op;
+    assertEquals(java.util.List.of("thread", "name"), toMapOp.keyField);
+    assertEquals(java.util.List.of("duration"), toMapOp.valueField);
+  }
+
+  @Test
+  void toMapRequiresTwoArguments() {
+    assertThrows(IllegalArgumentException.class, () -> JfrPathParser.parse("events/X | toMap()"));
+    assertThrows(
+        IllegalArgumentException.class, () -> JfrPathParser.parse("events/X | toMap(name)"));
+  }
+
+  @Test
+  void toMapToStringFormat() {
+    var q = JfrPathParser.parse("events/X | toMap(name, value)");
+    var op = (JfrPath.ToMapOp) q.pipeline.get(0);
+    assertEquals("toMap(name, value)", op.toString());
+  }
 }
