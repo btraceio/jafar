@@ -285,4 +285,107 @@ class MapVariablesTest {
     assertTrue(output.contains("Session variables"), "Should show session scope");
     assertTrue(output.contains("config"), "Should show config in session scope");
   }
+
+  // Map merge tests
+
+  @Test
+  void mergesTwoMapVariables() throws Exception {
+    dispatcher.dispatch("set map1 = {\"a\": \"1\", \"b\": \"2\"}");
+    dispatcher.dispatch("set map2 = {\"c\": \"3\", \"d\": \"4\"}");
+    dispatcher.dispatch("set merged = merge(${map1}, ${map2})");
+    io.clear();
+    dispatcher.dispatch("echo a=${merged.a} b=${merged.b} c=${merged.c} d=${merged.d}");
+    String output = io.text();
+    assertTrue(output.contains("a=1"), "Should have key 'a' from map1");
+    assertTrue(output.contains("b=2"), "Should have key 'b' from map1");
+    assertTrue(output.contains("c=3"), "Should have key 'c' from map2");
+    assertTrue(output.contains("d=4"), "Should have key 'd' from map2");
+  }
+
+  @Test
+  void mergeLastWinsOnConflict() throws Exception {
+    dispatcher.dispatch("set map1 = {\"key\": \"first\"}");
+    dispatcher.dispatch("set map2 = {\"key\": \"second\"}");
+    dispatcher.dispatch("set merged = merge(${map1}, ${map2})");
+    io.clear();
+    dispatcher.dispatch("echo ${merged.key}");
+    String output = io.text();
+    assertTrue(output.contains("second"), "Last value should win on conflict");
+    assertFalse(output.contains("first"), "First value should be overwritten");
+  }
+
+  @Test
+  void mergesThreeMaps() throws Exception {
+    dispatcher.dispatch("set m1 = {\"a\": \"1\"}");
+    dispatcher.dispatch("set m2 = {\"b\": \"2\"}");
+    dispatcher.dispatch("set m3 = {\"c\": \"3\"}");
+    dispatcher.dispatch("set merged = merge(${m1}, ${m2}, ${m3})");
+    io.clear();
+    dispatcher.dispatch("echo a=${merged.a} b=${merged.b} c=${merged.c}");
+    String output = io.text();
+    assertTrue(output.contains("a=1"), "Should have key from map1");
+    assertTrue(output.contains("b=2"), "Should have key from map2");
+    assertTrue(output.contains("c=3"), "Should have key from map3");
+  }
+
+  @Test
+  void mergesVariableAndLiteral() throws Exception {
+    dispatcher.dispatch("set map1 = {\"a\": \"1\"}");
+    dispatcher.dispatch("set merged = merge(${map1}, {\"b\": \"2\"})");
+    io.clear();
+    dispatcher.dispatch("echo a=${merged.a} b=${merged.b}");
+    String output = io.text();
+    assertTrue(output.contains("a=1"), "Should have key from variable");
+    assertTrue(output.contains("b=2"), "Should have key from literal");
+  }
+
+  @Test
+  void errorOnMissingVariable() throws Exception {
+    io.clear();
+    dispatcher.dispatch("set merged = merge(${missing}, {\"a\": \"1\"})");
+    String errors = io.errors();
+    assertTrue(errors.contains("Variable not found"), "Should error on missing variable");
+  }
+
+  @Test
+  void errorOnNonMapVariable() throws Exception {
+    dispatcher.dispatch("set scalar = 42");
+    io.clear();
+    dispatcher.dispatch("set merged = merge(${scalar}, {\"a\": \"1\"})");
+    String errors = io.errors();
+    assertTrue(errors.contains("not a map"), "Should error when variable is not a map");
+  }
+
+  @Test
+  void errorOnSingleArgument() throws Exception {
+    dispatcher.dispatch("set map1 = {\"a\": \"1\"}");
+    io.clear();
+    dispatcher.dispatch("set merged = merge(${map1})");
+    String errors = io.errors();
+    assertTrue(errors.contains("at least 2"), "Should error with only 1 argument");
+  }
+
+  @Test
+  void shallowMergeReplacesNestedMaps() throws Exception {
+    dispatcher.dispatch("set m1 = {\"nested\": {\"a\": \"1\", \"b\": \"2\"}}");
+    dispatcher.dispatch("set m2 = {\"nested\": {\"c\": \"3\"}}");
+    dispatcher.dispatch("set merged = merge(${m1}, ${m2})");
+    io.clear();
+    dispatcher.dispatch("echo a=${merged.nested.a} c=${merged.nested.c}");
+    String output = io.text();
+    // Shallow merge: nested map from m2 should completely replace nested map from m1
+    assertFalse(output.contains("a=1"), "Should not have 'a' after shallow merge");
+    assertTrue(output.contains("c=3"), "Should have 'c' from second nested map");
+  }
+
+  @Test
+  void mergeWithEmptyMap() throws Exception {
+    dispatcher.dispatch("set map1 = {\"a\": \"1\"}");
+    dispatcher.dispatch("set empty = {}");
+    dispatcher.dispatch("set merged = merge(${map1}, ${empty})");
+    io.clear();
+    dispatcher.dispatch("echo ${merged.a}");
+    String output = io.text();
+    assertTrue(output.contains("1"), "Should preserve values when merging with empty map");
+  }
 }

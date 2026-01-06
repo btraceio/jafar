@@ -336,7 +336,7 @@ public class ShellCompleter implements Completer {
 
   /**
    * Completes set/let commands. After "set name = ", uses JfrPath completion for the value
-   * expression or suggests map literal syntax.
+   * expression or suggests map literal syntax and merge() function.
    */
   private void completeSetCommand(
       ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
@@ -348,12 +348,26 @@ public class ShellCompleter implements Completer {
       // If user is typing a map literal, provide hints
       if (currentWord.startsWith("{")) {
         suggestMapLiteralSyntax(currentWord, candidates);
+      } else if (currentWord.startsWith("merge(")) {
+        // Inside merge() - suggest variable names
+        completeVariableName(line, candidates);
       } else {
-        // Suggest map literal start or use JfrPath completion
+        // Suggest map literal start, merge function, or use JfrPath completion
         if (currentWord.isEmpty() || "{".startsWith(currentWord)) {
           candidates.add(
               new Candidate(
                   "{", "{", null, "map literal - {\"key\": value, ...}", null, null, false));
+        }
+        if (currentWord.isEmpty() || "merge".startsWith(currentWord.toLowerCase())) {
+          candidates.add(
+              new Candidate(
+                  "merge(",
+                  "merge(",
+                  null,
+                  "merge maps - merge(${map1}, ${map2}, ...)",
+                  null,
+                  null,
+                  false));
         }
         completeWithFramework(line, candidates);
       }
