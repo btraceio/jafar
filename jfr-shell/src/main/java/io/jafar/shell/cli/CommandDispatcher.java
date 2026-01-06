@@ -712,6 +712,15 @@ public class CommandDispatcher {
       io.println(
           "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
       io.println("        echo CPU engine: ${config.cpuEngine}");
+      io.println(
+          "    merge(${map1}, ${map2}, ...) → merge multiple maps (last wins for duplicates)");
+      io.println("      Examples:");
+      io.println(
+          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
+      io.println(
+          "        set stats = events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when, heapUsed)");
+      io.println("        set report = merge(${config}, ${stats}, {\"date\": \"2024-01-15\"})");
+      io.println("        echo Date: ${report.date}, CPU: ${report.cpuEngine}");
       io.println("  Value transforms (also usable in filters where applicable):");
       io.println("    | len([path])              → length of string or list/array attribute");
       io.println("    | uppercase([path])        → string uppercased");
@@ -1485,6 +1494,22 @@ public class CommandDispatcher {
       }
     }
 
+    // Check for merge function syntax
+    String exprTrimmed = exprPart.trim();
+    if (exprTrimmed.startsWith("merge(") && exprTrimmed.endsWith(")")) {
+      try {
+        Map<String, Object> merged = parseMergeFunction(exprTrimmed, store);
+        store.set(varName, new VariableStore.MapValue(merged));
+        if (verbose) {
+          io.println("Set " + varName + " = " + new VariableStore.MapValue(merged).describe());
+        }
+        return;
+      } catch (Exception e) {
+        io.error("Merge function error: " + e.getMessage());
+        return;
+      }
+    }
+
     // Check for literal string value
     if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
       String literal = exprPart.substring(1, exprPart.length() - 1);
@@ -1868,6 +1893,138 @@ public class CommandDispatcher {
     // Check the last operator in the pipeline
     JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
     return lastOp instanceof JfrPath.ToMapOp;
+  }
+
+  /**
+   * Parses and executes a merge function call: merge(${map1}, ${map2}, ...)
+   *
+   * @param expr the merge function expression
+   * @param store the variable store for resolving variables
+   * @return merged map
+   */
+  private Map<String, Object> parseMergeFunction(String expr, VariableStore store) {
+    // Extract argument list between merge( and )
+    String argList = expr.substring(6, expr.length() - 1).trim();
+
+    if (argList.isEmpty()) {
+      throw new IllegalArgumentException("merge() requires at least 2 arguments");
+    }
+
+    // Parse arguments
+    List<String> args = parseMergeArgs(argList);
+
+    if (args.size() < 2) {
+      throw new IllegalArgumentException(
+          "merge() requires at least 2 arguments, got " + args.size());
+    }
+
+    // Resolve each argument to a map
+    List<Map<String, Object>> maps = new ArrayList<>();
+    for (String arg : args) {
+      Map<String, Object> map = resolveMapArg(arg, store);
+      maps.add(map);
+    }
+
+    // Merge all maps
+    return mergeMaps(maps);
+  }
+
+  /**
+   * Parses merge function arguments, splitting by comma while respecting nested structures.
+   *
+   * @param argList comma-separated argument list
+   * @return list of trimmed arguments
+   */
+  private List<String> parseMergeArgs(String argList) {
+    List<String> args = new ArrayList<>();
+    int start = 0;
+    int depth = 0;
+    boolean inString = false;
+
+    for (int i = 0; i < argList.length(); i++) {
+      char c = argList.charAt(i);
+
+      // Track string boundaries
+      if (c == '"' && (i == 0 || argList.charAt(i - 1) != '\\')) {
+        inString = !inString;
+      }
+
+      if (!inString) {
+        // Track nesting depth
+        if (c == '(' || c == '{' || c == '[') {
+          depth++;
+        }
+        if (c == ')' || c == '}' || c == ']') {
+          depth--;
+        }
+
+        // Split on comma at depth 0
+        if (c == ',' && depth == 0) {
+          args.add(argList.substring(start, i).trim());
+          start = i + 1;
+        }
+      }
+    }
+
+    // Add last argument
+    args.add(argList.substring(start).trim());
+
+    return args;
+  }
+
+  /**
+   * Resolves a merge argument to a map. Supports variable references and map literals.
+   *
+   * @param arg the argument string
+   * @param store the variable store
+   * @return resolved map
+   */
+  private Map<String, Object> resolveMapArg(String arg, VariableStore store) {
+    // Check for variable reference: ${varName}
+    if (arg.startsWith("${") && arg.endsWith("}")) {
+      String varName = arg.substring(2, arg.length() - 1);
+      VariableStore.Value value = store.get(varName);
+
+      if (value == null) {
+        throw new IllegalArgumentException("Variable not found: " + varName);
+      }
+      if (!(value instanceof VariableStore.MapValue mapValue)) {
+        throw new IllegalArgumentException(
+            "Variable is not a map: "
+                + varName
+                + " (type: "
+                + value.getClass().getSimpleName()
+                + ")");
+      }
+
+      return mapValue.value();
+    }
+
+    // Check for map literal: {...}
+    if (arg.startsWith("{") && arg.endsWith("}")) {
+      return parseMapLiteral(arg);
+    }
+
+    throw new IllegalArgumentException(
+        "Merge argument must be a map variable (${name}) or map literal {...}: " + arg);
+  }
+
+  /**
+   * Merges multiple maps into a single map. Last wins for duplicate keys.
+   *
+   * @param maps list of maps to merge
+   * @return merged map with insertion order preserved
+   */
+  private Map<String, Object> mergeMaps(List<Map<String, Object>> maps) {
+    Map<String, Object> result = new LinkedHashMap<>();
+
+    // Iterate through maps in order
+    for (Map<String, Object> map : maps) {
+      // Last wins: putAll overwrites existing keys
+      result.putAll(map);
+    }
+
+    return result;
   }
 
   private void cmdVars(List<String> args) {
