@@ -1,0 +1,102 @@
+#!/usr/bin/env -S jbang jfr-shell@btraceio script -
+# Map Operations Demo Script
+#
+# This script demonstrates advanced map operations in JFR Shell:
+# - Converting query results to maps with toMap()
+# - Merging multiple maps with merge()
+# - Accessing map fields with dot notation
+# - Building composite reports from multiple data sources
+#
+# Usage:
+#   jfr-shell script map-operations.jfrs /path/to/recording.jfr
+#
+# Or with shebang (make executable first):
+#   chmod +x map-operations.jfrs
+#   ./map-operations.jfrs /path/to/recording.jfr
+#
+# Arguments:
+#   $1 - Path to the JFR recording file to analyze
+
+# Open the recording
+open $1
+
+echo "=== Map Operations Demo ==="
+echo
+
+# Example 1: Extract JFR settings as a map
+echo "1. Converting JFR Settings to Map"
+echo "-----------------------------------"
+set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)
+vars --info config
+echo
+echo "Accessing individual settings:"
+echo "  CPU Engine: ${config.cpuEngine}"
+echo "  Wall Engine: ${config.wallEngine}"
+echo "  Stack Depth: ${config.stackDepth}"
+echo
+
+# Example 2: Create GC statistics map
+echo "2. GC Heap Statistics Map"
+echo "-------------------------"
+set gcStats = events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when, heapUsed)
+echo "GC stats entries: ${gcStats.size}"
+echo
+
+# Example 3: Build a composite report by merging maps
+echo "3. Building Composite Report"
+echo "----------------------------"
+# Create metadata map
+set metadata = {"reportDate": "2024-01-15", "author": "jfr-shell", "version": "1.0"}
+
+# Merge all data sources into a single report
+set report = merge(${config}, ${metadata})
+echo "Report structure:"
+vars --info report
+echo
+echo "Accessing merged data:"
+echo "  Report Date: ${report.reportDate}"
+echo "  Author: ${report.author}"
+echo "  CPU Engine: ${report.cpuEngine}"
+echo "  Wall Engine: ${report.wallEngine}"
+echo
+
+# Example 4: Merging multiple data sources
+echo "4. Multi-Source Data Aggregation"
+echo "---------------------------------"
+# Extract thread statistics
+set threadCount = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(1, by=count)
+
+# Create performance metrics map (using literal syntax)
+set perfMetrics = {"topThread": "main", "sampleCount": 1000, "threshold": 100}
+
+# Merge everything into final report
+set finalReport = merge(${metadata}, ${perfMetrics}, ${config})
+echo "Final report has ${finalReport.size} fields"
+echo "Sample fields:"
+echo "  Version: ${finalReport.version}"
+echo "  Top Thread: ${finalReport.topThread}"
+echo "  Sample Count: ${finalReport.sampleCount}"
+echo
+
+# Example 5: Nested maps
+echo "5. Working with Nested Maps"
+echo "---------------------------"
+set nestedConfig = {"database": {"host": "localhost", "port": 5432}, "cache": {"enabled": true, "ttl": 3600}}
+echo "Database config:"
+echo "  Host: ${nestedConfig.database.host}"
+echo "  Port: ${nestedConfig.database.port}"
+echo "Cache config:"
+echo "  Enabled: ${nestedConfig.cache.enabled}"
+echo "  TTL: ${nestedConfig.cache.ttl}"
+echo
+
+echo "=== Demo Complete ==="
+echo
+echo "Key Takeaways:"
+echo "  • Use toMap() to convert query results to accessible maps"
+echo "  • Use merge() to combine multiple data sources"
+echo "  • Access fields with ${map.field} or ${map.nested.field}"
+echo "  • Maps make report building intuitive and flexible"
+
+# Close the session
+close

@@ -24,6 +24,7 @@ public class PipelineOperatorCompleter implements ContextCompleter {
     {"quantiles(0.5,0.9,0.99)", "quantiles(...)", "Percentiles"},
     {"sketch()", "sketch()", "Approximate statistics"},
     {"select(", "select(field, ...)", "Select fields"},
+    {"toMap(", "toMap(keyField, valueField)", "Convert to map"},
     // Transform functions
     {"len()", "len()", "String length"},
     {"uppercase()", "uppercase()", "Uppercase string"},

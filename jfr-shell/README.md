@@ -240,6 +240,55 @@ Config has 3 entries
 
 **Tab completion:** Use Tab key to complete map field names in `${var.` expressions.
 
+### Advanced Map Operations ⭐ NEW
+
+#### Converting Query Results to Maps
+
+Use `toMap()` to convert query results into accessible maps:
+
+```bash
+# Extract JFR settings as a map
+jfr> set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)
+jfr> echo "CPU Engine: ${config.cpuEngine}"
+CPU Engine: jstackstraces
+
+# Create GC statistics map
+jfr> set gcStats = events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when, heapUsed)
+jfr> echo "GC stats: ${gcStats.size} entries"
+```
+
+#### Merging Multiple Maps
+
+Combine maps from different sources to build composite reports:
+
+```bash
+# Extract configuration
+jfr> set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)
+
+# Add metadata
+jfr> set metadata = {"reportDate": "2024-01-15", "author": "admin"}
+
+# Merge into single report
+jfr> set report = merge(${config}, ${metadata})
+jfr> echo "Report: ${report.reportDate} - CPU: ${report.cpuEngine}"
+Report: 2024-01-15 - CPU: jstackstraces
+
+# Last wins for duplicate keys
+jfr> set defaults = {"threshold": 100, "enabled": true}
+jfr> set overrides = {"threshold": 500}
+jfr> set final = merge(${defaults}, ${overrides})
+jfr> echo "Threshold: ${final.threshold}"
+Threshold: 500
+```
+
+**Key Features:**
+- `toMap(keyField, valueField)` - Convert query rows to map
+- `merge(map1, map2, ...)` - Combine multiple maps (last wins)
+- Shallow merge - nested maps replaced entirely
+- Supports both variables and inline literals: `merge(${map1}, {"extra": "data"})`
+
+See [example script](src/main/resources/examples/map-operations.jfrs) for complete demonstration.
+
 ### Lazy Query Variables
 
 Store queries for on-demand evaluation with caching:
@@ -402,6 +451,7 @@ Check `jfr-shell/src/main/resources/examples/` for ready-to-use scripts:
 - `basic-analysis.jfrs` - Recording overview, threads, I/O, GC
 - `thread-profiling.jfrs` - Detailed thread analysis
 - `gc-analysis.jfrs` - Comprehensive GC statistics
+- `map-operations.jfrs` - Map operations demo (toMap, merge)
 
 ### Documentation
 
