@@ -22,6 +22,8 @@ public class CommandCompleter implements ContextCompleter {
     "chunks",
     "chunk",
     "cp",
+    "export",
+    "import", // Session management
     "set",
     "let",
     "vars",

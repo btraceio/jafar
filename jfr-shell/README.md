@@ -11,6 +11,7 @@ An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files 
 - **Variables**: scalars, maps, and lazy query results with `${var}` substitution ⭐ NEW
 - **Map variables**: structured data storage with nested field access ⭐ NEW
 - **Conditionals**: if/elif/else/endif for control flow ⭐ NEW
+- **Session export/import**: save and share analysis sessions ⭐ NEW
 - **Scripting support**: record, save, and replay analysis workflows
 - **Positional parameters**: parameterize scripts for reusability
 - **Shebang support**: make scripts directly executable
@@ -325,6 +326,117 @@ jfr> echo "Value: ${myvar}"  # Print with substitution
 
 See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) and [Map Variables Tutorial](../doc/map-variables.md) for complete reference.
 
+## Session Export/Import ⭐ NEW
+
+Save and share complete analysis sessions, including variables, queries, and settings.
+
+### Export Session
+
+Export your current session to a JSON file:
+
+```bash
+# Export queries only (lightweight)
+jfr> export session.json
+Session exported to: /path/to/session.json
+  Variables: 5 session, 0 global
+
+# Include cached query results (larger file)
+jfr> export --include-results session-full.json
+
+# Limit rows per variable
+jfr> export --max-rows 100 session-limited.json
+```
+
+**What gets exported:**
+- Recording information (path, event types, metadata)
+- All variables (scalars, maps, lazy queries)
+- Session settings (output format)
+- Command history (future)
+
+### Import Session
+
+Restore a previously exported session:
+
+```bash
+# Basic import
+jfr> import session.json
+Importing session from /path/to/session.json...
+Session imported successfully.
+  Session ID: 2
+  Alias: imported
+  Variables: 5 session, 0 global
+
+# Import with custom alias
+jfr> import --alias my-analysis session.json
+
+# Remap recording path (useful when sharing across machines)
+jfr> import --remap-path /new/path/recording.jfr session.json
+```
+
+**What gets restored:**
+- Recording is opened (if file exists)
+- All variables are recreated
+- Session settings are applied
+- Lazy queries can be re-evaluated on demand
+- Cached results restored (if included in export)
+
+### Use Cases
+
+**Save Analysis Progress:**
+```bash
+# Do some analysis
+jfr> open recording.jfr --alias analysis
+jfr> set threshold = 1000
+jfr> set bigReads = events/jdk.FileRead[bytes>${threshold}]
+jfr> show ${bigReads} | top(10, by=bytes)
+
+# Save for later
+jfr> export my-analysis.json
+
+# Resume later
+jfr> import my-analysis.json
+jfr> vars                    # All variables restored
+jfr> show ${bigReads}        # Continue analysis
+```
+
+**Share Analysis with Team:**
+```bash
+# On your machine
+jfr> export --include-results team-analysis.json
+
+# Teammate imports on their machine
+jfr> import --remap-path /their/path/recording.jfr team-analysis.json
+```
+
+**Create Reusable Templates:**
+```bash
+# Create template session with common variables
+jfr> set defaultThreshold = 1048576
+jfr> set cpuThreshold = 0.8
+jfr> set config = {"maxResults": 100, "format": "json"}
+jfr> export analysis-template.json
+
+# Use template for different recordings
+jfr> import analysis-template.json
+jfr> open new-recording.jfr
+jfr> # All template variables available
+```
+
+### Export Options
+
+- `--include-results` - Include cached query results (makes file larger)
+- `--max-rows N` - Limit rows per variable (default: 1000)
+- `--format json` - Output format (only JSON in Phase 1; Markdown/HTML planned)
+
+### Import Options
+
+- `--alias NAME` - Assign custom alias to imported session
+- `--remap-path PATH` - Override recording file path
+
+**Note:** Exported sessions are in JSON format and can be inspected/edited with any text editor.
+
+See `help export` and `help import` for detailed usage.
+
 ## Conditionals
 
 Control script flow with if/elif/else/endif blocks:
@@ -587,6 +699,8 @@ See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
 - `use <id|alias>` - Switch current session
 - `info [id|alias]` - Show session information
 - `close [id|alias|--all]` - Close session(s)
+- `export [options] <path>` - Export session state to file ⭐ NEW
+- `import [options] <session-file>` - Import session state from file ⭐ NEW
 
 ### Querying
 - `show <expr> [options]` - Execute JfrPath query
