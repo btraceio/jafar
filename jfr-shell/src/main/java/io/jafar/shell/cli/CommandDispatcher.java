@@ -1,7 +1,10 @@
 package io.jafar.shell.cli;
 
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.SessionExporter;
+import io.jafar.shell.core.SessionImporter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.SessionSnapshot;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
@@ -206,6 +209,12 @@ public class CommandDispatcher {
           return true;
         case "invalidate":
           cmdInvalidate(args);
+          return true;
+        case "export":
+          cmdExport(args);
+          return true;
+        case "import":
+          cmdImport(args);
           return true;
         default:
           return false;
@@ -642,6 +651,10 @@ public class CommandDispatcher {
       io.println("  chunk     - Show specific chunk details");
       io.println("  cp        - Browse constant pool entries");
       io.println("");
+      io.println("Session management:");
+      io.println("  export    - Export session state to file");
+      io.println("  import    - Import session state from file");
+      io.println("");
       io.println("Variable commands:");
       io.println("  set       - Assign variable or set session options");
       io.println("  vars      - List all defined variables");
@@ -917,6 +930,53 @@ public class CommandDispatcher {
       io.println("Usage: invalidate <name>");
       io.println("Clear the cached result for a lazy variable.");
       io.println("Next access will re-evaluate the query.");
+      return;
+    }
+    if ("export".equals(sub)) {
+      io.println("Usage: export [options] <path>");
+      io.println("Export the current session state to a file.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --include-results   Include cached query results (makes file larger)");
+      io.println("  --max-rows N        Limit rows per variable (default: 1000)");
+      io.println("  --format json       Output format (only json supported in Phase 1)");
+      io.println("");
+      io.println("What gets exported:");
+      io.println("  - Recording information (path, event types, metadata)");
+      io.println("  - All session variables (scalars, maps, lazy queries)");
+      io.println("  - Session settings (output format)");
+      io.println("  - Command history (future)");
+      io.println("");
+      io.println("Examples:");
+      io.println("  export session.json                      # Export queries only");
+      io.println("  export --include-results session.json    # Include cached results");
+      io.println("  export --max-rows 100 limited.json       # Limit to 100 rows per variable");
+      io.println("");
+      io.println("Note: Exported sessions can be shared with others or reloaded later.");
+      return;
+    }
+    if ("import".equals(sub)) {
+      io.println("Usage: import [options] <session-file>");
+      io.println("Import a previously exported session state.");
+      io.println("");
+      io.println("Options:");
+      io.println("  --alias NAME        Assign an alias to the imported session");
+      io.println("  --remap-path PATH   Override the recording file path");
+      io.println("");
+      io.println("What gets imported:");
+      io.println("  - Recording is opened (if file exists)");
+      io.println("  - All variables are restored");
+      io.println("  - Session settings are applied");
+      io.println("  - Lazy queries are recreated (not re-executed unless accessed)");
+      io.println("  - Cached results are restored (if included in export)");
+      io.println("");
+      io.println("Examples:");
+      io.println("  import session.json                          # Basic import");
+      io.println("  import --alias restored session.json         # Import with custom alias");
+      io.println("  import --remap-path /new/path.jfr session.json  # Override recording path");
+      io.println("");
+      io.println("Note: If the recording file is not found, use --remap-path to specify");
+      io.println("the new location. This is useful when sharing sessions across machines.");
       return;
     }
     if ("if".equals(sub) || "elif".equals(sub) || "else".equals(sub) || "endif".equals(sub)) {
@@ -2239,6 +2299,166 @@ public class CommandDispatcher {
       return "\"" + value + "\"";
     }
     return value.toString();
+  }
+
+  // ---- Export/Import commands ----
+
+  private void cmdExport(List<String> args) throws Exception {
+    // Parse command-line options
+    boolean includeResults = false;
+    int maxRows = 1000;
+    String format = "json";
+    String outputPath = null;
+
+    for (int i = 0; i < args.size(); i++) {
+      String arg = args.get(i);
+      switch (arg) {
+        case "--include-results":
+          includeResults = true;
+          break;
+        case "--max-rows":
+          if (i + 1 >= args.size()) {
+            io.error("--max-rows requires a number");
+            return;
+          }
+          try {
+            maxRows = Integer.parseInt(args.get(++i));
+          } catch (NumberFormatException e) {
+            io.error("Invalid number for --max-rows: " + args.get(i));
+            return;
+          }
+          break;
+        case "--format":
+          if (i + 1 >= args.size()) {
+            io.error("--format requires a format (json|markdown|html)");
+            return;
+          }
+          format = args.get(++i);
+          if (!format.equals("json") && !format.equals("markdown") && !format.equals("html")) {
+            io.error("Unsupported format: " + format + ". Use json, markdown, or html.");
+            return;
+          }
+          if (!format.equals("json")) {
+            io.error(
+                "Format '"
+                    + format
+                    + "' not yet implemented. Only 'json' is supported in Phase 1.");
+            return;
+          }
+          break;
+        default:
+          if (arg.startsWith("--")) {
+            io.error("Unknown option: " + arg);
+            return;
+          }
+          outputPath = arg;
+          break;
+      }
+    }
+
+    if (outputPath == null) {
+      io.error("Usage: export [--include-results] [--max-rows N] [--format json] <path>");
+      return;
+    }
+
+    Optional<SessionManager.SessionRef> refOpt = sessions.current();
+    if (refOpt.isEmpty()) {
+      io.error("No active session. Use 'open' to load a recording first.");
+      return;
+    }
+
+    SessionManager.SessionRef ref = refOpt.get();
+
+    SessionExporter.ExportOptions opts =
+        SessionExporter.ExportOptions.builder()
+            .includeResults(includeResults)
+            .maxRows(maxRows)
+            .format(format)
+            .build();
+
+    SessionExporter exporter = new SessionExporter();
+    io.println("Exporting session...");
+
+    SessionSnapshot snapshot = exporter.captureSnapshot(ref, opts);
+    Path outPath = Paths.get(outputPath);
+    exporter.exportToJson(snapshot, outPath);
+
+    io.println("Session exported to: " + outPath.toAbsolutePath());
+    io.println(
+        "  Variables: "
+            + snapshot.sessionVariables.size()
+            + " session, "
+            + snapshot.globalVariables.size()
+            + " global");
+    if (includeResults) {
+      io.println("  Included cached query results (--include-results)");
+    }
+  }
+
+  private void cmdImport(List<String> args) throws Exception {
+    // Parse command-line options
+    String alias = null;
+    String remapPath = null;
+    String inputPath = null;
+
+    for (int i = 0; i < args.size(); i++) {
+      String arg = args.get(i);
+      switch (arg) {
+        case "--alias":
+          if (i + 1 >= args.size()) {
+            io.error("--alias requires a name");
+            return;
+          }
+          alias = args.get(++i);
+          break;
+        case "--remap-path":
+          if (i + 1 >= args.size()) {
+            io.error("--remap-path requires a path");
+            return;
+          }
+          remapPath = args.get(++i);
+          break;
+        default:
+          if (arg.startsWith("--")) {
+            io.error("Unknown option: " + arg);
+            return;
+          }
+          inputPath = arg;
+          break;
+      }
+    }
+
+    if (inputPath == null) {
+      io.error("Usage: import [--alias NAME] [--remap-path PATH] <session-file>");
+      return;
+    }
+
+    SessionImporter.ImportOptions opts =
+        SessionImporter.ImportOptions.builder().alias(alias).remapPath(remapPath).build();
+
+    // Create IO adapter for SessionImporter
+    SessionImporter.IO importerIO =
+        new SessionImporter.IO() {
+          @Override
+          public void println(String message) {
+            io.println(message);
+          }
+
+          @Override
+          public void error(String message) {
+            io.error(message);
+          }
+        };
+
+    SessionImporter importer = new SessionImporter(importerIO);
+    Path inPath = Paths.get(inputPath);
+
+    SessionManager.SessionRef ref = importer.importFromJson(inPath, opts, sessions);
+
+    // Notify listener of session change
+    if (listener != null) {
+      listener.onCurrentSessionChanged(ref);
+    }
   }
 
   // ---- Conditional handling ----

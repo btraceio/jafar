@@ -12,7 +12,7 @@ This tutorial teaches you how to use JFR Shell, an interactive CLI for exploring
 7. [Aggregations and Statistics](#aggregations-and-statistics)
 8. [Advanced Queries](#advanced-queries)
 9. [Event Decoration and Joining](#event-decoration-and-joining)
-10. [Multi-Session Management](#multi-session-management)
+10. [Multi-Session Management and Session Export/Import](#multi-session-management-and-session-exportimport)
 11. [Non-Interactive Mode](#non-interactive-mode)
 12. [Real-World Examples](#real-world-examples)
 
@@ -825,7 +825,9 @@ Event decoration enables powerful cross-event analysis:
 
 See the [JfrPath Reference](jfrpath.md) for complete syntax details and [examples/](../jfr-shell/src/main/resources/examples/) for more use cases.
 
-## Multi-Session Management
+## Multi-Session Management and Session Export/Import
+
+### Multi-Session Management
 
 Work with multiple recordings simultaneously:
 
@@ -861,6 +863,141 @@ jfr> close prod
 # Close all
 jfr> close --all
 ```
+
+### Session Export/Import
+
+Save your analysis progress and share sessions with teammates.
+
+#### Export Session State
+
+Export includes recording info, all variables, and settings:
+
+```bash
+# Do some analysis
+jfr> open recording.jfr --alias analysis
+jfr> set threshold = 1000
+jfr> set bigReads = events/jdk.FileRead[bytes>${threshold}]
+jfr> show ${bigReads} | top(10, by=bytes)
++-----------------------------+--------+
+| path                        | bytes  |
++-----------------------------+--------+
+| /data/large-file.bin        | 524288 |
+| /logs/app.log               | 102400 |
+...
+
+# Export session (queries only)
+jfr> export my-analysis.json
+Exporting session...
+Session exported to: /path/to/my-analysis.json
+  Variables: 2 session, 0 global
+
+# Export with cached results (larger file)
+jfr> export --include-results analysis-full.json
+Exporting session...
+Session exported to: /path/to/analysis-full.json
+  Variables: 2 session, 0 global
+  Included cached query results (--include-results)
+```
+
+#### Import Session State
+
+Restore a previously exported session:
+
+```bash
+# Close current session
+jfr> close --all
+
+# Import saved session
+jfr> import my-analysis.json
+Importing session from /path/to/my-analysis.json...
+Snapshot version: 1.0, exported: 2025-01-10T15:30:00Z
+Session imported successfully.
+  Session ID: 1
+  Alias: imported
+  Recording: /path/to/recording.jfr
+  Variables: 2 session, 0 global
+
+# Variables are restored
+jfr> vars
+Session variables:
+  threshold = 1000
+  bigReads = lazy[events/jdk.FileRead[bytes>${threshold}]] (not evaluated)
+
+# Continue analysis
+jfr> show ${bigReads} | select(path, bytes) | top(5)
+```
+
+#### Import with Path Remapping
+
+Share sessions across machines with different file paths:
+
+```bash
+# On teammate's machine with different path
+jfr> import --remap-path /their/path/recording.jfr my-analysis.json
+Using remapped path: /their/path/recording.jfr
+Session imported successfully.
+  Session ID: 1
+  Alias: imported
+  Variables: 2 session, 0 global
+
+# All variables work with remapped recording
+jfr> show ${bigReads}
+```
+
+#### Use Cases
+
+**1. Save Analysis Progress**
+
+```bash
+# At end of work day
+jfr> export daily-analysis.json
+
+# Next day
+jfr> import daily-analysis.json
+jfr> # Continue where you left off
+```
+
+**2. Share Analysis with Team**
+
+```bash
+# Senior developer creates analysis template
+jfr> set threshold = 1048576
+jfr> set topN = 10
+jfr> set cpuThreshold = 0.8
+jfr> export team-template.json
+
+# Team members use template
+jfr> import team-template.json
+jfr> open their-recording.jfr
+jfr> # Template variables ready to use
+jfr> show events/jdk.FileRead[bytes>${threshold}] | top(${topN}, by=bytes)
+```
+
+**3. Document Incident Analysis**
+
+```bash
+# During incident investigation
+jfr> open incident-recording.jfr --alias incident
+jfr> set errorThreshold = 100
+jfr> set criticalMethods = events/jdk.ExecutionSample[...] | groupBy(method)
+jfr> show ${criticalMethods}
+
+# Save for postmortem
+jfr> export --include-results incident-analysis.json
+
+# Later, team reviews exact same analysis
+jfr> import incident-analysis.json
+jfr> # All queries and results preserved
+```
+
+**Export Options:**
+- `--include-results`: Include cached query results
+- `--max-rows N`: Limit rows per variable (default: 1000)
+- `--format json`: Output format (JSON only in Phase 1)
+
+**Import Options:**
+- `--alias NAME`: Custom alias for imported session
+- `--remap-path PATH`: Override recording file path
 
 ## Non-Interactive Mode
 

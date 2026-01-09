@@ -13,9 +13,10 @@ public class OptionCompleter implements ContextCompleter {
 
   // Options per command
   private static final Map<String, String[]> COMMAND_OPTIONS =
-      Map.of(
-          "show", new String[] {"--limit", "--format", "--tree", "--depth", "--list-match"},
-          "metadata",
+      Map.ofEntries(
+          Map.entry("show", new String[] {"--limit", "--format", "--tree", "--depth", "--list-match"}),
+          Map.entry(
+              "metadata",
               new String[] {
                 "--search",
                 "--regex",
@@ -30,10 +31,12 @@ public class OptionCompleter implements ContextCompleter {
                 "--fields",
                 "--annotations",
                 "--depth"
-              },
-          "open", new String[] {"--alias"},
-          "close", new String[] {"--all"},
-          "cp", new String[] {"--limit", "--format", "--tree", "--depth"});
+              }),
+          Map.entry("open", new String[] {"--alias"}),
+          Map.entry("close", new String[] {"--all"}),
+          Map.entry("cp", new String[] {"--limit", "--format", "--tree", "--depth"}),
+          Map.entry("export", new String[] {"--include-results", "--max-rows", "--format"}),
+          Map.entry("import", new String[] {"--alias", "--remap-path"}));
 
   // Values for specific options
   private static final Map<String, String[]> OPTION_VALUES =

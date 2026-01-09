@@ -50,6 +50,8 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `use <id|alias>`: Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
 - `info [<id|alias>]`: Show session information.
+- `export [--include-results] [--max-rows N] [--format json] <path>`: Export session state to file.
+- `import [--alias NAME] [--remap-path PATH] <session-file>`: Import session state from file.
 
 ### Querying and Browsing
 - `show <expr> [--limit N] [--format table|json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
