@@ -45,8 +45,7 @@ public class PromptTunerMain {
 
       if (!provider.isAvailable()) {
         System.err.println("\nERROR: LLM provider not available!");
-        System.err.println(
-            "Provider: " + config.provider() + ", Model: " + config.model());
+        System.err.println("Provider: " + config.provider() + ", Model: " + config.model());
         if (config.provider() == LLMConfig.ProviderType.LOCAL) {
           System.err.println("\nMake sure Ollama is running:");
           System.err.println("  ollama serve");
@@ -69,7 +68,9 @@ public class PromptTunerMain {
       // Create SessionRef wrapper
       SessionRef testSession = new SessionRef(1, "test", session);
       System.out.println(
-          "Recording loaded: " + testSession.session.getAvailableEventTypes().size() + " event types\n");
+          "Recording loaded: "
+              + testSession.session.getAvailableEventTypes().size()
+              + " event types\n");
 
       // 5. Run tests for each variant
       List<TuningResults> allResults = new ArrayList<>();
@@ -77,7 +78,13 @@ public class PromptTunerMain {
       for (int i = 0; i < variants.size(); i++) {
         PromptVariant variant = variants.get(i);
         System.out.println(
-            "=== Testing variant " + (i + 1) + "/" + variants.size() + ": " + variant.getId() + " ===");
+            "=== Testing variant "
+                + (i + 1)
+                + "/"
+                + variants.size()
+                + ": "
+                + variant.getId()
+                + " ===");
         System.out.println("Description: " + variant.getDescription());
 
         PromptTuner tuner = new PromptTuner(testSuite, variant, provider, testSession);
@@ -106,11 +113,16 @@ public class PromptTunerMain {
               .orElse(0.0);
 
       if (bestSuccessRate >= 0.9) {
-        System.out.println("\nSUCCESS: Best variant achieved " + String.format("%.1f%%", bestSuccessRate * 100) + " success rate!");
+        System.out.println(
+            "\nSUCCESS: Best variant achieved "
+                + String.format("%.1f%%", bestSuccessRate * 100)
+                + " success rate!");
         System.exit(0);
       } else {
         System.out.println(
-            "\nWARNING: Best variant only achieved " + String.format("%.1f%%", bestSuccessRate * 100) + " success rate (target: 90%)");
+            "\nWARNING: Best variant only achieved "
+                + String.format("%.1f%%", bestSuccessRate * 100)
+                + " success rate (target: 90%)");
         System.exit(1);
       }
 

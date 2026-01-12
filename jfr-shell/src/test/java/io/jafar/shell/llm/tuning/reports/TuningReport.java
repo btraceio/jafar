@@ -63,7 +63,12 @@ public class TuningReport {
         m.errorCategories().entrySet().stream()
             .sorted((e1, e2) -> Long.compare(e2.getValue(), e1.getValue()))
             .forEach(
-                e -> md.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n"));
+                e ->
+                    md.append("- ")
+                        .append(e.getKey())
+                        .append(": ")
+                        .append(e.getValue())
+                        .append("\n"));
         md.append("\n");
       }
 
@@ -75,9 +80,7 @@ public class TuningReport {
         for (TestResult failure : failures) {
           md.append("#### ").append(failure.testCase().id()).append("\n\n");
           md.append("- **Query:** `").append(failure.testCase().naturalLanguage()).append("`\n");
-          md.append("- **Expected:** `")
-              .append(failure.testCase().expectedQuery())
-              .append("`\n");
+          md.append("- **Expected:** `").append(failure.testCase().expectedQuery()).append("`\n");
           if (failure.generatedQuery() != null) {
             md.append("- **Generated:** `").append(failure.generatedQuery()).append("`\n");
           } else {
@@ -85,9 +88,7 @@ public class TuningReport {
           }
           md.append("- **Error:** ").append(failure.getErrorCategory()).append("\n");
           if (failure.error() != null) {
-            md.append("- **Exception:** ")
-                .append(failure.error().getMessage())
-                .append("\n");
+            md.append("- **Exception:** ").append(failure.error().getMessage()).append("\n");
           }
           md.append("\n");
         }
@@ -105,8 +106,7 @@ public class TuningReport {
             .max(
                 (r1, r2) ->
                     Double.compare(
-                        r1.calculateMetrics().successRate(),
-                        r2.calculateMetrics().successRate()))
+                        r1.calculateMetrics().successRate(), r2.calculateMetrics().successRate()))
             .orElse(null);
 
     if (bestResult != null) {
@@ -131,8 +131,7 @@ public class TuningReport {
                     .orElse("UNKNOWN");
 
             if (topError.equals("WRONG_ARRAY_SYNTAX")) {
-              md.append(
-                  "- Consider emphasizing array syntax rules: Use `/0` not `[0]`\n");
+              md.append("- Consider emphasizing array syntax rules: Use `/0` not `[0]`\n");
               break;
             } else if (topError.equals("INVALID_SELECT")) {
               md.append("- Consider adding more examples showing `select()` is not supported\n");

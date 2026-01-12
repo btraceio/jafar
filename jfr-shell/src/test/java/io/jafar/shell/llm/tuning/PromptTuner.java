@@ -29,10 +29,7 @@ public class PromptTuner {
    * @param testSession JFR session for context
    */
   public PromptTuner(
-      TestSuite testSuite,
-      PromptVariant variant,
-      LLMProvider provider,
-      SessionRef testSession) {
+      TestSuite testSuite, PromptVariant variant, LLMProvider provider, SessionRef testSession) {
     this.testSuite = testSuite;
     this.variant = variant;
     this.provider = provider;
@@ -96,8 +93,7 @@ public class PromptTuner {
 
       // Validate generated query
       boolean syntaxValid = validateSyntax(translation.jfrPathQuery());
-      boolean semanticMatch =
-          semanticEquals(translation.jfrPathQuery(), testCase.expectedQuery());
+      boolean semanticMatch = semanticEquals(translation.jfrPathQuery(), testCase.expectedQuery());
 
       return new TestResult(
           testCase,
@@ -162,7 +158,8 @@ public class PromptTuner {
    */
   private String normalize(String query) {
     // Remove extra whitespace, standardize spacing around operators
-    return query.replaceAll("\\s+", " ")
+    return query
+        .replaceAll("\\s+", " ")
         .replaceAll("\\s*\\|\\s*", " | ")
         .replaceAll("\\s*\\[\\s*", "[")
         .replaceAll("\\s*]\\s*", "]")

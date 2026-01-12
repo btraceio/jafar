@@ -9,8 +9,8 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Represents a variation of the system prompt with specific modifications. Allows testing
- * different prompt strategies to improve LLM query generation.
+ * Represents a variation of the system prompt with specific modifications. Allows testing different
+ * prompt strategies to improve LLM query generation.
  */
 public class PromptVariant {
   private final String id;
