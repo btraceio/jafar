@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "testCases": [
     {
       "id": "cpu-top-methods",
@@ -80,6 +80,86 @@
       "category": "gc",
       "difficulty": "MEDIUM",
       "keywords": ["filter", "duration", "nanoseconds"]
+    },
+    {
+      "id": "network-reads",
+      "naturalLanguage": "show network read events",
+      "expectedQuery": "events/jdk.SocketRead",
+      "category": "network",
+      "difficulty": "SIMPLE",
+      "keywords": ["event-selection"]
+    },
+    {
+      "id": "network-large-reads",
+      "naturalLanguage": "network reads larger than 1KB",
+      "expectedQuery": "events/jdk.SocketRead[bytesRead>1024]",
+      "category": "network",
+      "difficulty": "SIMPLE",
+      "keywords": ["filter", "bytes"]
+    },
+    {
+      "id": "class-loading-top",
+      "naturalLanguage": "which classes took longest to load",
+      "expectedQuery": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)",
+      "category": "classloading",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top", "duration"]
+    },
+    {
+      "id": "exception-count",
+      "naturalLanguage": "count exceptions by type",
+      "expectedQuery": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)",
+      "category": "exceptions",
+      "difficulty": "SIMPLE",
+      "keywords": ["groupBy"]
+    },
+    {
+      "id": "thread-park-duration",
+      "naturalLanguage": "threads with longest park times",
+      "expectedQuery": "events/jdk.ThreadPark | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)",
+      "category": "threading",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top", "duration"]
+    },
+    {
+      "id": "file-write-large",
+      "naturalLanguage": "file writes over 5MB",
+      "expectedQuery": "events/jdk.FileWrite[bytesWritten>5242880]",
+      "category": "io",
+      "difficulty": "SIMPLE",
+      "keywords": ["filter", "bytes"]
+    },
+    {
+      "id": "compilation-slow",
+      "naturalLanguage": "slow compilations over 1 second",
+      "expectedQuery": "events/jdk.Compilation[duration>1000000000]",
+      "category": "compilation",
+      "difficulty": "MEDIUM",
+      "keywords": ["filter", "duration", "nanoseconds"]
+    },
+    {
+      "id": "multiple-filters-complex",
+      "naturalLanguage": "GC events in young generation longer than 50ms",
+      "expectedQuery": "events/jdk.GarbageCollection[name=~\".*Young.*\"][duration>50000000]",
+      "category": "gc",
+      "difficulty": "COMPLEX",
+      "keywords": ["filter", "regex", "multiple-filters", "duration"]
+    },
+    {
+      "id": "socket-address-groupby",
+      "naturalLanguage": "network traffic by remote address",
+      "expectedQuery": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)",
+      "category": "network",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation"]
+    },
+    {
+      "id": "allocation-size-stats",
+      "naturalLanguage": "statistics on object allocation sizes",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | stats(weight)",
+      "category": "memory",
+      "difficulty": "SIMPLE",
+      "keywords": ["stats"]
     }
   ]
 }

@@ -154,6 +154,33 @@ public class ContextBuilder {
         Q: "top threads by execution samples"
         A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", "explanation": "Groups execution samples by thread name and shows top 10 threads", "confidence": 0.95}
 
+        Q: "show network read events"
+        A: {"query": "events/jdk.SocketRead", "explanation": "Selects all socket read events for network I/O analysis", "confidence": 0.98}
+
+        Q: "network reads larger than 1KB"
+        A: {"query": "events/jdk.SocketRead[bytesRead>1024]", "explanation": "Filters socket reads by bytesRead field (note: different from file bytes)", "confidence": 0.95}
+
+        Q: "file writes over 5MB"
+        A: {"query": "events/jdk.FileWrite[bytesWritten>5242880]", "explanation": "Filters file writes by bytesWritten field (note: FileWrite uses bytesWritten not bytes)", "confidence": 0.95}
+
+        Q: "count exceptions by type"
+        A: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", "explanation": "Groups exception throw events by exception class name", "confidence": 0.95}
+
+        Q: "which classes took longest to load"
+        A: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", "explanation": "Groups class loads by class name with max duration aggregation to find slowest loads", "confidence": 0.95}
+
+        Q: "threads with longest park times"
+        A: {"query": "events/jdk.ThreadPark | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Groups thread park events by thread and sums durations", "confidence": 0.95}
+
+        Q: "slow compilations over 1 second"
+        A: {"query": "events/jdk.Compilation[duration>1000000000]", "explanation": "Filters compilation events longer than 1 second (1 billion nanoseconds)", "confidence": 0.95}
+
+        Q: "statistics on object allocation sizes"
+        A: {"query": "events/jdk.ObjectAllocationSample | stats(weight)", "explanation": "Computes statistics (min, max, avg, count) on allocation weight field", "confidence": 0.95}
+
+        Q: "network traffic by remote address"
+        A: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", "explanation": "Groups socket reads by remote address and sums bytes read", "confidence": 0.95}
+
         INCORRECT EXAMPLES (DO NOT DO THIS):
 
         Q: "top allocating classes"
@@ -170,6 +197,52 @@ public class ContextBuilder {
         WRONG: {"query": "events/jdk.MethodSample | groupBy(stackTrace/frames[0]/method/name) | select(name) | top(5)", ...}
         WHY WRONG: (1) jdk.MethodSample doesn't exist, use jdk.ExecutionSample (2) frames[0] should be frames/0 (3) select() not supported
         CORRECT: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(5, by=count)", ...}
+
+        Q: "show network read events"
+        WRONG: {"query": "events/jdk.FileRead", ...}
+        WHY WRONG: Using jdk.FileRead for network events - should use jdk.SocketRead for network I/O
+        CORRECT: {"query": "events/jdk.SocketRead", ...}
+
+        Q: "file writes over 5MB"
+        WRONG: {"query": "events/jdk.FileWrite[bytes>5242880]", ...}
+        WHY WRONG: FileWrite uses bytesWritten field, not bytes (FileRead uses bytes, FileWrite uses bytesWritten)
+        CORRECT: {"query": "events/jdk.FileWrite[bytesWritten>5242880]", ...}
+
+        Q: "count exceptions by type"
+        WRONG: {"query": "events/jdk.ExceptionStatistics | groupBy(type)", ...}
+        WHY WRONG: Using jdk.ExceptionStatistics instead of jdk.JavaExceptionThrow
+        CORRECT: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", ...}
+
+        Q: "slow compilations over 1 second"
+        WRONG: {"query": "events/jdk.Compilation | filter(duration>1000000000)", ...}
+        WHY WRONG: Using filter() operator which doesn't exist - use [] for filtering
+        CORRECT: {"query": "events/jdk.Compilation[duration>1000000000]", ...}
+
+        Q: "which classes took longest to load"
+        WRONG: {"query": "events/jdk.ClassLoad | groupBy(className) | stats(duration)", ...}
+        WHY WRONG: Using stats instead of max aggregation + top, and className instead of loadedClass/name
+        CORRECT: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", ...}
+
+        Q: "which threads allocated the most memory"
+        WRONG: {"query": "events/jdk.ObjectAllocationSample | groupBy(thread/javaName, agg=sum, value=weight) | top(10, by=sum)", ...}
+        WHY WRONG: Using thread/javaName instead of eventThread/javaName, and weight instead of bytes for memory
+        CORRECT: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)", ...}
+
+        Q: "top threads by execution samples"
+        WRONG: {"query": "events/jdk.ExecutionSample | groupBy(eventThread/javaName) | top(10, by=count)", ...}
+        WHY WRONG: Using eventThread/javaName instead of sampledThread/javaName for execution samples
+        CORRECT: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
+
+        KEY FIELD NAME RULES:
+        - Network I/O: jdk.SocketRead uses 'bytesRead', jdk.SocketWrite uses 'bytesWritten'
+        - File I/O: jdk.FileRead uses 'bytes', jdk.FileWrite uses 'bytesWritten'
+        - Allocations: Use 'bytes' for memory size, 'weight' for allocation weight/pressure
+        - Thread fields: ExecutionSample uses 'sampledThread', most other events use 'eventThread'
+        - Class loading: jdk.ClassLoad uses 'loadedClass/name' not 'className'
+        - Exceptions: jdk.JavaExceptionThrow uses 'thrownClass/name' not 'type'
+        - Thread parking: Use jdk.ThreadPark not jdk.JavaThreadPark
+        - Filtering: Use [condition] syntax, never use filter() operator
+        - For "longest" or "slowest": Use agg=max with top(N, by=max), not stats()
         """;
   }
 
