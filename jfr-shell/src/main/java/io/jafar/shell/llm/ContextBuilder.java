@@ -3,6 +3,7 @@ package io.jafar.shell.llm;
 import io.jafar.shell.core.SessionManager.SessionRef;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -94,6 +95,7 @@ public class ContextBuilder {
 
     // Group by common prefixes for readability
     return eventTypes.stream()
+        .filter(Objects::nonNull)
         .sorted()
         .limit(50) // Limit to avoid huge prompts
         .collect(Collectors.joining(", "));
