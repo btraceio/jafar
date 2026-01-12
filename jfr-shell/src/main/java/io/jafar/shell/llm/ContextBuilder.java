@@ -233,6 +233,21 @@ public class ContextBuilder {
         WHY WRONG: Using eventThread/javaName instead of sampledThread/javaName for execution samples
         CORRECT: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
 
+        Q: "count exceptions by type"
+        WRONG: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name) | count()", ...}
+        WHY WRONG: User said "count by type" meaning group by type, not add count() operator
+        CORRECT: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", ...}
+
+        Q: "GC events in young generation longer than 50ms"
+        WRONG: {"query": "events/jdk.G1YoungGarbageCollection[duration>50000000]", ...}
+        WHY WRONG: Don't use specific event type, use filter with regex on general GarbageCollection event
+        CORRECT: {"query": "events/jdk.GarbageCollection[name=~\\\".*Young.*\\\"][duration>50000000]", ...}
+
+        Q: "network traffic by remote address"
+        WRONG: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead) | top(10, by=sum)", ...}
+        WHY WRONG: User only asked for grouping, don't add top() unless specifically requested
+        CORRECT: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", ...}
+
         KEY FIELD NAME RULES:
         - Network I/O: jdk.SocketRead uses 'bytesRead', jdk.SocketWrite uses 'bytesWritten'
         - File I/O: jdk.FileRead uses 'bytes', jdk.FileWrite uses 'bytesWritten'
@@ -243,6 +258,8 @@ public class ContextBuilder {
         - Thread parking: Use jdk.ThreadPark not jdk.JavaThreadPark
         - Filtering: Use [condition] syntax, never use filter() operator
         - For "longest" or "slowest": Use agg=max with top(N, by=max), not stats()
+        - Don't add operators not explicitly requested (e.g., don't add count() or top() unless asked)
+        - For filtering by attributes like "young generation", use regex filters not specific event types
         """;
   }
 
