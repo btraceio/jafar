@@ -37,6 +37,15 @@ dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
 
+    // LLM integration - LangChain4j
+    implementation 'dev.langchain4j:langchain4j:0.36.2'
+    implementation 'dev.langchain4j:langchain4j-ollama:0.36.2'
+    implementation 'dev.langchain4j:langchain4j-open-ai:0.36.2'
+    implementation 'dev.langchain4j:langchain4j-anthropic:0.36.2'
+
+    // JSON parsing
+    implementation 'com.google.code.gson:gson:2.10.1'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
@@ -57,6 +66,54 @@ test {
     // jqwik configuration
     systemProperty 'jqwik.tries.default', '1000'
     systemProperty 'jqwik.shrinking.mode', 'FULL'
+
+    // Pass through system properties for LLM integration tests
+    if (System.getProperty('test.llm.enabled')) {
+        systemProperty 'test.llm.enabled', System.getProperty('test.llm.enabled')
+    }
+}
+
+// LLM Integration Tests
+tasks.register('testLLMIntegration', Test) {
+    group 'Verification'
+    description 'Run LLM integration tests (requires Ollama with llama3.1:8b)'
+
+    dependsOn testClasses
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform {
+        includeEngines 'junit-jupiter'
+    }
+
+    systemProperty 'net.bytebuddy.experimental', 'true'
+    systemProperty 'test.llm.enabled', 'true'
+
+    include '**/ImprovedPromptsIntegrationTest.class'
+
+    testLogging {
+        events 'passed', 'skipped', 'failed', 'standard_out', 'standard_error'
+        showStandardStreams = true
+    }
+}
+
+// LLM Prompt Tuning Task
+tasks.register('tunePrompts', JavaExec) {
+    group 'Verification'
+    description 'Run LLM prompt tuning tests to optimize query translation'
+
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.jafar.shell.llm.tuning.PromptTunerMain'
+
+    // Enable Byte Buddy experimental support for Java 25
+    systemProperty 'net.bytebuddy.experimental', 'true'
+
+    args = [
+        '--test-suite', 'src/test/resources/llm-tuning/test-suite.json',
+        '--variants', 'src/test/resources/llm-tuning/variants.json',
+        '--recording', 'src/test/resources/sample.jfr',
+        '--output', 'build/reports/prompt-tuning'
+    ]
 }
 
 shadowJar {
@@ -120,7 +177,7 @@ tasks.register('jlinkDist') {
         def jlinkCmd = [
             "${javaHome}/bin/jlink",
             '--module-path', jmodsDir.absolutePath,
-            '--add-modules', 'java.base,java.logging,java.management,jdk.unsupported,jdk.crypto.ec',
+            '--add-modules', 'java.base,java.logging,java.management,java.net.http,jdk.unsupported,jdk.crypto.ec',
             '--strip-debug',
             '--compress', '2',
             '--no-header-files',

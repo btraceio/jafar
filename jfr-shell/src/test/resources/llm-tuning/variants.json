@@ -1,0 +1,16 @@
+{
+  "variants": [
+    {
+      "id": "baseline",
+      "description": "Current production prompt",
+      "modifications": {}
+    },
+    {
+      "id": "targeted-examples",
+      "description": "Add specific examples for allocation and contention patterns",
+      "modifications": {
+        "customExamples": "CORRECT EXAMPLES:\n\nQ: \"which threads allocated the most memory?\"\nA: {\"query\": \"events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)\", \"explanation\": \"Groups allocation events by thread and sums the bytes allocated\", \"confidence\": 0.95}\n\nQ: \"top allocating classes\"\nA: {\"query\": \"events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(10, by=sum)\", \"explanation\": \"Groups allocations by class name and sums the allocation weight\", \"confidence\": 0.95}\n\nQ: \"show file reads over 1MB\"\nA: {\"query\": \"events/jdk.FileRead[bytes>1048576]\", \"explanation\": \"Filters file read events to those larger than 1MB\", \"confidence\": 0.98}\n\nQ: \"count GC events\"\nA: {\"query\": \"events/jdk.GarbageCollection | count()\", \"explanation\": \"Counts total garbage collection events\", \"confidence\": 0.98}\n\nQ: \"average GC pause time\"\nA: {\"query\": \"events/jdk.GarbageCollection | stats(duration)\", \"explanation\": \"Calculates statistics for GC pause durations\", \"confidence\": 0.95}\n\nQ: \"top 10 hottest methods\"\nA: {\"query\": \"events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)\", \"explanation\": \"Projects to class name from top stack frame, groups by value, shows top 10\", \"confidence\": 0.90}\n\nQ: \"which monitors have the most contention\"\nA: {\"query\": \"events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)\", \"explanation\": \"Groups monitor enter events by monitor class and shows top 10\", \"confidence\": 0.95}\n\nQ: \"top threads by execution samples\"\nA: {\"query\": \"events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)\", \"explanation\": \"Groups execution samples by thread name\", \"confidence\": 0.95}\n\nINCORRECT EXAMPLES (DO NOT DO THIS):\n\nQ: \"top allocating classes\"\nWRONG: {\"query\": \"events/jdk.ObjectAllocationSample | groupBy(eventThread/javaClass) | top(10, by=sum)\", ...}\nWHY WRONG: Using eventThread/javaClass instead of objectClass/name - wrong field path for classes\nCORRECT: {\"query\": \"events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(10, by=sum)\", ...}\n\nQ: \"which monitors have the most contention\"\nWRONG: {\"query\": \"events/jdk.LockContended | groupBy(lockOwner/javaName) | top(10, by=count)\", ...}\nWHY WRONG: Using jdk.LockContended instead of jdk.JavaMonitorEnter - wrong event type\nCORRECT: {\"query\": \"events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)\", ...}\n\nQ: \"top methods\"\nWRONG: {\"query\": \"events/jdk.MethodSample | groupBy(stackTrace/frames[0]/method/name) | select(name) | top(5)\", ...}\nWHY WRONG: (1) jdk.MethodSample doesn't exist (2) frames[0] should be frames/0 (3) select() not supported\nCORRECT: {\"query\": \"events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(5, by=count)\", ...}"
+      }
+    }
+  ]
+}

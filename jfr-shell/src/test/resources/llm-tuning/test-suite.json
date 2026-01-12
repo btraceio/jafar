@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "testCases": [
+    {
+      "id": "cpu-top-methods",
+      "naturalLanguage": "what are top 5 hottest methods",
+      "expectedQuery": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(5, by=count)",
+      "category": "cpu",
+      "difficulty": "MEDIUM",
+      "keywords": ["array-access", "projection", "groupBy", "top"]
+    },
+    {
+      "id": "memory-threads",
+      "naturalLanguage": "which threads allocated the most memory",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)",
+      "category": "memory",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top"]
+    },
+    {
+      "id": "file-filter",
+      "naturalLanguage": "show file reads over 1MB",
+      "expectedQuery": "events/jdk.FileRead[bytes>1048576]",
+      "category": "io",
+      "difficulty": "SIMPLE",
+      "keywords": ["filter"]
+    },
+    {
+      "id": "gc-count",
+      "naturalLanguage": "count GC events",
+      "expectedQuery": "events/jdk.GarbageCollection | count()",
+      "category": "gc",
+      "difficulty": "SIMPLE",
+      "keywords": ["count"]
+    },
+    {
+      "id": "gc-stats",
+      "naturalLanguage": "average GC pause time",
+      "expectedQuery": "events/jdk.GarbageCollection | stats(duration)",
+      "category": "gc",
+      "difficulty": "SIMPLE",
+      "keywords": ["stats"]
+    },
+    {
+      "id": "thread-top",
+      "naturalLanguage": "top threads by execution samples",
+      "expectedQuery": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)",
+      "category": "cpu",
+      "difficulty": "SIMPLE",
+      "keywords": ["groupBy", "top"]
+    },
+    {
+      "id": "allocation-classes",
+      "naturalLanguage": "top allocating classes",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(10, by=sum)",
+      "category": "memory",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top"]
+    },
+    {
+      "id": "monitor-contention",
+      "naturalLanguage": "which monitors have the most contention",
+      "expectedQuery": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)",
+      "category": "threading",
+      "difficulty": "SIMPLE",
+      "keywords": ["groupBy", "top"]
+    },
+    {
+      "id": "large-files",
+      "naturalLanguage": "files read with more than 10MB",
+      "expectedQuery": "events/jdk.FileRead[bytes>10485760]",
+      "category": "io",
+      "difficulty": "SIMPLE",
+      "keywords": ["filter", "bytes"]
+    },
+    {
+      "id": "gc-long-pauses",
+      "naturalLanguage": "GC events longer than 100ms",
+      "expectedQuery": "events/jdk.GarbageCollection[duration>100000000]",
+      "category": "gc",
+      "difficulty": "MEDIUM",
+      "keywords": ["filter", "duration", "nanoseconds"]
+    }
+  ]
+}
