@@ -50,6 +50,7 @@ public class CommandDispatcher {
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
   private final ConditionalState conditionalState = new ConditionalState();
+  private final ChatState chatState = new ChatState();
   private final boolean verbose;
 
   @FunctionalInterface
@@ -118,6 +119,11 @@ public class CommandDispatcher {
   /** Returns the conditional state for tracking if-blocks. */
   public ConditionalState getConditionalState() {
     return conditionalState;
+  }
+
+  /** Returns the chat state for tracking conversational mode. */
+  public ChatState getChatState() {
+    return chatState;
   }
 
   public boolean dispatch(String line) {
@@ -216,8 +222,8 @@ public class CommandDispatcher {
         case "invalidate":
           cmdInvalidate(args);
           return true;
-        case "ask":
-          cmdAsk(args, line);
+        case "chat":
+          cmdChat(args);
           return true;
         case "llm":
           cmdLLM(args);
@@ -658,7 +664,7 @@ public class CommandDispatcher {
       io.println("  cp        - Browse constant pool entries");
       io.println("");
       io.println("Natural language queries:");
-      io.println("  ask       - Translate natural language to JfrPath queries");
+      io.println("  chat      - Enter conversational mode for LLM-powered analysis");
       io.println("  llm       - LLM configuration and status commands");
       io.println("");
       io.println("Variable commands:");
@@ -971,9 +977,14 @@ public class CommandDispatcher {
       io.println("  endif");
       return;
     }
-    if ("ask".equals(sub)) {
-      io.println("Usage: ask <natural-language-question>");
-      io.println("Translate a natural language question into a JfrPath query and execute it.");
+    if ("chat".equals(sub)) {
+      io.println("Usage: chat [query]");
+      io.println("       chat /exit");
+      io.println("       chat /help");
+      io.println("       chat /clear");
+      io.println("");
+      io.println("Enters conversational mode for natural language JFR analysis.");
+      io.println("In chat mode, type questions directly without command prefix.");
       io.println("");
       io.println("The LLM understands various query patterns including:");
       io.println("  - Memory analysis");
@@ -984,46 +995,26 @@ public class CommandDispatcher {
       io.println("");
       io.println("Natural language keywords for event decoration:");
       io.println("  - 'decorated' / 'embellished' / 'extended' - Add context from related events");
-      io.println("  - 'with context from' - Explicitly request correlation");
       io.println("");
       io.println("Examples:");
-      io.println("  Memory analysis:");
-      io.println("    ask which threads allocated the most memory?");
-      io.println("    ask show me allocations over 1MB");
-      io.println("    ask what objects were allocated the most?");
+      io.println("  jfr> chat");
+      io.println("  jafar> which threads allocated the most memory?");
+      io.println("  jafar> show me only thread 'main'");
+      io.println("  jafar> /exit");
       io.println("");
-      io.println("  CPU profiling:");
-      io.println("    ask top 10 methods by CPU time");
-      io.println("    ask which threads were running most?");
+      io.println("Commands while in chat:");
+      io.println("  /exit, /quit  - Return to normal CLI");
+      io.println("  /clear        - Clear conversation history");
+      io.println("  /help         - Show chat tips");
       io.println("");
-      io.println("  File I/O:");
-      io.println("    ask show file reads over 1MB");
-      io.println("    ask which files were read most frequently?");
-      io.println("");
-      io.println("  GC analysis:");
-      io.println("    ask count garbage collection events");
-      io.println("    ask what was the average GC pause time?");
-      io.println("");
-      io.println("  Event decoration (temporal correlation):");
-      io.println("    ask show top 5 hottest methods decorated with duration from VirtualThreadPinned");
-      io.println("    ask execution samples embellished with GC phase name");
-      io.println("    ask which code allocates memory during garbage collection");
-      io.println("");
-      io.println("  Event decoration (ID-based correlation):");
-      io.println("    ask show samples decorated with requestId from RequestStart");
-      io.println("    ask allocations extended with traceId from datadog.Timeline");
-      io.println("    ask top endpoints by CPU usage with request context");
-      io.println("    ask file reads grouped by request endpoint");
-      io.println("");
-      io.println("See 'help llm' for configuration and other LLM commands.");
-      io.println("Documentation: doc/llm-integration.md");
+      io.println("See 'help llm' for LLM configuration.");
       return;
     }
     if ("llm".equals(sub)) {
       io.println("LLM (Large Language Model) commands for natural language query translation.");
       io.println("");
       io.println("Commands:");
-      io.println("  ask <question>  - Translate natural language to JfrPath and execute");
+      io.println("  chat [query]    - Enter conversational mode for natural language queries");
       io.println("  llm status      - Check LLM configuration and availability");
       io.println("  llm config      - Display configuration options");
       io.println("  llm test        - Test LLM connection");
@@ -2342,27 +2333,56 @@ public class CommandDispatcher {
 
   // ---- LLM Commands ----
 
-  private void cmdAsk(List<String> args, String fullLine) throws Exception {
+  private void cmdChat(List<String> args) throws Exception {
+    // Check for subcommands (support both bare and / prefix)
+    if (!args.isEmpty()) {
+      String subCmd = args.get(0).toLowerCase(Locale.ROOT);
+
+      if ("exit".equals(subCmd) || "quit".equals(subCmd) ||
+          "/exit".equals(subCmd) || "/quit".equals(subCmd)) {
+        chatState.exitChat();
+        io.println("Exited chat mode.");
+        return;
+      }
+
+      if ("help".equals(subCmd) || "/help".equals(subCmd)) {
+        printChatHelp();
+        return;
+      }
+
+      if ("clear".equals(subCmd) || "/clear".equals(subCmd)) {
+        // Clear conversation history
+        var cur = sessions.current();
+        if (cur.isEmpty()) {
+          io.error("No session open. Use 'open <path>' to open a recording first.");
+          return;
+        }
+        cur.get().variables.set("__llm_history",
+            new VariableStore.MapValue(new ConversationHistory(20).toMap()));
+        io.println("Conversation history cleared.");
+        return;
+      }
+    }
+
+    // If entering chat mode (no args or first use)
+    if (!chatState.isChatMode()) {
+      chatState.enterChat();
+      io.println("Entering chat mode. Ask questions naturally.");
+      io.println("Commands: '/exit' or '/quit' to return, '/clear' to reset history, '/help' for tips.");
+      io.println("");
+
+      // If no query provided, just enter mode
+      if (args.isEmpty()) {
+        return;
+      }
+    }
+
+    // Join args back to full query
+    String query = String.join(" ", args);
+
     var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <path>' to open a recording first.");
-      return;
-    }
-
-    // Extract query after "ask "
-    int askIndex = fullLine.toLowerCase().indexOf("ask");
-    if (askIndex == -1) {
-      io.error("Usage: ask <natural-language-question>");
-      return;
-    }
-
-    String query = fullLine.substring(askIndex + 3).trim();
-    if (query.isEmpty()) {
-      io.error("Usage: ask <natural-language-question>");
-      io.println("Examples:");
-      io.println("  ask which threads allocated the most memory?");
-      io.println("  ask show me file reads over 1MB");
-      io.println("  ask what caused the GC pause?");
       return;
     }
 
@@ -2418,22 +2438,26 @@ public class CommandDispatcher {
     // Execute the query
     io.println("");
     try {
-      if (selector != null) {
-        List<Map<String, Object>> results =
-            selector.select(cur.get().session, result.jfrPathQuery());
+      List<Map<String, Object>> results;
 
-        // Render results using session's output format
-        String format = cur.get().outputFormat;
-        if ("json".equalsIgnoreCase(format)) {
-          printJson(results, io);
-        } else if ("csv".equalsIgnoreCase(format)) {
-          CsvRenderer.render(results, io);
-        } else {
-          TableRenderer.render(results, io);
-        }
+      if (selector != null) {
+        // Use optimized selector if available
+        results = selector.select(cur.get().session, result.jfrPathQuery());
       } else {
-        io.error("Query selector not available");
-        return;
+        // FALLBACK: Use JfrPathEvaluator directly (like cmdShow does)
+        var jfrPathQuery = JfrPathParser.parse(result.jfrPathQuery());
+        var evaluator = new JfrPathEvaluator(JfrPath.MatchMode.ANY);
+        results = evaluator.evaluate(cur.get().session, jfrPathQuery);
+      }
+
+      // Render results using session's output format
+      String format = cur.get().outputFormat;
+      if ("json".equalsIgnoreCase(format)) {
+        printJson(results, io);
+      } else if ("csv".equalsIgnoreCase(format)) {
+        CsvRenderer.render(results, io);
+      } else {
+        TableRenderer.render(results, io);
       }
 
       // Add to history
@@ -2452,7 +2476,7 @@ public class CommandDispatcher {
               new AuditLogger.AuditEntry(
                   provider.getConfig().provider().name().toLowerCase(),
                   provider.getModelName(),
-                  "ask",
+                  "chat",
                   query.length(),
                   result.jfrPathQuery().length(),
                   false, // Only metadata sent
@@ -2470,6 +2494,19 @@ public class CommandDispatcher {
         e.printStackTrace();
       }
     }
+  }
+
+  private void printChatHelp() {
+    io.println("Chat Mode Tips:");
+    io.println("  - Ask questions naturally without command prefix");
+    io.println("  - Examples:");
+    io.println("    • which threads allocated the most memory?");
+    io.println("    • show execution samples decorated with GC phase");
+    io.println("    • top 10 methods by CPU time");
+    io.println("  - Follow-up questions use conversation context");
+    io.println("  - Type '/exit' or '/quit' to return to normal CLI");
+    io.println("  - Type '/clear' to reset conversation history");
+    io.println("  - Type '/help' to show this message");
   }
 
   private void cmdLLM(List<String> args) throws Exception {

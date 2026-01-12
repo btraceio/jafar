@@ -47,7 +47,22 @@
       "Bash(gh pr list:*)",
       "Bash(gh pr create:*)",
       "Bash(gh label list:*)",
-      "Bash(gh pr edit:*)"
+      "Bash(gh pr edit:*)",
+      "Bash(ollama list:*)",
+      "Bash(ollama pull:*)",
+      "WebFetch(domain:ollama.com)",
+      "Bash(build/jlink/bin/jfr-shell:*)",
+      "Bash(tee:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(for dir in ~/.sdkman/candidates/java/*/jmods)",
+      "Bash(do if [ -d \"$dir\" ])",
+      "Bash(then dirname \"$dir\")",
+      "Bash(xargs basename:*)",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(xargs:*)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/java:*)"
     ],
     "deny": [],
     "ask": []

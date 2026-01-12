@@ -65,7 +65,8 @@ class QueryTranslatorTest {
             "events/jdk.ExecutionSample | count()",
             "Counts execution samples",
             0.95,
-            Optional.empty());
+            Optional.empty(),
+            null);
 
     assertEquals("events/jdk.ExecutionSample | count()", result.jfrPathQuery());
     assertEquals("Counts execution samples", result.explanation());

@@ -83,9 +83,11 @@ public final class Shell implements AutoCloseable {
 
     while (running) {
       try {
-        // Adjust prompt based on conditional nesting depth
+        // Adjust prompt based on state (chat mode, conditional nesting, or normal)
         String prompt;
-        if (dispatcher.getConditionalState().inConditional()) {
+        if (dispatcher.getChatState().isChatMode()) {
+          prompt = "jafar> ";
+        } else if (dispatcher.getConditionalState().inConditional()) {
           int depth = dispatcher.getConditionalState().depth();
           prompt = "...(" + depth + ")> ";
         } else {
@@ -95,6 +97,27 @@ public final class Shell implements AutoCloseable {
         String input = lineReader.readLine(prompt);
         if (input == null || input.isBlank()) continue;
         input = input.trim();
+
+        // In chat mode, treat all input as natural language unless special commands
+        if (dispatcher.getChatState().isChatMode()) {
+          // Special commands that exit or control chat (with / prefix)
+          if ("/exit".equalsIgnoreCase(input) || "/quit".equalsIgnoreCase(input)) {
+            dispatcher.dispatch("chat exit");
+            continue;
+          }
+          if ("/help".equalsIgnoreCase(input)) {
+            dispatcher.dispatch("chat help");
+            continue;
+          }
+          if ("/clear".equalsIgnoreCase(input)) {
+            dispatcher.dispatch("chat clear");
+            continue;
+          }
+
+          // All other input becomes "chat <query>"
+          dispatcher.dispatch("chat " + input);
+          continue;
+        }
 
         // Built-ins
         if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {

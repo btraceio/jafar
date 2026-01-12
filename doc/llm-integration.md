@@ -48,12 +48,16 @@ ollama pull llama3.1:70b
 # Open a JFR recording
 jfr> open /path/to/recording.jfr
 
-# Ask a natural language question
-jfr> ask which threads allocated the most memory?
+# Enter chat mode and ask questions
+jfr> chat
+jafar> which threads allocated the most memory?
 Generated query: events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)
 Explanation: Groups allocation events by thread and sums the bytes allocated, then shows the top 10 threads
 
 [Results displayed in table format]
+
+jafar> /exit
+jfr>
 ```
 
 ## Configuration
@@ -123,39 +127,63 @@ privacy.auditEnabled=true
 
 ## Commands
 
-### `ask <question>`
+### `chat [query]`
 
-Translate a natural language question into a JfrPath query and execute it.
+Enter conversational mode for natural language JFR analysis.
+
+**Usage:**
+
+```bash
+# Enter chat mode
+jfr> chat
+jafar> which threads allocated the most memory?
+[Results displayed]
+jafar> show me only thread 'main'
+[Results for main thread]
+jafar> /exit
+jfr>
+
+# Or provide initial query
+jfr> chat top 10 methods by CPU time
+jafar> show me methods in package com.myapp
+jafar> /exit
+```
+
+**Commands in chat mode:**
+- Type questions naturally without command prefix
+- `/exit` or `/quit` - Return to normal CLI
+- `/clear` - Reset conversation history
+- `/help` - Show tips and examples
 
 **Examples:**
 
 ```bash
 # Memory analysis
-ask which threads allocated the most memory?
-ask show me allocations over 1MB
-ask what objects were allocated the most?
+jafar> which threads allocated the most memory?
+jafar> show me allocations over 1MB
+jafar> what objects were allocated the most?
 
 # File I/O
-ask show file reads over 1MB
-ask which files were read most frequently?
-ask what was the average file read size?
+jafar> show file reads over 1MB
+jafar> which files were read most frequently?
+jafar> what was the average file read size?
 
 # CPU profiling
-ask top 10 methods by CPU time
-ask show me execution samples for MyClass
-ask which threads were running most?
+jafar> top 10 methods by CPU time
+jafar> show me execution samples for MyClass
+jafar> which threads were running most?
 
 # GC analysis
-ask count garbage collection events
-ask what was the average GC pause time?
-ask show me GC pauses over 100ms
+jafar> count garbage collection events
+jafar> what was the average GC pause time?
+jafar> show me GC pauses over 100ms
 
 # Event decoration and correlation
-ask show top 5 hottest methods decorated with duration from VirtualThreadPinned
-ask execution samples embellished with GC phase name
-ask allocations extended with traceId from datadog.Timeline
-ask top endpoints by CPU usage with request context
-ask show samples decorated with requestId from RequestStart
+jafar> show top 5 hottest methods decorated with duration from VirtualThreadPinned
+jafar> execution samples embellished with GC phase name
+jafar> allocations extended with traceId from datadog.Timeline
+jafar> top endpoints by CPU usage with request context
+jafar> show samples decorated with requestId from RequestStart
 ```
 
 ### `llm status`
@@ -289,24 +317,28 @@ You can review this log anytime to see what was sent to LLMs.
 
 ### Conversation Context
 
-The LLM remembers previous queries in the same session, enabling follow-up questions:
+The LLM remembers previous queries in chat mode, enabling follow-up questions:
 
 ```bash
-jfr> ask which threads allocated the most memory?
+jfr> chat
+jafar> which threads allocated the most memory?
 [Results shown]
 
-jfr> ask what about CPU time?
+jafar> what about CPU time?
 Generated query: events/jdk.ExecutionSample | groupBy(eventThread/javaName) | top(10, by=count)
 Explanation: Shows threads with most CPU samples, following up on the previous memory query
 [Results shown]
 
-jfr> ask show me the top method in thread "main"
+jafar> show me the top method in thread "main"
 [Results shown]
+
+jafar> /exit
+jfr>
 ```
 
-To clear history and start fresh:
+To clear history:
 ```bash
-jfr> llm clear
+jafar> /clear
 ```
 
 ### Confidence Scores
@@ -314,7 +346,8 @@ jfr> llm clear
 The LLM provides a confidence score (0.0-1.0) for each translation:
 
 ```bash
-jfr> ask show me weird stuff
+jfr> chat
+jafar> show me weird stuff
 Generated query: events/jdk.JavaErrorThrow
 Explanation: Shows exception throw events, which may represent unusual behavior
 Confidence: 45% (low)
@@ -336,18 +369,21 @@ Results respect the current output format setting:
 
 ```bash
 # Table format (default)
-jfr> ask count GC events
+jfr> chat
+jafar> count GC events
 events/jdk.GarbageCollection | count()
 [Table with count]
 
 # JSON format
 jfr> set output json
-jfr> ask count GC events
+jfr> chat
+jafar> count GC events
 [{"count": 42}]
 
 # CSV format
 jfr> set output csv
-jfr> ask count GC events
+jfr> chat
+jafar> count GC events
 count
 42
 ```
@@ -406,7 +442,8 @@ The generated query may have syntax errors. This can happen with:
 The audit log is created on first use. Try:
 ```bash
 # Run a query first
-jfr> ask count all events
+jfr> chat
+jafar> count all events
 
 # Then check audit
 jfr> llm audit
@@ -463,37 +500,45 @@ privacy.auditEnabled=true
 ### Memory Leak Investigation
 
 ```bash
-jfr> ask which threads allocated the most memory?
-jfr> ask show me allocations over 10MB
-jfr> ask what classes were allocated most?
-jfr> ask show me allocation stack traces for MyLeakyClass
+jfr> chat
+jafar> which threads allocated the most memory?
+jafar> show me allocations over 10MB
+jafar> what classes were allocated most?
+jafar> show me allocation stack traces for MyLeakyClass
+jafar> /exit
 ```
 
 ### Performance Profiling
 
 ```bash
-jfr> ask top 20 methods by CPU time
-jfr> ask show execution samples in package com.mycompany
-jfr> ask which threads had most CPU samples?
-jfr> ask count samples per method for MyHotClass
+jfr> chat
+jafar> top 20 methods by CPU time
+jafar> show execution samples in package com.mycompany
+jafar> which threads had most CPU samples?
+jafar> count samples per method for MyHotClass
+jafar> /exit
 ```
 
 ### I/O Analysis
 
 ```bash
-jfr> ask show file reads
-jfr> ask what was the total bytes read?
-jfr> ask show reads over 1MB
-jfr> ask which files were read most frequently?
+jfr> chat
+jafar> show file reads
+jafar> what was the total bytes read?
+jafar> show reads over 1MB
+jafar> which files were read most frequently?
+jafar> /exit
 ```
 
 ### GC Analysis
 
 ```bash
-jfr> ask count GC events
-jfr> ask what was average GC pause time?
-jfr> ask show GC pauses over 100ms
-jfr> ask which GC type was used most?
+jfr> chat
+jafar> count GC events
+jafar> what was average GC pause time?
+jafar> show GC pauses over 100ms
+jafar> which GC type was used most?
+jafar> /exit
 ```
 
 ### Event Correlation and Context
@@ -509,19 +554,20 @@ Used when events overlap in time on the same thread - great for "during" or "whi
 
 ```bash
 # Virtual thread pinning analysis
-jfr> ask show top 5 hottest methods decorated with duration from VirtualThreadPinned
+jfr> chat
+jafar> show top 5 hottest methods decorated with duration from VirtualThreadPinned
 Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)
 
 # GC impact on code
-jfr> ask execution samples embellished with GC phase name
+jafar> execution samples embellished with GC phase name
 Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
 
 # What was running during safepoints
-jfr> ask what was the application doing during long safepoint pauses
+jafar> what was the application doing during long safepoint pauses
 Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin, fields=operation,duration) | groupBy($decorator.operation, agg=avg, value=$decorator.duration)
 
 # Allocations during GC
-jfr> ask which code allocates memory during garbage collection
+jafar> which code allocates memory during garbage collection
 Generated query: events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
@@ -530,23 +576,24 @@ Used for matching events by correlation IDs (requestId, spanId, traceId, etc.) -
 
 ```bash
 # Request tracing
-jfr> ask show execution samples decorated with requestId from RequestStart
+jfr> chat
+jafar> show execution samples decorated with requestId from RequestStart
 Generated query: events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)
 
 # Distributed tracing
-jfr> ask allocations extended with traceId and spanId from datadog.Timeline
+jafar> allocations extended with traceId and spanId from datadog.Timeline
 Generated query: events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)
 
 # Request-aware CPU profiling
-jfr> ask top endpoints by CPU usage with request context
+jafar> top endpoints by CPU usage with request context
 Generated query: events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)
 
 # Transaction tracking
-jfr> ask allocations extended with transaction ID from TransactionEvent
+jafar> allocations extended with transaction ID from TransactionEvent
 Generated query: events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)
 
 # File I/O by endpoint
-jfr> ask file reads grouped by request endpoint
+jafar> file reads grouped by request endpoint
 Generated query: events/jdk.FileRead | decorateByKey(RequestStart, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=sum, value=bytes)
 ```
 

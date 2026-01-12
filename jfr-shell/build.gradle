@@ -142,6 +142,8 @@ tasks.register('jlinkDist') {
 
     outputs.dir(outputDir)
 
+    def javaToolchains = project.extensions.getByType(JavaToolchainService)
+
     doLast {
         // Clean output directory
         project.delete(outputDir)
@@ -149,28 +151,48 @@ tasks.register('jlinkDist') {
         project.mkdir(binDir)
         project.mkdir(libDir)
 
-        // Find JDK with jmods - prefer Java 25 to match compilation target
-        def javaHome = null
-        def jmodsDir = null
+        // Use the configured Java toolchain
+        def javaToolchain = project.extensions.getByType(JavaPluginExtension).toolchain
+        def javaLauncher = javaToolchains.launcherFor(javaToolchain).get()
+        def javaHome = javaLauncher.metadata.installationPath.asFile.absolutePath
+        def jmodsDir = new File("${javaHome}/jmods")
 
-        // First try Java 25 EA (matches compilation target)
-        def java25EA = System.getProperty("user.home") + "/.sdkman/candidates/java/25.ea.33-open"
-        def java25EAJmods = new File("${java25EA}/jmods")
-        if (java25EAJmods.exists()) {
-            javaHome = java25EA
-            jmodsDir = java25EAJmods
-            logger.lifecycle("Using Java 25 EA for jlink (matches compilation target)")
-        } else {
-            // Fallback to current Java home
-            javaHome = System.getProperty("java.home")
-            jmodsDir = new File("${javaHome}/jmods")
-            if (!jmodsDir.exists()) {
-                throw new GradleException("Cannot find JDK with jmods directory. Tried: ${java25EA} and ${javaHome}")
+        // Some JDK distributions (e.g., Temurin ARM64) don't ship with jmods
+        // Fall back to any available Java 25+ JDK with jmods
+        if (!jmodsDir.exists()) {
+            logger.warn("Toolchain JDK at ${javaHome} does not have jmods directory")
+            logger.lifecycle("Searching for alternative JDK with jmods...")
+
+            def sdkmanDir = new File(System.getProperty("user.home"), ".sdkman/candidates/java")
+            if (sdkmanDir.exists()) {
+                def candidates = sdkmanDir.listFiles()
+                    .findAll { it.isDirectory() && it.name.matches("25\\..*") && new File(it, "jmods").exists() }
+                    .sort { a, b ->
+                        // Prefer non-EA versions
+                        def aIsEA = a.name.contains(".ea.")
+                        def bIsEA = b.name.contains(".ea.")
+                        if (aIsEA != bIsEA) return aIsEA ? 1 : -1
+                        // Then prefer oracle over other vendors
+                        def aIsOracle = a.name.contains("-oracle")
+                        def bIsOracle = b.name.contains("-oracle")
+                        if (aIsOracle != bIsOracle) return aIsOracle ? -1 : 1
+                        // Finally sort by version descending
+                        return b.name <=> a.name
+                    }
+
+                if (!candidates.isEmpty()) {
+                    javaHome = candidates[0].absolutePath
+                    jmodsDir = new File("${javaHome}/jmods")
+                    logger.lifecycle("Found alternative JDK with jmods: ${javaHome}")
+                } else {
+                    throw new GradleException("No Java 25+ JDK with jmods directory found. Please install a JDK that includes jmods (e.g., Oracle OpenJDK or Zulu).")
+                }
+            } else {
+                throw new GradleException("JDK at ${javaHome} does not have jmods directory and no alternatives found.")
             }
-            logger.warn("Using ${javaHome} for jlink - may have version mismatch with compiled classes")
+        } else {
+            logger.lifecycle("Using JDK from toolchain: ${javaHome}")
         }
-
-        logger.lifecycle("Using JDK: ${javaHome}")
         logger.lifecycle("Creating custom JRE with jlink...")
 
         // Run jlink to create custom JRE
