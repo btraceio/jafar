@@ -2391,6 +2391,18 @@ public class CommandDispatcher {
       return;
     }
 
+    // Check if it's a conversational response (no query generated)
+    if (result.isConversational()) {
+      io.println("");
+      io.println(result.conversationalResponse());
+      // Add to history
+      history.addTurn(
+          new ConversationHistory.Turn(query, result.conversationalResponse(), Optional.empty()));
+      // Save history back to session
+      cur.get().variables.set("__llm_history", new VariableStore.MapValue(history.toMap()));
+      return;
+    }
+
     // Show the generated query
     io.println("Generated query: " + result.jfrPathQuery());
     if (result.explanation() != null && !result.explanation().isEmpty()) {

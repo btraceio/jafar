@@ -96,14 +96,9 @@ public class QueryTranslator {
       // Extract JSON object from response (may have extra text)
       String json = extractJson(responseContent);
       if (json == null) {
-        // Truncate response content for error message
-        String preview =
-            responseContent.length() > 200
-                ? responseContent.substring(0, 200) + "..."
-                : responseContent;
-        throw new LLMException(
-            LLMException.ErrorType.PARSE_ERROR,
-            "Could not find valid JSON object in response. Response preview: " + preview);
+        // No JSON found - treat as conversational response
+        // This happens for ambiguous queries like "help" or general questions
+        return new TranslationResult(null, null, 0.0, Optional.empty(), responseContent);
       }
 
       // Parse JSON using Gson
@@ -139,7 +134,8 @@ public class QueryTranslator {
             "Generated query has invalid syntax: " + query);
       }
 
-      return new TranslationResult(query, explanation, confidence, Optional.ofNullable(warning));
+      return new TranslationResult(
+          query, explanation, confidence, Optional.ofNullable(warning), null);
 
     } catch (JsonParseException e) {
       throw new LLMException(
@@ -222,11 +218,26 @@ public class QueryTranslator {
   /**
    * Result of query translation.
    *
-   * @param jfrPathQuery the generated JfrPath query
+   * @param jfrPathQuery the generated JfrPath query (null for conversational responses)
    * @param explanation explanation of what the query does
    * @param confidence confidence score 0.0-1.0
    * @param warning optional warning about ambiguity or limitations
+   * @param conversationalResponse non-null when LLM responds conversationally instead of with a
+   *     query
    */
   public record TranslationResult(
-      String jfrPathQuery, String explanation, double confidence, Optional<String> warning) {}
+      String jfrPathQuery,
+      String explanation,
+      double confidence,
+      Optional<String> warning,
+      String conversationalResponse) {
+    /**
+     * Returns true if this is a conversational response (no query generated).
+     *
+     * @return true if conversational
+     */
+    public boolean isConversational() {
+      return conversationalResponse != null;
+    }
+  }
 }
