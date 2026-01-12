@@ -115,8 +115,13 @@ public class JFRSession implements AutoCloseable {
               return false;
             }
           });
+    } catch (IOException e) {
+      // IOException indicates file format issues (invalid magic number, corrupted file, etc.)
+      // Re-throw to prevent opening non-JFR files
+      throw e;
     } catch (Exception e) {
-      // If metadata scanning fails, just continue without types - they'll be available after run()
+      // Other exceptions might be metadata parsing issues in otherwise valid files
+      // Log warning but allow session creation - types will be available after run()
       System.err.println("Warning: Failed to scan metadata: " + recordingPath);
       e.printStackTrace();
     }
