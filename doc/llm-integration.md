@@ -149,6 +149,13 @@ ask which threads were running most?
 ask count garbage collection events
 ask what was the average GC pause time?
 ask show me GC pauses over 100ms
+
+# Event decoration and correlation
+ask show top 5 hottest methods decorated with duration from VirtualThreadPinned
+ask execution samples embellished with GC phase name
+ask allocations extended with traceId from datadog.Timeline
+ask top endpoints by CPU usage with request context
+ask show samples decorated with requestId from RequestStart
 ```
 
 ### `llm status`
@@ -488,6 +495,66 @@ jfr> ask what was average GC pause time?
 jfr> ask show GC pauses over 100ms
 jfr> ask which GC type was used most?
 ```
+
+### Event Correlation and Context
+
+The LLM understands natural language keywords for event decoration, allowing you to correlate events and add contextual information:
+
+**Natural Language Keywords:**
+- `decorated` / `embellished` / `extended` - Add context from related events
+- `with context from` - Explicitly request correlation
+
+**Temporal Correlation (decorateByTime):**
+Used when events overlap in time on the same thread - great for "during" or "while" scenarios.
+
+```bash
+# Virtual thread pinning analysis
+jfr> ask show top 5 hottest methods decorated with duration from VirtualThreadPinned
+Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)
+
+# GC impact on code
+jfr> ask execution samples embellished with GC phase name
+Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+
+# What was running during safepoints
+jfr> ask what was the application doing during long safepoint pauses
+Generated query: events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin, fields=operation,duration) | groupBy($decorator.operation, agg=avg, value=$decorator.duration)
+
+# Allocations during GC
+jfr> ask which code allocates memory during garbage collection
+Generated query: events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=allocationSize)
+```
+
+**ID-Based Correlation (decorateByKey):**
+Used for matching events by correlation IDs (requestId, spanId, traceId, etc.) - great for distributed tracing and request tracking.
+
+```bash
+# Request tracing
+jfr> ask show execution samples decorated with requestId from RequestStart
+Generated query: events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)
+
+# Distributed tracing
+jfr> ask allocations extended with traceId and spanId from datadog.Timeline
+Generated query: events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)
+
+# Request-aware CPU profiling
+jfr> ask top endpoints by CPU usage with request context
+Generated query: events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)
+
+# Transaction tracking
+jfr> ask allocations extended with transaction ID from TransactionEvent
+Generated query: events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)
+
+# File I/O by endpoint
+jfr> ask file reads grouped by request endpoint
+Generated query: events/jdk.FileRead | decorateByKey(RequestStart, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=sum, value=bytes)
+```
+
+**Context-Bearing Events:**
+The LLM supports any custom event type with correlation metadata:
+- JDK 25+ `@Contextual` annotated events
+- Custom application events (RequestStart, UserSession, TransactionEvent)
+- APM vendor events (datadog.Timeline, newrelic.Transaction, etc.)
 
 ## Limitations
 
