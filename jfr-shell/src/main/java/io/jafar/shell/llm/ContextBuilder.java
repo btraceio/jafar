@@ -183,6 +183,42 @@ public class ContextBuilder {
         Q: "network traffic by remote address"
         A: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", "explanation": "Groups socket reads by remote address and sums bytes read", "confidence": 0.95}
 
+        Q: "which methods are causing virtual thread pinning"
+        A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)", "explanation": "Uses decorateByTime to correlate execution samples with pinning events, then groups by method and sums decorator duration field", "confidence": 0.90}
+
+        Q: "which code allocates memory during garbage collection"
+        A: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=allocationSize)", "explanation": "Decorates allocation events with GC phase names using temporal overlap, groups by decorator field", "confidence": 0.90}
+
+        Q: "what was the application doing during long safepoint pauses"
+        A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin[duration>50000000], fields=operation,duration) | groupBy($decorator.operation, agg=avg, value=$decorator.duration)", "explanation": "Correlates execution samples with long safepoints, groups by safepoint operation from decorator", "confidence": 0.90}
+
+        Q: "which monitors have cascading wait queues"
+        A: {"query": "events/jdk.JavaMonitorWait | groupBy(monitorClass/name, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Groups monitor waits by class and sums total wait duration to identify convoy patterns", "confidence": 0.95}
+
+        Q: "which threads are blocked on I/O operations the most"
+        A: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Decorates thread park events with file read context, groups by thread to find most blocked", "confidence": 0.90}
+
+        Q: "correlate monitor inflation events with contention"
+        A: {"query": "events/jdk.JavaMonitorEnter | decorateByTime(jdk.JavaMonitorInflate, fields=monitorClass) | groupBy($decorator.monitorClass, agg=count)", "explanation": "Uses decorateByTime to join monitor enter events with inflation events temporally", "confidence": 0.90}
+
+        Q: "show execution samples decorated with requestId from RequestStart"
+        A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)", "explanation": "Uses decorateByKey to correlate samples with request tracking events by matching thread IDs", "confidence": 0.90}
+
+        Q: "allocations extended with traceId from datadog.Timeline"
+        A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)", "explanation": "Decorates allocations with distributed trace IDs using thread-based correlation for cross-service tracing", "confidence": 0.90}
+
+        Q: "top endpoints by CPU usage with request context"
+        A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)", "explanation": "Correlates execution samples with request metadata by thread ID, groups by endpoint from decorator", "confidence": 0.90}
+
+        Q: "show top 5 hottest methods decorated with duration from VirtualThreadPinned"
+        A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)", "explanation": "Natural language 'decorated' maps to decorateByTime for temporal correlation with pinning events", "confidence": 0.90}
+
+        Q: "execution samples embellished with GC phase name"
+        A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)", "explanation": "Natural language 'embellished' is synonym for decoration, uses temporal correlation with GC phases", "confidence": 0.90}
+
+        Q: "allocations extended with transaction ID from TransactionEvent"
+        A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)", "explanation": "Natural language 'extended' maps to decorateByKey for correlation ID-based joining", "confidence": 0.90}
+
         INCORRECT EXAMPLES (DO NOT DO THIS):
 
         Q: "top allocating classes"
@@ -250,6 +286,41 @@ public class ContextBuilder {
         WHY WRONG: User only asked for grouping, don't add top() unless specifically requested
         CORRECT: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", ...}
 
+        Q: "which methods are causing virtual thread pinning"
+        WRONG: {"query": "events/jdk.VirtualThreadPinned | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=duration) | top(10, by=sum)", ...}
+        WHY WRONG: VirtualThreadPinned events don't have stack traces - need to correlate with ExecutionSample using decorateByTime
+        CORRECT: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)", ...}
+
+        Q: "which code allocates during GC"
+        WRONG: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy(decorator.name, agg=sum, value=bytes)", ...}
+        WHY WRONG: Missing $ prefix on decorator field - must use $decorator.name not decorator.name
+        CORRECT: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=bytes)", ...}
+
+        Q: "correlate safepoints with compilation"
+        WRONG: {"query": "events/jdk.SafepointBegin | decorate(jdk.Compilation, fields=method) | groupBy($decorator.method)", ...}
+        WHY WRONG: Using decorate() instead of decorateByTime() - wrong operator name
+        CORRECT: {"query": "events/jdk.SafepointBegin | decorateByTime(jdk.Compilation, fields=method) | groupBy($decorator.method, agg=sum, value=duration)", ...}
+
+        Q: "threads blocked on I/O"
+        WRONG: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead) | groupBy(eventThread/javaName)", ...}
+        WHY WRONG: Missing fields parameter in decorateByTime - must specify which fields to decorate with
+        CORRECT: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", ...}
+
+        Q: "execution samples decorated with requestId from RequestContext"
+        WRONG: {"query": "events/jdk.ExecutionSample | decorateByTime(RequestContext, fields=requestId)", ...}
+        WHY WRONG: requestId is a correlation ID field - should use decorateByKey to match by ID, not temporal overlap
+        CORRECT: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestContext, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)", ...}
+
+        Q: "allocations during GC phases"
+        WRONG: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(jdk.GCPhase, key=startTime, decoratorKey=startTime, fields=name)", ...}
+        WHY WRONG: "during" indicates temporal correlation - should use decorateByTime for time overlap, not decorateByKey
+        CORRECT: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)", ...}
+
+        Q: "show samples decorated with spanId from datadog.Timeline"
+        WRONG: {"query": "events/jdk.ExecutionSample | decorateByTime(datadog.Timeline, fields=spanId)", ...}
+        WHY WRONG: spanId is a distributed tracing correlation ID - should use decorateByKey to match by thread ID
+        CORRECT: {"query": "events/jdk.ExecutionSample | decorateByKey(datadog.Timeline, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=spanId)", ...}
+
         KEY FIELD NAME RULES:
         - Network I/O: jdk.SocketRead uses 'bytesRead', jdk.SocketWrite uses 'bytesWritten'
         - File I/O: jdk.FileRead uses 'bytes', jdk.FileWrite uses 'bytesWritten'
@@ -262,6 +333,17 @@ public class ContextBuilder {
         - For "longest" or "slowest": Use agg=max with top(N, by=max), not stats()
         - Don't add operators not explicitly requested (e.g., don't add count() or top() unless asked)
         - For filtering by attributes like "young generation", use regex filters not specific event types
+
+        DECORATOR SYNTAX RULES:
+        - Use decorateByTime(eventType, fields=field1,field2) to correlate events temporally
+        - Use decorateByKey(eventType, key=keyPath, decoratorKey=decoratorKeyPath, fields=field1,field2) for ID-based correlation
+        - Decorator fields accessed via $decorator.fieldName ($ prefix is REQUIRED)
+        - Specify fields parameter: decorateByTime(jdk.Type, fields=name,duration) NOT decorateByTime(jdk.Type)
+        - $decorator.field works in groupBy keys, aggregation values, and top sorting
+        - Use decorateByTime NOT decorate() - the operator name is decorateByTime
+        - decorateByTime joins events that overlap in time on the same thread
+        - decorateByKey joins events by matching correlation keys (cross-thread capable)
+        - Examples: $decorator.duration, $decorator.name, $decorator.requestId, $decorator.spanId, $decorator.endpoint
         """;
   }
 
@@ -324,6 +406,27 @@ public class ContextBuilder {
         8. Bytes are exact (1MB = 1048576 bytes)
         9. Field paths use / separator (e.g., thread/name, NOT thread.name)
         10. If ambiguous, set confidence < 0.5 and add warning
+
+        DECORATOR SELECTION RULES:
+
+        1. Use decorateByTime() when:
+           - Query mentions temporal context: "during", "while", "when", "causing"
+           - Correlating with JDK events: GCPhase, SafepointBegin, VirtualThreadPinned
+           - No explicit correlation IDs mentioned
+
+        2. Use decorateByKey() when:
+           - Query mentions correlation IDs: requestId, spanId, traceId, transactionId, sessionId
+           - Correlating with custom tracking events: RequestStart, Timeline, TransactionEvent
+           - Need cross-thread correlation (async processing)
+
+        3. Common correlation patterns:
+           - ExecutionSample: key=sampledThread/javaThreadId
+           - ObjectAllocationSample/FileRead/SocketRead: key=eventThread/javaThreadId
+           - Custom events: decoratorKey=thread/javaThreadId or threadId
+
+        4. Natural language synonyms:
+           - "decorated" = "embellished" = "extended" = "with context from"
+           - All map to decorator operators (ByTime or ByKey)
         """;
   }
 

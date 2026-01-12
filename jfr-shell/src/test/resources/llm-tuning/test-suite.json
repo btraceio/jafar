@@ -1,5 +1,5 @@
 {
-  "version": "2.0",
+  "version": "3.0",
   "testCases": [
     {
       "id": "cpu-top-methods",
@@ -160,6 +160,238 @@
       "category": "memory",
       "difficulty": "SIMPLE",
       "keywords": ["stats"]
+    },
+    {
+      "id": "vthread-pinning-methods",
+      "naturalLanguage": "which methods are causing virtual thread pinning",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)",
+      "category": "virtual-threads",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "top", "decorator-field"]
+    },
+    {
+      "id": "vthread-pinning-duration",
+      "naturalLanguage": "show pinned thread stack traces with duration over 100ms",
+      "expectedQuery": "events/jdk.VirtualThreadPinned[duration>100000000]",
+      "category": "virtual-threads",
+      "difficulty": "MEDIUM",
+      "keywords": ["filter", "duration", "nanoseconds"]
+    },
+    {
+      "id": "vthread-pinning-monitors",
+      "naturalLanguage": "which monitors cause the most pinning events",
+      "expectedQuery": "events/jdk.VirtualThreadPinned | decorateByTime(jdk.JavaMonitorEnter, fields=monitorClass) | groupBy($decorator.monitorClass, agg=count)",
+      "category": "virtual-threads",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "vthread-pinning-threads",
+      "naturalLanguage": "top threads by virtual thread pinning duration",
+      "expectedQuery": "events/jdk.VirtualThreadPinned | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)",
+      "category": "virtual-threads",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top", "duration"]
+    },
+    {
+      "id": "vthread-pinning-samples",
+      "naturalLanguage": "correlate thread pinning with execution samples",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration,stackTrace) | groupBy($decorator.stackTrace/frames/0/method/type/name, agg=count)",
+      "category": "virtual-threads",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "gc-allocation-during-phases",
+      "naturalLanguage": "which code allocates memory during garbage collection",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=allocationSize)",
+      "category": "gc",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "decorator-field"]
+    },
+    {
+      "id": "gc-allocation-young-gen",
+      "naturalLanguage": "show allocation hot spots during young generation GC",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GarbageCollection, fields=gcId,name) | groupBy(objectClass/name, agg=sum, value=bytes) | top(10, by=sum)",
+      "category": "gc",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "top", "decorator-field"]
+    },
+    {
+      "id": "gc-allocation-threads",
+      "naturalLanguage": "which threads allocate the most during GC phases",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)",
+      "category": "gc",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "top", "decorator-field"]
+    },
+    {
+      "id": "gc-allocation-storms",
+      "naturalLanguage": "find allocation storms triggering emergency GC",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GarbageCollection, fields=gcId,name,cause) | groupBy($decorator.gcId, agg=count)",
+      "category": "gc",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "safepoint-app-doing",
+      "naturalLanguage": "what was the application doing during long safepoint pauses",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin, fields=operation,duration) | groupBy($decorator.operation, agg=avg, value=$decorator.duration)",
+      "category": "threading",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "decorator-field"]
+    },
+    {
+      "id": "safepoint-delays",
+      "naturalLanguage": "find operations causing safepoint delays over 50ms",
+      "expectedQuery": "events/jdk.SafepointBegin[duration>50000000] | groupBy(operation, agg=count)",
+      "category": "threading",
+      "difficulty": "MEDIUM",
+      "keywords": ["filter", "duration", "groupBy"]
+    },
+    {
+      "id": "safepoint-jit-correlation",
+      "naturalLanguage": "correlate JIT compilation with safepoint duration",
+      "expectedQuery": "events/jdk.SafepointBegin | decorateByTime(jdk.Compilation, fields=method) | groupBy($decorator.method, agg=sum, value=duration)",
+      "category": "compilation",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "decorator-field"]
+    },
+    {
+      "id": "lock-convoy-waits",
+      "naturalLanguage": "which monitors have cascading wait queues",
+      "expectedQuery": "events/jdk.JavaMonitorWait | groupBy(monitorClass/name, agg=sum, value=duration) | top(10, by=sum)",
+      "category": "threading",
+      "difficulty": "MEDIUM",
+      "keywords": ["groupBy", "aggregation", "top", "duration"]
+    },
+    {
+      "id": "lock-convoy-starvation",
+      "naturalLanguage": "show thread starvation caused by lock contention",
+      "expectedQuery": "events/jdk.JavaMonitorEnter[duration>100000000] | groupBy(eventThread/javaName, agg=count)",
+      "category": "threading",
+      "difficulty": "MEDIUM",
+      "keywords": ["filter", "duration", "groupBy"]
+    },
+    {
+      "id": "lock-convoy-inflation",
+      "naturalLanguage": "correlate monitor inflation events with contention",
+      "expectedQuery": "events/jdk.JavaMonitorEnter | decorateByTime(jdk.JavaMonitorInflate, fields=monitorClass) | groupBy($decorator.monitorClass, agg=count)",
+      "category": "threading",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "io-threads-blocked",
+      "naturalLanguage": "which threads are blocked on I/O operations the most",
+      "expectedQuery": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)",
+      "category": "io",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "top", "duration", "decorator-field"]
+    },
+    {
+      "id": "io-socket-parking",
+      "naturalLanguage": "correlate socket reads with thread parking duration",
+      "expectedQuery": "events/jdk.SocketRead | decorateByTime(jdk.ThreadPark, fields=duration) | groupBy(address, agg=avg, value=$decorator.duration)",
+      "category": "network",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "groupBy", "aggregation", "decorator-field"]
+    },
+    {
+      "id": "io-blocking-detection",
+      "naturalLanguage": "detect blocking I/O causing thread starvation",
+      "expectedQuery": "events/jdk.ThreadPark[duration>10000000] | decorateByTime(jdk.SocketRead, fields=bytesRead) | groupBy(eventThread/javaName, agg=count)",
+      "category": "network",
+      "difficulty": "COMPLEX",
+      "keywords": ["filter", "duration", "decorator", "decorateByTime", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "decorator-natural-decorated",
+      "naturalLanguage": "show top 5 hottest methods decorated with duration from VirtualThreadPinned",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "natural-language", "decorated", "groupBy", "top", "decorator-field"]
+    },
+    {
+      "id": "decorator-natural-embellished",
+      "naturalLanguage": "execution samples embellished with GC phase name",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "natural-language", "embellished", "decorator-field"]
+    },
+    {
+      "id": "decorator-natural-extended",
+      "naturalLanguage": "allocations extended with transaction ID from TransactionEvent",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "natural-language", "extended", "correlation-id", "decorator-field"]
+    },
+    {
+      "id": "decorator-key-requestid",
+      "naturalLanguage": "show execution samples decorated with requestId from RequestStart",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "correlation-id", "requestId", "decorator-field"]
+    },
+    {
+      "id": "decorator-key-tracing",
+      "naturalLanguage": "allocations extended with traceId and spanId from datadog.Timeline",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "correlation-id", "spanId", "traceId", "distributed-tracing", "decorator-field"]
+    },
+    {
+      "id": "decorator-key-transaction",
+      "naturalLanguage": "show allocations with transactionId from TransactionEvent",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "correlation-id", "transactionId", "decorator-field"]
+    },
+    {
+      "id": "decorator-key-endpoint",
+      "naturalLanguage": "top endpoints by CPU usage with request context",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "correlation-id", "endpoint", "groupBy", "top", "decorator-field"]
+    },
+    {
+      "id": "decorator-temporal-during-gc",
+      "naturalLanguage": "show allocations during GC phases",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "temporal", "during", "decorator-field"]
+    },
+    {
+      "id": "decorator-temporal-while-blocked",
+      "naturalLanguage": "execution samples while threads are blocked on monitors",
+      "expectedQuery": "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorEnter, fields=monitorClass,duration)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByTime", "temporal", "while", "decorator-field"]
+    },
+    {
+      "id": "decorator-custom-file-endpoint",
+      "naturalLanguage": "file reads grouped by request endpoint",
+      "expectedQuery": "events/jdk.FileRead | decorateByKey(RequestStart, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=sum, value=bytes)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "custom-event", "endpoint", "groupBy", "decorator-field"]
+    },
+    {
+      "id": "decorator-custom-allocation-user",
+      "naturalLanguage": "allocations with user context from UserSession",
+      "expectedQuery": "events/jdk.ObjectAllocationSample | decorateByKey(UserSession, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=userId,sessionId)",
+      "category": "decorators",
+      "difficulty": "COMPLEX",
+      "keywords": ["decorator", "decorateByKey", "custom-event", "user-context", "decorator-field"]
     }
   ]
 }
