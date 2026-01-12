@@ -37,6 +37,15 @@ public class ContextBuilder {
     prompt.append("You are an expert JFR (Java Flight Recording) analysis assistant. ");
     prompt.append(
         "Your role is to translate natural language questions into valid JfrPath queries.\n\n");
+    prompt.append(
+        "IMPORTANT: For questions about event data, ALWAYS generate a query. ");
+    prompt.append(
+        "Use conversational responses ONLY when the question is unclear, ambiguous, or not about JFR data.\n\n");
+    prompt.append(
+        "Question types that MUST generate queries:\n");
+    prompt.append("- Existence checks: 'is X present?', 'does this have Y?', 'are there Z?' → use count()\n");
+    prompt.append("- Metadata questions: 'what fields does X have?', 'describe Y' → use metadata/\n");
+    prompt.append("- Data analysis: 'top X', 'which Y', 'how many Z' → use events/ with appropriate operators\n\n");
 
     prompt.append(buildJfrPathGrammar());
     prompt.append("\n\n");
@@ -218,6 +227,48 @@ public class ContextBuilder {
 
         Q: "allocations extended with transaction ID from TransactionEvent"
         A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)", "explanation": "Natural language 'extended' maps to decorateByKey for correlation ID-based joining", "confidence": 0.90}
+
+        EXISTENCE CHECK EXAMPLES:
+
+        Q: "is jdk.ExecutionSample present in this recording?"
+        A: {"query": "events/jdk.ExecutionSample | count()", "explanation": "Counts execution sample events to check if any exist (0 means not present)", "confidence": 0.98}
+
+        Q: "does this recording have GC events?"
+        A: {"query": "events/jdk.GarbageCollection | count()", "explanation": "Counts garbage collection events to verify their presence", "confidence": 0.98}
+
+        Q: "are there any file read events?"
+        A: {"query": "events/jdk.FileRead | count()", "explanation": "Counts file read events to check if file I/O was recorded", "confidence": 0.98}
+
+        Q: "do we have allocation tracking enabled?"
+        A: {"query": "events/jdk.ObjectAllocationSample | count()", "explanation": "Checks for allocation events which require specific JFR settings to be enabled", "confidence": 0.95}
+
+        METADATA QUERY EXAMPLES:
+
+        Q: "what fields does jdk.ExecutionSample have?"
+        A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for ExecutionSample event type including all available fields", "confidence": 0.98}
+
+        Q: "show me the structure of GarbageCollection events"
+        A: {"query": "metadata/jdk.GarbageCollection", "explanation": "Returns metadata about GarbageCollection event type structure", "confidence": 0.98}
+
+        Q: "what event types are named like ExecutionSample?"
+        A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for jdk.ExecutionSample event type - the exact event matching the query", "confidence": 0.95}
+
+        Q: "describe the ThreadPark event"
+        A: {"query": "metadata/jdk.ThreadPark", "explanation": "Returns metadata describing the ThreadPark event type and its fields", "confidence": 0.98}
+
+        YES/NO AND COMPARISON EXAMPLES:
+
+        Q: "how many threads allocated memory?"
+        A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName)", "explanation": "Groups allocations by thread to show unique threads that allocated", "confidence": 0.95}
+
+        Q: "how many different event types are in this recording?"
+        A: {"query": "metadata", "explanation": "Lists all event types present in the recording", "confidence": 0.90, "warning": "This returns metadata for all types; count the results to get the number"}
+
+        Q: "is thread 'main' doing any allocations?"
+        A: {"query": "events/jdk.ObjectAllocationSample[eventThread/javaName=\"main\"] | count()", "explanation": "Counts allocations from 'main' thread (0 means no allocations)", "confidence": 0.95}
+
+        Q: "did any compilation take longer than 2 seconds?"
+        A: {"query": "events/jdk.Compilation[duration>2000000000] | count()", "explanation": "Counts compilations over 2 seconds (>0 means yes, 0 means no)", "confidence": 0.95}
 
         INCORRECT EXAMPLES (DO NOT DO THIS):
 
@@ -406,6 +457,34 @@ public class ContextBuilder {
         8. Bytes are exact (1MB = 1048576 bytes)
         9. Field paths use / separator (e.g., thread/name, NOT thread.name)
         10. If ambiguous, set confidence < 0.5 and add warning
+
+        QUERY TYPE RULES:
+
+        1. YES/NO QUESTIONS (is/does/are/did):
+           - Use count() to get numeric answer: >0 means yes, 0 means no
+           - Examples: "is X present?", "does this have Y?", "are there any Z?"
+           ✓ CORRECT: events/jdk.ExecutionSample | count()
+           ✗ WRONG: Conversational response without query
+
+        2. EXISTENCE CHECKS:
+           - Questions about event presence should generate count() queries
+           - "is X in recording?" → events/X | count()
+           - "do we have Y?" → events/Y | count()
+           ✓ CORRECT: events/jdk.GarbageCollection | count()
+
+        3. METADATA QUERIES:
+           - Questions about event type structure use metadata/ root
+           - "what fields does X have?" → metadata/X
+           - "describe Y event" → metadata/Y
+           - "show structure of Z" → metadata/Z
+           ✓ CORRECT: metadata/jdk.ExecutionSample
+           ✗ WRONG: events/jdk.ExecutionSample (for structure questions)
+
+        4. COMPARISON QUESTIONS (how many):
+           - "how many X" typically means groupBy to show unique items
+           - "how many different Y" → groupBy to count unique values
+           ✓ CORRECT: events/Type | groupBy(field)
+           ✗ WRONG: events/Type | count() (unless asking for total count)
 
         DECORATOR SELECTION RULES:
 
