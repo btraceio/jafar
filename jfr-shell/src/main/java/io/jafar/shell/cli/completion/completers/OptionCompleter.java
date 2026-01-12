@@ -43,7 +43,10 @@ public class OptionCompleter implements ContextCompleter {
 
   // Subcommands for specific commands
   private static final Map<String, String[]> COMMAND_SUBCOMMANDS =
-      Map.of("set", new String[] {"output"}, "let", new String[] {"output"});
+      Map.of(
+          "set", new String[] {"output"},
+          "let", new String[] {"output"},
+          "llm", new String[] {"status", "config", "test", "clear", "audit"});
 
   // Values for subcommands
   private static final Map<String, String[]> SUBCOMMAND_VALUES =
@@ -61,9 +64,10 @@ public class OptionCompleter implements ContextCompleter {
     if (ctx.type() == CompletionContextType.OPTION_VALUE) {
       completeOptionValue(ctx, candidates);
     } else {
-      // Check if we should complete subcommands for set/let commands
+      // Check if we should complete subcommands for set/let/llm commands
       String command = ctx.command();
-      if (("set".equals(command) || "let".equals(command)) && isSubcommandContext(ctx)) {
+      if (("set".equals(command) || "let".equals(command) || "llm".equals(command))
+          && isSubcommandContext(ctx)) {
         completeSubcommand(ctx, candidates);
       } else {
         completeOption(ctx, candidates);
@@ -121,7 +125,7 @@ public class OptionCompleter implements ContextCompleter {
     String[] tokens = fullLine.split("\\s+");
 
     if (tokens.length == 2 || (tokens.length == 3 && tokens[2].isEmpty())) {
-      // Complete subcommand name: "set " or "set o"
+      // Complete subcommand name: "set ", "llm ", or "set o"
       for (String sub : subcommands) {
         if (sub.startsWith(partial)) {
           candidates.add(new Candidate(sub));
@@ -129,6 +133,7 @@ public class OptionCompleter implements ContextCompleter {
       }
     } else if (tokens.length >= 3 && "output".equals(tokens[1])) {
       // Complete subcommand value: "set output " or "set output t"
+      // (only for set/let commands)
       String[] values = SUBCOMMAND_VALUES.get("output");
       if (values != null) {
         for (String value : values) {
@@ -138,5 +143,6 @@ public class OptionCompleter implements ContextCompleter {
         }
       }
     }
+    // Note: "llm" subcommands don't take values, so no additional handling needed
   }
 }

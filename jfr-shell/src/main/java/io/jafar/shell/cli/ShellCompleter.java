@@ -180,6 +180,7 @@ public class ShellCompleter implements Completer {
       case "record" -> completeRecord(reader, line, candidates, wordIndex, words);
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       case "echo" -> completeEchoCommand(line, candidates);
+      case "llm" -> completeLLMCommand(line, candidates);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -641,6 +642,15 @@ public class ShellCompleter implements Completer {
       // After "record start " - provide filesystem completion for the path parameter
       if (reader != null) {
         fileCompleter.complete(reader, line, candidates);
+      }
+    }
+  }
+
+  private void completeLLMCommand(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word();
+    for (String sub : new String[] {"status", "config", "test", "clear", "audit"}) {
+      if (sub.startsWith(partial)) {
+        candidates.add(new Candidate(sub));
       }
     }
   }

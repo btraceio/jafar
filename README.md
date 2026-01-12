@@ -454,7 +454,8 @@ JAFAR includes `jfr-shell`, an interactive CLI for exploring and analyzing JFR f
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
-- **Scripting support**: record, save, and replay analysis workflows with variable substitution ⭐ NEW
+- **LLM Integration**: Ask questions in natural language, powered by local (Ollama) or cloud LLMs (OpenAI, Anthropic) ⭐ NEW
+- **Scripting support**: record, save, and replay analysis workflows with variable substitution
 - **Event decoration** for correlating and joining events (time-based and key-based)
 - **Multiple output formats**: table and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
@@ -472,6 +473,11 @@ jfr-shell recording.jfr
 jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
 jfr> show events/jdk.FileRead | top(10, by=bytes)
 
+# Natural language queries with LLM (local Ollama by default)
+jfr> ask which threads allocated the most memory?
+jfr> ask show me file reads over 1MB
+jfr> ask what was the average GC pause time?
+
 # Event decoration: correlate samples with lock waits
 jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 ```
@@ -482,10 +488,11 @@ See **[Event Decoration and Joining](doc/jfr-shell-tutorial.md#event-decoration-
 
 ### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
+- **[doc/llm-integration.md](doc/llm-integration.md)** - LLM integration: natural language queries with Ollama, OpenAI, Anthropic ⭐ NEW
 - **[doc/jfr-shell-tutorial.md](doc/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
-- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
-- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
-- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
+- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows
+- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial
+- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
 
 ### General

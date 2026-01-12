@@ -9,11 +9,20 @@ import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import io.jafar.shell.llm.ContextBuilder;
+import io.jafar.shell.llm.ConversationHistory;
+import io.jafar.shell.llm.LLMConfig;
+import io.jafar.shell.llm.LLMException;
+import io.jafar.shell.llm.LLMProvider;
+import io.jafar.shell.llm.QueryTranslator;
+import io.jafar.shell.llm.privacy.AuditLogger;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -206,6 +215,12 @@ public class CommandDispatcher {
           return true;
         case "invalidate":
           cmdInvalidate(args);
+          return true;
+        case "ask":
+          cmdAsk(args, line);
+          return true;
+        case "llm":
+          cmdLLM(args);
           return true;
         default:
           return false;
@@ -2239,6 +2254,441 @@ public class CommandDispatcher {
       return "\"" + value + "\"";
     }
     return value.toString();
+  }
+
+  // ---- LLM Commands ----
+
+  private void cmdAsk(List<String> args, String fullLine) throws Exception {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open. Use 'open <path>' to open a recording first.");
+      return;
+    }
+
+    // Extract query after "ask "
+    int askIndex = fullLine.toLowerCase().indexOf("ask");
+    if (askIndex == -1) {
+      io.error("Usage: ask <natural-language-question>");
+      return;
+    }
+
+    String query = fullLine.substring(askIndex + 3).trim();
+    if (query.isEmpty()) {
+      io.error("Usage: ask <natural-language-question>");
+      io.println("Examples:");
+      io.println("  ask which threads allocated the most memory?");
+      io.println("  ask show me file reads over 1MB");
+      io.println("  ask what caused the GC pause?");
+      return;
+    }
+
+    // Get or create LLM provider
+    LLMProvider provider = getOrCreateLLMProvider(cur.get());
+    if (provider == null) {
+      return; // Error already displayed
+    }
+
+    // Get or create conversation history
+    ConversationHistory history = getOrCreateHistory(cur.get());
+
+    // Build context and translate
+    ContextBuilder contextBuilder = new ContextBuilder(cur.get(), provider.getConfig());
+    QueryTranslator translator = new QueryTranslator(provider, contextBuilder, history);
+
+    if (verbose) {
+      io.println("Translating natural language query...");
+    }
+
+    QueryTranslator.TranslationResult result;
+    try {
+      result = translator.translate(query);
+    } catch (LLMException e) {
+      handleLLMException(e, provider.getConfig());
+      return;
+    }
+
+    // Show the generated query
+    io.println("Generated query: " + result.jfrPathQuery());
+    if (result.explanation() != null && !result.explanation().isEmpty()) {
+      io.println("Explanation: " + result.explanation());
+    }
+    if (result.warning().isPresent()) {
+      io.println("Warning: " + result.warning().get());
+    }
+    if (result.confidence() < 0.5) {
+      io.println("Confidence: " + String.format("%.0f%%", result.confidence() * 100) + " (low)");
+    }
+
+    // Execute the query
+    io.println("");
+    try {
+      if (selector != null) {
+        List<Map<String, Object>> results =
+            selector.select(cur.get().session, result.jfrPathQuery());
+
+        // Render results using session's output format
+        String format = cur.get().outputFormat;
+        if ("json".equalsIgnoreCase(format)) {
+          printJson(results, io);
+        } else if ("csv".equalsIgnoreCase(format)) {
+          CsvRenderer.render(results, io);
+        } else {
+          TableRenderer.render(results, io);
+        }
+      } else {
+        io.error("Query selector not available");
+        return;
+      }
+
+      // Add to history
+      history.addTurn(
+          new ConversationHistory.Turn(
+              query, result.explanation(), Optional.of(result.jfrPathQuery())));
+
+      // Save history back to session
+      cur.get().variables.set("__llm_history", new VariableStore.MapValue(history.toMap()));
+
+      // Log to audit if enabled
+      if (provider.getConfig().privacy().auditEnabled()) {
+        try {
+          AuditLogger logger = new AuditLogger();
+          logger.log(
+              new AuditLogger.AuditEntry(
+                  provider.getConfig().provider().name().toLowerCase(),
+                  provider.getModelName(),
+                  "ask",
+                  query.length(),
+                  result.jfrPathQuery().length(),
+                  false, // Only metadata sent
+                  Duration.ofMillis(0)));
+        } catch (IOException e) {
+          if (verbose) {
+            io.println("Warning: Failed to write audit log: " + e.getMessage());
+          }
+        }
+      }
+
+    } catch (Exception e) {
+      io.error("Query execution failed: " + e.getMessage());
+      if (verbose) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  private void cmdLLM(List<String> args) throws Exception {
+    if (args.isEmpty()) {
+      cmdLLMStatus();
+      return;
+    }
+
+    String subcommand = args.get(0).toLowerCase();
+    switch (subcommand) {
+      case "config" -> cmdLLMConfig();
+      case "status" -> cmdLLMStatus();
+      case "test" -> cmdLLMTest();
+      case "clear" -> cmdLLMClear();
+      case "audit" -> cmdLLMAudit();
+      default -> {
+        io.error("Unknown llm subcommand: " + subcommand);
+        io.println("Available subcommands: config, status, test, clear, audit");
+      }
+    }
+  }
+
+  private void cmdLLMStatus() {
+    try {
+      LLMConfig config = LLMConfig.load();
+      io.println("LLM Configuration:");
+      io.println("  Provider: " + config.provider());
+      io.println("  Endpoint: " + config.endpoint());
+      io.println("  Model: " + config.model());
+      io.println("  Privacy Mode: " + config.privacy().mode());
+      io.println("  Audit Enabled: " + config.privacy().auditEnabled());
+
+      // Test availability
+      LLMProvider provider = LLMProvider.create(config);
+      boolean available = provider.isAvailable();
+      io.println("  Status: " + (available ? "Available" : "Unavailable"));
+
+      // For Ollama, show available models
+      if (config.provider() == LLMConfig.ProviderType.LOCAL && available) {
+        try {
+          String models = listOllamaModels(config.endpoint());
+          if (models != null && !models.isEmpty()) {
+            io.println("");
+            io.println("Available models:");
+            io.println(models);
+          }
+        } catch (Exception e) {
+          if (verbose) {
+            io.println("Could not list models: " + e.getMessage());
+          }
+        }
+      }
+
+      if (!available) {
+        io.println("");
+        io.println("Troubleshooting:");
+        if (config.provider() == LLMConfig.ProviderType.LOCAL) {
+          io.println("  - Ensure Ollama is running: ollama serve");
+          io.println("  - Check available models: ollama list");
+          io.println("  - Pull the configured model: ollama pull " + config.model());
+          io.println("  - Or use a different model in ~/.jfr-shell/llm-config.properties");
+        } else {
+          io.println("  - Check API key is set (config file or environment variable)");
+          io.println("  - Verify network connection");
+        }
+      }
+      provider.close();
+    } catch (IOException e) {
+      io.error("No LLM config found");
+      io.println(
+          "Default config will be used: LOCAL provider with Ollama at http://localhost:11434");
+      io.println("Run 'llm config' to customize or create config file at:");
+      io.println("  ~/.jfr-shell/llm-config.properties");
+    } catch (Exception e) {
+      io.error("Error: " + e.getMessage());
+    }
+  }
+
+  private void cmdLLMConfig() {
+    io.println("LLM Configuration");
+    io.println("=================");
+    io.println("");
+    io.println("Configuration file: ~/.jfr-shell/llm-config.properties");
+    io.println("");
+    io.println("Default configuration:");
+    io.println("  provider=LOCAL");
+    io.println("  endpoint=http://localhost:11434");
+    io.println("  model=llama3.1:8b");
+    io.println("  privacy.mode=LOCAL_ONLY");
+    io.println("  privacy.auditEnabled=true");
+    io.println("");
+    io.println("To use OpenAI:");
+    io.println("  provider=OPENAI");
+    io.println("  endpoint=https://api.openai.com/v1");
+    io.println("  model=gpt-4o-mini");
+    io.println("  apiKey=your-api-key-here");
+    io.println("");
+    io.println("To use Anthropic (Claude):");
+    io.println("  provider=ANTHROPIC");
+    io.println("  endpoint=https://api.anthropic.com");
+    io.println("  model=claude-3-5-sonnet-20241022");
+    io.println("  apiKey=your-api-key-here");
+    io.println("");
+    io.println("For details, see: doc/llm-integration.md");
+  }
+
+  private void cmdLLMTest() throws Exception {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open");
+      return;
+    }
+
+    LLMProvider provider = getOrCreateLLMProvider(cur.get());
+    if (provider == null) {
+      return;
+    }
+
+    io.println("Testing LLM connection...");
+
+    LLMProvider.LLMRequest testRequest =
+        LLMProvider.LLMRequest.of(
+            "You are a test assistant.", "Say 'Hello from jfr-shell!' and nothing else.");
+
+    try {
+      LLMProvider.LLMResponse response = provider.complete(testRequest);
+      io.println("Success!");
+      io.println("Response: " + response.content());
+      io.println("Model: " + response.model());
+      io.println("Tokens: " + response.tokensUsed());
+      io.println("Duration: " + response.durationMs() + "ms");
+    } catch (LLMException e) {
+      handleLLMException(e, provider.getConfig());
+    }
+  }
+
+  private void cmdLLMClear() {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open");
+      return;
+    }
+
+    cur.get().variables.remove("__llm_history");
+    io.println("Conversation history cleared.");
+  }
+
+  private void cmdLLMAudit() {
+    try {
+      String entries = AuditLogger.readRecentEntries(50);
+      io.println("Recent LLM Interactions (last 50):");
+      io.println("===================================");
+      io.println(entries);
+      io.println("");
+      io.println("Full log: " + AuditLogger.getAuditLogPath());
+    } catch (IOException e) {
+      io.println("No audit log found.");
+    }
+  }
+
+  private LLMProvider getOrCreateLLMProvider(SessionManager.SessionRef session) {
+    // Check session variable for cached provider
+    Value providerVar = session.variables.get("__llm_provider");
+    if (providerVar instanceof ScalarValue sv && sv.value() instanceof LLMProvider) {
+      return (LLMProvider) sv.value();
+    }
+
+    // Load config and create provider
+    try {
+      LLMConfig config = LLMConfig.load();
+      LLMProvider provider = LLMProvider.create(config);
+
+      if (!provider.isAvailable()) {
+        io.error("LLM provider not available: " + config.provider());
+        if (config.provider() == LLMConfig.ProviderType.LOCAL) {
+          io.println("Ensure Ollama is running: ollama serve");
+          io.println("And model is pulled: ollama pull " + config.model());
+        } else {
+          io.println("Check API key and network connection");
+        }
+        io.println("Run 'llm status' for more details");
+        return null;
+      }
+
+      // Cache in session
+      session.variables.set("__llm_provider", new ScalarValue(provider));
+      if (verbose) {
+        io.println("Using " + config.provider() + " provider with model " + config.model());
+      }
+      return provider;
+    } catch (IOException e) {
+      if (verbose) {
+        io.println("Using default configuration (LOCAL provider)");
+      }
+      try {
+        LLMConfig defaultConfig = LLMConfig.defaults();
+        LLMProvider provider = LLMProvider.create(defaultConfig);
+        if (!provider.isAvailable()) {
+          io.error("Default LLM provider not available");
+          io.println("Install and start Ollama: https://ollama.ai");
+          return null;
+        }
+        session.variables.set("__llm_provider", new ScalarValue(provider));
+        return provider;
+      } catch (Exception ex) {
+        io.error("Failed to create LLM provider: " + ex.getMessage());
+        return null;
+      }
+    } catch (Exception e) {
+      io.error("Failed to create LLM provider: " + e.getMessage());
+      return null;
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private ConversationHistory getOrCreateHistory(SessionManager.SessionRef session) {
+    Value historyVar = session.variables.get("__llm_history");
+    if (historyVar instanceof VariableStore.MapValue mv) {
+      try {
+        return ConversationHistory.fromMap(mv.value());
+      } catch (Exception e) {
+        if (verbose) {
+          io.println("Failed to restore history, creating new: " + e.getMessage());
+        }
+      }
+    }
+    return new ConversationHistory(20);
+  }
+
+  /**
+   * Lists available models from Ollama.
+   *
+   * @param endpoint Ollama endpoint
+   * @return formatted list of models, or null if unavailable
+   */
+  private String listOllamaModels(String endpoint) {
+    try {
+      java.net.http.HttpClient client =
+          java.net.http.HttpClient.newBuilder()
+              .connectTimeout(java.time.Duration.ofSeconds(5))
+              .build();
+      java.net.http.HttpRequest request =
+          java.net.http.HttpRequest.newBuilder()
+              .uri(java.net.URI.create(endpoint + "/api/tags"))
+              .timeout(java.time.Duration.ofSeconds(5))
+              .GET()
+              .build();
+
+      java.net.http.HttpResponse<String> response =
+          client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+      if (response.statusCode() == 200) {
+        // Parse model names from JSON response
+        // Response format: {"models":[{"name":"llama3.1:8b",...},{"name":"mistral:7b",...}]}
+        java.util.regex.Pattern pattern =
+            java.util.regex.Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"");
+        java.util.regex.Matcher matcher = pattern.matcher(response.body());
+        java.util.List<String> models = new java.util.ArrayList<>();
+        while (matcher.find()) {
+          models.add(matcher.group(1));
+        }
+
+        if (!models.isEmpty()) {
+          return models.stream()
+              .map(m -> "  - " + m)
+              .collect(java.util.stream.Collectors.joining("\n"));
+        }
+      }
+    } catch (Exception e) {
+      // Silently fail - not critical
+    }
+    return null;
+  }
+
+  private void handleLLMException(LLMException e, LLMConfig config) {
+    switch (e.getType()) {
+      case PROVIDER_UNAVAILABLE -> {
+        io.error("LLM provider is not available.");
+        io.println("Run 'llm status' to diagnose the issue.");
+      }
+      case TIMEOUT -> {
+        io.error("LLM request timed out. Try a simpler query or increase timeout in config.");
+      }
+      case INVALID_RESPONSE -> {
+        io.error(e.getMessage());
+        if (verbose && e.getCause() != null) {
+          io.println("Details: " + e.getCause().getMessage());
+        }
+      }
+      case AUTH_FAILED -> {
+        io.error("Authentication failed. Check your API key.");
+        io.println("Set apiKey in ~/.jfr-shell/llm-config.properties");
+        io.println(
+            "Or set "
+                + (config.provider() == LLMConfig.ProviderType.OPENAI
+                    ? "OPENAI_API_KEY"
+                    : "ANTHROPIC_API_KEY")
+                + " environment variable");
+      }
+      case RATE_LIMITED -> {
+        io.error("Rate limit exceeded. Wait a moment and try again.");
+      }
+      case NETWORK_ERROR -> {
+        io.error("Network error: " + e.getMessage());
+      }
+      case PARSE_ERROR -> {
+        io.error("Failed to parse LLM response: " + e.getMessage());
+        if (verbose && e.getCause() != null) {
+          e.getCause().printStackTrace();
+        }
+      }
+      default -> {
+        io.error("LLM error: " + e.getMessage());
+      }
+    }
   }
 
   // ---- Conditional handling ----
