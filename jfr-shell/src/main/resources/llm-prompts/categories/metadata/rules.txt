@@ -1,0 +1,45 @@
+METADATA_QUERY Category Rules:
+
+Use metadata/ root for queries about event type structure, fields, and discovery.
+
+WHEN TO USE:
+- "what fields does X have?"
+- "describe Y event"
+- "show structure of Z"
+- "what event types match pattern?"
+- "list all events with X in the name"
+
+PATTERNS:
+
+1. Specific event type:
+   metadata/jdk.ExecutionSample
+   - Use when user asks about ONE specific event type
+
+2. Wildcard/pattern matching:
+   metadata/[name ~ 'REGEX_PATTERN']
+   - Use when user asks about MULTIPLE event types
+   - Use when query includes wildcards: *, .*, "like", "matching"
+   - Use when asking about a namespace: "jdk.*", "all X events"
+
+   Examples:
+   - "events like *ExecutionSample" → metadata/[name ~ '.*ExecutionSample']
+   - "all Allocation events" → metadata/[name ~ '.*Allocation.*']
+   - "jdk.* events" → metadata/[name ~ 'jdk\\..*']
+   - "GC-related types" → metadata/[name ~ '.*GC.*|.*Garbage.*']
+
+3. All event types:
+   metadata
+   - Use when asking for ALL event types in recording
+   - "how many event types", "list all types"
+
+REGEX TIPS:
+- .* matches any characters
+- \. matches literal dot (escape it!)
+- | is OR operator
+- ^ is start of string, $ is end
+- Case sensitive by default
+
+CONFIDENCE:
+- High (0.95+): Specific event type name
+- Medium (0.85-0.95): Pattern matching, wildcards
+- Lower (0.80-0.85): Complex regex, multiple patterns

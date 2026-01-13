@@ -4,11 +4,20 @@ A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for 
 Q: "show me the structure of GarbageCollection events"
 A: {"query": "metadata/jdk.GarbageCollection", "explanation": "Returns metadata about GarbageCollection event type structure", "confidence": 0.98}
 
-Q: "what event types are named like ExecutionSample?"
-A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for jdk.ExecutionSample event type - the exact event matching the query", "confidence": 0.95}
-
 Q: "describe the ThreadPark event"
 A: {"query": "metadata/jdk.ThreadPark", "explanation": "Returns metadata describing the ThreadPark event type and its fields", "confidence": 0.98}
+
+Q: "what event types are named like *ExecutionSample?"
+A: {"query": "metadata/[name ~ '.*ExecutionSample']", "explanation": "Finds all event types with names ending in ExecutionSample using regex filter", "confidence": 0.95}
+
+Q: "show me all event types with 'Allocation' in the name"
+A: {"query": "metadata/[name ~ '.*Allocation.*']", "explanation": "Uses regex pattern to match event types containing 'Allocation' anywhere in the name", "confidence": 0.95}
+
+Q: "what jdk.* events are in this recording?"
+A: {"query": "metadata/[name ~ 'jdk\\..*']", "explanation": "Finds all event types in the jdk namespace using regex pattern (note escaped dot)", "confidence": 0.93}
+
+Q: "list all GC-related event types"
+A: {"query": "metadata/[name ~ '.*GC.*|.*Garbage.*']", "explanation": "Uses regex OR pattern to find event types with GC or Garbage in the name", "confidence": 0.90}
 
 Q: "how many different event types are in this recording?"
 A: {"query": "metadata", "explanation": "Lists all event types present in the recording", "confidence": 0.90, "warning": "This returns metadata for all types; count the results to get the number"}
