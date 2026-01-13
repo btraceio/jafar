@@ -1,0 +1,19 @@
+spring:
+  main:
+    web-application-type: none    # NO web server
+    banner-mode: off              # NO banner to stdout
+
+  ai:
+    mcp:
+      server:
+        type: SYNC
+        protocol: STDIO
+        name: jfr-shell-mcp
+        version: ${project.version:0.8.0-SNAPSHOT}
+
+logging:
+  file:
+    name: logs/jfr-shell-mcp.log
+  level:
+    root: INFO
+    io.jafar.mcp: DEBUG

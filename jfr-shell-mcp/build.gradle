@@ -1,0 +1,58 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'com.gradleup.shadow' version '8.3.6'
+}
+
+group = 'io.btrace'
+version = rootProject.version
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
+    maven { url 'https://repo.spring.io/snapshot' }
+}
+
+dependencies {
+    // Reuse existing infrastructure
+    implementation project(':jfr-shell')
+    implementation project(':parser')
+
+    // Spring Boot + Spring AI MCP Server (STDIO transport)
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server:1.1.2'
+
+    // JSON for MCP protocol
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+shadowJar {
+    archiveBaseName = 'jfr-shell-mcp'
+    archiveClassifier = ''
+    manifest {
+        attributes 'Main-Class': 'io.jafar.mcp.JfrShellMcpApplication'
+    }
+    // Exclude signature files that cause issues
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
+// Make shadowJar part of the build
+build.dependsOn shadowJar
