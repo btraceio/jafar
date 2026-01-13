@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -241,5 +242,39 @@ public class ContextBuilder {
    */
   public List<String> getAvailableEventTypes() {
     return new ArrayList<>(session.session.getAvailableEventTypes());
+  }
+
+  // ===== Multi-Level Prompt Building (Phase 3 Implementation) =====
+
+  /**
+   * Builds a minimal category-specific prompt (~2-3KB).
+   *
+   * <p>TODO: Implement in Phase 3 - currently returns full prompt for backward compatibility
+   *
+   * @param category the query category
+   * @return minimal prompt string
+   * @throws IOException if resource loading fails
+   */
+  public String buildMinimalPrompt(QueryCategory category) throws IOException {
+    // TODO Phase 3: Load category-specific examples and rules
+    // For now, delegate to full prompt to keep tests passing
+    return buildSystemPrompt();
+  }
+
+  /**
+   * Builds an enhanced prompt with related categories (~6-8KB).
+   *
+   * <p>TODO: Implement in Phase 3 - currently returns full prompt for backward compatibility
+   *
+   * @param category the primary query category
+   * @param relatedCategories related categories to include
+   * @return enhanced prompt string
+   * @throws IOException if resource loading fails
+   */
+  public String buildEnhancedPrompt(QueryCategory category, Set<QueryCategory> relatedCategories)
+      throws IOException {
+    // TODO Phase 3: Load primary + related category examples
+    // For now, delegate to full prompt to keep tests passing
+    return buildSystemPrompt();
   }
 }
