@@ -1,0 +1,137 @@
+EVENT TYPE SELECTION GUIDE
+
+This guide helps select the correct JFR event types for common analysis tasks.
+
+=== CPU PROFILING & EXECUTION ANALYSIS ===
+
+When users ask about CPU usage, hot methods, thread activity, or profiling:
+
+ALWAYS check for these event types (in order of preference):
+1. jdk.ExecutionSample - Standard JDK profiling samples (most common)
+2. datadog.ExecutionSample - Datadog profiler samples (if present)
+3. jdk.NativeMethodSample - For native code profiling
+4. jdk.CPUTimeSample - Explicit CPU time tracking (rare, but check)
+
+IMPORTANT: Different profilers may emit different event types:
+- OpenJDK/Oracle JDK recordings: jdk.ExecutionSample
+- Datadog profiled applications: datadog.ExecutionSample (richer fields)
+- Both may be present in the same recording!
+
+Query patterns:
+- Single profiler: events/jdk.ExecutionSample
+- Multiple profilers: events/(jdk.ExecutionSample|datadog.ExecutionSample)
+- Detect available: metadata/[name ~ '.*ExecutionSample']
+
+Examples:
+Q: "which methods use the most CPU?"
+A: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", ...}
+
+Q: "top threads by CPU time"
+A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
+
+Q: "CPU profile"
+BEST: First check which ExecutionSample types exist, then query them
+A: {"query": "metadata/[name ~ '.*ExecutionSample']", "explanation": "Check which profiling event types are available", ...}
+
+=== THREAD ANALYSIS ===
+
+Thread states and activity:
+- jdk.ThreadStart / jdk.ThreadEnd - Thread lifecycle
+- jdk.ThreadPark - Thread parking/waiting
+- jdk.ThreadSleep - Thread sleeping
+- jdk.JavaMonitorWait / jdk.JavaMonitorEnter - Lock contention
+
+CPU time per thread:
+- Use ExecutionSample events grouped by thread:
+  events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+
+Thread CPU load (if available):
+- jdk.ThreadCPULoad - Periodic CPU load measurements
+
+=== MEMORY & ALLOCATION ANALYSIS ===
+
+Allocation profiling:
+- jdk.ObjectAllocationSample - Sampled allocations (most efficient)
+- jdk.ObjectAllocationInNewTLAB - TLAB allocations
+- jdk.ObjectAllocationOutsideTLAB - Large allocations
+- datadog.ObjectSample - Datadog allocation profiler
+
+Old objects:
+- jdk.OldObjectSample - Long-lived objects (heap profiling)
+
+=== I/O & NETWORK ===
+
+File operations:
+- jdk.FileRead / jdk.FileWrite - File I/O with duration and bytes
+- jdk.FileForce - File sync operations
+
+Network:
+- jdk.SocketRead / jdk.SocketWrite - Network I/O
+
+=== GARBAGE COLLECTION ===
+
+GC events:
+- jdk.GarbageCollection - All GC events
+- jdk.YoungGarbageCollection - Young gen GC
+- jdk.OldGarbageCollection - Old gen GC
+- jdk.G1GarbageCollection - G1 specific
+
+GC phases:
+- jdk.GCPhasePause - Stop-the-world pause phases
+- jdk.GCPhaseConcurrent - Concurrent phases
+
+=== COMPILATION & OPTIMIZATION ===
+
+JIT compilation:
+- jdk.Compilation - Method compilation events
+- jdk.CompilationFailure - Failed compilations
+- jdk.Deoptimization - Method deoptimizations
+
+=== VIRTUAL THREADS (Java 21+) ===
+
+Virtual thread operations:
+- jdk.VirtualThreadStart / jdk.VirtualThreadEnd
+- jdk.VirtualThreadPinned - Carrier thread pinning
+
+Important: VirtualThreadPinned has no stack trace!
+To find pinning methods, correlate with ExecutionSample:
+  events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration)
+
+=== COMMON MISTAKES ===
+
+❌ WRONG: Using jdk.MethodSample (doesn't exist)
+✓ CORRECT: Use jdk.ExecutionSample
+
+❌ WRONG: Assuming only jdk.* events exist
+✓ CORRECT: Check for datadog.*, io.*, custom profiler events
+
+❌ WRONG: events/ExecutionSample (missing namespace)
+✓ CORRECT: events/jdk.ExecutionSample or events/(jdk.ExecutionSample|datadog.ExecutionSample)
+
+❌ WRONG: Querying VirtualThreadPinned for stack traces
+✓ CORRECT: Decorate ExecutionSample with VirtualThreadPinned events
+
+=== MULTI-PROFILER RECORDINGS ===
+
+Some recordings contain events from multiple profilers:
+- jdk.ExecutionSample (JDK built-in)
+- datadog.ExecutionSample (Datadog profiler)
+- Custom profiler events
+
+For CPU queries, ALWAYS:
+1. Check what profiling events exist: metadata/[name ~ '.*ExecutionSample']
+2. Use multi-type query if multiple found: events/(jdk.ExecutionSample|datadog.ExecutionSample)
+3. Or query each separately and explain differences
+
+datadog.ExecutionSample typically includes:
+- Additional fields: spanId, localRootSpanId (distributed tracing)
+- Weight field for sampling bias correction
+- Mode field (cpu, wall, etc.)
+
+=== WHEN IN DOUBT ===
+
+If the user asks about CPU/profiling/hot-spots without specifying:
+1. Query: metadata/[name ~ '.*ExecutionSample']
+2. Check result to see which profilers are active
+3. Generate query using available event type(s)
+4. Explain in "explanation" field which profiler(s) are being used

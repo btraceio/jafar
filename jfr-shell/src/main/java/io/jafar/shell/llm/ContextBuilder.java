@@ -81,6 +81,10 @@ public class ContextBuilder {
       prompt.append(buildSessionContext());
       prompt.append("\n\n");
 
+      // Event type selection guide
+      prompt.append(loadResource("event-type-selection.txt"));
+      prompt.append("\n\n");
+
       // Load examples from multiple files
       prompt.append("CORRECT EXAMPLES:\n\n");
       prompt.append(loadResource("examples/basic-queries.txt"));
@@ -279,6 +283,10 @@ public class ContextBuilder {
     prompt.append(buildSessionContext());
     prompt.append("\n\n");
 
+    // Event type selection guide
+    prompt.append(loadResource("event-type-selection.txt"));
+    prompt.append("\n\n");
+
     // Category-specific examples
     prompt.append("EXAMPLES FOR THIS QUERY TYPE:\n\n");
     prompt.append(loadCategoryExamples(category));
@@ -334,6 +342,10 @@ public class ContextBuilder {
     // Dynamic: session context
     prompt.append("CURRENT SESSION:\n");
     prompt.append(buildSessionContext());
+    prompt.append("\n\n");
+
+    // Event type selection guide
+    prompt.append(loadResource("event-type-selection.txt"));
     prompt.append("\n\n");
 
     // Primary category examples
