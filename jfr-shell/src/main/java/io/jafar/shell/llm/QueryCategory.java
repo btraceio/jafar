@@ -87,20 +87,43 @@ public enum QueryCategory {
   }
 
   /**
+   * Returns the directory name for this category's resources.
+   *
+   * @return directory name like "count", "topn", "decorator-temporal"
+   */
+  public String getDirectoryName() {
+    return switch (this) {
+      case SIMPLE_COUNT -> "count";
+      case EXISTENCE_CHECK -> "existence";
+      case METADATA_QUERY -> "metadata";
+      case SIMPLE_FILTER -> "filter";
+      case STATISTICS -> "statistics";
+      case GROUPBY_SIMPLE -> "groupby-simple";
+      case GROUPBY_AGGREGATED -> "groupby-aggregated";
+      case TOPN_RANKING -> "topn";
+      case TIME_RANGE_FILTER -> "time-range";
+      case DECORATOR_TEMPORAL -> "decorator-temporal";
+      case DECORATOR_CORRELATION -> "decorator-correlation";
+      case COMPLEX_MULTIOP -> "complex";
+      case CONVERSATIONAL -> "conversational";
+    };
+  }
+
+  /**
    * Returns the resource path for category-specific examples.
    *
-   * @return path like "categories/simple-count/examples.txt"
+   * @return path like "categories/count/examples.txt"
    */
   public String getExamplesPath() {
-    return "categories/" + name().toLowerCase().replace('_', '-') + "/examples.txt";
+    return "categories/" + getDirectoryName() + "/examples.txt";
   }
 
   /**
    * Returns the resource path for category-specific rules.
    *
-   * @return path like "categories/simple-count/rules.txt"
+   * @return path like "categories/topn/rules.txt"
    */
   public String getRulesPath() {
-    return "categories/" + name().toLowerCase().replace('_', '-') + "/rules.txt";
+    return "categories/" + getDirectoryName() + "/rules.txt";
   }
 }

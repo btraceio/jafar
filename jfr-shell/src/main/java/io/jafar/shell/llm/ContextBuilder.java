@@ -249,22 +249,60 @@ public class ContextBuilder {
   /**
    * Builds a minimal category-specific prompt (~2-3KB).
    *
-   * <p>TODO: Implement in Phase 3 - currently returns full prompt for backward compatibility
+   * <p>Includes: system intro, grammar, event types, session context, category-specific
+   * examples/rules, and response format.
    *
    * @param category the query category
    * @return minimal prompt string
    * @throws IOException if resource loading fails
    */
   public String buildMinimalPrompt(QueryCategory category) throws IOException {
-    // TODO Phase 3: Load category-specific examples and rules
-    // For now, delegate to full prompt to keep tests passing
-    return buildSystemPrompt();
+    StringBuilder prompt = new StringBuilder();
+
+    // Core system components
+    prompt.append(loadResource("system-intro.txt"));
+    prompt.append("\n\n");
+
+    prompt.append(loadResource("critical-understanding.txt"));
+    prompt.append("\n\n");
+
+    prompt.append(loadResource("jfrpath-grammar.txt"));
+    prompt.append("\n\n");
+
+    // Dynamic: available event types
+    prompt.append("AVAILABLE EVENT TYPES:\n");
+    prompt.append(buildEventTypesList());
+    prompt.append("\n\n");
+
+    // Dynamic: session context
+    prompt.append("CURRENT SESSION:\n");
+    prompt.append(buildSessionContext());
+    prompt.append("\n\n");
+
+    // Category-specific examples
+    prompt.append("EXAMPLES FOR THIS QUERY TYPE:\n\n");
+    prompt.append(loadCategoryExamples(category));
+    prompt.append("\n\n");
+
+    // Category-specific rules (if they exist)
+    String rules = loadCategoryRulesIfExists(category);
+    if (!rules.isEmpty()) {
+      prompt.append("CATEGORY-SPECIFIC RULES:\n\n");
+      prompt.append(rules);
+      prompt.append("\n\n");
+    }
+
+    // Response format
+    prompt.append(loadResource("response-format.txt"));
+
+    return prompt.toString();
   }
 
   /**
    * Builds an enhanced prompt with related categories (~6-8KB).
    *
-   * <p>TODO: Implement in Phase 3 - currently returns full prompt for backward compatibility
+   * <p>Includes everything from minimal plus related category examples, shared incorrect examples,
+   * and decorator rules if needed.
    *
    * @param category the primary query category
    * @param relatedCategories related categories to include
@@ -273,8 +311,98 @@ public class ContextBuilder {
    */
   public String buildEnhancedPrompt(QueryCategory category, Set<QueryCategory> relatedCategories)
       throws IOException {
-    // TODO Phase 3: Load primary + related category examples
-    // For now, delegate to full prompt to keep tests passing
-    return buildSystemPrompt();
+    StringBuilder prompt = new StringBuilder();
+
+    // Core system components
+    prompt.append(loadResource("system-intro.txt"));
+    prompt.append("\n\n");
+
+    prompt.append(loadResource("critical-understanding.txt"));
+    prompt.append("\n\n");
+
+    prompt.append(loadResource("important-guidelines.txt"));
+    prompt.append("\n\n");
+
+    prompt.append(loadResource("jfrpath-grammar.txt"));
+    prompt.append("\n\n");
+
+    // Dynamic: available event types
+    prompt.append("AVAILABLE EVENT TYPES:\n");
+    prompt.append(buildEventTypesList());
+    prompt.append("\n\n");
+
+    // Dynamic: session context
+    prompt.append("CURRENT SESSION:\n");
+    prompt.append(buildSessionContext());
+    prompt.append("\n\n");
+
+    // Primary category examples
+    prompt.append("EXAMPLES FOR PRIMARY QUERY TYPE:\n\n");
+    prompt.append(loadCategoryExamples(category));
+    prompt.append("\n\n");
+
+    // Related category examples
+    if (!relatedCategories.isEmpty()) {
+      prompt.append("RELATED QUERY TYPES:\n\n");
+      for (QueryCategory related : relatedCategories) {
+        prompt.append("--- ").append(related.name()).append(" ---\n");
+        prompt.append(loadCategoryExamples(related));
+        prompt.append("\n");
+      }
+      prompt.append("\n");
+    }
+
+    // Shared incorrect examples
+    prompt.append(loadResource("incorrect-examples.txt"));
+    prompt.append("\n\n");
+
+    // Category-specific rules
+    String rules = loadCategoryRulesIfExists(category);
+    if (!rules.isEmpty()) {
+      prompt.append("CATEGORY-SPECIFIC RULES:\n\n");
+      prompt.append(rules);
+      prompt.append("\n\n");
+    }
+
+    // Decorator syntax rules if category needs decorators
+    if (category.needsDecorator()) {
+      prompt.append(loadResource("rules/decorator-syntax.txt"));
+      prompt.append("\n\n");
+    }
+
+    // Field name rules (important for all categories)
+    prompt.append(loadResource("rules/field-names.txt"));
+    prompt.append("\n\n");
+
+    // Response format
+    prompt.append(loadResource("response-format.txt"));
+
+    return prompt.toString();
+  }
+
+  /**
+   * Loads examples for a specific category.
+   *
+   * @param category the query category
+   * @return category examples as string
+   * @throws IOException if resource cannot be loaded
+   */
+  private String loadCategoryExamples(QueryCategory category) throws IOException {
+    return loadResource(category.getExamplesPath());
+  }
+
+  /**
+   * Loads rules for a specific category if they exist.
+   *
+   * @param category the query category
+   * @return category rules, or empty string if no rules file exists
+   */
+  private String loadCategoryRulesIfExists(QueryCategory category) {
+    try {
+      return loadResource(category.getRulesPath());
+    } catch (IOException e) {
+      // No rules file for this category - that's okay
+      return "";
+    }
   }
 }
