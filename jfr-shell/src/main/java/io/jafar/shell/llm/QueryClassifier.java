@@ -87,11 +87,27 @@ public class QueryClassifier {
     // Try rule-based classification first
     Optional<ClassificationResult> ruleResult = classifyByRules(query);
     if (ruleResult.isPresent()) {
+      if (Boolean.getBoolean("jfr.shell.debug")) {
+        System.err.println("=== CLASSIFICATION (RULE-BASED) ===");
+        System.err.println("Query: " + query);
+        System.err.println("Category: " + ruleResult.get().category());
+        System.err.println("Confidence: " + ruleResult.get().confidence());
+        System.err.println("====================================");
+      }
       return ruleResult.get();
     }
 
     // Fall back to LLM for ambiguous queries
-    return classifyByLLM(query);
+    ClassificationResult llmResult = classifyByLLM(query);
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.err.println("=== CLASSIFICATION (LLM) ===");
+      System.err.println("Query: " + query);
+      System.err.println("Category: " + llmResult.category());
+      System.err.println("Confidence: " + llmResult.confidence());
+      System.err.println("Reasoning: " + llmResult.reasoning().orElse("none"));
+      System.err.println("=============================");
+    }
+    return llmResult;
   }
 
   /**

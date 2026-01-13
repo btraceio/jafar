@@ -333,6 +333,13 @@ public class QueryTranslator {
         // Build category-specific prompt
         String systemPrompt = promptStrategy.buildPrompt(classification.category(), level);
 
+        if (Boolean.getBoolean("jfr.shell.debug")) {
+          System.err.println("=== TRANSLATION ATTEMPT " + attempt + " ===");
+          System.err.println("Prompt level: " + level);
+          System.err.println("Prompt size: " + systemPrompt.length() + " chars (~" + (systemPrompt.length() / 4) + " tokens)");
+          System.err.println("====================================");
+        }
+
         // Build messages
         List<Message> messages = buildMessages(query);
 
@@ -346,18 +353,55 @@ public class QueryTranslator {
         // Get response
         LLMProvider.LLMResponse response = provider.complete(request);
 
+        if (Boolean.getBoolean("jfr.shell.debug")) {
+          System.err.println("=== LLM RESPONSE (attempt " + attempt + ") ===");
+          System.err.println("Response length: " + response.content().length() + " chars");
+          System.err.println("Response preview: " + response.content().substring(0, Math.min(200, response.content().length())));
+          System.err.println("====================================");
+        }
+
         // Parse response
         result = parseResponse(response.content());
 
+        if (Boolean.getBoolean("jfr.shell.debug")) {
+          System.err.println("=== PARSED RESULT (attempt " + attempt + ") ===");
+          System.err.println("Has query: " + result.hasQuery());
+          System.err.println("Is conversational: " + result.isConversational());
+          System.err.println("Confidence: " + result.confidence());
+          if (result.hasQuery()) {
+            System.err.println("Query: " + result.jfrPathQuery());
+          }
+          System.err.println("====================================");
+        }
+
         // Check if escalation is needed
         if (!promptStrategy.shouldEscalate(result, attempt, level)) {
+          if (Boolean.getBoolean("jfr.shell.debug")) {
+            System.err.println("=== NO ESCALATION NEEDED ===");
+            System.err.println("Returning result from attempt " + attempt);
+            System.err.println("============================");
+          }
           return result;
+        }
+
+        if (Boolean.getBoolean("jfr.shell.debug")) {
+          System.err.println("=== ESCALATING ===");
+          System.err.println("From level: " + level);
         }
 
         // Escalate to next level
         level = level.next();
         if (level == null) {
+          if (Boolean.getBoolean("jfr.shell.debug")) {
+            System.err.println("No more levels to escalate to");
+            System.err.println("==================");
+          }
           break; // No more levels to try
+        }
+
+        if (Boolean.getBoolean("jfr.shell.debug")) {
+          System.err.println("To level: " + level);
+          System.err.println("==================");
         }
 
       } catch (LLMException e) {

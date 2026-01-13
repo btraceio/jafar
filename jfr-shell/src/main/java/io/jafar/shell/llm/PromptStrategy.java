@@ -88,33 +88,50 @@ public class PromptStrategy {
    * @return appropriate starting level
    */
   public PromptLevel selectStartLevel(ClassificationResult classification) {
+    PromptLevel selected;
+    String reason;
+
     // COMPLEX_MULTIOP always starts with full (check first)
     if (classification.category() == QueryCategory.COMPLEX_MULTIOP) {
-      return PromptLevel.FULL;
+      selected = PromptLevel.FULL;
+      reason = "COMPLEX_MULTIOP category requires full context";
     }
-
     // Low confidence → start with full
-    if (classification.isLowConfidence()) {
-      return PromptLevel.FULL;
+    else if (classification.isLowConfidence()) {
+      selected = PromptLevel.FULL;
+      reason = "Low confidence (" + classification.confidence() + ") requires full context";
     }
-
     // High confidence + simple category → start with minimal
-    if (classification.isHighConfidence() && classification.category().isSimple()) {
-      return PromptLevel.MINIMAL;
+    else if (classification.isHighConfidence() && classification.category().isSimple()) {
+      selected = PromptLevel.MINIMAL;
+      reason = "High confidence (" + classification.confidence() + ") + simple category = minimal";
     }
-
     // High confidence + complex category → start with enhanced
-    if (classification.isHighConfidence()) {
-      return PromptLevel.ENHANCED;
+    else if (classification.isHighConfidence()) {
+      selected = PromptLevel.ENHANCED;
+      reason = "High confidence (" + classification.confidence() + ") + complex category = enhanced";
     }
-
     // Medium confidence → start with enhanced
-    if (classification.isMediumConfidence()) {
-      return PromptLevel.ENHANCED;
+    else if (classification.isMediumConfidence()) {
+      selected = PromptLevel.ENHANCED;
+      reason = "Medium confidence (" + classification.confidence() + ") = enhanced";
+    }
+    // Default to enhanced for safety
+    else {
+      selected = PromptLevel.ENHANCED;
+      reason = "Default to enhanced for safety";
     }
 
-    // Default to enhanced for safety
-    return PromptLevel.ENHANCED;
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.err.println("=== PROMPT LEVEL SELECTION ===");
+      System.err.println("Category: " + classification.category());
+      System.err.println("Confidence: " + classification.confidence());
+      System.err.println("Selected level: " + selected);
+      System.err.println("Reason: " + reason);
+      System.err.println("==============================");
+    }
+
+    return selected;
   }
 
   /**
