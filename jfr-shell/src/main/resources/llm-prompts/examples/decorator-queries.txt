@@ -1,0 +1,32 @@
+Q: "which methods are causing virtual thread pinning"
+A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)", "explanation": "Uses decorateByTime to correlate execution samples with pinning events, then groups by method and sums decorator duration field", "confidence": 0.90}
+
+Q: "which code allocates memory during garbage collection"
+A: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=allocationSize)", "explanation": "Decorates allocation events with GC phase names using temporal overlap, groups by decorator field", "confidence": 0.90}
+
+Q: "what was the application doing during long safepoint pauses"
+A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin[duration>50000000], fields=operation,duration) | groupBy($decorator.operation, agg=avg, value=$decorator.duration)", "explanation": "Correlates execution samples with long safepoints, groups by safepoint operation from decorator", "confidence": 0.90}
+
+Q: "which threads are blocked on I/O operations the most"
+A: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Decorates thread park events with file read context, groups by thread to find most blocked", "confidence": 0.90}
+
+Q: "correlate monitor inflation events with contention"
+A: {"query": "events/jdk.JavaMonitorEnter | decorateByTime(jdk.JavaMonitorInflate, fields=monitorClass) | groupBy($decorator.monitorClass, agg=count)", "explanation": "Uses decorateByTime to join monitor enter events with inflation events temporally", "confidence": 0.90}
+
+Q: "show execution samples decorated with requestId from RequestStart"
+A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)", "explanation": "Uses decorateByKey to correlate samples with request tracking events by matching thread IDs", "confidence": 0.90}
+
+Q: "allocations extended with traceId from datadog.Timeline"
+A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)", "explanation": "Decorates allocations with distributed trace IDs using thread-based correlation for cross-service tracing", "confidence": 0.90}
+
+Q: "top endpoints by CPU usage with request context"
+A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)", "explanation": "Correlates execution samples with request metadata by thread ID, groups by endpoint from decorator", "confidence": 0.90}
+
+Q: "show top 5 hottest methods decorated with duration from VirtualThreadPinned"
+A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)", "explanation": "Natural language 'decorated' maps to decorateByTime for temporal correlation with pinning events", "confidence": 0.90}
+
+Q: "execution samples embellished with GC phase name"
+A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)", "explanation": "Natural language 'embellished' is synonym for decoration, uses temporal correlation with GC phases", "confidence": 0.90}
+
+Q: "allocations extended with transaction ID from TransactionEvent"
+A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)", "explanation": "Natural language 'extended' maps to decorateByKey for correlation ID-based joining", "confidence": 0.90}

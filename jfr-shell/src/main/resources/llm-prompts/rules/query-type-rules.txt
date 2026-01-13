@@ -1,0 +1,81 @@
+CRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:
+
+1. Array Access: Use /index NOT [index]
+   ✓ CORRECT: stackTrace/frames/0/method/type/name
+   ✗ WRONG: stackTrace/frames[0]/method/type/name
+
+2. Event Types: ONLY use event types from AVAILABLE EVENT TYPES list
+   ✓ CORRECT: events/jdk.ExecutionSample (if in list)
+   ✗ WRONG: events/jdk.MethodSample (does not exist)
+
+3. groupBy Patterns:
+   ✓ CORRECT: events/Type | groupBy(field)
+   ✓ CORRECT: events/Type/field | groupBy(value)
+   ✗ WRONG: events/Type/field | groupBy()
+
+4. DO NOT use select() - it is not supported
+   ✗ WRONG: | select(name, count)
+   ✓ CORRECT: Use projection (/field) or groupBy instead
+
+5. DO NOT use stats(count) - count is not a field
+   ✗ WRONG: | stats(count)
+   ✓ CORRECT: | count() or | stats(duration)
+
+6. Pipeline operators: count(), sum(field), stats(field), groupBy(...), top(n, by=field)
+   - No intermediate stats() before groupBy or top
+   ✗ WRONG: | groupBy(x) | stats(count) | select(y) | top(5)
+   ✓ CORRECT: | groupBy(x) | top(5, by=count)
+
+7. Duration fields are in nanoseconds (1ms = 1,000,000 ns)
+8. Bytes are exact (1MB = 1048576 bytes)
+9. Field paths use / separator (e.g., thread/name, NOT thread.name)
+10. If ambiguous, set confidence < 0.5 and add warning
+
+QUERY TYPE RULES:
+
+1. YES/NO QUESTIONS (is/does/are/did):
+   - Use count() to get numeric answer: >0 means yes, 0 means no
+   - Examples: "is X present?", "does this have Y?", "are there any Z?"
+   ✓ CORRECT: events/jdk.ExecutionSample | count()
+   ✗ WRONG: Conversational response without query
+
+2. EXISTENCE CHECKS:
+   - Questions about event presence should generate count() queries
+   - "is X in recording?" → events/X | count()
+   - "do we have Y?" → events/Y | count()
+   ✓ CORRECT: events/jdk.GarbageCollection | count()
+
+3. METADATA QUERIES:
+   - Questions about event type structure use metadata/ root
+   - "what fields does X have?" → metadata/X
+   - "describe Y event" → metadata/Y
+   - "show structure of Z" → metadata/Z
+   ✓ CORRECT: metadata/jdk.ExecutionSample
+   ✗ WRONG: events/jdk.ExecutionSample (for structure questions)
+
+4. COMPARISON QUESTIONS (how many):
+   - "how many X" typically means groupBy to show unique items
+   - "how many different Y" → groupBy to count unique values
+   ✓ CORRECT: events/Type | groupBy(field)
+   ✗ WRONG: events/Type | count() (unless asking for total count)
+
+DECORATOR SELECTION RULES:
+
+1. Use decorateByTime() when:
+   - Query mentions temporal context: "during", "while", "when", "causing"
+   - Correlating with JDK events: GCPhase, SafepointBegin, VirtualThreadPinned
+   - No explicit correlation IDs mentioned
+
+2. Use decorateByKey() when:
+   - Query mentions correlation IDs: requestId, spanId, traceId, transactionId, sessionId
+   - Correlating with custom tracking events: RequestStart, Timeline, TransactionEvent
+   - Need cross-thread correlation (async processing)
+
+3. Common correlation patterns:
+   - ExecutionSample: key=sampledThread/javaThreadId
+   - ObjectAllocationSample/FileRead/SocketRead: key=eventThread/javaThreadId
+   - Custom events: decoratorKey=thread/javaThreadId or threadId
+
+4. Natural language synonyms:
+   - "decorated" = "embellished" = "extended" = "with context from"
+   - All map to decorator operators (ByTime or ByKey)

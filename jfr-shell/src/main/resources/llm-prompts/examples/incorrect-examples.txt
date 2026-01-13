@@ -1,0 +1,101 @@
+INCORRECT EXAMPLES (DO NOT DO THIS):
+
+Q: "top allocating classes"
+WRONG: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaClass) | top(10, by=sum)", ...}
+WHY WRONG: Using eventThread/javaClass instead of objectClass/name - wrong field path for classes
+CORRECT: {"query": "events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(10, by=sum)", ...}
+
+Q: "which monitors have the most contention"
+WRONG: {"query": "events/jdk.LockContended | groupBy(lockOwner/javaName) | top(10, by=count)", ...}
+WHY WRONG: Using jdk.LockContended instead of jdk.JavaMonitorEnter - wrong event type
+CORRECT: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)", ...}
+
+Q: "top methods"
+WRONG: {"query": "events/jdk.MethodSample | groupBy(stackTrace/frames[0]/method/name) | select(name) | top(5)", ...}
+WHY WRONG: (1) jdk.MethodSample doesn't exist, use jdk.ExecutionSample (2) frames[0] should be frames/0 (3) select() not supported
+CORRECT: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(5, by=count)", ...}
+
+Q: "show network read events"
+WRONG: {"query": "events/jdk.FileRead", ...}
+WHY WRONG: Using jdk.FileRead for network events - should use jdk.SocketRead for network I/O
+CORRECT: {"query": "events/jdk.SocketRead", ...}
+
+Q: "file writes over 5MB"
+WRONG: {"query": "events/jdk.FileWrite[bytes>5242880]", ...}
+WHY WRONG: FileWrite uses bytesWritten field, not bytes (FileRead uses bytes, FileWrite uses bytesWritten)
+CORRECT: {"query": "events/jdk.FileWrite[bytesWritten>5242880]", ...}
+
+Q: "count exceptions by type"
+WRONG: {"query": "events/jdk.ExceptionStatistics | groupBy(type)", ...}
+WHY WRONG: Using jdk.ExceptionStatistics instead of jdk.JavaExceptionThrow
+CORRECT: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", ...}
+
+Q: "slow compilations over 1 second"
+WRONG: {"query": "events/jdk.Compilation | filter(duration>1000000000)", ...}
+WHY WRONG: Using filter() operator which doesn't exist - use [] for filtering
+CORRECT: {"query": "events/jdk.Compilation[duration>1000000000]", ...}
+
+Q: "which classes took longest to load"
+WRONG: {"query": "events/jdk.ClassLoad | groupBy(className) | stats(duration)", ...}
+WHY WRONG: Using stats instead of max aggregation + top, and className instead of loadedClass/name
+CORRECT: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", ...}
+
+Q: "which threads allocated the most memory"
+WRONG: {"query": "events/jdk.ObjectAllocationSample | groupBy(thread/javaName, agg=sum, value=weight) | top(10, by=sum)", ...}
+WHY WRONG: Using thread/javaName instead of eventThread/javaName, and weight instead of bytes for memory
+CORRECT: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)", ...}
+
+Q: "top threads by execution samples"
+WRONG: {"query": "events/jdk.ExecutionSample | groupBy(eventThread/javaName) | top(10, by=count)", ...}
+WHY WRONG: Using eventThread/javaName instead of sampledThread/javaName for execution samples
+CORRECT: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
+
+Q: "count exceptions by type"
+WRONG: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name) | count()", ...}
+WHY WRONG: User said "count by type" meaning group by type, not add count() operator
+CORRECT: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", ...}
+
+Q: "GC events in young generation longer than 50ms"
+WRONG: {"query": "events/jdk.G1YoungGarbageCollection[duration>50000000]", ...}
+WHY WRONG: Don't use specific event type, use filter with regex on general GarbageCollection event
+CORRECT: {"query": "events/jdk.GarbageCollection[name=~\".*Young.*\"][duration>50000000]", ...}
+
+Q: "network traffic by remote address"
+WRONG: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead) | top(10, by=sum)", ...}
+WHY WRONG: User only asked for grouping, don't add top() unless specifically requested
+CORRECT: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", ...}
+
+Q: "which methods are causing virtual thread pinning"
+WRONG: {"query": "events/jdk.VirtualThreadPinned | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=duration) | top(10, by=sum)", ...}
+WHY WRONG: VirtualThreadPinned events don't have stack traces - need to correlate with ExecutionSample using decorateByTime
+CORRECT: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)", ...}
+
+Q: "which code allocates during GC"
+WRONG: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy(decorator.name, agg=sum, value=bytes)", ...}
+WHY WRONG: Missing $ prefix on decorator field - must use $decorator.name not decorator.name
+CORRECT: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name) | groupBy($decorator.name, agg=sum, value=bytes)", ...}
+
+Q: "correlate safepoints with compilation"
+WRONG: {"query": "events/jdk.SafepointBegin | decorate(jdk.Compilation, fields=method) | groupBy($decorator.method)", ...}
+WHY WRONG: Using decorate() instead of decorateByTime() - wrong operator name
+CORRECT: {"query": "events/jdk.SafepointBegin | decorateByTime(jdk.Compilation, fields=method) | groupBy($decorator.method, agg=sum, value=duration)", ...}
+
+Q: "threads blocked on I/O"
+WRONG: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead) | groupBy(eventThread/javaName)", ...}
+WHY WRONG: Missing fields parameter in decorateByTime - must specify which fields to decorate with
+CORRECT: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", ...}
+
+Q: "execution samples decorated with requestId from RequestContext"
+WRONG: {"query": "events/jdk.ExecutionSample | decorateByTime(RequestContext, fields=requestId)", ...}
+WHY WRONG: requestId is a correlation ID field - should use decorateByKey to match by ID, not temporal overlap
+CORRECT: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestContext, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)", ...}
+
+Q: "allocations during GC phases"
+WRONG: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(jdk.GCPhase, key=startTime, decoratorKey=startTime, fields=name)", ...}
+WHY WRONG: "during" indicates temporal correlation - should use decorateByTime for time overlap, not decorateByKey
+CORRECT: {"query": "events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)", ...}
+
+Q: "show samples decorated with spanId from datadog.Timeline"
+WRONG: {"query": "events/jdk.ExecutionSample | decorateByTime(datadog.Timeline, fields=spanId)", ...}
+WHY WRONG: spanId is a distributed tracing correlation ID - should use decorateByKey to match by thread ID
+CORRECT: {"query": "events/jdk.ExecutionSample | decorateByKey(datadog.Timeline, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=spanId)", ...}

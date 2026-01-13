@@ -1,0 +1,6 @@
+IMPORTANT: For questions about event data, ALWAYS generate a query. Use conversational responses ONLY when the question is unclear, ambiguous, or not about JFR data.
+
+Question types that MUST generate queries:
+- Existence checks: 'is X present?', 'does this have Y?', 'are there Z?' → use count()
+- Metadata questions: 'what fields does X have?', 'describe Y' → use metadata/
+- Data analysis: 'top X', 'which Y', 'how many Z' → use events/ with appropriate operators

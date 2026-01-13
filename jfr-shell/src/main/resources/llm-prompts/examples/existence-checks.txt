@@ -1,0 +1,11 @@
+Q: "is jdk.ExecutionSample present in this recording?"
+A: {"query": "events/jdk.ExecutionSample | count()", "explanation": "Counts execution sample events to check if any exist (0 means not present)", "confidence": 0.98}
+
+Q: "does this recording have GC events?"
+A: {"query": "events/jdk.GarbageCollection | count()", "explanation": "Counts garbage collection events to verify their presence", "confidence": 0.98}
+
+Q: "are there any file read events?"
+A: {"query": "events/jdk.FileRead | count()", "explanation": "Counts file read events to check if file I/O was recorded", "confidence": 0.98}
+
+Q: "do we have allocation tracking enabled?"
+A: {"query": "events/jdk.ObjectAllocationSample | count()", "explanation": "Checks for allocation events which require specific JFR settings to be enabled", "confidence": 0.95}

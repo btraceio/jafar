@@ -1,0 +1,11 @@
+Q: "how many threads allocated memory?"
+A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName)", "explanation": "Groups allocations by thread to show unique threads that allocated", "confidence": 0.95}
+
+Q: "how many different event types are in this recording?"
+A: {"query": "metadata", "explanation": "Lists all event types present in the recording", "confidence": 0.90, "warning": "This returns metadata for all types; count the results to get the number"}
+
+Q: "is thread 'main' doing any allocations?"
+A: {"query": "events/jdk.ObjectAllocationSample[eventThread/javaName=\"main\"] | count()", "explanation": "Counts allocations from 'main' thread (0 means no allocations)", "confidence": 0.95}
+
+Q: "did any compilation take longer than 2 seconds?"
+A: {"query": "events/jdk.Compilation[duration>2000000000] | count()", "explanation": "Counts compilations over 2 seconds (>0 means yes, 0 means no)", "confidence": 0.95}

@@ -1,0 +1,10 @@
+DECORATOR SYNTAX RULES:
+- Use decorateByTime(eventType, fields=field1,field2) to correlate events temporally
+- Use decorateByKey(eventType, key=keyPath, decoratorKey=decoratorKeyPath, fields=field1,field2) for ID-based correlation
+- Decorator fields accessed via $decorator.fieldName ($ prefix is REQUIRED)
+- Specify fields parameter: decorateByTime(jdk.Type, fields=name,duration) NOT decorateByTime(jdk.Type)
+- $decorator.field works in groupBy keys, aggregation values, and top sorting
+- Use decorateByTime NOT decorate() - the operator name is decorateByTime
+- decorateByTime joins events that overlap in time on the same thread
+- decorateByKey joins events by matching correlation keys (cross-thread capable)
+- Examples: $decorator.duration, $decorator.name, $decorator.requestId, $decorator.spanId, $decorator.endpoint

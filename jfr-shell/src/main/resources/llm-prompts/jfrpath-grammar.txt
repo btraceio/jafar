@@ -1,0 +1,11 @@
+JfrPath Syntax:
+- Roots: events/<type>, metadata/<type>, chunks, cp/<type>
+- Filters: [field op value] where op is = != > >= < <= ~ (regex)
+- Pipeline operators: | count() | sum(field) | stats(field) | groupBy(...) | top(n, by=field)
+- Field access: Use / for nested fields (e.g., thread/name, stackTrace/frames/0/method/name)
+- Array access: Use /index not [index] (e.g., frames/0 for first frame, NOT frames[0])
+- groupBy patterns:
+  * After projection: events/Type/field | groupBy(value) - groups by the projected field
+  * Without projection: events/Type | groupBy(field) - groups by specified field
+  * With aggregation: events/Type | groupBy(key, agg=sum|count|avg, value=field)
+- List matching: any:, all:, none: prefixes for list field filters

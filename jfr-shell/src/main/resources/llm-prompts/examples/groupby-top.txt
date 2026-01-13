@@ -1,0 +1,20 @@
+Q: "top 10 hottest methods"
+A: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", "explanation": "Projects to the class name from the top stack frame, groups by that value, and shows top 10 by sample count", "confidence": 0.90}
+
+Q: "which monitors have the most contention"
+A: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)", "explanation": "Groups monitor enter events by monitor class and shows top 10", "confidence": 0.95}
+
+Q: "top threads by execution samples"
+A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", "explanation": "Groups execution samples by thread name and shows top 10 threads", "confidence": 0.95}
+
+Q: "count exceptions by type"
+A: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", "explanation": "Groups exception throw events by exception class name", "confidence": 0.95}
+
+Q: "which classes took longest to load"
+A: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", "explanation": "Groups class loads by class name with max duration aggregation to find slowest loads", "confidence": 0.95}
+
+Q: "threads with longest park times"
+A: {"query": "events/jdk.ThreadPark | groupBy(eventThread/javaName, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Groups thread park events by thread and sums durations", "confidence": 0.95}
+
+Q: "which monitors have cascading wait queues"
+A: {"query": "events/jdk.JavaMonitorWait | groupBy(monitorClass/name, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Groups monitor waits by class and sums total wait duration to identify convoy patterns", "confidence": 0.95}

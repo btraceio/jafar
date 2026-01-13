@@ -1,0 +1,11 @@
+Q: "what fields does jdk.ExecutionSample have?"
+A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for ExecutionSample event type including all available fields", "confidence": 0.98}
+
+Q: "show me the structure of GarbageCollection events"
+A: {"query": "metadata/jdk.GarbageCollection", "explanation": "Returns metadata about GarbageCollection event type structure", "confidence": 0.98}
+
+Q: "what event types are named like ExecutionSample?"
+A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for jdk.ExecutionSample event type - the exact event matching the query", "confidence": 0.95}
+
+Q: "describe the ThreadPark event"
+A: {"query": "metadata/jdk.ThreadPark", "explanation": "Returns metadata describing the ThreadPark event type and its fields", "confidence": 0.98}

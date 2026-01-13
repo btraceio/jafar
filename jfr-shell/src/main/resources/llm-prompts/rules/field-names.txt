@@ -1,0 +1,12 @@
+KEY FIELD NAME RULES:
+- Network I/O: jdk.SocketRead uses 'bytesRead', jdk.SocketWrite uses 'bytesWritten'
+- File I/O: jdk.FileRead uses 'bytes', jdk.FileWrite uses 'bytesWritten'
+- Allocations: Use 'bytes' for memory size, 'weight' for allocation weight/pressure
+- Thread fields: ExecutionSample uses 'sampledThread', most other events use 'eventThread'
+- Class loading: jdk.ClassLoad uses 'loadedClass/name' not 'className'
+- Exceptions: jdk.JavaExceptionThrow uses 'thrownClass/name' not 'type'
+- Thread parking: Use jdk.ThreadPark not jdk.JavaThreadPark
+- Filtering: Use [condition] syntax, never use filter() operator
+- For "longest" or "slowest": Use agg=max with top(N, by=max), not stats()
+- Don't add operators not explicitly requested (e.g., don't add count() or top() unless asked)
+- For filtering by attributes like "young generation", use regex filters not specific event types
