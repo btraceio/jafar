@@ -375,7 +375,7 @@ public class QueryTranslator {
         }
 
         // Check if escalation is needed
-        if (!promptStrategy.shouldEscalate(result, attempt, level)) {
+        if (!promptStrategy.shouldEscalate(result, attempt, level, classification.category())) {
           if (Boolean.getBoolean("jfr.shell.debug")) {
             System.err.println("=== NO ESCALATION NEEDED ===");
             System.err.println("Returning result from attempt " + attempt);

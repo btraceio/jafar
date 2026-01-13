@@ -140,42 +140,89 @@ public class PromptStrategy {
    * @param result the translation result
    * @param attempt the current attempt number (1-based)
    * @param currentLevel the current prompt level
+   * @param expectedCategory the category from classification
    * @return true if escalation is needed
    */
   public boolean shouldEscalate(
-      TranslationResult result, int attempt, PromptLevel currentLevel) {
+      TranslationResult result,
+      int attempt,
+      PromptLevel currentLevel,
+      QueryCategory expectedCategory) {
+    boolean debug = Boolean.getBoolean("jfr.shell.debug");
+
     // Don't escalate if already at full level
     if (currentLevel.isFinal()) {
+      if (debug) {
+        System.err.println("No escalation: already at FULL level");
+      }
       return false;
     }
 
     // Don't escalate after max attempts (3)
     if (attempt >= 3) {
+      if (debug) {
+        System.err.println("No escalation: max attempts reached");
+      }
       return false;
     }
 
-    // Don't escalate for conversational or clarification responses
-    if (result.isConversational() || result.needsClarification()) {
+    // Don't escalate for clarification requests
+    if (result.needsClarification()) {
+      if (debug) {
+        System.err.println("No escalation: clarification requested");
+      }
+      return false;
+    }
+
+    // Escalate if we got conversational response but expected a query
+    // (Only allow conversational if category was CONVERSATIONAL)
+    if (result.isConversational() && expectedCategory != QueryCategory.CONVERSATIONAL) {
+      if (debug) {
+        System.err.println(
+            "ESCALATING: Got conversational response but expected "
+                + expectedCategory
+                + " query");
+      }
+      return true;
+    }
+
+    // Don't escalate for legitimate conversational responses
+    if (result.isConversational() && expectedCategory == QueryCategory.CONVERSATIONAL) {
+      if (debug) {
+        System.err.println("No escalation: legitimate conversational response");
+      }
       return false;
     }
 
     // Escalate if low confidence
     if (result.confidence() < 0.6) {
+      if (debug) {
+        System.err.println("ESCALATING: Low confidence (" + result.confidence() + ")");
+      }
       return true;
     }
 
-    // Escalate if no query generated
+    // Escalate if no query generated (and not conversational)
     if (!result.hasQuery()) {
+      if (debug) {
+        System.err.println("ESCALATING: No query generated");
+      }
       return true;
     }
 
     // Escalate if query has warning about ambiguity
     if (result.warning().isPresent()
         && result.warning().get().toLowerCase().contains("ambiguous")) {
+      if (debug) {
+        System.err.println("ESCALATING: Query has ambiguity warning");
+      }
       return true;
     }
 
     // No escalation needed
+    if (debug) {
+      System.err.println("No escalation: result meets quality thresholds");
+    }
     return false;
   }
 
