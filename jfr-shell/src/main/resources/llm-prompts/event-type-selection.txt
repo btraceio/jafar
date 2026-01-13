@@ -56,8 +56,27 @@ Allocation profiling:
 - jdk.ObjectAllocationOutsideTLAB - Large allocations
 - datadog.ObjectSample - Datadog allocation profiler
 
-Old objects:
-- jdk.OldObjectSample - Long-lived objects (heap profiling)
+Old objects / Heap profiling:
+- jdk.OldObjectSample - Long-lived objects (standard JDK heap profiling)
+- datadog.HeapLiveObject - Datadog heap profiler (alternative/additional)
+
+IMPORTANT: Different profilers may emit different heap events:
+- OpenJDK/Oracle JDK recordings: jdk.OldObjectSample
+- Datadog profiled applications: datadog.HeapLiveObject
+- Both may be present in the same recording!
+
+Query patterns for heap analysis:
+- Single profiler: events/jdk.OldObjectSample
+- Multiple profilers: events/(jdk.OldObjectSample|datadog.HeapLiveObject)
+- Detect available: metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']
+
+Examples:
+Q: "which objects are consuming the most heap memory?"
+A: {"query": "events/jdk.OldObjectSample | groupBy(type/name, agg=sum, value=totalSize) | top(10, by=sum)", ...}
+
+Q: "largest heap objects"
+BEST: First check which heap profiling events exist, then query them
+A: {"query": "metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']", "explanation": "Check which heap profiling event types are available", ...}
 
 === I/O & NETWORK ===
 
@@ -114,24 +133,40 @@ To find pinning methods, correlate with ExecutionSample:
 === MULTI-PROFILER RECORDINGS ===
 
 Some recordings contain events from multiple profilers:
+
+CPU Profiling:
 - jdk.ExecutionSample (JDK built-in)
 - datadog.ExecutionSample (Datadog profiler)
 - Custom profiler events
+
+Heap Profiling:
+- jdk.OldObjectSample (JDK built-in)
+- datadog.HeapLiveObject (Datadog profiler)
 
 For CPU queries, ALWAYS:
 1. Check what profiling events exist: metadata/[name ~ '.*ExecutionSample']
 2. Use multi-type query if multiple found: events/(jdk.ExecutionSample|datadog.ExecutionSample)
 3. Or query each separately and explain differences
 
-datadog.ExecutionSample typically includes:
-- Additional fields: spanId, localRootSpanId (distributed tracing)
-- Weight field for sampling bias correction
-- Mode field (cpu, wall, etc.)
+For heap/memory queries, ALWAYS:
+1. Check what heap profiling events exist: metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']
+2. Use multi-type query if multiple found: events/(jdk.OldObjectSample|datadog.HeapLiveObject)
+3. Or query each separately and explain differences
+
+Datadog profiler events typically include additional fields:
+- ExecutionSample: spanId, localRootSpanId (distributed tracing), weight, mode
+- HeapLiveObject: May have different field names/structure than OldObjectSample
 
 === WHEN IN DOUBT ===
 
 If the user asks about CPU/profiling/hot-spots without specifying:
 1. Query: metadata/[name ~ '.*ExecutionSample']
 2. Check result to see which profilers are active
+3. Generate query using available event type(s)
+4. Explain in "explanation" field which profiler(s) are being used
+
+If the user asks about heap/memory/objects without specifying:
+1. Query: metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']
+2. Check result to see which heap profilers are active
 3. Generate query using available event type(s)
 4. Explain in "explanation" field which profiler(s) are being used
