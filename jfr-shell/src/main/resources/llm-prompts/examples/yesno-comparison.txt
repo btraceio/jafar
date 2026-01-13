@@ -1,3 +1,7 @@
+# DEPRECATED: This file is deprecated and kept for backward compatibility only.
+# Use category-specific files in categories/ directory instead.
+# See: categories/groupby-simple/, categories/metadata/, categories/existence/
+
 Q: "how many threads allocated memory?"
 A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName)", "explanation": "Groups allocations by thread to show unique threads that allocated", "confidence": 0.95}
 

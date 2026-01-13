@@ -1,0 +1,11 @@
+Q: "count exceptions by type"
+A: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", "explanation": "Groups exception throw events by exception class name", "confidence": 0.95}
+
+Q: "how many different threads executed code"
+A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)", "explanation": "Groups execution samples by thread name to show unique threads", "confidence": 0.95}
+
+Q: "list unique monitor classes"
+A: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name)", "explanation": "Groups monitor events by class to show distinct monitors used", "confidence": 0.95}
+
+Q: "how many threads allocated memory?"
+A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName)", "explanation": "Groups allocations by thread to show unique threads that allocated", "confidence": 0.95}

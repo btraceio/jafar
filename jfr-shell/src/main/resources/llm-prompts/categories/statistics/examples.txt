@@ -1,0 +1,8 @@
+Q: "average GC pause time"
+A: {"query": "events/jdk.GarbageCollection | stats(duration)", "explanation": "Calculates statistics for GC pause durations including average", "confidence": 0.95}
+
+Q: "statistics on object allocation sizes"
+A: {"query": "events/jdk.ObjectAllocationSample | stats(weight)", "explanation": "Computes statistics (min, max, avg, count) on allocation weight field", "confidence": 0.95}
+
+Q: "min and max compilation times"
+A: {"query": "events/jdk.Compilation | stats(duration)", "explanation": "Computes min, max, and other statistics for compilation durations", "confidence": 0.95}

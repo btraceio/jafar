@@ -1,0 +1,27 @@
+TOPN_RANKING RULES:
+
+Use top() operator to get top N results ranked by a criterion.
+
+SYNTAX:
+  ... | groupBy(...) | top(N, by=<aggregation>)
+
+KEY POINTS:
+1. Always requires groupBy before top()
+2. by= parameter specifies ranking criterion: count, sum, max, min, avg
+3. N is the number of results (typically 5-20)
+4. Default sorting is descending (highest first)
+
+COMMON PATTERNS:
+- "top N <items>" → groupBy + top(N, by=count)
+- "hottest/most/slowest" → top() with appropriate aggregation
+- "which X have the most Y" → groupBy(X) with agg on Y + top()
+
+AGGREGATION TYPES:
+- by=count: Most frequent items
+- by=sum: Largest total values
+- by=max: Maximum values
+- by=min: Minimum values (rare)
+- by=avg: Average values
+
+KEYWORDS THAT INDICATE TOPN:
+- top, hottest, most, slowest, longest, largest, biggest, highest, worst

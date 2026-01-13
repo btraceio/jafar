@@ -1,7 +1,3 @@
-# DEPRECATED: This file is deprecated and kept for backward compatibility only.
-# Use category-specific files in categories/ directory instead.
-# See: categories/existence/
-
 Q: "is jdk.ExecutionSample present in this recording?"
 A: {"query": "events/jdk.ExecutionSample | count()", "explanation": "Counts execution sample events to check if any exist (0 means not present)", "confidence": 0.98}
 
@@ -13,3 +9,9 @@ A: {"query": "events/jdk.FileRead | count()", "explanation": "Counts file read e
 
 Q: "do we have allocation tracking enabled?"
 A: {"query": "events/jdk.ObjectAllocationSample | count()", "explanation": "Checks for allocation events which require specific JFR settings to be enabled", "confidence": 0.95}
+
+Q: "is thread 'main' doing any allocations?"
+A: {"query": "events/jdk.ObjectAllocationSample[eventThread/javaName=\"main\"] | count()", "explanation": "Counts allocations from 'main' thread (0 means no allocations)", "confidence": 0.95}
+
+Q: "did any compilation take longer than 2 seconds?"
+A: {"query": "events/jdk.Compilation[duration>2000000000] | count()", "explanation": "Counts compilations over 2 seconds (>0 means yes, 0 means no)", "confidence": 0.95}

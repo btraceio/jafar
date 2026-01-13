@@ -1,7 +1,3 @@
-# DEPRECATED: This file is deprecated and kept for backward compatibility only.
-# Use category-specific files in categories/ directory instead.
-# See: categories/decorator-temporal/, categories/decorator-correlation/
-
 Q: "which methods are causing virtual thread pinning"
 A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(10, by=sum)", "explanation": "Uses decorateByTime to correlate execution samples with pinning events, then groups by method and sums decorator duration field", "confidence": 0.90}
 
@@ -17,20 +13,8 @@ A: {"query": "events/jdk.ThreadPark | decorateByTime(jdk.FileRead, fields=path) 
 Q: "correlate monitor inflation events with contention"
 A: {"query": "events/jdk.JavaMonitorEnter | decorateByTime(jdk.JavaMonitorInflate, fields=monitorClass) | groupBy($decorator.monitorClass, agg=count)", "explanation": "Uses decorateByTime to join monitor enter events with inflation events temporally", "confidence": 0.90}
 
-Q: "show execution samples decorated with requestId from RequestStart"
-A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)", "explanation": "Uses decorateByKey to correlate samples with request tracking events by matching thread IDs", "confidence": 0.90}
-
-Q: "allocations extended with traceId from datadog.Timeline"
-A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(datadog.Timeline, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=traceId,spanId)", "explanation": "Decorates allocations with distributed trace IDs using thread-based correlation for cross-service tracing", "confidence": 0.90}
-
-Q: "top endpoints by CPU usage with request context"
-A: {"query": "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=endpoint) | groupBy($decorator.endpoint, agg=count) | top(10, by=count)", "explanation": "Correlates execution samples with request metadata by thread ID, groups by endpoint from decorator", "confidence": 0.90}
-
 Q: "show top 5 hottest methods decorated with duration from VirtualThreadPinned"
 A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.VirtualThreadPinned, fields=duration) | groupBy(stackTrace/frames/0/method/type/name, agg=sum, value=$decorator.duration) | top(5, by=sum)", "explanation": "Natural language 'decorated' maps to decorateByTime for temporal correlation with pinning events", "confidence": 0.90}
 
 Q: "execution samples embellished with GC phase name"
 A: {"query": "events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)", "explanation": "Natural language 'embellished' is synonym for decoration, uses temporal correlation with GC phases", "confidence": 0.90}
-
-Q: "allocations extended with transaction ID from TransactionEvent"
-A: {"query": "events/jdk.ObjectAllocationSample | decorateByKey(TransactionEvent, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=transactionId)", "explanation": "Natural language 'extended' maps to decorateByKey for correlation ID-based joining", "confidence": 0.90}

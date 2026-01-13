@@ -1,3 +1,7 @@
+# DEPRECATED: This file is deprecated and kept for backward compatibility only.
+# Use category-specific files in categories/ directory instead.
+# See: categories/topn/, categories/filter/, categories/count/, categories/statistics/
+
 Q: "which threads allocated the most memory?"
 A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)", "explanation": "Groups allocation events by thread and sums the bytes allocated, then shows the top 10 threads", "confidence": 0.95}
 

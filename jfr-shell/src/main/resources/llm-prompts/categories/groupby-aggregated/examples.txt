@@ -1,0 +1,8 @@
+Q: "network traffic by remote address"
+A: {"query": "events/jdk.SocketRead | groupBy(address, agg=sum, value=bytesRead)", "explanation": "Groups socket reads by remote address and sums bytes read", "confidence": 0.95}
+
+Q: "total allocations per thread"
+A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes)", "explanation": "Groups allocations by thread name and sums total bytes allocated", "confidence": 0.95}
+
+Q: "average compilation time per compiler"
+A: {"query": "events/jdk.Compilation | groupBy(compiler, agg=avg, value=duration)", "explanation": "Groups compilations by compiler type and computes average duration", "confidence": 0.95}

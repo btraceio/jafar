@@ -1,7 +1,3 @@
-# DEPRECATED: This file is deprecated and kept for backward compatibility only.
-# Use category-specific files in categories/ directory instead.
-# See: categories/metadata/
-
 Q: "what fields does jdk.ExecutionSample have?"
 A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for ExecutionSample event type including all available fields", "confidence": 0.98}
 
@@ -13,3 +9,6 @@ A: {"query": "metadata/jdk.ExecutionSample", "explanation": "Shows metadata for 
 
 Q: "describe the ThreadPark event"
 A: {"query": "metadata/jdk.ThreadPark", "explanation": "Returns metadata describing the ThreadPark event type and its fields", "confidence": 0.98}
+
+Q: "how many different event types are in this recording?"
+A: {"query": "metadata", "explanation": "Lists all event types present in the recording", "confidence": 0.90, "warning": "This returns metadata for all types; count the results to get the number"}

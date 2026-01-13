@@ -1,0 +1,23 @@
+DECORATOR_CORRELATION RULES:
+
+Use decorateByKey() when correlating events by matching correlation IDs (requestId, traceId, spanId, transactionId, threadId).
+
+SYNTAX:
+  events/<type> | decorateByKey(<decorator-type>, key=<key-path>, decoratorKey=<decorator-key-path>, fields=<field1>,<field2>,...)
+
+KEY POINTS:
+1. Key-based matching: Events are joined where key == decoratorKey
+2. Common keys: threadId (eventThread/javaThreadId), requestId, traceId, spanId
+3. Decorator fields accessed with $decorator. prefix
+4. Useful for distributed tracing and request correlation
+
+COMMON PATTERNS:
+- "samples with requestId" → decorateByKey matching on thread ID to get request context
+- "allocations with traceId" → decorateByKey for distributed tracing correlation
+- "events for transaction X" → decorateByKey matching on transactionId
+
+EXAMPLES OF KEY-BASED CORRELATION:
+- Execution samples with request context (requestId, endpoint)
+- Allocations with distributed trace IDs (traceId, spanId)
+- Top endpoints by CPU usage with request metadata
+- Transaction-scoped event analysis

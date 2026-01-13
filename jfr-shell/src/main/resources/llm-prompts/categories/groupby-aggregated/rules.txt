@@ -1,0 +1,30 @@
+GROUPBY_AGGREGATED RULES:
+
+Use groupBy with aggregation when you need to compute aggregate values per group.
+
+SYNTAX:
+  events/<type> | groupBy(<field>, agg=<function>, value=<field-to-aggregate>)
+
+KEY POINTS:
+1. Requires both agg= and value= parameters
+2. Common aggregations: sum, avg, max, min, count
+3. Can be followed by top() for ranking
+4. Use when query mentions "total X by Y" or "average X per Y"
+
+AGGREGATION FUNCTIONS:
+- sum: Total of values (bytes, duration, weight)
+- avg: Average of values
+- max: Maximum value in group
+- min: Minimum value in group
+- count: Number of items (use simple groupBy instead)
+
+COMMON PATTERNS:
+- "total <value> by <group>" → groupBy(group, agg=sum, value=value)
+- "average <value> per <group>" → groupBy(group, agg=avg, value=value)
+- "maximum <value> for each <group>" → groupBy(group, agg=max, value=value)
+
+FIELD NAME CAUTIONS:
+- Memory: use 'bytes' (ObjectAllocationSample)
+- Weight: use 'weight' (for allocation weight)
+- Duration: always in nanoseconds
+- Thread fields: eventThread/javaName or sampledThread/javaName depending on event type

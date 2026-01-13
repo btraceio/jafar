@@ -1,0 +1,8 @@
+Q: "count GC events"
+A: {"query": "events/jdk.GarbageCollection | count()", "explanation": "Counts total garbage collection events", "confidence": 0.98}
+
+Q: "how many compilation events"
+A: {"query": "events/jdk.Compilation | count()", "explanation": "Counts all compilation events in the recording", "confidence": 0.98}
+
+Q: "total number of file reads"
+A: {"query": "events/jdk.FileRead | count()", "explanation": "Counts all file read operations", "confidence": 0.98}

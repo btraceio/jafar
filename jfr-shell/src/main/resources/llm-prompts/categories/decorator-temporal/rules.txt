@@ -1,0 +1,23 @@
+DECORATOR_TEMPORAL RULES:
+
+Use decorateByTime() when correlating events that overlap in time on the same thread.
+
+SYNTAX:
+  events/<type> | decorateByTime(<decorator-type>, fields=<field1>,<field2>,...)
+
+KEY POINTS:
+1. Temporal overlap: Events must occur during the same time period on the same thread
+2. Decorator fields are accessed with $decorator. prefix
+3. Can be combined with groupBy and aggregations
+4. Use filters on decorator type: decorateByTime(jdk.GCPhase[name="Mark"], ...)
+
+COMMON PATTERNS:
+- "methods during X" → decorateByTime to find code executing during X events
+- "allocations while Y" → decorateByTime to correlate allocations with Y
+- "samples when Z" → decorateByTime for temporal correlation with Z
+
+EXAMPLES OF TEMPORAL CORRELATION:
+- Methods causing virtual thread pinning
+- Code executing during GC phases
+- Activity during long safepoint pauses
+- Thread parks overlapping with I/O operations

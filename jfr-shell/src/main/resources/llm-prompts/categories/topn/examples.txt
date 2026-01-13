@@ -1,7 +1,3 @@
-# DEPRECATED: This file is deprecated and kept for backward compatibility only.
-# Use category-specific files in categories/ directory instead.
-# See: categories/topn/, categories/groupby-simple/, categories/groupby-aggregated/
-
 Q: "top 10 hottest methods"
 A: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", "explanation": "Projects to the class name from the top stack frame, groups by that value, and shows top 10 by sample count", "confidence": 0.90}
 
@@ -11,9 +7,6 @@ A: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10,
 Q: "top threads by execution samples"
 A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", "explanation": "Groups execution samples by thread name and shows top 10 threads", "confidence": 0.95}
 
-Q: "count exceptions by type"
-A: {"query": "events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)", "explanation": "Groups exception throw events by exception class name", "confidence": 0.95}
-
 Q: "which classes took longest to load"
 A: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", "explanation": "Groups class loads by class name with max duration aggregation to find slowest loads", "confidence": 0.95}
 
@@ -22,3 +15,9 @@ A: {"query": "events/jdk.ThreadPark | groupBy(eventThread/javaName, agg=sum, val
 
 Q: "which monitors have cascading wait queues"
 A: {"query": "events/jdk.JavaMonitorWait | groupBy(monitorClass/name, agg=sum, value=duration) | top(10, by=sum)", "explanation": "Groups monitor waits by class and sums total wait duration to identify convoy patterns", "confidence": 0.95}
+
+Q: "which threads allocated the most memory?"
+A: {"query": "events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=bytes) | top(10, by=sum)", "explanation": "Groups allocation events by thread and sums the bytes allocated, then shows the top 10 threads", "confidence": 0.95}
+
+Q: "top allocating classes"
+A: {"query": "events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(10, by=sum)", "explanation": "Groups allocations by class name and sums the allocation weight", "confidence": 0.95}

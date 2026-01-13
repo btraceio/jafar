@@ -1,0 +1,8 @@
+Q: "slow compilations over 1 second"
+A: {"query": "events/jdk.Compilation[duration>1000000000]", "explanation": "Filters compilation events longer than 1 second (1 billion nanoseconds)", "confidence": 0.95}
+
+Q: "GC pauses longer than 50ms"
+A: {"query": "events/jdk.GarbageCollection[duration>50000000]", "explanation": "Filters GC events with duration exceeding 50 milliseconds (50 million nanoseconds)", "confidence": 0.95}
+
+Q: "file operations taking more than 100ms"
+A: {"query": "events/jdk.FileRead[duration>100000000]", "explanation": "Filters file reads that took longer than 100 milliseconds", "confidence": 0.95}

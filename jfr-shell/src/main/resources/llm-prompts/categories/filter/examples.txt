@@ -1,0 +1,11 @@
+Q: "show file reads over 1MB"
+A: {"query": "events/jdk.FileRead[bytes>1048576]", "explanation": "Filters file read events to those larger than 1MB (1048576 bytes)", "confidence": 0.98}
+
+Q: "show network read events"
+A: {"query": "events/jdk.SocketRead", "explanation": "Selects all socket read events for network I/O analysis", "confidence": 0.98}
+
+Q: "network reads larger than 1KB"
+A: {"query": "events/jdk.SocketRead[bytesRead>1024]", "explanation": "Filters socket reads by bytesRead field (note: different from file bytes)", "confidence": 0.95}
+
+Q: "file writes over 5MB"
+A: {"query": "events/jdk.FileWrite[bytesWritten>5242880]", "explanation": "Filters file writes by bytesWritten field (note: FileWrite uses bytesWritten not bytes)", "confidence": 0.95}
