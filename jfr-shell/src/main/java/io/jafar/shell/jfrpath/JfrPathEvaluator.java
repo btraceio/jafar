@@ -94,9 +94,24 @@ public final class JfrPathEvaluator {
       }
       return out;
     } else if (query.root == Root.METADATA) {
+      // Handle metadata queries: metadata/Type or metadata/[filter] or metadata
       if (query.segments.isEmpty()) {
-        throw new IllegalArgumentException("Expected type segment after 'metadata/'");
+        // No type specified: load all metadata types and filter
+        // This handles: metadata or metadata/[filter]
+        List<Map<String, Object>> allMetadata =
+            MetadataProvider.loadAllClasses(session.getRecordingPath());
+        if (query.predicates.isEmpty()) {
+          return allMetadata;
+        }
+        List<Map<String, Object>> filtered = new ArrayList<>();
+        for (Map<String, Object> meta : allMetadata) {
+          if (matchesAll(meta, query.predicates)) {
+            filtered.add(meta);
+          }
+        }
+        return filtered;
       }
+      // Specific type: metadata/TypeName or metadata/TypeName[filter]
       String typeName = query.segments.get(0);
       Map<String, Object> meta = MetadataProvider.loadClass(session.getRecordingPath(), typeName);
       if (meta == null) return java.util.Collections.emptyList();
