@@ -197,7 +197,7 @@ public record LLMConfig(
     int maxTokens = Integer.parseInt(props.getProperty("maxTokens", "2048"));
     double temperature = Double.parseDouble(props.getProperty("temperature", "0.1"));
     boolean multiLevelEnabled =
-        Boolean.parseBoolean(props.getProperty("multiLevelEnabled", "false"));
+        Boolean.parseBoolean(props.getProperty("multiLevelEnabled", "true"));
 
     return new LLMConfig(
         provider, endpoint, model, apiKey, privacy, timeoutSeconds, maxTokens, temperature,
