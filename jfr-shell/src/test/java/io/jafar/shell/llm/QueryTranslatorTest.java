@@ -3,7 +3,7 @@ package io.jafar.shell.llm;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.shell.jfrpath.JfrPathParser;
-import io.jafar.shell.llm.QueryTranslator.TranslationResult;
+import io.jafar.shell.llm.TranslationResult;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -66,7 +66,8 @@ class QueryTranslatorTest {
             "Counts execution samples",
             0.95,
             Optional.empty(),
-            null);
+            null,
+            Optional.empty());
 
     assertEquals("events/jdk.ExecutionSample | count()", result.jfrPathQuery());
     assertEquals("Counts execution samples", result.explanation());

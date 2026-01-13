@@ -15,6 +15,7 @@ import io.jafar.shell.llm.LLMConfig;
 import io.jafar.shell.llm.LLMException;
 import io.jafar.shell.llm.LLMProvider;
 import io.jafar.shell.llm.QueryTranslator;
+import io.jafar.shell.llm.TranslationResult;
 import io.jafar.shell.llm.privacy.AuditLogger;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
@@ -2338,8 +2339,10 @@ public class CommandDispatcher {
     if (!args.isEmpty()) {
       String subCmd = args.get(0).toLowerCase(Locale.ROOT);
 
-      if ("exit".equals(subCmd) || "quit".equals(subCmd) ||
-          "/exit".equals(subCmd) || "/quit".equals(subCmd)) {
+      if ("exit".equals(subCmd)
+          || "quit".equals(subCmd)
+          || "/exit".equals(subCmd)
+          || "/quit".equals(subCmd)) {
         chatState.exitChat();
         io.println("Exited chat mode.");
         return;
@@ -2357,8 +2360,9 @@ public class CommandDispatcher {
           io.error("No session open. Use 'open <path>' to open a recording first.");
           return;
         }
-        cur.get().variables.set("__llm_history",
-            new VariableStore.MapValue(new ConversationHistory(20).toMap()));
+        cur.get()
+            .variables
+            .set("__llm_history", new VariableStore.MapValue(new ConversationHistory(20).toMap()));
         io.println("Conversation history cleared.");
         return;
       }
@@ -2368,7 +2372,8 @@ public class CommandDispatcher {
     if (!chatState.isChatMode()) {
       chatState.enterChat();
       io.println("Entering chat mode. Ask questions naturally.");
-      io.println("Commands: '/exit' or '/quit' to return, '/clear' to reset history, '/help' for tips.");
+      io.println(
+          "Commands: '/exit' or '/quit' to return, '/clear' to reset history, '/help' for tips.");
       io.println("");
 
       // If no query provided, just enter mode
@@ -2403,7 +2408,7 @@ public class CommandDispatcher {
       io.println("Translating natural language query...");
     }
 
-    QueryTranslator.TranslationResult result;
+    TranslationResult result;
     try {
       result = translator.translate(query);
     } catch (LLMException e) {

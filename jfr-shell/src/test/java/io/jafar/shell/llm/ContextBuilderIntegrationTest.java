@@ -187,7 +187,8 @@ class ContextBuilderIntegrationTest {
             PrivacyMode.LOCAL_ONLY, false, false, false, Set.of(), false),
         60,
         2000,
-        0.7);
+        0.7,
+        false); // multiLevelEnabled not needed for ContextBuilder tests
   }
 
   private void assertContains(String text, String substring) {

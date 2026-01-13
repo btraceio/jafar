@@ -21,6 +21,9 @@ public class QueryTranslator {
   private final ContextBuilder contextBuilder;
   private final ConversationHistory history;
   private final Gson gson;
+  private final LLMConfig config;
+  private final QueryClassifier classifier;
+  private final PromptStrategy promptStrategy;
 
   /**
    * Creates a query translator.
@@ -34,17 +37,55 @@ public class QueryTranslator {
     this.provider = provider;
     this.contextBuilder = contextBuilder;
     this.history = history;
+    this.config = provider.getConfig();
     this.gson = new Gson();
+    this.classifier = new QueryClassifier(provider);
+    this.promptStrategy = new PromptStrategy(contextBuilder);
   }
 
   /**
    * Translates a natural language query into a JfrPath query.
+   *
+   * <p>Uses multi-level prompting if enabled in config, otherwise falls back to legacy full-prompt
+   * approach.
    *
    * @param naturalLanguageQuery the user's question
    * @return translation result with query, explanation, and confidence
    * @throws LLMException if translation fails
    */
   public TranslationResult translate(String naturalLanguageQuery) throws LLMException {
+    if (!config.multiLevelEnabled()) {
+      return translateLegacy(naturalLanguageQuery);
+    }
+
+    // Phase 4: Multi-level translation with classification and escalation
+
+    // Step 1: Classify the query
+    ClassificationResult classification = classifier.classify(naturalLanguageQuery);
+
+    // Step 2: Check if clarification is needed
+    if (classification.needsClarification()) {
+      ClarificationRequest clarification = generateClarification(naturalLanguageQuery, classification);
+      return TranslationResult.needsClarification(clarification);
+    }
+
+    // Step 3: Handle conversational queries
+    if (classification.category() == QueryCategory.CONVERSATIONAL) {
+      return handleConversational(naturalLanguageQuery);
+    }
+
+    // Step 4: Translate with progressive escalation
+    return translateWithEscalation(naturalLanguageQuery, classification);
+  }
+
+  /**
+   * Translates using legacy full-prompt approach (backward compatibility).
+   *
+   * @param naturalLanguageQuery the user's question
+   * @return translation result
+   * @throws LLMException if translation fails
+   */
+  private TranslationResult translateLegacy(String naturalLanguageQuery) throws LLMException {
     // Build the request
     String systemPrompt = contextBuilder.buildSystemPrompt();
     List<Message> messages = buildMessages(naturalLanguageQuery);
@@ -56,8 +97,26 @@ public class QueryTranslator {
 
     LLMProvider.LLMRequest request = new LLMProvider.LLMRequest(systemPrompt, messages, options);
 
+    // Debug logging
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.err.println("=== LLM DEBUG: System Prompt ===");
+      System.err.println(systemPrompt);
+      System.err.println("=== LLM DEBUG: Messages ===");
+      for (Message msg : messages) {
+        System.err.println(msg.role() + ": " + msg.content());
+      }
+      System.err.println("================================");
+    }
+
     // Get LLM response
     LLMProvider.LLMResponse response = provider.complete(request);
+
+    // Debug logging
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.err.println("=== LLM DEBUG: Response ===");
+      System.err.println(response.content());
+      System.err.println("===========================");
+    }
 
     // Parse the response
     return parseResponse(response.content());
@@ -98,7 +157,7 @@ public class QueryTranslator {
       if (json == null) {
         // No JSON found - treat as conversational response
         // This happens for ambiguous queries like "help" or general questions
-        return new TranslationResult(null, null, 0.0, Optional.empty(), responseContent);
+        return TranslationResult.conversational(responseContent);
       }
 
       // Parse JSON using Gson
@@ -134,8 +193,11 @@ public class QueryTranslator {
             "Generated query has invalid syntax: " + query);
       }
 
-      return new TranslationResult(
-          query, explanation, confidence, Optional.ofNullable(warning), null);
+      if (warning != null) {
+        return TranslationResult.successWithWarning(query, explanation, confidence, warning);
+      } else {
+        return TranslationResult.success(query, explanation, confidence);
+      }
 
     } catch (JsonParseException e) {
       throw new LLMException(
@@ -201,6 +263,100 @@ public class QueryTranslator {
   }
 
   /**
+   * Generates a clarification request for an ambiguous query.
+   *
+   * @param query the ambiguous query
+   * @param classification the classification result
+   * @return clarification request
+   * @throws LLMException if clarification generation fails
+   */
+  private ClarificationRequest generateClarification(
+      String query, ClassificationResult classification) throws LLMException {
+    // For now, create a basic clarification request
+    // In Phase 5, we can use LLM to generate better clarifications
+    return new ClarificationRequest(
+        query,
+        "Your query is ambiguous. Could you be more specific?",
+        List.of(
+            "Count events of a specific type",
+            "Find top N results",
+            "Filter events by criteria",
+            "Get metadata about event types"),
+        classification.confidence());
+  }
+
+  /**
+   * Handles conversational queries that don't require JfrPath translation.
+   *
+   * @param query the conversational query
+   * @return conversational response
+   * @throws LLMException if response generation fails
+   */
+  private TranslationResult handleConversational(String query) throws LLMException {
+    // Use legacy translation but expect a conversational response
+    return translateLegacy(query);
+  }
+
+  /**
+   * Translates a query with progressive escalation through prompt levels.
+   *
+   * @param query the natural language query
+   * @param classification the query classification
+   * @return translation result
+   * @throws LLMException if all attempts fail
+   */
+  private TranslationResult translateWithEscalation(
+      String query, ClassificationResult classification) throws LLMException {
+    PromptStrategy.PromptLevel level = promptStrategy.selectStartLevel(classification);
+    TranslationResult result = null;
+
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // Build category-specific prompt
+        String systemPrompt = promptStrategy.buildPrompt(classification.category(), level);
+
+        // Build messages
+        List<Message> messages = buildMessages(query);
+
+        // Create request
+        Map<String, Object> options =
+            Map.of(
+                "temperature", config.temperature(),
+                "max_tokens", config.maxTokens());
+        LLMProvider.LLMRequest request = new LLMProvider.LLMRequest(systemPrompt, messages, options);
+
+        // Get response
+        LLMProvider.LLMResponse response = provider.complete(request);
+
+        // Parse response
+        result = parseResponse(response.content());
+
+        // Check if escalation is needed
+        if (!promptStrategy.shouldEscalate(result, attempt, level)) {
+          return result;
+        }
+
+        // Escalate to next level
+        level = level.next();
+        if (level == null) {
+          break; // No more levels to try
+        }
+
+      } catch (LLMException e) {
+        // On last attempt, rethrow
+        if (attempt == 3 || level == null || level.next() == null) {
+          throw e;
+        }
+        // Otherwise escalate and retry
+        level = level.next();
+      }
+    }
+
+    // Return last result if all attempts completed without success
+    return result != null ? result : translateLegacy(query);
+  }
+
+  /**
    * Validates a JfrPath query by attempting to parse it.
    *
    * @param query query string
@@ -215,29 +371,4 @@ public class QueryTranslator {
     }
   }
 
-  /**
-   * Result of query translation.
-   *
-   * @param jfrPathQuery the generated JfrPath query (null for conversational responses)
-   * @param explanation explanation of what the query does
-   * @param confidence confidence score 0.0-1.0
-   * @param warning optional warning about ambiguity or limitations
-   * @param conversationalResponse non-null when LLM responds conversationally instead of with a
-   *     query
-   */
-  public record TranslationResult(
-      String jfrPathQuery,
-      String explanation,
-      double confidence,
-      Optional<String> warning,
-      String conversationalResponse) {
-    /**
-     * Returns true if this is a conversational response (no query generated).
-     *
-     * @return true if conversational
-     */
-    public boolean isConversational() {
-      return conversationalResponse != null;
-    }
-  }
 }

@@ -20,7 +20,8 @@ public record LLMConfig(
     PrivacySettings privacy,
     int timeoutSeconds,
     int maxTokens,
-    double temperature) {
+    double temperature,
+    boolean multiLevelEnabled) {
 
   /** Type of LLM provider. */
   public enum ProviderType {
@@ -84,7 +85,8 @@ public record LLMConfig(
         PrivacySettings.defaults(),
         30, // 30 second timeout
         2048, // Max tokens
-        0.1 // Low temperature for deterministic queries
+        0.1, // Low temperature for deterministic queries
+        false // Multi-level prompting disabled by default (Phase 4 migration)
         );
   }
 
@@ -180,9 +182,12 @@ public record LLMConfig(
     int timeoutSeconds = Integer.parseInt(props.getProperty("timeoutSeconds", "30"));
     int maxTokens = Integer.parseInt(props.getProperty("maxTokens", "2048"));
     double temperature = Double.parseDouble(props.getProperty("temperature", "0.1"));
+    boolean multiLevelEnabled =
+        Boolean.parseBoolean(props.getProperty("multiLevelEnabled", "false"));
 
     return new LLMConfig(
-        provider, endpoint, model, apiKey, privacy, timeoutSeconds, maxTokens, temperature);
+        provider, endpoint, model, apiKey, privacy, timeoutSeconds, maxTokens, temperature,
+        multiLevelEnabled);
   }
 
   /**
@@ -209,6 +214,7 @@ public record LLMConfig(
     props.setProperty("timeoutSeconds", String.valueOf(timeoutSeconds));
     props.setProperty("maxTokens", String.valueOf(maxTokens));
     props.setProperty("temperature", String.valueOf(temperature));
+    props.setProperty("multiLevelEnabled", String.valueOf(multiLevelEnabled));
 
     return props;
   }

@@ -60,7 +60,7 @@ class ImprovedPromptsIntegrationTest {
     // This query previously failed - should now work with improved prompts
     String naturalQuery = "top allocating classes";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     // Verify query is syntactically valid
     assertNotNull(result.jfrPathQuery(), "Query should not be null");
@@ -86,7 +86,7 @@ class ImprovedPromptsIntegrationTest {
     // This query previously failed - should now work with improved prompts
     String naturalQuery = "which monitors have the most contention";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     // Verify query is syntactically valid
     assertNotNull(result.jfrPathQuery(), "Query should not be null");
@@ -112,7 +112,7 @@ class ImprovedPromptsIntegrationTest {
     // This query should continue to work
     String naturalQuery = "which threads allocated the most memory";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     assertNotNull(result.jfrPathQuery());
     assertDoesNotThrow(() -> JfrPathParser.parse(result.jfrPathQuery()));
@@ -130,7 +130,7 @@ class ImprovedPromptsIntegrationTest {
     // This query should continue to work
     String naturalQuery = "what are top 5 hottest methods";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     assertNotNull(result.jfrPathQuery());
     assertDoesNotThrow(() -> JfrPathParser.parse(result.jfrPathQuery()));
@@ -148,7 +148,7 @@ class ImprovedPromptsIntegrationTest {
     // This query should continue to work
     String naturalQuery = "show file reads over 1MB";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     assertNotNull(result.jfrPathQuery());
     assertDoesNotThrow(() -> JfrPathParser.parse(result.jfrPathQuery()));
@@ -166,7 +166,7 @@ class ImprovedPromptsIntegrationTest {
     // This query should continue to work
     String naturalQuery = "count GC events";
 
-    QueryTranslator.TranslationResult result = translator.translate(naturalQuery);
+    TranslationResult result = translator.translate(naturalQuery);
 
     assertNotNull(result.jfrPathQuery());
     assertDoesNotThrow(() -> JfrPathParser.parse(result.jfrPathQuery()));

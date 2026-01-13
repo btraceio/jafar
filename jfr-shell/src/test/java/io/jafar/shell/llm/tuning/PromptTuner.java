@@ -8,7 +8,7 @@ import io.jafar.shell.llm.LLMConfig;
 import io.jafar.shell.llm.LLMException;
 import io.jafar.shell.llm.LLMProvider;
 import io.jafar.shell.llm.QueryTranslator;
-import io.jafar.shell.llm.QueryTranslator.TranslationResult;
+import io.jafar.shell.llm.TranslationResult;
 
 /**
  * Main orchestrator for LLM prompt tuning. Runs test cases against a prompt variant and validates
