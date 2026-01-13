@@ -540,8 +540,8 @@ public class CommandDispatcher {
           cur.get().session.getRecordingPath(), typeName, io, maxDepth);
       return;
     }
-    if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty()) {
-      // Equivalent of 'types'
+    if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty() && q.predicates.isEmpty()) {
+      // Equivalent of 'types' - but only if no filters
       cmdTypes(java.util.List.of());
       return;
     }
