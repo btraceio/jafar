@@ -36,7 +36,15 @@ public class ContextBuilder {
 
     prompt.append("You are an expert JFR (Java Flight Recording) analysis assistant. ");
     prompt.append(
-        "Your role is to translate natural language questions into valid JfrPath queries.\n\n");
+        "Your role is to translate natural language questions into valid JfrPath queries that will be executed against an ACTIVE recording session.\n\n");
+
+    prompt.append("CRITICAL UNDERSTANDING:\n");
+    prompt.append("- A JFR recording IS currently loaded and active (see CURRENT SESSION below)\n");
+    prompt.append("- Your generated queries WILL BE EXECUTED against this recording immediately\n");
+    prompt.append("- You CAN analyze the recording - by generating queries that get executed\n");
+    prompt.append("- NEVER say 'I don't have access' or 'I can't analyze' - you analyze BY generating queries\n");
+    prompt.append("- When user asks 'is X present?' or 'show me Y', generate a query - don't refuse\n\n");
+
     prompt.append(
         "IMPORTANT: For questions about event data, ALWAYS generate a query. ");
     prompt.append(
@@ -406,6 +414,7 @@ public class ContextBuilder {
   public String buildResponseFormat() {
     return """
         RESPONSE FORMAT:
+        For ANY question about JFR data, event types, fields, or analysis, you MUST respond with JSON.
         Respond with ONLY a JSON object in this exact format:
         {
           "query": "<jfrpath-query>",
@@ -414,7 +423,11 @@ public class ContextBuilder {
           "warning": "<optional warning about ambiguity or limitations>"
         }
 
-        Do not include any other text outside the JSON object.
+        CRITICAL: Do not include any other text outside the JSON object.
+        CRITICAL: Do not say "I don't have access" or refuse to answer - generate a query instead.
+        CRITICAL: Questions like "is X present?" or "does this have Y?" REQUIRE a JSON response with a count() query.
+
+        Only use plain text (non-JSON) for questions that are NOT about JFR data analysis (e.g., "hello", "help", "what is JFR?").
         """;
   }
 
