@@ -233,6 +233,22 @@ The jfr-shell module provides a powerful interactive environment for JFR analysi
 - Memory-efficient lazy evaluation
 - Examples: monitor contention analysis, request tracing, GC impact assessment
 
+**New Feature: Multi-Level LLM Translation**
+- **Intelligent prompting**: Automatically selects appropriate prompt size based on query complexity
+- **Query classification**: 12 categories (count, topN, decorator, etc.) with rule-based + LLM hybrid classification
+- **Three-tier strategy**:
+  - MINIMAL (~2-3KB): Simple queries - 70-80% token reduction
+  - ENHANCED (~6-8KB): Medium complexity - 40-50% token reduction
+  - FULL (~15KB): Complex queries - backward compatible
+- **Progressive escalation**: Automatically retries with larger prompts if confidence is low or syntax errors occur
+- **Clarification requests**: Generates user prompts when queries are ambiguous (confidence < 0.5)
+- **Configuration**: Enabled by default via `multiLevelEnabled` in `~/.jfr-shell/llm-config.properties`
+- **Architecture**:
+  - `QueryClassifier`: Rule-based patterns + LLM fallback for classification
+  - `PromptStrategy`: Prompt level selection and escalation logic
+  - `ContextBuilder`: Category-specific prompt generation from resource files
+  - `QueryTranslator`: Orchestrates classification, translation, and escalation
+
 #### JFR Shell Usage:
 ```bash
 # Start interactive shell
