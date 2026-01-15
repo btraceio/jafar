@@ -361,6 +361,19 @@ public final class JfrPathEvaluator {
   // segment.
   private void extractWithIndexing(Map<String, Object> root, List<String> proj, List<Object> out) {
     if (proj.isEmpty()) return;
+    boolean debug =
+        Boolean.getBoolean("jfr.shell.debug") || System.getenv("JFR_SHELL_DEBUG") != null;
+    if (debug || proj.contains("0")) { // Always debug if path contains "0"
+      try {
+        java.nio.file.Files.writeString(
+            java.nio.file.Paths.get("/tmp/jfr-shell-debug.log"),
+            "[extractWithIndexing] proj = " + proj + "\n",
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.APPEND);
+      } catch (Exception ignore) {
+      }
+      System.err.println("[extractWithIndexing] DEBUG=" + debug + ", proj = " + proj);
+    }
     String last = proj.get(proj.size() - 1);
     Slice sl = parseSlice(last);
     if (sl != null) {
@@ -404,7 +417,23 @@ public final class JfrPathEvaluator {
         }
       }
     }
-    Object v = Values.get(root, buildPathTokens(proj).toArray());
+    Object[] pathTokens = buildPathTokens(proj).toArray();
+    if (debug || proj.contains("0")) {
+      System.err.println(
+          "[extractWithIndexing] pathTokens after buildPathTokens = "
+              + java.util.Arrays.toString(pathTokens));
+      System.err.println(
+          "[extractWithIndexing] pathTokens types = "
+              + java.util.Arrays.stream(pathTokens)
+                  .map(o -> o == null ? "null" : o.getClass().getSimpleName())
+                  .toList());
+    }
+    Object v = Values.get(root, pathTokens);
+    if (debug || proj.contains("0")) {
+      System.err.println(
+          "[extractWithIndexing] Values.get returned: "
+              + (v == null ? "null" : v.getClass().getSimpleName()));
+    }
     if (v != null) out.add(v);
   }
 
@@ -413,7 +442,14 @@ public final class JfrPathEvaluator {
     for (String seg : segs) {
       int b = seg.indexOf('[');
       if (b < 0) {
-        tokens.add(seg);
+        // No brackets - check if segment is a numeric index
+        try {
+          int index = Integer.parseInt(seg);
+          tokens.add(index);
+        } catch (NumberFormatException e) {
+          // Not a number, add as string
+          tokens.add(seg);
+        }
         continue;
       }
       String name = seg.substring(0, b);
@@ -475,36 +511,48 @@ public final class JfrPathEvaluator {
   // Aggregations
   private List<Map<String, Object>> evaluateAggregate(JFRSession session, Query query)
       throws Exception {
-    // Only a single op supported for now; chain could be added later
+    // Execute the first operator
     JfrPath.PipelineOp op = query.pipeline.get(0);
-    return switch (op) {
-      case JfrPath.CountOp c -> aggregateCount(session, query);
-      case JfrPath.StatsOp s -> aggregateStats(session, query, s.valuePath);
-      case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
-      case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
-      case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
-      case JfrPath.GroupByOp gb -> aggregateGroupBy(
-          session, query, gb.keyPath, gb.aggFunc, gb.valuePath);
-      case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
-      case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
-      case JfrPath.UppercaseOp up -> aggregateStringTransform(
-          session, query, up.valuePath, "uppercase");
-      case JfrPath.LowercaseOp lo -> aggregateStringTransform(
-          session, query, lo.valuePath, "lowercase");
-      case JfrPath.TrimOp tr -> aggregateStringTransform(session, query, tr.valuePath, "trim");
-      case JfrPath.AbsOp ab -> aggregateNumberTransform(session, query, ab.valuePath, "abs");
-      case JfrPath.RoundOp ro -> aggregateNumberTransform(session, query, ro.valuePath, "round");
-      case JfrPath.FloorOp flo -> aggregateNumberTransform(session, query, flo.valuePath, "floor");
-      case JfrPath.CeilOp cei -> aggregateNumberTransform(session, query, cei.valuePath, "ceil");
-      case JfrPath.ContainsOp co -> aggregateStringPredicate(
-          session, query, co.valuePath, "contains", co.substr);
-      case JfrPath.ReplaceOp rp -> aggregateStringReplace(
-          session, query, rp.valuePath, rp.target, rp.replacement);
-      case JfrPath.DecorateByTimeOp dt -> evaluateDecorateByTime(session, query, dt);
-      case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
-      case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
-      case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
-    };
+    List<Map<String, Object>> result =
+        switch (op) {
+          case JfrPath.CountOp c -> aggregateCount(session, query);
+          case JfrPath.StatsOp s -> aggregateStats(session, query, s.valuePath);
+          case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
+          case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
+          case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
+          case JfrPath.GroupByOp gb -> aggregateGroupBy(
+              session, query, gb.keyPath, gb.aggFunc, gb.valuePath);
+          case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
+          case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
+          case JfrPath.UppercaseOp up -> aggregateStringTransform(
+              session, query, up.valuePath, "uppercase");
+          case JfrPath.LowercaseOp lo -> aggregateStringTransform(
+              session, query, lo.valuePath, "lowercase");
+          case JfrPath.TrimOp tr -> aggregateStringTransform(session, query, tr.valuePath, "trim");
+          case JfrPath.AbsOp ab -> aggregateNumberTransform(session, query, ab.valuePath, "abs");
+          case JfrPath.RoundOp ro -> aggregateNumberTransform(
+              session, query, ro.valuePath, "round");
+          case JfrPath.FloorOp flo -> aggregateNumberTransform(
+              session, query, flo.valuePath, "floor");
+          case JfrPath.CeilOp cei -> aggregateNumberTransform(
+              session, query, cei.valuePath, "ceil");
+          case JfrPath.ContainsOp co -> aggregateStringPredicate(
+              session, query, co.valuePath, "contains", co.substr);
+          case JfrPath.ReplaceOp rp -> aggregateStringReplace(
+              session, query, rp.valuePath, rp.target, rp.replacement);
+          case JfrPath.DecorateByTimeOp dt -> evaluateDecorateByTime(session, query, dt);
+          case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
+          case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
+          case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
+        };
+
+    // Apply remaining operators in sequence
+    if (query.pipeline.size() > 1) {
+      List<JfrPath.PipelineOp> remainingOps = query.pipeline.subList(1, query.pipeline.size());
+      result = applyToRows(result, remainingOps);
+    }
+
+    return result;
   }
 
   private List<Map<String, Object>> evaluateSelect(
@@ -1044,14 +1092,17 @@ public final class JfrPathEvaluator {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object key = Values.get(map, keyPath.toArray());
+              Object key = Values.get(map, buildPathTokens(keyPath).toArray());
               GroupAccumulator acc =
                   groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
 
               if ("count".equals(aggFunc)) {
                 acc.add(1);
               } else {
-                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                Object val =
+                    valuePath.isEmpty()
+                        ? null
+                        : Values.get(map, buildPathTokens(valuePath).toArray());
                 if (val instanceof Number n) {
                   acc.add(n.doubleValue());
                 }
@@ -1067,14 +1118,17 @@ public final class JfrPathEvaluator {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object key = Values.get(map, keyPath.toArray());
+              Object key = Values.get(map, buildPathTokens(keyPath).toArray());
               GroupAccumulator acc =
                   groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
 
               if ("count".equals(aggFunc)) {
                 acc.add(1);
               } else {
-                Object val = valuePath.isEmpty() ? null : Values.get(map, valuePath.toArray());
+                Object val =
+                    valuePath.isEmpty()
+                        ? null
+                        : Values.get(map, buildPathTokens(valuePath).toArray());
                 if (val instanceof Number n) {
                   acc.add(n.doubleValue());
                 }
@@ -1138,8 +1192,8 @@ public final class JfrPathEvaluator {
     rows = new ArrayList<>(rows);
     rows.sort(
         (a, b) -> {
-          Object aVal = Values.get(a, byPath.toArray());
-          Object bVal = Values.get(b, byPath.toArray());
+          Object aVal = Values.get(a, buildPathTokens(byPath).toArray());
+          Object bVal = Values.get(b, buildPathTokens(byPath).toArray());
           int cmp = compareValues(aVal, bVal);
           return ascending ? cmp : -cmp;
         });
@@ -1593,7 +1647,7 @@ public final class JfrPathEvaluator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (matchesAll(map, query.predicates)) {
-              Object val = Values.get(map, proj.toArray());
+              Object val = Values.get(map, buildPathTokens(proj).toArray());
               if (val != null) out.add(val);
               if (out.size() >= limit) {
                 ctl.abort();
@@ -2152,9 +2206,10 @@ public final class JfrPathEvaluator {
   }
 
   /**
-   * Validates that all requested event types exist in the recording. Throws
-   * IllegalArgumentException with a helpful error message if any type is not found. If event type
-   * information is not available from the session, validation is skipped.
+   * Validates that all requested event types exist in the recording. Logs warnings for missing
+   * types but allows query to continue (will return empty results for non-existent types). This
+   * makes the engine resilient to LLM hallucinations of event types. If event type information is
+   * not available from the session, validation is skipped.
    */
   private void validateEventTypes(JFRSession session, List<String> requestedTypes)
       throws Exception {
@@ -2169,10 +2224,19 @@ public final class JfrPathEvaluator {
       if (!availableTypes.contains(requestedType)) {
         String suggestion = findClosestMatch(requestedType, availableTypes);
         if (suggestion != null) {
-          throw new IllegalArgumentException(
-              "Event type '" + requestedType + "' not found. Did you mean '" + suggestion + "'?");
+          System.err.println(
+              "Warning: Event type '"
+                  + requestedType
+                  + "' not found in recording. Did you mean '"
+                  + suggestion
+                  + "'? Query will continue but may return empty results.");
+        } else {
+          System.err.println(
+              "Warning: Event type '"
+                  + requestedType
+                  + "' not found in recording. Query will continue but may return empty results.");
         }
-        throw new IllegalArgumentException("Event type '" + requestedType + "' not found");
+        // Don't throw - let query continue and return empty results naturally
       }
     }
   }
@@ -2293,8 +2357,8 @@ public final class JfrPathEvaluator {
     List<Map<String, Object>> sorted = new ArrayList<>(rows);
     sorted.sort(
         (a, b) -> {
-          Object aVal = Values.get(a, byPath.toArray());
-          Object bVal = Values.get(b, byPath.toArray());
+          Object aVal = Values.get(a, buildPathTokens(byPath).toArray());
+          Object bVal = Values.get(b, buildPathTokens(byPath).toArray());
           int cmp = compareValues(aVal, bVal);
           return ascending ? cmp : -cmp;
         });
@@ -2369,7 +2433,7 @@ public final class JfrPathEvaluator {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
     for (Map<String, Object> row : rows) {
-      Object keyVal = Values.get(row, keyPath.toArray());
+      Object keyVal = Values.get(row, buildPathTokens(keyPath).toArray());
       GroupAccumulator acc = groups.computeIfAbsent(keyVal, k -> new GroupAccumulator(aggFunc));
 
       if ("count".equals(aggFunc)) {
@@ -2378,7 +2442,7 @@ public final class JfrPathEvaluator {
         Object val =
             valuePath.isEmpty()
                 ? row.values().iterator().next()
-                : Values.get(row, valuePath.toArray());
+                : Values.get(row, buildPathTokens(valuePath).toArray());
         if (val instanceof Number num) {
           acc.add(num.doubleValue());
         }

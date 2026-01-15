@@ -10,6 +10,11 @@ WRONG: {"query": "events/jdk.LockContended | groupBy(lockOwner/javaName) | top(1
 WHY WRONG: Using jdk.LockContended instead of jdk.JavaMonitorEnter - wrong event type
 CORRECT: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)", ...}
 
+Q: "count lock events"
+WRONG: {"query": "events/java.lang.LockSample | count()", ...}
+WHY WRONG: java.lang.LockSample DOES NOT EXIST - this is a hallucination. Use jdk.JavaMonitorEnter, jdk.JavaMonitorWait, or jdk.ThreadPark for lock analysis
+CORRECT: {"query": "events/jdk.JavaMonitorEnter | count()", ...}
+
 Q: "top methods"
 WRONG: {"query": "events/jdk.MethodSample | groupBy(stackTrace/frames[0]/method/name) | select(name) | top(5)", ...}
 WHY WRONG: (1) jdk.MethodSample doesn't exist, use jdk.ExecutionSample (2) frames[0] should be frames/0 (3) select() not supported

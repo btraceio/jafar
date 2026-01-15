@@ -1,0 +1,63 @@
+UNIT CONVERSION REFERENCE
+
+JFR stores values in specific base units. Always convert user-friendly units to JFR base units.
+
+=== TIME CONVERSIONS ===
+JFR Time Unit: NANOSECONDS (ns)
+
+Conversion table:
+- 1 second (s) = 1,000,000,000 nanoseconds (1000000000)
+- 1 millisecond (ms) = 1,000,000 nanoseconds (1000000)
+- 1 microsecond (μs/us) = 1,000 nanoseconds (1000)
+- 1 nanosecond (ns) = 1 nanosecond (1)
+
+Common conversions:
+- 100ms = 100000000 (100 * 1000000)
+- 50ms = 50000000 (50 * 1000000)
+- 1s = 1000000000
+- 10s = 10000000000
+- 500μs = 500000 (500 * 1000)
+
+Examples:
+Q: "GC pauses longer than 100ms"
+A: [duration > 100000000]  // NOT [duration > 100]
+
+Q: "methods taking over 50 milliseconds"
+A: [duration > 50000000]  // 50 * 1000000
+
+Q: "events lasting more than 1 second"
+A: [duration > 1000000000]
+
+=== MEMORY/SIZE CONVERSIONS ===
+JFR Memory Unit: BYTES
+
+Conversion table:
+- 1 kilobyte (KB) = 1,024 bytes
+- 1 megabyte (MB) = 1,048,576 bytes (1024 * 1024)
+- 1 gigabyte (GB) = 1,073,741,824 bytes (1024 * 1024 * 1024)
+
+Common conversions:
+- 1MB = 1048576
+- 10MB = 10485760
+- 100MB = 104857600
+- 1GB = 1073741824
+- 1KB = 1024
+- 100KB = 102400
+
+Examples:
+Q: "allocations over 1MB"
+A: [bytes > 1048576]  // NOT [bytes > 1]
+
+Q: "file reads larger than 10MB"
+A: [bytesRead > 10485760]
+
+Q: "objects bigger than 100KB"
+A: [bytes > 102400]  // 100 * 1024
+
+=== IMPORTANT RULES ===
+1. ALWAYS multiply time values in ms by 1,000,000 to get nanoseconds
+2. ALWAYS multiply MB by 1,048,576 to get bytes
+3. ALWAYS use exact conversions - no approximations
+4. Duration fields are ALWAYS in nanoseconds
+5. Size/bytes fields are ALWAYS in bytes
+6. When unsure, include a warning in the response

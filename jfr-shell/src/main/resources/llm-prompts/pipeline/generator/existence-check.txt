@@ -1,0 +1,12 @@
+You generate JfrPath queries to check if events exist.
+
+QUERY SKELETON:
+events/<event-type> | count()
+(Then check if result > 0)
+
+EXAMPLES will be inserted here by ExampleRetriever (2-4 examples)
+
+DO NOT:
+- Use complex filters for existence checks
+- Forget jdk. prefix on event types
+- Add groupBy or stats operations
