@@ -2,7 +2,6 @@ package io.jafar.shell.llm;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import io.jafar.shell.core.SessionManager.SessionRef;
 import io.jafar.shell.llm.schemas.ResponseSchemas;
 import java.util.List;
@@ -47,7 +46,27 @@ public class QueryPipeline {
     this.clarifier = new QueryClarifier(provider);
     this.contextBuilder = new ContextBuilder(session, config);
     this.exampleRetriever = new ExampleRetriever(4); // max 4 examples
-    this.validator = new QueryValidator();
+
+    // Get available event types from session metadata for validation
+    var availableEventTypes = session.session.getAvailableEventTypes();
+
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.out.println("=== PIPELINE INIT ===");
+      System.out.println("Total event types in metadata: " + availableEventTypes.size());
+      var profilingEvents =
+          availableEventTypes.stream()
+              .filter(
+                  e ->
+                      e.contains("ExecutionSample")
+                          || e.contains("HeapLiveObject")
+                          || e.contains("OldObjectSample")
+                          || e.contains("ObjectSample"))
+              .sorted()
+              .toList();
+      System.out.println("Profiling events available: " + profilingEvents);
+      System.out.println("=====================");
+    }
+    this.validator = new QueryValidator(availableEventTypes);
     this.repairer = new QueryRepairer(provider);
   }
 
@@ -77,10 +96,8 @@ public class QueryPipeline {
       // STEP 3: GENERATE
       GenerationResult generation = stepGenerate(userQuestion, classification, context, trace);
 
-      // STEP 4: VALIDATE/REPAIR (conditional)
-      if (shouldRepair(generation)) {
-        generation = stepRepair(generation, trace);
-      }
+      // STEP 4: ALWAYS REPAIR (to expand profiling event groups + fix validation issues)
+      generation = stepRepair(generation, trace);
 
       return PipelineResult.success(
           generation.query(),
@@ -106,8 +123,7 @@ public class QueryPipeline {
    * @return classification result
    * @throws LLMException if classification fails
    */
-  private ClassificationResult stepClassify(String query, PipelineTrace trace)
-      throws LLMException {
+  private ClassificationResult stepClassify(String query, PipelineTrace trace) throws LLMException {
 
     long start = System.currentTimeMillis();
     ClassificationResult result = classifier.classify(query);
@@ -142,8 +158,7 @@ public class QueryPipeline {
    * @throws LLMException if clarification generation fails
    */
   private PipelineResult stepClarify(
-      String query, ClassificationResult classification, PipelineTrace trace)
-      throws LLMException {
+      String query, ClassificationResult classification, PipelineTrace trace) throws LLMException {
 
     long start = System.currentTimeMillis();
     QueryClarifier.ClarificationResult clarification =
@@ -161,7 +176,7 @@ public class QueryPipeline {
             query,
             clarification.question(),
             clarification.choices(),
-            classification.confidence()),
+            clarification.ambiguityScore()),
         trace);
   }
 
@@ -188,8 +203,7 @@ public class QueryPipeline {
     List<ExampleRetriever.Example> examples =
         exampleRetriever.retrieve(classification.category(), query);
 
-    // Build category-specific prompt
-    // NOTE: This will be implemented in ContextBuilder in Phase 7
+    // Build category-specific prompt with session context and guidance
     String prompt = buildGeneratorPrompt(classification.category(), examples);
 
     // Generate query
@@ -223,18 +237,33 @@ public class QueryPipeline {
   }
 
   /**
-   * Build generator prompt for category. Temporary implementation until Phase 7.
+   * Build generator prompt for category with session context and guidance.
    *
    * @param category query category
-   * @param examples selected examples
-   * @return generator prompt
+   * @param examples selected examples (2-4)
+   * @return generator prompt with context, guidance, template, and examples
    */
   private String buildGeneratorPrompt(
       QueryCategory category, List<ExampleRetriever.Example> examples) {
     StringBuilder prompt = new StringBuilder();
 
+    // Session context (available event types, recording info)
+    prompt.append("CURRENT SESSION:\n");
+    prompt.append(contextBuilder.buildSessionContext());
+    prompt.append("\n\n");
+
+    // CRITICAL: Short event type selection rules (not the full guide - too long)
+    prompt.append("EVENT TYPE SELECTION:\n");
+    prompt.append(
+        "- CPU profiling: Use the ExecutionSample event shown in CURRENT SESSION above\n");
+    prompt.append(
+        "- Heap profiling: Use the OldObjectSample or HeapLiveObject shown in CURRENT SESSION above\n");
+    prompt.append("- DO NOT assume jdk.ExecutionSample exists - check CURRENT SESSION!\n");
+    prompt.append("- Use ONLY event types listed as present in CURRENT SESSION\n\n");
+
     // Load category template from resources
-    String templatePath = "/llm-prompts/pipeline/generator/" + category.name().toLowerCase() + ".txt";
+    String templatePath =
+        "/llm-prompts/pipeline/generator/" + category.name().toLowerCase() + ".txt";
     try (var is = getClass().getResourceAsStream(templatePath)) {
       if (is != null) {
         prompt.append(new String(is.readAllBytes()));
@@ -270,15 +299,34 @@ public class QueryPipeline {
   private boolean shouldRepair(GenerationResult generation) {
     // Repair if: (1) low confidence, OR (2) validation fails
     if (generation.confidence() < REPAIR_THRESHOLD) {
+      if (Boolean.getBoolean("jfr.shell.debug")) {
+        System.out.println(
+            "=== SHOULD REPAIR: Low confidence ("
+                + generation.confidence()
+                + " < "
+                + REPAIR_THRESHOLD
+                + ") ===");
+      }
       return true;
     }
 
     QueryValidator.ValidationResult validation = validator.validate(generation.query());
+    if (Boolean.getBoolean("jfr.shell.debug")) {
+      System.out.println("=== VALIDATION ===");
+      System.out.println("Query: " + generation.query());
+      System.out.println("Valid: " + validation.valid());
+      System.out.println("Needs repair: " + validation.needsRepair());
+      System.out.println("Issues: " + validation.issues().size());
+      for (var issue : validation.issues()) {
+        System.out.println("  - " + issue.type() + ": " + issue.description());
+      }
+      System.out.println("==================");
+    }
     return validation.needsRepair();
   }
 
   /**
-   * STEP 4: Validate and repair query if needed.
+   * STEP 4: Always repair to expand event type groups and fix any validation issues.
    *
    * @param original original generation result
    * @param trace optional trace
@@ -291,11 +339,8 @@ public class QueryPipeline {
     long start = System.currentTimeMillis();
 
     QueryValidator.ValidationResult validation = validator.validate(original.query());
-    if (!validation.needsRepair()) {
-      // No repair needed
-      return original;
-    }
 
+    // ALWAYS call repair - it will expand profiling event type groups even if validation passes
     QueryRepairer.RepairResult repair = repairer.repair(original.query(), validation);
 
     if (trace != null) {
