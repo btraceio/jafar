@@ -72,6 +72,9 @@ test {
     if (System.getProperty('test.llm.enabled')) {
         systemProperty 'test.llm.enabled', System.getProperty('test.llm.enabled')
     }
+    if (System.getProperty('jfr.shell.debug')) {
+        systemProperty 'jfr.shell.debug', System.getProperty('jfr.shell.debug')
+    }
 }
 
 // LLM Integration Tests

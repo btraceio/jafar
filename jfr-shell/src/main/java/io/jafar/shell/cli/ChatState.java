@@ -1,8 +1,8 @@
 package io.jafar.shell.cli;
 
 /**
- * Tracks whether shell is in conversational chat mode.
- * Similar to ConditionalState but simpler (no nesting).
+ * Tracks whether shell is in conversational chat mode. Similar to ConditionalState but simpler (no
+ * nesting).
  */
 public class ChatState {
   private boolean inChatMode = false;

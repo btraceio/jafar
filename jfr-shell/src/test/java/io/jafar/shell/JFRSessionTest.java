@@ -44,9 +44,7 @@ class JFRSessionTest {
     ParsingContext context = ParsingContext.create();
     IOException exception =
         assertThrows(
-            IOException.class,
-            () -> new JFRSession(pngFile, context),
-            "Should reject PNG files");
+            IOException.class, () -> new JFRSession(pngFile, context), "Should reject PNG files");
 
     // Verify error is about parsing failure (original message wrapped)
     assertTrue(

@@ -2402,7 +2402,7 @@ public class CommandDispatcher {
 
     // Build context and translate
     ContextBuilder contextBuilder = new ContextBuilder(cur.get(), provider.getConfig());
-    QueryTranslator translator = new QueryTranslator(provider, contextBuilder, history);
+    QueryTranslator translator = new QueryTranslator(provider, contextBuilder, history, cur.get());
 
     if (verbose) {
       io.println("Translating natural language query...");
