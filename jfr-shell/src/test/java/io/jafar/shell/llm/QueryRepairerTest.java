@@ -39,7 +39,7 @@ class QueryRepairerTest {
             "datadog.ExecutionSample",
             "datadog.HeapLiveObject");
 
-    repairer = new QueryRepairer(mockProvider, availableEventTypes);
+    repairer = new QueryRepairer(mockProvider);
   }
 
   @Test
@@ -225,7 +225,7 @@ class QueryRepairerTest {
     Set<String> ddOnlyEvents =
         Set.of("datadog.ExecutionSample", "datadog.HeapLiveObject", "jdk.GarbageCollection");
 
-    repairer = new QueryRepairer(mockProvider, ddOnlyEvents);
+    repairer = new QueryRepairer(mockProvider);
 
     String originalQuery =
         "events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count)";
@@ -264,7 +264,7 @@ class QueryRepairerTest {
     Set<String> jdkOnlyEvents =
         Set.of("jdk.ExecutionSample", "jdk.OldObjectSample", "jdk.GarbageCollection");
 
-    repairer = new QueryRepairer(mockProvider, jdkOnlyEvents);
+    repairer = new QueryRepairer(mockProvider);
 
     String originalQuery =
         "events/datadog.ExecutionSample | groupBy(sampledThread/javaName, agg=count)";
@@ -295,7 +295,7 @@ class QueryRepairerTest {
     // Setup: Recording has datadog.HeapLiveObject, query uses jdk.OldObjectSample
     Set<String> ddHeapEvents = Set.of("datadog.HeapLiveObject", "jdk.GarbageCollection");
 
-    repairer = new QueryRepairer(mockProvider, ddHeapEvents);
+    repairer = new QueryRepairer(mockProvider);
 
     String originalQuery =
         "events/jdk.OldObjectSample | groupBy(objectClass/name, agg=sum, value=objectSize)";
@@ -325,7 +325,7 @@ class QueryRepairerTest {
     // Setup: No alternative available for missing event type
     Set<String> limitedEvents = Set.of("jdk.GarbageCollection");
 
-    repairer = new QueryRepairer(mockProvider, limitedEvents);
+    repairer = new QueryRepairer(mockProvider);
 
     String originalQuery = "events/jdk.ExecutionSample | count()";
     ValidationResult validation =
@@ -396,7 +396,7 @@ class QueryRepairerTest {
     // Setup: Recording has datadog events, query uses jdk events with wrong pattern
     Set<String> ddOnlyEvents = Set.of("datadog.ExecutionSample", "jdk.GarbageCollection");
 
-    repairer = new QueryRepairer(mockProvider, ddOnlyEvents);
+    repairer = new QueryRepairer(mockProvider);
 
     String originalQuery =
         "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)";

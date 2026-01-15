@@ -392,53 +392,101 @@ public final class JfrPathEvaluator {
       }
       return;
     }
-    // If the parent of the last segment resolves to an array/list and the last is a simple
-    // field name, project that field from each element.
-    if (proj.size() >= 2) {
-      String baseName = baseName(last);
-      boolean hasIndexOrSlice = last.contains("[");
-      if (!hasIndexOrSlice) {
-        List<String> head = new java.util.ArrayList<>(proj.subList(0, proj.size() - 1));
-        Object parent = Values.get(root, buildPathTokens(head).toArray());
-        Object arr = unwrapArrayLike(parent);
-        if (arr != null) {
-          int len = java.lang.reflect.Array.getLength(arr);
-          for (int i = 0; i < len; i++) {
-            Object el = java.lang.reflect.Array.get(arr, i);
-            if (el instanceof io.jafar.parser.api.ComplexType ct) el = ct.getValue();
-            if (el instanceof java.util.Map<?, ?> m) {
-              @SuppressWarnings("unchecked")
-              java.util.Map<String, Object> mm = (java.util.Map<String, Object>) m;
-              Object v = mm.get(baseName);
-              if (v != null) out.add(v);
-            }
-          }
-          return;
-        }
-      }
-    }
-    Object[] pathTokens = buildPathTokens(proj).toArray();
-    if (debug || proj.contains("0")) {
-      System.err.println(
-          "[extractWithIndexing] pathTokens after buildPathTokens = "
-              + java.util.Arrays.toString(pathTokens));
-      System.err.println(
-          "[extractWithIndexing] pathTokens types = "
-              + java.util.Arrays.stream(pathTokens)
-                  .map(o -> o == null ? "null" : o.getClass().getSimpleName())
-                  .toList());
-    }
-    Object v = Values.get(root, pathTokens);
-    if (debug || proj.contains("0")) {
-      System.err.println(
-          "[extractWithIndexing] Values.get returned: "
-              + (v == null ? "null" : v.getClass().getSimpleName()));
-    }
-    if (v != null) out.add(v);
+    // Try new recursive array iteration approach
+    extractWithArrayIteration(root, buildPathTokens(proj), out);
   }
 
-  private static java.util.List<Object> buildPathTokens(List<String> segs) {
-    java.util.List<Object> tokens = new java.util.ArrayList<>();
+  /**
+   * Recursively extract values with automatic array iteration. When navigating a path encounters an
+   * array and the next segment is a field name (not an Integer index), automatically iterates the
+   * array and continues navigating on each element.
+   *
+   * @param current the current value to navigate from
+   * @param pathTokens remaining path tokens (Strings for fields, Integers for indices)
+   * @param out output list to collect results
+   */
+  @SuppressWarnings("unchecked")
+  private void extractWithArrayIteration(
+      Object current, List<Object> pathTokens, List<Object> out) {
+    if (pathTokens.isEmpty()) {
+      // Reached end of path
+      if (current != null) {
+        // Unwrap ComplexType and ArrayType for final result
+        if (current instanceof io.jafar.parser.api.ComplexType ct) {
+          current = ct.getValue();
+        }
+        Object unwrapped = unwrapArrayLike(current);
+        if (unwrapped != null) {
+          out.add(unwrapped);
+        } else {
+          out.add(current);
+        }
+      }
+      return;
+    }
+
+    // Unwrap ComplexType
+    if (current instanceof io.jafar.parser.api.ComplexType ct) {
+      current = ct.getValue();
+    }
+
+    Object firstToken = pathTokens.get(0);
+    List<Object> remainingTokens = pathTokens.subList(1, pathTokens.size());
+
+    // Handle Integer index - explicit array access
+    if (firstToken instanceof Integer idx) {
+      Object arr = unwrapArrayLike(current);
+      if (arr != null) {
+        int len = java.lang.reflect.Array.getLength(arr);
+        if (idx >= 0 && idx < len) {
+          Object element = java.lang.reflect.Array.get(arr, idx);
+          extractWithArrayIteration(element, remainingTokens, out);
+        }
+      }
+      return;
+    }
+
+    // Handle String key - field access
+    if (firstToken instanceof String key) {
+      // Check if current is an array WITHOUT an explicit index
+      Object arr = unwrapArrayLike(current);
+      if (arr != null) {
+        // Automatic array iteration: navigate remaining path on each element
+        int len = java.lang.reflect.Array.getLength(arr);
+        for (int i = 0; i < len; i++) {
+          Object element = java.lang.reflect.Array.get(arr, i);
+          // Continue with the FULL remaining path (including current key)
+          extractWithArrayIteration(element, pathTokens, out);
+        }
+        return;
+      }
+
+      // Current is not an array, try map access
+      if (current instanceof Map<?, ?> map) {
+        Map<String, Object> m = (Map<String, Object>) map;
+        Object value = m.get(key);
+        extractWithArrayIteration(value, remainingTokens, out);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Helper to extract all values from a map using a path with automatic array iteration. Returns a
+   * list of all matching values (may be empty if path doesn't match).
+   *
+   * @param map the root map
+   * @param pathTokens path tokens (Strings for fields, Integers for indices)
+   * @return list of extracted values (may contain multiple results if path traverses arrays)
+   */
+  private List<Object> extractAllValues(Map<String, Object> map, List<Object> pathTokens) {
+    List<Object> results = new ArrayList<>();
+    extractWithArrayIteration(map, pathTokens, results);
+    return results;
+  }
+
+  private static List<Object> buildPathTokens(List<String> segs) {
+    List<Object> tokens = new ArrayList<>();
     for (String seg : segs) {
       int b = seg.indexOf('[');
       if (b < 0) {
@@ -1073,7 +1121,11 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> aggregateGroupBy(
       JFRSession session, Query query, List<String> keyPath, String aggFunc, List<String> valuePath)
       throws Exception {
-    Map<Object, GroupAccumulator> groups = new java.util.LinkedHashMap<>();
+    Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+
+    // Pre-build path tokens for array iteration support
+    List<Object> keyTokens = buildPathTokens(keyPath);
+    List<Object> valueTokens = valuePath.isEmpty() ? null : buildPathTokens(valuePath);
 
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1092,19 +1144,22 @@ public final class JfrPathEvaluator {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object key = Values.get(map, buildPathTokens(keyPath).toArray());
-              GroupAccumulator acc =
-                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+              // Extract all keys (handles arrays automatically)
+              List<Object> keys = extractAllValues(map, keyTokens);
+              for (Object key : keys) {
+                GroupAccumulator acc =
+                    groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
 
-              if ("count".equals(aggFunc)) {
-                acc.add(1);
-              } else {
-                Object val =
-                    valuePath.isEmpty()
-                        ? null
-                        : Values.get(map, buildPathTokens(valuePath).toArray());
-                if (val instanceof Number n) {
-                  acc.add(n.doubleValue());
+                if ("count".equals(aggFunc)) {
+                  acc.add(1);
+                } else {
+                  List<Object> vals =
+                      valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
+                  for (Object val : vals) {
+                    if (val instanceof Number n) {
+                      acc.add(n.doubleValue());
+                    }
+                  }
                 }
               }
             });
@@ -1118,19 +1173,22 @@ public final class JfrPathEvaluator {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object key = Values.get(map, buildPathTokens(keyPath).toArray());
-              GroupAccumulator acc =
-                  groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+              // Extract all keys (handles arrays automatically)
+              List<Object> keys = extractAllValues(map, keyTokens);
+              for (Object key : keys) {
+                GroupAccumulator acc =
+                    groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
 
-              if ("count".equals(aggFunc)) {
-                acc.add(1);
-              } else {
-                Object val =
-                    valuePath.isEmpty()
-                        ? null
-                        : Values.get(map, buildPathTokens(valuePath).toArray());
-                if (val instanceof Number n) {
-                  acc.add(n.doubleValue());
+                if ("count".equals(aggFunc)) {
+                  acc.add(1);
+                } else {
+                  List<Object> vals =
+                      valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
+                  for (Object val : vals) {
+                    if (val instanceof Number n) {
+                      acc.add(n.doubleValue());
+                    }
+                  }
                 }
               }
             });
@@ -1140,15 +1198,21 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows =
           evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
-        Object key = Values.get(row, keyPath.toArray());
-        GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
+        // Extract all keys (handles arrays automatically)
+        List<Object> keys = extractAllValues(row, keyTokens);
+        for (Object key : keys) {
+          GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(aggFunc));
 
-        if ("count".equals(aggFunc)) {
-          acc.add(1);
-        } else {
-          Object val = valuePath.isEmpty() ? null : Values.get(row, valuePath.toArray());
-          if (val instanceof Number n) {
-            acc.add(n.doubleValue());
+          if ("count".equals(aggFunc)) {
+            acc.add(1);
+          } else {
+            List<Object> vals =
+                valueTokens == null ? List.of() : extractAllValues(row, valueTokens);
+            for (Object val : vals) {
+              if (val instanceof Number n) {
+                acc.add(n.doubleValue());
+              }
+            }
           }
         }
       }
@@ -1647,8 +1711,7 @@ public final class JfrPathEvaluator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (matchesAll(map, query.predicates)) {
-              Object val = Values.get(map, buildPathTokens(proj).toArray());
-              if (val != null) out.add(val);
+              extractWithIndexing(map, proj, out);
               if (out.size() >= limit) {
                 ctl.abort();
               }
