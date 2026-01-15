@@ -7,6 +7,7 @@ import io.jafar.shell.core.SessionManager.SessionRef;
 import io.jafar.shell.llm.LLMConfig.PrivacyMode;
 import io.jafar.shell.llm.LLMConfig.PrivacySettings;
 import io.jafar.shell.llm.LLMConfig.ProviderType;
+import io.jafar.shell.llm.providers.OllamaProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,7 +30,7 @@ class ModelComparisonIntegrationTest {
 
   private static final String[] MODELS = {
     "adrienbrault/nous-hermes2pro:Q8_0", // Hermes 2 Pro
-    "qwen2.5-coder:7b" // Qwen 2.5 Instruct
+    "qwen2.5:7b-instruct" // Qwen 2.5 Instruct
   };
 
   // Test cases: (natural language, expected query, description)
@@ -126,7 +127,8 @@ class ModelComparisonIntegrationTest {
     LLMProvider provider = new OllamaProvider(config);
     SessionRef sessionRef = createMockSession();
     ContextBuilder contextBuilder = new ContextBuilder(sessionRef, config);
-    QueryTranslator translator = new QueryTranslator(provider, contextBuilder, new ArrayList<>());
+    ConversationHistory history = new ConversationHistory();
+    QueryTranslator translator = new QueryTranslator(provider, contextBuilder, history, sessionRef);
 
     ModelResults results = new ModelResults();
 
@@ -212,8 +214,7 @@ class ModelComparisonIntegrationTest {
         new PrivacySettings(PrivacyMode.LOCAL_ONLY, false, false, false, Set.of(), false),
         60,
         2000,
-        0.1, // Low temperature for consistency
-        true); // multiLevelEnabled
+        0.1); // Low temperature for consistency
   }
 
   private SessionRef createMockSession() {

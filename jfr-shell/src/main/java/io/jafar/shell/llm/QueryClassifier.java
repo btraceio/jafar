@@ -133,8 +133,7 @@ public class QueryClassifier {
 
     // DECORATOR_CORRELATION - check for correlation IDs
     if (DECORATOR_CORRELATION_PATTERN.matcher(normalized).find()) {
-      return Optional.of(
-          ClassificationResult.fromRules(QueryCategory.DECORATOR_CORRELATION, 0.88));
+      return Optional.of(ClassificationResult.fromRules(QueryCategory.DECORATOR_CORRELATION, 0.88));
     }
 
     // DECORATOR_TEMPORAL - check for temporal keywords
@@ -160,8 +159,7 @@ public class QueryClassifier {
             || normalized.contains("average")
             || normalized.contains("max")
             || normalized.contains("min"))) {
-      return Optional.of(
-          ClassificationResult.fromRules(QueryCategory.GROUPBY_AGGREGATED, 0.86));
+      return Optional.of(ClassificationResult.fromRules(QueryCategory.GROUPBY_AGGREGATED, 0.86));
     }
 
     // GROUPBY_SIMPLE - unique/distinct patterns
@@ -212,7 +210,9 @@ public class QueryClassifier {
             List.of(new LLMProvider.Message(LLMProvider.Role.USER, userMessage)),
             options);
 
-    LLMProvider.LLMResponse response = provider.complete(request);
+    LLMProvider.LLMResponse response =
+        provider.completeStructured(
+            request, io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION);
     String content = response.content();
 
     // Parse JSON response

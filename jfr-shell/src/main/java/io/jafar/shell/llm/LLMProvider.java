@@ -31,6 +31,17 @@ public abstract class LLMProvider implements AutoCloseable {
   public abstract LLMResponse complete(LLMRequest request) throws LLMException;
 
   /**
+   * Complete with structured output enforcement.
+   *
+   * @param request LLM request
+   * @param schema JSON schema for response format
+   * @return LLM response guaranteed to match schema
+   * @throws LLMException if the request fails or response doesn't match schema
+   */
+  public abstract LLMResponse completeStructured(LLMRequest request, JsonSchema schema)
+      throws LLMException;
+
+  /**
    * Checks if this provider is available and ready to handle requests.
    *
    * @return true if the provider is available
@@ -128,4 +139,28 @@ public abstract class LLMProvider implements AutoCloseable {
    * @param durationMs time taken to generate the response in milliseconds
    */
   public record LLMResponse(String content, String model, int tokensUsed, long durationMs) {}
+
+  /**
+   * JSON schema for structured outputs.
+   *
+   * @param name Schema name (for debugging)
+   * @param description Human-readable description
+   * @param properties Map of property name to property schema
+   * @param required List of required property names
+   */
+  public record JsonSchema(
+      String name,
+      String description,
+      Map<String, PropertySchema> properties,
+      List<String> required) {}
+
+  /**
+   * Property schema within a JSON schema.
+   *
+   * @param type Property type ("string", "number", "boolean", "array", "object")
+   * @param description Human-readable description
+   * @param additionalConstraints Additional constraints (minimum, maximum, items, etc.)
+   */
+  public record PropertySchema(
+      String type, String description, Map<String, Object> additionalConstraints) {}
 }

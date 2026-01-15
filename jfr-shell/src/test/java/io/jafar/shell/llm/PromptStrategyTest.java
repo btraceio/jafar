@@ -7,7 +7,6 @@ import static org.mockito.Mockito.*;
 
 import io.jafar.shell.llm.PromptStrategy.PromptLevel;
 import java.io.IOException;
-import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,7 +126,8 @@ class PromptStrategyTest {
   void testShouldEscalate_AlreadyFull_NoEscalation() {
     var result = TranslationResult.success("events/jdk.GC", "Gets GC events", 0.5);
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.FULL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.FULL, QueryCategory.SIMPLE_COUNT);
 
     assertFalse(shouldEscalate);
   }
@@ -136,7 +136,8 @@ class PromptStrategyTest {
   void testShouldEscalate_MaxAttempts_NoEscalation() {
     var result = TranslationResult.success("events/jdk.GC", "Gets GC events", 0.5);
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 3, PromptLevel.ENHANCED);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 3, PromptLevel.ENHANCED, QueryCategory.SIMPLE_COUNT);
 
     assertFalse(shouldEscalate);
   }
@@ -145,7 +146,8 @@ class PromptStrategyTest {
   void testShouldEscalate_LowConfidence_Escalates() {
     var result = TranslationResult.success("events/jdk.GC", "Gets GC events", 0.5); // < 0.6
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertTrue(shouldEscalate);
   }
@@ -154,7 +156,8 @@ class PromptStrategyTest {
   void testShouldEscalate_NoQuery_Escalates() {
     var result = TranslationResult.success(null, null, 0.8); // no query
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertTrue(shouldEscalate);
   }
@@ -163,7 +166,8 @@ class PromptStrategyTest {
   void testShouldEscalate_Conversational_NoEscalation() {
     var result = TranslationResult.conversational("Hello! How can I help?");
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.CONVERSATIONAL);
 
     assertFalse(shouldEscalate);
   }
@@ -172,13 +176,11 @@ class PromptStrategyTest {
   void testShouldEscalate_Clarification_NoEscalation() {
     var clarification =
         new ClarificationRequest(
-            "show threads",
-            "What do you want?",
-            java.util.List.of("Metadata", "Events"),
-            0.8);
+            "show threads", "What do you want?", java.util.List.of("Metadata", "Events"), 0.8);
     var result = TranslationResult.needsClarification(clarification);
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertFalse(shouldEscalate);
   }
@@ -189,7 +191,8 @@ class PromptStrategyTest {
         TranslationResult.successWithWarning(
             "events/jdk.GC", "Gets GC events", 0.8, "Query is ambiguous");
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertTrue(shouldEscalate);
   }
@@ -200,7 +203,8 @@ class PromptStrategyTest {
         TranslationResult.successWithWarning(
             "events/jdk.GC", "Gets GC events", 0.8, "Performance might be slow");
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertFalse(shouldEscalate);
   }
@@ -209,7 +213,8 @@ class PromptStrategyTest {
   void testShouldEscalate_HighConfidence_NoEscalation() {
     var result = TranslationResult.success("events/jdk.GC | count()", "Counts GC events", 0.95);
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT);
 
     assertFalse(shouldEscalate);
   }
@@ -218,7 +223,8 @@ class PromptStrategyTest {
   void testShouldEscalate_Attempt2_StillEscalates() {
     var result = TranslationResult.success("events/jdk.GC", "Gets GC events", 0.5);
 
-    boolean shouldEscalate = strategy.shouldEscalate(result, 2, PromptLevel.ENHANCED);
+    boolean shouldEscalate =
+        strategy.shouldEscalate(result, 2, PromptLevel.ENHANCED, QueryCategory.SIMPLE_COUNT);
 
     assertTrue(shouldEscalate);
   }
@@ -374,14 +380,13 @@ class PromptStrategyTest {
     assertEquals(PromptLevel.MINIMAL, level);
 
     // 2. Build minimal prompt
-    when(mockContextBuilder.buildMinimalPrompt(QueryCategory.SIMPLE_COUNT))
-        .thenReturn("MINIMAL");
+    when(mockContextBuilder.buildMinimalPrompt(QueryCategory.SIMPLE_COUNT)).thenReturn("MINIMAL");
     String prompt = strategy.buildPrompt(QueryCategory.SIMPLE_COUNT, level);
     assertEquals("MINIMAL", prompt);
 
     // 3. Success on first try, no escalation
     var result = TranslationResult.success("events/jdk.GC | count()", "Counts GC events", 0.95);
-    assertFalse(strategy.shouldEscalate(result, 1, level));
+    assertFalse(strategy.shouldEscalate(result, 1, level, QueryCategory.SIMPLE_COUNT));
   }
 
   @Test
@@ -392,8 +397,7 @@ class PromptStrategyTest {
     assertEquals(PromptLevel.ENHANCED, level);
 
     // 2. Build enhanced prompt
-    when(mockContextBuilder.buildEnhancedPrompt(
-            eq(QueryCategory.TOPN_RANKING), any(Set.class)))
+    when(mockContextBuilder.buildEnhancedPrompt(eq(QueryCategory.TOPN_RANKING), any(Set.class)))
         .thenReturn("ENHANCED");
     String prompt1 = strategy.buildPrompt(QueryCategory.TOPN_RANKING, level);
     assertEquals("ENHANCED", prompt1);
@@ -401,7 +405,7 @@ class PromptStrategyTest {
     // 3. First attempt returns low confidence → escalate
     var result1 =
         TranslationResult.success("groupBy(...) | top(10)", "Top 10 ranking", 0.55); // Low conf
-    assertTrue(strategy.shouldEscalate(result1, 1, level));
+    assertTrue(strategy.shouldEscalate(result1, 1, level, QueryCategory.TOPN_RANKING));
 
     // 4. Escalate to FULL
     level = level.next();
@@ -415,7 +419,7 @@ class PromptStrategyTest {
     // 6. Second attempt succeeds → no more escalation
     var result2 =
         TranslationResult.success("groupBy(...) | top(10, by=sum)", "Top 10 ranking", 0.92);
-    assertFalse(strategy.shouldEscalate(result2, 2, level));
+    assertFalse(strategy.shouldEscalate(result2, 2, level, QueryCategory.TOPN_RANKING));
   }
 
   @Test
@@ -434,7 +438,8 @@ class PromptStrategyTest {
     // After 3 attempts, no more escalation even if low confidence
     var result = TranslationResult.success("query", "explanation", 0.4);
 
-    assertFalse(strategy.shouldEscalate(result, 3, PromptLevel.ENHANCED));
+    assertFalse(
+        strategy.shouldEscalate(result, 3, PromptLevel.ENHANCED, QueryCategory.SIMPLE_COUNT));
   }
 
   @Test
@@ -445,7 +450,8 @@ class PromptStrategyTest {
             "show threads", "What do you want?", java.util.List.of("A", "B"), 0.7);
     var result = TranslationResult.needsClarification(clarification);
 
-    assertFalse(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL));
+    assertFalse(
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT));
   }
 
   // ===== Edge Cases =====
@@ -454,14 +460,15 @@ class PromptStrategyTest {
   void testEdgeCase_ConfidenceExactly06_NoEscalation() {
     var result = TranslationResult.success("query", "explanation", 0.6);
 
-    assertFalse(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL));
+    assertFalse(
+        strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT));
   }
 
   @Test
   void testEdgeCase_ConfidenceJustBelow06_Escalates() {
     var result = TranslationResult.success("query", "explanation", 0.59);
 
-    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL));
+    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT));
   }
 
   @Test
@@ -469,7 +476,7 @@ class PromptStrategyTest {
     var result = TranslationResult.success("", "explanation", 0.95);
 
     // Empty query should trigger escalation despite high confidence
-    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL));
+    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT));
   }
 
   @Test
@@ -477,6 +484,6 @@ class PromptStrategyTest {
     var result = TranslationResult.success("   ", "explanation", 0.95);
 
     // Blank query should trigger escalation despite high confidence
-    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL));
+    assertTrue(strategy.shouldEscalate(result, 1, PromptLevel.MINIMAL, QueryCategory.SIMPLE_COUNT));
   }
 }

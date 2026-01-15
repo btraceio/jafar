@@ -12,19 +12,16 @@ import java.util.stream.Stream;
  * Configuration for LLM providers and privacy settings. Loads from {@code
  * ~/.jfr-shell/llm-config.properties} by default.
  *
- * <p>Multi-level translation: When enabled, the system uses a three-tier prompting strategy for
- * query translation:
+ * <p>Pipeline translation: Uses a multi-step pipeline architecture for query generation:
  *
  * <ul>
- *   <li>MINIMAL (~2-3KB): For simple queries (count, existence checks) - 70-80% token reduction
- *   <li>ENHANCED (~6-8KB): For medium complexity (topN, groupBy) - 40-50% token reduction
- *   <li>FULL (~15KB): For complex queries (decorators, multi-op) - backward compatible
+ *   <li>CLASSIFY: Categorizes queries into 12 types
+ *   <li>CLARIFY (conditional): Generates clarification for ambiguous queries
+ *   <li>GENERATE: Creates JfrPath query with category-specific prompts and 2-4 examples
+ *   <li>VALIDATE/REPAIR (conditional): Fixes syntax errors when needed
  * </ul>
  *
- * <p>Progressive escalation automatically retries with larger prompts if confidence is low or
- * syntax errors occur.
- *
- * @param multiLevelEnabled enable multi-level prompting (default: true for optimal performance)
+ * <p>Benefits: 85-95% prompt size reduction, structured outputs, smart example selection.
  */
 public record LLMConfig(
     ProviderType provider,
@@ -34,8 +31,7 @@ public record LLMConfig(
     PrivacySettings privacy,
     int timeoutSeconds,
     int maxTokens,
-    double temperature,
-    boolean multiLevelEnabled) {
+    double temperature) {
 
   /** Type of LLM provider. */
   public enum ProviderType {
@@ -99,8 +95,7 @@ public record LLMConfig(
         PrivacySettings.defaults(),
         30, // 30 second timeout
         2048, // Max tokens
-        0.1, // Low temperature for deterministic queries
-        true // Multi-level prompting enabled (Phase 5: production ready)
+        0.1 // Low temperature for deterministic queries
         );
   }
 
@@ -196,12 +191,9 @@ public record LLMConfig(
     int timeoutSeconds = Integer.parseInt(props.getProperty("timeoutSeconds", "30"));
     int maxTokens = Integer.parseInt(props.getProperty("maxTokens", "2048"));
     double temperature = Double.parseDouble(props.getProperty("temperature", "0.1"));
-    boolean multiLevelEnabled =
-        Boolean.parseBoolean(props.getProperty("multiLevelEnabled", "true"));
 
     return new LLMConfig(
-        provider, endpoint, model, apiKey, privacy, timeoutSeconds, maxTokens, temperature,
-        multiLevelEnabled);
+        provider, endpoint, model, apiKey, privacy, timeoutSeconds, maxTokens, temperature);
   }
 
   /**
@@ -228,7 +220,6 @@ public record LLMConfig(
     props.setProperty("timeoutSeconds", String.valueOf(timeoutSeconds));
     props.setProperty("maxTokens", String.valueOf(maxTokens));
     props.setProperty("temperature", String.valueOf(temperature));
-    props.setProperty("multiLevelEnabled", String.valueOf(multiLevelEnabled));
 
     return props;
   }

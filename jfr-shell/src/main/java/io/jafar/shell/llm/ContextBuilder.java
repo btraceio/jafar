@@ -1,11 +1,16 @@
 package io.jafar.shell.llm;
 
 import io.jafar.shell.core.SessionManager.SessionRef;
+import io.jafar.shell.providers.MetadataProvider;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -20,6 +25,9 @@ public class ContextBuilder {
   private final LLMConfig config;
 
   private static final String PROMPT_BASE = "/llm-prompts/";
+
+  // Cache for event fields reference by prompt level
+  private final Map<PromptStrategy.PromptLevel, String> eventFieldsCache = new HashMap<>();
 
   /**
    * Creates a context builder for the given session.
@@ -76,6 +84,10 @@ public class ContextBuilder {
       prompt.append(buildEventTypesList());
       prompt.append("\n\n");
 
+      // Dynamic: event fields with importance-based prioritization
+      prompt.append(buildEventFieldsReference(PromptStrategy.PromptLevel.FULL));
+      prompt.append("\n\n");
+
       // Dynamic: session context (stays in code)
       prompt.append("CURRENT SESSION:\n");
       prompt.append(buildSessionContext());
@@ -105,6 +117,8 @@ public class ContextBuilder {
 
       // Load rules from resources
       prompt.append(loadResource("rules/field-names.txt"));
+      prompt.append("\n\n");
+      prompt.append(loadResource("rules/unit-conversions.txt"));
       prompt.append("\n\n");
       prompt.append(loadResource("rules/decorator-syntax.txt"));
       prompt.append("\n\n");
@@ -165,7 +179,53 @@ public class ContextBuilder {
     StringBuilder context = new StringBuilder();
 
     context.append("Recording: ").append(session.session.getRecordingPath()).append("\n");
-    context.append("Event types: ").append(session.session.getAvailableEventTypes().size());
+
+    var eventTypes = session.session.getAvailableEventTypes();
+    context.append("Total event types: ").append(eventTypes.size()).append("\n");
+
+    // List profiling-relevant event types explicitly (critical for choosing correct events)
+    context.append("\nProfiling events present:\n");
+
+    // CPU/Execution profiling
+    boolean hasJdkExecution = eventTypes.contains("jdk.ExecutionSample");
+    boolean hasDatadogExecution = eventTypes.contains("datadog.ExecutionSample");
+    boolean hasCpuTimeSample = eventTypes.contains("jdk.CPUTimeSample");
+
+    if (hasJdkExecution || hasDatadogExecution || hasCpuTimeSample) {
+      context.append("  CPU profiling: ");
+      if (hasJdkExecution) context.append("jdk.ExecutionSample ");
+      if (hasDatadogExecution) context.append("datadog.ExecutionSample ");
+      if (hasCpuTimeSample) context.append("jdk.CPUTimeSample ");
+      context.append("\n");
+    } else {
+      context.append("  CPU profiling: NONE\n");
+    }
+
+    // Heap profiling
+    boolean hasOldObjectSample = eventTypes.contains("jdk.OldObjectSample");
+    boolean hasHeapLiveObject = eventTypes.contains("datadog.HeapLiveObject");
+
+    if (hasOldObjectSample || hasHeapLiveObject) {
+      context.append("  Heap profiling: ");
+      if (hasOldObjectSample) context.append("jdk.OldObjectSample ");
+      if (hasHeapLiveObject) context.append("datadog.HeapLiveObject ");
+      context.append("\n");
+    } else {
+      context.append("  Heap profiling: NONE\n");
+    }
+
+    // Allocation profiling
+    boolean hasAllocationSample = eventTypes.contains("jdk.ObjectAllocationSample");
+    boolean hasAllocationInNewTLAB = eventTypes.contains("jdk.ObjectAllocationInNewTLAB");
+    boolean hasDatadogAllocation = eventTypes.contains("datadog.ObjectSample");
+
+    if (hasAllocationSample || hasAllocationInNewTLAB || hasDatadogAllocation) {
+      context.append("  Allocation profiling: ");
+      if (hasAllocationSample) context.append("jdk.ObjectAllocationSample ");
+      if (hasAllocationInNewTLAB) context.append("jdk.ObjectAllocationInNewTLAB ");
+      if (hasDatadogAllocation) context.append("datadog.ObjectSample ");
+      context.append("\n");
+    }
 
     // Add variable names (but not values for privacy)
     if (!session.variables.isEmpty()) {
@@ -278,6 +338,10 @@ public class ContextBuilder {
     prompt.append(buildEventTypesList());
     prompt.append("\n\n");
 
+    // Dynamic: event fields (minimal set)
+    prompt.append(buildEventFieldsReference(PromptStrategy.PromptLevel.MINIMAL));
+    prompt.append("\n\n");
+
     // Dynamic: session context
     prompt.append("CURRENT SESSION:\n");
     prompt.append(buildSessionContext());
@@ -285,6 +349,10 @@ public class ContextBuilder {
 
     // Event type selection guide
     prompt.append(loadResource("event-type-selection.txt"));
+    prompt.append("\n\n");
+
+    // Unit conversions
+    prompt.append(loadResource("rules/unit-conversions.txt"));
     prompt.append("\n\n");
 
     // Category-specific examples
@@ -339,6 +407,10 @@ public class ContextBuilder {
     prompt.append(buildEventTypesList());
     prompt.append("\n\n");
 
+    // Dynamic: event fields (enhanced set with annotations)
+    prompt.append(buildEventFieldsReference(PromptStrategy.PromptLevel.ENHANCED));
+    prompt.append("\n\n");
+
     // Dynamic: session context
     prompt.append("CURRENT SESSION:\n");
     prompt.append(buildSessionContext());
@@ -386,6 +458,10 @@ public class ContextBuilder {
     prompt.append(loadResource("rules/field-names.txt"));
     prompt.append("\n\n");
 
+    // Unit conversions (critical for accuracy)
+    prompt.append(loadResource("rules/unit-conversions.txt"));
+    prompt.append("\n\n");
+
     // Response format
     prompt.append(loadResource("response-format.txt"));
 
@@ -415,6 +491,263 @@ public class ContextBuilder {
     } catch (IOException e) {
       // No rules file for this category - that's okay
       return "";
+    }
+  }
+
+  /**
+   * Builds a dynamic event fields reference based on available metadata.
+   *
+   * @param level the prompt level determining detail depth
+   * @return formatted event fields documentation
+   */
+  private String buildEventFieldsReference(PromptStrategy.PromptLevel level) {
+    return eventFieldsCache.computeIfAbsent(level, l -> generateEventFieldsReference(l));
+  }
+
+  /**
+   * Generates event fields reference based on metadata.
+   *
+   * @param level the prompt level
+   * @return formatted event fields string
+   */
+  private String generateEventFieldsReference(PromptStrategy.PromptLevel level) {
+    try {
+      StringBuilder sb = new StringBuilder();
+      sb.append("AVAILABLE EVENT FIELDS:\n\n");
+
+      Map<String, Long> eventCounts = session.session.getEventTypeCounts();
+      Path recordingPath = session.session.getRecordingPath();
+
+      // Check for null or empty recording
+      if (eventCounts == null || eventCounts.isEmpty()) {
+        return "AVAILABLE EVENT FIELDS:\n"
+            + "(No events in recording - metadata not available)\n\n";
+      }
+
+      // Determine how many events and fields to include
+      int maxEvents;
+      int maxFields;
+      switch (level) {
+        case MINIMAL:
+          maxEvents = 5;
+          maxFields = 5;
+          break;
+        case ENHANCED:
+          maxEvents = 15;
+          maxFields = 12;
+          break;
+        case FULL:
+          maxEvents = 30;
+          maxFields = -1; // All important fields
+          break;
+        default:
+          maxEvents = 10;
+          maxFields = 8;
+      }
+
+      // Get top N events by occurrence
+      List<String> topEvents =
+          eventCounts.entrySet().stream()
+              .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+              .limit(maxEvents)
+              .map(Map.Entry::getKey)
+              .collect(Collectors.toList());
+
+      // Build field reference for each event
+      for (String eventType : topEvents) {
+        try {
+          Map<String, Object> metadata = MetadataProvider.loadClass(recordingPath, eventType);
+
+          if (metadata == null) {
+            continue;
+          }
+
+          sb.append(eventType).append(":\n");
+
+          @SuppressWarnings("unchecked")
+          Map<String, Map<String, Object>> fieldsByName =
+              (Map<String, Map<String, Object>>) metadata.get("fieldsByName");
+
+          if (fieldsByName != null) {
+            List<FieldInfo> fields = buildFieldList(fieldsByName, eventType);
+
+            // Sort by importance
+            fields.sort((a, b) -> Integer.compare(b.importance, a.importance));
+
+            // Take top N fields
+            int fieldCount = maxFields < 0 ? fields.size() : Math.min(maxFields, fields.size());
+
+            for (int i = 0; i < fieldCount; i++) {
+              FieldInfo field = fields.get(i);
+              sb.append("  - ")
+                  .append(field.name)
+                  .append(": ")
+                  .append(field.type)
+                  .append(field.arraySuffix);
+
+              // Add important annotations in ENHANCED and FULL
+              if (level != PromptStrategy.PromptLevel.MINIMAL && !field.annotations.isEmpty()) {
+                sb.append(" ").append(String.join(" ", field.annotations));
+              }
+
+              sb.append("\n");
+            }
+          }
+
+          sb.append("\n");
+
+        } catch (Exception e) {
+          // Skip problematic events, continue with others
+          if (Boolean.getBoolean("jfr.shell.debug")) {
+            System.err.println("Failed to load metadata for " + eventType + ": " + e.getMessage());
+          }
+        }
+      }
+
+      return sb.toString();
+
+    } catch (Exception e) {
+      // If metadata extraction fails, return minimal info
+      if (Boolean.getBoolean("jfr.shell.debug")) {
+        System.err.println("Failed to build event fields reference: " + e.getMessage());
+      }
+      return "AVAILABLE EVENT FIELDS:\n"
+          + "(Metadata extraction unavailable - using runtime discovery)\n\n";
+    }
+  }
+
+  /**
+   * Builds a list of FieldInfo from metadata map.
+   *
+   * @param fieldsByName map of field name to field metadata
+   * @param eventType the event type name
+   * @return list of field information
+   */
+  private List<FieldInfo> buildFieldList(
+      Map<String, Map<String, Object>> fieldsByName, String eventType) {
+
+    List<FieldInfo> result = new ArrayList<>();
+
+    for (Map.Entry<String, Map<String, Object>> entry : fieldsByName.entrySet()) {
+      String fieldName = entry.getKey();
+      Map<String, Object> fieldMeta = entry.getValue();
+
+      String type = String.valueOf(fieldMeta.get("type"));
+      int dimension = (Integer) fieldMeta.getOrDefault("dimension", -1);
+      String arraySuffix = dimension > 0 ? "[]".repeat(dimension) : "";
+
+      @SuppressWarnings("unchecked")
+      List<String> annotations =
+          (List<String>) fieldMeta.getOrDefault("annotations", Collections.emptyList());
+
+      int importance =
+          calculateFieldImportanceFromMetadata(fieldName, type, annotations, eventType);
+
+      result.add(new FieldInfo(fieldName, type, arraySuffix, importance, annotations));
+    }
+
+    return result;
+  }
+
+  /**
+   * Calculates field importance based on metadata.
+   *
+   * @param fieldName the field name
+   * @param fieldType the field type
+   * @param annotations list of annotation strings
+   * @param eventType the event type name
+   * @return importance score (0-100+)
+   */
+  private int calculateFieldImportanceFromMetadata(
+      String fieldName, String fieldType, List<String> annotations, String eventType) {
+
+    int score = 0;
+    String lowerName = fieldName.toLowerCase();
+    String lowerType = fieldType.toLowerCase();
+
+    // Temporal fields (critical)
+    if (lowerName.equals("starttime")
+        || lowerName.equals("endtime")
+        || lowerName.equals("duration")) {
+      score += 100;
+    }
+
+    // Thread references
+    if (lowerName.contains("thread") && !lowerType.equals("long")) {
+      score += 90;
+    }
+
+    // Stack traces
+    if (lowerName.equals("stacktrace")) {
+      score += 85;
+    }
+
+    // Size/bytes fields
+    if (lowerName.contains("bytes")
+        || lowerName.contains("size")
+        || lowerName.contains("allocated")
+        || lowerName.contains("weight")) {
+      score += 80;
+    }
+
+    // Common thread field names
+    if (lowerName.equals("eventthread") || lowerName.equals("sampledthread")) {
+      score += 75;
+    }
+
+    // Class references
+    if (lowerName.contains("class") && !lowerType.equals("long")) {
+      score += 70;
+    }
+
+    // Method references
+    if (lowerName.contains("method")) {
+      score += 65;
+    }
+
+    // Names and identifiers
+    if (lowerName.equals("name") || lowerName.equals("id")) {
+      score += 60;
+    }
+
+    // Path fields (File I/O)
+    if (lowerName.equals("path")) {
+      score += 55;
+    }
+
+    // Annotated fields (Label, Description indicate importance)
+    for (String ann : annotations) {
+      if (ann.contains("Label") || ann.contains("Description")) {
+        score += 20;
+      }
+      if (ann.contains("Timespan") || ann.contains("DataAmount")) {
+        score += 15;
+      }
+    }
+
+    // Penalize internal/diagnostic fields
+    if (lowerName.startsWith("_") || lowerName.contains("internal")) {
+      score -= 50;
+    }
+
+    return score;
+  }
+
+  /** Helper class to hold field information with importance score. */
+  private static class FieldInfo {
+    final String name;
+    final String type;
+    final String arraySuffix;
+    final int importance;
+    final List<String> annotations;
+
+    FieldInfo(
+        String name, String type, String arraySuffix, int importance, List<String> annotations) {
+      this.name = name;
+      this.type = type;
+      this.arraySuffix = arraySuffix;
+      this.importance = importance;
+      this.annotations = annotations;
     }
   }
 }

@@ -8,14 +8,13 @@ import io.jafar.shell.core.SessionManager.SessionRef;
 import java.nio.file.Path;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
  * Integration tests for the query pipeline.
  *
- * <p>Note: These tests are disabled by default as they require a real LLM provider (Ollama). To
- * run them:
+ * <p>Note: These tests are disabled by default as they require a real LLM provider (Ollama). To run
+ * them:
  *
  * <ol>
  *   <li>Start Ollama: `ollama serve`
@@ -116,8 +115,7 @@ class PipelineIntegrationTest {
   @Test
   void testPipeline_TopNQuery() throws LLMException {
     PipelineResult result =
-        pipeline.generateJfrPath(
-            "top 10 hottest methods", new QueryPipeline.PipelineContext());
+        pipeline.generateJfrPath("top 10 hottest methods", new QueryPipeline.PipelineContext());
 
     assertTrue(result.hasQuery());
     String query = result.query();
@@ -157,8 +155,7 @@ class PipelineIntegrationTest {
 
     try {
       PipelineResult result =
-          pipeline.generateJfrPath(
-              "count GC events", new QueryPipeline.PipelineContext());
+          pipeline.generateJfrPath("count GC events", new QueryPipeline.PipelineContext());
 
       assertTrue(result.hasQuery());
       assertTrue(result.trace().isPresent(), "Should have trace in debug mode");

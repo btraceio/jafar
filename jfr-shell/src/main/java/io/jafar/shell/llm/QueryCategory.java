@@ -22,7 +22,9 @@ public enum QueryCategory {
   /** Simple filtering: "file reads over 1MB" → events/jdk.FileRead[bytes>1048576] */
   SIMPLE_FILTER(Set.of(SIMPLE_COUNT), true, false),
 
-  /** Statistical aggregation: "average GC pause" → events/jdk.GarbageCollection | stats(duration) */
+  /**
+   * Statistical aggregation: "average GC pause" → events/jdk.GarbageCollection | stats(duration)
+   */
   STATISTICS(Set.of(SIMPLE_FILTER, SIMPLE_COUNT), false, false),
 
   /** Simple groupBy: "how many threads" → groupBy(eventThread/javaName) */

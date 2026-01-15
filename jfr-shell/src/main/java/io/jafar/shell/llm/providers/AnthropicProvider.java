@@ -103,6 +103,13 @@ public class AnthropicProvider extends LLMProvider {
   }
 
   @Override
+  public LLMResponse completeStructured(LLMRequest request, JsonSchema schema) throws LLMException {
+    // TODO: Implement structured outputs for Anthropic when needed
+    throw new UnsupportedOperationException(
+        "Structured outputs not yet implemented for Anthropic provider");
+  }
+
+  @Override
   public boolean isAvailable() {
     try {
       // Try a minimal request to check availability

@@ -30,7 +30,8 @@ class ExampleRetrieverTest {
     if (!examples.isEmpty()) {
       String firstExample = examples.get(0).question().toLowerCase();
       assertTrue(
-          firstExample.contains("count") || firstExample.contains("gc")
+          firstExample.contains("count")
+              || firstExample.contains("gc")
               || firstExample.contains("garbage"),
           "First example should contain relevant keywords");
     }

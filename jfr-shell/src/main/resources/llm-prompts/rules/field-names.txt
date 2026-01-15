@@ -1,12 +1,133 @@
 KEY FIELD NAME RULES:
-- Network I/O: jdk.SocketRead uses 'bytesRead', jdk.SocketWrite uses 'bytesWritten'
-- File I/O: jdk.FileRead uses 'bytes', jdk.FileWrite uses 'bytesWritten'
-- Allocations: Use 'bytes' for memory size, 'weight' for allocation weight/pressure
-- Thread fields: ExecutionSample uses 'sampledThread', most other events use 'eventThread'
-- Class loading: jdk.ClassLoad uses 'loadedClass/name' not 'className'
-- Exceptions: jdk.JavaExceptionThrow uses 'thrownClass/name' not 'type'
-- Thread parking: Use jdk.ThreadPark not jdk.JavaThreadPark
-- Filtering: Use [condition] syntax, never use filter() operator
-- For "longest" or "slowest": Use agg=max with top(N, by=max), not stats()
-- Don't add operators not explicitly requested (e.g., don't add count() or top() unless asked)
-- For filtering by attributes like "young generation", use regex filters not specific event types
+
+=== NETWORK I/O ===
+- jdk.SocketRead: Uses 'bytesRead' field (NOT 'bytes')
+- jdk.SocketWrite: Uses 'bytesWritten' field
+- Address fields: Use 'address' (socket address)
+- Host/port: Use 'host' and 'port' fields
+
+Examples:
+Q: "network reads over 1MB"
+A: events/jdk.SocketRead[bytesRead > 1048576]  // NOT [bytes > ...]
+
+=== FILE I/O ===
+- jdk.FileRead: Uses 'bytesRead' field
+- jdk.FileWrite: Uses 'bytesWritten' field
+- Path: Use 'path' field (file path)
+
+Examples:
+Q: "file writes larger than 10MB"
+A: events/jdk.FileWrite[bytesWritten > 10485760]
+
+=== MEMORY ALLOCATION ===
+- Allocation events: Use 'allocationSize' or 'bytes' for object size
+- Weight field: Use 'weight' for allocation pressure/sampling weight
+- Object class: Use 'objectClass/name' for the allocated class
+- Allocation site: Use 'stackTrace' for allocation location
+
+Examples:
+Q: "large allocations over 1MB"
+A: events/jdk.ObjectAllocationInNewTLAB[allocationSize > 1048576]
+
+Q: "allocations by class"
+A: events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name)
+
+=== THREAD FIELDS ===
+CRITICAL: Different events use different thread field names!
+
+- jdk.ExecutionSample: Uses 'sampledThread' (NOT eventThread)
+- Most other events: Use 'eventThread'
+- Thread names: Access via 'sampledThread/javaName' or 'eventThread/javaName'
+- Thread IDs: Use 'sampledThread/javaThreadId' or 'eventThread/javaThreadId'
+
+Examples:
+Q: "CPU time by thread"
+A: events/jdk.ExecutionSample | groupBy(sampledThread/javaName)  // NOT eventThread
+
+Q: "GC events by thread"
+A: events/jdk.GarbageCollection | groupBy(eventThread/javaName)
+
+=== CLASS AND METHOD REFERENCES ===
+- Class loading: jdk.ClassLoad uses 'loadedClass/name' (NOT 'className')
+- Class fields: Usually 'class/name' or 'objectClass/name'
+- Method references: Use 'method/name', 'method/descriptor'
+- Method in stack frames: Use 'stackTrace/frames/0/method/type/name'
+
+Examples:
+Q: "loaded classes"
+A: events/jdk.ClassLoad | groupBy(loadedClass/name)  // NOT className
+
+Q: "top methods by CPU"
+A: events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10)
+
+=== EXCEPTION HANDLING ===
+- Exception events: jdk.JavaExceptionThrow (NOT jdk.Exception)
+- Exception class: Use 'thrownClass/name' (NOT 'type' or 'exceptionType')
+- Message: Use 'message' field
+
+Examples:
+Q: "exceptions thrown"
+A: events/jdk.JavaExceptionThrow | groupBy(thrownClass/name)  // NOT [type]
+
+=== GARBAGE COLLECTION ===
+- GC events: jdk.GarbageCollection (main event)
+- GC cause: Use 'cause' field
+- GC name: Use 'name' field
+- Heap usage: jdk.GCHeapSummary with 'heapUsed', 'heapSpace'
+
+Examples:
+Q: "GC pauses by cause"
+A: events/jdk.GarbageCollection | groupBy(cause)
+
+=== SYNCHRONIZATION ===
+- Thread parking: Use jdk.ThreadPark (NOT jdk.JavaThreadPark)
+- Monitor wait: jdk.JavaMonitorWait
+- Monitor enter: jdk.JavaMonitorEnter
+- Monitor class: Use 'monitorClass/name'
+- Parked class: Use 'parkedClass/name'
+
+Examples:
+Q: "thread parking duration"
+A: events/jdk.ThreadPark | stats(duration)  // NOT JavaThreadPark
+
+=== COMMON FIELD PATTERNS ===
+- Duration: Always 'duration' (in nanoseconds)
+- Start time: Always 'startTime' (timestamp)
+- End time: May be 'endTime' (if event has duration)
+- Event thread: Usually 'eventThread' (except ExecutionSample)
+- Stack trace: Always 'stackTrace'
+
+=== FIELD PATH SYNTAX ===
+- Nested objects: Use '/' separator (e.g., 'sampledThread/javaName')
+- Array access: Use '/N' for index (e.g., 'stackTrace/frames/0/method')
+- Top frame: Use '/0' for most recent (e.g., 'stackTrace/frames/0')
+
+Examples:
+Q: "thread names"
+A: sampledThread/javaName  // NOT sampledThread.javaName
+
+Q: "top stack frame method"
+A: stackTrace/frames/0/method/type/name  // Navigate nested structure
+
+=== FILTERING RULES ===
+- Always use [condition] syntax for filters
+- NEVER use filter() operator
+- Combine conditions with 'and', 'or'
+- Use regex with '~' operator for pattern matching
+
+Examples:
+Q: "young generation GCs"
+A: events/jdk.GarbageCollection[name ~ '.*Young.*']  // Use regex
+
+=== AGGREGATION RULES ===
+- For "longest" or "slowest": Use agg=max with top(N, by=max)
+- For "most": Use count aggregation with top(N, by=count)
+- For "total": Use sum aggregation
+- Don't add operators unless explicitly requested
+
+Examples:
+Q: "longest GC pauses"
+A: events/jdk.GarbageCollection | top(10, by=max(duration))  // NOT stats()
+
+Q: "total allocated bytes by class"
+A: events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum(allocationSize))

@@ -35,12 +35,14 @@ class ContextBuilderIntegrationTest {
 
     // Should NOT contain examples from other categories
     assertNotContains(prompt, "top 10");
-    assertNotContains(prompt, "decorateByTime");
+    // Note: decorateByTime appears in event-type-selection.txt as a valid example for
+    // VirtualThreadPinned, so we can't exclude it from all minimal prompts
 
-    // Should be relatively small (~2-3KB)
+    // Should be relatively small - now larger due to unit conversions, field rules, and
+    // dynamic metadata
     assertTrue(
-        prompt.length() < 4000,
-        "Minimal prompt should be < 4KB, was: " + prompt.length() + " bytes");
+        prompt.length() < 15000,
+        "Minimal prompt should be < 15KB, was: " + prompt.length() + " bytes");
   }
 
   @Test
@@ -94,9 +96,11 @@ class ContextBuilderIntegrationTest {
 
     // Should be larger than minimal but not too large
     // Note: TOPN has 2 related categories so it can be larger than originally estimated
+    // With new context (unit conversions, field rules, dynamic metadata), enhanced prompts are
+    // larger. TOPN with related categories can reach ~33KB.
     assertTrue(
-        prompt.length() > 4000 && prompt.length() < 20000,
-        "Enhanced prompt should be 4-20KB, was: " + prompt.length() + " bytes");
+        prompt.length() > 10000 && prompt.length() < 40000,
+        "Enhanced prompt should be 10-40KB, was: " + prompt.length() + " bytes");
   }
 
   @Test
@@ -124,9 +128,10 @@ class ContextBuilderIntegrationTest {
     assertContains(prompt, "CORRECT EXAMPLES");
     assertContains(prompt, "decorateByTime");
 
-    // Should be the largest
+    // Should be the largest - with new context additions, expect 20KB+
     assertTrue(
-        prompt.length() > 12000, "Full prompt should be > 12KB, was: " + prompt.length() + " bytes");
+        prompt.length() > 20000,
+        "Full prompt should be > 20KB, was: " + prompt.length() + " bytes");
   }
 
   @Test
@@ -142,11 +147,7 @@ class ContextBuilderIntegrationTest {
     // Size should increase: minimal < enhanced < full
     assertTrue(
         minimal.length() < enhanced.length(),
-        "Minimal ("
-            + minimal.length()
-            + ") should be < Enhanced ("
-            + enhanced.length()
-            + ")");
+        "Minimal (" + minimal.length() + ") should be < Enhanced (" + enhanced.length() + ")");
     assertTrue(
         enhanced.length() < full.length(),
         "Enhanced (" + enhanced.length() + ") should be < Full (" + full.length() + ")");
@@ -172,6 +173,8 @@ class ContextBuilderIntegrationTest {
                 "jdk.ObjectAllocationSample",
                 "jdk.FileRead"));
     when(mockSession.getRecordingPath()).thenReturn(Path.of("test-recording.jfr"));
+    // Mock getEventTypeCounts to return empty map (no metadata available in tests)
+    when(mockSession.getEventTypeCounts()).thenReturn(java.util.Collections.emptyMap());
 
     // Create SessionRef with mock session
     return new SessionRef(1, "test", mockSession);
@@ -183,12 +186,10 @@ class ContextBuilderIntegrationTest {
         "http://localhost:11434",
         "llama3",
         null,
-        new PrivacySettings(
-            PrivacyMode.LOCAL_ONLY, false, false, false, Set.of(), false),
+        new PrivacySettings(PrivacyMode.LOCAL_ONLY, false, false, false, Set.of(), false),
         60,
         2000,
-        0.7,
-        false); // multiLevelEnabled not needed for ContextBuilder tests
+        0.7);
   }
 
   private void assertContains(String text, String substring) {

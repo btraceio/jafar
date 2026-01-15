@@ -39,8 +39,7 @@ public class QueryClarifier {
    * @return clarification result with question and choices
    * @throws LLMException if clarification generation fails
    */
-  public ClarificationResult clarify(String userQuery, QueryCategory category)
-      throws LLMException {
+  public ClarificationResult clarify(String userQuery, QueryCategory category) throws LLMException {
 
     String userMessage = buildClarifyMessage(userQuery, category);
 

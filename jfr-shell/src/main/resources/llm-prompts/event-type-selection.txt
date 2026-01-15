@@ -2,36 +2,46 @@ EVENT TYPE SELECTION GUIDE
 
 This guide helps select the correct JFR event types for common analysis tasks.
 
+*** CRITICAL: ALWAYS CHECK "CURRENT SESSION" CONTEXT FIRST ***
+
+The CURRENT SESSION section above lists which profiling events are actually present
+in this recording. You MUST use ONLY the event types listed as present.
+
+DO NOT assume jdk.ExecutionSample exists - use the event types shown in CURRENT SESSION!
+
 === CPU PROFILING & EXECUTION ANALYSIS ===
 
 When users ask about CPU usage, hot methods, thread activity, or profiling:
 
-ALWAYS check for these event types (in order of preference):
-1. jdk.ExecutionSample - Standard JDK profiling samples (most common)
-2. datadog.ExecutionSample - Datadog profiler samples (if present)
-3. jdk.NativeMethodSample - For native code profiling
-4. jdk.CPUTimeSample - Explicit CPU time tracking (rare, but check)
+STEP 1: Check CURRENT SESSION "Profiling events present" section above
+STEP 2: Use ONLY the CPU profiling events listed as present
+
+Possible CPU profiling event types:
+- jdk.ExecutionSample - Standard JDK profiling samples
+- datadog.ExecutionSample - Datadog profiler samples (richer fields)
+- jdk.NativeMethodSample - For native code profiling
+- jdk.CPUTimeSample - Explicit CPU time tracking (rare)
 
 IMPORTANT: Different profilers may emit different event types:
 - OpenJDK/Oracle JDK recordings: jdk.ExecutionSample
-- Datadog profiled applications: datadog.ExecutionSample (richer fields)
+- Datadog profiled applications: datadog.ExecutionSample
 - Both may be present in the same recording!
 
 Query patterns:
-- Single profiler: events/jdk.ExecutionSample
+- Single profiler: events/jdk.ExecutionSample OR events/datadog.ExecutionSample
 - Multiple profilers: events/(jdk.ExecutionSample|datadog.ExecutionSample)
 - Detect available: metadata/[name ~ '.*ExecutionSample']
 
-Examples:
+Examples (assuming CURRENT SESSION shows jdk.ExecutionSample is present):
 Q: "which methods use the most CPU?"
 A: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", ...}
 
-Q: "top threads by CPU time"
-A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
+Examples (assuming CURRENT SESSION shows datadog.ExecutionSample is present):
+Q: "which methods use the most CPU?"
+A: {"query": "events/datadog.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", ...}
 
-Q: "CPU profile"
-BEST: First check which ExecutionSample types exist, then query them
-A: {"query": "metadata/[name ~ '.*ExecutionSample']", "explanation": "Check which profiling event types are available", ...}
+Q: "top threads by CPU time" (use whichever ExecutionSample type is present)
+A: {"query": "events/datadog.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", ...}
 
 === THREAD ANALYSIS ===
 
@@ -57,6 +67,11 @@ Allocation profiling:
 - datadog.ObjectSample - Datadog allocation profiler
 
 Old objects / Heap profiling:
+
+STEP 1: Check CURRENT SESSION "Profiling events present" section for heap profiling
+STEP 2: Use ONLY the heap profiling events listed as present
+
+Possible heap profiling event types:
 - jdk.OldObjectSample - Long-lived objects (standard JDK heap profiling)
 - datadog.HeapLiveObject - Datadog heap profiler (alternative/additional)
 
@@ -66,17 +81,17 @@ IMPORTANT: Different profilers may emit different heap events:
 - Both may be present in the same recording!
 
 Query patterns for heap analysis:
-- Single profiler: events/jdk.OldObjectSample
+- Single profiler: events/jdk.OldObjectSample OR events/datadog.HeapLiveObject
 - Multiple profilers: events/(jdk.OldObjectSample|datadog.HeapLiveObject)
 - Detect available: metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']
 
-Examples:
+Examples (assuming CURRENT SESSION shows jdk.OldObjectSample is present):
 Q: "which objects are consuming the most heap memory?"
 A: {"query": "events/jdk.OldObjectSample | groupBy(type/name, agg=sum, value=totalSize) | top(10, by=sum)", ...}
 
-Q: "largest heap objects"
-BEST: First check which heap profiling events exist, then query them
-A: {"query": "metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']", "explanation": "Check which heap profiling event types are available", ...}
+Examples (assuming CURRENT SESSION shows datadog.HeapLiveObject is present):
+Q: "which objects are consuming the most heap memory?"
+A: {"query": "events/datadog.HeapLiveObject | groupBy(type/name, agg=sum, value=totalSize) | top(10, by=sum)", ...}
 
 === I/O & NETWORK ===
 
@@ -159,14 +174,14 @@ Datadog profiler events typically include additional fields:
 
 === WHEN IN DOUBT ===
 
-If the user asks about CPU/profiling/hot-spots without specifying:
-1. Query: metadata/[name ~ '.*ExecutionSample']
-2. Check result to see which profilers are active
-3. Generate query using available event type(s)
-4. Explain in "explanation" field which profiler(s) are being used
+If the user asks about CPU/profiling/hot-spots:
+1. FIRST: Check "CURRENT SESSION" section above to see which CPU profiling events are present
+2. Use ONLY the event type(s) shown as present (e.g., if it shows "datadog.ExecutionSample", use that, NOT jdk.ExecutionSample)
+3. Explain in "explanation" field which profiler is being used
+4. If NONE are present, explain that CPU profiling data is not available
 
-If the user asks about heap/memory/objects without specifying:
-1. Query: metadata/[name ~ '.*(OldObjectSample|HeapLiveObject)']
-2. Check result to see which heap profilers are active
-3. Generate query using available event type(s)
-4. Explain in "explanation" field which profiler(s) are being used
+If the user asks about heap/memory/objects:
+1. FIRST: Check "CURRENT SESSION" section above to see which heap profiling events are present
+2. Use ONLY the event type(s) shown as present
+3. Explain in "explanation" field which profiler is being used
+4. If NONE are present, explain that heap profiling data is not available

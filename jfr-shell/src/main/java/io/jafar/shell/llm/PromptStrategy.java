@@ -71,12 +71,7 @@ public class PromptStrategy {
       };
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to build "
-              + level
-              + " prompt for category "
-              + category
-              + ": "
-              + e.getMessage(),
+          "Failed to build " + level + " prompt for category " + category + ": " + e.getMessage(),
           e);
     }
   }
@@ -109,7 +104,8 @@ public class PromptStrategy {
     // High confidence + complex category → start with enhanced
     else if (classification.isHighConfidence()) {
       selected = PromptLevel.ENHANCED;
-      reason = "High confidence (" + classification.confidence() + ") + complex category = enhanced";
+      reason =
+          "High confidence (" + classification.confidence() + ") + complex category = enhanced";
     }
     // Medium confidence → start with enhanced
     else if (classification.isMediumConfidence()) {
@@ -179,9 +175,7 @@ public class PromptStrategy {
     if (result.isConversational() && expectedCategory != QueryCategory.CONVERSATIONAL) {
       if (debug) {
         System.err.println(
-            "ESCALATING: Got conversational response but expected "
-                + expectedCategory
-                + " query");
+            "ESCALATING: Got conversational response but expected " + expectedCategory + " query");
       }
       return true;
     }

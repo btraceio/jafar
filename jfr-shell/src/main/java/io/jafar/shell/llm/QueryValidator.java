@@ -2,6 +2,7 @@ package io.jafar.shell.llm;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -10,6 +11,17 @@ import java.util.regex.Pattern;
  * enabling targeted repair.
  */
 public class QueryValidator {
+
+  private final Set<String> availableEventTypes;
+
+  /**
+   * Creates a validator with knowledge of available event types.
+   *
+   * @param availableEventTypes set of event types present in the recording
+   */
+  public QueryValidator(Set<String> availableEventTypes) {
+    this.availableEventTypes = availableEventTypes;
+  }
 
   /**
    * Validate a JfrPath query for common mistakes.
@@ -48,7 +60,7 @@ public class QueryValidator {
     }
 
     // Rule 4: event type must have jdk. prefix or (multiple types)
-    Pattern eventPattern = Pattern.compile("events/([a-zA-Z][a-zA-Z0-9]*)");
+    Pattern eventPattern = Pattern.compile("events/([a-zA-Z][a-zA-Z0-9.]*)");
     Matcher matcher = eventPattern.matcher(query);
     if (matcher.find()) {
       String eventType = matcher.group(1);
@@ -64,13 +76,11 @@ public class QueryValidator {
     // Rule 5: query must be single line (no embedded newlines)
     if (query.contains("\n")) {
       issues.add(
-          new Issue(
-              IssueType.MULTILINE, "Query contains newlines", "Collapse to single line"));
+          new Issue(IssueType.MULTILINE, "Query contains newlines", "Collapse to single line"));
     }
 
     // Rule 6: check for common field name mistakes
-    if (query.contains("bytes>")
-        && (query.contains("FileRead") || query.contains("SocketRead"))) {
+    if (query.contains("bytes>") && (query.contains("FileRead") || query.contains("SocketRead"))) {
       if (!query.contains("bytesRead")) {
         issues.add(
             new Issue(
@@ -89,7 +99,62 @@ public class QueryValidator {
               "Change eventThread to sampledThread"));
     }
 
+    // Rule 8: Event types must exist in recording
+    List<String> usedEventTypes = extractEventTypes(query);
+    for (String eventType : usedEventTypes) {
+      if (!availableEventTypes.contains(eventType)) {
+        issues.add(
+            new Issue(
+                IssueType.EVENT_TYPE_NOT_FOUND,
+                "Event type not found in recording: " + eventType,
+                "Use alternative event type (will be auto-substituted)"));
+      }
+    }
+
+    // Rule 9: Detect projection before groupBy anti-pattern
+    if (query.matches(".*events/[^|]+/[^|]+\\s*\\|\\s*groupBy\\s*\\(\\s*value.*")) {
+      issues.add(
+          new Issue(
+              IssueType.PROJECTION_BEFORE_GROUPBY,
+              "Invalid pattern: projection before groupBy",
+              "Use: events/<type> | groupBy(field/path) not events/<type>/field | groupBy(value)"));
+    }
+
     return new ValidationResult(issues.isEmpty(), issues);
+  }
+
+  /**
+   * Extract event types from a JfrPath query.
+   *
+   * @param query JfrPath query
+   * @return list of event type names used in query
+   */
+  private List<String> extractEventTypes(String query) {
+    List<String> eventTypes = new ArrayList<>();
+
+    // Match patterns like: events/jdk.ExecutionSample or events/(jdk.Type1|jdk.Type2)
+    Pattern singleType = Pattern.compile("events/([a-zA-Z0-9.]+)");
+    Pattern multiType = Pattern.compile("events/\\(([^)]+)\\)");
+
+    // Extract single event types
+    Matcher singleMatcher = singleType.matcher(query);
+    while (singleMatcher.find()) {
+      String eventType = singleMatcher.group(1);
+      if (!eventType.startsWith("(")) {
+        eventTypes.add(eventType);
+      }
+    }
+
+    // Extract multiple event types from (type1|type2|type3)
+    Matcher multiMatcher = multiType.matcher(query);
+    while (multiMatcher.find()) {
+      String types = multiMatcher.group(1);
+      for (String type : types.split("\\|")) {
+        eventTypes.add(type.trim());
+      }
+    }
+
+    return eventTypes;
   }
 
   /** Types of validation issues. */
@@ -105,7 +170,11 @@ public class QueryValidator {
     /** Query contains newlines (should be single line). */
     MULTILINE,
     /** Wrong field name (e.g., bytes instead of bytesRead). */
-    FIELD_NAME
+    FIELD_NAME,
+    /** Event type doesn't exist in recording (needs alternative substitution). */
+    EVENT_TYPE_NOT_FOUND,
+    /** Projection before groupBy anti-pattern (e.g., events/.../field | groupBy(value)). */
+    PROJECTION_BEFORE_GROUPBY
   }
 
   /**

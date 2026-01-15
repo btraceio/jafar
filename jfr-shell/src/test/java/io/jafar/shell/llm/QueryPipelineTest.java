@@ -32,10 +32,7 @@ class QueryPipelineTest {
     when(mockSession.getAvailableEventTypes())
         .thenReturn(
             Set.of(
-                "jdk.ExecutionSample",
-                "jdk.GarbageCollection",
-                "jdk.FileRead",
-                "jdk.SocketRead"));
+                "jdk.ExecutionSample", "jdk.GarbageCollection", "jdk.FileRead", "jdk.SocketRead"));
     when(mockSession.getRecordingPath()).thenReturn(Path.of("test.jfr"));
     when(mockSession.getEventTypeCounts()).thenReturn(java.util.Collections.emptyMap());
 
@@ -127,7 +124,8 @@ class QueryPipelineTest {
     assertTrue(result.needsClarification());
     assertFalse(result.hasQuery());
     assertTrue(result.clarification().isPresent());
-    assertEquals("What do you want to filter?", result.clarification().get().clarificationQuestion());
+    assertEquals(
+        "What do you want to filter?", result.clarification().get().clarificationQuestion());
     assertEquals(3, result.clarification().get().suggestedChoices().size());
 
     // Should call classify and clarify (not generate or repair)
@@ -264,8 +262,7 @@ class QueryPipelineTest {
   void testPipeline_ClassificationFailure() throws LLMException {
     // Mock classification failure
     when(mockProvider.completeStructured(any(), eq(ResponseSchemas.CLASSIFICATION)))
-        .thenThrow(
-            new LLMException(LLMException.ErrorType.NETWORK_ERROR, "Connection failed"));
+        .thenThrow(new LLMException(LLMException.ErrorType.NETWORK_ERROR, "Connection failed"));
 
     // Execute & Verify
     assertThrows(

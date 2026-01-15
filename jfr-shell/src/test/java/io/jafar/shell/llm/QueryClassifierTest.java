@@ -6,7 +6,6 @@ import static org.mockito.Mockito.*;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -553,7 +552,9 @@ class QueryClassifierTest {
 
     LLMProvider.LLMResponse mockResponse =
         new LLMProvider.LLMResponse(gson.toJson(jsonResponse), "test-model", 70, 500);
-    when(mockProvider.complete(any())).thenReturn(mockResponse);
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
+        .thenReturn(mockResponse);
 
     // Classify using LLM
     var result = classifier.classifyByLLM(ambiguousQuery);
@@ -566,7 +567,9 @@ class QueryClassifierTest {
     // Verify LLM was called with correct parameters
     ArgumentCaptor<LLMProvider.LLMRequest> captor =
         ArgumentCaptor.forClass(LLMProvider.LLMRequest.class);
-    verify(mockProvider).complete(captor.capture());
+    verify(mockProvider)
+        .completeStructured(
+            captor.capture(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION));
 
     LLMProvider.LLMRequest request = captor.getValue();
     assertNotNull(request.systemPrompt());
@@ -588,7 +591,9 @@ class QueryClassifierTest {
 
     LLMProvider.LLMResponse mockResponse =
         new LLMProvider.LLMResponse(gson.toJson(jsonResponse), "test-model", 55, 400);
-    when(mockProvider.complete(any())).thenReturn(mockResponse);
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
+        .thenReturn(mockResponse);
 
     var result = classifier.classifyByLLM(conversationalQuery);
 
@@ -607,7 +612,7 @@ class QueryClassifierTest {
     assertFalse(result.usedLLM());
 
     // Verify LLM was NOT called
-    verify(mockProvider, never()).complete(any());
+    verify(mockProvider, never()).completeStructured(any(), any());
   }
 
   @Test
@@ -622,7 +627,9 @@ class QueryClassifierTest {
 
     LLMProvider.LLMResponse mockResponse =
         new LLMProvider.LLMResponse(gson.toJson(jsonResponse), "test-model", 85, 600);
-    when(mockProvider.complete(any())).thenReturn(mockResponse);
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
+        .thenReturn(mockResponse);
 
     var result = classifier.classify(ambiguousQuery);
 
@@ -630,12 +637,14 @@ class QueryClassifierTest {
     assertTrue(result.usedLLM());
 
     // Verify LLM was called
-    verify(mockProvider, times(1)).complete(any());
+    verify(mockProvider, times(1))
+        .completeStructured(any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION));
   }
 
   @Test
   void testLLMFallback_InvalidJSON() throws LLMException {
-    when(mockProvider.complete(any()))
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
         .thenReturn(new LLMProvider.LLMResponse("not valid json", "test-model", 10, 100));
 
     assertThrows(LLMException.class, () -> classifier.classifyByLLM("test query"));
@@ -647,7 +656,8 @@ class QueryClassifierTest {
     incomplete.addProperty("category", "SIMPLE_COUNT");
     // Missing confidence field
 
-    when(mockProvider.complete(any()))
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
         .thenReturn(new LLMProvider.LLMResponse(gson.toJson(incomplete), "test-model", 10, 100));
 
     assertThrows(LLMException.class, () -> classifier.classifyByLLM("test query"));
@@ -659,7 +669,8 @@ class QueryClassifierTest {
     invalid.addProperty("category", "INVALID_CATEGORY");
     invalid.addProperty("confidence", 0.9);
 
-    when(mockProvider.complete(any()))
+    when(mockProvider.completeStructured(
+            any(), eq(io.jafar.shell.llm.schemas.ResponseSchemas.CLASSIFICATION)))
         .thenReturn(new LLMProvider.LLMResponse(gson.toJson(invalid), "test-model", 10, 100));
 
     assertThrows(LLMException.class, () -> classifier.classifyByLLM("test query"));

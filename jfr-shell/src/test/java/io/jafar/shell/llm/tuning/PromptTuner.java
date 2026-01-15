@@ -86,7 +86,7 @@ public class PromptTuner {
 
       // Create QueryTranslator with modified prompt
       QueryTranslator translator =
-          new QueryTranslator(provider, variantBuilder, new ConversationHistory(0));
+          new QueryTranslator(provider, variantBuilder, new ConversationHistory(0), testSession);
 
       // Translate natural language query
       TranslationResult translation = translator.translate(testCase.naturalLanguage());

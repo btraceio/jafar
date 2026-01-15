@@ -52,7 +52,8 @@ class ImprovedPromptsIntegrationTest {
 
     // Create translator
     ContextBuilder contextBuilder = new ContextBuilder(testSession, config);
-    translator = new QueryTranslator(provider, contextBuilder, new ConversationHistory(0));
+    translator =
+        new QueryTranslator(provider, contextBuilder, new ConversationHistory(0), testSession);
   }
 
   @Test

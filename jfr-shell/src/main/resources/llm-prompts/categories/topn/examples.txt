@@ -1,11 +1,11 @@
 Q: "top 10 hottest methods"
-A: {"query": "events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)", "explanation": "Projects to the class name from the top stack frame, groups by that value, and shows top 10 by sample count", "confidence": 0.90}
+A: {"query": "events/jdk.ExecutionSample | groupBy(stackTrace/frames/0/method/type/name, agg=count) | top(10, by=count)", "explanation": "Groups execution samples by the top stack frame's class name (frames/0 is the top frame), counts occurrences, and shows top 10 hottest methods", "confidence": 0.95}
 
 Q: "which monitors have the most contention"
-A: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)", "explanation": "Groups monitor enter events by monitor class and shows top 10", "confidence": 0.95}
+A: {"query": "events/jdk.JavaMonitorEnter | groupBy(monitorClass/name, agg=count) | top(10, by=count)", "explanation": "Groups monitor enter events by monitor class and shows top 10", "confidence": 0.95}
 
 Q: "top threads by execution samples"
-A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)", "explanation": "Groups execution samples by thread name and shows top 10 threads", "confidence": 0.95}
+A: {"query": "events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count) | top(10, by=count)", "explanation": "Groups execution samples by thread name and shows top 10 threads", "confidence": 0.95}
 
 Q: "which classes took longest to load"
 A: {"query": "events/jdk.ClassLoad | groupBy(loadedClass/name, agg=max, value=duration) | top(10, by=max)", "explanation": "Groups class loads by class name with max duration aggregation to find slowest loads", "confidence": 0.95}

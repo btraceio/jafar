@@ -165,13 +165,10 @@ class QueryClarifierTest {
 
     // Mock LLM exception
     when(mockProvider.completeStructured(any(), eq(ResponseSchemas.CLARIFICATION)))
-        .thenThrow(
-            new LLMException(LLMException.ErrorType.INVALID_RESPONSE, "Malformed JSON"));
+        .thenThrow(new LLMException(LLMException.ErrorType.INVALID_RESPONSE, "Malformed JSON"));
 
     // Execute & Verify
-    assertThrows(
-        LLMException.class,
-        () -> clarifier.clarify(userQuery, category));
+    assertThrows(LLMException.class, () -> clarifier.clarify(userQuery, category));
 
     verify(mockProvider, times(1)).completeStructured(any(), eq(ResponseSchemas.CLARIFICATION));
   }
@@ -204,8 +201,7 @@ class QueryClarifierTest {
                 request -> {
                   // Check that user message contains the query and category
                   String userMessage = request.messages().get(0).content();
-                  return userMessage.contains(userQuery)
-                      && userMessage.contains(category.name());
+                  return userMessage.contains(userQuery) && userMessage.contains(category.name());
                 }),
             eq(ResponseSchemas.CLARIFICATION));
   }

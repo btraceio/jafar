@@ -57,6 +57,12 @@ public class MockProvider extends LLMProvider {
   }
 
   @Override
+  public LLMResponse completeStructured(LLMRequest request, JsonSchema schema) throws LLMException {
+    // For mock provider, just return same as complete() - responses are already JSON
+    return complete(request);
+  }
+
+  @Override
   public boolean isAvailable() {
     return true;
   }

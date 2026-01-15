@@ -4,9 +4,19 @@ QUERY SKELETON:
 events/<event-type> | groupBy(field, agg=count) | top(N, by=count)
 events/<event-type> | groupBy(field, agg=sum, value=valueField) | top(N, by=sum)
 
+CRITICAL - GROUPBY MUST BE FIRST OPERATION:
+CORRECT: events/jdk.ExecutionSample | groupBy(stackTrace/frames/0/method/type/name, agg=count) | top(10, by=count)
+WRONG:   events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value) | top(10, by=count)
+
+The groupBy operator works on the EVENT STREAM, not on projected fields.
+NEVER use projection (events/.../field) before groupBy.
+NEVER use groupBy(value) - specify the full field path in groupBy.
+
 EXAMPLES will be inserted here by ExampleRetriever (2-4 examples)
 
 DO NOT:
+- Project to a field before groupBy (events/.../field | groupBy...)
+- Use groupBy(value) - specify the field path explicitly
 - Forget groupBy before top()
 - Forget by parameter in top()
 - Use wrong aggregation name in by= (must match agg=)

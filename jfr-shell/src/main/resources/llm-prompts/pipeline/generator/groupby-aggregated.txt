@@ -5,9 +5,19 @@ events/<event-type> | groupBy(field, agg=count)
 events/<event-type> | groupBy(field, agg=sum, value=anotherField)
 events/<event-type> | groupBy(field, agg=avg, value=anotherField)
 
+CRITICAL - GROUPBY OPERATES ON EVENT STREAM:
+CORRECT: events/jdk.ExecutionSample | groupBy(stackTrace/frames/0/method/type/name, agg=count)
+WRONG:   events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy(value)
+
+The groupBy operator works on the EVENT STREAM, not on projected fields.
+NEVER use projection (events/.../field) before groupBy.
+NEVER use groupBy(value) - specify the full field path in groupBy.
+
 EXAMPLES will be inserted here by ExampleRetriever (2-4 examples)
 
 DO NOT:
+- Project to a field before groupBy (events/.../field | groupBy...)
+- Use groupBy(value) - specify the field path explicitly
 - Forget agg parameter in groupBy
 - Use wrong aggregation functions (only: count, sum, avg, max, min)
 - Forget value parameter when using sum/avg/max/min

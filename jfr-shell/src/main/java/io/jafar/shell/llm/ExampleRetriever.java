@@ -105,7 +105,9 @@ public class ExampleRetriever {
 
       String path = category.getExamplesPath();
       if (path != null) {
-        List<Example> examples = loadExamplesFromFile(path);
+        // Prepend /llm-prompts/ for resource loading
+        String fullPath = "/llm-prompts/" + path;
+        List<Example> examples = loadExamplesFromFile(fullPath);
         if (!examples.isEmpty()) {
           map.put(category, examples);
         }

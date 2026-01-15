@@ -100,7 +100,6 @@ public record TranslationResult(
    * @return translation result with clarification request
    */
   public static TranslationResult needsClarification(ClarificationRequest request) {
-    return new TranslationResult(
-        null, null, 0.0, Optional.empty(), null, Optional.of(request));
+    return new TranslationResult(null, null, 0.0, Optional.empty(), null, Optional.of(request));
   }
 }

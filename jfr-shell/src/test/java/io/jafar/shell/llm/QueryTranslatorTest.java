@@ -3,7 +3,6 @@ package io.jafar.shell.llm;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.shell.jfrpath.JfrPathParser;
-import io.jafar.shell.llm.TranslationResult;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;

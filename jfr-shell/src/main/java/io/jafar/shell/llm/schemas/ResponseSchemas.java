@@ -21,9 +21,7 @@ public class ResponseSchemas {
               new PropertySchema("string", "Query category enum value", Map.of()),
               "confidence",
               new PropertySchema(
-                  "number",
-                  "Confidence 0.0-1.0",
-                  Map.of("minimum", 0.0, "maximum", 1.0)),
+                  "number", "Confidence 0.0-1.0", Map.of("minimum", 0.0, "maximum", 1.0)),
               "reasoning",
               new PropertySchema("string", "Brief reasoning for classification", Map.of())),
           List.of("category", "confidence", "reasoning"));
@@ -38,14 +36,10 @@ public class ResponseSchemas {
               new PropertySchema("string", "Single question to ask user", Map.of()),
               "suggestedChoices",
               new PropertySchema(
-                  "array",
-                  "2-4 suggested answers",
-                  Map.of("items", Map.of("type", "string"))),
+                  "array", "2-4 suggested answers", Map.of("items", Map.of("type", "string"))),
               "ambiguityScore",
               new PropertySchema(
-                  "number",
-                  "Ambiguity score 0.0-1.0",
-                  Map.of("minimum", 0.0, "maximum", 1.0))),
+                  "number", "Ambiguity score 0.0-1.0", Map.of("minimum", 0.0, "maximum", 1.0))),
           List.of("clarificationQuestion", "suggestedChoices", "ambiguityScore"));
 
   /** Schema for JfrPath query generation response. */
@@ -60,9 +54,7 @@ public class ResponseSchemas {
               new PropertySchema("string", "1-2 sentence explanation", Map.of()),
               "confidence",
               new PropertySchema(
-                  "number",
-                  "Confidence 0.0-1.0",
-                  Map.of("minimum", 0.0, "maximum", 1.0)),
+                  "number", "Confidence 0.0-1.0", Map.of("minimum", 0.0, "maximum", 1.0)),
               "warning",
               new PropertySchema("string", "Optional warning message", Map.of())),
           List.of("query", "explanation", "confidence"));
@@ -77,14 +69,10 @@ public class ResponseSchemas {
               new PropertySchema("string", "Repaired JfrPath query", Map.of()),
               "changes",
               new PropertySchema(
-                  "array",
-                  "List of changes made",
-                  Map.of("items", Map.of("type", "string"))),
+                  "array", "List of changes made", Map.of("items", Map.of("type", "string"))),
               "confidence",
               new PropertySchema(
-                  "number",
-                  "Confidence 0.0-1.0",
-                  Map.of("minimum", 0.0, "maximum", 1.0)),
+                  "number", "Confidence 0.0-1.0", Map.of("minimum", 0.0, "maximum", 1.0)),
               "warning",
               new PropertySchema("string", "Optional warning", Map.of())),
           List.of("query", "changes", "confidence"));
