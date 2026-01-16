@@ -114,7 +114,14 @@ public final class TableRenderer {
 
   private static String toCell(Object v) {
     if (v == null) return "";
-    if (v instanceof Map<?, ?> m) return m.toString();
+    if (v instanceof Map<?, ?> m) {
+      // Unwrap simple type wrappers (single-entry maps like {string=value})
+      if (m.size() == 1) {
+        Object unwrapped = m.values().iterator().next();
+        return toCell(unwrapped); // Recursively format the unwrapped value
+      }
+      return m.toString();
+    }
     if (v.getClass().isArray()) return java.util.Arrays.deepToString((Object[]) v);
     return String.valueOf(v);
   }
