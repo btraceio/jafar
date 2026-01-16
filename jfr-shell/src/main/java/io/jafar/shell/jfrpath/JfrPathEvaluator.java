@@ -2271,8 +2271,8 @@ public final class JfrPathEvaluator {
   /**
    * Validates that all requested event types exist in the recording. Logs warnings for missing
    * types but allows query to continue (will return empty results for non-existent types). This
-   * makes the engine resilient to LLM hallucinations of event types. If event type information is
-   * not available from the session, validation is skipped.
+   * makes the engine resilient to typos or incorrect event type names. If event type information
+   * is not available from the session, validation is skipped.
    */
   private void validateEventTypes(JFRSession session, List<String> requestedTypes)
       throws Exception {
