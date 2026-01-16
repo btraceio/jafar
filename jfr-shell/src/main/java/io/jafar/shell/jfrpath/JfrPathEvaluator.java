@@ -2268,12 +2268,6 @@ public final class JfrPathEvaluator {
     }
   }
 
-  /**
-   * Validates that all requested event types exist in the recording. Logs warnings for missing
-   * types but allows query to continue (will return empty results for non-existent types). This
-   * makes the engine resilient to typos or incorrect event type names. If event type information is
-   * not available from the session, validation is skipped.
-   */
   private void validateEventTypes(JFRSession session, List<String> requestedTypes)
       throws Exception {
     Set<String> availableTypes = session.getAvailableEventTypes();
@@ -2287,19 +2281,10 @@ public final class JfrPathEvaluator {
       if (!availableTypes.contains(requestedType)) {
         String suggestion = findClosestMatch(requestedType, availableTypes);
         if (suggestion != null) {
-          System.err.println(
-              "Warning: Event type '"
-                  + requestedType
-                  + "' not found in recording. Did you mean '"
-                  + suggestion
-                  + "'? Query will continue but may return empty results.");
-        } else {
-          System.err.println(
-              "Warning: Event type '"
-                  + requestedType
-                  + "' not found in recording. Query will continue but may return empty results.");
+          throw new IllegalArgumentException(
+              "Event type '" + requestedType + "' not found. Did you mean '" + suggestion + "'?");
         }
-        // Don't throw - let query continue and return empty results naturally
+        throw new IllegalArgumentException("Event type '" + requestedType + "' not found");
       }
     }
   }
