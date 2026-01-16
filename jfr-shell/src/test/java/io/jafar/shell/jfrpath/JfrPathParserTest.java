@@ -79,7 +79,8 @@ class JfrPathParserTest {
 
   @Test
   void parsesMultipleChainedFilters() {
-    var q = JfrPathParser.parse("events/jdk.GarbageCollection[name=~\".*Young.*\"][duration>50000000]");
+    var q =
+        JfrPathParser.parse("events/jdk.GarbageCollection[name=~\".*Young.*\"][duration>50000000]");
     assertEquals(JfrPath.Root.EVENTS, q.root);
     assertEquals(1, q.segments.size());
     assertEquals("jdk.GarbageCollection", q.segments.get(0));
