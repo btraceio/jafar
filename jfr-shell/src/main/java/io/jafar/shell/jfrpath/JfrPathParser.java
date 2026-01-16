@@ -175,7 +175,7 @@ public final class JfrPathParser {
     fieldPath.addAll(parsePathSegments());
     skipWs();
     Op op;
-    if (match("~")) op = Op.REGEX;
+    if (match("=~") || match("~")) op = Op.REGEX;
     else if (match(">=")) op = Op.GE;
     else if (match("<=")) op = Op.LE;
     else if (match("==") || match("=")) op = Op.EQ;
@@ -251,7 +251,7 @@ public final class JfrPathParser {
     var ve = parseValueExpr();
     skipWs();
     Op op;
-    if (match("~")) op = Op.REGEX;
+    if (match("=~") || match("~")) op = Op.REGEX;
     else if (match(">=")) op = Op.GE;
     else if (match("<=")) op = Op.LE;
     else if (match("==") || match("=")) op = Op.EQ;

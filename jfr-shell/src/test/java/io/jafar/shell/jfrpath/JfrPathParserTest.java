@@ -52,6 +52,70 @@ class JfrPathParserTest {
   }
 
   @Test
+  void parsesRegexFilterWithEqualsTilde() {
+    var q = JfrPathParser.parse("events/jdk.GarbageCollection[name=~\".*Young.*\"]");
+    assertEquals(JfrPath.Root.EVENTS, q.root);
+    assertEquals(1, q.segments.size());
+    assertEquals("jdk.GarbageCollection", q.segments.get(0));
+    assertEquals(1, q.predicates.size());
+    var pred = q.predicates.get(0);
+    if (pred instanceof JfrPath.FieldPredicate p) {
+      assertEquals(JfrPath.Op.REGEX, p.op);
+      assertEquals(".*Young.*", p.literal);
+      assertEquals(1, p.fieldPath.size());
+      assertEquals("name", p.fieldPath.get(0));
+    } else if (pred instanceof JfrPath.ExprPredicate ep) {
+      assertTrue(ep.expr instanceof JfrPath.CompExpr);
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(JfrPath.Op.REGEX, ce.op);
+      assertEquals(".*Young.*", ce.literal);
+      assertTrue(ce.lhs instanceof JfrPath.PathRef);
+      var pr = (JfrPath.PathRef) ce.lhs;
+      assertEquals(java.util.List.of("name"), pr.path);
+    } else {
+      fail("Unexpected predicate type: " + pred.getClass());
+    }
+  }
+
+  @Test
+  void parsesMultipleChainedFilters() {
+    var q =
+        JfrPathParser.parse("events/jdk.GarbageCollection[name=~\".*Young.*\"][duration>50000000]");
+    assertEquals(JfrPath.Root.EVENTS, q.root);
+    assertEquals(1, q.segments.size());
+    assertEquals("jdk.GarbageCollection", q.segments.get(0));
+    assertEquals(2, q.predicates.size());
+
+    // First predicate: regex filter
+    var pred1 = q.predicates.get(0);
+    if (pred1 instanceof JfrPath.FieldPredicate p) {
+      assertEquals(JfrPath.Op.REGEX, p.op);
+      assertEquals(".*Young.*", p.literal);
+      assertEquals(1, p.fieldPath.size());
+      assertEquals("name", p.fieldPath.get(0));
+    } else if (pred1 instanceof JfrPath.ExprPredicate ep) {
+      assertTrue(ep.expr instanceof JfrPath.CompExpr);
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(JfrPath.Op.REGEX, ce.op);
+      assertEquals(".*Young.*", ce.literal);
+    }
+
+    // Second predicate: numeric comparison
+    var pred2 = q.predicates.get(1);
+    if (pred2 instanceof JfrPath.FieldPredicate p) {
+      assertEquals(JfrPath.Op.GT, p.op);
+      assertTrue(p.literal instanceof Number);
+      assertEquals(1, p.fieldPath.size());
+      assertEquals("duration", p.fieldPath.get(0));
+    } else if (pred2 instanceof JfrPath.ExprPredicate ep) {
+      assertTrue(ep.expr instanceof JfrPath.CompExpr);
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(JfrPath.Op.GT, ce.op);
+      assertTrue(ce.literal instanceof Number);
+    }
+  }
+
+  @Test
   void parsesSelectWithSingleField() {
     var q = JfrPathParser.parse("events/jdk.ExecutionSample | select(startTime)");
     assertEquals(JfrPath.Root.EVENTS, q.root);
