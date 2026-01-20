@@ -15,10 +15,10 @@
 #   ./gc-analysis.jfrs /path/to/recording.jfr
 #
 # Arguments:
-#   $1 - Path to the JFR recording file to analyze
+#   $1 - Path to the JFR recording file to analyze (required)
 
 # Open the recording
-open $1
+open ${1:?recording file path required}
 
 echo "=== GC Pause Time Statistics ==="
 show events/jdk.GarbageCollection | stats(duration)

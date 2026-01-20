@@ -844,6 +844,7 @@ public class CommandDispatcher {
       io.println("  - Literal strings: set name = \"hello\"");
       io.println("  - Numbers: set count = 42");
       io.println("  - Map literals: set config = {\"key\": \"value\", \"count\": 42}");
+      io.println("  - Variable copies: set backup = original or set backup = $original");
       io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
       io.println("");
       io.println("Options:");
@@ -919,6 +920,39 @@ public class CommandDispatcher {
       io.println("Next access will re-evaluate the query.");
       return;
     }
+    if ("script".equals(sub)) {
+      io.println("Usage: script <path> [args...]");
+      io.println("       script run <name> [args...]");
+      io.println("       script list");
+      io.println("");
+      io.println("Execute a JFR Shell script with optional positional parameters.");
+      io.println("");
+      io.println("Positional Parameters:");
+      io.println("  $1, $2, ...           - Required parameters (1-indexed)");
+      io.println("  ${1}, ${2}, ...       - Optional parameters (empty if not provided)");
+      io.println("  ${1:-default}         - Parameter with default value");
+      io.println("  ${1:?error message}   - Required with custom error message");
+      io.println("  $@                    - All arguments space-separated");
+      io.println("");
+      io.println("Examples:");
+      io.println("  # Script: analyze.jfrs");
+      io.println("  # Usage: script analyze.jfrs /path/to/recording.jfr 1000 10");
+      io.println("  open $1");
+      io.println("  set limit = ${2:-100}      # Default to 100 if not provided");
+      io.println("  set format = ${3:-table}   # Default to table");
+      io.println("  show events/jdk.FileRead[bytes>=${limit}] --format ${format}");
+      io.println("  close");
+      io.println("");
+      io.println("  # Required parameter with error");
+      io.println("  open ${1:?recording file required}");
+      io.println("");
+      io.println("Run by name from ~/.jfr-shell/scripts:");
+      io.println("  script run basic-analysis /tmp/app.jfr");
+      io.println("");
+      io.println("List available scripts:");
+      io.println("  script list");
+      return;
+    }
     if ("if".equals(sub) || "elif".equals(sub) || "else".equals(sub) || "endif".equals(sub)) {
       io.println("Conditional execution with if/elif/else/endif blocks.");
       io.println("");
@@ -933,7 +967,8 @@ public class CommandDispatcher {
       io.println("");
       io.println("Condition expressions:");
       io.println("  Comparisons: ==, !=, >, >=, <, <=");
-      io.println("  Logical: && (and), || (or), ! (not)");
+      io.println("  String: contains (substring check)");
+      io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
       io.println("  Functions: exists(var), empty(var)");
       io.println("  Grouping: parentheses ( )");
@@ -943,12 +978,16 @@ public class CommandDispatcher {
       io.println("    echo Found ${count.count} events");
       io.println("  endif");
       io.println("");
-      io.println("  if exists(myVar) && ${myVar.size} > 100");
+      io.println("  if exists(myVar) and ${myVar.size} > 100");
       io.println("    echo Large result set");
       io.println("  elif ${myVar.size} > 0");
       io.println("    echo Small result set");
       io.println("  else");
       io.println("    echo Empty result");
+      io.println("  endif");
+      io.println("");
+      io.println("  if ${path} contains \"/tmp/\" or ${path} contains \"/var/\"");
+      io.println("    echo Found in temp or var directory");
       io.println("  endif");
       return;
     }

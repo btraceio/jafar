@@ -15,30 +15,33 @@
 #   ./thread-profiling.jfrs /path/to/recording.jfr 10
 #
 # Arguments:
-#   $1 - Path to the JFR recording file to analyze
-#   $2 - Number of top results to display (default: 10)
+#   $1 - Path to the JFR recording file to analyze (required)
+#   $2 - Number of top results to display (optional, default: 10)
 
 # Open the recording
-open $1
+open ${1:?recording file path required}
+
+# Set default for top_n parameter
+set top_n = ${2:-10}
 
 echo "=== Top Threads by Execution Sample Count ==="
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 echo
 echo "=== Thread Allocation Statistics ==="
-show events/jdk.ThreadAllocationStatistics | groupBy(eentThread/javaName) | top($2, by=sum(allocated))
+show events/jdk.ThreadAllocationStatistics | groupBy(eentThread/javaName) | top(${top_n}, by=sum(allocated))
 
 echo
 echo "=== Monitor Contention by Class ==="
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
 
 echo
 echo "=== Thread Sleep Events ==="
-show events/jdk.ThreadSleep | groupBy(eventthread/javaName) | top($2, by=sum(time))
+show events/jdk.ThreadSleep | groupBy(eventthread/javaName) | top(${top_n}, by=sum(time))
 
 echo
 echo "=== Thread Park Events (Blocking Operations) ==="
-show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
+show events/jdk.ThreadPark | groupBy(parkedClass/name) | top(${top_n}, by=count)
 
 # Close the session
 close
