@@ -72,7 +72,7 @@ public final class ConditionEvaluator {
   private Object parseOrExpr() throws Exception {
     Object left = parseAndExpr();
 
-    while (match("||")) {
+    while (match("||") || matchKeyword("or")) {
       Object right = parseAndExpr();
       left = toBoolean(left) || toBoolean(right);
     }
@@ -83,7 +83,7 @@ public final class ConditionEvaluator {
   private Object parseAndExpr() throws Exception {
     Object left = parseNotExpr();
 
-    while (match("&&")) {
+    while (match("&&") || matchKeyword("and")) {
       Object right = parseNotExpr();
       left = toBoolean(left) && toBoolean(right);
     }
@@ -92,7 +92,7 @@ public final class ConditionEvaluator {
   }
 
   private Object parseNotExpr() throws Exception {
-    if (match("!")) {
+    if (match("!") || matchKeyword("not")) {
       Object value = parseNotExpr();
       return !toBoolean(value);
     }
@@ -121,6 +121,9 @@ public final class ConditionEvaluator {
     } else if (match("<")) {
       Object right = parseAddExpr();
       return compare(left, right) < 0;
+    } else if (matchKeyword("contains")) {
+      Object right = parseAddExpr();
+      return containsCheck(left, right);
     }
 
     return left;
@@ -361,6 +364,54 @@ public final class ConditionEvaluator {
       }
     }
     return false;
+  }
+
+  /**
+   * Matches a keyword operator ensuring word boundaries. This prevents matching 'or' inside 'fork'
+   * or 'and' inside 'band'.
+   *
+   * @param keyword the keyword to match (case-insensitive)
+   * @return true if keyword matched at current position with proper word boundaries
+   */
+  private boolean matchKeyword(String keyword) {
+    skipWhitespace();
+    int keywordLen = keyword.length();
+
+    if (pos + keywordLen > input.length()) {
+      return false;
+    }
+
+    // Case-insensitive match
+    if (!input.regionMatches(true, pos, keyword, 0, keywordLen)) {
+      return false;
+    }
+
+    // Ensure word boundary - not part of a larger identifier
+    if (pos + keywordLen < input.length()) {
+      char nextChar = input.charAt(pos + keywordLen);
+      if (Character.isLetterOrDigit(nextChar) || nextChar == '_') {
+        return false;
+      }
+    }
+
+    pos += keywordLen;
+    return true;
+  }
+
+  /**
+   * Checks if left contains right (as strings).
+   *
+   * @param left the value to search in
+   * @param right the value to search for
+   * @return true if left contains right
+   */
+  private boolean containsCheck(Object left, Object right) {
+    if (left == null || right == null) {
+      return false;
+    }
+    String leftStr = String.valueOf(left);
+    String rightStr = String.valueOf(right);
+    return leftStr.contains(rightStr);
   }
 
   private boolean toBoolean(Object value) {

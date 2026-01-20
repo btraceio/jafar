@@ -1479,7 +1479,7 @@ public class CommandDispatcher {
 
     VariableStore store = getTargetStore(isGlobal);
 
-    // Check for map literal
+    // Check for map literal first (before substitution)
     if (exprPart.startsWith("{")) {
       try {
         Map<String, Object> map = parseMapLiteral(exprPart);
@@ -1510,6 +1510,19 @@ public class CommandDispatcher {
       }
     }
 
+    // Perform variable substitution if expression contains ${...} references
+    // BUT skip if it's a merge() function (which handles ${...} internally)
+    if (VariableSubstitutor.hasVariables(exprPart)
+        && !(exprPart.trim().startsWith("merge(") && exprPart.trim().endsWith(")"))) {
+      try {
+        VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+        exprPart = sub.substitute(exprPart);
+      } catch (Exception e) {
+        io.error("Variable substitution failed: " + e.getMessage());
+        return;
+      }
+    }
+
     // Check for literal string value
     if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
       String literal = exprPart.substring(1, exprPart.length() - 1);
@@ -1528,6 +1541,36 @@ public class CommandDispatcher {
         io.println("Set " + varName + " = " + num);
       }
       return;
+    }
+
+    // Check for variable reference (bare name or $varname syntax)
+    String sourceVarName = null;
+    if (exprPart.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+      // Bare variable name: set target = source
+      sourceVarName = exprPart;
+    } else if (exprPart.matches("\\$[a-zA-Z_][a-zA-Z0-9_]*")) {
+      // Dollar-prefixed: set target = $source
+      sourceVarName = exprPart.substring(1);
+    }
+
+    if (sourceVarName != null) {
+      Value existingValue = resolveVariable(sourceVarName);
+      if (existingValue != null) {
+        // Copy the variable value (not the reference, but the actual Value object)
+        // For LazyQueryValue, we copy the reference so both variables share the same lazy query
+        store.set(varName, existingValue);
+        if (verbose) {
+          io.println("Set " + varName + " = " + existingValue.describe());
+        }
+        return;
+      }
+      // If not found as variable and it's bare name, fall through to JfrPath query parsing
+      // (might be an event type like "jdk.ExecutionSample")
+      // If it's $-prefixed and not found, show error
+      if (exprPart.startsWith("$")) {
+        io.error("Variable not found: " + sourceVarName);
+        return;
+      }
     }
 
     // Treat as JfrPath query
@@ -2243,41 +2286,61 @@ public class CommandDispatcher {
 
   // ---- Conditional handling ----
 
-  private boolean handleIf(String line) throws Exception {
+  private boolean handleIf(String line) {
     // Extract condition after "if "
     String condition = line.length() > 2 ? line.substring(2).trim() : "";
+
     if (condition.isEmpty()) {
-      throw new IllegalArgumentException("if requires a condition");
+      io.error("if requires a condition");
+      conditionalState.enterIf(false);
+      return true;
     }
 
     // Only evaluate if we're in an active branch
     boolean result = false;
+
     if (conditionalState.isActive() || !conditionalState.inConditional()) {
-      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-      result = evaluator.evaluate(condition);
+      try {
+        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+        result = evaluator.evaluate(condition);
+      } catch (Exception e) {
+        io.error("Condition evaluation failed: " + e.getMessage());
+        result = false;
+        // Continue to enterIf - don't return early
+      }
     }
+
+    // CRITICAL: Always update state, even after errors
     conditionalState.enterIf(result);
     return true;
   }
 
-  private boolean handleElif(String line) throws Exception {
+  private boolean handleElif(String line) {
     // Extract condition after "elif "
     String condition = line.length() > 4 ? line.substring(4).trim() : "";
+
     if (condition.isEmpty()) {
-      throw new IllegalArgumentException("elif requires a condition");
+      io.error("elif requires a condition");
+      conditionalState.handleElif(false);
+      return true;
     }
 
     // Only evaluate if needed (previous branches failed and parent is active)
     boolean result = false;
-    // We need to check if we should evaluate - only if no branch taken yet
-    // The state machine handles this, but we need the parent's active state
     int depth = conditionalState.depth();
+
     if (depth > 0) {
-      // Check if we need to evaluate by temporarily looking at state
-      // If condition is needed, it will be used; if branch already taken, it's ignored
-      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-      result = evaluator.evaluate(condition);
+      try {
+        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+        result = evaluator.evaluate(condition);
+      } catch (Exception e) {
+        io.error("Condition evaluation failed: " + e.getMessage());
+        result = false;
+        // Continue to handleElif - don't return early
+      }
     }
+
+    // CRITICAL: Always update state
     conditionalState.handleElif(result);
     return true;
   }
