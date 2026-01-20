@@ -2,9 +2,7 @@ package io.jafar.shell;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,8 +42,7 @@ class ScriptListRunCommandTest {
     Files.createDirectories(testScriptsDir);
 
     // Save original scripts dir (though we can't easily override it)
-    originalScriptsDir =
-        Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
+    originalScriptsDir = Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
   }
 
   @AfterEach
@@ -59,9 +56,7 @@ class ScriptListRunCommandTest {
   void scriptExecutionByPath(@TempDir Path tempDir) throws Exception {
     // Create a test script with simple commands
     Path scriptPath = tempDir.resolve("test.jfrs");
-    Files.writeString(
-        scriptPath,
-        """
+    Files.writeString(scriptPath, """
         # Test script
         echo Test output
         """);
@@ -105,8 +100,7 @@ class ScriptListRunCommandTest {
 
     List<String> lines = Files.readAllLines(scriptPath);
     assertTrue(lines.get(0).startsWith("#"), "First line should be comment");
-    assertTrue(
-        lines.get(0).contains("Analyzes"), "First comment should be description");
+    assertTrue(lines.get(0).contains("Analyzes"), "First comment should be description");
   }
 
   // ==================== Script File Validation ====================
@@ -142,8 +136,7 @@ class ScriptListRunCommandTest {
   void scriptWithOnlyComments(@TempDir Path tempDir) throws Exception {
     Path scriptPath = testScriptsDir.resolve("comments.jfrs");
     Files.writeString(
-        scriptPath,
-        """
+        scriptPath, """
         # Comment 1
         # Comment 2
         # Comment 3

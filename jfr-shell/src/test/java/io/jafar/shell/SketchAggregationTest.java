@@ -139,7 +139,8 @@ class SketchAggregationTest {
     String output = io.getOutput();
     assertNotNull(output);
     assertTrue(output.contains("["), "JSON output should contain array marker");
-    assertTrue(output.contains("\"min\"") || output.contains("\"count\""),
+    assertTrue(
+        output.contains("\"min\"") || output.contains("\"count\""),
         "JSON should contain statistical field names");
     assertTrue(
         output.contains("\"p50\"") || output.contains("\"p90\"") || output.contains("\"p99\""),
@@ -150,8 +151,7 @@ class SketchAggregationTest {
 
   @Test
   void sketchWithFilter() throws Exception {
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[state=\"RUNNABLE\"]/duration | sketch()");
+    dispatcher.dispatch("show events/jdk.ExecutionSample[state=\"RUNNABLE\"]/duration | sketch()");
 
     String output = io.getOutput();
     assertNotNull(output);
@@ -259,7 +259,8 @@ class SketchAggregationTest {
   void sketchWithoutPriorSession() {
     // Attempt sketch without opening a session - should fail gracefully with error message
     ParsingContext emptyCtx = ParsingContext.create();
-    SessionManager emptySession = new SessionManager(emptyCtx, (path, c) -> new JFRSession(path, c));
+    SessionManager emptySession =
+        new SessionManager(emptyCtx, (path, c) -> new JFRSession(path, c));
     BufferIO emptyIO = new BufferIO();
     CommandDispatcher emptyDispatcher = new CommandDispatcher(emptySession, emptyIO, r -> {});
 

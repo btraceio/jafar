@@ -13,8 +13,7 @@ import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
 
 /**
- * Tests for JSON output format (--format json) across different query types and result
- * structures.
+ * Tests for JSON output format (--format json) across different query types and result structures.
  *
  * <p>Validates that JSON output:
  *
@@ -65,9 +64,7 @@ class JsonOutputFormatTest {
     return outContent.toString();
   }
 
-  /**
-   * Basic JSON structure validation - checks for balanced braces and brackets.
-   */
+  /** Basic JSON structure validation - checks for balanced braces and brackets. */
   private void assertValidJsonStructure(String output) {
     int braceBalance = 0;
     int bracketBalance = 0;
@@ -226,8 +223,13 @@ class JsonOutputFormatTest {
   void jsonOutputForShowWithLimit() {
     int exitCode =
         execute(
-            "show", testJfr().toString(), "events/jdk.ExecutionSample", "--format", "json",
-            "--limit", "5");
+            "show",
+            testJfr().toString(),
+            "events/jdk.ExecutionSample",
+            "--format",
+            "json",
+            "--limit",
+            "5");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -285,7 +287,8 @@ class JsonOutputFormatTest {
     String output = getOutput();
 
     assertValidJsonStructure(output);
-    assertTrue(output.contains("[") || output.contains("{"), "Chunks should contain JSON structure");
+    assertTrue(
+        output.contains("[") || output.contains("{"), "Chunks should contain JSON structure");
   }
 
   // ==================== CP Command JSON Tests ====================
@@ -333,8 +336,8 @@ class JsonOutputFormatTest {
     assertValidJsonStructure(output);
     assertTrue(output.contains("["), "Empty result should be JSON array");
     // Empty arrays can be formatted as [] or with whitespace/newlines
-    assertTrue(output.replaceAll("\\s+", "").contains("[]"),
-        "Empty result should be empty JSON array");
+    assertTrue(
+        output.replaceAll("\\s+", "").contains("[]"), "Empty result should be empty JSON array");
   }
 
   @Test

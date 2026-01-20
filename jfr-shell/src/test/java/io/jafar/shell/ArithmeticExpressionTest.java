@@ -351,8 +351,7 @@ class ArithmeticExpressionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    assertTrue(
-        output.contains("Complex mixed works"), "(10+5)*2 - (8/2+1) should be 30 - 5 = 25");
+    assertTrue(output.contains("Complex mixed works"), "(10+5)*2 - (8/2+1) should be 30 - 5 = 25");
   }
 
   // ==================== Arithmetic with Variables ====================

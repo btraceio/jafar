@@ -79,12 +79,7 @@ class NonInteractiveModeTest {
   @Test
   void showCommandWithLimitOption() {
     int exitCode =
-        execute(
-            "show",
-            testJfr().toString(),
-            "events/jdk.ExecutionSample",
-            "--limit",
-            "5");
+        execute("show", testJfr().toString(), "events/jdk.ExecutionSample", "--limit", "5");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -111,10 +106,7 @@ class NonInteractiveModeTest {
   @Test
   void showCommandWithGroupBy() {
     int exitCode =
-        execute(
-            "show",
-            testJfr().toString(),
-            "events/jdk.ExecutionSample | groupBy(state)");
+        execute("show", testJfr().toString(), "events/jdk.ExecutionSample | groupBy(state)");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -151,14 +143,12 @@ class NonInteractiveModeTest {
   @Test
   void showCommandWithStats() {
     int exitCode =
-        execute(
-            "show",
-            testJfr().toString(),
-            "events/jdk.ExecutionSample/duration | stats()");
+        execute("show", testJfr().toString(), "events/jdk.ExecutionSample/duration | stats()");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
-    assertTrue(output.contains("min") || output.contains("max") || output.contains("avg"),
+    assertTrue(
+        output.contains("min") || output.contains("max") || output.contains("avg"),
         "Should show statistics");
   }
 
@@ -206,7 +196,8 @@ class NonInteractiveModeTest {
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
-    assertTrue(output.contains("ExecutionSample") || output.contains("jdk.Execution"),
+    assertTrue(
+        output.contains("ExecutionSample") || output.contains("jdk.Execution"),
         "Should contain matching types");
   }
 
@@ -389,8 +380,7 @@ class NonInteractiveModeTest {
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
-    assertTrue(output.contains("Usage") || output.contains("jfr-shell"),
-        "Should display help");
+    assertTrue(output.contains("Usage") || output.contains("jfr-shell"), "Should display help");
   }
 
   @Test
@@ -399,8 +389,7 @@ class NonInteractiveModeTest {
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
-    assertTrue(output.contains("jfr-shell") || output.contains("0."),
-        "Should display version");
+    assertTrue(output.contains("jfr-shell") || output.contains("0."), "Should display version");
   }
 
   @Test
@@ -413,7 +402,8 @@ class NonInteractiveModeTest {
     assertTrue(exitCode == 0 || exitCode == 2, "Help may return 0 or 2");
     // Output goes to err stream when params missing
     String output = getOutput() + getError();
-    assertTrue(output.contains("show") || output.contains("Usage") || output.contains("jfr"),
+    assertTrue(
+        output.contains("show") || output.contains("Usage") || output.contains("jfr"),
         "Should display show command help");
   }
 
@@ -426,7 +416,8 @@ class NonInteractiveModeTest {
     assertTrue(exitCode == 0 || exitCode == 2, "Help may return 0 or 2");
     // Output goes to err stream when params missing
     String output = getOutput() + getError();
-    assertTrue(output.contains("metadata") || output.contains("Usage") || output.contains("jfr"),
+    assertTrue(
+        output.contains("metadata") || output.contains("Usage") || output.contains("jfr"),
         "Should display metadata command help");
   }
 
@@ -438,7 +429,8 @@ class NonInteractiveModeTest {
     // picocli may return 0 or 2 for help depending on param defaults
     assertTrue(exitCode == 0 || exitCode == 2, "Help may return 0 or 2");
     String output = getOutput() + getError();
-    assertTrue(output.contains("script") || output.contains("Usage") || output.contains("stdin"),
+    assertTrue(
+        output.contains("script") || output.contains("Usage") || output.contains("stdin"),
         "Should display script command help");
   }
 

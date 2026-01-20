@@ -102,7 +102,8 @@ class EmptyConditionalFunctionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    assertTrue(output.contains("Variable is empty"), "Should execute if block for non-existent var");
+    assertTrue(
+        output.contains("Variable is empty"), "Should execute if block for non-existent var");
   }
 
   @Test

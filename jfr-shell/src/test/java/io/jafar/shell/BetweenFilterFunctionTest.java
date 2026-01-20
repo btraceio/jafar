@@ -155,8 +155,7 @@ class BetweenFilterFunctionTest {
   @Test
   void betweenWithSameMinMax() throws Exception {
     // When min == max, should match values exactly equal to that number
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 1000)] | count()");
+    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, 1000, 1000)] | count()");
 
     String output = io.getOutput();
     assertNotNull(output);
@@ -178,8 +177,7 @@ class BetweenFilterFunctionTest {
   @Test
   void betweenWithNegativeAndPositive() throws Exception {
     // Test with range spanning negative to positive
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, -100, 100)] | count()");
+    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, -100, 100)] | count()");
 
     String output = io.getOutput();
     assertNotNull(output);

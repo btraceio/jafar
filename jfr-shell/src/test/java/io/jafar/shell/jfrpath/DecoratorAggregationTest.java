@@ -53,11 +53,7 @@ class DecoratorAggregationTest {
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.ExecutionSample",
-                      Map.of(
-                          "eventThread",
-                          Map.of("javaThreadId", 1L),
-                          "startTime",
-                          1500L)));
+                      Map.of("eventThread", Map.of("javaThreadId", 1L), "startTime", 1500L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -84,24 +80,14 @@ class DecoratorAggregationTest {
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.GCPhasePause",
-                      Map.of(
-                          "startTime",
-                          1000L,
-                          "duration",
-                          2000L,
-                          "name",
-                          "YoungGC")));
+                      Map.of("startTime", 1000L, "duration", 2000L, "name", "YoungGC")));
 
               // Samples during YoungGC
               consumer.accept(
-                  new JfrPathEvaluator.Event(
-                      "jdk.ExecutionSample",
-                      Map.of("startTime", 1500L)));
+                  new JfrPathEvaluator.Event("jdk.ExecutionSample", Map.of("startTime", 1500L)));
 
               consumer.accept(
-                  new JfrPathEvaluator.Event(
-                      "jdk.ExecutionSample",
-                      Map.of("startTime", 2500L)));
+                  new JfrPathEvaluator.Event("jdk.ExecutionSample", Map.of("startTime", 2500L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -139,11 +125,7 @@ class DecoratorAggregationTest {
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.ExecutionSample",
-                      Map.of(
-                          "eventThread",
-                          Map.of("javaThreadId", 1L),
-                          "startTime",
-                          1200L)));
+                      Map.of("eventThread", Map.of("javaThreadId", 1L), "startTime", 1200L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -184,14 +166,10 @@ class DecoratorAggregationTest {
 
               // Primary events
               consumer.accept(
-                  new JfrPathEvaluator.Event(
-                      "jdk.ExecutionSample",
-                      Map.of("startTime", 1500L)));
+                  new JfrPathEvaluator.Event("jdk.ExecutionSample", Map.of("startTime", 1500L)));
 
               consumer.accept(
-                  new JfrPathEvaluator.Event(
-                      "jdk.ExecutionSample",
-                      Map.of("startTime", 6000L)));
+                  new JfrPathEvaluator.Event("jdk.ExecutionSample", Map.of("startTime", 6000L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -234,17 +212,11 @@ class DecoratorAggregationTest {
               // Primary events
               consumer.accept(
                   new JfrPathEvaluator.Event(
-                      "custom.DatabaseQuery",
-                      Map.of(
-                          "requestId", "req-1",
-                          "duration", 100L)));
+                      "custom.DatabaseQuery", Map.of("requestId", "req-1", "duration", 100L)));
 
               consumer.accept(
                   new JfrPathEvaluator.Event(
-                      "custom.DatabaseQuery",
-                      Map.of(
-                          "requestId", "req-2",
-                          "duration", 200L)));
+                      "custom.DatabaseQuery", Map.of("requestId", "req-2", "duration", 200L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -269,18 +241,12 @@ class DecoratorAggregationTest {
               // Decorator with numeric field
               consumer.accept(
                   new JfrPathEvaluator.Event(
-                      "custom.RequestStart",
-                      Map.of(
-                          "requestId", "req-1",
-                          "priority", 10L)));
+                      "custom.RequestStart", Map.of("requestId", "req-1", "priority", 10L)));
 
               // Primary event
               consumer.accept(
                   new JfrPathEvaluator.Event(
-                      "custom.ProcessingEvent",
-                      Map.of(
-                          "requestId", "req-1",
-                          "duration", 100L)));
+                      "custom.ProcessingEvent", Map.of("requestId", "req-1", "duration", 100L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -370,21 +336,13 @@ class DecoratorAggregationTest {
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.ExecutionSample",
-                      Map.of(
-                          "eventThread",
-                          Map.of("javaThreadId", 1L),
-                          "startTime",
-                          1500L)));
+                      Map.of("eventThread", Map.of("javaThreadId", 1L), "startTime", 1500L)));
 
               // Primary event 2: no decorator
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.ExecutionSample",
-                      Map.of(
-                          "eventThread",
-                          Map.of("javaThreadId", 1L),
-                          "startTime",
-                          3000L)));
+                      Map.of("eventThread", Map.of("javaThreadId", 1L), "startTime", 3000L)));
             };
 
     var eval = new JfrPathEvaluator(src);
@@ -427,11 +385,7 @@ class DecoratorAggregationTest {
               consumer.accept(
                   new JfrPathEvaluator.Event(
                       "jdk.ExecutionSample",
-                      Map.of(
-                          "eventThread",
-                          Map.of("javaThreadId", 1L),
-                          "startTime",
-                          1200L)));
+                      Map.of("eventThread", Map.of("javaThreadId", 1L), "startTime", 1200L)));
             };
 
     var eval = new JfrPathEvaluator(src);
