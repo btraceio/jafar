@@ -844,6 +844,7 @@ public class CommandDispatcher {
       io.println("  - Literal strings: set name = \"hello\"");
       io.println("  - Numbers: set count = 42");
       io.println("  - Map literals: set config = {\"key\": \"value\", \"count\": 42}");
+      io.println("  - Variable copies: set backup = original or set backup = $original");
       io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
       io.println("");
       io.println("Options:");
@@ -919,6 +920,39 @@ public class CommandDispatcher {
       io.println("Next access will re-evaluate the query.");
       return;
     }
+    if ("script".equals(sub)) {
+      io.println("Usage: script <path> [args...]");
+      io.println("       script run <name> [args...]");
+      io.println("       script list");
+      io.println("");
+      io.println("Execute a JFR Shell script with optional positional parameters.");
+      io.println("");
+      io.println("Positional Parameters:");
+      io.println("  $1, $2, ...           - Required parameters (1-indexed)");
+      io.println("  ${1}, ${2}, ...       - Optional parameters (empty if not provided)");
+      io.println("  ${1:-default}         - Parameter with default value");
+      io.println("  ${1:?error message}   - Required with custom error message");
+      io.println("  $@                    - All arguments space-separated");
+      io.println("");
+      io.println("Examples:");
+      io.println("  # Script: analyze.jfrs");
+      io.println("  # Usage: script analyze.jfrs /path/to/recording.jfr 1000 10");
+      io.println("  open $1");
+      io.println("  set limit = ${2:-100}      # Default to 100 if not provided");
+      io.println("  set format = ${3:-table}   # Default to table");
+      io.println("  show events/jdk.FileRead[bytes>=${limit}] --format ${format}");
+      io.println("  close");
+      io.println("");
+      io.println("  # Required parameter with error");
+      io.println("  open ${1:?recording file required}");
+      io.println("");
+      io.println("Run by name from ~/.jfr-shell/scripts:");
+      io.println("  script run basic-analysis /tmp/app.jfr");
+      io.println("");
+      io.println("List available scripts:");
+      io.println("  script list");
+      return;
+    }
     if ("if".equals(sub) || "elif".equals(sub) || "else".equals(sub) || "endif".equals(sub)) {
       io.println("Conditional execution with if/elif/else/endif blocks.");
       io.println("");
@@ -933,7 +967,8 @@ public class CommandDispatcher {
       io.println("");
       io.println("Condition expressions:");
       io.println("  Comparisons: ==, !=, >, >=, <, <=");
-      io.println("  Logical: && (and), || (or), ! (not)");
+      io.println("  String: contains (substring check)");
+      io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
       io.println("  Functions: exists(var), empty(var)");
       io.println("  Grouping: parentheses ( )");
@@ -943,12 +978,16 @@ public class CommandDispatcher {
       io.println("    echo Found ${count.count} events");
       io.println("  endif");
       io.println("");
-      io.println("  if exists(myVar) && ${myVar.size} > 100");
+      io.println("  if exists(myVar) and ${myVar.size} > 100");
       io.println("    echo Large result set");
       io.println("  elif ${myVar.size} > 0");
       io.println("    echo Small result set");
       io.println("  else");
       io.println("    echo Empty result");
+      io.println("  endif");
+      io.println("");
+      io.println("  if ${path} contains \"/tmp/\" or ${path} contains \"/var/\"");
+      io.println("    echo Found in temp or var directory");
       io.println("  endif");
       return;
     }
@@ -1479,7 +1518,7 @@ public class CommandDispatcher {
 
     VariableStore store = getTargetStore(isGlobal);
 
-    // Check for map literal
+    // Check for map literal first (before substitution)
     if (exprPart.startsWith("{")) {
       try {
         Map<String, Object> map = parseMapLiteral(exprPart);
@@ -1510,6 +1549,19 @@ public class CommandDispatcher {
       }
     }
 
+    // Perform variable substitution if expression contains ${...} references
+    // BUT skip if it's a merge() function (which handles ${...} internally)
+    if (VariableSubstitutor.hasVariables(exprPart)
+        && !(exprPart.trim().startsWith("merge(") && exprPart.trim().endsWith(")"))) {
+      try {
+        VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+        exprPart = sub.substitute(exprPart);
+      } catch (Exception e) {
+        io.error("Variable substitution failed: " + e.getMessage());
+        return;
+      }
+    }
+
     // Check for literal string value
     if (exprPart.startsWith("\"") && exprPart.endsWith("\"")) {
       String literal = exprPart.substring(1, exprPart.length() - 1);
@@ -1528,6 +1580,36 @@ public class CommandDispatcher {
         io.println("Set " + varName + " = " + num);
       }
       return;
+    }
+
+    // Check for variable reference (bare name or $varname syntax)
+    String sourceVarName = null;
+    if (exprPart.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+      // Bare variable name: set target = source
+      sourceVarName = exprPart;
+    } else if (exprPart.matches("\\$[a-zA-Z_][a-zA-Z0-9_]*")) {
+      // Dollar-prefixed: set target = $source
+      sourceVarName = exprPart.substring(1);
+    }
+
+    if (sourceVarName != null) {
+      Value existingValue = resolveVariable(sourceVarName);
+      if (existingValue != null) {
+        // Copy the variable value (not the reference, but the actual Value object)
+        // For LazyQueryValue, we copy the reference so both variables share the same lazy query
+        store.set(varName, existingValue);
+        if (verbose) {
+          io.println("Set " + varName + " = " + existingValue.describe());
+        }
+        return;
+      }
+      // If not found as variable and it's bare name, fall through to JfrPath query parsing
+      // (might be an event type like "jdk.ExecutionSample")
+      // If it's $-prefixed and not found, show error
+      if (exprPart.startsWith("$")) {
+        io.error("Variable not found: " + sourceVarName);
+        return;
+      }
     }
 
     // Treat as JfrPath query
@@ -2243,41 +2325,61 @@ public class CommandDispatcher {
 
   // ---- Conditional handling ----
 
-  private boolean handleIf(String line) throws Exception {
+  private boolean handleIf(String line) {
     // Extract condition after "if "
     String condition = line.length() > 2 ? line.substring(2).trim() : "";
+
     if (condition.isEmpty()) {
-      throw new IllegalArgumentException("if requires a condition");
+      io.error("if requires a condition");
+      conditionalState.enterIf(false);
+      return true;
     }
 
     // Only evaluate if we're in an active branch
     boolean result = false;
+
     if (conditionalState.isActive() || !conditionalState.inConditional()) {
-      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-      result = evaluator.evaluate(condition);
+      try {
+        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+        result = evaluator.evaluate(condition);
+      } catch (Exception e) {
+        io.error("Condition evaluation failed: " + e.getMessage());
+        result = false;
+        // Continue to enterIf - don't return early
+      }
     }
+
+    // CRITICAL: Always update state, even after errors
     conditionalState.enterIf(result);
     return true;
   }
 
-  private boolean handleElif(String line) throws Exception {
+  private boolean handleElif(String line) {
     // Extract condition after "elif "
     String condition = line.length() > 4 ? line.substring(4).trim() : "";
+
     if (condition.isEmpty()) {
-      throw new IllegalArgumentException("elif requires a condition");
+      io.error("elif requires a condition");
+      conditionalState.handleElif(false);
+      return true;
     }
 
     // Only evaluate if needed (previous branches failed and parent is active)
     boolean result = false;
-    // We need to check if we should evaluate - only if no branch taken yet
-    // The state machine handles this, but we need the parent's active state
     int depth = conditionalState.depth();
+
     if (depth > 0) {
-      // Check if we need to evaluate by temporarily looking at state
-      // If condition is needed, it will be used; if branch already taken, it's ignored
-      ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-      result = evaluator.evaluate(condition);
+      try {
+        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
+        result = evaluator.evaluate(condition);
+      } catch (Exception e) {
+        io.error("Condition evaluation failed: " + e.getMessage());
+        result = false;
+        // Continue to handleElif - don't return early
+      }
     }
+
+    // CRITICAL: Always update state
     conditionalState.handleElif(result);
     return true;
   }

@@ -47,7 +47,8 @@
       "Bash(gh pr list:*)",
       "Bash(gh pr create:*)",
       "Bash(gh label list:*)",
-      "Bash(gh pr edit:*)"
+      "Bash(gh pr edit:*)",
+      "Bash(unzip:*)"
     ],
     "deny": [],
     "ask": []

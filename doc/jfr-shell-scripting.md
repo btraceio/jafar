@@ -52,19 +52,38 @@ By convention, JFR Shell scripts use the `.jfrs` extension (JFR Shell Script).
 
 ## Positional Parameters
 
-Scripts support bash-style positional parameter substitution using `$1`, `$2`, `$@` syntax. Positional parameters make scripts reusable across different recordings, thresholds, and parameters.
+Scripts support bash-style positional parameter substitution using `$1`, `$2`, `$@` syntax with optional parameter support. Positional parameters make scripts reusable across different recordings, thresholds, and parameters.
 
 ### Parameter Syntax
 
 ```bash
-# Use $1, $2, etc. anywhere in a command
+# Required parameters (error if not provided)
 open $1
 
-show events/jdk.FileRead[bytes>=$2] --limit $3
+# Optional parameters (empty string if not provided)
+open ${1}
+set limit = ${2}      # Empty string if $2 not provided
 
-# $@ expands to all parameters space-separated
+# Optional with default value
+set limit = ${2:-100}
+set format = ${3:-table}
+
+# Required with custom error message
+open ${1:?recording file required}
+set threshold = ${2:?threshold value required}
+
+# All parameters space-separated
 show events/$1 | count()
+# or using all args
+echo "Processing: $@"
 ```
+
+**Parameter forms:**
+- `$N` - Required parameter (error if missing)
+- `${N}` - Optional parameter (empty if missing)
+- `${N:-default}` - Optional with default value
+- `${N:?error message}` - Required with custom error message
+- `$@` - All arguments space-separated
 
 ### Passing Parameters
 
@@ -86,34 +105,48 @@ Parameters are positional (like bash):
 
 ### Out-of-Bounds Parameters
 
-If a script references a parameter that wasn't provided, execution fails with a clear error message:
+If a script references a **required** parameter (`$N` form) that wasn't provided, execution fails with a clear error message:
 
 ```
 Error on line 3: Positional parameter $1 out of bounds. Script has 0 argument(s).
   Command: open $1
 ```
 
+Optional parameters (`${N}` form) return empty string when not provided, while `${N:-default}` returns the default value.
+
 ### Example with Parameters
 
 **script.jfrs:**
 ```bash
 # Configurable analysis script
-# Arguments: $1=recording, $2=min_bytes, $3=top_n
+# Usage: script.jfrs <recording> [min_bytes] [top_n]
 
-open $1
+# Required parameter with error message
+open ${1:?recording file path required}
+
+# Optional parameters with defaults
+set min_bytes = ${2:-1024}
+set top_n = ${3:-20}
 
 # Show large file reads
-show events/jdk.FileRead[bytes>=$2] --limit $3
+show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
 
 # Thread analysis
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=count)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 close
 ```
 
 **Execution:**
 ```bash
+# With all arguments
 jfr-shell script script.jfrs /tmp/app.jfr 1024 20
+
+# With defaults (uses min_bytes=1024, top_n=20)
+jfr-shell script script.jfrs /tmp/app.jfr
+
+# Partial defaults (uses top_n=20)
+jfr-shell script script.jfrs /tmp/app.jfr 2048
 ```
 
 ## Variables
@@ -169,9 +202,17 @@ set name = "my-analysis"
 set threshold = 1000
 let limit = 25
 
+# Copy variables
+set backup = threshold          # Copy value from threshold
+set copy = $threshold            # Alternative syntax with $
+
 # Lazy query (assigned when RHS contains JfrPath expression)
 set reads = events/jdk.FileRead[bytes>=1000]
 set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+
+# Copy map variables
+set originalConfig = {"threshold": 1000, "enabled": true}
+set configBackup = originalConfig    # Creates a copy
 ```
 
 The `=` sign is required but spaces around it are flexible:
@@ -379,11 +420,29 @@ if ${total} / ${count} > 50
 
 #### Logical Operators
 
+Both symbols and keywords are supported:
+
 ```bash
+# Symbols
 if ${a} > 0 && ${b} > 0
 if ${a} == 0 || ${b} == 0
 if !${flag}
 if (${a} > 0 && ${b} > 0) || ${c} == 1
+
+# Keywords (equivalent to symbols above)
+if ${a} > 0 and ${b} > 0
+if ${a} == 0 or ${b} == 0
+if not ${flag}
+if (${a} > 0 and ${b} > 0) or ${c} == 1
+```
+
+#### String Operations
+
+```bash
+# Substring check with contains operator
+if ${path} contains "/tmp/"
+if ${name} contains "Error"
+if ${filename} contains ".jfr" and ${size} > 1000
 ```
 
 #### Built-in Functions
@@ -451,23 +510,24 @@ close
 
 ```bash
 #!/usr/bin/env -S jbang jfr-shell@btraceio script -
-# Arguments: $1=recording, $2=analysis_type
+# Usage: script.jfrs <recording> [analysis_type]
 
-open $1
+open ${1:?recording file required}
+set analysis = ${2:-cpu}
 
-if ${2} == "cpu"
+if ${analysis} == "cpu"
   echo "=== CPU Analysis ==="
   show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-elif ${2} == "io"
+elif ${analysis} == "io" or ${analysis} == "file"
   echo "=== I/O Analysis ==="
   show events/jdk.FileRead | sum(bytes)
   show events/jdk.FileWrite | sum(bytes)
-elif ${2} == "gc"
+elif ${analysis} == "gc"
   echo "=== GC Analysis ==="
   show events/jdk.GarbageCollection | stats(duration)
 else
-  echo "Unknown analysis type: ${2}"
-  echo "Supported: cpu, io, gc"
+  echo "Unknown analysis type: ${analysis}"
+  echo "Supported: cpu, io, file, gc"
 endif
 
 close

@@ -206,6 +206,11 @@ Store and reuse values in your analysis sessions with `${var}` substitution.
 jfr> set threshold = 1000
 jfr> set limit = 10
 jfr> show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+
+# Copy variables
+jfr> set backup = threshold       # Copy value from threshold
+jfr> set copy = $threshold         # Alternative syntax with $
+jfr> echo "Backup: ${backup}"
 ```
 
 ### Map Variables ⭐ NEW
@@ -229,6 +234,11 @@ jfr> show events/jdk.FileRead[bytes>=${config.threshold}]
 # Get map size
 jfr> echo "Config has ${config.size} entries"
 Config has 3 entries
+
+# Copy map variables
+jfr> set backup = config          # Creates a copy of the map
+jfr> echo "${backup.threshold}"
+1000
 ```
 
 **Supported value types:**
@@ -349,18 +359,29 @@ if ${x} == 0
 if ${value} != "error"
 if ${bytes} > 1000
 
+# String operations
+if ${path} contains "/tmp/"
+if ${name} contains "Error"
+
 # Arithmetic
 if ${a} + ${b} > 100
 
-# Logical operators
+# Logical operators (symbols and keywords supported)
 if ${a} > 0 && ${b} > 0
+if ${a} > 0 and ${b} > 0
 if ${x} == 0 || ${y} == 0
+if ${x} == 0 or ${y} == 0
 if !${flag}
+if not ${flag}
 
 # Built-in functions
 if exists(myvar)
 if empty(results)
 if !empty(data)
+
+# Combined with keywords
+if ${scenario} == "prod" or ${scenario} == "staging"
+if ${path} contains "/tmp/" and ${bytes} > 1000
 ```
 
 See [Scripting Guide](../doc/jfr-shell-scripting.md#conditionals) for complete reference.
@@ -389,22 +410,36 @@ jfr> script run basic-analysis /tmp/app.jfr
 
 ### Script Execution
 
-Create reusable analysis scripts with variable substitution:
+Create reusable analysis scripts with positional parameter substitution:
 
 **analysis.jfrs:**
 ```bash
 # Comprehensive file I/O analysis
-# Arguments: recording, min_bytes, top_n
+# Usage: script analysis.jfrs <recording> [min_bytes] [top_n]
 
-open $1
-show events/jdk.FileRead[bytes>=$2] --limit $3
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($3, by=count)
+open ${1:?recording file required}
+set min_bytes = ${2:-1000}     # Default to 1000 if not provided
+set top_n = ${3:-10}           # Default to 10 if not provided
+
+show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 close
 ```
 
+**Positional Parameters:**
+- `$1`, `$2`, ... - Required parameters (error if missing)
+- `${1}`, `${2}`, ... - Optional (empty string if missing)
+- `${1:-default}` - Parameter with default value
+- `${1:?error message}` - Required with custom error
+- `$@` - All arguments space-separated
+
 **Execute by path:**
 ```bash
+# With all arguments
 jfr-shell script analysis.jfrs /tmp/app.jfr 1000 10
+
+# With defaults (uses min_bytes=1000, top_n=10)
+jfr-shell script analysis.jfrs /tmp/app.jfr
 ```
 
 ### Command Recording
