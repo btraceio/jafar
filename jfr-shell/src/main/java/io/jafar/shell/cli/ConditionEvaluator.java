@@ -386,7 +386,15 @@ public final class ConditionEvaluator {
       return false;
     }
 
-    // Ensure word boundary - not part of a larger identifier
+    // Ensure word boundary before keyword - not part of a larger identifier
+    if (pos > 0) {
+      char prevChar = input.charAt(pos - 1);
+      if (Character.isLetterOrDigit(prevChar) || prevChar == '_') {
+        return false;
+      }
+    }
+
+    // Ensure word boundary after keyword - not part of a larger identifier
     if (pos + keywordLen < input.length()) {
       char nextChar = input.charAt(pos + keywordLen);
       if (Character.isLetterOrDigit(nextChar) || nextChar == '_') {

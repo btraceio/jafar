@@ -43,6 +43,8 @@ public class ScriptRunner {
   // Group 2: Bracketed form ${N...} - captures N
   // Group 3: Operator :- or :?
   // Group 4: Default value or error message (can be empty)
+  // Note: Using non-greedy .*? to support multiple parameters on same line.
+  // This means } cannot appear in default values - use variables for complex defaults.
   private static final Pattern VAR_PATTERN =
       Pattern.compile("\\$(?:(\\d+|@)|\\{(\\d+|@)(?:(:[-?])(.*?))?\\})");
 
