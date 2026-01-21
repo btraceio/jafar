@@ -189,6 +189,26 @@ public final class VariableStore {
       this.evaluated = false;
     }
 
+    /**
+     * Creates a copy of this LazyQueryValue with independent cache state. The copy shares the same
+     * query and session reference but has its own cache, allowing independent cache management.
+     *
+     * @return a new LazyQueryValue instance
+     */
+    public LazyQueryValue copy() {
+      SessionRef ref = sessionRef.get();
+      if (ref == null) {
+        throw new IllegalStateException("Cannot copy LazyQueryValue: session no longer available");
+      }
+      LazyQueryValue copy = new LazyQueryValue(query, ref, queryString);
+      // Copy cache state if evaluated
+      if (evaluated) {
+        copy.cachedResult = this.cachedResult;
+        copy.evaluated = true;
+      }
+      return copy;
+    }
+
     @Override
     public Object get() throws Exception {
       if (evaluated) {

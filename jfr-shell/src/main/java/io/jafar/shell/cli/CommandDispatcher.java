@@ -1595,11 +1595,15 @@ public class CommandDispatcher {
     if (sourceVarName != null) {
       Value existingValue = resolveVariable(sourceVarName);
       if (existingValue != null) {
-        // Copy the variable value (not the reference, but the actual Value object)
-        // For LazyQueryValue, we copy the reference so both variables share the same lazy query
-        store.set(varName, existingValue);
+        // Copy the variable value with independent state
+        // For LazyQueryValue, create a new instance so each variable has independent cache
+        Value valueToCopy = existingValue;
+        if (existingValue instanceof VariableStore.LazyQueryValue lazyValue) {
+          valueToCopy = lazyValue.copy();
+        }
+        store.set(varName, valueToCopy);
         if (verbose) {
-          io.println("Set " + varName + " = " + existingValue.describe());
+          io.println("Set " + varName + " = " + valueToCopy.describe());
         }
         return;
       }
