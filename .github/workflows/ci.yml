@@ -46,7 +46,5 @@ jobs:
           cd jafar-gradle-plugin
           ./gradlew publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
         env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SONATYPE_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SONATYPE_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}

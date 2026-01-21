@@ -398,16 +398,16 @@ class ScriptListRunCommandTest {
     Path examplesDir =
         Paths.get("jfr-shell", "src", "main", "resources", "examples").toAbsolutePath();
 
-    // These example scripts should exist in the source code
+    // Verify example scripts exist in the source code
     Path basicAnalysis = examplesDir.resolve("basic-analysis.jfrs");
     Path gcAnalysis = examplesDir.resolve("gc-analysis.jfrs");
     Path threadProfiling = examplesDir.resolve("thread-profiling.jfrs");
 
-    // Note: These files might not exist in all test environments
-    // This test documents the expected example scripts
-    assertNotNull(basicAnalysis);
-    assertNotNull(gcAnalysis);
-    assertNotNull(threadProfiling);
+    // These should exist in the project structure
+    assertTrue(Files.exists(basicAnalysis), "basic-analysis.jfrs should exist: " + basicAnalysis);
+    assertTrue(Files.exists(gcAnalysis), "gc-analysis.jfrs should exist: " + gcAnalysis);
+    assertTrue(
+        Files.exists(threadProfiling), "thread-profiling.jfrs should exist: " + threadProfiling);
   }
 
   // ==================== Error Handling ====================

@@ -443,7 +443,11 @@ class EndToEndWorkflowTest {
       if (line.matches("\\|\\s*\\d+\\s*\\|")) {
         String digits = line.replaceAll("[^0-9]", "");
         if (!digits.isEmpty()) {
-          return Long.parseLong(digits);
+          try {
+            return Long.parseLong(digits);
+          } catch (NumberFormatException e) {
+            throw new IllegalStateException("Invalid numeric value in output: " + digits, e);
+          }
         }
       }
     }
