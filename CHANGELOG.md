@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.8.0] - 2026-01-21
+
+### Added
+- **Map variables in JFR Shell** - Store and manipulate map data structures (#38)
+  - Map literal syntax: `{key1: value1, key2: value2}`
+  - Map access operations and nested maps support
+  - Integration with JfrPath queries
+- **Advanced map operations** - toMap() and merge() functions (#39)
+  - `toMap()` for converting query results to maps
+  - `merge()` for combining maps
+  - Enhanced map manipulation capabilities
+- **Comprehensive test coverage** - 150+ new tests for JFR Shell (#45)
+  - E2E workflow tests
+  - Decorator field aggregation tests
+  - Script command tests
+  - Arithmetic expressions in conditionals (40 tests)
+  - empty() conditional function (23 tests)
+  - between() filter function (22 tests)
+  - Non-interactive mode, JSON output, sketch() (65 tests)
+
+### Fixed
+- **Conditional flow and parameters** - Fixed several scripting bugs (#43)
+  - Fixed conditional operators (or, and, not, contains) requiring proper word boundaries
+  - Fixed variable copying for LazyQueryValue to properly clone result lists
+  - Added optional positional parameters with ${N} syntax and default values
+- **Array iteration in JfrPath** - Fixed array handling and enhanced queries (#42)
+  - Fixed array element iteration in filters and transforms
+  - Enhanced JfrPath query capabilities
+
 ## [0.6.0] - 2026-01-04
 
 ### Added
