@@ -48,7 +48,9 @@
       "Bash(gh pr create:*)",
       "Bash(gh label list:*)",
       "Bash(gh pr edit:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "WebFetch(domain:central.sonatype.org)",
+      "Bash(timeout 120 ./gradlew:*)"
     ],
     "deny": [],
     "ask": []
