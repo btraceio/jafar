@@ -395,8 +395,7 @@ class ScriptListRunCommandTest {
 
   @Test
   void exampleScriptsExist() {
-    Path examplesDir =
-        Paths.get("jfr-shell", "src", "main", "resources", "examples").toAbsolutePath();
+    Path examplesDir = Paths.get("src", "main", "resources", "examples").toAbsolutePath();
 
     // Verify example scripts exist in the source code
     Path basicAnalysis = examplesDir.resolve("basic-analysis.jfrs");
