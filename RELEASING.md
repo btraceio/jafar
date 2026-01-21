@@ -61,7 +61,7 @@ git push origin v0.4.0
 1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
 2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
 3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
-4. ✅ Automatically update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
+4. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
 5. ✅ Create GitHub Release with changelog notes
 
 ### 5. Monitor Release Workflow
@@ -70,17 +70,45 @@ Watch the workflow at: https://github.com/btraceio/jafar/actions
 
 The release workflow typically takes 10-15 minutes to complete all steps.
 
+### 5.5. JBang Catalog Update Timing
+
+The JBang catalog is updated automatically once artifacts are available on Maven Central:
+
+**Immediate (within 10 minutes):**
+- If Maven Central sync completes quickly (rare), the catalog updates during the release workflow
+- The workflow polls Maven Central every 30-60 seconds for up to 10 minutes
+
+**Scheduled (30-minute intervals):**
+- If Maven Central sync is delayed (typical ~2 hours), a scheduled workflow checks every 30 minutes
+- Once artifacts are available, the catalog is updated automatically
+- No manual intervention required
+
+**Fallback (after 24 hours):**
+- If Maven Central sync fails after 24 hours, a GitHub issue is created automatically
+- The issue includes troubleshooting steps and manual update instructions
+
+**Tracking:**
+- Pending updates are tracked in `.github/pending-jbang-updates.json`
+- This file is automatically created if Maven Central is not immediately available
+- It's removed once the catalog is updated or an issue is created
+
 ### 6. Verify Release
 
 After the workflow completes, verify:
 
 ```bash
-# Test JBang installation
+# Test JBang installation (may work immediately via GitHub Packages, or after Maven Central sync)
 jbang --fresh jfr-shell@btraceio --version
 
-# Test Maven artifact (wait ~2 hours for Maven Central sync)
-# Check: https://central.sonatype.com/artifact/io.btrace/jafar-parser/0.4.0
+# Test Maven artifact directly from Maven Central
+# Note: Maven Central sync typically takes ~2 hours after publishing
+# Check: https://central.sonatype.com/artifact/io.btrace/jafar-parser/0.8.0
 ```
+
+**Expected Timeline:**
+- **Immediately (0-15 min)**: GitHub Release created, artifacts published to Sonatype
+- **Within 2 hours**: Artifacts appear on Maven Central
+- **Within 2.5 hours**: JBang catalog updated automatically (if Maven Central sync completes)
 
 ### 7. Prepare for Next Development Iteration
 
@@ -130,9 +158,30 @@ git push origin main
 
 ### JBang Catalog Not Updated
 
-- Check if the catalog update job succeeded in the workflow
-- Manually verify: https://github.com/btraceio/jbang-catalog/commits/main
-- If needed, manually create PR to update catalog
+The catalog update process has multiple fallbacks:
+
+1. **Check Maven Central availability:**
+   - Visit: `https://repo1.maven.org/maven2/io/btrace/jafar-shell/VERSION/jafar-shell-VERSION.pom`
+   - Replace `VERSION` with your release version (e.g., `0.8.0`)
+   - If you get HTTP 404, Maven Central hasn't synced yet (typically takes ~2 hours)
+
+2. **Check pending updates:**
+   - Look for `.github/pending-jbang-updates.json` in the main branch
+   - If present, the scheduled workflow will retry every 30 minutes
+
+3. **Check scheduled workflow:**
+   - Workflow runs: https://github.com/btraceio/jafar/actions/workflows/sync-jbang-catalog.yml
+   - Should automatically update catalog once Maven Central sync completes
+
+4. **Check for auto-created issues:**
+   - After 24 hours, an issue is created if sync fails
+   - Look for issues labeled `release` and `maven-central`
+
+5. **Manual update (if needed):**
+   - Clone https://github.com/btraceio/jbang-catalog
+   - Update version in `jbang-catalog.json` and `jafar-shell.java`
+   - Create PR with changes
+   - Remove `.github/pending-jbang-updates.json` from main branch
 
 ## Manual Release (Emergency)
 

@@ -83,7 +83,54 @@ jobs:
     needs: [prepare, publish-maven]
     runs-on: ubuntu-latest
     steps:
+      - name: Wait for Maven Central availability
+        id: maven-central-check
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ARTIFACT_URL="https://repo1.maven.org/maven2/io/btrace/jafar-shell/${VERSION}/jafar-shell-${VERSION}.pom"
+
+          MAX_ATTEMPTS=20
+          ATTEMPT=1
+          AVAILABLE=false
+
+          echo "🔍 Checking Maven Central for jafar-shell:${VERSION}"
+          echo "URL: $ARTIFACT_URL"
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS..."
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$ARTIFACT_URL")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Artifact available on Maven Central!"
+              AVAILABLE=true
+              break
+            fi
+
+            echo "⏳ Not available yet (HTTP $HTTP_CODE). Waiting..."
+
+            # Exponential backoff: 30s for first 10 attempts, 60s after
+            if [ $ATTEMPT -lt 10 ]; then
+              SLEEP_TIME=30
+            else
+              SLEEP_TIME=60
+            fi
+
+            sleep $SLEEP_TIME
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          if [ "$AVAILABLE" = "true" ]; then
+            echo "maven-central-available=true" >> $GITHUB_OUTPUT
+            echo "✅ Maven Central sync complete - will update JBang catalog now"
+          else
+            echo "maven-central-available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Maven Central sync still pending after 10 minutes"
+            echo "📅 Scheduled workflow will retry every 30 minutes"
+          fi
+
       - name: Checkout jbang-catalog
+        if: steps.maven-central-check.outputs.maven-central-available == 'true'
         continue-on-error: true
         uses: actions/checkout@v4
         with:
@@ -92,6 +139,7 @@ jobs:
           path: catalog
 
       - name: Update catalog files
+        if: steps.maven-central-check.outputs.maven-central-available == 'true'
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="${{ needs.prepare.outputs.version_tag }}"
@@ -111,6 +159,7 @@ jobs:
           git diff
 
       - name: Commit and push catalog updates
+        if: steps.maven-central-check.outputs.maven-central-available == 'true'
         continue-on-error: true
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
@@ -130,6 +179,47 @@ jobs:
           if git commit -m "Update jafar-shell to version $VERSION"; then
             git push || echo "⚠️ Push failed - update catalog manually at https://github.com/btraceio/jbang-catalog"
           fi
+
+      - name: Checkout repository for pending update tracking
+        if: steps.maven-central-check.outputs.maven-central-available == 'false'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create pending update tracking file
+        if: steps.maven-central-check.outputs.maven-central-available == 'false'
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.version_tag }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create .github directory if it doesn't exist
+          mkdir -p .github
+
+          # Create pending updates file
+          cat > .github/pending-jbang-updates.json <<EOF
+          {
+            "version": "$VERSION",
+            "tag": "$TAG",
+            "timestamp": "$TIMESTAMP",
+            "artifact_url": "https://repo1.maven.org/maven2/io/btrace/jafar-shell/$VERSION/jafar-shell-${VERSION}.pom"
+          }
+          EOF
+
+          echo "📝 Created pending update tracking file:"
+          cat .github/pending-jbang-updates.json
+
+      - name: Commit pending update file
+        if: steps.maven-central-check.outputs.maven-central-available == 'false'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Track pending JBang catalog update for ${{ needs.prepare.outputs.version }}"
+          file_pattern: .github/pending-jbang-updates.json
+          branch: main
 
   # Create GitHub Release with notes
   create-release:

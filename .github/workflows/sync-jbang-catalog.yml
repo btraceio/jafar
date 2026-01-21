@@ -1,0 +1,215 @@
+name: Sync JBang Catalog
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync-pending-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Check for pending updates
+        id: check-pending
+        run: |
+          if [ ! -f .github/pending-jbang-updates.json ]; then
+            echo "✅ No pending JBang catalog updates"
+            echo "has-pending=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "📋 Found pending update file"
+          cat .github/pending-jbang-updates.json
+          echo "has-pending=true" >> $GITHUB_OUTPUT
+
+      - name: Process pending update
+        if: steps.check-pending.outputs.has-pending == 'true'
+        id: process
+        run: |
+          # Parse the pending update file
+          VERSION=$(jq -r '.version' .github/pending-jbang-updates.json)
+          TAG=$(jq -r '.tag' .github/pending-jbang-updates.json)
+          TIMESTAMP=$(jq -r '.timestamp' .github/pending-jbang-updates.json)
+          ARTIFACT_URL=$(jq -r '.artifact_url' .github/pending-jbang-updates.json)
+
+          echo "Processing pending update for version $VERSION"
+          echo "Created at: $TIMESTAMP"
+
+          # Calculate age of pending update
+          PENDING_TIMESTAMP=$(date -d "$TIMESTAMP" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$TIMESTAMP" +%s)
+          CURRENT_TIMESTAMP=$(date +%s)
+          AGE_HOURS=$(( ($CURRENT_TIMESTAMP - $PENDING_TIMESTAMP) / 3600 ))
+
+          echo "Pending update age: ${AGE_HOURS} hours"
+
+          # Check Maven Central availability (3 attempts max for scheduled check)
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          AVAILABLE=false
+
+          echo "🔍 Checking Maven Central availability..."
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $ARTIFACT_URL"
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$ARTIFACT_URL")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Artifact is now available on Maven Central!"
+              AVAILABLE=true
+              break
+            fi
+
+            echo "⏳ Not yet available (HTTP $HTTP_CODE)"
+            sleep 10
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          # Determine action based on availability and age
+          if [ "$AVAILABLE" = "true" ]; then
+            echo "Action: UPDATE_CATALOG"
+            echo "action=update" >> $GITHUB_OUTPUT
+          elif [ $AGE_HOURS -ge 24 ]; then
+            echo "⚠️ Maven Central sync failed after 24 hours"
+            echo "Action: CREATE_ISSUE"
+            echo "action=create_issue" >> $GITHUB_OUTPUT
+          else
+            echo "⏳ Still waiting (${AGE_HOURS}h < 24h)"
+            echo "Action: WAIT"
+            echo "action=wait" >> $GITHUB_OUTPUT
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "age_hours=$AGE_HOURS" >> $GITHUB_OUTPUT
+
+      - name: Checkout jbang-catalog
+        if: steps.process.outputs.action == 'update'
+        uses: actions/checkout@v4
+        with:
+          repository: btraceio/jbang-catalog
+          token: ${{ secrets.JBANG_CATALOG_PAT || secrets.GITHUB_TOKEN }}
+          path: catalog
+
+      - name: Update catalog files
+        if: steps.process.outputs.action == 'update'
+        run: |
+          VERSION="${{ steps.process.outputs.version }}"
+
+          cd catalog
+
+          # Update jbang-catalog.json
+          sed -i.bak "s|io.btrace:jafar-shell:[^\"]*|io.btrace:jafar-shell:$VERSION|g" jbang-catalog.json
+
+          # Update jafar-shell.java
+          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
+
+          # Clean up backup files
+          rm -f *.bak
+
+          # Show changes
+          echo "📝 Changes to be committed:"
+          git diff
+
+      - name: Commit and push catalog updates
+        if: steps.process.outputs.action == 'update'
+        run: |
+          VERSION="${{ steps.process.outputs.version }}"
+
+          cd catalog
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add jbang-catalog.json jafar-shell.java
+
+          if git commit -m "Update jafar-shell to version $VERSION"; then
+            if git push; then
+              echo "✅ Successfully updated JBang catalog to version $VERSION"
+            else
+              echo "❌ Failed to push catalog updates"
+              exit 1
+            fi
+          else
+            echo "⚠️ No changes to commit"
+          fi
+
+      - name: Remove pending update file
+        if: steps.process.outputs.action == 'update'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          rm .github/pending-jbang-updates.json
+          git add .github/pending-jbang-updates.json
+          git commit -m "Remove pending JBang update for ${{ steps.process.outputs.version }}"
+          git push
+
+      - name: Create issue for failed Maven Central sync
+        if: steps.process.outputs.action == 'create_issue'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.process.outputs.version }}';
+            const tag = '${{ steps.process.outputs.tag }}';
+            const timestamp = '${{ steps.process.outputs.timestamp }}';
+            const ageHours = '${{ steps.process.outputs.age_hours }}';
+
+            const body = `## Maven Central Sync Failure
+
+            The release \`${version}\` was published over 24 hours ago, but the artifact is still not available on Maven Central.
+
+            **Details:**
+            - Version: \`${version}\`
+            - Tag: \`${tag}\`
+            - Release timestamp: ${timestamp}
+            - Age: ${ageHours} hours
+            - Artifact: \`io.btrace:jafar-shell:${version}\`
+
+            **Expected URL:**
+            https://repo1.maven.org/maven2/io/btrace/jafar-shell/${version}/jafar-shell-${version}.pom
+
+            **Actions required:**
+            1. Check [Sonatype Central Portal](https://central.sonatype.com/publishing) for publishing status
+            2. Verify the artifact was successfully uploaded
+            3. Check for any validation errors or rejections
+            4. Once the issue is resolved and the artifact appears on Maven Central, manually update the [JBang catalog](https://github.com/btraceio/jbang-catalog):
+               - Update \`jbang-catalog.json\`
+               - Update \`jafar-shell.java\`
+               - Change version references from the current version to \`${version}\`
+
+            **Related:**
+            - Release: https://github.com/${{ github.repository }}/releases/tag/${tag}
+            - Pending update tracking file: \`.github/pending-jbang-updates.json\`
+
+            This issue was automatically created by the \`sync-jbang-catalog\` workflow.`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Maven Central sync failed for ${tag}`,
+              body: body,
+              labels: ['release', 'maven-central']
+            });
+
+      - name: Remove pending file after issue creation
+        if: steps.process.outputs.action == 'create_issue'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          rm .github/pending-jbang-updates.json
+          git add .github/pending-jbang-updates.json
+          git commit -m "Remove pending update after creating issue for ${{ steps.process.outputs.version }}"
+          git push
