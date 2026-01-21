@@ -422,62 +422,6 @@ public final class ConditionEvaluator {
     return leftStr.contains(rightStr);
   }
 
-  /**
-   * Matches a keyword operator ensuring word boundaries. This prevents matching 'or' inside 'fork'
-   * or 'and' inside 'band'.
-   *
-   * @param keyword the keyword to match (case-insensitive)
-   * @return true if keyword matched at current position with proper word boundaries
-   */
-  private boolean matchKeyword(String keyword) {
-    skipWhitespace();
-    int keywordLen = keyword.length();
-
-    if (pos + keywordLen > input.length()) {
-      return false;
-    }
-
-    // Case-insensitive match
-    if (!input.regionMatches(true, pos, keyword, 0, keywordLen)) {
-      return false;
-    }
-
-    // Ensure word boundary before keyword - not part of a larger identifier
-    if (pos > 0) {
-      char prevChar = input.charAt(pos - 1);
-      if (Character.isLetterOrDigit(prevChar) || prevChar == '_') {
-        return false;
-      }
-    }
-
-    // Ensure word boundary after keyword - not part of a larger identifier
-    if (pos + keywordLen < input.length()) {
-      char nextChar = input.charAt(pos + keywordLen);
-      if (Character.isLetterOrDigit(nextChar) || nextChar == '_') {
-        return false;
-      }
-    }
-
-    pos += keywordLen;
-    return true;
-  }
-
-  /**
-   * Checks if left contains right (as strings).
-   *
-   * @param left the value to search in
-   * @param right the value to search for
-   * @return true if left contains right
-   */
-  private boolean containsCheck(Object left, Object right) {
-    if (left == null || right == null) {
-      return false;
-    }
-    String leftStr = String.valueOf(left);
-    String rightStr = String.valueOf(right);
-    return leftStr.contains(rightStr);
-  }
-
   private boolean toBoolean(Object value) {
     if (value instanceof Boolean b) {
       return b;
