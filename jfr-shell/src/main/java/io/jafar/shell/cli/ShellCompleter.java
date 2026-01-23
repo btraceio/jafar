@@ -12,6 +12,7 @@ import io.jafar.shell.cli.completion.completers.FieldPathCompleter;
 import io.jafar.shell.cli.completion.completers.FilterFieldCompleter;
 import io.jafar.shell.cli.completion.completers.FilterLogicalCompleter;
 import io.jafar.shell.cli.completion.completers.FilterOperatorCompleter;
+import io.jafar.shell.cli.completion.completers.FilterValueCompleter;
 import io.jafar.shell.cli.completion.completers.FunctionParamCompleter;
 import io.jafar.shell.cli.completion.completers.MetadataSubpropCompleter;
 import io.jafar.shell.cli.completion.completers.OptionCompleter;
@@ -64,6 +65,7 @@ public class ShellCompleter implements Completer {
             new FieldPathCompleter(),
             new FilterFieldCompleter(),
             new FilterOperatorCompleter(),
+            new FilterValueCompleter(),
             new FilterLogicalCompleter(),
             new PipelineOperatorCompleter(),
             new DecoratorFunctionCompleter(),

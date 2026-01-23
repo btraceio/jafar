@@ -768,6 +768,21 @@ public class CompletionContextAnalyzer {
     return null;
   }
 
+  /** Check if a token is an operator token. */
+  private boolean isOperatorToken(Token token) {
+    if (token == null) {
+      return false;
+    }
+    return token.type() == TokenType.GT
+        || token.type() == TokenType.LT
+        || token.type() == TokenType.EQUALS
+        || token.type() == TokenType.DOUBLE_EQUALS
+        || token.type() == TokenType.NOT_EQUALS
+        || token.type() == TokenType.GTE
+        || token.type() == TokenType.LTE
+        || token.type() == TokenType.TILDE;
+  }
+
   /** Check if filter content has an operator. */
   boolean hasOperator(String content) {
     return content.contains("==")
@@ -884,12 +899,19 @@ public class CompletionContextAnalyzer {
 
   /** Check if cursor is after a pipe token. */
   private boolean isAfterPipeToken(List<Token> tokens, Token cursorToken) {
+    if (cursorToken == null) {
+      return false;
+    }
     if (cursorToken.type() == TokenType.PIPE) {
       return true;
     }
 
     // Find previous non-whitespace token
     int cursorIdx = tokens.indexOf(cursorToken);
+    if (cursorIdx < 0) {
+      // Token not found in list - shouldn't happen but handle gracefully
+      return false;
+    }
     for (int i = cursorIdx - 1; i >= 0; i--) {
       Token prev = tokens.get(i);
       if (prev.type() == TokenType.WHITESPACE) {
@@ -999,6 +1021,20 @@ public class CompletionContextAnalyzer {
       }
     }
 
+    // Validate: filter predicates require an event type
+    // If we have a bracket but no eventType, this is an invalid filter context
+    // (e.g., "metadata[" or "show [")
+    if (eventType == null) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.UNKNOWN)
+          .command("show")
+          .rootType(rootType)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
     // Build extras map with nestedPath and filterContent
     Map<String, String> extras = new HashMap<>();
 
@@ -1084,6 +1120,7 @@ public class CompletionContextAnalyzer {
     }
 
     // After a value (number, string, identifier) following an operator -> FILTER_LOGICAL
+    // After an operator itself -> FILTER_VALUE (waiting for value input)
     boolean hasOperator = false;
     for (Token t : tokens) {
       if (t.start() >= cursor) break;
@@ -1097,6 +1134,21 @@ public class CompletionContextAnalyzer {
           || t.type() == TokenType.TILDE) {
         hasOperator = true;
       }
+    }
+
+    // If we have an operator and the last token IS the operator, we're waiting for a value
+    if (hasOperator && isOperatorToken(lastNonWhitespace)) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_VALUE)
+          .command("show")
+          .rootType(rootType)
+          .eventType(eventType)
+          .fieldPath(fieldPath)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
     }
 
     if (hasOperator
