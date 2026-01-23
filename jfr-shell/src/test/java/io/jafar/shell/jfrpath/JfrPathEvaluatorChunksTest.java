@@ -25,6 +25,8 @@ class JfrPathEvaluatorChunksTest {
     Map<String, Object> first = rows.get(0);
     assertTrue(first.containsKey("size"));
     assertTrue(first.containsKey("startNanos"));
+    assertTrue(first.containsKey("startTicks"));
+    assertTrue(first.containsKey("frequency"));
 
     var qp = JfrPathParser.parse("chunks/size");
     List<Object> sizes = eval.evaluateValues(session, qp);

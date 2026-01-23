@@ -9,6 +9,9 @@ import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -592,6 +595,7 @@ public final class JfrPathEvaluator {
           case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
           case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
           case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
+          case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
         };
 
     // Apply remaining operators in sequence
@@ -688,6 +692,190 @@ public final class JfrPathEvaluator {
 
     // Apply toMap transformation
     return applyToMap(baseResults, op.keyField, op.valueField);
+  }
+
+  private List<Map<String, Object>> aggregateTimeRange(
+      JFRSession session, Query query, JfrPath.TimeRangeOp op) throws Exception {
+
+    // Load chunk metadata to get timing info for conversion
+    List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getRecordingPath());
+    if (chunks.isEmpty()) {
+      throw new IllegalStateException("No chunks found in recording");
+    }
+
+    // Use first chunk's timing info (all chunks in a recording share the same clock)
+    Map<String, Object> firstChunk = chunks.get(0);
+    long startTicks = ((Number) firstChunk.get("startTicks")).longValue();
+    long startNanos = ((Number) firstChunk.get("startNanos")).longValue();
+    long frequency = ((Number) firstChunk.get("frequency")).longValue();
+
+    // Track min/max tick values
+    long[] minMax = {Long.MAX_VALUE, Long.MIN_VALUE};
+    long[] count = {0};
+
+    List<String> valuePath = op.valuePath;
+    List<String> durationPath = op.durationPath;
+    boolean hasDuration = !durationPath.isEmpty();
+
+    if (query.root == Root.EVENTS) {
+      if (query.eventTypes.isEmpty()) {
+        throw new IllegalArgumentException("events root requires type");
+      }
+
+      validateEventTypes(session, query.eventTypes);
+
+      if (query.isMultiType) {
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object val = Values.get(map, valuePath.toArray());
+              if (val instanceof Number n) {
+                long ticks = n.longValue();
+                if (ticks < minMax[0]) minMax[0] = ticks;
+                // For max, if duration is specified, use startTime + duration
+                long endTicks = ticks;
+                if (hasDuration) {
+                  Object durVal = Values.get(map, durationPath.toArray());
+                  if (durVal instanceof Number dn) {
+                    endTicks = ticks + dn.longValue();
+                  }
+                }
+                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                count[0]++;
+              }
+            });
+      } else {
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+
+              Object val = Values.get(map, valuePath.toArray());
+              if (val instanceof Number n) {
+                long ticks = n.longValue();
+                if (ticks < minMax[0]) minMax[0] = ticks;
+                // For max, if duration is specified, use startTime + duration
+                long endTicks = ticks;
+                if (hasDuration) {
+                  Object durVal = Values.get(map, durationPath.toArray());
+                  if (durVal instanceof Number dn) {
+                    endTicks = ticks + dn.longValue();
+                  }
+                }
+                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                count[0]++;
+              }
+            });
+      }
+    } else {
+      // For non-event roots, materialize rows first
+      List<Map<String, Object>> rows =
+          evaluate(session, new Query(query.root, query.segments, query.predicates));
+      for (Map<String, Object> row : rows) {
+        Object val = Values.get(row, valuePath.toArray());
+        if (val instanceof Number n) {
+          long ticks = n.longValue();
+          if (ticks < minMax[0]) minMax[0] = ticks;
+          // For max, if duration is specified, use startTime + duration
+          long endTicks = ticks;
+          if (hasDuration) {
+            Object durVal = Values.get(row, durationPath.toArray());
+            if (durVal instanceof Number dn) {
+              endTicks = ticks + dn.longValue();
+            }
+          }
+          if (endTicks > minMax[1]) minMax[1] = endTicks;
+          count[0]++;
+        }
+      }
+    }
+
+    // Build result
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("count", count[0]);
+    result.put("field", String.join("/", valuePath));
+
+    if (count[0] == 0) {
+      result.put("minTicks", null);
+      result.put("maxTicks", null);
+      result.put("minTime", null);
+      result.put("maxTime", null);
+      result.put("durationNanos", null);
+      result.put("durationMs", null);
+      result.put("duration", null);
+    } else {
+      result.put("minTicks", minMax[0]);
+      result.put("maxTicks", minMax[1]);
+
+      // Convert ticks to wall-clock time
+      Instant minInstant = ticksToInstant(minMax[0], startTicks, startNanos, frequency);
+      Instant maxInstant = ticksToInstant(minMax[1], startTicks, startNanos, frequency);
+
+      // Format the times
+      DateTimeFormatter formatter = getFormatter(op.format);
+      result.put("minTime", formatter.format(minInstant.atZone(ZoneId.systemDefault())));
+      result.put("maxTime", formatter.format(maxInstant.atZone(ZoneId.systemDefault())));
+
+      // Calculate duration
+      long durationNanos = ticksToNanos(minMax[1] - minMax[0], frequency);
+      result.put("durationNanos", durationNanos);
+      result.put("durationMs", durationNanos / 1_000_000.0);
+      result.put("duration", formatDuration(durationNanos));
+    }
+
+    return List.of(result);
+  }
+
+  private static String formatDuration(long nanos) {
+    if (nanos < 1_000) {
+      return nanos + "ns";
+    } else if (nanos < 1_000_000) {
+      return String.format("%.2fus", nanos / 1_000.0);
+    } else if (nanos < 1_000_000_000) {
+      return String.format("%.2fms", nanos / 1_000_000.0);
+    } else if (nanos < 60_000_000_000L) {
+      return String.format("%.2fs", nanos / 1_000_000_000.0);
+    } else if (nanos < 3_600_000_000_000L) {
+      long totalSecs = nanos / 1_000_000_000L;
+      long mins = totalSecs / 60;
+      long secs = totalSecs % 60;
+      return String.format("%dm %ds", mins, secs);
+    } else {
+      long totalSecs = nanos / 1_000_000_000L;
+      long hours = totalSecs / 3600;
+      long mins = (totalSecs % 3600) / 60;
+      long secs = totalSecs % 60;
+      return String.format("%dh %dm %ds", hours, mins, secs);
+    }
+  }
+
+  private static Instant ticksToInstant(
+      long ticks, long startTicks, long startNanos, long frequency) {
+    long tickDiff = ticks - startTicks;
+    long nanoDiff = ticksToNanos(tickDiff, frequency);
+    return Instant.ofEpochSecond(0, startNanos + nanoDiff);
+  }
+
+  private static long ticksToNanos(long ticks, long frequency) {
+    // frequency is ticks per second, so:
+    // nanos = ticks * (1e9 / frequency) = (ticks * 1_000_000_000L) / frequency
+    // Use BigDecimal-like approach to avoid overflow
+    return Math.round(ticks * (1_000_000_000.0 / frequency));
+  }
+
+  private static DateTimeFormatter getFormatter(String format) {
+    if (format == null || format.isEmpty()) {
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+    }
+    return DateTimeFormatter.ofPattern(format);
   }
 
   // Expression evaluator for computed fields in select()
@@ -2395,6 +2583,7 @@ public final class JfrPathEvaluator {
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
+      case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }
@@ -2654,5 +2843,50 @@ public final class JfrPathEvaluator {
 
     // Return as single-row list containing the map
     return List.of(resultMap);
+  }
+
+  private List<Map<String, Object>> applyTimeRange(
+      List<Map<String, Object>> rows, List<String> valuePath, List<String> durationPath) {
+    long minTicks = Long.MAX_VALUE;
+    long maxTicks = Long.MIN_VALUE;
+    long count = 0;
+    boolean hasDuration = durationPath != null && !durationPath.isEmpty();
+
+    for (Map<String, Object> row : rows) {
+      Object val = Values.get(row, valuePath.toArray());
+      if (val instanceof Number n) {
+        long ticks = n.longValue();
+        if (ticks < minTicks) minTicks = ticks;
+        long endTicks = ticks;
+        if (hasDuration) {
+          Object durVal = Values.get(row, durationPath.toArray());
+          if (durVal instanceof Number dn) {
+            endTicks = ticks + dn.longValue();
+          }
+        }
+        if (endTicks > maxTicks) maxTicks = endTicks;
+        count++;
+      }
+    }
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("count", count);
+    result.put("field", String.join("/", valuePath));
+
+    if (count == 0) {
+      result.put("minTicks", null);
+      result.put("maxTicks", null);
+      result.put("durationTicks", null);
+      result.put("note", "Time conversion unavailable for cached rows");
+    } else {
+      result.put("minTicks", minTicks);
+      result.put("maxTicks", maxTicks);
+      result.put("durationTicks", maxTicks - minTicks);
+      result.put(
+          "note",
+          "Time conversion unavailable for cached rows; use timerange() directly on events");
+    }
+
+    return List.of(result);
   }
 }

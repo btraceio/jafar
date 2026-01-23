@@ -1,0 +1,22 @@
+{
+  "name": "jfr-shell-textmate",
+  "displayName": "JFR Shell Language Support",
+  "description": "Syntax highlighting for JFR Shell scripts (.jfrs)",
+  "version": "0.1.0",
+  "contributes": {
+    "languages": [
+      {
+        "id": "jfrshell",
+        "aliases": ["JFR Shell", "jfrshell"],
+        "extensions": [".jfrs"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jfrshell",
+        "scopeName": "source.jfrshell",
+        "path": "./syntaxes/jfrshell.tmLanguage.json"
+      }
+    ]
+  }
+}
