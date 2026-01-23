@@ -1,0 +1,51 @@
+{
+  "name": "jfr-shell",
+  "displayName": "JFR Shell Language Support",
+  "description": "Syntax highlighting for JFR Shell scripts (.jfrs)",
+  "version": "0.1.0",
+  "publisher": "btraceio",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/btraceio/jafar"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "jfr",
+    "java flight recorder",
+    "jfr-shell",
+    "performance",
+    "profiling"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "jfrshell",
+        "aliases": [
+          "JFR Shell",
+          "jfrshell"
+        ],
+        "extensions": [
+          ".jfrs"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/jfr-light.png",
+          "dark": "./icons/jfr-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jfrshell",
+        "scopeName": "source.jfrshell",
+        "path": "./syntaxes/jfrshell.tmLanguage.json"
+      }
+    ]
+  }
+}

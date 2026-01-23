@@ -1,0 +1,212 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "JFR Shell",
+  "scopeName": "source.jfrshell",
+  "fileTypes": ["jfrs"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#variables" },
+    { "include": "#numbers" },
+    { "include": "#control-flow" },
+    { "include": "#commands" },
+    { "include": "#root-keywords" },
+    { "include": "#pipeline-functions" },
+    { "include": "#logical-operators" },
+    { "include": "#comparison-operators" },
+    { "include": "#booleans" },
+    { "include": "#options" },
+    { "include": "#decorator-fields" },
+    { "include": "#event-types" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.jfrshell",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.jfrshell",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.jfrshell",
+              "match": "\\\\[\"'\\\\ntr]"
+            },
+            { "include": "#string-interpolation" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.jfrshell",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.jfrshell",
+              "match": "\\\\[\"'\\\\ntr]"
+            }
+          ]
+        }
+      ]
+    },
+    "string-interpolation": {
+      "patterns": [
+        {
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$\\{[^}]+\\}"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "comment": "Variable substitution with modifiers: ${var:-default}, ${1:?error}",
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$\\{[a-zA-Z0-9_][a-zA-Z0-9_.]*(?::[\\-\\?][^}]*)?\\}"
+        },
+        {
+          "comment": "Positional parameter with modifiers: ${1:-default}",
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$\\{[0-9]+(?::[\\-\\?][^}]*)?\\}"
+        },
+        {
+          "comment": "Simple positional parameters: $1, $2, $@",
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$[0-9@]"
+        },
+        {
+          "comment": "Simple variable reference: $var",
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.jfrshell",
+          "match": "-?[0-9]+\\.?[0-9]*"
+        }
+      ]
+    },
+    "control-flow": {
+      "patterns": [
+        {
+          "name": "keyword.control.jfrshell",
+          "match": "\\b(if|elif|else|endif)\\b"
+        }
+      ]
+    },
+    "commands": {
+      "patterns": [
+        {
+          "comment": "Shell commands at start of line",
+          "name": "keyword.control.jfrshell",
+          "match": "^\\s*(open|close|show|sessions|use|info|set|let|vars|unset|echo|script|record|help|exit|quit|metadata|chunks|chunk|cp|invalidate|export)\\b"
+        }
+      ]
+    },
+    "root-keywords": {
+      "patterns": [
+        {
+          "comment": "JfrPath root keywords followed by path separator",
+          "name": "string.jfrshell",
+          "match": "\\b(events|metadata|chunks|cp)/"
+        }
+      ]
+    },
+    "pipeline-functions": {
+      "patterns": [
+        {
+          "comment": "Aggregation and transformation functions",
+          "name": "entity.name.function.jfrshell",
+          "match": "\\b(count|sum|stats|quantiles|quantile|sketch|groupBy|top|select|toMap|len|uppercase|lowercase|trim|abs|round|floor|ceil|contains|replace|decorateByTime|decorateByKey|empty|exists)(?=\\s*\\()"
+        }
+      ]
+    },
+    "logical-operators": {
+      "patterns": [
+        {
+          "comment": "Word-based logical operators (case-insensitive)",
+          "name": "keyword.operator.jfrshell",
+          "match": "\\b(?i)(and|or|not)\\b"
+        },
+        {
+          "comment": "Symbol-based logical operators",
+          "name": "keyword.operator.jfrshell",
+          "match": "&&|\\|\\||!"
+        }
+      ]
+    },
+    "comparison-operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.jfrshell",
+          "match": "==|!=|>=|<=|=~|~|>|<|="
+        }
+      ]
+    },
+    "booleans": {
+      "patterns": [
+        {
+          "name": "constant.language.jfrshell",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "options": {
+      "patterns": [
+        {
+          "comment": "Command-line style options",
+          "name": "entity.other.attribute-name.jfrshell",
+          "match": "--[a-zA-Z][a-zA-Z0-9-]*"
+        }
+      ]
+    },
+    "decorator-fields": {
+      "patterns": [
+        {
+          "comment": "Decorator field access: $decorator.fieldName",
+          "name": "constant.other.placeholder.jfrshell",
+          "match": "\\$decorator\\.[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    },
+    "event-types": {
+      "patterns": [
+        {
+          "comment": "Namespaced event types like jdk.ExecutionSample",
+          "name": "support.class.jfrshell",
+          "match": "(jdk|datadog|jfr)\\.[A-Z][a-zA-Z0-9]*"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "keyword.operator.jfrshell",
+          "match": "\\|"
+        },
+        {
+          "name": "punctuation.separator.jfrshell",
+          "match": "/"
+        },
+        {
+          "name": "punctuation.bracket.jfrshell",
+          "match": "[\\[\\]\\(\\)]"
+        },
+        {
+          "name": "punctuation.separator.jfrshell",
+          "match": ","
+        }
+      ]
+    }
+  }
+}
