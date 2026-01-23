@@ -212,4 +212,79 @@ class JfrPathParserTest {
     var op = (JfrPath.ToMapOp) q.pipeline.get(0);
     assertEquals("toMap(name, value)", op.toString());
   }
+
+  @Test
+  void parsesTimerangeDefault() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | timerange()");
+    assertEquals(1, q.pipeline.size());
+    assertTrue(q.pipeline.get(0) instanceof JfrPath.TimeRangeOp);
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertNull(op.format);
+  }
+
+  @Test
+  void parsesTimerangeWithPath() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | timerange(startTime)");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertNull(op.format);
+  }
+
+  @Test
+  void parsesTimerangeWithFormat() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | timerange(format=\"yyyy-MM-dd\")");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertEquals("yyyy-MM-dd", op.format);
+  }
+
+  @Test
+  void parsesTimerangeWithPathAndFormat() {
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | timerange(startTime, format=\"HH:mm:ss\")");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertEquals("HH:mm:ss", op.format);
+  }
+
+  @Test
+  void timerangeToStringFormat() {
+    var q = JfrPathParser.parse("events/X | timerange(startTime, format=\"yyyy-MM-dd\")");
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals("timerange(startTime, format=yyyy-MM-dd)", op.toString());
+  }
+
+  @Test
+  void parsesTimerangeWithDuration() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | timerange(startTime, duration=duration)");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertEquals(java.util.List.of("duration"), op.durationPath);
+    assertNull(op.format);
+  }
+
+  @Test
+  void parsesTimerangeWithDurationAndFormat() {
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.FileRead | timerange(startTime, duration=duration, format=\"HH:mm:ss\")");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("startTime"), op.valuePath);
+    assertEquals(java.util.List.of("duration"), op.durationPath);
+    assertEquals("HH:mm:ss", op.format);
+  }
+
+  @Test
+  void timerangeWithDurationToString() {
+    var q = JfrPathParser.parse("events/X | timerange(startTime, duration=dur)");
+    var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
+    assertEquals("timerange(startTime, duration=dur)", op.toString());
+  }
 }

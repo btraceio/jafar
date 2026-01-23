@@ -25,6 +25,7 @@ public class PipelineOperatorCompleter implements ContextCompleter {
     {"sketch()", "sketch()", "Approximate statistics"},
     {"select(", "select(field, ...)", "Select fields"},
     {"toMap(", "toMap(keyField, valueField)", "Convert to map"},
+    {"timerange()", "timerange([path][,duration=][,format=])", "Time range (min/max)"},
     // Transform functions
     {"len()", "len()", "String length"},
     {"uppercase()", "uppercase()", "Uppercase string"},

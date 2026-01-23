@@ -695,6 +695,8 @@ public final class JfrPathParser {
       return parseSelect();
     } else if ("tomap".equals(name)) {
       return parseToMap();
+    } else if ("timerange".equals(name)) {
+      return parseTimeRange();
     } else {
       throw error("Unknown pipeline function: " + name);
     }
@@ -886,6 +888,43 @@ public final class JfrPathParser {
     expect(')');
 
     return new JfrPath.ToMapOp(keyField, valueField);
+  }
+
+  private JfrPath.TimeRangeOp parseTimeRange() {
+    List<String> valuePath = List.of();
+    List<String> durationPath = List.of();
+    String format = null;
+
+    if (peek() == '(') {
+      pos++;
+      skipWs();
+
+      // Parse optional arguments: path, duration=, and/or format=
+      while (peek() != ')' && !eof()) {
+        skipWs();
+        if (startsWithIgnoreCase("format=")) {
+          pos += 7;
+          skipWs();
+          Object lit = parseLiteral();
+          format = lit == null ? null : String.valueOf(lit);
+        } else if (startsWithIgnoreCase("duration=")) {
+          pos += 9;
+          skipWs();
+          durationPath = parsePathArg();
+        } else if (peek() != ')' && peek() != ',') {
+          // Assume it's a path argument (startTime field)
+          valuePath = parsePathArg();
+        }
+        skipWs();
+        if (peek() == ',') {
+          pos++;
+          skipWs();
+        }
+      }
+      expect(')');
+    }
+
+    return new JfrPath.TimeRangeOp(valuePath, durationPath, format);
   }
 
   private JfrPath.SelectItem parseSelectItem() {

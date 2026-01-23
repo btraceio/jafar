@@ -22,7 +22,8 @@ public final class ChunkProvider {
   private ChunkProvider() {}
 
   /**
-   * Load all chunks as row maps. Returns: index, offset, size, startNanos, duration, compressed
+   * Load all chunks as row maps. Returns: index, offset, size, startNanos, duration, startTicks,
+   * frequency, compressed
    *
    * @param recording the JFR recording file path
    * @return list of chunk metadata rows
@@ -153,6 +154,8 @@ public final class ChunkProvider {
     m.put("size", header.size);
     m.put("startNanos", header.startNanos);
     m.put("duration", header.duration);
+    m.put("startTicks", header.startTicks);
+    m.put("frequency", header.frequency);
     m.put("compressed", header.compressed);
     return m;
   }

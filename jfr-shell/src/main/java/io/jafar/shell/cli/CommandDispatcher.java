@@ -692,6 +692,8 @@ public class CommandDispatcher {
       io.println(
           "    | groupBy(key[, agg=count|sum|avg|min|max, value=path]) → group by key and aggregate");
       io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
+      io.println(
+          "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");
       io.println("  Field projection:");
       io.println("    | select(field1, field2, ...) → project specific fields");
       io.println("    | select(field as alias)      → rename fields");
@@ -746,6 +748,7 @@ public class CommandDispatcher {
       io.println("    show events/jdk.FileRead/bytes | stats()");
       io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println("    show events/jdk.FileRead | top(10, by=bytes)");
+      io.println("    show events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");
       io.println("    show events/jdk.FileRead | select(path, bytes / 1024 as kilobytes)");
       io.println("    show events/jdk.FileRead | select(\"${path} (${bytes} bytes)\" as info)");
@@ -816,7 +819,8 @@ public class CommandDispatcher {
       io.println("  chunk 0 show");
       io.println("  chunk 2 show");
       io.println("");
-      io.println("Displays: index, offset, size, startNanos, duration, compressed");
+      io.println(
+          "Displays: index, offset, size, startNanos, duration, startTicks, frequency, compressed");
       return;
     }
     if ("cp".equals(sub)) {

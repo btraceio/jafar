@@ -300,7 +300,8 @@ public final class JfrPath {
           DecorateByTimeOp,
           DecorateByKeyOp,
           SelectOp,
-          ToMapOp {}
+          ToMapOp,
+          TimeRangeOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -593,6 +594,53 @@ public final class JfrPath {
     @Override
     public int hashCode() {
       return Objects.hash(keyField, valueField);
+    }
+  }
+
+  /**
+   * timerange([path][, duration=durationPath]) - Calculate the time range (min/max) of a tick-based
+   * attribute. The path defaults to "startTime" if not specified. If duration is specified, the max
+   * time will be startTime + duration for each event, giving the full span. Returns min/max tick
+   * values along with their human-readable wall-clock representations.
+   */
+  public static final class TimeRangeOp implements PipelineOp {
+    public final List<String> valuePath;
+    public final List<String> durationPath;
+    public final String format;
+
+    public TimeRangeOp(List<String> valuePath, List<String> durationPath, String format) {
+      this.valuePath =
+          valuePath == null || valuePath.isEmpty() ? List.of("startTime") : List.copyOf(valuePath);
+      this.durationPath = durationPath == null ? List.of() : List.copyOf(durationPath);
+      this.format = format;
+    }
+
+    @Override
+    public String toString() {
+      StringBuilder sb = new StringBuilder("timerange(");
+      sb.append(String.join("/", valuePath));
+      if (!durationPath.isEmpty()) {
+        sb.append(", duration=").append(String.join("/", durationPath));
+      }
+      if (format != null) {
+        sb.append(", format=").append(format);
+      }
+      sb.append(")");
+      return sb.toString();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof TimeRangeOp that)) return false;
+      return valuePath.equals(that.valuePath)
+          && durationPath.equals(that.durationPath)
+          && Objects.equals(format, that.format);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(valuePath, durationPath, format);
     }
   }
 }
