@@ -39,6 +39,9 @@ public record CompletionContext(
     /** Cursor position in the line */
     int cursor,
 
+    /** JLine's current word at cursor - used for candidate prefix calculation */
+    String jlineWord,
+
     /** Additional context-specific data */
     Map<String, String> extras) {
   /** Canonical constructor with validation */
@@ -54,6 +57,9 @@ public record CompletionContext(
     }
     if (fullLine == null) {
       fullLine = "";
+    }
+    if (jlineWord == null) {
+      jlineWord = "";
     }
     if (extras == null) {
       extras = Collections.emptyMap();
@@ -76,6 +82,7 @@ public record CompletionContext(
     private String partialInput = "";
     private String fullLine = "";
     private int cursor = 0;
+    private String jlineWord = "";
     private Map<String, String> extras = Collections.emptyMap();
 
     public Builder type(CompletionContextType type) {
@@ -128,6 +135,11 @@ public record CompletionContext(
       return this;
     }
 
+    public Builder jlineWord(String jlineWord) {
+      this.jlineWord = jlineWord;
+      return this;
+    }
+
     public Builder extras(Map<String, String> extras) {
       this.extras = extras;
       return this;
@@ -145,6 +157,7 @@ public record CompletionContext(
           partialInput,
           fullLine,
           cursor,
+          jlineWord,
           extras);
     }
   }

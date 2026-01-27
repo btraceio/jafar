@@ -342,6 +342,63 @@ class CompletionContextAnalyzerTest {
       assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
       assertEquals("sum", ctx.functionName());
     }
+
+    @Test
+    void detectsFunctionParamContext_partialFieldName() {
+      // User typing: groupBy(thr
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.ExecutionSample | groupBy(thr"));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("groupBy", ctx.functionName());
+      assertEquals("thr", ctx.partialInput()); // KEY: partial field name
+      assertEquals("jdk.ExecutionSample", ctx.eventType()); // KEY: event type extracted
+    }
+
+    @Test
+    void detectsFunctionParamContext_partialAfterComma() {
+      // User typing: select(startTime, dur
+      CompletionContext ctx =
+          analyzer.analyze(
+              new TestParsedLine("show events/jdk.ExecutionSample | select(startTime, dur"));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("select", ctx.functionName());
+      assertEquals(1, ctx.parameterIndex());
+      assertEquals("dur", ctx.partialInput());
+    }
+
+    @Test
+    void detectsFunctionParamContext_nestedFieldPath() {
+      // User typing: groupBy(sampledThread/java
+      CompletionContext ctx =
+          analyzer.analyze(
+              new TestParsedLine("show events/jdk.ExecutionSample | groupBy(sampledThread/java"));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("sampledThread/java", ctx.partialInput());
+    }
+
+    @Test
+    void detectsFunctionParamContext_emptyPartial() {
+      // Just opened paren - partial should be empty
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.ExecutionSample | groupBy("));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("", ctx.partialInput());
+      assertEquals("jdk.ExecutionSample", ctx.eventType());
+    }
+
+    @Test
+    void detectsFunctionParamContext_withFilterBeforePipe() {
+      // User typing with filter: show events/Type[filter] | groupBy(lo
+      CompletionContext ctx =
+          analyzer.analyze(
+              new TestParsedLine(
+                  "show events/datadog.ExecutionSample[eventThread/javaThreadId == 59] | groupBy(lo"));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("groupBy", ctx.functionName());
+      assertEquals("lo", ctx.partialInput());
+      // BUG: This currently fails - eventType extraction doesn't skip over filter brackets
+      assertEquals("datadog.ExecutionSample", ctx.eventType());
+    }
   }
 
   @Nested
@@ -444,6 +501,140 @@ class CompletionContextAnalyzerTest {
     @Test
     void countCommas_multiple() {
       assertEquals(2, analyzer.countCommas("field1, field2, field3"));
+    }
+  }
+
+  @Nested
+  class SetCommandContext {
+    @Test
+    void detectsRootContext_afterEquals() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = "));
+      assertEquals(CompletionContextType.ROOT, ctx.type());
+      assertEquals("set", ctx.command());
+    }
+
+    @Test
+    void detectsRootContext_partialRoot() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = eve"));
+      assertEquals(CompletionContextType.ROOT, ctx.type());
+      assertEquals("eve", ctx.partialInput());
+    }
+
+    @Test
+    void detectsEventTypeContext_afterEventsSlash() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = events/"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("events", ctx.rootType());
+      assertEquals("set", ctx.command());
+    }
+
+    @Test
+    void detectsEventTypeContext_partialEventType() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = events/jdk.Exec"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("jdk.Exec", ctx.partialInput());
+    }
+
+    @Test
+    void detectsFieldPathContext_afterEventType() {
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("set var = events/jdk.ExecutionSample/"));
+      assertEquals(CompletionContextType.FIELD_PATH, ctx.type());
+      assertEquals("jdk.ExecutionSample", ctx.eventType());
+      assertEquals("set", ctx.command());
+    }
+
+    @Test
+    void detectsFieldPathContext_partialField() {
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("set var = events/jdk.ExecutionSample/sampled"));
+      assertEquals(CompletionContextType.FIELD_PATH, ctx.type());
+      assertEquals("sampled", ctx.partialInput());
+    }
+
+    @Test
+    void detectsEventTypeContext_metadata() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = metadata/"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("metadata", ctx.rootType());
+    }
+
+    @Test
+    void detectsEventTypeContext_cp() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = cp/"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("cp", ctx.rootType());
+    }
+
+    @Test
+    void detectsChunkIdContext_chunks() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = chunks/"));
+      assertEquals(CompletionContextType.CHUNK_ID, ctx.type());
+      assertEquals("chunks", ctx.rootType());
+    }
+
+    @Test
+    void worksWithGlobalFlag() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set --global var = events/"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("events", ctx.rootType());
+    }
+
+    @Test
+    void worksWithLetAlias() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("let var = events/jdk.Exec"));
+      assertEquals(CompletionContextType.EVENT_TYPE, ctx.type());
+      assertEquals("let", ctx.command());
+    }
+
+    @Test
+    void detectsUnknownContext_mapLiteral() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = {"));
+      assertEquals(CompletionContextType.UNKNOWN, ctx.type());
+    }
+
+    @Test
+    void detectsUnknownContext_mergeFunction() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var = merge("));
+      assertEquals(CompletionContextType.UNKNOWN, ctx.type());
+    }
+
+    @Test
+    void noCompletionBeforeEquals() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set var"));
+      assertEquals(CompletionContextType.COMMAND_OPTION, ctx.type());
+    }
+
+    @Test
+    void detectsOptionContext_globalFlag() {
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("set --"));
+      assertEquals(CompletionContextType.COMMAND_OPTION, ctx.type());
+      assertEquals("--", ctx.partialInput());
+    }
+
+    @Test
+    void detectsPipelineContext_afterPipe() {
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("set var = events/jdk.ExecutionSample | "));
+      assertEquals(CompletionContextType.PIPELINE_OPERATOR, ctx.type());
+    }
+
+    @Test
+    void detectsFilterFieldContext_insideBrackets() {
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("set var = events/jdk.ExecutionSample["));
+      assertEquals(CompletionContextType.FILTER_FIELD, ctx.type());
+    }
+
+    @Test
+    void detectsFunctionParamContext_setCommand() {
+      CompletionContext ctx =
+          analyzer.analyze(
+              new TestParsedLine("set var = events/jdk.ExecutionSample | groupBy(thr"));
+      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals("thr", ctx.partialInput());
+      assertEquals("jdk.ExecutionSample", ctx.eventType());
+      assertEquals("set", ctx.command()); // Should preserve "set" not "show"
     }
   }
 

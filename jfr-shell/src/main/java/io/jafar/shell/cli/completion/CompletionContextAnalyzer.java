@@ -79,8 +79,10 @@ public class CompletionContextAnalyzer {
 
     // For 'show' command - most complex case
     // Use token-based analysis for accurate detection
+    // Normalize JLine's ParsedLine to use consistent word splitting (like TestParsedLine)
     if ("show".equals(command)) {
-      return analyzeShowContextWithTokens(line);
+      ParsedLine normalizedLine = createNormalizedParsedLine(line.line(), line.cursor());
+      return analyzeShowContextWithTokens(normalizedLine);
     }
 
     // For 'metadata' command
@@ -91,6 +93,11 @@ public class CompletionContextAnalyzer {
     // For 'cp' command
     if ("cp".equals(command)) {
       return analyzeCpContext(line);
+    }
+
+    // For 'set' and 'let' commands
+    if ("set".equals(command) || "let".equals(command)) {
+      return analyzeSetContext(line);
     }
 
     // Default: treat as command option context
@@ -275,6 +282,126 @@ public class CompletionContextAnalyzer {
         .partialInput(line.word())
         .fullLine(line.line())
         .cursor(line.cursor())
+        .build();
+  }
+
+  /**
+   * Analyze context for 'set' and 'let' commands.
+   *
+   * <p>After "set var = ", the expression can be a JfrPath query, so we analyze it using the same
+   * logic as 'show' command.
+   */
+  private CompletionContext analyzeSetContext(ParsedLine line) {
+    String fullLine = line.line();
+    int cursor = line.cursor();
+    List<String> words = line.words();
+    String currentWord = line.word();
+    String command = words.get(0).toLowerCase(Locale.ROOT);
+
+    // Handle options (--global, --help, etc.)
+    if (currentWord.startsWith("--")) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.COMMAND_OPTION)
+          .command(command)
+          .partialInput(currentWord)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Find the '=' sign in the line
+    int equalsPos = fullLine.indexOf('=');
+
+    // If no '=' yet, or cursor is before '=', no JfrPath completion
+    if (equalsPos < 0 || cursor <= equalsPos) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.COMMAND_OPTION)
+          .command(command)
+          .partialInput(currentWord)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Cursor is after '=' - analyze the expression part
+    String afterEquals = fullLine.substring(equalsPos + 1);
+
+    // Check for special cases where we shouldn't complete
+    String trimmedAfter = afterEquals.trim();
+
+    // If starts with {, it's a map literal - no completion
+    if (trimmedAfter.startsWith("{")) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.UNKNOWN)
+          .command(command)
+          .partialInput("")
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // If starts with merge(, no completion (let completeSetCommand handle it)
+    if (trimmedAfter.startsWith("merge(")) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.UNKNOWN)
+          .command(command)
+          .partialInput("")
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Check for "set output <format>" special case
+    if (words.size() >= 2 && "output".equalsIgnoreCase(words.get(1))) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.OPTION_VALUE)
+          .command(command)
+          .partialInput(currentWord)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(Collections.singletonMap("option", "output"))
+          .build();
+    }
+
+    // Create a synthetic "show" line with just the expression part
+    // Calculate cursor offset within the expression
+    int exprStartPos = equalsPos + 1;
+    // Skip leading whitespace to align with how show would parse it
+    while (exprStartPos < fullLine.length()
+        && Character.isWhitespace(fullLine.charAt(exprStartPos))) {
+      exprStartPos++;
+    }
+
+    String syntheticLine = "show " + afterEquals.trim();
+    int syntheticCursor = cursor - exprStartPos + 5; // 5 = "show ".length()
+
+    // Ensure synthetic cursor is within bounds
+    if (syntheticCursor < 0) {
+      syntheticCursor = 5; // Just after "show "
+    }
+    if (syntheticCursor > syntheticLine.length()) {
+      syntheticCursor = syntheticLine.length();
+    }
+
+    // Create synthetic ParsedLine using the normalized implementation
+    ParsedLine syntheticParsed = createNormalizedParsedLine(syntheticLine, syntheticCursor);
+
+    // Analyze as if it were a 'show' command
+    CompletionContext showContext = analyzeShowContextWithTokens(syntheticParsed);
+
+    // Preserve the original command name
+    return CompletionContext.builder()
+        .type(showContext.type())
+        .command(command) // Use "set" or "let", not "show"
+        .rootType(showContext.rootType())
+        .eventType(showContext.eventType())
+        .fieldPath(showContext.fieldPath())
+        .functionName(showContext.functionName())
+        .parameterIndex(showContext.parameterIndex())
+        .partialInput(showContext.partialInput())
+        .fullLine(fullLine) // Use original line
+        .cursor(cursor) // Use original cursor
+        .extras(showContext.extras())
         .build();
   }
 
@@ -1222,15 +1349,30 @@ public class CompletionContextAnalyzer {
       Token t = tokens.get(i);
       if (t.type() == TokenType.PIPE && t.start() < cursor) {
         // Look backward for event type (identifier after slash, before pipe)
-        for (int j = i - 1; j >= 0; j--) {
+        // Skip over any filter brackets first
+        int j = i - 1;
+        int bracketDepth = 0;
+
+        while (j >= 0) {
           Token prev = tokens.get(j);
-          if (prev.type() == TokenType.IDENTIFIER && j > 0) {
+
+          // Track bracket depth to skip over filter content
+          if (prev.type() == TokenType.BRACKET_CLOSE) {
+            bracketDepth++;
+          } else if (prev.type() == TokenType.BRACKET_OPEN) {
+            bracketDepth--;
+          }
+
+          // Only look for event type when not inside brackets
+          if (bracketDepth == 0 && prev.type() == TokenType.IDENTIFIER && j > 0) {
             Token beforePrev = tokens.get(j - 1);
             if (beforePrev.type() == TokenType.SLASH) {
               eventType = prev.value();
               break;
             }
           }
+
+          j--;
         }
         break;
       }
@@ -1294,15 +1436,30 @@ public class CompletionContextAnalyzer {
       Token t = tokens.get(i);
       if (t.type() == TokenType.PIPE && t.start() < cursor) {
         // Look backward for event type (identifier after slash, before pipe)
-        for (int j = i - 1; j >= 0; j--) {
+        // Skip over any filter brackets first
+        int j = i - 1;
+        int bracketDepth = 0;
+
+        while (j >= 0) {
           Token prev = tokens.get(j);
-          if (prev.type() == TokenType.IDENTIFIER && j > 0) {
+
+          // Track bracket depth to skip over filter content
+          if (prev.type() == TokenType.BRACKET_CLOSE) {
+            bracketDepth++;
+          } else if (prev.type() == TokenType.BRACKET_OPEN) {
+            bracketDepth--;
+          }
+
+          // Only look for event type when not inside brackets
+          if (bracketDepth == 0 && prev.type() == TokenType.IDENTIFIER && j > 0) {
             Token beforePrev = tokens.get(j - 1);
             if (beforePrev.type() == TokenType.SLASH) {
               eventType = prev.value();
               break;
             }
           }
+
+          j--;
         }
         break;
       }
@@ -1410,6 +1567,55 @@ public class CompletionContextAnalyzer {
 
   /** Path information extracted from tokens. */
   private record PathInfo(String rootType, String eventType, List<String> fieldPath) {}
+
+  /**
+   * Creates a normalized ParsedLine that uses simple whitespace-based word splitting. This ensures
+   * consistent behavior between JLine's native parsing and our token-based analysis.
+   *
+   * <p>JLine may split words on special characters like brackets and pipes, which breaks our
+   * token-based analysis. This method creates a ParsedLine that only splits on whitespace, matching
+   * the behavior of our custom ParsedLine used in set command completion.
+   */
+  private ParsedLine createNormalizedParsedLine(final String fullLine, final int cursor) {
+    return new ParsedLine() {
+      @Override
+      public String line() {
+        return fullLine;
+      }
+
+      @Override
+      public int cursor() {
+        return cursor;
+      }
+
+      @Override
+      public String word() {
+        // Extract word at cursor
+        int start = cursor;
+        while (start > 0 && !Character.isWhitespace(fullLine.charAt(start - 1))) {
+          start--;
+        }
+        return fullLine.substring(start, cursor);
+      }
+
+      @Override
+      public int wordCursor() {
+        return word().length();
+      }
+
+      @Override
+      public int wordIndex() {
+        return (int) fullLine.substring(0, cursor).chars().filter(Character::isWhitespace).count();
+      }
+
+      @Override
+      public List<String> words() {
+        List<String> w = new ArrayList<>(java.util.Arrays.asList(fullLine.split("\\s+")));
+        if (fullLine.endsWith(" ")) w.add("");
+        return w;
+      }
+    };
+  }
 
   // ========== Internal position classes ==========
 

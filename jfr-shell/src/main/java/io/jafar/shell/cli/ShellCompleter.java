@@ -75,6 +75,7 @@ public class ShellCompleter implements Completer {
 
   // Debug flag - set to true to see completion debug output
   private static final boolean DEBUG = Boolean.getBoolean("jfr.shell.completion.debug");
+  private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
   @Override
   public void complete(LineReader reader, ParsedLine line, List<Candidate> candidates) {
@@ -105,6 +106,15 @@ public class ShellCompleter implements Completer {
     // For show command, use the new framework
     if ("show".equals(cmd)) {
       completeWithFramework(line, candidates);
+
+      if (TRACE) {
+        System.err.println("[TRACE] ShellCompleter: JLine word='" + line.word()
+            + "' candidates=" + candidates.size());
+        if (!candidates.isEmpty() && candidates.size() <= 5) {
+          candidates.forEach(c -> System.err.println("[TRACE]   candidate: '" + c.value() + "'"));
+        }
+      }
+
       if (DEBUG) {
         System.err.println(
             "[COMPLETION DEBUG] Generated " + candidates.size() + " candidates for 'show'");
@@ -126,7 +136,21 @@ public class ShellCompleter implements Completer {
 
   /** Complete using the new framework. */
   private void completeWithFramework(ParsedLine line, List<Candidate> candidates) {
-    CompletionContext ctx = analyzer.analyze(line);
+    CompletionContext baseCtx = analyzer.analyze(line);
+    // Add JLine's word to the context for completers that need it
+    CompletionContext ctx = new CompletionContext(
+        baseCtx.type(),
+        baseCtx.command(),
+        baseCtx.rootType(),
+        baseCtx.eventType(),
+        baseCtx.fieldPath(),
+        baseCtx.functionName(),
+        baseCtx.parameterIndex(),
+        baseCtx.partialInput(),
+        baseCtx.fullLine(),
+        baseCtx.cursor(),
+        line.word(),
+        baseCtx.extras());
 
     if (DEBUG) {
       System.err.println("  --- Context Analysis ---");
