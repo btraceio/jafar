@@ -200,6 +200,33 @@ public class CompletionContextAnalyzer {
           .build();
     }
 
+    // Check for variable reference context: ${varName}
+    // Pattern: IDENTIFIER($) followed by UNKNOWN({) followed by identifier being typed
+    VariableRefInfo varRefInfo = findVariableReferenceContext(tokens, cursor);
+    if (varRefInfo != null) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.VARIABLE_REFERENCE)
+          .command("show")
+          .partialInput(varRefInfo.partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    // Check for multi-event type syntax: events/(Type1|Type2)
+    // Must check BEFORE generic parentheses check to avoid triggering function context
+    MultiEventInfo multiEventInfo = findMultiEventContext(tokens, cursor);
+    if (multiEventInfo != null) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.MULTI_EVENT_TYPE)
+          .command("show")
+          .rootType("events")
+          .partialInput(multiEventInfo.partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
     // Find if cursor is inside brackets (filter context)
     if (isInsideBrackets(tokens, cursor)) {
       return analyzeFilterContextFromTokens(tokens, cursor, fullLine);
@@ -1094,11 +1121,41 @@ public class CompletionContextAnalyzer {
     return cursorToken.value();
   }
 
+  // Known filter functions for context detection
+  private static final java.util.Set<String> FILTER_FUNCTIONS_SET =
+      java.util.Set.of(
+          "contains", "exists", "empty", "between", "len", "matches", "starts_with", "ends_with");
+
   /** Analyze filter context from tokens. */
   private CompletionContext analyzeFilterContextFromTokens(
       List<Token> tokens, int cursor, String fullLine) {
     Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
     String partial = extractPartialInput(cursorToken, cursor);
+
+    // Check if inside a filter function call: [contains(field, "text")]
+    // Look for: BRACKET_OPEN ... IDENTIFIER(filterFunc) PAREN_OPEN ... cursor
+    FilterFunctionInfo filterFuncInfo = findFilterFunctionContext(tokens, cursor);
+    if (filterFuncInfo != null) {
+      // We're inside a filter function's parentheses
+      // Extract event type for field completion
+      String eventType = extractEventTypeFromLine(fullLine);
+
+      Map<String, String> extras = new HashMap<>();
+      extras.put("filterFunction", filterFuncInfo.functionName);
+      extras.put("paramIndex", String.valueOf(filterFuncInfo.paramIndex));
+
+      return CompletionContext.builder()
+          .type(CompletionContextType.FILTER_FUNCTION_ARG)
+          .command("show")
+          .eventType(eventType)
+          .functionName(filterFuncInfo.functionName)
+          .parameterIndex(filterFuncInfo.paramIndex)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
 
     // Extract rootType, eventType, and field path from the path before the bracket
     // Example: "show events/jdk.ExecutionSample/stackTrace["
@@ -1412,6 +1469,40 @@ public class CompletionContextAnalyzer {
           .build();
     }
 
+    // Check for decorator field access: $decorator.fieldName
+    // Used to access fields from decorator events in decorateByTime/decorateByKey pipelines
+    if (partial.startsWith("$decorator.")) {
+      String decoratorPartial = partial.substring("$decorator.".length());
+      Map<String, String> extras = new HashMap<>();
+      extras.put("decoratorPrefix", "$decorator.");
+
+      return CompletionContext.builder()
+          .type(CompletionContextType.DECORATOR_FIELD)
+          .command("show")
+          .eventType(eventType)
+          .functionName(functionName)
+          .parameterIndex(paramIndex)
+          .partialInput(decoratorPartial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .extras(extras)
+          .build();
+    }
+
+    // Check for select() function - use SELECT_EXPRESSION context for richer completion
+    if ("select".equalsIgnoreCase(functionName)) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.SELECT_EXPRESSION)
+          .command("show")
+          .eventType(eventType)
+          .functionName(functionName)
+          .parameterIndex(paramIndex)
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
     return CompletionContext.builder()
         .type(CompletionContextType.FUNCTION_PARAM)
         .command("show")
@@ -1484,6 +1575,7 @@ public class CompletionContextAnalyzer {
     String eventType = null;
     List<String> fieldPath = new ArrayList<>();
     boolean afterSlash = false;
+    boolean inMultiEventParens = false; // Track if inside (Type1|Type2) syntax
 
     for (Token token : tokens) {
       // For IDENTIFIER tokens, skip if cursor is inside or at the end (still typing)
@@ -1503,21 +1595,29 @@ public class CompletionContextAnalyzer {
                   || token.value().equals("cp")
                   || token.value().equals("chunks"))) {
             rootType = token.value();
-          } else if (rootType != null && eventType == null && afterSlash) {
+          } else if (rootType != null && eventType == null && afterSlash && !inMultiEventParens) {
             eventType = token.value();
             afterSlash = false;
           } else if (eventType != null && afterSlash) {
             fieldPath.add(token.value());
             afterSlash = false;
           }
+          // Inside multi-event parens, identifiers are event types but we don't set eventType
         }
         case SLASH -> afterSlash = true;
+        case PAREN_OPEN -> {
+          // After events/, a ( starts multi-event syntax (Type1|Type2)
+          if (rootType != null && "events".equals(rootType) && eventType == null && afterSlash) {
+            inMultiEventParens = true;
+          }
+        }
+        case PAREN_CLOSE -> inMultiEventParens = false;
         default -> {}
       }
     }
 
     if (rootType != null) {
-      return new PathInfo(rootType, eventType, fieldPath);
+      return new PathInfo(rootType, eventType, fieldPath, inMultiEventParens);
     }
     return null;
   }
@@ -1528,13 +1628,25 @@ public class CompletionContextAnalyzer {
     Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
     String partial = extractPartialInput(cursorToken, cursor);
 
-    if (pathInfo.eventType == null) {
+    // Check for multi-event type context: events/(Type1|<cursor>
+    if (pathInfo.inMultiEventParens()) {
+      return CompletionContext.builder()
+          .type(CompletionContextType.MULTI_EVENT_TYPE)
+          .command("show")
+          .rootType(pathInfo.rootType())
+          .partialInput(partial)
+          .fullLine(fullLine)
+          .cursor(cursor)
+          .build();
+    }
+
+    if (pathInfo.eventType() == null) {
       // Special handling for chunks - after "chunks/", we complete chunk IDs
-      if ("chunks".equals(pathInfo.rootType)) {
+      if ("chunks".equals(pathInfo.rootType())) {
         return CompletionContext.builder()
             .type(CompletionContextType.CHUNK_ID)
             .command("show")
-            .rootType(pathInfo.rootType)
+            .rootType(pathInfo.rootType())
             .partialInput(partial)
             .fullLine(fullLine)
             .cursor(cursor)
@@ -1545,7 +1657,7 @@ public class CompletionContextAnalyzer {
       return CompletionContext.builder()
           .type(CompletionContextType.EVENT_TYPE)
           .command("show")
-          .rootType(pathInfo.rootType)
+          .rootType(pathInfo.rootType())
           .partialInput(partial)
           .fullLine(fullLine)
           .cursor(cursor)
@@ -1556,17 +1668,25 @@ public class CompletionContextAnalyzer {
     return CompletionContext.builder()
         .type(CompletionContextType.FIELD_PATH)
         .command("show")
-        .rootType(pathInfo.rootType)
-        .eventType(pathInfo.eventType)
-        .fieldPath(pathInfo.fieldPath)
+        .rootType(pathInfo.rootType())
+        .eventType(pathInfo.eventType())
+        .fieldPath(pathInfo.fieldPath())
         .partialInput(partial)
         .fullLine(fullLine)
         .cursor(cursor)
         .build();
   }
 
-  /** Path information extracted from tokens. */
-  private record PathInfo(String rootType, String eventType, List<String> fieldPath) {}
+  /**
+   * Path information extracted from tokens.
+   *
+   * @param rootType The root path type (events, metadata, cp, chunks)
+   * @param eventType The event type name, or null if still typing
+   * @param fieldPath List of field path segments
+   * @param inMultiEventParens Whether cursor is inside (Type1|Type2) multi-event syntax
+   */
+  private record PathInfo(
+      String rootType, String eventType, List<String> fieldPath, boolean inMultiEventParens) {}
 
   /**
    * Creates a normalized ParsedLine that uses simple whitespace-based word splitting. This ensures
@@ -1616,6 +1736,254 @@ public class CompletionContextAnalyzer {
       }
     };
   }
+
+  /**
+   * Find filter function context if cursor is inside a filter function's parentheses.
+   *
+   * <p>Detects patterns like: [contains(field, | where | is cursor position
+   *
+   * @return FilterFunctionInfo if inside a filter function, null otherwise
+   */
+  private FilterFunctionInfo findFilterFunctionContext(List<Token> tokens, int cursor) {
+    // Check if we're inside brackets first
+    int bracketDepth = 0;
+    int bracketOpenIndex = -1;
+    for (int i = 0; i < tokens.size(); i++) {
+      Token t = tokens.get(i);
+      if (t.start() >= cursor) break;
+      if (t.type() == TokenType.BRACKET_OPEN) {
+        bracketDepth++;
+        bracketOpenIndex = i;
+      } else if (t.type() == TokenType.BRACKET_CLOSE) {
+        bracketDepth--;
+      }
+    }
+
+    if (bracketDepth <= 0) {
+      return null; // Not inside brackets
+    }
+
+    // Now check if inside parentheses within the brackets
+    int parenDepth = 0;
+    int parenOpenIndex = -1;
+    String functionName = null;
+
+    for (int i = bracketOpenIndex + 1; i < tokens.size(); i++) {
+      Token t = tokens.get(i);
+      if (t.start() >= cursor) break;
+
+      if (t.type() == TokenType.PAREN_OPEN) {
+        if (parenDepth == 0) {
+          parenOpenIndex = i;
+          // Look for identifier before this paren
+          for (int j = i - 1; j > bracketOpenIndex; j--) {
+            Token prev = tokens.get(j);
+            if (prev.type() == TokenType.WHITESPACE) continue;
+            if (prev.type() == TokenType.IDENTIFIER) {
+              String name = prev.value().toLowerCase(Locale.ROOT);
+              if (FILTER_FUNCTIONS_SET.contains(name)) {
+                functionName = prev.value();
+              }
+            }
+            break;
+          }
+        }
+        parenDepth++;
+      } else if (t.type() == TokenType.PAREN_CLOSE) {
+        parenDepth--;
+        if (parenDepth == 0) {
+          functionName = null; // Exited this function call
+          parenOpenIndex = -1;
+        }
+      }
+    }
+
+    if (parenDepth > 0 && functionName != null && parenOpenIndex >= 0) {
+      // We're inside a filter function's parentheses
+      // Count commas to get parameter index
+      int paramIndex = 0;
+      for (int i = parenOpenIndex + 1; i < tokens.size(); i++) {
+        Token t = tokens.get(i);
+        if (t.start() >= cursor) break;
+        if (t.type() == TokenType.COMMA) {
+          paramIndex++;
+        }
+      }
+      return new FilterFunctionInfo(functionName, paramIndex);
+    }
+
+    return null;
+  }
+
+  /** Information about filter function context */
+  private record FilterFunctionInfo(String functionName, int paramIndex) {}
+
+  /**
+   * Find variable reference context if cursor is inside ${varName} syntax.
+   *
+   * <p>Detects pattern: IDENTIFIER($) followed by UNKNOWN({) followed by optional identifier
+   *
+   * @return VariableRefInfo if inside variable reference, null otherwise
+   */
+  private VariableRefInfo findVariableReferenceContext(List<Token> tokens, int cursor) {
+    // Look for pattern: $ followed by { where cursor is after {
+    for (int i = 0; i < tokens.size() - 1; i++) {
+      Token t = tokens.get(i);
+
+      // Look for $ identifier
+      if (t.type() == TokenType.IDENTIFIER && t.value().equals("$")) {
+        Token next = tokens.get(i + 1);
+
+        // Check if next token is { (UNKNOWN since tokenizer doesn't handle it specially)
+        if (next.type() == TokenType.UNKNOWN && next.value().equals("{")) {
+          // Check if cursor is at or after the {
+          if (cursor >= next.end()) {
+            // Find closing } or cursor position
+            int varStart = next.end();
+            int varEnd = cursor;
+
+            // Look for closing brace
+            for (int j = i + 2; j < tokens.size(); j++) {
+              Token afterBrace = tokens.get(j);
+              if (afterBrace.type() == TokenType.UNKNOWN && afterBrace.value().equals("}")) {
+                // If cursor is before the closing brace, we're inside
+                if (cursor <= afterBrace.start()) {
+                  String partial =
+                      tokens.get(j - 1).type() == TokenType.IDENTIFIER
+                          ? extractPartialInput(tokens.get(j - 1), cursor)
+                          : "";
+                  return new VariableRefInfo(partial);
+                }
+                break; // Cursor is after closing brace, not inside this reference
+              }
+            }
+
+            // No closing brace found yet - user is still typing
+            // Extract partial from what's been typed after ${
+            String afterBraceStr = "";
+            if (i + 2 < tokens.size()) {
+              Token afterBrace = tokens.get(i + 2);
+              if (afterBrace.type() == TokenType.IDENTIFIER && afterBrace.start() < cursor) {
+                afterBraceStr = extractPartialInput(afterBrace, cursor);
+              }
+            }
+            return new VariableRefInfo(afterBraceStr);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Information about variable reference context */
+  private record VariableRefInfo(String partial) {}
+
+  /**
+   * Find multi-event type context if cursor is inside events/(Type1|Type2) syntax.
+   *
+   * <p>Detects pattern: events / ( [identifier [|]] ... This is specifically for the multi-event OR
+   * syntax, not for function calls.
+   *
+   * <p>Key distinctions: - Must be immediately after "events/" - Cannot be inside filter brackets
+   * [] - Cannot be after a pipe | (pipeline operator)
+   *
+   * @return MultiEventInfo if inside multi-event syntax, null otherwise
+   */
+  private MultiEventInfo findMultiEventContext(List<Token> tokens, int cursor) {
+    // Multi-event syntax: events/(Type1|Type2)/field
+    // The ( must come IMMEDIATELY after events/ with no intermediate tokens
+    // Check we're not inside brackets (filter)
+    // Check we're not after a pipeline |
+
+    int eventsIndex = -1;
+    int slashAfterEventsIndex = -1;
+    int parenOpenIndex = -1;
+    int bracketDepth = 0;
+    boolean afterPipeline = false;
+
+    for (int i = 0; i < tokens.size(); i++) {
+      Token t = tokens.get(i);
+      if (t.start() >= cursor) break;
+
+      // Track bracket depth - multi-event parens shouldn't be inside brackets
+      if (t.type() == TokenType.BRACKET_OPEN) {
+        bracketDepth++;
+      } else if (t.type() == TokenType.BRACKET_CLOSE) {
+        bracketDepth--;
+      }
+
+      // Pipeline | marks the end of path context
+      // But only if we're NOT inside multi-event parentheses
+      // Inside events/(Type1|Type2), the | is an event separator, not pipeline
+      if (t.type() == TokenType.PIPE && bracketDepth == 0 && parenOpenIndex < 0) {
+        afterPipeline = true;
+      }
+
+      if (t.type() == TokenType.IDENTIFIER && t.value().equals("events")) {
+        eventsIndex = i;
+        slashAfterEventsIndex = -1;
+        parenOpenIndex = -1;
+      } else if (eventsIndex >= 0 && t.type() == TokenType.SLASH && slashAfterEventsIndex < 0) {
+        // First slash after events - check if it's immediate (next non-WS token)
+        boolean isImmediate = true;
+        for (int j = eventsIndex + 1; j < i; j++) {
+          if (tokens.get(j).type() != TokenType.WHITESPACE) {
+            isImmediate = false;
+            break;
+          }
+        }
+        if (isImmediate) {
+          slashAfterEventsIndex = i;
+        }
+      } else if (slashAfterEventsIndex >= 0
+          && parenOpenIndex < 0
+          && t.type() == TokenType.PAREN_OPEN
+          && bracketDepth == 0
+          && !afterPipeline) {
+        // Check if ( is immediately after / (next non-WS token after slash)
+        boolean isImmediate = true;
+        for (int j = slashAfterEventsIndex + 1; j < i; j++) {
+          if (tokens.get(j).type() != TokenType.WHITESPACE) {
+            isImmediate = false;
+            break;
+          }
+        }
+        if (isImmediate) {
+          parenOpenIndex = i;
+        }
+      } else if (parenOpenIndex >= 0 && t.type() == TokenType.PAREN_CLOSE) {
+        // Exited multi-event parens
+        parenOpenIndex = -1;
+      }
+    }
+
+    if (parenOpenIndex < 0 || bracketDepth > 0 || afterPipeline) {
+      return null; // Not in multi-event context
+    }
+
+    // We're inside events/(...)
+    Token parenOpen = tokens.get(parenOpenIndex);
+    if (cursor < parenOpen.end()) {
+      return null; // Cursor is before the (
+    }
+
+    // Extract partial - the part being typed (after last | separator in the parens)
+    String partial = "";
+    Token cursorToken = tokenizer.tokenAtCursor(tokens, cursor);
+    if (cursorToken != null && cursorToken.type() == TokenType.IDENTIFIER) {
+      int relPos = cursor - cursorToken.start();
+      if (relPos > 0 && relPos <= cursorToken.value().length()) {
+        partial = cursorToken.value().substring(0, relPos);
+      } else {
+        partial = cursorToken.value();
+      }
+    }
+
+    return new MultiEventInfo(partial);
+  }
+
+  /** Information about multi-event type context */
+  private record MultiEventInfo(String partial) {}
 
   // ========== Internal position classes ==========
 

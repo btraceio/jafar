@@ -10,8 +10,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Central registry of all functions in the JFR query language. Serves as the single source of
- * truth for function signatures, enabling:
+ * Central registry of all functions in the JFR query language. Serves as the single source of truth
+ * for function signatures, enabling:
  *
  * <ul>
  *   <li>Code completion with context-aware parameter suggestions
@@ -458,7 +458,9 @@ public final class FunctionRegistry {
 
   /** Get all pipeline operators */
   public static Collection<FunctionSpec> getPipelineOperators() {
-    return FUNCTIONS.values().stream().filter(FunctionSpec::isPipeline).collect(Collectors.toList());
+    return FUNCTIONS.values().stream()
+        .filter(FunctionSpec::isPipeline)
+        .collect(Collectors.toList());
   }
 
   /** Get all filter functions */

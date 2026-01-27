@@ -68,19 +68,13 @@ public record FunctionSpec(
   /** Create a pipeline operator with no parameters */
   public static FunctionSpec pipeline(String name, String description) {
     return new FunctionSpec(
-        name,
-        Collections.emptyList(),
-        FunctionCategory.PIPELINE,
-        description,
-        name + "()",
-        false);
+        name, Collections.emptyList(), FunctionCategory.PIPELINE, description, name + "()", false);
   }
 
   /** Create a pipeline operator with parameters */
   public static FunctionSpec pipeline(
       String name, String description, String template, List<ParamSpec> params) {
-    return new FunctionSpec(
-        name, params, FunctionCategory.PIPELINE, description, template, false);
+    return new FunctionSpec(name, params, FunctionCategory.PIPELINE, description, template, false);
   }
 
   /** Create a pipeline operator with varargs */

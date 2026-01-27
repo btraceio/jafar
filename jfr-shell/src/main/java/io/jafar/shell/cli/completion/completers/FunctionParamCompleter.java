@@ -24,16 +24,21 @@ public class FunctionParamCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
-    return ctx.type() == CompletionContextType.FUNCTION_PARAM;
+    // Handle both regular function params and select expressions (which get field completion)
+    return ctx.type() == CompletionContextType.FUNCTION_PARAM
+        || ctx.type() == CompletionContextType.SELECT_EXPRESSION;
   }
 
   /**
-   * Handle keyword parameters for functions like groupBy and top.
-   * Returns a KeywordResult indicating how to proceed.
+   * Handle keyword parameters for functions like groupBy and top. Returns a KeywordResult
+   * indicating how to proceed.
    */
   private KeywordResult handleKeywordParameters(
-      CompletionContext ctx, String functionName, int paramIndex,
-      String partial, List<Candidate> candidates) {
+      CompletionContext ctx,
+      String functionName,
+      int paramIndex,
+      String partial,
+      List<Candidate> candidates) {
 
     // groupBy: first param is field, subsequent are agg= or value=
     if ("groupBy".equals(functionName) && paramIndex > 0) {
@@ -50,9 +55,9 @@ public class FunctionParamCompleter implements ContextCompleter {
 
   /** Result of keyword parameter handling */
   private enum KeywordResult {
-    HANDLED,      // Completion was handled, stop processing
-    NOT_KEYWORD,  // Not a keyword context, continue with normal field completion
-    FIELD_AFTER_KEYWORD  // After keyword= that takes a field path
+    HANDLED, // Completion was handled, stop processing
+    NOT_KEYWORD, // Not a keyword context, continue with normal field completion
+    FIELD_AFTER_KEYWORD // After keyword= that takes a field path
   }
 
   /** Info for completing field names after a keyword like value= or by= */
@@ -70,7 +75,8 @@ public class FunctionParamCompleter implements ContextCompleter {
     return null;
   }
 
-  private KeywordResult completeGroupByKeywords(CompletionContext ctx, String partial, List<Candidate> candidates) {
+  private KeywordResult completeGroupByKeywords(
+      CompletionContext ctx, String partial, List<Candidate> candidates) {
     String jlineWord = ctx.jlineWord();
 
     // Check if we're completing after "agg=" (suggest aggregation functions)
@@ -101,7 +107,8 @@ public class FunctionParamCompleter implements ContextCompleter {
     return KeywordResult.HANDLED;
   }
 
-  private KeywordResult completeTopKeywords(CompletionContext ctx, String partial, List<Candidate> candidates) {
+  private KeywordResult completeTopKeywords(
+      CompletionContext ctx, String partial, List<Candidate> candidates) {
     String jlineWord = ctx.jlineWord();
 
     // Check if we're completing after "asc=" (suggest true/false)
@@ -154,12 +161,20 @@ public class FunctionParamCompleter implements ContextCompleter {
     int paramIndex = ctx.parameterIndex();
 
     if (TRACE) {
-      System.err.println("[TRACE] FunctionParamCompleter: eventType=" + eventType
-          + " partial='" + partial + "' func=" + functionName + " paramIndex=" + paramIndex);
+      System.err.println(
+          "[TRACE] FunctionParamCompleter: eventType="
+              + eventType
+              + " partial='"
+              + partial
+              + "' func="
+              + functionName
+              + " paramIndex="
+              + paramIndex);
     }
 
     // Handle function-specific keyword parameters (not field names)
-    KeywordResult keywordResult = handleKeywordParameters(ctx, functionName, paramIndex, partial, candidates);
+    KeywordResult keywordResult =
+        handleKeywordParameters(ctx, functionName, paramIndex, partial, candidates);
     if (keywordResult == KeywordResult.HANDLED) {
       return;
     }
@@ -172,8 +187,12 @@ public class FunctionParamCompleter implements ContextCompleter {
         keywordPrefix = fak.keywordPrefix();
         partial = fak.fieldPartial();
         if (TRACE) {
-          System.err.println("[TRACE] FunctionParamCompleter: field after keyword '"
-              + keywordPrefix + "', adjusted partial='" + partial + "'");
+          System.err.println(
+              "[TRACE] FunctionParamCompleter: field after keyword '"
+                  + keywordPrefix
+                  + "', adjusted partial='"
+                  + partial
+                  + "'");
         }
       }
     }
@@ -219,8 +238,12 @@ public class FunctionParamCompleter implements ContextCompleter {
             : metadata.getNestedFieldNames(eventType, pathSegments);
 
     if (TRACE) {
-      System.err.println("[TRACE] FunctionParamCompleter: fieldNames.size()=" + fieldNames.size()
-          + " lastSegment='" + lastSegment + "'");
+      System.err.println(
+          "[TRACE] FunctionParamCompleter: fieldNames.size()="
+              + fieldNames.size()
+              + " lastSegment='"
+              + lastSegment
+              + "'");
     }
 
     // Build completion prefix from the path segments (for nested fields)
@@ -249,8 +272,12 @@ public class FunctionParamCompleter implements ContextCompleter {
     }
 
     if (TRACE) {
-      System.err.println("[TRACE] FunctionParamCompleter: jlineWord='" + jlineWord
-          + "' jlineWordPrefix='" + jlineWordPrefix + "'");
+      System.err.println(
+          "[TRACE] FunctionParamCompleter: jlineWord='"
+              + jlineWord
+              + "' jlineWordPrefix='"
+              + jlineWordPrefix
+              + "'");
     }
 
     String lowerLastSegment = lastSegment.toLowerCase();

@@ -108,8 +108,11 @@ public class ShellCompleter implements Completer {
       completeWithFramework(line, candidates);
 
       if (TRACE) {
-        System.err.println("[TRACE] ShellCompleter: JLine word='" + line.word()
-            + "' candidates=" + candidates.size());
+        System.err.println(
+            "[TRACE] ShellCompleter: JLine word='"
+                + line.word()
+                + "' candidates="
+                + candidates.size());
         if (!candidates.isEmpty() && candidates.size() <= 5) {
           candidates.forEach(c -> System.err.println("[TRACE]   candidate: '" + c.value() + "'"));
         }
@@ -138,19 +141,20 @@ public class ShellCompleter implements Completer {
   private void completeWithFramework(ParsedLine line, List<Candidate> candidates) {
     CompletionContext baseCtx = analyzer.analyze(line);
     // Add JLine's word to the context for completers that need it
-    CompletionContext ctx = new CompletionContext(
-        baseCtx.type(),
-        baseCtx.command(),
-        baseCtx.rootType(),
-        baseCtx.eventType(),
-        baseCtx.fieldPath(),
-        baseCtx.functionName(),
-        baseCtx.parameterIndex(),
-        baseCtx.partialInput(),
-        baseCtx.fullLine(),
-        baseCtx.cursor(),
-        line.word(),
-        baseCtx.extras());
+    CompletionContext ctx =
+        new CompletionContext(
+            baseCtx.type(),
+            baseCtx.command(),
+            baseCtx.rootType(),
+            baseCtx.eventType(),
+            baseCtx.fieldPath(),
+            baseCtx.functionName(),
+            baseCtx.parameterIndex(),
+            baseCtx.partialInput(),
+            baseCtx.fullLine(),
+            baseCtx.cursor(),
+            line.word(),
+            baseCtx.extras());
 
     if (DEBUG) {
       System.err.println("  --- Context Analysis ---");

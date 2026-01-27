@@ -206,7 +206,13 @@ class FunctionRegistryTest {
     void allFilterFunctionsRegistered() {
       List<String> expectedFunctions =
           List.of(
-              "contains", "exists", "empty", "between", "len", "matches", "starts_with",
+              "contains",
+              "exists",
+              "empty",
+              "between",
+              "len",
+              "matches",
+              "starts_with",
               "ends_with");
 
       for (String func : expectedFunctions) {
@@ -411,8 +417,7 @@ class FunctionRegistryTest {
 
     @Test
     void enumParamHasValues() {
-      ParamSpec param =
-          ParamSpec.enumKeyword("type", List.of("a", "b", "c"), false, "test");
+      ParamSpec param = ParamSpec.enumKeyword("type", List.of("a", "b", "c"), false, "test");
       assertEquals(ParamType.ENUM, param.type());
       assertEquals(3, param.enumValues().size());
       assertTrue(param.enumValues().contains("a"));

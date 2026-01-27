@@ -301,18 +301,20 @@ class CompletionContextAnalyzerTest {
 
     @Test
     void detectsFunctionParamContext_selectOpen() {
+      // select() gets special SELECT_EXPRESSION context for richer completion
       CompletionContext ctx =
           analyzer.analyze(new TestParsedLine("show events/jdk.ExecutionSample | select("));
-      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals(CompletionContextType.SELECT_EXPRESSION, ctx.type());
       assertEquals("select", ctx.functionName());
     }
 
     @Test
     void detectsFunctionParamContext_selectAfterComma() {
+      // select() gets special SELECT_EXPRESSION context for richer completion
       CompletionContext ctx =
           analyzer.analyze(
               new TestParsedLine("show events/jdk.ExecutionSample | select(startTime, "));
-      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals(CompletionContextType.SELECT_EXPRESSION, ctx.type());
       assertEquals("select", ctx.functionName());
       assertEquals(1, ctx.parameterIndex());
     }
@@ -357,10 +359,11 @@ class CompletionContextAnalyzerTest {
     @Test
     void detectsFunctionParamContext_partialAfterComma() {
       // User typing: select(startTime, dur
+      // select() gets special SELECT_EXPRESSION context for richer completion
       CompletionContext ctx =
           analyzer.analyze(
               new TestParsedLine("show events/jdk.ExecutionSample | select(startTime, dur"));
-      assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+      assertEquals(CompletionContextType.SELECT_EXPRESSION, ctx.type());
       assertEquals("select", ctx.functionName());
       assertEquals(1, ctx.parameterIndex());
       assertEquals("dur", ctx.partialInput());
@@ -667,6 +670,118 @@ class CompletionContextAnalyzerTest {
       CompletionContext ctx =
           analyzer.analyze(new TestParsedLine("show events/jdk.Test | groupBy("));
       assertEquals(CompletionContextType.FUNCTION_PARAM, ctx.type());
+    }
+  }
+
+  /** Tests for new context types added in Phase 2 */
+  @Nested
+  class NewContextTypes {
+
+    @Test
+    void detectsMultiEventTypeContext_afterOpenParen() {
+      // events/(Type1| - inside multi-event syntax
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/(jdk.ExecutionSample|"));
+      assertEquals(CompletionContextType.MULTI_EVENT_TYPE, ctx.type());
+      assertEquals("events", ctx.rootType());
+    }
+
+    @Test
+    void detectsMultiEventTypeContext_afterPipe() {
+      // events/(Type1|Type - typing second type
+      // The partial is the full event type name being typed (including package prefix)
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/(jdk.ExecutionSample|jdk.T"));
+      assertEquals(CompletionContextType.MULTI_EVENT_TYPE, ctx.type());
+      assertEquals("jdk.T", ctx.partialInput());
+    }
+
+    @Test
+    void detectsMultiEventTypeContext_empty() {
+      // events/( - just opened multi-event
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("show events/("));
+      assertEquals(CompletionContextType.MULTI_EVENT_TYPE, ctx.type());
+    }
+
+    @Test
+    void detectsFilterFunctionArg_containsFirstParam() {
+      // [contains( - inside filter function
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test[contains("));
+      assertEquals(CompletionContextType.FILTER_FUNCTION_ARG, ctx.type());
+      assertEquals("contains", ctx.functionName());
+      assertEquals(0, ctx.parameterIndex());
+    }
+
+    @Test
+    void detectsFilterFunctionArg_containsSecondParam() {
+      // [contains(field, - waiting for second param
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test[contains(path, "));
+      assertEquals(CompletionContextType.FILTER_FUNCTION_ARG, ctx.type());
+      assertEquals("contains", ctx.functionName());
+      assertEquals(1, ctx.parameterIndex());
+    }
+
+    @Test
+    void detectsFilterFunctionArg_between() {
+      // [between(field, - between has 3 params
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test[between(bytes, "));
+      assertEquals(CompletionContextType.FILTER_FUNCTION_ARG, ctx.type());
+      assertEquals("between", ctx.functionName());
+      assertEquals(1, ctx.parameterIndex());
+    }
+
+    @Test
+    void detectsDecoratorFieldContext() {
+      // select($decorator. - accessing decorator fields
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test | select($decorator."));
+      assertEquals(CompletionContextType.DECORATOR_FIELD, ctx.type());
+      assertEquals("", ctx.partialInput()); // After the dot, no partial yet
+    }
+
+    @Test
+    void detectsDecoratorFieldContext_withPartial() {
+      // select($decorator.field - typing decorator field name
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test | select($decorator.name"));
+      assertEquals(CompletionContextType.DECORATOR_FIELD, ctx.type());
+      assertEquals("name", ctx.partialInput());
+    }
+
+    @Test
+    void detectsSelectExpressionContext() {
+      // select() uses SELECT_EXPRESSION for richer completion
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test | select("));
+      assertEquals(CompletionContextType.SELECT_EXPRESSION, ctx.type());
+      assertEquals("select", ctx.functionName());
+    }
+
+    @Test
+    void detectsSelectExpressionContext_withPartial() {
+      // select(st - typing expression
+      CompletionContext ctx =
+          analyzer.analyze(new TestParsedLine("show events/jdk.Test | select(st"));
+      assertEquals(CompletionContextType.SELECT_EXPRESSION, ctx.type());
+      assertEquals("st", ctx.partialInput());
+    }
+
+    @Test
+    void detectsVariableReferenceContext() {
+      // ${ - inside variable reference
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("show ${"));
+      assertEquals(CompletionContextType.VARIABLE_REFERENCE, ctx.type());
+    }
+
+    @Test
+    void detectsVariableReferenceContext_withPartial() {
+      // ${var - typing variable name
+      CompletionContext ctx = analyzer.analyze(new TestParsedLine("show ${var"));
+      assertEquals(CompletionContextType.VARIABLE_REFERENCE, ctx.type());
+      assertEquals("var", ctx.partialInput());
     }
   }
 }
