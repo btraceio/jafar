@@ -6,18 +6,22 @@ import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.completers.ChunkIdCompleter;
 import io.jafar.shell.cli.completion.completers.CommandCompleter;
+import io.jafar.shell.cli.completion.completers.DecoratorFieldCompleter;
 import io.jafar.shell.cli.completion.completers.DecoratorFunctionCompleter;
 import io.jafar.shell.cli.completion.completers.EventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.FieldPathCompleter;
 import io.jafar.shell.cli.completion.completers.FilterFieldCompleter;
+import io.jafar.shell.cli.completion.completers.FilterFunctionArgCompleter;
 import io.jafar.shell.cli.completion.completers.FilterLogicalCompleter;
 import io.jafar.shell.cli.completion.completers.FilterOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.FilterValueCompleter;
 import io.jafar.shell.cli.completion.completers.FunctionParamCompleter;
 import io.jafar.shell.cli.completion.completers.MetadataSubpropCompleter;
+import io.jafar.shell.cli.completion.completers.MultiEventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.OptionCompleter;
 import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
+import io.jafar.shell.cli.completion.completers.VariableReferenceCompleter;
 import io.jafar.shell.core.SessionManager;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -62,13 +66,17 @@ public class ShellCompleter implements Completer {
             new ChunkIdCompleter(),
             new MetadataSubpropCompleter(),
             new EventTypeCompleter(),
+            new MultiEventTypeCompleter(),
             new FieldPathCompleter(),
             new FilterFieldCompleter(),
+            new FilterFunctionArgCompleter(),
             new FilterOperatorCompleter(),
             new FilterValueCompleter(),
             new FilterLogicalCompleter(),
             new PipelineOperatorCompleter(),
+            new DecoratorFieldCompleter(),
             new DecoratorFunctionCompleter(),
+            new VariableReferenceCompleter(),
             new FunctionParamCompleter(),
             new OptionCompleter());
   }

@@ -1476,6 +1476,12 @@ public class CompletionContextAnalyzer {
       Map<String, String> extras = new HashMap<>();
       extras.put("decoratorPrefix", "$decorator.");
 
+      // Extract decorator event type from decorateByTime/decorateByKey call in the line
+      String decoratorEventType = extractDecoratorEventType(fullLine);
+      if (decoratorEventType != null) {
+        extras.put("decoratorEventType", decoratorEventType);
+      }
+
       return CompletionContext.builder()
           .type(CompletionContextType.DECORATOR_FIELD)
           .command("show")
@@ -1990,4 +1996,46 @@ public class CompletionContextAnalyzer {
   record FilterPosition(int openBracket, int closeBracket, String content) {}
 
   record FunctionPosition(String functionName, int openParen, int closeParen, String parameters) {}
+
+  /**
+   * Extract the decorator event type from a decorateByTime or decorateByKey function call.
+   *
+   * <p>Searches the line for patterns like: - decorateByTime(jdk.ExecutionSample, ...) -
+   * decorateByKey(jdk.ThreadStart, ...)
+   *
+   * @param fullLine the full input line
+   * @return the decorator event type, or null if not found
+   */
+  private String extractDecoratorEventType(String fullLine) {
+    // Pattern: decorateByTime( or decorateByKey( followed by event type
+    int decorateIdx = fullLine.indexOf("decorateByTime(");
+    if (decorateIdx < 0) {
+      decorateIdx = fullLine.indexOf("decorateByKey(");
+    }
+    if (decorateIdx < 0) {
+      return null;
+    }
+
+    // Find the opening paren
+    int parenStart = fullLine.indexOf('(', decorateIdx);
+    if (parenStart < 0) {
+      return null;
+    }
+
+    // Extract first parameter (event type) - ends at comma or closing paren
+    int paramStart = parenStart + 1;
+    int paramEnd = fullLine.length();
+
+    // Find the end of the first parameter
+    for (int i = paramStart; i < fullLine.length(); i++) {
+      char c = fullLine.charAt(i);
+      if (c == ',' || c == ')') {
+        paramEnd = i;
+        break;
+      }
+    }
+
+    String eventType = fullLine.substring(paramStart, paramEnd).trim();
+    return eventType.isEmpty() ? null : eventType;
+  }
 }

@@ -190,4 +190,16 @@ public class MetadataService {
     metadataCache.clear();
     cachedRecordingPath = null;
   }
+
+  /**
+   * Get variable names from the current session's variable store.
+   *
+   * @return set of variable names, or empty set if no session
+   */
+  public Set<String> getSessionVariableNames() {
+    return sessions
+        .getCurrent()
+        .map(entry -> entry.variables.names())
+        .orElse(Collections.emptySet());
+  }
 }
