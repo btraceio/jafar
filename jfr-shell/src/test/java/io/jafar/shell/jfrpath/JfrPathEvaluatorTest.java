@@ -99,4 +99,133 @@ class JfrPathEvaluatorTest {
     assertEquals(1000.0, (Double) qr.get("p50"), 0.0001);
     assertEquals(1500.0, (Double) qr.get("p90"), 0.0001);
   }
+
+  // ==================== Filter Function Tests ====================
+
+  @Test
+  void startsWithFilter_MatchesPrefix() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/file.txt")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/var/log/app.log")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/other.dat")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.FileRead[startsWith(path, \"/tmp/\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(2, out.size());
+    assertTrue(out.stream().allMatch(e -> ((String) e.get("path")).startsWith("/tmp/")));
+  }
+
+  @Test
+  void startsWithFilter_NoMatch() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/var/log/app.log")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/etc/hosts")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.FileRead[startsWith(path, \"/tmp/\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(0, out.size());
+  }
+
+  @Test
+  void endsWithFilter_MatchesSuffix() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/var/log/app.log")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/file.txt")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/etc/syslog.log")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.FileRead[endsWith(path, \".log\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(2, out.size());
+    assertTrue(out.stream().allMatch(e -> ((String) e.get("path")).endsWith(".log")));
+  }
+
+  @Test
+  void endsWithFilter_NoMatch() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/file.txt")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/data.json")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.FileRead[endsWith(path, \".log\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(0, out.size());
+  }
+
+  @Test
+  void startsWithFilter_NullFieldValue() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 100)));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/file.txt")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.FileRead[startsWith(path, \"/tmp/\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(1, out.size());
+    assertEquals("/tmp/file.txt", out.get(0).get("path"));
+  }
+
+  @Test
+  void endsWithFilter_EmptySuffix() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/file.txt")));
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/var/log/app.log")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    // Empty suffix should match all strings
+    var q = JfrPathParser.parse("events/jdk.FileRead[endsWith(path, \"\")]");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+    assertEquals(2, out.size());
+  }
 }

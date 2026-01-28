@@ -191,7 +191,7 @@ is aliased for convenience.
   - Simple: `[field op value]` with `= != > >= < <= ~` (regex)
   - Boolean expressions with functions and logic: `[expr]`
     - Logic: `and`, `or`, `not`, parentheses
-    - String funcs: `contains(path, "substr")`, `starts_with(path, "pre")`, `ends_with(path, "suf")`, `matches(path, "re"[, "i"])`
+    - String funcs: `contains(path, "substr")`, `startsWith(path, "pre")`, `endsWith(path, "suf")`, `matches(path, "re"[, "i"])`
     - Existence/emptiness: `exists(path)`, `empty(path)`
     - Numeric: `between(path, min, max)`, and `len(path)` for length in comparisons
     - List-scoped: keep `any:/all:/none:` prefixes for list fields (e.g., `any:frames[ matches(method/name/string, ".*Foo.*") ]`)
@@ -330,8 +330,8 @@ JFR Shell provides intelligent context-aware tab completion throughout the query
 - Nested paths — Field names of nested types (e.g., `sampledThread/javaName`)
 
 **Filter Predicates (`[...]`):**
-- After `[` — Field names and filter functions (`contains(`, `exists(`, `starts_with(`, `ends_with(`)
-- After field name — Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `~`, `contains`, `starts_with`, `ends_with`, `matches`
+- After `[` — Field names and filter functions (`contains(`, `exists(`, `startsWith(`, `endsWith(`)
+- After field name — Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `~`, `contains`, `startsWith`, `endsWith`, `matches`
 - After condition — Logical operators: `&&`, `||`
 - After logical operator — Field names for next condition
 

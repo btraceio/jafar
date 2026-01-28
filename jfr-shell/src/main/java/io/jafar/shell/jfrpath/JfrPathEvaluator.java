@@ -1944,13 +1944,13 @@ public final class JfrPathEvaluator {
           String sub = String.valueOf(resolveArg(root, args.get(1)));
           return s != null && String.valueOf(s).contains(sub);
         }
-        case "starts_with" -> {
+        case "startswith" -> {
           ensureArgs(args, 2);
           Object s = resolveArg(root, args.get(0));
           String pre = String.valueOf(resolveArg(root, args.get(1)));
           return s != null && String.valueOf(s).startsWith(pre);
         }
-        case "ends_with" -> {
+        case "endswith" -> {
           ensureArgs(args, 2);
           Object s = resolveArg(root, args.get(0));
           String suf = String.valueOf(resolveArg(root, args.get(1)));

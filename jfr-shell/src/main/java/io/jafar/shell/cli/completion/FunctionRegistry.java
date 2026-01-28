@@ -329,22 +329,22 @@ public final class FunctionRegistry {
             .optionalPositional(2, STRING, "Regex flags (e.g., \"i\" for case-insensitive)")
             .build());
 
-    // starts_with(field, prefix) - Prefix check
+    // startsWith(field, prefix) - Prefix check
     register(
-        FunctionSpec.builder("starts_with")
+        FunctionSpec.builder("startsWith")
             .filter()
             .description("Check if field starts with prefix")
-            .template("starts_with(field, \"prefix\")")
+            .template("startsWith(field, \"prefix\")")
             .positional(0, FIELD_PATH, "Field to check")
             .positional(1, STRING, "Prefix to match")
             .build());
 
-    // ends_with(field, suffix) - Suffix check
+    // endsWith(field, suffix) - Suffix check
     register(
-        FunctionSpec.builder("ends_with")
+        FunctionSpec.builder("endsWith")
             .filter()
             .description("Check if field ends with suffix")
-            .template("ends_with(field, \"suffix\")")
+            .template("endsWith(field, \"suffix\")")
             .positional(0, FIELD_PATH, "Field to check")
             .positional(1, STRING, "Suffix to match")
             .build());

@@ -403,7 +403,7 @@ jfr> show events/jdk.FileRead[len(path)>50] --limit 10
 jfr> show events/jdk.ExecutionSample[exists(stackTrace)] --limit 10
 
 # String functions
-jfr> show events/jdk.FileRead[starts_with(path, "/tmp/")] --limit 10
+jfr> show events/jdk.FileRead[startsWith(path, "/tmp/")] --limit 10
 jfr> show events/jdk.FileRead[contains(path, "temp")] --limit 10
 jfr> show events/jdk.FileRead[matches(path, ".*\\.log")] --limit 10
 
@@ -1077,10 +1077,10 @@ fields  settings  annotations
 ```bash
 jfr> show events/jdk.FileRead[<TAB>
 # Field names: path, bytes, duration, startTime
-# Filter functions: contains(, exists(, starts_with(, ends_with(
+# Filter functions: contains(, exists(, startsWith(, endsWith(
 
 jfr> show events/jdk.FileRead[bytes<TAB>
-# Operators: ==, !=, >, >=, <, <=, ~, contains, starts_with, ends_with, matches
+# Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
 
 jfr> show events/jdk.FileRead[bytes > 1000 <TAB>
 # Logical operators: &&, ||

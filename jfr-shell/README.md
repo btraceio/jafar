@@ -519,7 +519,7 @@ Operators: `=` `!=` `>` `>=` `<` `<=` `~` (regex)
 Boolean expressions with functions:
 ```
 [contains(path, "substring")]
-[starts_with(path, "prefix")]
+[startsWith(path, "prefix")]
 [matches(path, "regex")]
 [exists(path)]
 [empty(path)]

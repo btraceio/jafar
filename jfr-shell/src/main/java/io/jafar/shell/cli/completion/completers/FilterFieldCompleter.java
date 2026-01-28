@@ -15,7 +15,7 @@ public class FilterFieldCompleter implements ContextCompleter {
 
   private static final String[] OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
   private static final String[] FILTER_FUNCTIONS = {
-    "contains(", "exists(", "starts_with(", "ends_with("
+    "contains(", "exists(", "startsWith(", "endsWith("
   };
 
   @Override

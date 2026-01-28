@@ -77,7 +77,7 @@ This test plan covers all documented JFR Shell functionality from the tutorial a
 ### 2.5 Filters - Functions
 - [ ] `len(field)` for length checks
 - [ ] `exists(field)` for null checks
-- [ ] `starts_with(field, "prefix")`
+- [ ] `startsWith(field, "prefix")`
 - [ ] `contains(field, "substring")`
 - [ ] `matches(field, "regex")`
 - [ ] `between(field, min, max)`
@@ -540,7 +540,7 @@ This test plan covers all documented JFR Shell functionality from the tutorial a
 
 ### 16.5 Function Fuzzing
 - [ ] Function with missing parentheses: `len`
-- [ ] Function with missing arguments: `starts_with()`
+- [ ] Function with missing arguments: `startsWith()`
 - [ ] Function with too many arguments: `exists(a, b, c)`
 - [ ] Function with wrong argument types
 - [ ] Nested function calls: `len(exists(field))`

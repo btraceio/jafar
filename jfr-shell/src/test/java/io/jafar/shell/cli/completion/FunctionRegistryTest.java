@@ -206,14 +206,7 @@ class FunctionRegistryTest {
     void allFilterFunctionsRegistered() {
       List<String> expectedFunctions =
           List.of(
-              "contains",
-              "exists",
-              "empty",
-              "between",
-              "len",
-              "matches",
-              "starts_with",
-              "ends_with");
+              "contains", "exists", "empty", "between", "len", "matches", "startsWith", "endsWith");
 
       for (String func : expectedFunctions) {
         FunctionSpec spec = FunctionRegistry.getFilterFunction(func);

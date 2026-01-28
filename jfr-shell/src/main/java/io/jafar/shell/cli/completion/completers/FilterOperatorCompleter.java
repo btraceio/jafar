@@ -15,7 +15,7 @@ public class FilterOperatorCompleter implements ContextCompleter {
 
   private static final String[] SHORT_OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
   private static final String[] WORD_OPERATORS = {
-    "==", "!=", ">", ">=", "<", "<=", "~", "contains", "starts_with", "ends_with", "matches"
+    "==", "!=", ">", ">=", "<", "<=", "~", "contains", "startsWith", "endsWith", "matches"
   };
 
   @Override
@@ -74,8 +74,8 @@ public class FilterOperatorCompleter implements ContextCompleter {
       case "<=" -> "less or equal";
       case "~" -> "regex match";
       case "contains" -> "string contains";
-      case "starts_with" -> "string starts with";
-      case "ends_with" -> "string ends with";
+      case "startsWith" -> "string starts with";
+      case "endsWith" -> "string ends with";
       case "matches" -> "regex matches";
       default -> null;
     };

@@ -127,16 +127,16 @@ events/jdk.FileRead[not (bytes<100)]
 
 #### String Functions
 - `contains(field, "substr")` - Check if string contains substring
-- `starts_with(field, "prefix")` - Check if string starts with prefix
-- `ends_with(field, "suffix")` - Check if string ends with suffix
+- `startsWith(field, "prefix")` - Check if string starts with prefix
+- `endsWith(field, "suffix")` - Check if string ends with suffix
 - `matches(field, "regex")` - Check if string matches regex
 - `matches(field, "regex", "i")` - Case-insensitive regex match
 
 **Examples**:
 ```
 events/jdk.FileRead[contains(path, "tmp")]
-events/jdk.ExecutionSample[starts_with(thread/name, "pool-")]
-events/jdk.FileRead[ends_with(path, ".log")]
+events/jdk.ExecutionSample[startsWith(thread/name, "pool-")]
+events/jdk.FileRead[endsWith(path, ".log")]
 events/jdk.ExecutionSample[matches(thread/name, "worker-[0-9]+")]
 ```
 
