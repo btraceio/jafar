@@ -26,7 +26,7 @@ import org.jline.reader.Candidate;
  * <p>For the first parameter (index 0), this completer suggests field names from the event type.
  * Subsequent parameters are typically literal values and don't need completion.
  */
-public class FilterFunctionArgCompleter implements ContextCompleter {
+public final class FilterFunctionArgCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

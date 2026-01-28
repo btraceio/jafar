@@ -8,7 +8,7 @@ import java.util.List;
 import org.jline.reader.Candidate;
 
 /** Completer for logical operators (&&, ||) inside filter predicates. */
-public class FilterLogicalCompleter implements ContextCompleter {
+public final class FilterLogicalCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

@@ -14,7 +14,7 @@ import org.jline.reader.Candidate;
  * <p>Suggests variable names from the current session's variable store when the user is typing
  * inside a variable reference pattern like ${var...}.
  */
-public class VariableReferenceCompleter implements ContextCompleter {
+public final class VariableReferenceCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

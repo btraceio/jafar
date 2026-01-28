@@ -20,7 +20,7 @@ import org.jline.reader.Candidate;
  * <p>This completer suggests field names from the decorator event type (jdk.ExecutionSample in the
  * example above).
  */
-public class DecoratorFieldCompleter implements ContextCompleter {
+public final class DecoratorFieldCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

@@ -9,7 +9,7 @@ import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /** Completer for shell commands (first word on the line). */
-public class CommandCompleter implements ContextCompleter {
+public final class CommandCompleter implements ContextCompleter {
 
   private static final String[] COMMANDS = {
     "open",

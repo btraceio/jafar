@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for field paths within event types. Handles nested field navigation (e.g.,
  * events/jdk.ExecutionSample/sampledThread/name).
  */
-public class FieldPathCompleter implements ContextCompleter {
+public final class FieldPathCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

@@ -39,7 +39,7 @@ import org.jline.reader.ParsedLine;
  * JLine completer for shell commands using the completion framework. Uses Strategy pattern with
  * context-specific completers for clean separation of concerns.
  */
-public class ShellCompleter implements Completer {
+public final class ShellCompleter implements Completer {
 
   private static final Path SCRIPTS_DIR =
       Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");

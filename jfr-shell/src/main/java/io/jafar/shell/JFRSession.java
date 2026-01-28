@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Represents an active JFR analysis session with a loaded recording. Manages the parser, context,
  * and provides statistics about the recording.
  */
-public class JFRSession implements AutoCloseable {
+public final class JFRSession implements AutoCloseable {
 
   private final Path recordingPath;
   private final ParsingContext parsingContext;

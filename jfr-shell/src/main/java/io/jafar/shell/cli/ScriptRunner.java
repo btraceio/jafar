@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * close
  * </pre>
  */
-public class ScriptRunner {
+public final class ScriptRunner {
   // Match patterns:
   // Group 1: Simple form $N - captures N
   // Group 2: Bracketed form ${N...} - captures N

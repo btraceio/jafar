@@ -14,7 +14,7 @@ import org.jline.reader.Candidate;
  * <p>Suggests event type names when inside the parentheses of multi-event selection. The | pipe
  * character is used to separate multiple event types.
  */
-public class MultiEventTypeCompleter implements ContextCompleter {
+public final class MultiEventTypeCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

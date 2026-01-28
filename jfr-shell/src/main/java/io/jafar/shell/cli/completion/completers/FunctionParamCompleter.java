@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for function parameters inside sum(), groupBy(), select(), top(). Suggests field names
  * from the event type.
  */
-public class FunctionParamCompleter implements ContextCompleter {
+public final class FunctionParamCompleter implements ContextCompleter {
   private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
   // Keyword parameters for groupBy: agg=count|sum|avg|min|max, value=path, sortBy=key|value,

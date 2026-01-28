@@ -17,7 +17,7 @@ import java.util.TreeSet;
  * Discovers available JFR event types in a recording and can generate typed interfaces for them on
  * the fly.
  */
-public class TypeDiscovery {
+public final class TypeDiscovery {
 
   private final ParsingContext parsingContext;
 

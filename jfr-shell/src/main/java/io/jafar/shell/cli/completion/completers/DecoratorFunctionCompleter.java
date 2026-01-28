@@ -17,7 +17,7 @@ import org.jline.reader.Candidate;
  *   <li>Named parameters: fields=, key=, decoratorKey=, threadPath=, decoratorThreadPath=
  * </ul>
  */
-public class DecoratorFunctionCompleter implements ContextCompleter {
+public final class DecoratorFunctionCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

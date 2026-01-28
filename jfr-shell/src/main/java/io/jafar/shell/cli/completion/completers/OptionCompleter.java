@@ -9,7 +9,7 @@ import java.util.Map;
 import org.jline.reader.Candidate;
 
 /** Completer for command options (--limit, --format, etc.) and option values. */
-public class OptionCompleter implements ContextCompleter {
+public final class OptionCompleter implements ContextCompleter {
 
   // Options per command
   private static final Map<String, String[]> COMMAND_OPTIONS =

@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * names, and nested field information. Caches metadata to avoid repeated file parsing on every
  * keystroke.
  */
-public class MetadataService {
+public final class MetadataService {
   private final SessionManager sessions;
 
   /** Cache of type name -> metadata map */

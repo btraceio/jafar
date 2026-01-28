@@ -16,7 +16,7 @@ import org.jline.reader.ParsedLine;
  * <p>Uses token-based parsing to accurately identify completion contexts independent of JLine3's
  * word splitting behavior.
  */
-public class CompletionContextAnalyzer {
+public final class CompletionContextAnalyzer {
 
   // Functions that take field parameters (including decorator functions with special handling)
   private static final String[] FIELD_FUNCTIONS = {

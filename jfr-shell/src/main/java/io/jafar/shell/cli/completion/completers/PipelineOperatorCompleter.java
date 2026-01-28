@@ -16,7 +16,7 @@ import org.jline.reader.Candidate;
  * <p>Uses semantic filtering to hide functions that don't apply to the current context. For
  * example, {@code sum()} won't be suggested if the event type has no numeric fields.
  */
-public class PipelineOperatorCompleter implements ContextCompleter {
+public final class PipelineOperatorCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
