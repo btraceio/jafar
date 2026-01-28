@@ -500,13 +500,15 @@ public final class JfrPathParser {
       List<String> keyPath = List.of();
       String aggFunc = "count";
       List<String> aggValuePath = List.of();
+      String sortBy = null;
+      boolean ascending = false;
       if (peek() == '(') {
         pos++;
         skipWs();
         // First arg is always the key path
         keyPath = parsePathArg();
         skipWs();
-        // Parse optional agg= and value= parameters
+        // Parse optional agg=, value=, sortBy=, asc= parameters
         while (peek() == ',') {
           pos++;
           skipWs();
@@ -518,14 +520,33 @@ public final class JfrPathParser {
             pos += 6;
             skipWs();
             aggValuePath = parsePathArg();
+          } else if (startsWithIgnoreCase("sortBy=")) {
+            pos += 7;
+            skipWs();
+            String sortVal = readIdent().toLowerCase(Locale.ROOT);
+            if (!"key".equals(sortVal) && !"value".equals(sortVal)) {
+              throw error("sortBy= expects 'key' or 'value'");
+            }
+            sortBy = sortVal;
+          } else if (startsWithIgnoreCase("asc=")) {
+            pos += 4;
+            skipWs();
+            String ascVal = readIdent().toLowerCase(Locale.ROOT);
+            if ("true".equals(ascVal)) {
+              ascending = true;
+            } else if ("false".equals(ascVal)) {
+              ascending = false;
+            } else {
+              throw error("asc= expects 'true' or 'false'");
+            }
           } else {
-            throw error("groupBy() expects agg= or value= parameters");
+            throw error("groupBy() expects agg=, value=, sortBy=, or asc= parameters");
           }
           skipWs();
         }
         expect(')');
       }
-      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath);
+      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, sortBy, ascending);
     } else if ("top".equals(name)) {
       int n = 10; // default
       List<String> byPath = List.of("value");

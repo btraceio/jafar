@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -572,7 +573,7 @@ public final class JfrPathEvaluator {
           case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb -> aggregateGroupBy(
-              session, query, gb.keyPath, gb.aggFunc, gb.valuePath);
+              session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
           case JfrPath.UppercaseOp up -> aggregateStringTransform(
@@ -1307,7 +1308,13 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> aggregateGroupBy(
-      JFRSession session, Query query, List<String> keyPath, String aggFunc, List<String> valuePath)
+      JFRSession session,
+      Query query,
+      List<String> keyPath,
+      String aggFunc,
+      List<String> valuePath,
+      String sortBy,
+      boolean ascending)
       throws Exception {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
@@ -1412,6 +1419,11 @@ public final class JfrPathEvaluator {
       row.put("key", entry.getKey());
       row.put(aggFunc, entry.getValue().getResult());
       result.add(row);
+    }
+
+    // Sort results if sortBy is specified
+    if (sortBy != null) {
+      sortGroupByResults(result, sortBy, aggFunc, ascending);
     }
 
     return result;
@@ -2570,7 +2582,8 @@ public final class JfrPathEvaluator {
       case JfrPath.SumOp sum -> applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
-      case JfrPath.GroupByOp gb -> applyGroupBy(rows, gb.keyPath, gb.aggFunc, gb.valuePath);
+      case JfrPath.GroupByOp gb -> applyGroupBy(
+          rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
@@ -2666,7 +2679,9 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows,
       List<String> keyPath,
       String aggFunc,
-      List<String> valuePath) {
+      List<String> valuePath,
+      String sortBy,
+      boolean ascending) {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
     for (Map<String, Object> row : rows) {
@@ -2693,7 +2708,47 @@ public final class JfrPathEvaluator {
       out.put(aggFunc, entry.getValue().getResult());
       result.add(out);
     }
+
+    // Sort results if sortBy is specified
+    if (sortBy != null) {
+      sortGroupByResults(result, sortBy, aggFunc, ascending);
+    }
+
     return result;
+  }
+
+  /**
+   * Sort groupBy results by key or aggregated value.
+   *
+   * @param result the list of grouped results to sort in place
+   * @param sortBy "key" to sort by group key, "value" to sort by aggregated value
+   * @param aggFunc the aggregation function name (used to find the value column)
+   * @param ascending true for ascending order, false for descending
+   */
+  @SuppressWarnings("unchecked")
+  private void sortGroupByResults(
+      List<Map<String, Object>> result, String sortBy, String aggFunc, boolean ascending) {
+    Comparator<Map<String, Object>> comparator;
+    if ("key".equals(sortBy)) {
+      comparator =
+          (a, b) -> {
+            Object ka = a.get("key");
+            Object kb = b.get("key");
+            return compareValues(ka, kb);
+          };
+    } else {
+      // sortBy "value" - compare by the aggregation result
+      comparator =
+          (a, b) -> {
+            Object va = a.get(aggFunc);
+            Object vb = b.get(aggFunc);
+            return compareValues(va, vb);
+          };
+    }
+    if (!ascending) {
+      comparator = comparator.reversed();
+    }
+    result.sort(comparator);
   }
 
   private List<Map<String, Object>> applyQuantiles(

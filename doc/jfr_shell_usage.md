@@ -301,6 +301,8 @@ For complete operator reference and grammar details, see [doc/jfrpath.md](jfrpat
 - `show events/jdk.FileRead/bytes | sketch()`
 - `show events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
 - `show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
+- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
+- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
 - `show events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
 - `show metadata/jdk.types.Method/name | count()`
 - `show cp/jdk.types.Symbol | count()`

@@ -750,7 +750,9 @@ public class CommandDispatcher {
       io.println("    show events/jdk.FileRead/bytes | stats()");
       io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println(
-          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count");
+          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count desc");
+      io.println(
+          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  # alphabetical");
       io.println("    show events/jdk.FileRead | top(10, by=bytes)");
       io.println("    show events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");
