@@ -281,7 +281,7 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| stats([path])` — Numeric stats: `min`, `max`, `avg`, `stddev`.
 - `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
 - `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
-- `| groupBy(key[, agg=count|sum|avg|min|max, value=path])` — Group by key and aggregate.
+- `| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])` — Group by key and aggregate with optional sorting.
 - `| top(n[, by=path, asc=false])` — Sort and return top N rows (descending by default).
 
 **Value Transform Functions:**

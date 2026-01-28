@@ -14,13 +14,15 @@ import org.jline.reader.Candidate;
 public class FunctionParamCompleter implements ContextCompleter {
   private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
-  // Keyword parameters for groupBy: agg=count|sum|avg|min|max, value=path
-  private static final String[] GROUPBY_KEYWORDS = {"agg=", "value="};
+  // Keyword parameters for groupBy: agg=count|sum|avg|min|max, value=path, sortBy=key|value,
+  // asc=true|false
+  private static final String[] GROUPBY_KEYWORDS = {"agg=", "value=", "sortBy=", "asc="};
   private static final String[] GROUPBY_AGG_VALUES = {"count", "sum", "avg", "min", "max"};
+  private static final String[] GROUPBY_SORTBY_VALUES = {"key", "value"};
+  private static final String[] BOOLEAN_VALUES = {"true", "false"};
 
   // Keyword parameters for top: by=path, asc=true|false
   private static final String[] TOP_KEYWORDS = {"by=", "asc="};
-  private static final String[] TOP_ASC_VALUES = {"true", "false"};
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
@@ -78,11 +80,12 @@ public class FunctionParamCompleter implements ContextCompleter {
   private KeywordResult completeGroupByKeywords(
       CompletionContext ctx, String partial, List<Candidate> candidates) {
     String jlineWord = ctx.jlineWord();
+    String lowerPartial = partial.toLowerCase();
+    String prefix = calculateJlinePrefix(jlineWord, partial);
 
     // Check if we're completing after "agg=" (suggest aggregation functions)
-    if (partial.toLowerCase().startsWith("agg=")) {
+    if (lowerPartial.startsWith("agg=")) {
       String afterEq = partial.substring(4);
-      String prefix = calculateJlinePrefix(jlineWord, partial);
       for (String aggValue : GROUPBY_AGG_VALUES) {
         if (aggValue.startsWith(afterEq.toLowerCase())) {
           candidates.add(noSpace(prefix + "agg=" + aggValue));
@@ -91,14 +94,34 @@ public class FunctionParamCompleter implements ContextCompleter {
       return KeywordResult.HANDLED;
     }
 
+    // Check if we're completing after "sortBy=" (suggest key or value)
+    if (lowerPartial.startsWith("sortby=")) {
+      String afterEq = partial.substring(7);
+      for (String sortValue : GROUPBY_SORTBY_VALUES) {
+        if (sortValue.startsWith(afterEq.toLowerCase())) {
+          candidates.add(noSpace(prefix + "sortBy=" + sortValue));
+        }
+      }
+      return KeywordResult.HANDLED;
+    }
+
+    // Check if we're completing after "asc=" (suggest true/false)
+    if (lowerPartial.startsWith("asc=")) {
+      String afterEq = partial.substring(4);
+      for (String boolValue : BOOLEAN_VALUES) {
+        if (boolValue.startsWith(afterEq.toLowerCase())) {
+          candidates.add(noSpace(prefix + "asc=" + boolValue));
+        }
+      }
+      return KeywordResult.HANDLED;
+    }
+
     // Check if we're completing after "value=" (suggest field names)
-    if (partial.toLowerCase().startsWith("value=")) {
+    if (lowerPartial.startsWith("value=")) {
       return KeywordResult.FIELD_AFTER_KEYWORD;
     }
 
-    // Otherwise suggest keyword names (agg=, value=)
-    String lowerPartial = partial.toLowerCase();
-    String prefix = calculateJlinePrefix(jlineWord, partial);
+    // Otherwise suggest keyword names (agg=, value=, sortBy=, asc=)
     for (String keyword : GROUPBY_KEYWORDS) {
       if (keyword.toLowerCase().startsWith(lowerPartial)) {
         candidates.add(noSpace(prefix + keyword));
@@ -115,7 +138,7 @@ public class FunctionParamCompleter implements ContextCompleter {
     if (partial.toLowerCase().startsWith("asc=")) {
       String afterEq = partial.substring(4);
       String prefix = calculateJlinePrefix(jlineWord, partial);
-      for (String val : TOP_ASC_VALUES) {
+      for (String val : BOOLEAN_VALUES) {
         if (val.startsWith(afterEq.toLowerCase())) {
           candidates.add(noSpace(prefix + "asc=" + val));
         }

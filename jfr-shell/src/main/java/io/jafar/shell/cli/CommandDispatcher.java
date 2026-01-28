@@ -690,7 +690,9 @@ public class CommandDispatcher {
       io.println("    | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
       io.println("    | sketch([path])           → stats + p50,p90,p99");
       io.println(
-          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path]) → group by key and aggregate");
+          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])");
+      io.println(
+          "                                    → group by key and aggregate with optional sorting");
       io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
       io.println(
           "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");
@@ -747,6 +749,8 @@ public class CommandDispatcher {
       io.println("    show events/jdk.FileRead/bytes | sum()");
       io.println("    show events/jdk.FileRead/bytes | stats()");
       io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
+      io.println(
+          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count");
       io.println("    show events/jdk.FileRead | top(10, by=bytes)");
       io.println("    show events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");

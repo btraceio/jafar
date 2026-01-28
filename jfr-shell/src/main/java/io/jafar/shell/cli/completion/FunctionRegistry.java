@@ -99,15 +99,18 @@ public final class FunctionRegistry {
             .requiresNumeric()
             .build());
 
-    // groupBy(key, [agg=func], [value=path]) - Group and aggregate (always applicable)
+    // groupBy(key, [agg=func], [value=path], [sortBy=key|value], [asc=bool])
+    // Group and aggregate with optional sorting (always applicable)
     register(
         FunctionSpec.builder("groupBy")
             .pipeline()
-            .description("Group by field and aggregate")
-            .template("groupBy(field, agg=count)")
+            .description("Group by field and aggregate with optional sorting")
+            .template("groupBy(field, agg=count, sortBy=value, asc=false)")
             .positional(0, FIELD_PATH, "Grouping key field")
             .enumKeyword("agg", AGG_FUNCTIONS, "Aggregation function")
             .optionalKeyword("value", FIELD_PATH, "Value field to aggregate")
+            .enumKeyword("sortBy", List.of("key", "value"), "Sort by key or aggregated value")
+            .optionalKeyword("asc", BOOLEAN, "Ascending order (default: false)")
             .requiresAny()
             .build());
 

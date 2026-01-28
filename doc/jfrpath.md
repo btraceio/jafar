@@ -284,15 +284,17 @@ events/jdk.FileRead | sketch(bytes)
 
 ### Group By
 ```
-| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path])
+| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
 ```
 
-Group results by key and apply aggregation function.
+Group results by key and apply aggregation function with optional sorting.
 
 **Parameters**:
 - `keyPath` - Field path to group by
 - `agg` - Aggregation function (default: `count`)
 - `value` - Value path for sum/avg/min/max
+- `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
+- `asc` - Sort ascending (default: `false`, descending)
 
 **Returns**: `{ "key": groupKey, "<agg>": result }`
 
@@ -305,6 +307,11 @@ events/jdk.ExecutionSample | groupBy(thread/name, agg=count)                # Co
 events/jdk.FileRead | groupBy(path, agg=avg, value=bytes)                   # Avg bytes by path
 events/jdk.FileRead | groupBy(path, agg=min, value=bytes)                   # Min bytes by path
 events/jdk.FileRead | groupBy(path, agg=max, value=bytes)                   # Max bytes by path
+
+# Sorted results
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)             # Sort by count descending
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)     # Sort alphabetically
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytes, sortBy=value)     # Sort by total bytes
 ```
 
 ### Top
