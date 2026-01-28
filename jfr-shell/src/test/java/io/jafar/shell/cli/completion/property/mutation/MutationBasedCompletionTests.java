@@ -501,8 +501,8 @@ public class MutationBasedCompletionTests {
   private boolean isFilterFunction(String value) {
     return value.startsWith("contains")
         || value.startsWith("exists")
-        || value.startsWith("startsWith")
-        || value.startsWith("endsWith")
+        || value.startsWith("starts_with")
+        || value.startsWith("ends_with")
         || value.startsWith("matches");
   }
 

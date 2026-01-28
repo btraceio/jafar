@@ -1077,10 +1077,10 @@ fields  settings  annotations
 ```bash
 jfr> show events/jdk.FileRead[<TAB>
 # Field names: path, bytes, duration, startTime
-# Filter functions: contains(, exists(, startsWith(, endsWith(
+# Filter functions: contains(, exists(, starts_with(, ends_with(
 
 jfr> show events/jdk.FileRead[bytes<TAB>
-# Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
+# Operators: ==, !=, >, >=, <, <=, ~, contains, starts_with, ends_with, matches
 
 jfr> show events/jdk.FileRead[bytes > 1000 <TAB>
 # Logical operators: &&, ||

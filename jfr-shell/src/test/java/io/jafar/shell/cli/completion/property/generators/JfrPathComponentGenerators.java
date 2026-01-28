@@ -179,7 +179,7 @@ public class JfrPathComponentGenerators {
    * @return arbitrary generating filter function names
    */
   public static Arbitrary<String> filterFunction() {
-    return Arbitraries.of("contains", "startsWith", "endsWith", "matches", "exists", "empty");
+    return Arbitraries.of("contains", "starts_with", "ends_with", "matches", "exists", "empty");
   }
 
   /**

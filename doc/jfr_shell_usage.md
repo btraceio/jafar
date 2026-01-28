@@ -330,8 +330,8 @@ JFR Shell provides intelligent context-aware tab completion throughout the query
 - Nested paths — Field names of nested types (e.g., `sampledThread/javaName`)
 
 **Filter Predicates (`[...]`):**
-- After `[` — Field names and filter functions (`contains(`, `exists(`, `startsWith(`, `endsWith(`)
-- After field name — Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `~`, `contains`, `startsWith`, `endsWith`, `matches`
+- After `[` — Field names and filter functions (`contains(`, `exists(`, `starts_with(`, `ends_with(`)
+- After field name — Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `~`, `contains`, `starts_with`, `ends_with`, `matches`
 - After condition — Logical operators: `&&`, `||`
 - After logical operator — Field names for next condition
 

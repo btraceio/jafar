@@ -1121,10 +1121,11 @@ public class CompletionContextAnalyzer {
     return cursorToken.value();
   }
 
-  // Known filter functions for context detection
+  // Filter function names from FunctionRegistry (single source of truth)
   private static final java.util.Set<String> FILTER_FUNCTIONS_SET =
-      java.util.Set.of(
-          "contains", "exists", "empty", "between", "len", "matches", "starts_with", "ends_with");
+      FunctionRegistry.getFilterFunctions().stream()
+          .map(f -> f.name().toLowerCase())
+          .collect(java.util.stream.Collectors.toSet());
 
   /** Analyze filter context from tokens. */
   private CompletionContext analyzeFilterContextFromTokens(
