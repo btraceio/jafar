@@ -114,6 +114,17 @@ public final class FunctionRegistry {
             .requiresAny()
             .build());
 
+    // sortBy(field, [asc=bool]) - Sort rows by field (always applicable)
+    register(
+        FunctionSpec.builder("sortBy")
+            .pipeline()
+            .description("Sort rows by field")
+            .template("sortBy(field)")
+            .positional(0, FIELD_PATH, "Field to sort by")
+            .optionalKeyword("asc", BOOLEAN, "Ascending order (default: false)")
+            .requiresAny()
+            .build());
+
     // top(n, [by=path], [asc=bool]) - Top N entries (always applicable)
     register(
         FunctionSpec.builder("top")

@@ -286,6 +286,7 @@ public final class JfrPath {
           QuantilesOp,
           SketchOp,
           GroupByOp,
+          SortByOp,
           TopOp,
           LenOp,
           UppercaseOp,
@@ -360,6 +361,16 @@ public final class JfrPath {
       this.aggFunc = aggFunc == null ? "count" : aggFunc;
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
       this.sortBy = sortBy;
+      this.ascending = ascending;
+    }
+  }
+
+  public static final class SortByOp implements PipelineOp {
+    public final String field; // field name to sort by
+    public final boolean ascending; // sort order (default: false = descending)
+
+    public SortByOp(String field, boolean ascending) {
+      this.field = field;
       this.ascending = ascending;
     }
   }

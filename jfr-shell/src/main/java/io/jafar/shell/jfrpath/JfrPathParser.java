@@ -547,6 +547,38 @@ public final class JfrPathParser {
         expect(')');
       }
       return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, sortBy, ascending);
+    } else if ("sortby".equals(name)) {
+      String field = null;
+      boolean ascending = false;
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        field = readIdent(); // required field name
+        skipWs();
+        // Optional asc= parameter
+        while (peek() == ',') {
+          pos++;
+          skipWs();
+          if (startsWithIgnoreCase("asc=")) {
+            pos += 4;
+            skipWs();
+            String ascVal = readIdent().toLowerCase(Locale.ROOT);
+            if ("true".equals(ascVal)) {
+              ascending = true;
+            } else if (!"false".equals(ascVal)) {
+              throw error("sortBy() asc= expects 'true' or 'false'");
+            }
+          } else {
+            throw error("sortBy() expects asc= parameter");
+          }
+          skipWs();
+        }
+        expect(')');
+      }
+      if (field == null || field.isEmpty()) {
+        throw error("sortBy() requires a field name");
+      }
+      return new JfrPath.SortByOp(field, ascending);
     } else if ("top".equals(name)) {
       int n = 10; // default
       List<String> byPath = List.of("value");

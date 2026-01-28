@@ -574,6 +574,7 @@ public final class JfrPathEvaluator {
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb -> aggregateGroupBy(
               session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
           case JfrPath.UppercaseOp up -> aggregateStringTransform(
@@ -1427,6 +1428,14 @@ public final class JfrPathEvaluator {
     }
 
     return result;
+  }
+
+  private List<Map<String, Object>> aggregateSortBy(
+      JFRSession session, Query query, String field, boolean ascending) throws Exception {
+    // Materialize all rows first, then sort
+    List<Map<String, Object>> rows =
+        evaluate(session, new Query(query.root, query.segments, query.predicates));
+    return applySortBy(rows, field, ascending);
   }
 
   private List<Map<String, Object>> aggregateTop(
@@ -2584,6 +2593,7 @@ public final class JfrPathEvaluator {
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
       case JfrPath.GroupByOp gb -> applyGroupBy(
           rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+      case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
@@ -2749,6 +2759,26 @@ public final class JfrPathEvaluator {
       comparator = comparator.reversed();
     }
     result.sort(comparator);
+  }
+
+  private List<Map<String, Object>> applySortBy(
+      List<Map<String, Object>> rows, String field, boolean ascending) {
+    if (rows.isEmpty()) return rows;
+
+    // Validate field exists in first row (all rows have same structure after pipeline ops)
+    if (!rows.get(0).containsKey(field)) {
+      throw new IllegalArgumentException(
+          "sortBy: field '" + field + "' not found. Available: " + rows.get(0).keySet());
+    }
+
+    List<Map<String, Object>> result = new ArrayList<>(rows);
+    Comparator<Map<String, Object>> comparator =
+        (a, b) -> compareValues(a.get(field), b.get(field));
+    if (!ascending) {
+      comparator = comparator.reversed();
+    }
+    result.sort(comparator);
+    return result;
   }
 
   private List<Map<String, Object>> applyQuantiles(

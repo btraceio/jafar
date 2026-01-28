@@ -314,6 +314,30 @@ events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)     # So
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytes, sortBy=value)     # Sort by total bytes
 ```
 
+### Sort By
+```
+| sortBy(field[, asc=false])
+```
+
+Sort rows by any field in the current result set. Works after any operator that produces multiple rows.
+
+**Parameters**:
+- `field` - Field name to sort by (must exist in current row structure)
+- `asc` - Sort ascending (default: `false`, descending)
+
+**Key constraint**: Can only sort by fields available after previous operators:
+- After `select(a, b)` → only `a`, `b` available
+- After `groupBy(x)` → only `key`, `<aggFunc>` available
+- After `len(path)` → all original fields + `len`
+
+**Examples**:
+```
+events/jdk.FileRead | select(path, bytes) | sortBy(bytes)              # Sort by bytes descending
+events/jdk.FileRead | select(path, bytes) | sortBy(path, asc=true)     # Sort by path ascending
+events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count)      # Sort grouped results by count
+events/jdk.FileRead | len(path) | sortBy(len)                          # Sort by computed length
+```
+
 ### Top
 ```
 | top(n[, by=path, asc=false])
