@@ -2,7 +2,9 @@ package io.jafar.shell.cli.completion;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -23,6 +25,7 @@ import java.util.stream.Collectors;
  * @param description Human-readable description for help/completion
  * @param template Example usage template shown in completion
  * @param hasVarargs Whether the function accepts variable number of arguments
+ * @param requiredFieldTypes Field types required for this function to be applicable
  */
 public record FunctionSpec(
     String name,
@@ -30,7 +33,8 @@ public record FunctionSpec(
     FunctionCategory category,
     String description,
     String template,
-    boolean hasVarargs) {
+    boolean hasVarargs,
+    Set<RequiredFieldType> requiredFieldTypes) {
 
   /** Canonical constructor with validation */
   public FunctionSpec {
@@ -49,6 +53,9 @@ public record FunctionSpec(
     if (template == null) {
       template = name + "()";
     }
+    if (requiredFieldTypes == null || requiredFieldTypes.isEmpty()) {
+      requiredFieldTypes = EnumSet.of(RequiredFieldType.ANY);
+    }
   }
 
   /** Function categories */
@@ -63,36 +70,61 @@ public record FunctionSpec(
     SELECT
   }
 
+  /** Required field types for semantic completion filtering */
+  public enum RequiredFieldType {
+    /** Function requires numeric fields (long, int, double, Duration, etc.) */
+    NUMERIC,
+
+    /** Function requires string fields */
+    STRING,
+
+    /** Function requires time-related fields (startTime, timestamps, etc.) */
+    TIME,
+
+    /** Function works with any field type (always applicable) */
+    ANY
+  }
+
   // Factory methods for creating function specs
 
   /** Create a pipeline operator with no parameters */
   public static FunctionSpec pipeline(String name, String description) {
     return new FunctionSpec(
-        name, Collections.emptyList(), FunctionCategory.PIPELINE, description, name + "()", false);
+        name,
+        Collections.emptyList(),
+        FunctionCategory.PIPELINE,
+        description,
+        name + "()",
+        false,
+        null);
   }
 
   /** Create a pipeline operator with parameters */
   public static FunctionSpec pipeline(
       String name, String description, String template, List<ParamSpec> params) {
-    return new FunctionSpec(name, params, FunctionCategory.PIPELINE, description, template, false);
+    return new FunctionSpec(
+        name, params, FunctionCategory.PIPELINE, description, template, false, null);
   }
 
   /** Create a pipeline operator with varargs */
   public static FunctionSpec pipelineVarargs(
       String name, String description, String template, List<ParamSpec> params) {
-    return new FunctionSpec(name, params, FunctionCategory.PIPELINE, description, template, true);
+    return new FunctionSpec(
+        name, params, FunctionCategory.PIPELINE, description, template, true, null);
   }
 
   /** Create a filter function */
   public static FunctionSpec filter(
       String name, String description, String template, List<ParamSpec> params) {
-    return new FunctionSpec(name, params, FunctionCategory.FILTER, description, template, false);
+    return new FunctionSpec(
+        name, params, FunctionCategory.FILTER, description, template, false, null);
   }
 
   /** Create a select expression function */
   public static FunctionSpec select(
       String name, String description, String template, List<ParamSpec> params) {
-    return new FunctionSpec(name, params, FunctionCategory.SELECT, description, template, false);
+    return new FunctionSpec(
+        name, params, FunctionCategory.SELECT, description, template, false, null);
   }
 
   // Convenience methods
@@ -159,6 +191,30 @@ public record FunctionSpec(
     return (int) parameters.stream().filter(p -> p.isPositional() && p.required()).count();
   }
 
+  /**
+   * Check if this function is applicable given available field types.
+   *
+   * @param hasNumeric true if numeric fields are available
+   * @param hasString true if string fields are available
+   * @param hasTime true if time fields are available
+   * @return true if this function can be used with the available field types
+   */
+  public boolean isApplicable(boolean hasNumeric, boolean hasString, boolean hasTime) {
+    if (requiredFieldTypes.contains(RequiredFieldType.ANY)) {
+      return true;
+    }
+    if (requiredFieldTypes.contains(RequiredFieldType.NUMERIC) && hasNumeric) {
+      return true;
+    }
+    if (requiredFieldTypes.contains(RequiredFieldType.STRING) && hasString) {
+      return true;
+    }
+    if (requiredFieldTypes.contains(RequiredFieldType.TIME) && hasTime) {
+      return true;
+    }
+    return false;
+  }
+
   /** Builder for fluent construction of FunctionSpec */
   public static Builder builder(String name) {
     return new Builder(name);
@@ -171,6 +227,7 @@ public record FunctionSpec(
     private String description = "";
     private String template;
     private boolean hasVarargs = false;
+    private Set<RequiredFieldType> requiredFieldTypes = EnumSet.of(RequiredFieldType.ANY);
 
     Builder(String name) {
       this.name = name;
@@ -208,6 +265,30 @@ public record FunctionSpec(
 
     public Builder varargs() {
       this.hasVarargs = true;
+      return this;
+    }
+
+    /** Require numeric fields for this function to be applicable */
+    public Builder requiresNumeric() {
+      this.requiredFieldTypes = EnumSet.of(RequiredFieldType.NUMERIC);
+      return this;
+    }
+
+    /** Require string fields for this function to be applicable */
+    public Builder requiresString() {
+      this.requiredFieldTypes = EnumSet.of(RequiredFieldType.STRING);
+      return this;
+    }
+
+    /** Require time fields for this function to be applicable */
+    public Builder requiresTime() {
+      this.requiredFieldTypes = EnumSet.of(RequiredFieldType.TIME);
+      return this;
+    }
+
+    /** Function works with any field type (always applicable) */
+    public Builder requiresAny() {
+      this.requiredFieldTypes = EnumSet.of(RequiredFieldType.ANY);
       return this;
     }
 
@@ -253,7 +334,8 @@ public record FunctionSpec(
 
     public FunctionSpec build() {
       String t = template != null ? template : name + "()";
-      return new FunctionSpec(name, params, category, description, t, hasVarargs);
+      return new FunctionSpec(
+          name, params, category, description, t, hasVarargs, requiredFieldTypes);
     }
   }
 }

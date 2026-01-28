@@ -202,4 +202,71 @@ public class MetadataService {
         .map(entry -> entry.variables.names())
         .orElse(Collections.emptySet());
   }
+
+  // ==================== Field Type Analysis ====================
+
+  /**
+   * Check if an event type has any numeric fields (for sum, stats, etc.).
+   *
+   * @param eventType the event type name
+   * @return true if numeric fields exist
+   */
+  public boolean hasNumericFields(String eventType) {
+    return getFieldNames(eventType).stream()
+        .anyMatch(field -> isNumericType(getFieldType(eventType, field)));
+  }
+
+  /**
+   * Check if an event type has any string fields (for uppercase, contains, etc.).
+   *
+   * @param eventType the event type name
+   * @return true if string fields exist
+   */
+  public boolean hasStringFields(String eventType) {
+    return getFieldNames(eventType).stream()
+        .anyMatch(field -> isStringType(getFieldType(eventType, field)));
+  }
+
+  /**
+   * Check if an event type has time fields (for decorateByTime, etc.).
+   *
+   * @param eventType the event type name
+   * @return true if time-related fields exist
+   */
+  public boolean hasTimeFields(String eventType) {
+    return getFieldNames(eventType).stream()
+        .anyMatch(field -> isTimeType(getFieldType(eventType, field)));
+  }
+
+  private boolean isNumericType(String typeName) {
+    if (typeName == null) return false;
+    return typeName.equals("long")
+        || typeName.equals("int")
+        || typeName.equals("short")
+        || typeName.equals("byte")
+        || typeName.equals("double")
+        || typeName.equals("float")
+        || typeName.equals("java.lang.Long")
+        || typeName.equals("java.lang.Integer")
+        || typeName.equals("java.lang.Double")
+        || typeName.equals("java.lang.Float")
+        || typeName.equals("java.time.Duration");
+  }
+
+  private boolean isStringType(String typeName) {
+    if (typeName == null) return false;
+    return typeName.equals("java.lang.String")
+        || typeName.equals("String")
+        || typeName.contains("String")
+        || typeName.contains("Utf8");
+  }
+
+  private boolean isTimeType(String typeName) {
+    if (typeName == null) return false;
+    return typeName.equals("long")
+        || typeName.equals("java.time.Instant")
+        || typeName.equals("java.time.Duration")
+        || typeName.contains("Time")
+        || typeName.contains("Timestamp");
+  }
 }

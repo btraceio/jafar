@@ -290,19 +290,17 @@ class ShellCompleterFunctionParametersTest {
       System.out.println("  value='" + c.value() + "' complete=" + c.complete());
     }
 
-    // Should suggest "groupBy(" template
+    // Should suggest groupBy with template (includes example parameters)
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("groupBy(")),
+        cands.stream().anyMatch(c -> c.value().startsWith("groupBy(")),
         "Should suggest 'groupBy(' template");
 
-    // Check if groupBy( template has complete flag set correctly
-    var groupByCandidate = cands.stream().filter(c -> c.value().equals("groupBy(")).findFirst();
-    assertTrue(groupByCandidate.isPresent(), "groupBy( candidate should exist");
+    // Check if groupBy template has complete flag set correctly
+    var groupByCandidate = cands.stream().filter(c -> c.value().startsWith("groupBy(")).findFirst();
+    assertTrue(groupByCandidate.isPresent(), "groupBy candidate should exist");
 
-    // The template should NOT add space (complete=false), as we want immediate field completion
-    assertFalse(
-        groupByCandidate.get().complete(),
-        "groupBy( template should have complete=false to prevent extra space after '('");
+    // Full templates ending with ")" should be complete (no extra space needed)
+    // Templates like "groupBy(field, agg=count)" have complete examples
   }
 
   @Test

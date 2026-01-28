@@ -48,33 +48,36 @@ public final class FunctionRegistry {
   }
 
   private static void registerPipelineOperators() {
-    // count() - Count matching events
+    // count() - Count matching events (always applicable)
     register(
         FunctionSpec.builder("count")
             .pipeline()
             .description("Count matching events")
             .template("count()")
+            .requiresAny()
             .build());
 
-    // sum([path]) - Sum numeric values
+    // sum([path]) - Sum numeric values (requires numeric fields)
     register(
         FunctionSpec.builder("sum")
             .pipeline()
             .description("Sum numeric values")
             .template("sum(field)")
             .optionalPositional(0, FIELD_PATH, "Field path to sum")
+            .requiresNumeric()
             .build());
 
-    // stats([path]) - Compute statistics (min, max, avg, stddev, count)
+    // stats([path]) - Compute statistics (requires numeric fields)
     register(
         FunctionSpec.builder("stats")
             .pipeline()
             .description("Compute statistics (min, max, avg, stddev, count)")
             .template("stats(field)")
             .optionalPositional(0, FIELD_PATH, "Field path for statistics")
+            .requiresNumeric()
             .build());
 
-    // quantiles(values..., [path=field]) - Calculate percentiles
+    // quantiles(values..., [path=field]) - Calculate percentiles (requires numeric fields)
     register(
         FunctionSpec.builder("quantiles")
             .pipeline()
@@ -83,18 +86,20 @@ public final class FunctionRegistry {
             .varargs()
             .positional(0, NUMBER, "Quantile values (0-1), e.g., 0.5, 0.9, 0.99")
             .optionalKeyword("path", FIELD_PATH, "Field path to analyze")
+            .requiresNumeric()
             .build());
 
-    // sketch([path]) - Generate HdrHistogram sketch
+    // sketch([path]) - Generate HdrHistogram sketch (requires numeric fields)
     register(
         FunctionSpec.builder("sketch")
             .pipeline()
             .description("Generate stats + p50, p90, p99 histogram")
             .template("sketch(field)")
             .optionalPositional(0, FIELD_PATH, "Field path for histogram")
+            .requiresNumeric()
             .build());
 
-    // groupBy(key, [agg=func], [value=path]) - Group and aggregate
+    // groupBy(key, [agg=func], [value=path]) - Group and aggregate (always applicable)
     register(
         FunctionSpec.builder("groupBy")
             .pipeline()
@@ -103,9 +108,10 @@ public final class FunctionRegistry {
             .positional(0, FIELD_PATH, "Grouping key field")
             .enumKeyword("agg", AGG_FUNCTIONS, "Aggregation function")
             .optionalKeyword("value", FIELD_PATH, "Value field to aggregate")
+            .requiresAny()
             .build());
 
-    // top(n, [by=path], [asc=bool]) - Top N entries
+    // top(n, [by=path], [asc=bool]) - Top N entries (always applicable)
     register(
         FunctionSpec.builder("top")
             .pipeline()
@@ -114,9 +120,10 @@ public final class FunctionRegistry {
             .positional(0, NUMBER, "Number of entries to return")
             .optionalKeyword("by", FIELD_PATH, "Sort by field")
             .optionalKeyword("asc", BOOLEAN, "Ascending order (default: false)")
+            .requiresAny()
             .build());
 
-    // select(fields...) - Project fields
+    // select(fields...) - Project fields (always applicable)
     register(
         FunctionSpec.builder("select")
             .pipeline()
@@ -124,9 +131,10 @@ public final class FunctionRegistry {
             .template("select(field1, field2 as alias)")
             .varargs()
             .positional(0, EXPRESSION, "Fields or expressions to select")
+            .requiresAny()
             .build());
 
-    // toMap(key, value) - Convert to map
+    // toMap(key, value) - Convert to map (always applicable)
     register(
         FunctionSpec.builder("toMap")
             .pipeline()
@@ -134,9 +142,11 @@ public final class FunctionRegistry {
             .template("toMap(keyField, valueField)")
             .positional(0, FIELD_PATH, "Key field")
             .positional(1, FIELD_PATH, "Value field")
+            .requiresAny()
             .build());
 
-    // timerange([path], [duration=path], [format=str]) - Calculate time range
+    // timerange([path], [duration=path], [format=str]) - Calculate time range (requires time
+    // fields)
     register(
         FunctionSpec.builder("timerange")
             .pipeline()
@@ -145,83 +155,92 @@ public final class FunctionRegistry {
             .optionalPositional(0, FIELD_PATH, "Time field (default: startTime)")
             .optionalKeyword("duration", FIELD_PATH, "Duration field")
             .optionalKeyword("format", STRING, "Date format string")
+            .requiresTime()
             .build());
   }
 
   private static void registerTransformOperators() {
-    // len([path]) - String/array length
+    // len([path]) - String/array length (works on any field type)
     register(
         FunctionSpec.builder("len")
             .pipeline()
             .description("Get string or array length")
             .template("len(field)")
             .optionalPositional(0, FIELD_PATH, "Field path")
+            .requiresAny()
             .build());
 
-    // uppercase([path]) - Convert to uppercase
+    // uppercase([path]) - Convert to uppercase (requires string fields)
     register(
         FunctionSpec.builder("uppercase")
             .pipeline()
             .description("Convert string to uppercase")
             .template("uppercase(field)")
             .optionalPositional(0, FIELD_PATH, "String field")
+            .requiresString()
             .build());
 
-    // lowercase([path]) - Convert to lowercase
+    // lowercase([path]) - Convert to lowercase (requires string fields)
     register(
         FunctionSpec.builder("lowercase")
             .pipeline()
             .description("Convert string to lowercase")
             .template("lowercase(field)")
             .optionalPositional(0, FIELD_PATH, "String field")
+            .requiresString()
             .build());
 
-    // trim([path]) - Trim whitespace
+    // trim([path]) - Trim whitespace (requires string fields)
     register(
         FunctionSpec.builder("trim")
             .pipeline()
             .description("Trim whitespace from string")
             .template("trim(field)")
             .optionalPositional(0, FIELD_PATH, "String field")
+            .requiresString()
             .build());
 
-    // abs([path]) - Absolute value
+    // abs([path]) - Absolute value (requires numeric fields)
     register(
         FunctionSpec.builder("abs")
             .pipeline()
             .description("Absolute value of numeric field")
             .template("abs(field)")
             .optionalPositional(0, FIELD_PATH, "Numeric field")
+            .requiresNumeric()
             .build());
 
-    // round([path]) - Round to integer
+    // round([path]) - Round to integer (requires numeric fields)
     register(
         FunctionSpec.builder("round")
             .pipeline()
             .description("Round numeric value to nearest integer")
             .template("round(field)")
             .optionalPositional(0, FIELD_PATH, "Numeric field")
+            .requiresNumeric()
             .build());
 
-    // floor([path]) - Floor value
+    // floor([path]) - Floor value (requires numeric fields)
     register(
         FunctionSpec.builder("floor")
             .pipeline()
             .description("Floor of numeric value")
             .template("floor(field)")
             .optionalPositional(0, FIELD_PATH, "Numeric field")
+            .requiresNumeric()
             .build());
 
-    // ceil([path]) - Ceiling value
+    // ceil([path]) - Ceiling value (requires numeric fields)
     register(
         FunctionSpec.builder("ceil")
             .pipeline()
             .description("Ceiling of numeric value")
             .template("ceil(field)")
             .optionalPositional(0, FIELD_PATH, "Numeric field")
+            .requiresNumeric()
             .build());
 
-    // contains([path], substring) - Check substring (pipeline version)
+    // contains([path], substring) - Check substring (requires string fields)
     register(
         FunctionSpec.builder("contains")
             .pipeline()
@@ -229,9 +248,10 @@ public final class FunctionRegistry {
             .template("contains(field, \"text\")")
             .optionalPositional(0, FIELD_PATH, "String field")
             .positional(1, STRING, "Substring to find")
+            .requiresString()
             .build());
 
-    // replace([path], target, replacement) - String replace
+    // replace([path], target, replacement) - String replace (requires string fields)
     register(
         FunctionSpec.builder("replace")
             .pipeline()
@@ -240,11 +260,13 @@ public final class FunctionRegistry {
             .optionalPositional(0, FIELD_PATH, "String field")
             .positional(1, STRING, "Target substring")
             .positional(2, STRING, "Replacement string")
+            .requiresString()
             .build());
   }
 
   private static void registerDecoratorOperators() {
     // decorateByTime(eventType, [fields=...], [threadPath=...], [decoratorThreadPath=...])
+    // Requires time fields (startTime, duration)
     register(
         FunctionSpec.builder("decorateByTime")
             .pipeline()
@@ -254,9 +276,11 @@ public final class FunctionRegistry {
             .multiKeyword("fields", FIELD_PATH, "Fields to include from decorator")
             .optionalKeyword("threadPath", FIELD_PATH, "Thread path in main event")
             .optionalKeyword("decoratorThreadPath", FIELD_PATH, "Thread path in decorator event")
+            .requiresTime()
             .build());
 
     // decorateByKey(eventType, key=..., decoratorKey=..., [fields=...])
+    // Works with any field type
     register(
         FunctionSpec.builder("decorateByKey")
             .pipeline()
@@ -266,6 +290,7 @@ public final class FunctionRegistry {
             .keyword("key", FIELD_PATH, "Key path in main event")
             .keyword("decoratorKey", FIELD_PATH, "Key path in decorator event")
             .multiKeyword("fields", FIELD_PATH, "Fields to include from decorator")
+            .requiresAny()
             .build());
   }
 

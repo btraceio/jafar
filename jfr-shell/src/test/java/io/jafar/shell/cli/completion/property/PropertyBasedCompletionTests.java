@@ -429,28 +429,35 @@ public class PropertyBasedCompletionTests {
 
   // ==================== Pipeline Completion Property Tests ====================
 
-  /** Property: Pipeline operator completion after pipe suggests all functions. */
+  /**
+   * Property: Pipeline operator completion after pipe suggests applicable functions. Note: With
+   * semantic filtering, only functions applicable to the event type's field types are suggested.
+   * jdk.ExecutionSample has numeric/time fields but no direct string fields.
+   */
   @Property(tries = 300)
-  void pipelineOperatorCompletionSuggestsAllFunctions() {
+  void pipelineOperatorCompletionSuggestsApplicableFunctions() {
     // Test completion after pipe operator
     String expr = "events/jdk.ExecutionSample | ";
     int cursor = expr.length();
 
     List<Candidate> candidates = completeAt(expr, cursor);
 
-    // Should suggest aggregation functions
+    // Should suggest aggregation functions (always applicable or requires numeric/time)
     assertTrue(containsCandidate(candidates, "count"), "Should suggest count");
-    assertTrue(containsCandidate(candidates, "sum"), "Should suggest sum");
     assertTrue(containsCandidate(candidates, "groupBy"), "Should suggest groupBy");
     assertTrue(containsCandidate(candidates, "top"), "Should suggest top");
+    assertTrue(containsCandidate(candidates, "select"), "Should suggest select");
 
-    // Should suggest transform functions
-    assertTrue(containsCandidate(candidates, "uppercase"), "Should suggest uppercase");
-    assertTrue(containsCandidate(candidates, "lowercase"), "Should suggest lowercase");
+    // Should suggest numeric functions (jdk.ExecutionSample has numeric fields)
+    assertTrue(containsCandidate(candidates, "sum"), "Should suggest sum");
+    assertTrue(containsCandidate(candidates, "stats"), "Should suggest stats");
 
     // Should suggest decorator functions
     assertTrue(containsCandidate(candidates, "decorateByTime"), "Should suggest decorateByTime");
     assertTrue(containsCandidate(candidates, "decorateByKey"), "Should suggest decorateByKey");
+
+    // String functions (uppercase, lowercase) may not be suggested
+    // because jdk.ExecutionSample has no direct string fields - this is correct semantic filtering
   }
 
   /** Property: Function parameter completion suggests valid fields. */
@@ -470,7 +477,10 @@ public class PropertyBasedCompletionTests {
     }
   }
 
-  /** Property: Transform operators are available after pipe. */
+  /**
+   * Property: Transform operators are available after pipe based on field types. With semantic
+   * filtering, only applicable transforms are suggested.
+   */
   @Property(tries = 300)
   void transformOperatorsAvailableAfterPipe() {
     // Test that transform functions appear in pipeline completions
@@ -479,11 +489,15 @@ public class PropertyBasedCompletionTests {
 
     List<Candidate> candidates = completeAt(expr, cursor);
 
-    // Transform functions should be available
+    // Always-applicable transforms should be available
     assertTrue(containsCandidate(candidates, "len"), "Should suggest len");
-    assertTrue(containsCandidate(candidates, "trim"), "Should suggest trim");
+
+    // Numeric transforms (abs, round) should be available if event has numeric fields
     assertTrue(containsCandidate(candidates, "abs"), "Should suggest abs");
     assertTrue(containsCandidate(candidates, "round"), "Should suggest round");
+
+    // Note: String transforms (trim, uppercase) may not appear if event has no string fields
+    // This is correct semantic filtering behavior
   }
 
   // ==================== Decorator Completion Property Tests ====================

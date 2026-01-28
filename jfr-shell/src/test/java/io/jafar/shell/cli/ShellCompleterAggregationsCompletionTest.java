@@ -32,9 +32,10 @@ class ShellCompleterAggregationsCompletionTest {
     ShellCompleterTest.SimpleParsedLine pl =
         new ShellCompleterTest.SimpleParsedLine("show events/jdk.FileRead | ");
     completer.complete(null, pl, cands);
-    assertTrue(cands.stream().anyMatch(c -> c.value().contains("count()")));
-    assertTrue(cands.stream().anyMatch(c -> c.value().contains("stats()")));
-    assertTrue(cands.stream().anyMatch(c -> c.value().contains("quantiles")));
+    // Check for core aggregation functions (using prefix match since templates include parameters)
+    assertTrue(cands.stream().anyMatch(c -> c.value().startsWith("count(")));
+    assertTrue(cands.stream().anyMatch(c -> c.value().startsWith("stats(")));
+    assertTrue(cands.stream().anyMatch(c -> c.value().startsWith("quantiles(")));
   }
 
   @Test
@@ -55,6 +56,12 @@ class ShellCompleterAggregationsCompletionTest {
     ShellCompleterTest.SimpleParsedLine pl =
         new ShellCompleterTest.SimpleParsedLine("show events/jdk.FileRead | quant");
     completer.complete(null, pl, cands);
-    assertTrue(cands.stream().anyMatch(c -> c.value().startsWith("quantiles(0.5,0.9")));
+    // Completion value is "quantiles(" to allow parameter completion
+    // Display text shows template with example values
+    var quantilesCand = cands.stream().filter(c -> c.value().equals("quantiles(")).findFirst();
+    assertTrue(quantilesCand.isPresent(), "Should suggest quantiles(");
+    assertTrue(
+        quantilesCand.get().displ().contains("0.5"),
+        "Display should show template with example values");
   }
 }
