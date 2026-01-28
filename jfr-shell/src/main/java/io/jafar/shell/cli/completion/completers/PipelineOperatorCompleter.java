@@ -3,44 +3,20 @@ package io.jafar.shell.cli.completion.completers;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
+import io.jafar.shell.cli.completion.FunctionRegistry;
+import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
 import org.jline.reader.Candidate;
 
 /**
  * Completer for pipeline operators after |. Suggests aggregation functions, transforms, and
- * decorators.
+ * decorators based on the available field types in the current event type.
+ *
+ * <p>Uses semantic filtering to hide functions that don't apply to the current context. For
+ * example, {@code sum()} won't be suggested if the event type has no numeric fields.
  */
-public class PipelineOperatorCompleter implements ContextCompleter {
-
-  // Pipeline operators with their templates
-  private static final String[][] OPERATORS = {
-    // {value, display, description}
-    {"count()", "count()", "Count events"},
-    {"sum(", "sum(field)", "Sum field values"},
-    {"groupBy(", "groupBy(field)", "Group by field"},
-    {"top(", "top(N, field)", "Top N by field"},
-    {"stats()", "stats()", "Statistics"},
-    {"quantiles(0.5,0.9,0.99)", "quantiles(...)", "Percentiles"},
-    {"sketch()", "sketch()", "Approximate statistics"},
-    {"select(", "select(field, ...)", "Select fields"},
-    {"toMap(", "toMap(keyField, valueField)", "Convert to map"},
-    {"timerange()", "timerange([path][,duration=][,format=])", "Time range (min/max)"},
-    // Transform functions
-    {"len()", "len()", "String length"},
-    {"uppercase()", "uppercase()", "Uppercase string"},
-    {"lowercase()", "lowercase()", "Lowercase string"},
-    {"trim()", "trim()", "Trim whitespace"},
-    {"abs()", "abs()", "Absolute value"},
-    {"round()", "round()", "Round number"},
-    {"floor()", "floor()", "Floor number"},
-    {"ceil()", "ceil()", "Ceiling number"},
-    {"contains(\"\")", "contains(str)", "String contains"},
-    {"replace(\"\",\"\")", "replace(old,new)", "String replace"},
-    // Decorators
-    {"decorateByTime(eventType, fields=)", "decorateByTime(...)", "Join by time overlap"},
-    {"decorateByKey(eventType, key=, decoratorKey=, fields=)", "decorateByKey(...)", "Join by key"}
-  };
+public final class PipelineOperatorCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
@@ -51,21 +27,39 @@ public class PipelineOperatorCompleter implements ContextCompleter {
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput().toLowerCase();
+    String eventType = ctx.eventType();
 
-    for (String[] op : OPERATORS) {
-      String value = op[0];
-      String display = op[1];
-      String description = op[2];
+    // Analyze available field types for semantic filtering
+    // If no event type or no field metadata, show all functions (graceful fallback)
+    boolean hasMetadata = eventType != null && !metadata.getFieldNames(eventType).isEmpty();
+    boolean hasNumeric = hasMetadata && metadata.hasNumericFields(eventType);
+    boolean hasString = hasMetadata && metadata.hasStringFields(eventType);
+    boolean hasTime = hasMetadata && metadata.hasTimeFields(eventType);
 
-      // Match against both value and display text
-      if (value.toLowerCase().startsWith(partial) || display.toLowerCase().startsWith(partial)) {
-        // Use noSpace for templates ending with ( to allow immediate parameter entry
-        if (value.endsWith("(")) {
-          candidates.add(candidateNoSpace(value, display, description));
-        } else {
-          candidates.add(candidate(value, display, description));
-        }
+    // Get all pipeline operators from the registry
+    for (FunctionSpec spec : FunctionRegistry.getPipelineOperators()) {
+      String name = spec.name();
+      String template = spec.template();
+      String description = spec.description();
+
+      // Filter by prefix match
+      if (!name.toLowerCase().startsWith(partial) && !template.toLowerCase().startsWith(partial)) {
+        continue;
       }
+
+      // Filter by applicability only if we have metadata (otherwise show all)
+      if (hasMetadata && !spec.isApplicable(hasNumeric, hasString, hasTime)) {
+        continue;
+      }
+
+      // For functions with parameters, complete with "name(" to allow field completion
+      // For no-arg functions like count(), complete with "name()"
+      boolean hasParams = !spec.parameters().isEmpty() || spec.hasVarargs();
+      String value = hasParams ? name + "(" : name + "()";
+
+      // Show template in display for user reference, but insert simpler value
+      // This allows function parameter completer to suggest actual fields
+      candidates.add(candidateNoSpace(value, template, description));
     }
   }
 }

@@ -72,7 +72,7 @@
 |---------|--------|--------------|
 | `len()` | ✅ | `JfrPathLenOpTest.java` |
 | `exists()` | ✅ | `ConditionEvaluatorTest.java` |
-| `starts_with()` | ⚠️ | Completion tests only |
+| `startsWith()` | ✅ | `JfrPathEvaluatorTest.java` |
 | `contains()` | ✅ | `ConditionEvaluatorTest.java` |
 | `matches()` | ⚠️ | Completion tests only |
 | `between()` | ❌ | Missing |

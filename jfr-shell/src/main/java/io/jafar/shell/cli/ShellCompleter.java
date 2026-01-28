@@ -6,18 +6,22 @@ import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.completers.ChunkIdCompleter;
 import io.jafar.shell.cli.completion.completers.CommandCompleter;
+import io.jafar.shell.cli.completion.completers.DecoratorFieldCompleter;
 import io.jafar.shell.cli.completion.completers.DecoratorFunctionCompleter;
 import io.jafar.shell.cli.completion.completers.EventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.FieldPathCompleter;
 import io.jafar.shell.cli.completion.completers.FilterFieldCompleter;
+import io.jafar.shell.cli.completion.completers.FilterFunctionArgCompleter;
 import io.jafar.shell.cli.completion.completers.FilterLogicalCompleter;
 import io.jafar.shell.cli.completion.completers.FilterOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.FilterValueCompleter;
 import io.jafar.shell.cli.completion.completers.FunctionParamCompleter;
 import io.jafar.shell.cli.completion.completers.MetadataSubpropCompleter;
+import io.jafar.shell.cli.completion.completers.MultiEventTypeCompleter;
 import io.jafar.shell.cli.completion.completers.OptionCompleter;
 import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
+import io.jafar.shell.cli.completion.completers.VariableReferenceCompleter;
 import io.jafar.shell.core.SessionManager;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,7 +39,7 @@ import org.jline.reader.ParsedLine;
  * JLine completer for shell commands using the completion framework. Uses Strategy pattern with
  * context-specific completers for clean separation of concerns.
  */
-public class ShellCompleter implements Completer {
+public final class ShellCompleter implements Completer {
 
   private static final Path SCRIPTS_DIR =
       Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
@@ -62,19 +66,24 @@ public class ShellCompleter implements Completer {
             new ChunkIdCompleter(),
             new MetadataSubpropCompleter(),
             new EventTypeCompleter(),
+            new MultiEventTypeCompleter(),
             new FieldPathCompleter(),
             new FilterFieldCompleter(),
+            new FilterFunctionArgCompleter(),
             new FilterOperatorCompleter(),
             new FilterValueCompleter(),
             new FilterLogicalCompleter(),
             new PipelineOperatorCompleter(),
+            new DecoratorFieldCompleter(),
             new DecoratorFunctionCompleter(),
+            new VariableReferenceCompleter(),
             new FunctionParamCompleter(),
             new OptionCompleter());
   }
 
   // Debug flag - set to true to see completion debug output
   private static final boolean DEBUG = Boolean.getBoolean("jfr.shell.completion.debug");
+  private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
   @Override
   public void complete(LineReader reader, ParsedLine line, List<Candidate> candidates) {
@@ -105,6 +114,18 @@ public class ShellCompleter implements Completer {
     // For show command, use the new framework
     if ("show".equals(cmd)) {
       completeWithFramework(line, candidates);
+
+      if (TRACE) {
+        System.err.println(
+            "[TRACE] ShellCompleter: JLine word='"
+                + line.word()
+                + "' candidates="
+                + candidates.size());
+        if (!candidates.isEmpty() && candidates.size() <= 5) {
+          candidates.forEach(c -> System.err.println("[TRACE]   candidate: '" + c.value() + "'"));
+        }
+      }
+
       if (DEBUG) {
         System.err.println(
             "[COMPLETION DEBUG] Generated " + candidates.size() + " candidates for 'show'");
@@ -126,7 +147,22 @@ public class ShellCompleter implements Completer {
 
   /** Complete using the new framework. */
   private void completeWithFramework(ParsedLine line, List<Candidate> candidates) {
-    CompletionContext ctx = analyzer.analyze(line);
+    CompletionContext baseCtx = analyzer.analyze(line);
+    // Add JLine's word to the context for completers that need it
+    CompletionContext ctx =
+        new CompletionContext(
+            baseCtx.type(),
+            baseCtx.command(),
+            baseCtx.rootType(),
+            baseCtx.eventType(),
+            baseCtx.fieldPath(),
+            baseCtx.functionName(),
+            baseCtx.parameterIndex(),
+            baseCtx.partialInput(),
+            baseCtx.fullLine(),
+            baseCtx.cursor(),
+            line.word(),
+            baseCtx.extras());
 
     if (DEBUG) {
       System.err.println("  --- Context Analysis ---");

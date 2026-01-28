@@ -9,7 +9,7 @@ import java.util.Set;
 import org.jline.reader.Candidate;
 
 /** Completer for event type names after events/, metadata/, or cp/. */
-public class EventTypeCompleter implements ContextCompleter {
+public final class EventTypeCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

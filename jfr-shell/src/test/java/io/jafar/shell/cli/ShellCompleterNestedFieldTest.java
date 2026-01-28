@@ -41,12 +41,13 @@ class ShellCompleterNestedFieldTest {
     completer.complete(null, pl, cands);
 
     // Should suggest fields from jdk.types.StackTrace
+    // Candidates include the JLine word prefix "select(" so JLine can properly replace the word
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace/frames")),
-        "Should complete stackTrace/frames");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace/frames")),
+        "Should complete select(stackTrace/frames");
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace/truncated")),
-        "Should complete stackTrace/truncated");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace/truncated")),
+        "Should complete select(stackTrace/truncated");
   }
 
   @Test
@@ -66,12 +67,13 @@ class ShellCompleterNestedFieldTest {
     completer.complete(null, pl, cands);
 
     // Should suggest fields from jdk.types.StackTrace with dot notation
+    // Candidates include the JLine word prefix "select(" so JLine can properly replace the word
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace.frames")),
-        "Should complete stackTrace.frames");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace.frames")),
+        "Should complete select(stackTrace.frames");
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace.truncated")),
-        "Should complete stackTrace.truncated");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace.truncated")),
+        "Should complete select(stackTrace.truncated");
   }
 
   @Test
@@ -91,12 +93,13 @@ class ShellCompleterNestedFieldTest {
     completer.complete(null, pl, cands);
 
     // Should only suggest fields starting with 'f'
+    // Candidates include the JLine word prefix "select(" so JLine can properly replace the word
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace/frames")),
-        "Should complete stackTrace/frames");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace/frames")),
+        "Should complete select(stackTrace/frames");
     assertFalse(
-        cands.stream().anyMatch(c -> c.value().equals("stackTrace/truncated")),
-        "Should not complete stackTrace/truncated (doesn't start with 'f')");
+        cands.stream().anyMatch(c -> c.value().equals("select(stackTrace/truncated")),
+        "Should not complete select(stackTrace/truncated (doesn't start with 'f')");
   }
 
   @Test

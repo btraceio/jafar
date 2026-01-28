@@ -10,7 +10,7 @@ import org.jline.reader.Candidate;
 /**
  * Completer for root path types after 'show ' command. Suggests: events/, metadata/, cp/, chunks
  */
-public class RootCompleter implements ContextCompleter {
+public final class RootCompleter implements ContextCompleter {
 
   private static final String[] ROOTS = {"events/", "metadata/", "cp/", "chunks/"};
 

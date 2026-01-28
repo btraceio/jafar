@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for comparison operators inside filter predicates. Builds full path + operator
  * completions to match JLine's word replacement behavior.
  */
-public class FilterOperatorCompleter implements ContextCompleter {
+public final class FilterOperatorCompleter implements ContextCompleter {
 
   private static final String[] SHORT_OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
   private static final String[] WORD_OPERATORS = {

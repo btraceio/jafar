@@ -30,7 +30,7 @@ import java.time.format.DateTimeFormatter;
  * show events/jdk.ExecutionSample --limit 10
  * </pre>
  */
-public class CommandRecorder {
+public final class CommandRecorder {
   private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyyMMddHHmmss");

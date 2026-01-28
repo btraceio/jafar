@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for field names inside filter predicates [...]. Also suggests operators and function
  * templates when a field path is being typed.
  */
-public class FilterFieldCompleter implements ContextCompleter {
+public final class FilterFieldCompleter implements ContextCompleter {
 
   private static final String[] OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
   private static final String[] FILTER_FUNCTIONS = {

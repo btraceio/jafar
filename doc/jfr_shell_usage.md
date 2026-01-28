@@ -191,7 +191,7 @@ is aliased for convenience.
   - Simple: `[field op value]` with `= != > >= < <= ~` (regex)
   - Boolean expressions with functions and logic: `[expr]`
     - Logic: `and`, `or`, `not`, parentheses
-    - String funcs: `contains(path, "substr")`, `starts_with(path, "pre")`, `ends_with(path, "suf")`, `matches(path, "re"[, "i"])`
+    - String funcs: `contains(path, "substr")`, `startsWith(path, "pre")`, `endsWith(path, "suf")`, `matches(path, "re"[, "i"])`
     - Existence/emptiness: `exists(path)`, `empty(path)`
     - Numeric: `between(path, min, max)`, and `len(path)` for length in comparisons
     - List-scoped: keep `any:/all:/none:` prefixes for list fields (e.g., `any:frames[ matches(method/name/string, ".*Foo.*") ]`)
@@ -281,7 +281,8 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| stats([path])` — Numeric stats: `min`, `max`, `avg`, `stddev`.
 - `| quantiles(q1,q2[,path=...])` — Percentiles as `pXX` columns (e.g., `p50`, `p90`).
 - `| sketch([path])` — Shortcut: stats + `p50`, `p90`, `p99`.
-- `| groupBy(key[, agg=count|sum|avg|min|max, value=path])` — Group by key and aggregate.
+- `| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])` — Group by key and aggregate with optional sorting.
+- `| sortBy(field[, asc=false])` — Sort rows by field (works after any multi-row operator).
 - `| top(n[, by=path, asc=false])` — Sort and return top N rows (descending by default).
 
 **Value Transform Functions:**
@@ -301,6 +302,8 @@ For complete operator reference and grammar details, see [doc/jfrpath.md](jfrpat
 - `show events/jdk.FileRead/bytes | sketch()`
 - `show events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
 - `show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
+- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
+- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
 - `show events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
 - `show metadata/jdk.types.Method/name | count()`
 - `show cp/jdk.types.Symbol | count()`

@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Manages multiple JFR sessions, allowing open/list/switch/close operations. */
-public class SessionManager {
+public final class SessionManager {
   public interface JFRSessionFactory {
     JFRSession create(Path path, ParsingContext ctx) throws Exception;
   }

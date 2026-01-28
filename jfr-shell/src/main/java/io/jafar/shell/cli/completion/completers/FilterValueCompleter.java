@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for filter values after an operator. Suggests common value templates and the closing
  * bracket.
  */
-public class FilterValueCompleter implements ContextCompleter {
+public final class FilterValueCompleter implements ContextCompleter {
 
   // Common value templates
   private static final String[][] VALUE_TEMPLATES = {

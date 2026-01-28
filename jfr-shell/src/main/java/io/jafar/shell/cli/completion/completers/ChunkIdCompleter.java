@@ -10,7 +10,7 @@ import org.jline.reader.Candidate;
 /**
  * Completer for chunk IDs after 'show chunks/'. Suggests available chunk IDs from the recording.
  */
-public class ChunkIdCompleter implements ContextCompleter {
+public final class ChunkIdCompleter implements ContextCompleter {
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

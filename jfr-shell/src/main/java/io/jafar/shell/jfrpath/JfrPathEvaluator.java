@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -572,7 +573,8 @@ public final class JfrPathEvaluator {
           case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb -> aggregateGroupBy(
-              session, query, gb.keyPath, gb.aggFunc, gb.valuePath);
+              session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
           case JfrPath.UppercaseOp up -> aggregateStringTransform(
@@ -1307,7 +1309,13 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> aggregateGroupBy(
-      JFRSession session, Query query, List<String> keyPath, String aggFunc, List<String> valuePath)
+      JFRSession session,
+      Query query,
+      List<String> keyPath,
+      String aggFunc,
+      List<String> valuePath,
+      String sortBy,
+      boolean ascending)
       throws Exception {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
@@ -1414,7 +1422,20 @@ public final class JfrPathEvaluator {
       result.add(row);
     }
 
+    // Sort results if sortBy is specified
+    if (sortBy != null) {
+      sortGroupByResults(result, sortBy, aggFunc, ascending);
+    }
+
     return result;
+  }
+
+  private List<Map<String, Object>> aggregateSortBy(
+      JFRSession session, Query query, String field, boolean ascending) throws Exception {
+    // Materialize all rows first, then sort
+    List<Map<String, Object>> rows =
+        evaluate(session, new Query(query.root, query.segments, query.predicates));
+    return applySortBy(rows, field, ascending);
   }
 
   private List<Map<String, Object>> aggregateTop(
@@ -1944,13 +1965,13 @@ public final class JfrPathEvaluator {
           String sub = String.valueOf(resolveArg(root, args.get(1)));
           return s != null && String.valueOf(s).contains(sub);
         }
-        case "starts_with" -> {
+        case "startswith" -> {
           ensureArgs(args, 2);
           Object s = resolveArg(root, args.get(0));
           String pre = String.valueOf(resolveArg(root, args.get(1)));
           return s != null && String.valueOf(s).startsWith(pre);
         }
-        case "ends_with" -> {
+        case "endswith" -> {
           ensureArgs(args, 2);
           Object s = resolveArg(root, args.get(0));
           String suf = String.valueOf(resolveArg(root, args.get(1)));
@@ -2570,7 +2591,9 @@ public final class JfrPathEvaluator {
       case JfrPath.SumOp sum -> applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
-      case JfrPath.GroupByOp gb -> applyGroupBy(rows, gb.keyPath, gb.aggFunc, gb.valuePath);
+      case JfrPath.GroupByOp gb -> applyGroupBy(
+          rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+      case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
@@ -2666,7 +2689,9 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows,
       List<String> keyPath,
       String aggFunc,
-      List<String> valuePath) {
+      List<String> valuePath,
+      String sortBy,
+      boolean ascending) {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
 
     for (Map<String, Object> row : rows) {
@@ -2693,6 +2718,66 @@ public final class JfrPathEvaluator {
       out.put(aggFunc, entry.getValue().getResult());
       result.add(out);
     }
+
+    // Sort results if sortBy is specified
+    if (sortBy != null) {
+      sortGroupByResults(result, sortBy, aggFunc, ascending);
+    }
+
+    return result;
+  }
+
+  /**
+   * Sort groupBy results by key or aggregated value.
+   *
+   * @param result the list of grouped results to sort in place
+   * @param sortBy "key" to sort by group key, "value" to sort by aggregated value
+   * @param aggFunc the aggregation function name (used to find the value column)
+   * @param ascending true for ascending order, false for descending
+   */
+  @SuppressWarnings("unchecked")
+  private void sortGroupByResults(
+      List<Map<String, Object>> result, String sortBy, String aggFunc, boolean ascending) {
+    Comparator<Map<String, Object>> comparator;
+    if ("key".equals(sortBy)) {
+      comparator =
+          (a, b) -> {
+            Object ka = a.get("key");
+            Object kb = b.get("key");
+            return compareValues(ka, kb);
+          };
+    } else {
+      // sortBy "value" - compare by the aggregation result
+      comparator =
+          (a, b) -> {
+            Object va = a.get(aggFunc);
+            Object vb = b.get(aggFunc);
+            return compareValues(va, vb);
+          };
+    }
+    if (!ascending) {
+      comparator = comparator.reversed();
+    }
+    result.sort(comparator);
+  }
+
+  private List<Map<String, Object>> applySortBy(
+      List<Map<String, Object>> rows, String field, boolean ascending) {
+    if (rows.isEmpty()) return rows;
+
+    // Validate field exists in first row (all rows have same structure after pipeline ops)
+    if (!rows.get(0).containsKey(field)) {
+      throw new IllegalArgumentException(
+          "sortBy: field '" + field + "' not found. Available: " + rows.get(0).keySet());
+    }
+
+    List<Map<String, Object>> result = new ArrayList<>(rows);
+    Comparator<Map<String, Object>> comparator =
+        (a, b) -> compareValues(a.get(field), b.get(field));
+    if (!ascending) {
+      comparator = comparator.reversed();
+    }
+    result.sort(comparator);
     return result;
   }
 

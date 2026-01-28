@@ -403,7 +403,7 @@ jfr> show events/jdk.FileRead[len(path)>50] --limit 10
 jfr> show events/jdk.ExecutionSample[exists(stackTrace)] --limit 10
 
 # String functions
-jfr> show events/jdk.FileRead[starts_with(path, "/tmp/")] --limit 10
+jfr> show events/jdk.FileRead[startsWith(path, "/tmp/")] --limit 10
 jfr> show events/jdk.FileRead[contains(path, "temp")] --limit 10
 jfr> show events/jdk.FileRead[matches(path, ".*\\.log")] --limit 10
 

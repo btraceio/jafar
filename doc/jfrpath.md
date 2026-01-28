@@ -127,16 +127,16 @@ events/jdk.FileRead[not (bytes<100)]
 
 #### String Functions
 - `contains(field, "substr")` - Check if string contains substring
-- `starts_with(field, "prefix")` - Check if string starts with prefix
-- `ends_with(field, "suffix")` - Check if string ends with suffix
+- `startsWith(field, "prefix")` - Check if string starts with prefix
+- `endsWith(field, "suffix")` - Check if string ends with suffix
 - `matches(field, "regex")` - Check if string matches regex
 - `matches(field, "regex", "i")` - Case-insensitive regex match
 
 **Examples**:
 ```
 events/jdk.FileRead[contains(path, "tmp")]
-events/jdk.ExecutionSample[starts_with(thread/name, "pool-")]
-events/jdk.FileRead[ends_with(path, ".log")]
+events/jdk.ExecutionSample[startsWith(thread/name, "pool-")]
+events/jdk.FileRead[endsWith(path, ".log")]
 events/jdk.ExecutionSample[matches(thread/name, "worker-[0-9]+")]
 ```
 
@@ -284,15 +284,17 @@ events/jdk.FileRead | sketch(bytes)
 
 ### Group By
 ```
-| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path])
+| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
 ```
 
-Group results by key and apply aggregation function.
+Group results by key and apply aggregation function with optional sorting.
 
 **Parameters**:
 - `keyPath` - Field path to group by
 - `agg` - Aggregation function (default: `count`)
 - `value` - Value path for sum/avg/min/max
+- `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
+- `asc` - Sort ascending (default: `false`, descending)
 
 **Returns**: `{ "key": groupKey, "<agg>": result }`
 
@@ -305,6 +307,35 @@ events/jdk.ExecutionSample | groupBy(thread/name, agg=count)                # Co
 events/jdk.FileRead | groupBy(path, agg=avg, value=bytes)                   # Avg bytes by path
 events/jdk.FileRead | groupBy(path, agg=min, value=bytes)                   # Min bytes by path
 events/jdk.FileRead | groupBy(path, agg=max, value=bytes)                   # Max bytes by path
+
+# Sorted results
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)             # Sort by count descending
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)     # Sort alphabetically
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytes, sortBy=value)     # Sort by total bytes
+```
+
+### Sort By
+```
+| sortBy(field[, asc=false])
+```
+
+Sort rows by any field in the current result set. Works after any operator that produces multiple rows.
+
+**Parameters**:
+- `field` - Field name to sort by (must exist in current row structure)
+- `asc` - Sort ascending (default: `false`, descending)
+
+**Key constraint**: Can only sort by fields available after previous operators:
+- After `select(a, b)` → only `a`, `b` available
+- After `groupBy(x)` → only `key`, `<aggFunc>` available
+- After `len(path)` → all original fields + `len`
+
+**Examples**:
+```
+events/jdk.FileRead | select(path, bytes) | sortBy(bytes)              # Sort by bytes descending
+events/jdk.FileRead | select(path, bytes) | sortBy(path, asc=true)     # Sort by path ascending
+events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count)      # Sort grouped results by count
+events/jdk.FileRead | len(path) | sortBy(len)                          # Sort by computed length
 ```
 
 ### Top

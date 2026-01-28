@@ -11,7 +11,7 @@ import org.jline.reader.Candidate;
  * Completer for metadata type subproperties after 'show metadata/Type/'. Suggests: fields,
  * settings, annotations
  */
-public class MetadataSubpropCompleter implements ContextCompleter {
+public final class MetadataSubpropCompleter implements ContextCompleter {
 
   private static final String[] SUBPROPS = {"fields", "settings", "annotations"};
 

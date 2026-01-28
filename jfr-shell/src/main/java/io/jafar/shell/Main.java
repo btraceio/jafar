@@ -26,7 +26,7 @@ import picocli.CommandLine;
       Main.CpCommand.class,
       Main.ScriptCommand.class
     })
-public class Main implements Callable<Integer> {
+public final class Main implements Callable<Integer> {
   @CommandLine.Option(
       names = {"-f", "--file"},
       description = "JFR file to open immediately (interactive mode)")

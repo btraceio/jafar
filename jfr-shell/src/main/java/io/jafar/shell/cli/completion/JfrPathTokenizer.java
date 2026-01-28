@@ -23,7 +23,7 @@ import java.util.List;
  * <p>Performance: Designed for sub-millisecond tokenization of typical JfrPath expressions (100-200
  * chars).
  */
-public class JfrPathTokenizer {
+public final class JfrPathTokenizer {
 
   /**
    * Tokenizes a JfrPath expression into a list of tokens.

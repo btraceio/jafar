@@ -111,6 +111,12 @@ show events/jdk.FileRead[bytes>1048576] | count()
 # Group execution samples by thread
 show events/jdk.ExecutionSample | groupBy(thread/name)
 
+# Group by thread, sorted by count descending (default)
+show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)
+
+# Group by thread, sorted alphabetically by thread name
+show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)
+
 # Find threads with deep call stacks
 show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 10
 
@@ -519,7 +525,7 @@ Operators: `=` `!=` `>` `>=` `<` `<=` `~` (regex)
 Boolean expressions with functions:
 ```
 [contains(path, "substring")]
-[starts_with(path, "prefix")]
+[startsWith(path, "prefix")]
 [matches(path, "regex")]
 [exists(path)]
 [empty(path)]
@@ -541,7 +547,8 @@ List matching:
 - `| count()` - Count rows
 - `| sum([path])` - Sum numeric values
 - `| stats([path])` - Min, max, avg, stddev
-- `| groupBy(key[, agg=count|sum|avg|min|max, value=path])` - Group and aggregate
+- `| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])` - Group and aggregate with optional sorting
+- `| sortBy(field[, asc=false])` - Sort rows by field (works after any multi-row operator)
 - `| top(n[, by=path, asc=false])` - Sort and take top N
 - `| quantiles(0.5,0.9,0.99[,path=])` - Percentiles
 - `| sketch([path])` - Stats + p50, p90, p99
