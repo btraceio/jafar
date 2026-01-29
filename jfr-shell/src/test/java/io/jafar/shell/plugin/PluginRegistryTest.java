@@ -130,4 +130,114 @@ class PluginRegistryTest {
     Optional<PluginRegistry.PluginDefinition> result = emptyRegistry.get("jdk");
     assertFalse(result.isPresent());
   }
+
+  @Test
+  void parsesRemoteRegistryJson() throws IOException {
+    // Mock valid JSON registry
+    String validJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.2.0",
+              "repository": "central"
+            },
+            "jafar": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jafar",
+              "latestVersion": "0.3.0",
+              "repository": "sonatype-snapshots"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(validJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    // Create new registry to load cached JSON
+    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+
+    // Verify remote plugins are parsed correctly
+    Optional<PluginRegistry.PluginDefinition> jdk = registry.get("jdk");
+    assertTrue(jdk.isPresent());
+    assertEquals("jfr-shell-jdk", jdk.get().artifactId());
+    assertEquals("0.2.0", jdk.get().version());
+    assertEquals("central", jdk.get().repository());
+
+    Optional<PluginRegistry.PluginDefinition> jafar = registry.get("jafar");
+    assertTrue(jafar.isPresent());
+    assertEquals("jfr-shell-jafar", jafar.get().artifactId());
+    assertEquals("0.3.0", jafar.get().version());
+    assertEquals("sonatype-snapshots", jafar.get().repository());
+  }
+
+  @Test
+  void remotePluginsTakePriorityOverLocal() throws IOException {
+    // Create local Maven artifact
+    Path artifactDir = mockMavenRepo.resolve("jfr-shell-jdk");
+    Files.createDirectories(artifactDir.resolve("0.1.0-SNAPSHOT"));
+
+    // Mock remote registry with newer version
+    String remoteJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.2.0",
+              "repository": "central"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    // Create new registry
+    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+
+    // Remote should take priority
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals("0.2.0", result.get().version(), "Remote version should take priority");
+  }
+
+  @Test
+  void handlesInvalidRemoteJson() throws IOException {
+    // Mock invalid JSON
+    when(storageManager.loadRegistryCache()).thenReturn("not valid json {]");
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    // Should not crash, just skip remote plugins
+    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+
+    // Should still work with local Maven discovery
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertFalse(result.isPresent());
+  }
+
+  @Test
+  void handlesEmptyRemoteRegistry() throws IOException {
+    // Mock empty but valid JSON
+    String emptyJson =
+        """
+        {
+          "plugins": {}
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(emptyJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+
+    // Should work but find no plugins
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertFalse(result.isPresent());
+  }
 }
