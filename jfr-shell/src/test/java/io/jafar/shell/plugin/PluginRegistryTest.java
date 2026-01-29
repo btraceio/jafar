@@ -224,8 +224,7 @@ class PluginRegistryTest {
   @Test
   void handlesEmptyRemoteRegistry() throws IOException {
     // Mock empty but valid JSON
-    String emptyJson =
-        """
+    String emptyJson = """
         {
           "plugins": {}
         }

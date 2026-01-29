@@ -51,8 +51,18 @@ public final class BackendRegistry {
 
   private void discoverBackends() {
     // Use plugin-aware ClassLoader to discover backends from both built-in and plugin JARs
-    ClassLoader pluginClassLoader = PluginManager.getInstance().getPluginClassLoader();
-    ServiceLoader<JfrBackend> loader = ServiceLoader.load(JfrBackend.class, pluginClassLoader);
+    // Falls back to thread context classloader for testing when PluginManager isn't initialized
+    ClassLoader classLoader;
+    try {
+      classLoader = PluginManager.getInstance().getPluginClassLoader();
+    } catch (IllegalStateException e) {
+      // PluginManager not initialized - fall back to thread context classloader (for tests)
+      classLoader = Thread.currentThread().getContextClassLoader();
+      if (classLoader == null) {
+        classLoader = BackendRegistry.class.getClassLoader();
+      }
+    }
+    ServiceLoader<JfrBackend> loader = ServiceLoader.load(JfrBackend.class, classLoader);
     for (JfrBackend backend : loader) {
       backends.put(backend.getId().toLowerCase(Locale.ROOT), backend);
     }

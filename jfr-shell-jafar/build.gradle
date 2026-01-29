@@ -1,6 +1,6 @@
 plugins {
     id 'java-library'
-    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
 }
 
 def libraryName = "jfr-shell-jafar"
@@ -45,21 +45,4 @@ jar {
 
 group = 'io.btrace'
 version = component_version
-description = 'Jafar parser backend for jfr-shell'
-
-publishing {
-    publications {
-        maven(MavenPublication) {
-            groupId = 'io.btrace'
-            artifactId = libraryName
-            version = component_version
-
-            from components.java
-
-            pom {
-                name = 'JFR Shell Jafar Backend'
-                description = 'Jafar parser backend for jfr-shell - high-performance JFR parser'
-            }
-        }
-    }
-}
+description = 'Jafar parser backend for jfr-shell - high-performance JFR parser'

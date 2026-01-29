@@ -26,8 +26,9 @@ dependencies {
     implementation project(':parser')
     implementation project(':tools')
 
-    // JDK backend removed - will be installed as plugin
-    // runtimeOnly project(':jfr-shell-jdk')
+    // Backend plugins available for testing (discovered via ServiceLoader)
+    testRuntimeOnly project(':jfr-shell-jafar')
+    testRuntimeOnly project(':jfr-shell-jdk')
 
     // Command line parsing
     implementation 'info.picocli:picocli:4.7.5'

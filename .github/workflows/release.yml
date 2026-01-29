@@ -65,6 +65,10 @@ jobs:
         run: |
           ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
+      - name: Publish backend plugins to Maven Central
+        run: |
+          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
       - name: Publish gradle plugin to Maven Central and GitHub Packages
         run: |
           cd jafar-gradle-plugin

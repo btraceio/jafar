@@ -1,6 +1,6 @@
 plugins {
     id 'java-library'
-    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
 }
 
 def libraryName = "jfr-shell-jdk"
@@ -42,21 +42,4 @@ jar {
 
 group = 'io.btrace'
 version = component_version
-description = 'JDK JFR API backend for jfr-shell'
-
-publishing {
-    publications {
-        maven(MavenPublication) {
-            groupId = 'io.btrace'
-            artifactId = libraryName
-            version = component_version
-
-            from components.java
-
-            pom {
-                name = 'JFR Shell JDK Backend'
-                description = 'JDK JFR API backend for jfr-shell - provides alternative parser using standard JDK APIs'
-            }
-        }
-    }
-}
+description = 'JDK JFR API backend for jfr-shell - provides alternative parser using standard JDK APIs'
