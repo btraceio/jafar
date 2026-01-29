@@ -188,7 +188,8 @@ public final class PluginManager {
         log.debug("Using default groupId: {}", groupId);
       }
 
-      // Derive pluginId from artifactId (strip "jfr-shell-" prefix if present, normalize to lowercase)
+      // Derive pluginId from artifactId (strip "jfr-shell-" prefix if present, normalize to
+      // lowercase)
       String pluginId = artifactId;
       if (artifactId.startsWith("jfr-shell-")) {
         pluginId = artifactId.substring("jfr-shell-".length());
