@@ -487,6 +487,7 @@ See **[Event Decoration and Joining](doc/jfr-shell-tutorial.md#event-decoration-
 - **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
 - **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
+- **[doc/jfr-shell-backends.md](doc/jfr-shell-backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
