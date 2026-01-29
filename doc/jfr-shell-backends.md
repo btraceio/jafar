@@ -366,6 +366,7 @@ jfr-shell-tck/                      # Technology Compatibility Kit
 
 ## See Also
 
+- [Backend Quickstart (10 minutes)](tutorials/backend-quickstart.md) - Build a working backend fast
 - [JFR Shell Usage Guide](jfr_shell_usage.md)
 - [JfrPath Query Language](jfrpath.md)
 - [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md)

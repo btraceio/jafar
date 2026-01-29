@@ -488,6 +488,7 @@ See **[Event Decoration and Joining](doc/tutorials/jfr-shell-tutorial.md#event-d
 - **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
 - **[doc/jfr-shell-backends.md](doc/jfr-shell-backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
+- **[doc/tutorials/backend-quickstart.md](doc/tutorials/backend-quickstart.md)** - Build a custom backend in 10 minutes
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
