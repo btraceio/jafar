@@ -29,11 +29,12 @@ public final class BackendRegistry {
   private static final String PROP_BACKEND = "jfr.shell.backend";
 
   private final Map<String, JfrBackend> backends = new LinkedHashMap<>();
-  private final JfrBackend current;
+  private volatile JfrBackend current;
 
   private BackendRegistry() {
     discoverBackends();
-    this.current = selectInitialBackend();
+    // Defer backend selection to getCurrent() to allow system property to be set after
+    // initialization
   }
 
   private static final class Holder {
@@ -94,12 +95,22 @@ public final class BackendRegistry {
   }
 
   /**
-   * Returns the current backend.
+   * Returns the current backend. Selection is deferred until first call to allow system properties
+   * to be set after registry initialization.
    *
    * @return the selected backend
    */
   public JfrBackend getCurrent() {
-    return current;
+    JfrBackend result = current;
+    if (result == null) {
+      synchronized (this) {
+        result = current;
+        if (result == null) {
+          current = result = selectInitialBackend();
+        }
+      }
+    }
+    return result;
   }
 
   /**

@@ -224,33 +224,31 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> loadChunk(Path recording, int chunkIndex) throws Exception {
-      final Map<String, Object>[] result = new Map[1];
-      try (StreamingChunkParser parser =
-          new StreamingChunkParser(new UntypedParserContextFactory())) {
-        parser.parse(
-            recording,
-            new ChunkParserListener() {
-              @Override
-              public boolean onChunkStart(ParserContext context, int idx, ChunkHeader header) {
-                if (idx == chunkIndex) {
-                  result[0] = createChunkRow(idx, header);
-                  return false;
-                }
-                return true;
-              }
-
-              @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
-              }
-            });
+      // Simple: load all chunks and return by position (index is 0-based position)
+      List<Map<String, Object>> allChunks = loadAllChunks(recording);
+      if (chunkIndex >= 0 && chunkIndex < allChunks.size()) {
+        return allChunks.get(chunkIndex);
       }
-      return result[0];
+      return null;
     }
 
     @Override
     public List<Map<String, Object>> loadChunks(
         Path recording, Predicate<Map<String, Object>> filter) throws Exception {
+      return loadChunksWithLimit(recording, filter, -1);
+    }
+
+    /**
+     * Load chunks with optional filter and limit. Supports early termination when limit is reached.
+     *
+     * @param recording path to the JFR recording
+     * @param filter optional predicate to filter chunks, null for all
+     * @param limit maximum number of chunks to collect (-1 for unlimited)
+     * @return list of matching chunk rows
+     */
+    private List<Map<String, Object>> loadChunksWithLimit(
+        Path recording, Predicate<Map<String, Object>> filter, int limit) throws Exception {
+      // Synchronized because chunks may be processed in parallel
       final List<Map<String, Object>> rows = Collections.synchronizedList(new ArrayList<>());
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
@@ -260,16 +258,23 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
+                // Check if we've already collected enough chunks from previous iterations
+                if (limit > 0 && rows.size() >= limit) {
+                  return false; // Stop processing - we already have enough
+                }
                 Map<String, Object> row = createChunkRow(chunkIndex, header);
                 if (filter == null || filter.test(row)) {
                   rows.add(row);
                 }
+                // Always return true to complete processing of this chunk
+                // The limit check at the start of next onChunkStart will stop if needed
                 return true;
               }
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
+                // Stop processing metadata if we already have enough chunks
+                return limit <= 0 || rows.size() < limit;
               }
             });
       }

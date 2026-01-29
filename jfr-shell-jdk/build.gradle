@@ -21,14 +21,6 @@ java {
 dependencies {
     // Only depends on jfr-shell for the SPI interfaces
     compileOnly project(':jfr-shell')
-
-    testImplementation project(':jfr-shell')
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
-}
-
-test {
-    useJUnitPlatform()
 }
 
 jar {

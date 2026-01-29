@@ -1,9 +1,11 @@
 package io.jafar.shell.plugin;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -118,11 +120,16 @@ final class PluginInstaller {
       // Read expected checksum
       String expectedChecksum = Files.readString(checksumPath).trim();
 
-      // Calculate actual checksum
+      // Calculate actual checksum using streaming to avoid OOM on large JARs
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] jarBytes = Files.readAllBytes(jarPath);
-      byte[] hash = digest.digest(jarBytes);
-      String actualChecksum = HexFormat.of().formatHex(hash);
+      try (InputStream is = Files.newInputStream(jarPath);
+          DigestInputStream dis = new DigestInputStream(is, digest)) {
+        byte[] buffer = new byte[8192];
+        while (dis.read(buffer) != -1) {
+          // Just reading to compute digest
+        }
+      }
+      String actualChecksum = HexFormat.of().formatHex(digest.digest());
 
       if (!expectedChecksum.equalsIgnoreCase(actualChecksum)) {
         throw new PluginInstallException(

@@ -145,25 +145,27 @@ final class PluginRegistry {
         return plugins;
       }
 
-      Files.list(btraceRepo)
-          .filter(Files::isDirectory)
-          .filter(p -> p.getFileName().toString().startsWith("jfr-shell-"))
-          .forEach(
-              artifactDir -> {
-                String artifactId = artifactDir.getFileName().toString();
+      try (var stream = Files.list(btraceRepo)) {
+        stream
+            .filter(Files::isDirectory)
+            .filter(p -> p.getFileName().toString().startsWith("jfr-shell-"))
+            .forEach(
+                artifactDir -> {
+                  String artifactId = artifactDir.getFileName().toString();
 
-                // Extract plugin ID from artifact ID (e.g., "jfr-shell-jdk" -> "jdk")
-                String pluginId = artifactId.substring("jfr-shell-".length());
+                  // Extract plugin ID from artifact ID (e.g., "jfr-shell-jdk" -> "jdk")
+                  String pluginId = artifactId.substring("jfr-shell-".length());
 
-                // Find latest version
-                String latestVersion = findLatestVersion(artifactDir);
-                if (latestVersion != null) {
-                  log.debug("Discovered plugin: {} @ {}", pluginId, latestVersion);
-                  plugins.put(
-                      pluginId.toLowerCase(),
-                      new PluginDefinition("io.btrace", artifactId, latestVersion, "local"));
-                }
-              });
+                  // Find latest version
+                  String latestVersion = findLatestVersion(artifactDir);
+                  if (latestVersion != null) {
+                    log.debug("Discovered plugin: {} @ {}", pluginId, latestVersion);
+                    plugins.put(
+                        pluginId.toLowerCase(),
+                        new PluginDefinition("io.btrace", artifactId, latestVersion, "local"));
+                  }
+                });
+      }
     } catch (Exception e) {
       log.debug("Error discovering local Maven plugins", e);
       // Ignore discovery errors - return what we found

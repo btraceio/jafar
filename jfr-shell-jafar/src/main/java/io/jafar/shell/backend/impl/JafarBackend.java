@@ -66,7 +66,11 @@ public final class JafarBackend implements JfrBackend {
 
   @Override
   public EventSource createEventSource(BackendContext context) {
-    return new JafarEventSource();
+    ParsingContext parsingContext =
+        (context instanceof JafarBackendContext jbc)
+            ? jbc.getParsingContext()
+            : ParsingContext.create();
+    return new JafarEventSource(parsingContext);
   }
 
   @Override
@@ -111,9 +115,15 @@ public final class JafarBackend implements JfrBackend {
 
   /** Jafar event source using UntypedJafarParser. */
   private static final class JafarEventSource implements EventSource {
+    private final ParsingContext parsingContext;
+
+    JafarEventSource(ParsingContext parsingContext) {
+      this.parsingContext = parsingContext;
+    }
+
     @Override
     public void streamEvents(Path recording, Consumer<Event> consumer) throws Exception {
-      try (UntypedJafarParser p = ParsingContext.create().newUntypedParser(recording)) {
+      try (UntypedJafarParser p = parsingContext.newUntypedParser(recording)) {
         p.handle((type, value, ctl) -> consumer.accept(new Event(type.getName(), value)));
         p.run();
       }
