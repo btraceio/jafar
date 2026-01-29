@@ -51,14 +51,33 @@ public final class Main implements Callable<Integer> {
       description = "Custom plugin directory (default: ~/.jfr-shell/plugins)")
   private String pluginDir;
 
+  @CommandLine.Option(
+      names = {"--install-plugin"},
+      description = "Install a backend plugin from a local JAR file and exit")
+  private String installPlugin;
+
   public static void main(String[] args) {
-    // Parse CLI args to extract plugin-dir before initialization
+    // Parse CLI args to extract plugin-dir and install-plugin before initialization
     Main main = new Main();
     new CommandLine(main).parseArgs(args);
 
     // Set plugin directory if specified
     if (main.pluginDir != null) {
       System.setProperty("jfr.shell.plugin.dir", main.pluginDir);
+    }
+
+    // Handle --install-plugin before normal initialization
+    if (main.installPlugin != null) {
+      Path jarPath = Paths.get(main.installPlugin);
+      try {
+        PluginManager.getInstance().installLocalPlugin(jarPath);
+        System.out.println("Plugin installed successfully from: " + jarPath);
+        System.out.println("Restart jfr-shell to use the new plugin.");
+        System.exit(0);
+      } catch (Exception e) {
+        System.err.println("Failed to install plugin: " + e.getMessage());
+        System.exit(1);
+      }
     }
 
     // Initialize plugin system before BackendRegistry is accessed

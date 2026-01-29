@@ -355,6 +355,48 @@ jfr-shell-jdk/                      # JDK API backend plugin
 jfr-shell-tck/                      # Technology Compatibility Kit
 ```
 
+## Offline/Airgapped Installation
+
+For environments without internet access (Docker images, air-gapped systems), plugins can be manually installed from local JAR files:
+
+```bash
+# Install a backend plugin from a local JAR
+java -jar jfr-shell.jar --install-plugin /path/to/jfr-shell-jdk-1.0.0.jar
+
+# The JAR filename must follow the convention: {artifactId}-{version}.jar
+# Example: jfr-shell-jdk-1.0.0.jar → pluginId "jdk"
+```
+
+### Requirements
+
+1. **ServiceLoader config**: The JAR must contain `META-INF/services/io.jafar.shell.backend.JfrBackend`
+2. **Filename format**: `{artifactId}-{version}.jar` (e.g., `jfr-shell-jdk-1.0.0.jar`)
+3. **Optional pom.properties**: If present in `META-INF/maven/`, the groupId is extracted; otherwise defaults to `io.btrace`
+
+### Docker Example
+
+```dockerfile
+# Pre-install backend plugin during image build
+FROM eclipse-temurin:21-jre
+
+COPY jfr-shell.jar /app/
+COPY jfr-shell-jdk-1.0.0.jar /tmp/
+
+# Install the plugin
+RUN java -jar /app/jfr-shell.jar --install-plugin /tmp/jfr-shell-jdk-1.0.0.jar && \
+    rm /tmp/jfr-shell-jdk-1.0.0.jar
+
+ENTRYPOINT ["java", "-jar", "/app/jfr-shell.jar"]
+```
+
+### Custom Plugin Directory
+
+Use `--plugin-dir` to specify an alternative plugin directory:
+
+```bash
+java -jar jfr-shell.jar --plugin-dir /custom/plugins --install-plugin backend.jar
+```
+
 ## Best Practices
 
 1. **Declare only supported capabilities** - Don't claim `CHUNK_INFO` if you can't provide chunk data

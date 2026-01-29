@@ -1,9 +1,18 @@
 package io.jafar.shell.plugin;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.jar.JarFile;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,6 +135,132 @@ public final class PluginManager {
    */
   public void installPlugin(String pluginId) throws PluginInstallException {
     installer.install(pluginId);
+  }
+
+  /**
+   * Install a plugin from a local JAR file.
+   *
+   * <p>This is intended for offline/airgapped environments where plugins cannot be downloaded from
+   * Maven repositories. The JAR filename should follow the convention: {artifactId}-{version}.jar
+   *
+   * @param jarPath Path to the plugin JAR file
+   * @throws PluginInstallException if installation fails
+   */
+  public void installLocalPlugin(Path jarPath) throws PluginInstallException {
+    if (!Files.exists(jarPath)) {
+      throw new PluginInstallException("JAR file not found: " + jarPath);
+    }
+
+    String fileName = jarPath.getFileName().toString();
+    if (!fileName.endsWith(".jar")) {
+      throw new PluginInstallException("File must be a JAR: " + fileName);
+    }
+
+    // Validate JAR contains ServiceLoader config
+    try (JarFile jar = new JarFile(jarPath.toFile())) {
+      ZipEntry serviceEntry = jar.getEntry("META-INF/services/io.jafar.shell.backend.JfrBackend");
+      if (serviceEntry == null) {
+        throw new PluginInstallException(
+            "JAR does not contain a JfrBackend service provider (META-INF/services/io.jafar.shell.backend.JfrBackend)");
+      }
+
+      // Parse artifactId and version from filename: {artifactId}-{version}.jar
+      String baseName = fileName.substring(0, fileName.length() - 4); // Remove .jar
+      Pattern pattern = Pattern.compile("^(.+)-([0-9][0-9a-zA-Z.\\-]*)$");
+      Matcher matcher = pattern.matcher(baseName);
+
+      String artifactId;
+      String version;
+      if (matcher.matches()) {
+        artifactId = matcher.group(1);
+        version = matcher.group(2);
+      } else {
+        throw new PluginInstallException(
+            "Cannot parse artifactId and version from filename: "
+                + fileName
+                + ". Expected format: {artifactId}-{version}.jar");
+      }
+
+      // Try to extract groupId from pom.properties
+      String groupId = extractGroupId(jar, artifactId);
+      if (groupId == null) {
+        groupId = "io.btrace"; // Default groupId
+        log.debug("Using default groupId: {}", groupId);
+      }
+
+      // Derive pluginId from artifactId (strip "jfr-shell-" prefix if present, normalize to lowercase)
+      String pluginId = artifactId;
+      if (artifactId.startsWith("jfr-shell-")) {
+        pluginId = artifactId.substring("jfr-shell-".length());
+      }
+      pluginId = pluginId.toLowerCase();
+
+      // Create metadata for storage operations
+      PluginMetadata metadata =
+          PluginMetadata.installed(groupId, artifactId, version, "local", Instant.now());
+
+      // Copy JAR to plugin directory
+      Path targetPath = storageManager.getPluginJarPath(metadata);
+      Files.createDirectories(targetPath.getParent());
+      Files.copy(jarPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+      // Update installed.json - rollback JAR on failure
+      try {
+        Map<String, PluginMetadata> installed = storageManager.loadInstalled();
+        installed.put(pluginId, metadata);
+        storageManager.saveInstalled(installed);
+      } catch (IOException e) {
+        // Rollback: remove copied JAR
+        try {
+          Files.deleteIfExists(targetPath);
+        } catch (IOException ignored) {
+          // Best effort cleanup
+        }
+        throw e;
+      }
+
+      log.info(
+          "Installed plugin from local JAR: {} ({}:{}:{}) -> {}",
+          pluginId,
+          groupId,
+          artifactId,
+          version,
+          targetPath);
+    } catch (IOException e) {
+      throw new PluginInstallException("Failed to install plugin from JAR: " + e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Extract groupId from pom.properties inside the JAR.
+   *
+   * @param jar The JAR file
+   * @param artifactId The expected artifactId
+   * @return groupId if found, null otherwise
+   */
+  private String extractGroupId(JarFile jar, String artifactId) {
+    // Look for META-INF/maven/{groupId}/{artifactId}/pom.properties
+    var entries = jar.entries();
+    while (entries.hasMoreElements()) {
+      ZipEntry entry = entries.nextElement();
+      String name = entry.getName();
+      if (name.startsWith("META-INF/maven/")
+          && name.endsWith("/pom.properties")
+          && name.contains("/" + artifactId + "/")) {
+        try (InputStream is = jar.getInputStream(entry)) {
+          Properties props = new Properties();
+          props.load(is);
+          String groupId = props.getProperty("groupId");
+          if (groupId != null && !groupId.isEmpty()) {
+            log.debug("Extracted groupId from pom.properties: {}", groupId);
+            return groupId;
+          }
+        } catch (IOException e) {
+          log.debug("Failed to read pom.properties: {}", e.getMessage());
+        }
+      }
+    }
+    return null;
   }
 
   /**

@@ -297,6 +297,12 @@ graph TB
     PR --> REMOTE
 ```
 
+**Offline Installation**: For air-gapped environments, plugins can be installed from local JAR files:
+```bash
+java -jar jfr-shell.jar --install-plugin /path/to/plugin.jar
+```
+See [Backend Plugin Guide](jfr-shell-backends.md#offlineairgapped-installation) for details.
+
 ---
 
 ## JfrPath Query Engine
