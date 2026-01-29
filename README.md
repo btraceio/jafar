@@ -482,6 +482,7 @@ See **[Event Decoration and Joining](doc/tutorials/jfr-shell-tutorial.md#event-d
 
 ### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
+- **[doc/jfr-shell-architecture.md](doc/jfr-shell-architecture.md)** - Architecture overview with diagrams
 - **[doc/tutorials/jfr-shell-tutorial.md](doc/tutorials/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
 - **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
 - **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
