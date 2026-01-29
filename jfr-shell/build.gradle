@@ -252,15 +252,18 @@ afterEvaluate {
     publishing {
         publications {
             maven(MavenPublication) {
-                // Remove default JAR artifacts
-                artifacts.clear()
-                // Use shadow JAR as main artifact
+                // Remove the regular jar artifact added by vanniktech plugin
+                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Add shadow JAR as main artifact
                 artifact(shadowJar) {
-                    classifier = ''
+                    classifier = ''  // Publish without classifier
                 }
-                artifact(sourcesJar)
-                artifact(javadocJar)
             }
         }
     }
+}
+
+// Disable Gradle module metadata for jfr-shell (it's a distribution, not a library)
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
 }
