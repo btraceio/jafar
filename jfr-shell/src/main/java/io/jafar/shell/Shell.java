@@ -6,12 +6,14 @@ import io.jafar.shell.cli.CommandRecorder;
 import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.plugin.PluginManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -79,6 +81,17 @@ public final class Shell implements AutoCloseable {
 
   public void run() {
     printBanner();
+
+    // Check for plugin updates in background (non-blocking)
+    CompletableFuture.runAsync(
+        () -> {
+          try {
+            PluginManager.getInstance().checkAndApplyUpdates();
+          } catch (Exception e) {
+            // Log but don't fail startup
+          }
+        });
+
     CommandRecorder recorder = new CommandRecorder();
 
     while (running) {

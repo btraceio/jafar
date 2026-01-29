@@ -1,6 +1,9 @@
 package io.jafar.shell.cli;
 
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.backend.BackendCapability;
+import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.LazyQueryValue;
@@ -21,6 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /** Minimal command dispatcher for M1 session commands. */
 public class CommandDispatcher {
@@ -207,6 +211,9 @@ public class CommandDispatcher {
         case "invalidate":
           cmdInvalidate(args);
           return true;
+        case "backend":
+          cmdBackend(args);
+          return true;
         default:
           return false;
       }
@@ -330,6 +337,42 @@ public class CommandDispatcher {
       io.println("  Total Events Processed: " + s.getTotalEvents());
       io.println("  Uptime: " + (s.getUptime() / 1_000_000) + "ms");
     }
+  }
+
+  private void cmdBackend(List<String> args) {
+    BackendRegistry registry = BackendRegistry.getInstance();
+
+    if (args.isEmpty()) {
+      // Show current backend and capabilities
+      JfrBackend current = registry.getCurrent();
+      io.println("Current backend: " + current.getName() + " (" + current.getId() + ")");
+      io.println("Version: " + current.getVersion());
+      io.println("Priority: " + current.getPriority());
+      io.println(
+          "Capabilities: "
+              + current.getCapabilities().stream()
+                  .map(BackendCapability::name)
+                  .collect(Collectors.joining(", ")));
+      return;
+    }
+
+    String subcmd = args.get(0).toLowerCase(Locale.ROOT);
+
+    if ("list".equals(subcmd)) {
+      io.println("Available backends:");
+      JfrBackend current = registry.getCurrent();
+      for (JfrBackend b : registry.listAll()) {
+        String marker = b.getId().equals(current.getId()) ? "*" : " ";
+        io.printf(
+            "  %s %-10s %-20s (priority: %d)%n", marker, b.getId(), b.getName(), b.getPriority());
+      }
+      io.println("");
+      io.println(
+          "Note: Backend is selected at startup. Use --backend flag or JFRSHELL_BACKEND env var.");
+      return;
+    }
+
+    io.error("Usage: backend | backend list");
   }
 
   private void cmdShow(List<String> args, String fullLine) throws Exception {
@@ -654,6 +697,9 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
+      io.println("");
+      io.println("System:");
+      io.println("  backend   - Show current backend and list available backends");
       io.println("");
       io.println("Tab completion:");
       io.println("  Press Tab at any point for context-aware suggestions:");
@@ -1327,6 +1373,14 @@ public class CommandDispatcher {
       io.error("No session open. Use 'open <file>' first.");
       return;
     }
+    if (!ChunkProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      io.error(
+          "Backend '"
+              + backend.getId()
+              + "' does not support chunk queries. Use 'jafar' backend for full introspection.");
+      return;
+    }
 
     boolean summary = args.contains("--summary");
     String range = extractOption(new ArrayList<>(args), "--range");
@@ -1388,6 +1442,14 @@ public class CommandDispatcher {
       io.error("No session open. Use 'open <file>' first.");
       return;
     }
+    if (!ChunkProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      io.error(
+          "Backend '"
+              + backend.getId()
+              + "' does not support chunk queries. Use 'jafar' backend for full introspection.");
+      return;
+    }
     if (args.isEmpty()) {
       io.error("Usage: chunk <index> show [--header|--events|--constants]");
       return;
@@ -1418,6 +1480,14 @@ public class CommandDispatcher {
     Optional<SessionManager.SessionRef> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
+      return;
+    }
+    if (!ConstantPoolProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      io.error(
+          "Backend '"
+              + backend.getId()
+              + "' does not support constant pool queries. Use 'jafar' backend for full introspection.");
       return;
     }
 

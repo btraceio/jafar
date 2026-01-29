@@ -1,0 +1,62 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+def libraryName = "jfr-shell-jdk"
+// Independent versioning for backend plugins
+def component_version = "0.1.0-SNAPSHOT"
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Only depends on jfr-shell for the SPI interfaces
+    compileOnly project(':jfr-shell')
+
+    testImplementation project(':jfr-shell')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'JFR Shell JDK Backend',
+            'Implementation-Version': component_version
+        )
+    }
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'JDK JFR API backend for jfr-shell'
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'io.btrace'
+            artifactId = libraryName
+            version = component_version
+
+            from components.java
+
+            pom {
+                name = 'JFR Shell JDK Backend'
+                description = 'JDK JFR API backend for jfr-shell - provides alternative parser using standard JDK APIs'
+            }
+        }
+    }
+}
