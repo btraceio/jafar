@@ -78,7 +78,8 @@ shadowJar {
     group 'Build'
     archiveBaseName = libraryName
     archiveVersion = component_version
-    archiveClassifier.set('')
+    // Keep classifier so shadow JAR doesn't replace regular jar for inter-project deps
+    archiveClassifier.set('all')
 
     // Merge service files for ServiceLoader discovery
     mergeServiceFiles()
