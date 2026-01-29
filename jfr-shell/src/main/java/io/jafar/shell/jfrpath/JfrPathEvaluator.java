@@ -5,6 +5,8 @@ import static io.jafar.shell.jfrpath.JfrPath.*;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
@@ -125,6 +127,11 @@ public final class JfrPathEvaluator {
         return java.util.Collections.emptyList();
       }
     } else if (query.root == Root.CHUNKS) {
+      if (!ChunkProvider.isSupported()) {
+        JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+        throw new UnsupportedOperationException(
+            "Backend '" + backend.getId() + "' does not support chunk queries");
+      }
       if (!query.segments.isEmpty()) {
         // show chunks/0 - specific chunk by ID
         try {
@@ -146,6 +153,11 @@ public final class JfrPathEvaluator {
             session.getRecordingPath(), row -> matchesAll(row, query.predicates));
       }
     } else if (query.root == Root.CP) {
+      if (!ConstantPoolProvider.isSupported()) {
+        JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+        throw new UnsupportedOperationException(
+            "Backend '" + backend.getId() + "' does not support constant pool queries");
+      }
       if (!query.segments.isEmpty()) {
         String type = query.segments.get(0);
         return ConstantPoolProvider.loadEntries(
@@ -323,6 +335,11 @@ public final class JfrPathEvaluator {
       extractWithIndexing(meta, proj, out);
       return out;
     } else if (query.root == Root.CHUNKS) {
+      if (!ChunkProvider.isSupported()) {
+        JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+        throw new UnsupportedOperationException(
+            "Backend '" + backend.getId() + "' does not support chunk queries");
+      }
       if (query.segments.isEmpty()) {
         throw new IllegalArgumentException("No projection path provided after 'chunks'");
       }
@@ -333,6 +350,11 @@ public final class JfrPathEvaluator {
       }
       return out;
     } else if (query.root == Root.CP) {
+      if (!ConstantPoolProvider.isSupported()) {
+        JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+        throw new UnsupportedOperationException(
+            "Backend '" + backend.getId() + "' does not support constant pool queries");
+      }
       if (query.segments.isEmpty()) {
         // projection from summary rows
         List<Map<String, Object>> rows =
@@ -698,6 +720,14 @@ public final class JfrPathEvaluator {
 
   private List<Map<String, Object>> aggregateTimeRange(
       JFRSession session, Query query, JfrPath.TimeRangeOp op) throws Exception {
+
+    if (!ChunkProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      throw new UnsupportedOperationException(
+          "Backend '"
+              + backend.getId()
+              + "' does not support timeRange() - chunk metadata required");
+    }
 
     // Load chunk metadata to get timing info for conversion
     List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getRecordingPath());

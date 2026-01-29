@@ -19,6 +19,8 @@ build/
 .idea
 
 *.jfr
+# Exception: TCK test recording needed for CI
+!jfr-shell-tck/src/main/resources/tck-test.jfr
 **/.DS_Store
 
 harness*

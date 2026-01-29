@@ -1,0 +1,81 @@
+plugins {
+    id 'java-library'
+    id 'com.vanniktech.maven.publish'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+def libraryName = "jfr-shell-tck"
+def component_version = "0.1.0-SNAPSHOT"
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Depends on jfr-shell for the backend SPI
+    api project(':jfr-shell')
+
+    // JUnit for test execution
+    api 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+
+    // JUnit platform launcher for programmatic test execution
+    implementation 'org.junit.platform:junit-platform-launcher:1.10.2'
+    implementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'JFR Shell Backend TCK',
+            'Implementation-Version': component_version,
+            'Main-Class': 'io.jafar.shell.backend.tck.TckRunner'
+        )
+    }
+}
+
+shadowJar {
+    archiveClassifier.set('all')
+    mergeServiceFiles()
+}
+
+// Task to run TCK against a backend JAR (uses toolchain for correct Java version)
+tasks.register('runTck', JavaExec) {
+    group = 'Verification'
+    description = 'Run TCK against a backend JAR. Usage: ./gradlew :jfr-shell-tck:runTck -PbackendJar=path/to/backend.jar'
+
+    dependsOn shadowJar
+
+    mainClass = 'io.jafar.shell.backend.tck.TckRunner'
+    classpath = files(shadowJar.archiveFile)
+
+    // Use toolchain to ensure correct Java version
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+
+    doFirst {
+        if (!project.hasProperty('backendJar')) {
+            throw new GradleException("Required property 'backendJar' not set. Usage: ./gradlew :jfr-shell-tck:runTck -PbackendJar=path/to/backend.jar")
+        }
+        // Resolve path relative to root project
+        def jarPath = rootProject.file(project.property('backendJar')).absolutePath
+        args jarPath
+
+        // Optional test recording
+        if (project.hasProperty('testRecording')) {
+            def recordingPath = rootProject.file(project.property('testRecording')).absolutePath
+            args recordingPath
+        }
+    }
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Technology Compatibility Kit for JFR Shell backend plugins'

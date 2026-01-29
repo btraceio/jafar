@@ -476,17 +476,20 @@ jfr> show events/jdk.FileRead | top(10, by=bytes)
 jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 ```
 
-See **[Event Decoration and Joining](doc/jfr-shell-tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
+See **[Event Decoration and Joining](doc/tutorials/jfr-shell-tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
 ## Documentation
 
 ### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
-- **[doc/jfr-shell-tutorial.md](doc/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
+- **[doc/jfr-shell-architecture.md](doc/jfr-shell-architecture.md)** - Architecture overview with diagrams
+- **[doc/tutorials/jfr-shell-tutorial.md](doc/tutorials/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
 - **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
 - **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
 - **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
+- **[doc/jfr-shell-backends.md](doc/jfr-shell-backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
+- **[doc/tutorials/backend-quickstart.md](doc/tutorials/backend-quickstart.md)** - Build a custom backend in 10 minutes
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes

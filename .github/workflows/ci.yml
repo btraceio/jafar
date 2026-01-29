@@ -42,6 +42,7 @@ jobs:
       - name: Publish
         if: steps.version-check.outputs.is_snapshot == 'true'
         run: |
+          # Publish all modules (parser, tools, backend plugins) except jfr-shell
           ./gradlew publish publishToMavenLocal -x :jfr-shell:publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
           cd jafar-gradle-plugin
           ./gradlew publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon

@@ -74,6 +74,25 @@ jobs:
         run: |
           ./gradlew -p jafar-gradle-plugin --stacktrace --no-daemon test
 
+      - name: Build backend JARs for TCK (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          ./gradlew --stacktrace --no-daemon :jfr-shell-jafar:jar :jfr-shell-jdk:jar
+
+      - name: Run TCK against Jafar backend (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          JAFAR_JAR=$(ls jfr-shell-jafar/build/libs/jfr-shell-jafar-*.jar | grep -v sources | grep -v javadoc | head -1)
+          if [ -z "$JAFAR_JAR" ]; then echo "Error: Jafar backend JAR not found"; exit 1; fi
+          ./gradlew --stacktrace --no-daemon :jfr-shell-tck:runTck -PbackendJar="$JAFAR_JAR"
+
+      - name: Run TCK against JDK backend (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          JDK_JAR=$(ls jfr-shell-jdk/build/libs/jfr-shell-jdk-*.jar | grep -v sources | grep -v javadoc | head -1)
+          if [ -z "$JDK_JAR" ]; then echo "Error: JDK backend JAR not found"; exit 1; fi
+          ./gradlew --stacktrace --no-daemon :jfr-shell-tck:runTck -PbackendJar="$JDK_JAR"
+
       - name: Prepare artifacts (collect XML/HTML; add placeholder if empty)
         if: always()
         shell: bash

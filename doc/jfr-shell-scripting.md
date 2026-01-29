@@ -1216,6 +1216,6 @@ JFR Shell scripting provides:
 - ✅ **CI/CD Integration** - Automate performance testing and monitoring
 
 For more examples and tutorials, see:
-- [JFR Shell Tutorial](jfr-shell-tutorial.md)
+- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md)
 - [Example Scripts](../jfr-shell/src/main/resources/examples/)
 - [JfrPath Query Language](jfrpath.md)

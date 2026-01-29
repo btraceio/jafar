@@ -62,7 +62,7 @@ jfr-shell/build/jlink/bin/jfr-shell
 ```bash
 # Build and use fat JAR (requires Java 25+)
 ./gradlew :jfr-shell:shadowJar
-java -jar jfr-shell/build/libs/jfr-shell-all.jar
+java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 ```
 
 ### Interactive Session

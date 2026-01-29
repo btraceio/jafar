@@ -1,0 +1,40 @@
+plugins {
+    id 'java-library'
+    id 'com.vanniktech.maven.publish'
+}
+
+def libraryName = "jfr-shell-jafar"
+// Independent versioning for backend plugins
+def component_version = "0.1.0-SNAPSHOT"
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Only depends on jfr-shell for the SPI interfaces (compile-only)
+    compileOnly project(':jfr-shell')
+
+    // Depends on jafar parser for actual parsing implementation
+    implementation project(':parser')
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'JFR Shell Jafar Backend',
+            'Implementation-Version': component_version
+        )
+    }
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Jafar parser backend for jfr-shell - high-performance JFR parser'

@@ -1,6 +1,6 @@
 plugins {
     id 'java'
-    id 'com.gradleup.shadow' version '8.3.6'
+    id 'com.gradleup.shadow' version '9.0.0'
     id 'maven-publish'
     id 'com.vanniktech.maven.publish'
 }
@@ -26,6 +26,10 @@ dependencies {
     implementation project(':parser')
     implementation project(':tools')
 
+    // Backend plugins available for testing (discovered via ServiceLoader)
+    testRuntimeOnly project(':jfr-shell-jafar')
+    testRuntimeOnly project(':jfr-shell-jdk')
+
     // Command line parsing
     implementation 'info.picocli:picocli:4.7.5'
 
@@ -36,6 +40,17 @@ dependencies {
     // Utilities
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
+
+    // JSON processing for plugin metadata
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Maven Resolver for plugin downloads
+    implementation 'org.apache.maven:maven-resolver-provider:3.9.9'
+    implementation 'org.apache.maven.resolver:maven-resolver-api:1.9.18'
+    implementation 'org.apache.maven.resolver:maven-resolver-impl:1.9.18'
+    implementation 'org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18'
+    implementation 'org.apache.maven.resolver:maven-resolver-transport-http:1.9.18'
+    implementation 'org.apache.httpcomponents:httpclient:4.5.14'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
@@ -63,7 +78,16 @@ shadowJar {
     group 'Build'
     archiveBaseName = libraryName
     archiveVersion = component_version
-    archiveClassifier.set('')
+    // Keep classifier so shadow JAR doesn't replace regular jar for inter-project deps
+    archiveClassifier.set('all')
+
+    // Merge service files for ServiceLoader discovery
+    mergeServiceFiles()
+
+    // Relocate dependencies to avoid conflicts with plugin JARs
+    relocate 'org.apache.maven.resolver', 'io.jafar.shaded.resolver'
+    relocate 'org.apache.http', 'io.jafar.shaded.http'
+    relocate 'com.google.gson', 'io.jafar.shaded.gson'
 
     // Ensure main class is set
     manifest {
@@ -228,15 +252,18 @@ afterEvaluate {
     publishing {
         publications {
             maven(MavenPublication) {
-                // Remove default JAR artifacts
-                artifacts.clear()
-                // Use shadow JAR as main artifact
+                // Remove the regular jar artifact added by vanniktech plugin
+                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Add shadow JAR as main artifact
                 artifact(shadowJar) {
-                    classifier = ''
+                    classifier = ''  // Publish without classifier
                 }
-                artifact(sourcesJar)
-                artifact(javadocJar)
             }
         }
     }
+}
+
+// Disable Gradle module metadata for jfr-shell (it's a distribution, not a library)
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
 }

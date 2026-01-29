@@ -1,9 +1,12 @@
 package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
@@ -12,6 +15,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 import picocli.CommandLine;
 
 @CommandLine.Command(
@@ -37,13 +41,64 @@ public final class Main implements Callable<Integer> {
       description = "Suppress banner (interactive mode)")
   private boolean quiet;
 
+  @CommandLine.Option(
+      names = {"-b", "--backend"},
+      description = "JFR backend to use (default: auto-select by priority)")
+  private String backend;
+
+  @CommandLine.Option(
+      names = {"--plugin-dir"},
+      description = "Custom plugin directory (default: ~/.jfr-shell/plugins)")
+  private String pluginDir;
+
+  @CommandLine.Option(
+      names = {"--install-plugin"},
+      description = "Install a backend plugin from a local JAR file and exit")
+  private String installPlugin;
+
   public static void main(String[] args) {
+    // Parse CLI args to extract plugin-dir and install-plugin before initialization
+    Main main = new Main();
+    new CommandLine(main).parseArgs(args);
+
+    // Set plugin directory if specified
+    if (main.pluginDir != null) {
+      System.setProperty("jfr.shell.plugin.dir", main.pluginDir);
+    }
+
+    // Handle --install-plugin before normal initialization
+    if (main.installPlugin != null) {
+      Path jarPath = Paths.get(main.installPlugin);
+      try {
+        PluginManager.getInstance().installLocalPlugin(jarPath);
+        System.out.println("Plugin installed successfully from: " + jarPath);
+        System.out.println("Restart jfr-shell to use the new plugin.");
+        System.exit(0);
+      } catch (Exception e) {
+        System.err.println("Failed to install plugin: " + e.getMessage());
+        System.exit(1);
+      }
+    }
+
+    // Initialize plugin system before BackendRegistry is accessed
+    PluginManager.initialize();
+
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
   }
 
   @Override
   public Integer call() throws Exception {
+    // Set backend selection via system property before registry initializes
+    if (backend != null) {
+      System.setProperty("jfr.shell.backend", backend);
+    }
+
+    // Validate backend is available
+    if (!validateBackend()) {
+      return 1;
+    }
+
     // Default: run interactive mode
     try (Shell shell = new Shell()) {
       if (jfrFile != null) {
@@ -59,12 +114,93 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  private boolean validateBackend() {
+    try {
+      BackendRegistry registry = BackendRegistry.getInstance();
+      JfrBackend current = registry.getCurrent();
+
+      // If user specified a backend, verify it was selected
+      if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
+        // Check if plugin can be auto-installed
+        if (PluginManager.getInstance().canInstall(backend)) {
+          System.err.println("Backend not found: " + backend);
+          System.err.print("Downloading from Maven repositories... ");
+
+          try {
+            PluginManager.getInstance().installPlugin(backend);
+            System.err.println("done.");
+            System.err.println("Restart jfr-shell to use backend: " + backend);
+            return false;
+          } catch (Exception e) {
+            System.err.println("failed: " + e.getMessage());
+            return false;
+          }
+        }
+
+        System.err.println("Error: Backend not found: " + backend);
+        System.err.println(
+            "Available backends: "
+                + registry.listAll().stream()
+                    .map(JfrBackend::getId)
+                    .collect(Collectors.joining(", ")));
+        return false;
+      }
+      return true;
+    } catch (IllegalStateException e) {
+      System.err.println("Error: " + e.getMessage());
+      return false;
+    }
+  }
+
   // Base class for non-interactive commands
   abstract static class NonInteractiveCommand implements Callable<Integer> {
     @CommandLine.Parameters(index = "0", description = "Path to JFR recording file")
     protected String jfrFile;
 
+    @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use")
+    protected String backend;
+
     protected Integer executeNonInteractive(String command) {
+      // Set backend selection via system property before registry initializes
+      if (backend != null) {
+        System.setProperty("jfr.shell.backend", backend);
+      }
+
+      // Validate backend
+      try {
+        BackendRegistry registry = BackendRegistry.getInstance();
+        JfrBackend current = registry.getCurrent();
+        if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
+          // Check if plugin can be auto-installed
+          if (PluginManager.getInstance().canInstall(backend)) {
+            System.err.println("Backend not found: " + backend);
+            System.err.print("Downloading from Maven repositories... ");
+
+            try {
+              PluginManager.getInstance().installPlugin(backend);
+              System.err.println("done.");
+              System.err.println("Restart jfr-shell to use backend: " + backend);
+              return 1;
+            } catch (Exception e) {
+              System.err.println("failed: " + e.getMessage());
+              return 1;
+            }
+          }
+
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Available backends: "
+                  + registry.listAll().stream()
+                      .map(JfrBackend::getId)
+                      .collect(Collectors.joining(", ")));
+          return 1;
+        }
+      } catch (IllegalStateException e) {
+        System.err.println("Error: " + e.getMessage());
+        return 1;
+      }
       Path path = Paths.get(jfrFile);
       if (!Files.exists(path)) {
         System.err.println("Error: JFR file not found: " + jfrFile);
@@ -287,8 +423,51 @@ public final class Main implements Callable<Integer> {
         description = "Continue execution on command failures")
     private boolean continueOnError;
 
+    @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use")
+    private String backend;
+
     @Override
     public Integer call() {
+      // Set backend selection via system property before registry initializes
+      if (backend != null) {
+        System.setProperty("jfr.shell.backend", backend);
+      }
+
+      // Validate backend
+      try {
+        BackendRegistry registry = BackendRegistry.getInstance();
+        JfrBackend current = registry.getCurrent();
+        if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
+          // Check if plugin can be auto-installed
+          if (PluginManager.getInstance().canInstall(backend)) {
+            System.err.println("Backend not found: " + backend);
+            System.err.print("Downloading from Maven repositories... ");
+
+            try {
+              PluginManager.getInstance().installPlugin(backend);
+              System.err.println("done.");
+              System.err.println("Restart jfr-shell to use backend: " + backend);
+              return 1;
+            } catch (Exception e) {
+              System.err.println("failed: " + e.getMessage());
+              return 1;
+            }
+          }
+
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Available backends: "
+                  + registry.listAll().stream()
+                      .map(JfrBackend::getId)
+                      .collect(Collectors.joining(", ")));
+          return 1;
+        }
+      } catch (IllegalStateException e) {
+        System.err.println("Error: " + e.getMessage());
+        return 1;
+      }
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
 
@@ -370,6 +549,11 @@ public final class Main implements Callable<Integer> {
         // Print captured output
         if (output.length() > 0) {
           System.out.print(output.toString());
+        }
+
+        // Print any captured error messages (from io.error())
+        if (errors.length() > 0) {
+          System.err.print(errors.toString());
         }
 
         // Handle errors

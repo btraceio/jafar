@@ -1,0 +1,16 @@
+{
+  "plugins": {
+    "jdk": {
+      "groupId": "io.btrace",
+      "artifactId": "jfr-shell-jdk",
+      "latestVersion": "0.1.0-SNAPSHOT",
+      "repository": "sonatype-snapshots"
+    },
+    "jafar": {
+      "groupId": "io.btrace",
+      "artifactId": "jfr-shell-jafar",
+      "latestVersion": "0.1.0-SNAPSHOT",
+      "repository": "sonatype-snapshots"
+    }
+  }
+}
