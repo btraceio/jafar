@@ -368,4 +368,4 @@ jfr-shell-tck/                      # Technology Compatibility Kit
 
 - [JFR Shell Usage Guide](jfr_shell_usage.md)
 - [JfrPath Query Language](jfrpath.md)
-- [JFR Shell Tutorial](jfr-shell-tutorial.md)
+- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md)
