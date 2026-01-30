@@ -1,0 +1,46 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
+}
+
+def libraryName = "hdump-parser"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+
+    // Fast primitive collections (same as parser module)
+    implementation 'it.unimi.dsi:fastutil:8.5.12'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'org.slf4j:slf4j-simple:2.0.5'
+}
+
+test {
+    useJUnitPlatform()
+    // Heap dumps can be large - allow more memory for tests
+    maxHeapSize = '2g'
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Fast HPROF heap dump parser with minimal API'
+
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-hdump-parser', version.toString())
+}

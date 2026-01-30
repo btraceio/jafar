@@ -1,7 +1,6 @@
 package io.jafar.shell.core;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Interface for domain-specific query evaluators. Each module (JFR, heap dump) provides its own
