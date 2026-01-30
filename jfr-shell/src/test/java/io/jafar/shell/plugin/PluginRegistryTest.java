@@ -19,11 +19,12 @@ class PluginRegistryTest {
   private PluginStorageManager storageManager;
   private PluginRegistry registry;
   private Path mockMavenRepo;
+  private Path mockMavenRepoRoot;
 
   @BeforeEach
   void setUp() throws IOException {
     // Create mock Maven repository structure
-    Path mockMavenRepoRoot = tempDir.resolve(".m2/repository");
+    mockMavenRepoRoot = tempDir.resolve(".m2/repository");
     mockMavenRepo = mockMavenRepoRoot.resolve("io/btrace");
     Files.createDirectories(mockMavenRepo);
 
@@ -50,7 +51,7 @@ class PluginRegistryTest {
     Files.createDirectories(versionDir);
 
     // Create new registry to pick up the artifact
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Verify plugin is discovered
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -69,7 +70,7 @@ class PluginRegistryTest {
     Files.createDirectories(artifactDir.resolve("0.8.0"));
 
     // Create new registry to discover artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
     assertTrue(result.isPresent());
@@ -90,7 +91,7 @@ class PluginRegistryTest {
     Files.createDirectories(mockMavenRepo.resolve("jafar-parser/0.9.0"));
 
     // Create new registry to scan artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Should only find jfr-shell-* artifacts
     assertEquals(Optional.empty(), registry.get("some-other-artifact"));
@@ -105,7 +106,7 @@ class PluginRegistryTest {
     Files.createDirectories(mockMavenRepo.resolve("jfr-shell-custom-backend/1.0.0"));
 
     // Create new registry to discover artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Verify plugin IDs are extracted correctly (strip "jfr-shell-" prefix)
     assertTrue(registry.get("jdk").isPresent());
@@ -158,7 +159,7 @@ class PluginRegistryTest {
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
     // Create new registry to load cached JSON
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Verify remote plugins are parsed correctly
     Optional<PluginRegistry.PluginDefinition> jdk = registry.get("jdk");
@@ -199,7 +200,7 @@ class PluginRegistryTest {
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
     // Create new registry
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Remote should take priority
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -214,7 +215,7 @@ class PluginRegistryTest {
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
     // Should not crash, just skip remote plugins
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Should still work with local Maven discovery
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -233,7 +234,7 @@ class PluginRegistryTest {
     when(storageManager.loadRegistryCache()).thenReturn(emptyJson);
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
-    registry = new PluginRegistry(storageManager, mockMavenRepo.getParent().getParent());
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
 
     // Should work but find no plugins
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
