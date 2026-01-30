@@ -14,45 +14,84 @@ jobs:
   sync-pending-updates:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main branch
+      - name: Get latest release
+        id: latest-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            if (releases.data.length === 0) {
+              console.log("No releases found");
+              return { version: null };
+            }
+
+            const latestRelease = releases.data[0];
+            const version = latestRelease.tag_name.replace(/^v/, '');
+            const createdAt = latestRelease.created_at;
+
+            console.log(`Latest release: ${latestRelease.tag_name} (${version})`);
+            console.log(`Created at: ${createdAt}`);
+
+            core.setOutput('version', version);
+            core.setOutput('tag', latestRelease.tag_name);
+            core.setOutput('created_at', createdAt);
+
+            return { version, tag: latestRelease.tag_name, created_at: createdAt };
+
+      - name: Checkout jbang-catalog
+        if: steps.latest-release.outputs.version != ''
         uses: actions/checkout@v4
         with:
-          ref: main
+          repository: btraceio/jbang-catalog
+          token: ${{ secrets.JBANG_CATALOG_PAT || secrets.GITHUB_TOKEN }}
+          path: catalog
 
-      - name: Check for pending updates
-        id: check-pending
+      - name: Check catalog version
+        if: steps.latest-release.outputs.version != ''
+        id: catalog-version
         run: |
-          if [ ! -f .github/pending-jbang-updates.json ]; then
-            echo "✅ No pending JBang catalog updates"
-            echo "has-pending=false" >> $GITHUB_OUTPUT
-            exit 0
+          cd catalog
+
+          # Extract current version from jbang-catalog.json
+          CATALOG_VERSION=$(grep -o 'io.btrace:jafar-shell:[^"]*' jbang-catalog.json | cut -d: -f3)
+          echo "Current JBang catalog version: $CATALOG_VERSION"
+          echo "catalog-version=$CATALOG_VERSION" >> $GITHUB_OUTPUT
+
+          RELEASE_VERSION="${{ steps.latest-release.outputs.version }}"
+          echo "Latest GitHub release version: $RELEASE_VERSION"
+
+          if [ "$CATALOG_VERSION" = "$RELEASE_VERSION" ]; then
+            echo "✅ JBang catalog is up to date"
+            echo "needs-update=false" >> $GITHUB_OUTPUT
+          else
+            echo "📦 JBang catalog needs update: $CATALOG_VERSION -> $RELEASE_VERSION"
+            echo "needs-update=true" >> $GITHUB_OUTPUT
           fi
 
-          echo "📋 Found pending update file"
-          cat .github/pending-jbang-updates.json
-          echo "has-pending=true" >> $GITHUB_OUTPUT
-
-      - name: Process pending update
-        if: steps.check-pending.outputs.has-pending == 'true'
+      - name: Check Maven Central and release age
+        if: steps.catalog-version.outputs.needs-update == 'true'
         id: process
         run: |
-          # Parse the pending update file
-          VERSION=$(jq -r '.version' .github/pending-jbang-updates.json)
-          TAG=$(jq -r '.tag' .github/pending-jbang-updates.json)
-          TIMESTAMP=$(jq -r '.timestamp' .github/pending-jbang-updates.json)
-          ARTIFACT_URL=$(jq -r '.artifact_url' .github/pending-jbang-updates.json)
+          VERSION="${{ steps.latest-release.outputs.version }}"
+          TAG="${{ steps.latest-release.outputs.tag }}"
+          CREATED_AT="${{ steps.latest-release.outputs.created_at }}"
+          ARTIFACT_URL="https://repo1.maven.org/maven2/io/btrace/jafar-shell/${VERSION}/jafar-shell-${VERSION}.pom"
 
-          echo "Processing pending update for version $VERSION"
-          echo "Created at: $TIMESTAMP"
+          echo "Processing update for version $VERSION"
+          echo "Release created at: $CREATED_AT"
 
-          # Calculate age of pending update
-          PENDING_TIMESTAMP=$(date -d "$TIMESTAMP" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$TIMESTAMP" +%s)
+          # Calculate age of release
+          RELEASE_TIMESTAMP=$(date -d "$CREATED_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CREATED_AT" +%s)
           CURRENT_TIMESTAMP=$(date +%s)
-          AGE_HOURS=$(( ($CURRENT_TIMESTAMP - $PENDING_TIMESTAMP) / 3600 ))
+          AGE_HOURS=$(( ($CURRENT_TIMESTAMP - $RELEASE_TIMESTAMP) / 3600 ))
 
-          echo "Pending update age: ${AGE_HOURS} hours"
+          echo "Release age: ${AGE_HOURS} hours"
 
-          # Check Maven Central availability (3 attempts max for scheduled check)
+          # Check Maven Central availability (3 attempts with short delays)
           MAX_ATTEMPTS=3
           ATTEMPT=1
           AVAILABLE=false
@@ -65,7 +104,7 @@ jobs:
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$ARTIFACT_URL")
 
             if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ Artifact is now available on Maven Central!"
+              echo "✅ Artifact is available on Maven Central!"
               AVAILABLE=true
               break
             fi
@@ -84,23 +123,16 @@ jobs:
             echo "Action: CREATE_ISSUE"
             echo "action=create_issue" >> $GITHUB_OUTPUT
           else
-            echo "⏳ Still waiting (${AGE_HOURS}h < 24h)"
+            echo "⏳ Still waiting for Maven Central sync (${AGE_HOURS}h < 24h)"
             echo "Action: WAIT"
             echo "action=wait" >> $GITHUB_OUTPUT
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "created_at=$CREATED_AT" >> $GITHUB_OUTPUT
           echo "age_hours=$AGE_HOURS" >> $GITHUB_OUTPUT
-
-      - name: Checkout jbang-catalog
-        if: steps.process.outputs.action == 'update'
-        uses: actions/checkout@v4
-        with:
-          repository: btraceio/jbang-catalog
-          token: ${{ secrets.JBANG_CATALOG_PAT || secrets.GITHUB_TOKEN }}
-          path: catalog
+          echo "artifact_url=$ARTIFACT_URL" >> $GITHUB_OUTPUT
 
       - name: Update catalog files
         if: steps.process.outputs.action == 'update'
@@ -145,17 +177,6 @@ jobs:
             echo "⚠️ No changes to commit"
           fi
 
-      - name: Remove pending update file
-        if: steps.process.outputs.action == 'update'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          rm .github/pending-jbang-updates.json
-          git add .github/pending-jbang-updates.json
-          git commit -m "Remove pending JBang update for ${{ steps.process.outputs.version }}"
-          git push
-
       - name: Create issue for failed Maven Central sync
         if: steps.process.outputs.action == 'create_issue'
         uses: actions/github-script@v7
@@ -163,8 +184,9 @@ jobs:
           script: |
             const version = '${{ steps.process.outputs.version }}';
             const tag = '${{ steps.process.outputs.tag }}';
-            const timestamp = '${{ steps.process.outputs.timestamp }}';
+            const createdAt = '${{ steps.process.outputs.created_at }}';
             const ageHours = '${{ steps.process.outputs.age_hours }}';
+            const artifactUrl = '${{ steps.process.outputs.artifact_url }}';
 
             const body = `## Maven Central Sync Failure
 
@@ -173,25 +195,21 @@ jobs:
             **Details:**
             - Version: \`${version}\`
             - Tag: \`${tag}\`
-            - Release timestamp: ${timestamp}
+            - Release created: ${createdAt}
             - Age: ${ageHours} hours
             - Artifact: \`io.btrace:jafar-shell:${version}\`
 
             **Expected URL:**
-            https://repo1.maven.org/maven2/io/btrace/jafar-shell/${version}/jafar-shell-${version}.pom
+            ${artifactUrl}
 
             **Actions required:**
             1. Check [Sonatype Central Portal](https://central.sonatype.com/publishing) for publishing status
             2. Verify the artifact was successfully uploaded
             3. Check for any validation errors or rejections
-            4. Once the issue is resolved and the artifact appears on Maven Central, manually update the [JBang catalog](https://github.com/btraceio/jbang-catalog):
-               - Update \`jbang-catalog.json\`
-               - Update \`jafar-shell.java\`
-               - Change version references from the current version to \`${version}\`
+            4. Once resolved, the \`sync-jbang-catalog\` workflow will automatically update the JBang catalog on its next run
 
             **Related:**
             - Release: https://github.com/${{ github.repository }}/releases/tag/${tag}
-            - Pending update tracking file: \`.github/pending-jbang-updates.json\`
 
             This issue was automatically created by the \`sync-jbang-catalog\` workflow.`;
 
@@ -202,14 +220,3 @@ jobs:
               body: body,
               labels: ['release', 'maven-central']
             });
-
-      - name: Remove pending file after issue creation
-        if: steps.process.outputs.action == 'create_issue'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          rm .github/pending-jbang-updates.json
-          git add .github/pending-jbang-updates.json
-          git commit -m "Remove pending update after creating issue for ${{ steps.process.outputs.version }}"
-          git push
