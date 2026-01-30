@@ -7,9 +7,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to update in JBang catalog (e.g., 0.9.0)'
+        description: 'Version to publish/update (e.g., 0.9.0)'
         required: true
         type: string
+      publish_backends_only:
+        description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar)'
+        required: false
+        type: boolean
+        default: false
+      update_catalog_only:
+        description: 'Update JBang catalog only (no publishing)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,6 +34,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       version_tag: ${{ steps.version.outputs.tag }}
       is_manual: ${{ steps.version.outputs.is_manual }}
+      publish_backends_only: ${{ steps.version.outputs.publish_backends_only }}
+      update_catalog_only: ${{ steps.version.outputs.update_catalog_only }}
     steps:
       - name: Extract version
         id: version
@@ -33,18 +45,31 @@ jobs:
             VERSION="${{ github.event.inputs.version }}"
             TAG="v${VERSION}"
             IS_MANUAL="true"
-            echo "Manual catalog update for version: $VERSION"
+            PUBLISH_BACKENDS_ONLY="${{ github.event.inputs.publish_backends_only }}"
+            UPDATE_CATALOG_ONLY="${{ github.event.inputs.update_catalog_only }}"
+
+            if [ "$PUBLISH_BACKENDS_ONLY" = "true" ]; then
+              echo "Manual backend artifacts publishing for version: $VERSION"
+            elif [ "$UPDATE_CATALOG_ONLY" = "true" ]; then
+              echo "Manual catalog update for version: $VERSION"
+            else
+              echo "Manual workflow trigger for version: $VERSION"
+            fi
           else
             # Tag trigger - extract from tag
             TAG="${{ github.ref_name }}"
             VERSION="${TAG#v}"
             IS_MANUAL="false"
+            PUBLISH_BACKENDS_ONLY="false"
+            UPDATE_CATALOG_ONLY="false"
             echo "Release version: $VERSION"
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "is_manual=$IS_MANUAL" >> $GITHUB_OUTPUT
+          echo "publish_backends_only=$PUBLISH_BACKENDS_ONLY" >> $GITHUB_OUTPUT
+          echo "update_catalog_only=$UPDATE_CATALOG_ONLY" >> $GITHUB_OUTPUT
 
   # Publish core artifacts to Sonatype
   publish-maven:
@@ -102,13 +127,46 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
 
+  # Publish backend plugins only (for manual emergency releases)
+  publish-backends-only:
+    needs: prepare
+    if: needs.prepare.outputs.publish_backends_only == 'true'
+    runs-on: ubuntu-latest
+    env:
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALUSERNAME }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALPASSWORD }}
+      ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEY }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYID }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.version_tag }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Publish backend plugins to Maven Central
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Publishing backend plugins for version $VERSION"
+          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          echo "✅ Backend plugins published successfully"
+
   # Update JBang catalog automatically or manually
   update-jbang-catalog:
     needs: prepare
     # Run after publish-maven on tag trigger, or independently on manual trigger
     if: |
       always() && !cancelled() &&
-      (needs.prepare.outputs.is_manual == 'true' || needs.publish-maven.result == 'success')
+      (needs.prepare.outputs.update_catalog_only == 'true' ||
+       (needs.prepare.outputs.is_manual == 'false' && needs.publish-maven.result == 'success'))
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Maven Central availability
