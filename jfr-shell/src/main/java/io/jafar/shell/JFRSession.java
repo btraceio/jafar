@@ -10,12 +10,14 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,7 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Represents an active JFR analysis session with a loaded recording. Manages the parser, context,
  * and provides statistics about the recording.
  */
-public final class JFRSession implements AutoCloseable {
+public final class JFRSession implements Session {
 
   private final Path recordingPath;
   private final ParsingContext parsingContext;
@@ -359,7 +361,37 @@ public final class JFRSession implements AutoCloseable {
     return "JFRSession[" + recordingPath + "]";
   }
 
-  /** Returns whether this session has been closed. */
+  // === Session interface implementation ===
+
+  @Override
+  public String getType() {
+    return "jfr";
+  }
+
+  @Override
+  public Path getFilePath() {
+    return recordingPath;
+  }
+
+  @Override
+  public Set<String> getAvailableTypes() {
+    return getAvailableEventTypes();
+  }
+
+  @Override
+  public Map<String, Object> getStatistics() {
+    Map<String, Object> stats = new LinkedHashMap<>();
+    stats.put("path", recordingPath.toString());
+    stats.put("totalEvents", totalEvents.get());
+    stats.put("handlerCount", handlerCount.get());
+    stats.put("eventTypes", eventTypeCounts.size());
+    stats.put("metadataTypes", metadataTypes.size());
+    stats.put("hasRun", hasRun);
+    stats.put("uptime", parsingContext.uptime());
+    return stats;
+  }
+
+  @Override
   public boolean isClosed() {
     return closed;
   }

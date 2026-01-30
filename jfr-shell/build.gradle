@@ -23,6 +23,7 @@ java {
 }
 
 dependencies {
+    implementation project(':shell-core')
     implementation project(':parser')
     implementation project(':tools')
 
