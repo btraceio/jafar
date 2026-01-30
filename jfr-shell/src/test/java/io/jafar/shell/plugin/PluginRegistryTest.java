@@ -30,9 +30,10 @@ class PluginRegistryTest {
 
     storageManager = mock(PluginStorageManager.class);
 
-    // Mock storage manager to return no cached data
-    when(storageManager.loadRegistryCache()).thenReturn(null);
-    when(storageManager.getRegistryCacheTime()).thenReturn(null);
+    // Mock storage manager to return empty remote registry (prevents GitHub fetch)
+    String emptyRegistry = "{\"plugins\": {}}";
+    when(storageManager.loadRegistryCache()).thenReturn(emptyRegistry);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
     // Pass custom Maven repository path to avoid system property manipulation
     registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
