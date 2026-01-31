@@ -83,8 +83,7 @@ public final class HdumpModule implements ShellModule {
 
   @Override
   public QueryEvaluator getQueryEvaluator() {
-    // TODO: Implement HdumpPath query language
-    return null;
+    return new HdumpQueryEvaluator();
   }
 
   @Override
