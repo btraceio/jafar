@@ -37,10 +37,24 @@ public interface GcRoot {
   /** Returns the object this root points to, or null if not found. */
   HeapObject getObject();
 
-  /** For JAVA_FRAME roots, returns the thread serial number. Returns -1 otherwise. */
+  /**
+   * Returns the thread serial number for this root.
+   *
+   * <p>This value is available for JAVA_FRAME, JNI_LOCAL, NATIVE_STACK, and THREAD_BLOCK root
+   * types. For other types, returns -1.
+   *
+   * @return thread serial number, or -1 if not applicable
+   */
   int getThreadSerial();
 
-  /** For JAVA_FRAME roots, returns the frame number in the stack. Returns -1 otherwise. */
+  /**
+   * Returns the frame number in the stack for this root.
+   *
+   * <p>This value is available for JAVA_FRAME and JNI_LOCAL root types. For other types, returns
+   * -1.
+   *
+   * @return frame number, or -1 if not applicable
+   */
   int getFrameNumber();
 
   /** For THREAD_OBJ roots, returns the thread serial number. Returns -1 otherwise. */

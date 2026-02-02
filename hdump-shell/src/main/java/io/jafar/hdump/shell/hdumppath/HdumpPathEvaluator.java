@@ -378,11 +378,19 @@ public final class HdumpPathEvaluator {
     return stream.limit(op.n()).collect(Collectors.toList());
   }
 
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings({"unchecked", "rawtypes"})
   private static Comparable<Object> toComparable(Object value) {
-    if (value == null) return o -> 1;
-    if (value instanceof Comparable<?>) {
-      return (Comparable<Object>) value;
+    if (value == null) return o -> 1; // nulls sort last
+    if (value instanceof Comparable comp) {
+      // Wrap to handle type mismatch gracefully (e.g., comparing Integer with String)
+      return o -> {
+        if (o == null) return -1;
+        if (value.getClass().isInstance(o)) {
+          return comp.compareTo(o);
+        }
+        // Fall back to string comparison for incompatible types
+        return String.valueOf(value).compareTo(String.valueOf(o));
+      };
     }
     return o -> String.valueOf(value).compareTo(String.valueOf(o));
   }

@@ -56,7 +56,11 @@ public interface HeapObject {
   /**
    * Returns objects that directly reference this object.
    *
-   * @return stream of referencing objects
+   * <p><strong>Note:</strong> This method requires the heap dump to be parsed with {@link
+   * HeapDumpParser.ParserOptions#trackInboundRefs()} enabled. If inbound reference tracking was not
+   * enabled, this method returns an empty stream.
+   *
+   * @return stream of referencing objects, or empty stream if tracking not enabled
    */
   Stream<HeapObject> getInboundReferences();
 

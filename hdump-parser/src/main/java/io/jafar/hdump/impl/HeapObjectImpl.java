@@ -262,8 +262,8 @@ final class HeapObjectImpl implements HeapObject {
       // Latin1
       return new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
     } else {
-      // UTF16
-      return new String(bytes, java.nio.charset.StandardCharsets.UTF_16);
+      // UTF16 - JVM uses big-endian internally
+      return new String(bytes, java.nio.charset.StandardCharsets.UTF_16BE);
     }
   }
 

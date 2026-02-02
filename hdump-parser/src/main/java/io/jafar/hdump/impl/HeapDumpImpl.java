@@ -51,7 +51,7 @@ public final class HeapDumpImpl implements HeapDump {
   // Statistics
   private int objectCount = 0;
   private long totalHeapSize = 0;
-  private boolean dominatorsComputed = false;
+  private volatile boolean dominatorsComputed = false;
 
   private HeapDumpImpl(Path path, HprofReader reader, ParserOptions options) {
     this.path = path;

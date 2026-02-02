@@ -3,6 +3,7 @@ package io.jafar.hdump.api;
 import io.jafar.hdump.impl.HeapDumpImpl;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /**
  * Main entry point for parsing HPROF heap dump files.
@@ -23,6 +24,14 @@ import java.nio.file.Path;
  *         .forEach(cls -> System.out.println(cls.getName() + ": " + cls.getInstanceCount()));
  * }
  * }</pre>
+ *
+ * <p><strong>Limitations:</strong>
+ *
+ * <ul>
+ *   <li>Maximum file size: 2GB (uses memory-mapped I/O with 32-bit addressing)
+ *   <li>Thread safety: The returned {@link HeapDump} and its objects are not thread-safe. Access
+ *       from multiple threads requires external synchronization.
+ * </ul>
  */
 public final class HeapDumpParser {
 
@@ -34,8 +43,10 @@ public final class HeapDumpParser {
    * @param path path to the HPROF file
    * @return parsed heap dump
    * @throws IOException if the file cannot be read or has invalid format
+   * @throws NullPointerException if path is null
    */
   public static HeapDump parse(Path path) throws IOException {
+    Objects.requireNonNull(path, "path must not be null");
     return parse(path, ParserOptions.DEFAULT);
   }
 
@@ -46,8 +57,11 @@ public final class HeapDumpParser {
    * @param options parser options
    * @return parsed heap dump
    * @throws IOException if the file cannot be read or has invalid format
+   * @throws NullPointerException if path or options is null
    */
   public static HeapDump parse(Path path, ParserOptions options) throws IOException {
+    Objects.requireNonNull(path, "path must not be null");
+    Objects.requireNonNull(options, "options must not be null");
     return HeapDumpImpl.parse(path, options);
   }
 

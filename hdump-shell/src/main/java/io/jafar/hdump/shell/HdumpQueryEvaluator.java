@@ -83,7 +83,13 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
   @Override
   public VariableStore.LazyValue createLazyValue(
       Session session, Object query, String queryString) {
-    return new LazyHdumpValue((HeapSession) session, (Query) query, queryString);
+    if (!(session instanceof HeapSession heapSession)) {
+      throw new IllegalArgumentException("HdumpQueryEvaluator requires a HeapSession");
+    }
+    if (!(query instanceof Query hdumpQuery)) {
+      throw new IllegalArgumentException("Expected HdumpPath.Query, got " + query.getClass());
+    }
+    return new LazyHdumpValue(heapSession, hdumpQuery, queryString);
   }
 
   /** Lazy value that evaluates HdumpPath query on demand. */

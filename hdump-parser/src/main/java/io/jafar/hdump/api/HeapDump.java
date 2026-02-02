@@ -3,6 +3,7 @@ package io.jafar.hdump.api;
 import java.io.Closeable;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -86,7 +87,12 @@ public interface HeapDump extends Closeable {
 
   /**
    * Computes dominator tree and retained sizes for all objects. This is an expensive operation but
-   * enables retained size queries.
+   * enables retained size queries via {@link HeapObject#getRetainedSize()}.
+   *
+   * <p>This method is idempotent - calling it multiple times has no additional effect. The
+   * computation is not thread-safe; callers must ensure no concurrent access during computation.
+   *
+   * @see #hasDominators()
    */
   void computeDominators();
 
@@ -96,8 +102,11 @@ public interface HeapDump extends Closeable {
   /**
    * Finds the shortest path from any GC root to the given object.
    *
+   * <p><strong>Note:</strong> This method is not yet implemented and currently returns an empty
+   * list.
+   *
    * @param obj the target object
-   * @return list of objects from GC root to target, or empty if not reachable
+   * @return list of objects from GC root to target, or empty list (currently always empty)
    */
-  java.util.List<HeapObject> findPathToGcRoot(HeapObject obj);
+  List<HeapObject> findPathToGcRoot(HeapObject obj);
 }
