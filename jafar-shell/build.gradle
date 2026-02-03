@@ -1,0 +1,44 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+group = 'io.btrace'
+version = rootProject.version
+
+repositories {
+    mavenCentral()
+    maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    implementation project(':shell-core')
+    implementation project(':jfr-shell')
+    implementation project(':hdump-shell')
+
+    implementation 'info.picocli:picocli:4.7.5'
+    implementation 'org.jline:jline:3.26.1'
+    implementation 'org.slf4j:slf4j-api:2.0.12'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.3'
+}
+
+application {
+    mainClass = 'io.jafar.shell.Main'
+}
+
+shadowJar {
+    archiveBaseName = 'jafar-shell'
+    archiveClassifier = 'all'
+    mergeServiceFiles()
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

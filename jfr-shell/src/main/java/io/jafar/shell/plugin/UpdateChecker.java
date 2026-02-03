@@ -64,7 +64,11 @@ final class UpdateChecker {
               });
     }
 
-    log.info("Found {} plugin updates", updates.size());
+    if (updates.isEmpty()) {
+      log.debug("No plugin updates available");
+    } else {
+      log.info("Found {} plugin update(s)", updates.size());
+    }
     return updates;
   }
 

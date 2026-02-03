@@ -1,5 +1,6 @@
 package io.jafar.shell.cli.completion;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
@@ -35,14 +36,14 @@ public final class MetadataService {
 
   /** Get the current recording path, or null if no session. */
   public Path getRecordingPath() {
-    return sessions.getCurrent().map(entry -> entry.session.getRecordingPath()).orElse(null);
+    return sessions.getCurrent().map(entry -> entry.session.getFilePath()).orElse(null);
   }
 
   /** Get all available event type names from the current session. */
   public Set<String> getEventTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableEventTypes())
+        .map(entry -> ((JFRSession) entry.session).getAvailableEventTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -50,7 +51,7 @@ public final class MetadataService {
   public Set<String> getAllMetadataTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAllMetadataTypes())
+        .map(entry -> ((JFRSession) entry.session).getAllMetadataTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -58,7 +59,7 @@ public final class MetadataService {
   public Set<String> getConstantPoolTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableConstantPoolTypes())
+        .map(entry -> ((JFRSession) entry.session).getAvailableConstantPoolTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -66,7 +67,7 @@ public final class MetadataService {
   public List<Integer> getChunkIds() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableChunkIds())
+        .map(entry -> ((JFRSession) entry.session).getAvailableChunkIds())
         .orElse(Collections.emptyList());
   }
 

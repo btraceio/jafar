@@ -36,7 +36,7 @@ public final class Shell implements AutoCloseable {
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
     ParsingContext ctx = ParsingContext.create();
-    this.sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    this.sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     java.nio.file.Path histPath =
         java.nio.file.Paths.get(System.getProperty("user.home"), ".jfr-shell", "history");
     try {
@@ -395,7 +395,7 @@ public final class Shell implements AutoCloseable {
           .getCurrent()
           .ifPresent(
               ref -> {
-                Path recordingPath = ref.session.getRecordingPath();
+                Path recordingPath = ref.session.getFilePath();
                 effectiveArgs.add(0, recordingPath.toString());
                 terminal.writer().println("Using session recording: " + recordingPath);
                 terminal.flush();

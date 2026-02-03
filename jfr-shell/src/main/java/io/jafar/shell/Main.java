@@ -209,7 +209,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+        SessionManager sessions = new SessionManager((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
 
@@ -482,7 +482,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+        SessionManager sessions = new SessionManager((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
 

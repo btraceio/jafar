@@ -268,8 +268,16 @@ public final class ConditionEvaluator {
       return false;
     }
 
-    if (val instanceof VariableStore.LazyQueryValue lqv) {
-      return lqv.size() == 0;
+    if (val instanceof LazyQueryValue lqv) {
+      try {
+        Object result = lqv.get();
+        if (result instanceof java.util.Collection<?> c) {
+          return c.isEmpty();
+        }
+        return result == null;
+      } catch (Exception e) {
+        return true; // Treat evaluation error as empty
+      }
     }
 
     return true;
