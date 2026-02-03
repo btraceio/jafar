@@ -1,5 +1,7 @@
 package io.jafar.shell.plugin;
 
+import io.jafar.shell.plugin.DependencyResolver.DependencyException;
+import io.jafar.shell.plugin.DependencyResolver.ResolutionResult;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -9,8 +11,11 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +50,83 @@ final class PluginInstaller {
   }
 
   /**
-   * Install a plugin from Maven repositories.
+   * Install a plugin with dependency resolution.
+   *
+   * @param pluginId Plugin identifier (e.g., "jdk")
+   * @param confirmRecommendations Callback to confirm recommended plugins (returns which to
+   *     install)
+   * @param progressCallback Callback for installation progress messages
+   * @return List of installed plugins (in installation order)
+   * @throws PluginInstallException if installation fails
+   */
+  List<String> installWithDependencies(
+      String pluginId,
+      java.util.function.Function<List<String>, List<String>> confirmRecommendations,
+      Consumer<String> progressCallback)
+      throws PluginInstallException {
+
+    Map<String, PluginMetadata> installed;
+    try {
+      installed = storageManager.loadInstalled();
+    } catch (IOException e) {
+      throw new PluginInstallException("Failed to load installed plugins: " + e.getMessage(), e);
+    }
+    DependencyResolver resolver = new DependencyResolver(registry, installed);
+
+    // Resolve dependencies
+    ResolutionResult resolution;
+    try {
+      resolution = resolver.resolve(pluginId);
+    } catch (DependencyException e) {
+      throw new PluginInstallException("Dependency resolution failed: " + e.getMessage(), e);
+    }
+
+    List<String> toInstall = new ArrayList<>(resolution.installOrder());
+
+    // Handle recommendations
+    if (resolution.hasRecommendations() && confirmRecommendations != null) {
+      List<String> acceptedRecs = confirmRecommendations.apply(resolution.recommended());
+      if (acceptedRecs != null && !acceptedRecs.isEmpty()) {
+        // Resolve dependencies for accepted recommendations too
+        for (String rec : acceptedRecs) {
+          try {
+            ResolutionResult recResolution = resolver.resolve(rec);
+            for (String dep : recResolution.installOrder()) {
+              if (!toInstall.contains(dep)) {
+                // Insert before the recommendation
+                int recIndex = toInstall.indexOf(rec);
+                if (recIndex >= 0) {
+                  toInstall.add(recIndex, dep);
+                } else {
+                  toInstall.add(dep);
+                }
+              }
+            }
+          } catch (DependencyException e) {
+            log.warn(
+                "Failed to resolve dependencies for recommended plugin {}: {}",
+                rec,
+                e.getMessage());
+          }
+        }
+      }
+    }
+
+    // Install in order
+    List<String> installedPlugins = new ArrayList<>();
+    for (String plugin : toInstall) {
+      if (progressCallback != null) {
+        progressCallback.accept("Installing " + plugin + "...");
+      }
+      install(plugin);
+      installedPlugins.add(plugin);
+    }
+
+    return installedPlugins;
+  }
+
+  /**
+   * Install a plugin from Maven repositories (single plugin, no dependency resolution).
    *
    * @param pluginId Plugin identifier (e.g., "jdk")
    * @throws PluginInstallException if installation fails
