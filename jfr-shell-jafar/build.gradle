@@ -23,7 +23,7 @@ dependencies {
     compileOnly project(':jfr-shell')
 
     // Depends on jafar parser for actual parsing implementation
-    implementation project(':parser')
+    implementation project(':jfr-parser')
 }
 
 jar {

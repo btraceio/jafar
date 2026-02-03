@@ -1,11 +1,9 @@
 package io.jafar.hdump.internal;
 
+import io.jafar.utils.CustomByteBuffer;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 
 /**
@@ -30,11 +28,10 @@ import java.nio.file.Path;
 public final class HprofReader implements Closeable {
 
   private static final String FORMAT_PREFIX = "JAVA PROFILE ";
+  private static final int SPLICE_SIZE = 256 * 1024 * 1024; // 256MB splices
 
   private final Path path;
-  private final RandomAccessFile raf;
-  private final FileChannel channel;
-  private final MappedByteBuffer buffer;
+  private final CustomByteBuffer buffer;
   private final String formatVersion;
   private final int idSize;
   private final long timestamp;
@@ -48,17 +45,9 @@ public final class HprofReader implements Closeable {
    */
   public HprofReader(Path path) throws IOException {
     this.path = path;
-    this.raf = new RandomAccessFile(path.toFile(), "r");
-    this.channel = raf.getChannel();
 
-    long fileSize = channel.size();
-    if (fileSize > Integer.MAX_VALUE) {
-      // For very large files, we'd need chunked mapping
-      // For now, limit to ~2GB
-      throw new IOException("Heap dump too large: " + fileSize + " bytes (max ~2GB supported)");
-    }
-
-    this.buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
+    // Use SplicedMappedByteBuffer to handle files of any size
+    this.buffer = CustomByteBuffer.map(path, SPLICE_SIZE);
     this.buffer.order(ByteOrder.BIG_ENDIAN); // HPROF is always big-endian
 
     // Parse header
@@ -68,7 +57,7 @@ public final class HprofReader implements Closeable {
       throw new IOException("Invalid identifier size: " + idSize);
     }
     this.timestamp = buffer.getLong();
-    this.headerSize = buffer.position();
+    this.headerSize = (int) buffer.position();
   }
 
   private String readFormatString() throws IOException {
@@ -106,7 +95,7 @@ public final class HprofReader implements Closeable {
 
   /** Returns the total file size in bytes. */
   public long getFileSize() {
-    return buffer.capacity();
+    return buffer.limit();
   }
 
   /** Resets the reader to the beginning of the records (after the header). */
@@ -121,7 +110,7 @@ public final class HprofReader implements Closeable {
 
   /** Returns the current position in the file. */
   public int position() {
-    return buffer.position();
+    return (int) buffer.position();
   }
 
   /** Sets the current position in the file. */
@@ -141,7 +130,7 @@ public final class HprofReader implements Closeable {
     int tag = buffer.get() & 0xFF;
     int timeOffset = buffer.getInt();
     int length = buffer.getInt();
-    return new RecordHeader(tag, timeOffset, length, buffer.position());
+    return new RecordHeader(tag, timeOffset, length, (int) buffer.position());
   }
 
   /** Skips the body of the current record (assumes header was just read). */
@@ -191,7 +180,7 @@ public final class HprofReader implements Closeable {
 
   /** Reads raw bytes into the given array. */
   public void readBytes(byte[] dest) {
-    buffer.get(dest);
+    buffer.get(dest, 0, dest.length);
   }
 
   /** Reads a value of the given basic type. */
@@ -217,9 +206,7 @@ public final class HprofReader implements Closeable {
 
   @Override
   public void close() throws IOException {
-    // MappedByteBuffer doesn't have explicit close, but we close the channel
-    channel.close();
-    raf.close();
+    buffer.close();
   }
 
   /** Record header information. */

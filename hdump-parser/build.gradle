@@ -19,6 +19,9 @@ java {
 }
 
 dependencies {
+    // Core parsing utilities (shared with jfr-parser)
+    api project(':parser-core')
+
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.5'
 

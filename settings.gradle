@@ -20,12 +20,13 @@ pluginManagement {
 // Wire the plugin build to use the in-repo parser project instead of a published module
 includeBuild('jafar-gradle-plugin') {
     dependencySubstitution {
-        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+        substitute(module("io.btrace:jafar-parser")).using(project(":jfr-parser"))
     }
 }
 
 rootProject.name = 'jafar'
-include ':parser'
+include ':parser-core'
+include ':jfr-parser'
 include ':jafar-processor'
 include ':tools'
 include ':shell-core'

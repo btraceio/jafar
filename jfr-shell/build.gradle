@@ -24,7 +24,7 @@ java {
 
 dependencies {
     implementation project(':shell-core')
-    implementation project(':parser')
+    implementation project(':jfr-parser')
     implementation project(':tools')
 
     // Backend plugins available for testing (discovered via ServiceLoader)
