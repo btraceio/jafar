@@ -816,7 +816,7 @@ public final class HdumpPathParser {
   private String parseStringOrIdentifier() {
     skipWs();
     if (peek() == '"' || peek() == '\'') {
-      return parseString();
+      return parseStringLiteral();
     } else {
       return parseIdentifier();
     }

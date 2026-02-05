@@ -657,7 +657,7 @@ public final class HdumpPathEvaluator {
       if (idObj == null) continue;
 
       long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
-      HeapObject obj = dump.getObjectById(id);
+      HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) continue;
 
       // Find path to GC root
@@ -730,7 +730,7 @@ public final class HdumpPathEvaluator {
       if (idObj == null) continue;
 
       long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
-      HeapObject obj = dump.getObjectById(id);
+      HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) continue;
 
       // For now, return a placeholder since we need full dominator tree implementation
