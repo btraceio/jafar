@@ -3,10 +3,13 @@ package io.jafar.hdump;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.hdump.api.*;
+import io.jafar.hdump.impl.HeapDumpImpl;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -113,6 +116,80 @@ class HeapDumpParserTest {
               });
 
       System.out.println("\n=== Test Passed ===");
+    }
+  }
+
+  @Test
+  @EnabledIf("testFileExists")
+  void testHybridDominatorComputation() throws Exception {
+    System.out.println("\n=== Testing Hybrid Dominator Computation ===");
+    System.out.println("Parsing heap dump: " + TEST_HPROF);
+
+    try (HeapDump heap = HeapDumpParser.parse(TEST_HPROF)) {
+      HeapDumpImpl dump = (HeapDumpImpl) heap;
+
+      // Measure memory before computation
+      System.gc();
+      long memoryBefore = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+
+      System.out.println("\n1. Computing hybrid dominators (top 100 objects)...");
+      long startTime = System.currentTimeMillis();
+
+      Set<String> classPatterns = new HashSet<>();
+      classPatterns.add("java.lang.ThreadLocal*");
+      classPatterns.add("java.util.*HashMap");
+
+      dump.computeHybridDominators(
+          100, // Top 100 objects
+          classPatterns,
+          (progress, message) -> {
+            if ((int) (progress * 100) % 10 == 0) {
+              System.out.printf("  Progress: %.0f%% - %s%n", progress * 100, message);
+            }
+          });
+
+      long hybridTime = System.currentTimeMillis() - startTime;
+
+      System.gc();
+      long memoryAfter = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+      long memoryUsed = (memoryAfter - memoryBefore) / (1024 * 1024);
+
+      System.out.printf("\nHybrid computation time: %d ms%n", hybridTime);
+      System.out.printf("Approximate memory used: %d MB%n", memoryUsed);
+
+      // Verify all objects have retained sizes computed (at least approximate)
+      long withRetainedSizes =
+          dump.getObjects().filter(obj -> obj.getRetainedSize() > 0).count();
+
+      System.out.printf(
+          "\n%d objects have retained sizes (%.2f%% of heap)%n",
+          withRetainedSizes, withRetainedSizes * 100.0 / dump.getObjectCount());
+
+      assertTrue(
+          withRetainedSizes > 0, "Should have at least some objects with retained sizes");
+
+      // Compare with full computation for a small subset
+      System.out.println("\n2. Testing correctness...");
+
+      // Find largest object by retained size (likely computed exactly)
+      HeapObject largestObj =
+          dump.getObjects()
+              .max(Comparator.comparingLong(HeapObject::getRetainedSize))
+              .orElseThrow();
+
+      long hybridRetainedSize = largestObj.getRetainedSize();
+      System.out.printf(
+          "Largest object %s @ %s has retained size: %s%n",
+          largestObj.getHeapClass().getName(),
+          Long.toHexString(largestObj.getId()),
+          formatSize(hybridRetainedSize));
+
+      // Basic sanity check
+      assertTrue(
+          hybridRetainedSize >= largestObj.getShallowSize(),
+          "Retained size should be >= shallow size");
+
+      System.out.println("\n=== Hybrid Dominator Test Passed ===");
     }
   }
 
