@@ -40,7 +40,7 @@ public final class HdumpPathEvaluator {
 
     // Apply pipeline operations
     for (PipelineOp op : query.pipeline()) {
-      results = applyPipelineOp(results, op);
+      results = applyPipelineOp(session, results, op);
     }
 
     return results;
@@ -328,7 +328,7 @@ public final class HdumpPathEvaluator {
   // === Pipeline operations ===
 
   private static List<Map<String, Object>> applyPipelineOp(
-      List<Map<String, Object>> results, PipelineOp op) {
+      HeapSession session, List<Map<String, Object>> results, PipelineOp op) {
     return switch (op) {
       case SelectOp s -> applySelect(results, s);
       case TopOp t -> applyTop(results, t);
@@ -347,6 +347,9 @@ public final class HdumpPathEvaluator {
           .filter(map -> matchesPredicate(map, f.predicate()))
           .collect(Collectors.toList());
       case DistinctOp d -> applyDistinct(results, d);
+      case PathToRootOp p -> applyPathToRoot(session.getHeapDump(), results);
+      case CheckLeaksOp c -> applyCheckLeaks(session, results, c);
+      case DominatorsOp d -> applyDominators(session.getHeapDump(), results);
     };
   }
 
@@ -643,5 +646,95 @@ public final class HdumpPathEvaluator {
     }
     regex.append("$");
     return Pattern.compile(regex.toString());
+  }
+
+  private static List<Map<String, Object>> applyPathToRoot(
+      HeapDump dump, List<Map<String, Object>> results) {
+    List<Map<String, Object>> paths = new ArrayList<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) continue;
+
+      long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject obj = dump.getObjectById(id);
+      if (obj == null) continue;
+
+      // Find path to GC root
+      List<HeapObject> path = dump.findPathToGcRoot(obj);
+      if (path.isEmpty()) continue;
+
+      // Convert path to result format - one row per object in path
+      for (int i = 0; i < path.size(); i++) {
+        HeapObject pathObj = path.get(i);
+        Map<String, Object> pathRow = new LinkedHashMap<>();
+        pathRow.put("step", i);
+        pathRow.put("id", pathObj.getId());
+        pathRow.put("class", pathObj.getHeapClass() != null ? pathObj.getHeapClass().getName() : "unknown");
+        pathRow.put("shallow", pathObj.getShallowSize());
+        pathRow.put("retained", pathObj.getRetainedSize());
+        pathRow.put("description", pathObj.getDescription());
+
+        // Add reference type for steps after the root
+        if (i > 0) {
+          pathRow.put("referenceType", i == 0 ? "GC Root" : "field/array reference");
+        } else {
+          pathRow.put("referenceType", "GC Root");
+        }
+
+        paths.add(pathRow);
+      }
+    }
+
+    return paths;
+  }
+
+  private static List<Map<String, Object>> applyCheckLeaks(
+      HeapSession session, List<Map<String, Object>> results, CheckLeaksOp op) {
+
+    if (op.detector() != null) {
+      // Use built-in detector (to be implemented with LeakDetector interface)
+      // For now, return placeholder
+      Map<String, Object> placeholder = new LinkedHashMap<>();
+      placeholder.put("message", "Built-in detector '" + op.detector() + "' not yet implemented");
+      placeholder.put("detector", op.detector());
+      placeholder.put("threshold", op.threshold());
+      placeholder.put("minSize", op.minSize());
+      return List.of(placeholder);
+    } else if (op.filter() != null) {
+      // Apply custom filter - this would reference a saved query variable
+      // For now, return placeholder
+      Map<String, Object> placeholder = new LinkedHashMap<>();
+      placeholder.put("message", "Custom filter '" + op.filter() + "' requires variable resolution");
+      placeholder.put("filter", op.filter());
+      return List.of(placeholder);
+    }
+
+    return results;
+  }
+
+  private static List<Map<String, Object>> applyDominators(
+      HeapDump dump, List<Map<String, Object>> results) {
+    List<Map<String, Object>> dominated = new ArrayList<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) continue;
+
+      long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject obj = dump.getObjectById(id);
+      if (obj == null) continue;
+
+      // For now, return a placeholder since we need full dominator tree implementation
+      // In a complete implementation, this would traverse the dominator tree
+      // and return all objects dominated by this object
+      Map<String, Object> placeholder = new LinkedHashMap<>();
+      placeholder.put("dominator", obj.getId());
+      placeholder.put("dominatorClass", obj.getHeapClass() != null ? obj.getHeapClass().getName() : "unknown");
+      placeholder.put("message", "Dominator traversal not yet implemented - requires full dominator tree");
+      dominated.add(placeholder);
+    }
+
+    return dominated;
   }
 }
