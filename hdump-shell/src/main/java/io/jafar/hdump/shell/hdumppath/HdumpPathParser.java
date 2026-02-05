@@ -1,5 +1,10 @@
 package io.jafar.hdump.shell.hdumppath;
 
+import io.jafar.shell.core.expr.BinaryExpr;
+import io.jafar.shell.core.expr.FieldRef;
+import io.jafar.shell.core.expr.NumberLiteral;
+import io.jafar.shell.core.expr.ValueExpr;
+import io.jafar.shell.core.expr.ValueExpr.ArithOp;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -426,6 +431,7 @@ public final class HdumpPathParser {
     expect('(');
     List<String> groupFields = new ArrayList<>();
     AggOp aggOp = AggOp.COUNT; // Default aggregation
+    ValueExpr valueExpr = null;
 
     do {
       skipWs();
@@ -445,14 +451,122 @@ public final class HdumpPathParser {
               case "max" -> AggOp.MAX;
               default -> throw new HdumpPathParseException("Unknown aggregation: " + aggName);
             };
+      } else if (lookahead("value=") || lookahead("value =")) {
+        matchKeyword("value");
+        skipWs();
+        expect('=');
+        skipWs();
+        valueExpr = parseValueExpr();
       } else {
-        groupFields.add(parseIdentifier());
+        // Check for aggregate function call syntax: sum(expr), avg(expr), etc.
+        String ident = parseIdentifier();
+        skipWs();
+        if (peek() == '(') {
+          // This might be an aggregate function call
+          AggOp funcAgg = tryParseAggOp(ident.toLowerCase());
+          if (funcAgg != null) {
+            advance(); // consume '('
+            skipWs();
+            valueExpr = parseValueExpr();
+            skipWs();
+            expect(')');
+            aggOp = funcAgg;
+          } else {
+            // Not an aggregate function, treat as group field
+            groupFields.add(ident);
+          }
+        } else {
+          groupFields.add(ident);
+        }
       }
       skipWs();
     } while (matchChar(','));
 
     expect(')');
-    return new GroupByOp(groupFields, aggOp);
+    return new GroupByOp(groupFields, aggOp, valueExpr);
+  }
+
+  /** Try to parse an aggregate operation from the given name, returns null if not recognized. */
+  private AggOp tryParseAggOp(String name) {
+    return switch (name) {
+      case "count" -> AggOp.COUNT;
+      case "sum" -> AggOp.SUM;
+      case "avg" -> AggOp.AVG;
+      case "min" -> AggOp.MIN;
+      case "max" -> AggOp.MAX;
+      default -> null;
+    };
+  }
+
+  // === Value expression parsing (for groupBy value=) ===
+
+  private ValueExpr parseValueExpr() {
+    return parseAdditiveExpr();
+  }
+
+  private ValueExpr parseAdditiveExpr() {
+    ValueExpr left = parseMultiplicativeExpr();
+    skipWs();
+
+    while (peek() == '+' || peek() == '-') {
+      char opChar = advance();
+      ArithOp op = ArithOp.fromSymbol(String.valueOf(opChar));
+      skipWs();
+      ValueExpr right = parseMultiplicativeExpr();
+      left = new BinaryExpr(left, op, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private ValueExpr parseMultiplicativeExpr() {
+    ValueExpr left = parsePrimaryValueExpr();
+    skipWs();
+
+    while (peek() == '*' || peek() == '/') {
+      char opChar = advance();
+      ArithOp op = ArithOp.fromSymbol(String.valueOf(opChar));
+      skipWs();
+      ValueExpr right = parsePrimaryValueExpr();
+      left = new BinaryExpr(left, op, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private ValueExpr parsePrimaryValueExpr() {
+    skipWs();
+
+    // Parenthesized expression
+    if (peek() == '(') {
+      advance();
+      ValueExpr expr = parseValueExpr();
+      skipWs();
+      expect(')');
+      return expr;
+    }
+
+    // Number literal
+    if (Character.isDigit(peek()) || peek() == '-' || peek() == '+') {
+      // Check if it's actually a number (not just + or - followed by non-digit)
+      if (peek() == '-' || peek() == '+') {
+        int savedPos = pos;
+        advance();
+        skipWs();
+        if (!Character.isDigit(peek())) {
+          pos = savedPos;
+          // Not a number, must be identifier
+          return new FieldRef(parseIdentifier());
+        }
+        pos = savedPos;
+      }
+      return new NumberLiteral(parseNumber().doubleValue());
+    }
+
+    // Field reference
+    return new FieldRef(parseIdentifier());
   }
 
   private SumOp parseSumOp() {

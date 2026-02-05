@@ -2,6 +2,10 @@ package io.jafar.hdump.shell;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.shell.core.expr.BinaryExpr;
+import io.jafar.shell.core.expr.FieldRef;
+import io.jafar.shell.core.expr.NumberLiteral;
+import io.jafar.shell.core.expr.ValueExpr;
 import io.jafar.hdump.shell.hdumppath.HdumpPath;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.Query;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
@@ -103,6 +107,104 @@ class HdumpPathTest {
     HdumpPath.GroupByOp groupBy = (HdumpPath.GroupByOp) query.pipeline().get(0);
     assertEquals(List.of("class"), groupBy.groupFields());
     assertEquals(HdumpPath.AggOp.COUNT, groupBy.aggregation());
+  }
+
+  @Test
+  void testParseGroupByWithValueField() {
+    Query query = HdumpPathParser.parse("classes | groupBy(name, agg=sum, value=instanceCount)");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.GroupByOp groupBy = (HdumpPath.GroupByOp) query.pipeline().get(0);
+    assertEquals(List.of("name"), groupBy.groupFields());
+    assertEquals(HdumpPath.AggOp.SUM, groupBy.aggregation());
+    assertNotNull(groupBy.valueExpr());
+    assertInstanceOf(FieldRef.class, groupBy.valueExpr());
+    assertEquals("instanceCount", ((FieldRef) groupBy.valueExpr()).field());
+  }
+
+  @Test
+  void testParseGroupByWithValueExpression() {
+    Query query =
+        HdumpPathParser.parse("classes | groupBy(name, agg=sum, value=instanceCount * instanceSize)");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.GroupByOp groupBy = (HdumpPath.GroupByOp) query.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.SUM, groupBy.aggregation());
+    assertNotNull(groupBy.valueExpr());
+    assertInstanceOf(BinaryExpr.class, groupBy.valueExpr());
+    BinaryExpr expr = (BinaryExpr) groupBy.valueExpr();
+    assertEquals(ValueExpr.ArithOp.MUL, expr.op());
+    assertInstanceOf(FieldRef.class, expr.left());
+    assertInstanceOf(FieldRef.class, expr.right());
+  }
+
+  @Test
+  void testParseGroupByWithComplexExpression() {
+    Query query =
+        HdumpPathParser.parse("classes | groupBy(name, agg=avg, value=(instanceCount + 1) * 2)");
+    HdumpPath.GroupByOp groupBy = (HdumpPath.GroupByOp) query.pipeline().get(0);
+    assertNotNull(groupBy.valueExpr());
+    assertInstanceOf(BinaryExpr.class, groupBy.valueExpr());
+  }
+
+  @Test
+  void testParseGroupByWithAggregateFunctionCall() {
+    // Test the new sum(expr) syntax as alternative to agg=sum, value=expr
+    Query query =
+        HdumpPathParser.parse("classes | groupBy(name, sum(instanceSize * instanceCount))");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.GroupByOp groupBy = (HdumpPath.GroupByOp) query.pipeline().get(0);
+    assertEquals(List.of("name"), groupBy.groupFields());
+    assertEquals(HdumpPath.AggOp.SUM, groupBy.aggregation());
+    assertNotNull(groupBy.valueExpr());
+    assertInstanceOf(BinaryExpr.class, groupBy.valueExpr());
+    BinaryExpr expr = (BinaryExpr) groupBy.valueExpr();
+    assertEquals(ValueExpr.ArithOp.MUL, expr.op());
+  }
+
+  @Test
+  void testParseGroupByWithDifferentAggregateFunctions() {
+    // Test avg()
+    Query avgQuery = HdumpPathParser.parse("classes | groupBy(name, avg(instanceSize))");
+    HdumpPath.GroupByOp avgGroupBy = (HdumpPath.GroupByOp) avgQuery.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.AVG, avgGroupBy.aggregation());
+    assertInstanceOf(FieldRef.class, avgGroupBy.valueExpr());
+
+    // Test min()
+    Query minQuery = HdumpPathParser.parse("classes | groupBy(name, min(instanceSize))");
+    HdumpPath.GroupByOp minGroupBy = (HdumpPath.GroupByOp) minQuery.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.MIN, minGroupBy.aggregation());
+
+    // Test max()
+    Query maxQuery = HdumpPathParser.parse("classes | groupBy(name, max(instanceSize))");
+    HdumpPath.GroupByOp maxGroupBy = (HdumpPath.GroupByOp) maxQuery.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.MAX, maxGroupBy.aggregation());
+
+    // Test count() with expression
+    Query countQuery = HdumpPathParser.parse("classes | groupBy(name, count(instanceCount))");
+    HdumpPath.GroupByOp countGroupBy = (HdumpPath.GroupByOp) countQuery.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.COUNT, countGroupBy.aggregation());
+  }
+
+  @Test
+  void testValueExprEvaluation() {
+    Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
+
+    // Simple field reference
+    ValueExpr fieldRef = new FieldRef("instanceCount");
+    assertEquals(10.0, fieldRef.evaluate(row));
+
+    // Multiplication expression
+    ValueExpr mulExpr =
+        new BinaryExpr(new FieldRef("instanceCount"), ValueExpr.ArithOp.MUL, new FieldRef("instanceSize"));
+    assertEquals(240.0, mulExpr.evaluate(row));
+
+    // Complex expression: (instanceCount + 1) * 2
+    ValueExpr complexExpr =
+        new BinaryExpr(
+            new BinaryExpr(
+                new FieldRef("instanceCount"), ValueExpr.ArithOp.ADD, new NumberLiteral(1)),
+            ValueExpr.ArithOp.MUL,
+            new NumberLiteral(2));
+    assertEquals(22.0, complexExpr.evaluate(row));
   }
 
   @Test
