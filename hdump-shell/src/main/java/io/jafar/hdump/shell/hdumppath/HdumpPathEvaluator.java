@@ -693,14 +693,22 @@ public final class HdumpPathEvaluator {
       HeapSession session, List<Map<String, Object>> results, CheckLeaksOp op) {
 
     if (op.detector() != null) {
-      // Use built-in detector (to be implemented with LeakDetector interface)
-      // For now, return placeholder
-      Map<String, Object> placeholder = new LinkedHashMap<>();
-      placeholder.put("message", "Built-in detector '" + op.detector() + "' not yet implemented");
-      placeholder.put("detector", op.detector());
-      placeholder.put("threshold", op.threshold());
-      placeholder.put("minSize", op.minSize());
-      return List.of(placeholder);
+      // Use built-in detector
+      io.jafar.hdump.shell.leaks.LeakDetector detector =
+          io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetector(op.detector());
+
+      if (detector == null) {
+        // Invalid detector name
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("error", "Unknown detector: " + op.detector());
+        error.put("availableDetectors",
+            io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetectorNames());
+        return List.of(error);
+      }
+
+      // Run the detector
+      return detector.detect(session.getHeapDump(), op.threshold(), op.minSize());
+
     } else if (op.filter() != null) {
       // Apply custom filter - this would reference a saved query variable
       // For now, return placeholder
