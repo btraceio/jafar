@@ -1,5 +1,6 @@
 package io.jafar.shell;
 
+import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -41,6 +42,9 @@ public final class Shell implements AutoCloseable {
   private final VariableStore globalStore;
   private boolean running = true;
   private final DefaultHistory history;
+  private final ShellCompleter fallbackCompleter;
+  private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
+  private final Map<String, org.jline.reader.Completer> completerCache; // Cache completers per module
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -64,15 +68,73 @@ public final class Shell implements AutoCloseable {
     java.util.Map<String, Object> vars = new java.util.HashMap<>();
     vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
 
-    // Create completer for context-aware command completion
-    ShellCompleter completer = new ShellCompleter(sessions, moduleById);
+    // Create a CommandDispatcher for modules that need it (like JFR shell)
+    CommandDispatcher.IO ioAdapter =
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            terminal.writer().println(s);
+            terminal.flush();
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            terminal.writer().printf(fmt, args);
+            terminal.flush();
+          }
+
+          @Override
+          public void error(String s) {
+            terminal.writer().println("Error: " + s);
+            terminal.flush();
+          }
+        };
+
+    // Session change listener (no-op for unified shell - prompt updates handled separately)
+    CommandDispatcher.SessionChangeListener sessionChangeListener = current -> {};
+
+    this.moduleContext = new CommandDispatcher(sessions, ioAdapter, sessionChangeListener);
+
+    // Create fallback completer for basic commands
+    this.fallbackCompleter = new ShellCompleter(sessions, moduleById);
+
+    // Cache for module-specific completers (create once per module, not on every keystroke)
+    this.completerCache = new HashMap<>();
+
+    // Create dynamic completer that delegates to module-specific completers
+    org.jline.reader.Completer dynamicCompleter =
+        (reader, line, candidates) -> {
+          Optional<SessionManager.SessionRef> current = sessions.getCurrent();
+          if (current.isPresent()) {
+            SessionManager.SessionRef ref = current.get();
+            String moduleType = ref.session.getType();
+            ShellModule module = moduleById.get(moduleType);
+            if (module != null) {
+              // Get or create cached completer for this module
+              org.jline.reader.Completer moduleCompleter =
+                  completerCache.computeIfAbsent(
+                      moduleType, type -> module.getCompleter(sessions, moduleContext));
+              if (moduleCompleter != null) {
+                moduleCompleter.complete(reader, line, candidates);
+                return;
+              }
+            }
+          }
+          // Fall back to basic completer
+          fallbackCompleter.complete(reader, line, candidates);
+        };
+
+    // Create parser that doesn't treat backslash as escape char (for raw string literals)
+    org.jline.reader.impl.DefaultParser parser = new org.jline.reader.impl.DefaultParser();
+    parser.setEscapeChars(null); // Disable backslash escape processing
 
     this.lineReader =
         LineReaderBuilder.builder()
             .terminal(terminal)
             .variables(vars)
             .history(history)
-            .completer(completer)
+            .completer(dynamicCompleter)
+            .parser(parser)
             .build();
   }
 
@@ -247,6 +309,14 @@ public final class Shell implements AutoCloseable {
     try {
       SessionManager.SessionRef ref = sessions.open(path, null);
       terminal.writer().println("Session " + ref.id + " opened: " + path.getFileName());
+
+      // Debug: Verify session state
+      if (System.getProperty("jfr.shell.completion.debug") != null) {
+        terminal.writer().println("[DEBUG] Session type: " + ref.session.getType());
+        terminal.writer().println("[DEBUG] Session file path: " + ref.session.getFilePath());
+        terminal.writer().println("[DEBUG] Session is current: " + sessions.getCurrent().isPresent());
+      }
+
       terminal.flush();
     } catch (Exception e) {
       terminal.writer().println("Error opening session: " + e.getMessage());
@@ -395,21 +465,28 @@ public final class Shell implements AutoCloseable {
 
   private void printResult(Object result) {
     if (result instanceof List<?> list) {
-      if (list.isEmpty()) {
-        terminal.writer().println("(no results)");
-      } else {
-        // Simple table output
-        terminal.writer().println("Results: " + list.size() + " rows");
-        int count = 0;
-        for (Object row : list) {
-          terminal.writer().println("  " + row);
-          count++;
-          if (count >= 10) {
-            terminal.writer().println("  ... (" + (list.size() - 10) + " more rows)");
-            break;
+      boolean isInteractive = System.console() != null;
+      int maxRows = Integer.MAX_VALUE;
+
+      if (isInteractive) {
+        // Detect terminal height and reserve lines for header + summary message
+        try {
+          int termHeight = terminal.getHeight();
+          if (termHeight > 0) {
+            // Reserve 10 lines: header line + summary message + prompt + margin
+            maxRows = Math.max(10, termHeight - 10);
+          } else {
+            maxRows = 50; // Fallback if height detection fails
           }
+        } catch (Exception e) {
+          maxRows = 50; // Fallback on error
         }
       }
+
+      String formatted = TableFormatter.formatTable(list, maxRows);
+      terminal.writer().print(formatted);
+    } else if (result instanceof Number) {
+      terminal.writer().println(result);
     } else {
       terminal.writer().println("Result: " + result);
     }
@@ -450,15 +527,12 @@ public final class Shell implements AutoCloseable {
     if (current.isPresent()) {
       SessionManager.SessionRef ref = current.get();
       ShellModule module = moduleById.get(ref.session.getType());
-      if (module != null && module.getQueryEvaluator() != null) {
-        terminal.writer().println("Examples for current session (" + module.getDisplayName() + "):");
-        QueryEvaluator evaluator = module.getQueryEvaluator();
-        List<String> roots = evaluator.getRootTypes();
-        if (!roots.isEmpty()) {
-          String firstRoot = roots.get(0);
-          terminal.writer().println("  show " + firstRoot + "/<type>");
-          if (!evaluator.getOperators().isEmpty()) {
-            terminal.writer().println("  show " + firstRoot + "/<type> | " + evaluator.getOperators().get(0) + "(10)");
+      if (module != null) {
+        List<String> examples = module.getExamples();
+        if (!examples.isEmpty()) {
+          terminal.writer().println("Examples for " + module.getDisplayName() + ":");
+          for (String example : examples) {
+            terminal.writer().println("  " + example);
           }
         }
       }
