@@ -3,6 +3,8 @@ package io.jafar.hdump.shell.hdumppath;
 import io.jafar.hdump.api.*;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
+import io.jafar.shell.core.RowSorter;
+import io.jafar.shell.core.expr.ValueExpr;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -426,35 +428,30 @@ public final class HdumpPathEvaluator {
       switch (op.aggregation()) {
         case COUNT -> row.put("count", group.size());
         case SUM, AVG, MIN, MAX -> {
-          // For SUM/AVG/MIN/MAX we need a value field - use first numeric field
-          String valueField = findFirstNumericField(group);
-          if (valueField != null) {
-            double sum =
+          ValueExpr valueExpr = op.valueExpr();
+          if (valueExpr != null) {
+            // Use provided expression
+            double[] values =
                 group.stream()
-                    .map(m -> m.get(valueField))
-                    .filter(v -> v instanceof Number)
-                    .mapToDouble(v -> ((Number) v).doubleValue())
-                    .sum();
-            switch (op.aggregation()) {
-              case SUM -> row.put("sum", sum);
-              case AVG -> row.put("avg", sum / group.size());
-              case MIN -> row.put(
-                  "min",
+                    .mapToDouble(valueExpr::evaluate)
+                    .filter(v -> !Double.isNaN(v))
+                    .toArray();
+            if (values.length > 0) {
+              applyAggregation(row, op.aggregation(), values);
+            }
+          } else {
+            // Fall back to first numeric field
+            String valueField = findFirstNumericField(group);
+            if (valueField != null) {
+              double[] values =
                   group.stream()
                       .map(m -> m.get(valueField))
                       .filter(v -> v instanceof Number)
                       .mapToDouble(v -> ((Number) v).doubleValue())
-                      .min()
-                      .orElse(0));
-              case MAX -> row.put(
-                  "max",
-                  group.stream()
-                      .map(m -> m.get(valueField))
-                      .filter(v -> v instanceof Number)
-                      .mapToDouble(v -> ((Number) v).doubleValue())
-                      .max()
-                      .orElse(0));
-              default -> {}
+                      .toArray();
+              if (values.length > 0) {
+                applyAggregation(row, op.aggregation(), values);
+              }
             }
           }
         }
@@ -463,7 +460,25 @@ public final class HdumpPathEvaluator {
       aggregated.add(row);
     }
 
+    // Apply sorting if requested
+    if (op.sortBy() != null) {
+      String keyField = op.groupFields().isEmpty() ? "key" : op.groupFields().get(0);
+      String valueField = getAggregationFieldName(op.aggregation());
+      RowSorter.sortGroupByResults(aggregated, op.sortBy(), keyField, valueField, op.ascending());
+    }
+
     return aggregated;
+  }
+
+  /** Returns the field name for the given aggregation operation. */
+  private static String getAggregationFieldName(AggOp aggOp) {
+    return switch (aggOp) {
+      case COUNT -> "count";
+      case SUM -> "sum";
+      case AVG -> "avg";
+      case MIN -> "min";
+      case MAX -> "max";
+    };
   }
 
   private static String findFirstNumericField(List<Map<String, Object>> rows) {
@@ -474,6 +489,32 @@ public final class HdumpPathEvaluator {
       }
     }
     return null;
+  }
+
+  private static void applyAggregation(Map<String, Object> row, AggOp aggOp, double[] values) {
+    switch (aggOp) {
+      case SUM -> {
+        double sum = 0;
+        for (double v : values) sum += v;
+        row.put("sum", sum);
+      }
+      case AVG -> {
+        double sum = 0;
+        for (double v : values) sum += v;
+        row.put("avg", sum / values.length);
+      }
+      case MIN -> {
+        double min = Double.MAX_VALUE;
+        for (double v : values) if (v < min) min = v;
+        row.put("min", min);
+      }
+      case MAX -> {
+        double max = Double.MIN_VALUE;
+        for (double v : values) if (v > max) max = v;
+        row.put("max", max);
+      }
+      default -> {}
+    }
   }
 
   private static List<Map<String, Object>> applyCount(List<Map<String, Object>> results) {

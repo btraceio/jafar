@@ -31,7 +31,14 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
     String jlineWord = ctx.jlineWord();
 
     // Use the shared method from ContextCompleter to calculate the JLine prefix
-    String prefix = calculateJlinePrefix(jlineWord, partial);
+    // But if jlineWord is just whitespace and partial is empty, don't use it as prefix
+    String prefix;
+    if (partial.isEmpty() && !jlineWord.isEmpty() && jlineWord.isBlank()) {
+      // jlineWord is whitespace-only, don't use it as prefix
+      prefix = "";
+    } else {
+      prefix = calculateJlinePrefix(jlineWord, partial);
+    }
 
     if (DEBUG) {
       System.err.println("[FunctionParamCompleter] rootType=" + rootType + ", func=" + functionName + ", partial='" + partial + "', jlineWord='" + jlineWord + "', prefix='" + prefix + "'");
@@ -42,6 +49,45 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
 
     if (DEBUG) {
       System.err.println("[FunctionParamCompleter] fields for " + rootType + ": " + fields);
+    }
+
+    // For groupBy, check if we're completing a named parameter value
+    if ("groupBy".equals(functionName) && ctx.parameterIndex() > 0) {
+      // Check if completing sort= value
+      // Use candidateNoSpace so user can type comma or closing paren without extra space
+      if (partial.startsWith("sort=")) {
+        String valuePartial = partial.substring(5);
+        if ("key".startsWith(valuePartial)) {
+          candidates.add(candidateNoSpace("sort=key", "key", "sort by group key"));
+        }
+        if ("value".startsWith(valuePartial)) {
+          candidates.add(candidateNoSpace("sort=value", "value", "sort by aggregated value"));
+        }
+        return;
+      }
+
+      // Check if completing asc= value
+      if (partial.startsWith("asc=")) {
+        String valuePartial = partial.substring(4);
+        if ("true".startsWith(valuePartial)) {
+          candidates.add(candidateNoSpace("asc=true", "true", "ascending order"));
+        }
+        if ("false".startsWith(valuePartial)) {
+          candidates.add(candidateNoSpace("asc=false", "false", "descending order"));
+        }
+        return;
+      }
+
+      // Check if completing agg= value
+      if (partial.startsWith("agg=")) {
+        String valuePartial = partial.substring(4);
+        for (String agg : AGGREGATE_FUNCTIONS) {
+          if (agg.startsWith(valuePartial)) {
+            candidates.add(candidateNoSpace("agg=" + agg, agg, "aggregation"));
+          }
+        }
+        return;
+      }
     }
 
     // Check if we're inside a value expression context
@@ -62,12 +108,19 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
 
     // For groupBy, suggest aggregation options
     if ("groupBy".equals(functionName) && ctx.parameterIndex() > 0) {
-      // Suggest named parameters: agg= and value=
+      // Suggest named parameters: agg=, value=, sort=, asc=
+      // Use candidateNoSpace because user needs to continue typing the value
       if ("agg=".startsWith(partial) || partial.isEmpty()) {
-        candidates.add(candidate(prefix + "agg=", "agg=", "aggregation type (count/sum/avg/min/max)"));
+        candidates.add(candidateNoSpace(prefix + "agg=", "agg=", "aggregation type (count/sum/avg/min/max)"));
       }
       if ("value=".startsWith(partial) || partial.isEmpty()) {
-        candidates.add(candidate(prefix + "value=", "value=", "value expression to aggregate"));
+        candidates.add(candidateNoSpace(prefix + "value=", "value=", "value expression to aggregate"));
+      }
+      if ("sort=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "sort=", "sort=", "sort by 'key' or 'value'"));
+      }
+      if ("asc=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "asc=", "asc=", "sort ascending (true/false)"));
       }
 
       // Suggest aggregate names (for agg= values) and function call syntax
@@ -75,8 +128,8 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
         if (agg.startsWith(partial)) {
           // Plain name (for use with agg=)
           candidates.add(candidate(prefix + agg, agg, "aggregation"));
-          // Function call syntax: sum(expr)
-          candidates.add(candidate(prefix + agg + "(", agg + "(", "aggregate expression"));
+          // Function call syntax: sum(expr) - no space since user continues typing
+          candidates.add(candidateNoSpace(prefix + agg + "(", agg + "(", "aggregate expression"));
         }
       }
     }
@@ -171,7 +224,11 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
 
     // Check if jlineWord matches different portions of what we parsed
     String completionPrefix;
-    if (jlineWord.equals(identPartial)) {
+    if (jlineWord.isEmpty() || jlineWord.isBlank()) {
+      // JLine word is empty or whitespace-only - just complete the field
+      // Don't prepend context/expr prefix as that's already on the line
+      completionPrefix = "";
+    } else if (jlineWord.equals(identPartial)) {
       // JLine word is just the identifier partial - complete with just the field
       completionPrefix = "";
     } else if (jlineWord.equals(exprWithIdent)) {
@@ -180,13 +237,16 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
     } else if (jlineWord.equals(valueCtx.contextPrefix + exprWithIdent)) {
       // JLine word is the full thing - complete with everything
       completionPrefix = valueCtx.contextPrefix + valueCtx.exprPrefix;
-    } else if (jlineWord.isEmpty()) {
-      // JLine word is empty - we're likely after a delimiter, just complete the field
-      completionPrefix = "";
     } else {
       // Fallback: use the standard prefix calculation
       String fullPartial = valueCtx.contextPrefix + valueCtx.exprPrefix + identPartial;
-      completionPrefix = calculateJlinePrefix(jlineWord, fullPartial) + valueCtx.contextPrefix + valueCtx.exprPrefix;
+      String basePrefix = calculateJlinePrefix(jlineWord, fullPartial);
+      // Don't use whitespace as prefix
+      if (basePrefix.isBlank()) {
+        completionPrefix = "";
+      } else {
+        completionPrefix = basePrefix + valueCtx.contextPrefix + valueCtx.exprPrefix;
+      }
     }
 
     if (DEBUG) {

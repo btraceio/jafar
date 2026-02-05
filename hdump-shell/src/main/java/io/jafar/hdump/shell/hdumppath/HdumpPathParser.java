@@ -432,6 +432,8 @@ public final class HdumpPathParser {
     List<String> groupFields = new ArrayList<>();
     AggOp aggOp = AggOp.COUNT; // Default aggregation
     ValueExpr valueExpr = null;
+    String sortBy = null;
+    boolean ascending = false; // Default to descending (most common for aggregates)
 
     do {
       skipWs();
@@ -457,6 +459,24 @@ public final class HdumpPathParser {
         expect('=');
         skipWs();
         valueExpr = parseValueExpr();
+      } else if (lookahead("sort=") || lookahead("sort =")) {
+        matchKeyword("sort");
+        skipWs();
+        expect('=');
+        skipWs();
+        String sortValue = parseIdentifier().toLowerCase();
+        if ("key".equals(sortValue) || "value".equals(sortValue)) {
+          sortBy = sortValue;
+        } else {
+          throw new HdumpPathParseException("sort= must be 'key' or 'value', got: " + sortValue);
+        }
+      } else if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        ascending = "true".equals(ascValue) || "yes".equals(ascValue) || "1".equals(ascValue);
       } else {
         // Check for aggregate function call syntax: sum(expr), avg(expr), etc.
         String ident = parseIdentifier();
@@ -483,7 +503,7 @@ public final class HdumpPathParser {
     } while (matchChar(','));
 
     expect(')');
-    return new GroupByOp(groupFields, aggOp, valueExpr);
+    return new GroupByOp(groupFields, aggOp, valueExpr, sortBy, ascending);
   }
 
   /** Try to parse an aggregate operation from the given name, returns null if not recognized. */

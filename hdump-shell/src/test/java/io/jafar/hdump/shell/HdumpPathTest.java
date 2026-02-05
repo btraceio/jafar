@@ -185,6 +185,30 @@ class HdumpPathTest {
   }
 
   @Test
+  void testParseGroupByWithSortOptions() {
+    // Test sort=key
+    Query sortKeyQuery = HdumpPathParser.parse("classes | groupBy(name, agg=count, sort=key)");
+    HdumpPath.GroupByOp sortKeyOp = (HdumpPath.GroupByOp) sortKeyQuery.pipeline().get(0);
+    assertEquals("key", sortKeyOp.sortBy());
+    assertFalse(sortKeyOp.ascending()); // default is descending
+
+    // Test sort=value with asc=true
+    Query sortValueAscQuery =
+        HdumpPathParser.parse("classes | groupBy(name, sum(instanceCount), sort=value, asc=true)");
+    HdumpPath.GroupByOp sortValueAscOp = (HdumpPath.GroupByOp) sortValueAscQuery.pipeline().get(0);
+    assertEquals("value", sortValueAscOp.sortBy());
+    assertTrue(sortValueAscOp.ascending());
+
+    // Test with function call syntax and sort
+    Query funcSortQuery =
+        HdumpPathParser.parse("classes | groupBy(name, sum(instanceSize * instanceCount), sort=value)");
+    HdumpPath.GroupByOp funcSortOp = (HdumpPath.GroupByOp) funcSortQuery.pipeline().get(0);
+    assertEquals(HdumpPath.AggOp.SUM, funcSortOp.aggregation());
+    assertEquals("value", funcSortOp.sortBy());
+    assertNotNull(funcSortOp.valueExpr());
+  }
+
+  @Test
   void testValueExprEvaluation() {
     Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
 

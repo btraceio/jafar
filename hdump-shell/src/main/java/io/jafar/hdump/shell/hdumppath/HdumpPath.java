@@ -1,5 +1,6 @@
 package io.jafar.hdump.shell.hdumppath;
 
+import io.jafar.shell.core.expr.ValueExpr;
 import java.util.List;
 
 /**
@@ -158,10 +159,32 @@ public final class HdumpPath {
     }
   }
 
-  /** Group by field(s) with aggregation. */
-  public record GroupByOp(List<String> groupFields, AggOp aggregation) implements PipelineOp {
+  /**
+   * Group by field(s) with aggregation.
+   *
+   * @param groupFields fields to group by
+   * @param aggregation aggregation operation (COUNT, SUM, AVG, MIN, MAX)
+   * @param valueExpr optional value expression for aggregation
+   * @param sortBy "key" to sort by group key, "value" to sort by aggregated value, null for no sorting
+   * @param ascending sort order (true = ascending, false = descending)
+   */
+  public record GroupByOp(
+      List<String> groupFields,
+      AggOp aggregation,
+      ValueExpr valueExpr,
+      String sortBy,
+      boolean ascending)
+      implements PipelineOp {
     public GroupByOp {
       groupFields = List.copyOf(groupFields);
+    }
+
+    public GroupByOp(List<String> groupFields, AggOp aggregation) {
+      this(groupFields, aggregation, null, null, false);
+    }
+
+    public GroupByOp(List<String> groupFields, AggOp aggregation, ValueExpr valueExpr) {
+      this(groupFields, aggregation, valueExpr, null, false);
     }
   }
 
