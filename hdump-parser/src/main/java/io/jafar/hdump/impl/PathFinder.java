@@ -1,4 +1,4 @@
-package io.jafar.hdump.analysis;
+package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapDump;
@@ -49,7 +49,7 @@ public final class PathFinder {
    * @return path from GC root to target, or empty list if unreachable
    */
   public static List<HeapObject> findShortestPath(
-      HeapDump dump, HeapObject target, List<GcRoot> gcRoots) {
+      HeapDump dump, HeapObject target, List<GcRootImpl> gcRoots) {
     if (target == null || gcRoots == null || gcRoots.isEmpty()) {
       return List.of();
     }
@@ -71,12 +71,13 @@ public final class PathFinder {
 
     // Initialize with all GC root objects
     for (GcRoot root : gcRoots) {
-      HeapObject rootObj = dump.getObjectById(root.getObjectId());
-      if (rootObj != null && !visited.contains(rootObj.getId())) {
-        visited.add(rootObj.getId());
-        queue.add(rootObj);
-        parents.put(rootObj.getId(), null); // Root has no parent
-      }
+      dump.getObjectById(root.getObjectId()).ifPresent(rootObj -> {
+        if (!visited.contains(rootObj.getId())) {
+          visited.add(rootObj.getId());
+          queue.add(rootObj);
+          parents.put(rootObj.getId(), null); // Root has no parent
+        }
+      });
     }
 
     // BFS until we find target or exhaust reachable objects
@@ -132,7 +133,7 @@ public final class PathFinder {
    * @return list of paths, each path is a list of objects from root to target
    */
   public static List<List<HeapObject>> findAllPaths(
-      HeapDump dump, HeapObject target, List<GcRoot> gcRoots, int maxDepth) {
+      HeapDump dump, HeapObject target, List<GcRootImpl> gcRoots, int maxDepth) {
     if (target == null || gcRoots == null || gcRoots.isEmpty() || maxDepth <= 0) {
       return List.of();
     }
@@ -150,12 +151,11 @@ public final class PathFinder {
 
     // DFS with path tracking from each GC root
     for (GcRoot root : gcRoots) {
-      HeapObject rootObj = dump.getObjectById(root.getObjectId());
-      if (rootObj != null) {
+      dump.getObjectById(root.getObjectId()).ifPresent(rootObj -> {
         List<HeapObject> currentPath = new ArrayList<>();
         LongOpenHashSet visited = new LongOpenHashSet();
         findPathsDFS(rootObj, target, currentPath, visited, allPaths, maxDepth);
-      }
+      });
     }
 
     return allPaths;

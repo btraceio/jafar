@@ -465,8 +465,7 @@ public final class HeapDumpImpl implements HeapDump {
   public void computeDominators() {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
-    io.jafar.hdump.analysis.ApproximateRetainedSizeComputer.computeAll(
-        this, objectsById, gcRoots);
+    ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots);
     dominatorsComputed = true;
   }
 
@@ -485,7 +484,7 @@ public final class HeapDumpImpl implements HeapDump {
 
   @Override
   public List<HeapObject> findPathToGcRoot(HeapObject obj) {
-    return io.jafar.hdump.analysis.PathFinder.findShortestPath(this, obj, gcRoots);
+    return PathFinder.findShortestPath(this, obj, gcRoots);
   }
 
   @Override

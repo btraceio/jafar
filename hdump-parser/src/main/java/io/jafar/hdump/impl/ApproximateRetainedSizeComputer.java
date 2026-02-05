@@ -1,9 +1,7 @@
-package io.jafar.hdump.analysis;
+package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapObject;
-import io.jafar.hdump.impl.HeapDumpImpl;
-import io.jafar.hdump.impl.HeapObjectImpl;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -50,7 +48,7 @@ public final class ApproximateRetainedSizeComputer {
    * @param gcRoots list of GC roots
    */
   public static void computeAll(
-      HeapDumpImpl dump, Long2ObjectMap<HeapObjectImpl> objectsById, List<GcRoot> gcRoots) {
+      HeapDumpImpl dump, Long2ObjectMap<HeapObjectImpl> objectsById, List<GcRootImpl> gcRoots) {
     LOG.debug("Computing inbound reference counts for {} objects...", objectsById.size());
     Long2IntOpenHashMap inboundCounts = buildInboundReferenceCounts(objectsById);
 
