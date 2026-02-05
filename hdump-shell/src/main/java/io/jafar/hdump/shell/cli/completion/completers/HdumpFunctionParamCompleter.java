@@ -51,6 +51,56 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
       System.err.println("[FunctionParamCompleter] fields for " + rootType + ": " + fields);
     }
 
+    // For checkLeaks, handle named parameters
+    if ("checkLeaks".equals(functionName)) {
+      // Complete detector= values
+      if (partial.startsWith("detector=")) {
+        String valuePartial = partial.substring(9);
+        // Remove quotes if present
+        if (valuePartial.startsWith("\"")) {
+          valuePartial = valuePartial.substring(1);
+        }
+
+        for (String detectorName : io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetectorNames()) {
+          if (detectorName.startsWith(valuePartial)) {
+            candidates.add(candidateNoSpace("detector=\"" + detectorName + "\"", detectorName,
+                io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetector(detectorName).getDescription()));
+          }
+        }
+        return;
+      }
+
+      // Complete filter= values (variable references)
+      if (partial.startsWith("filter=")) {
+        String valuePartial = partial.substring(7);
+        // Remove quotes if present
+        if (valuePartial.startsWith("\"")) {
+          valuePartial = valuePartial.substring(1);
+        }
+
+        // Suggest variable references starting with $
+        if (valuePartial.isEmpty() || "$".startsWith(valuePartial)) {
+          candidates.add(candidateNoSpace("filter=\"$", "$", "variable reference"));
+        }
+        return;
+      }
+
+      // Suggest named parameters
+      if ("detector=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "detector=", "detector=", "built-in detector name"));
+      }
+      if ("filter=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "filter=", "filter=", "custom filter query reference"));
+      }
+      if ("threshold=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "threshold=", "threshold=", "minimum count threshold"));
+      }
+      if ("minSize=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "minSize=", "minSize=", "minimum size in bytes"));
+      }
+      return;
+    }
+
     // For groupBy, check if we're completing a named parameter value
     if ("groupBy".equals(functionName) && ctx.parameterIndex() > 0) {
       // Check if completing sort= value
