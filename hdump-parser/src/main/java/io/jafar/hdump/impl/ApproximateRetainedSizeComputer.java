@@ -46,23 +46,68 @@ public final class ApproximateRetainedSizeComputer {
    * @param dump the heap dump
    * @param objectsById map of object IDs to objects
    * @param gcRoots list of GC roots
+   * @param progressCallback optional callback for progress updates (0.0 to 1.0)
    */
   public static void computeAll(
-      HeapDumpImpl dump, Long2ObjectMap<HeapObjectImpl> objectsById, List<GcRootImpl> gcRoots) {
-    LOG.debug("Computing inbound reference counts for {} objects...", objectsById.size());
+      HeapDumpImpl dump,
+      Long2ObjectMap<HeapObjectImpl> objectsById,
+      List<GcRootImpl> gcRoots,
+      ProgressCallback progressCallback) {
+
+    int totalObjects = objectsById.size();
+
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.0, "Building inbound reference counts...");
+    }
+    LOG.debug("Computing inbound reference counts for {} objects...", totalObjects);
     Long2IntOpenHashMap inboundCounts = buildInboundReferenceCounts(objectsById);
 
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
+    }
     LOG.debug("Computing approximate retained sizes...");
+
     int computed = 0;
+    int lastReportedPercent = 0;
+
     for (HeapObjectImpl obj : objectsById.values()) {
       long approxRetained = computeMinRetainedSize(obj, inboundCounts);
       obj.setRetainedSize(approxRetained);
       computed++;
+
+      // Report progress every 5% or every 100K objects (whichever is less frequent)
+      if (progressCallback != null && computed % Math.max(totalObjects / 20, 100000) == 0) {
+        double progress = 0.3 + (0.7 * (computed / (double) totalObjects));
+        int percentComplete = (int) (progress * 100);
+        if (percentComplete > lastReportedPercent) {
+          progressCallback.onProgress(
+              progress,
+              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
+          lastReportedPercent = percentComplete;
+        }
+      }
+
       if (computed % 100000 == 0) {
-        LOG.debug("Computed {} / {} retained sizes", computed, objectsById.size());
+        LOG.debug("Computed {} / {} retained sizes", computed, totalObjects);
       }
     }
+
+    if (progressCallback != null) {
+      progressCallback.onProgress(1.0, "Approximate retained size computation complete");
+    }
     LOG.debug("Completed approximate retained size computation for {} objects", computed);
+  }
+
+  /** Callback interface for progress updates during computation. */
+  @FunctionalInterface
+  public interface ProgressCallback {
+    /**
+     * Called periodically during computation.
+     *
+     * @param progress value between 0.0 and 1.0
+     * @param message description of current step
+     */
+    void onProgress(double progress, String message);
   }
 
   /**

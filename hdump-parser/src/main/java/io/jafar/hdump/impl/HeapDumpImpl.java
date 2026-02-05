@@ -54,6 +54,10 @@ public final class HeapDumpImpl implements HeapDump {
   private volatile boolean dominatorsComputed = false;
   private volatile boolean fullDominatorTreeComputed = false;
 
+  // Dominator children map: dominator ID -> list of dominated object IDs
+  // Built during full dominator tree computation for O(1) lookup
+  private Map<Long, List<Long>> dominatorChildrenMap;
+
   private HeapDumpImpl(Path path, HprofReader reader, ParserOptions options) {
     this.path = path;
     this.reader = reader;
@@ -464,9 +468,18 @@ public final class HeapDumpImpl implements HeapDump {
 
   @Override
   public void computeDominators() {
+    computeDominators(null);
+  }
+
+  /**
+   * Computes approximate retained sizes with optional progress callback.
+   *
+   * @param progressCallback optional callback for progress updates
+   */
+  public void computeDominators(ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
-    ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots);
+    ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots, progressCallback);
     dominatorsComputed = true;
   }
 
@@ -493,7 +506,7 @@ public final class HeapDumpImpl implements HeapDump {
   public void computeFullDominatorTree(DominatorTreeComputer.ProgressCallback progressCallback) {
     if (fullDominatorTreeComputed) return;
     LOG.info("Computing full dominator tree for {} objects...", objectCount);
-    DominatorTreeComputer.computeFull(this, objectsById, gcRoots, progressCallback);
+    dominatorChildrenMap = DominatorTreeComputer.computeFull(this, objectsById, gcRoots, progressCallback);
     dominatorsComputed = true;
     fullDominatorTreeComputed = true;
   }
@@ -519,14 +532,20 @@ public final class HeapDumpImpl implements HeapDump {
    * @return list of dominated objects (empty if full tree not computed)
    */
   public List<HeapObject> getDominatedObjects(HeapObject dominator) {
-    if (!fullDominatorTreeComputed) {
+    if (!fullDominatorTreeComputed || dominatorChildrenMap == null) {
       return Collections.emptyList();
     }
 
-    List<HeapObject> dominated = new ArrayList<>();
-    for (HeapObjectImpl obj : objectsById.values()) {
-      HeapObjectImpl idom = obj.getDominator();
-      if (idom != null && idom.getId() == dominator.getId()) {
+    // O(1) lookup using cached children map instead of O(N) scan
+    List<Long> childrenIds = dominatorChildrenMap.get(dominator.getId());
+    if (childrenIds == null) {
+      return Collections.emptyList();
+    }
+
+    List<HeapObject> dominated = new ArrayList<>(childrenIds.size());
+    for (Long childId : childrenIds) {
+      HeapObjectImpl obj = objectsById.get(childId);
+      if (obj != null) {
         dominated.add(obj);
       }
     }

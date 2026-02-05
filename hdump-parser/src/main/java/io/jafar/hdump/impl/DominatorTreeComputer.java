@@ -2,6 +2,7 @@ package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapObject;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,8 +53,9 @@ public final class DominatorTreeComputer {
    * @param objectsById map of object IDs to objects
    * @param gcRoots list of GC roots
    * @param progressCallback optional callback for progress updates (0.0 to 1.0)
+   * @return map from dominator ID to list of dominated object IDs (for efficient lookup)
    */
-  public static void computeFull(
+  public static Map<Long, List<Long>> computeFull(
       HeapDumpImpl dump,
       Long2ObjectMap<HeapObjectImpl> objectsById,
       List<GcRootImpl> gcRoots,
@@ -70,12 +73,19 @@ public final class DominatorTreeComputer {
     List<Long> rpo = buildReversePostOrder(objectsById, gcRoots);
     LOG.debug("Built RPO with {} reachable objects", rpo.size());
 
+    // Build RPO index map once (reused millions of times in intersect())
+    Long2IntOpenHashMap rpoIndex = new Long2IntOpenHashMap(rpo.size());
+    rpoIndex.defaultReturnValue(-1);
+    for (int i = 0; i < rpo.size(); i++) {
+      rpoIndex.put(rpo.get(i).longValue(), i);
+    }
+
     if (progressCallback != null) {
-      progressCallback.onProgress(0.2, "Computing immediate dominators...");
+      progressCallback.onProgress(0.2, "Building predecessor map...");
     }
 
     // Step 2: Build predecessor map (reverse edges)
-    Map<Long, List<Long>> predecessors = buildPredecessorMap(objectsById, rpo);
+    Map<Long, List<Long>> predecessors = buildPredecessorMap(objectsById, rpo, progressCallback);
 
     // Step 3: Compute immediate dominators using iterative dataflow
     Long2LongOpenHashMap idom = new Long2LongOpenHashMap(rpo.size());
@@ -88,19 +98,21 @@ public final class DominatorTreeComputer {
       idom.put(root.getObjectId(), root.getObjectId());
     }
 
-    // Iterate until fixed point
+    // Iterate until fixed point with convergence-based progress tracking
     boolean changed = true;
     int iteration = 0;
+    int lastChangeCount = Integer.MAX_VALUE;
+    long totalIterationTime = 0;
+
     while (changed) {
       changed = false;
       iteration++;
-
-      if (iteration % 10 == 0 && progressCallback != null) {
-        double progress = 0.2 + (0.5 * Math.min(iteration / 50.0, 1.0));
-        progressCallback.onProgress(progress, "Computing dominators (iteration " + iteration + ")...");
-      }
+      int changeCount = 0;
+      long iterationStart = System.currentTimeMillis();
 
       // Process nodes in reverse post-order (skip roots)
+      int processed = 0;
+      int lastReportedPercent = 0;
       for (int i = 0; i < rpo.size(); i++) {
         long nodeId = rpo.get(i);
         if (rootIds.contains(nodeId)) continue;
@@ -116,16 +128,81 @@ public final class DominatorTreeComputer {
           if (newIdom == UNDEFINED) {
             newIdom = predId;
           } else {
-            newIdom = intersect(idom, rpo, newIdom, predId);
+            newIdom = intersect(rpoIndex, idom, newIdom, predId);
           }
         }
 
         if (newIdom != UNDEFINED && idom.get(nodeId) != newIdom) {
           idom.put(nodeId, newIdom);
           changed = true;
+          changeCount++;
+        }
+
+        processed++;
+
+        // Show progress within iteration every 10% for first few iterations
+        if (iteration <= 5 && progressCallback != null && processed % (rpo.size() / 10) == 0) {
+          int percentWithinIteration = (int) ((processed / (double) rpo.size()) * 100);
+          if (percentWithinIteration > lastReportedPercent) {
+            progressCallback.onProgress(
+                0.4 + (0.01 * percentWithinIteration),
+                String.format(
+                    "Computing dominators (iteration %d, %d%% through %,d objects)...",
+                    iteration, percentWithinIteration, rpo.size()));
+            lastReportedPercent = percentWithinIteration;
+          }
         }
       }
+
+      long iterationElapsed = System.currentTimeMillis() - iterationStart;
+      totalIterationTime += iterationElapsed;
+
+      // Log slow iterations to console
+      if (iterationElapsed > 5000) {
+        String msg =
+            String.format(
+                "⚠ Slow iteration %d: %dms, %d changes, avg %.2fms/change",
+                iteration,
+                iterationElapsed,
+                changeCount,
+                changeCount > 0 ? iterationElapsed / (double) changeCount : 0);
+        LOG.warn(msg);
+        System.err.println(msg);
+      }
+
+      // Update progress more frequently - every iteration for first 10, then every 5, then every 10
+      boolean shouldReport =
+          iteration <= 10 || (iteration <= 50 && iteration % 5 == 0) || iteration % 10 == 0;
+
+      if (shouldReport && progressCallback != null) {
+        double iterationProgress;
+        if (changeCount < lastChangeCount && changeCount > 0) {
+          int convergenceRate = lastChangeCount - changeCount;
+          int estimatedRemaining = Math.max(changeCount / Math.max(convergenceRate, 1), 1);
+          iterationProgress =
+              Math.min(0.95, iteration / (double) (iteration + estimatedRemaining));
+        } else {
+          // Conservative estimate if not converging steadily
+          iterationProgress = Math.min(0.5, iteration / 100.0);
+        }
+
+        // Progress from 0.4 to 0.7 (40% to 70%) during iteration
+        double progress = 0.4 + (0.3 * iterationProgress);
+        progressCallback.onProgress(
+            progress,
+            String.format(
+                "Computing dominators (iteration %d, %d changes, %dms)...",
+                iteration, changeCount, iterationElapsed));
+
+        lastChangeCount = changeCount;
+      }
     }
+
+    LOG.debug(
+        "Converged after {} iterations in {}ms (avg {}ms/iteration)",
+        iteration,
+        totalIterationTime,
+        totalIterationTime / iteration);
 
     LOG.debug("Converged after {} iterations", iteration);
 
@@ -133,7 +210,8 @@ public final class DominatorTreeComputer {
       progressCallback.onProgress(0.7, "Computing retained sizes...");
     }
 
-    // Step 4: Set immediate dominators on objects
+    // Step 4: Set immediate dominators on objects and build dominator children map
+    Map<Long, LongArrayList> dominatorChildren = new HashMap<>();
     for (long nodeId : rpo) {
       long idomId = idom.get(nodeId);
       if (idomId != UNDEFINED && idomId != nodeId) {
@@ -142,6 +220,8 @@ public final class DominatorTreeComputer {
         if (obj != null && dominator != null) {
           obj.setDominator(dominator);
         }
+        // Build children map for efficient retained size computation
+        dominatorChildren.computeIfAbsent(idomId, k -> new LongArrayList()).add(nodeId);
       }
     }
 
@@ -149,8 +229,8 @@ public final class DominatorTreeComputer {
       progressCallback.onProgress(0.8, "Computing exact retained sizes...");
     }
 
-    // Step 5: Compute retained sizes bottom-up
-    computeRetainedSizes(objectsById, rpo, idom);
+    // Step 5: Compute retained sizes bottom-up using children map
+    computeRetainedSizes(objectsById, rpo, dominatorChildren);
 
     long elapsed = System.currentTimeMillis() - startTime;
     LOG.info("Dominator tree computation completed in {}ms", elapsed);
@@ -158,26 +238,58 @@ public final class DominatorTreeComputer {
     if (progressCallback != null) {
       progressCallback.onProgress(1.0, "Dominator tree computation complete");
     }
+
+    // Convert LongArrayList to List<Long> for return
+    Map<Long, List<Long>> result = new HashMap<>();
+    for (Map.Entry<Long, LongArrayList> entry : dominatorChildren.entrySet()) {
+      List<Long> children = new ArrayList<>(entry.getValue().size());
+      for (int i = 0; i < entry.getValue().size(); i++) {
+        children.add(entry.getValue().getLong(i));
+      }
+      result.put(entry.getKey(), children);
+    }
+    return result;
   }
 
   /**
    * Find intersection of two nodes in dominator tree. Walks up the tree from both nodes until they
    * meet.
+   *
+   * @param rpoIndex precomputed RPO index map for O(1) position lookups
+   * @param idom immediate dominator map
+   * @param b1 first node
+   * @param b2 second node
+   * @return the intersection node (common dominator)
    */
-  private static long intersect(Long2LongOpenHashMap idom, List<Long> rpo, long b1, long b2) {
-    Map<Long, Integer> rpoIndex = new HashMap<>();
-    for (int i = 0; i < rpo.size(); i++) {
-      rpoIndex.put(rpo.get(i), i);
-    }
-
+  private static long intersect(Long2IntOpenHashMap rpoIndex, Long2LongOpenHashMap idom, long b1, long b2) {
     while (b1 != b2) {
-      while (rpoIndex.getOrDefault(b1, -1) > rpoIndex.getOrDefault(b2, -1)) {
+      int pos1 = rpoIndex.get(b1);
+      int pos2 = rpoIndex.get(b2);
+
+      while (pos1 > pos2) {
+        long prevB1 = b1;
         b1 = idom.get(b1);
         if (b1 == UNDEFINED) return UNDEFINED;
+
+        // If b1 dominates itself (GC root), we've reached the top
+        if (b1 == prevB1) {
+          return b1; // GC root is the common dominator
+        }
+
+        pos1 = rpoIndex.get(b1);
       }
-      while (rpoIndex.getOrDefault(b2, -1) > rpoIndex.getOrDefault(b1, -1)) {
+
+      while (pos2 > pos1) {
+        long prevB2 = b2;
         b2 = idom.get(b2);
         if (b2 == UNDEFINED) return UNDEFINED;
+
+        // If b2 dominates itself (GC root), we've reached the top
+        if (b2 == prevB2) {
+          return b2; // GC root is the common dominator
+        }
+
+        pos2 = rpoIndex.get(b2);
       }
     }
     return b1;
@@ -225,33 +337,156 @@ public final class DominatorTreeComputer {
     postOrder.add(nodeId);
   }
 
-  /** Build predecessor map (reverse edges). */
+  /**
+   * Build predecessor map (reverse edges) with progress reporting.
+   * This can be slow for large heaps as it traverses all references.
+   */
   private static Map<Long, List<Long>> buildPredecessorMap(
-      Long2ObjectMap<HeapObjectImpl> objectsById, List<Long> rpo) {
+      Long2ObjectMap<HeapObjectImpl> objectsById,
+      List<Long> rpo,
+      ProgressCallback progressCallback) {
 
     Map<Long, List<Long>> predecessors = new HashMap<>();
     LongOpenHashSet reachable = new LongOpenHashSet(rpo);
 
-    for (long nodeId : rpo) {
-      HeapObjectImpl obj = objectsById.get(nodeId);
-      if (obj == null) continue;
+    int processed = 0;
+    int totalObjects = rpo.size();
+    int lastReportedPercent = 0;
+    long lastReportTime = System.currentTimeMillis();
 
-      obj.getOutboundReferences().forEach(ref -> {
-        long refId = ref.getId();
-        if (reachable.contains(refId)) {
-          predecessors.computeIfAbsent(refId, k -> new ArrayList<>()).add(nodeId);
+    LOG.debug("Building predecessor map for {} objects...", totalObjects);
+
+    for (long nodeId : rpo) {
+      long objectStartTime = System.currentTimeMillis();
+      HeapObjectImpl obj = objectsById.get(nodeId);
+      if (obj != null) {
+        String className = obj.getHeapClass() != null ? obj.getHeapClass().getName() : "unknown";
+
+        // For huge arrays, warn BEFORE processing
+        if (obj.isArray() && obj.getArrayLength() > 1000000) {
+          String arrayMsg =
+              String.format(
+                  "⚠ Huge array at object %,d: %s with %,d elements (ID: %s)",
+                  processed + 1,
+                  className,
+                  obj.getArrayLength(),
+                  Long.toHexString(nodeId));
+          System.err.println(arrayMsg);
+          LOG.warn(arrayMsg);
         }
-      });
+
+        // Process references and count them
+        long[] refCount = {0};
+        long[] lastRefReportTime = {System.currentTimeMillis()};
+
+        obj.getOutboundReferences()
+            .forEach(
+                ref -> {
+                  refCount[0]++;
+                  long refId = ref.getId();
+                  if (reachable.contains(refId)) {
+                    predecessors.computeIfAbsent(refId, k -> new ArrayList<>()).add(nodeId);
+                  }
+
+                  // Report progress DURING reference iteration for huge objects
+                  if (refCount[0] % 100000 == 0) {
+                    long now = System.currentTimeMillis();
+                    long elapsed = now - objectStartTime;
+                    if (now - lastRefReportTime[0] > 5000) {
+                      String refMsg =
+                          String.format(
+                              "  ... processing object %s: %,d refs in %,dms (%.0f refs/sec)",
+                              Long.toHexString(nodeId),
+                              refCount[0],
+                              elapsed,
+                              elapsed > 0 ? (refCount[0] / (elapsed / 1000.0)) : 0);
+                      System.err.println(refMsg);
+                      lastRefReportTime[0] = now;
+                    }
+                  }
+                });
+
+        long objectElapsed = System.currentTimeMillis() - objectStartTime;
+
+        // Warn about objects that take >1 second to process OR have >100K references
+        if (objectElapsed > 1000 || refCount[0] > 100000) {
+          String warnMsg =
+              String.format(
+                  "⚠ Slow object: %s (class: %s, refs: %d, time: %dms) - processed %d/%d",
+                  Long.toHexString(nodeId),
+                  className,
+                  refCount[0],
+                  objectElapsed,
+                  processed + 1,
+                  totalObjects);
+          LOG.warn(warnMsg);
+          System.err.println(warnMsg); // Also output to console
+        }
+      }
+
+      processed++;
+
+      // Check progress and report frequently
+      long now = System.currentTimeMillis();
+
+      // Watchdog: detect if we're completely hung (check every 1000 objects)
+      if (processed % 1000 == 0) {
+        long timeSinceLastReport = now - lastReportTime;
+        if (timeSinceLastReport > 30000) { // No progress update for 30 seconds
+          String errorMsg =
+              String.format(
+                  "🚨 WATCHDOG: No progress update for %dms at object %d/%d (%d%%)",
+                  timeSinceLastReport,
+                  processed,
+                  totalObjects,
+                  (int) ((processed / (double) totalObjects) * 100));
+          LOG.error(errorMsg);
+          System.err.println(errorMsg); // Also output to console
+        }
+      }
+
+      // Report progress more frequently (every 10K objects OR every 2 seconds)
+      boolean shouldReport =
+          processed % Math.min(totalObjects / 50, 10000) == 0 || (now - lastReportTime) >= 2000;
+
+      if (progressCallback != null && shouldReport) {
+        // Progress from 0.2 to 0.4 (20% to 40%) during predecessor map building
+        double progress = 0.2 + (0.2 * (processed / (double) totalObjects));
+        int percentComplete = (int) (progress * 100);
+        if (percentComplete > lastReportedPercent || (now - lastReportTime) >= 2000) {
+          progressCallback.onProgress(
+              progress,
+              String.format(
+                  "Building predecessor map (%d%%, %d/%d objects)...",
+                  percentComplete, processed, totalObjects));
+          lastReportedPercent = percentComplete;
+          lastReportTime = now;
+        }
+      }
     }
 
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.4, "Computing immediate dominators...");
+    }
+
+    LOG.debug("Built predecessor map with {} entries", predecessors.size());
     return predecessors;
   }
 
-  /** Compute retained sizes bottom-up from leaves. */
+  /**
+   * Compute retained sizes bottom-up from leaves using dominator children map.
+   * Optimized from O(N²) to O(N) by using precomputed children map instead of scanning all objects.
+   *
+   * @param objectsById map of object IDs to objects
+   * @param rpo reverse post-order traversal
+   * @param dominatorChildren map from dominator ID to list of dominated children IDs
+   */
   private static void computeRetainedSizes(
-      Long2ObjectMap<HeapObjectImpl> objectsById, List<Long> rpo, Long2LongOpenHashMap idom) {
+      Long2ObjectMap<HeapObjectImpl> objectsById,
+      List<Long> rpo,
+      Map<Long, LongArrayList> dominatorChildren) {
 
-    // Process in reverse RPO (bottom-up)
+    // Process in reverse RPO (bottom-up, leaves first)
     for (int i = rpo.size() - 1; i >= 0; i--) {
       long nodeId = rpo.get(i);
       HeapObjectImpl obj = objectsById.get(nodeId);
@@ -260,13 +495,13 @@ public final class DominatorTreeComputer {
       // Retained size = shallow size + sum of dominated children's retained sizes
       long retained = obj.getShallowSize();
 
-      // Find all objects dominated by this object
-      for (long otherId : rpo) {
-        if (otherId == nodeId) continue;
-        if (idom.get(otherId) == nodeId) {
-          HeapObjectImpl other = objectsById.get(otherId);
-          if (other != null) {
-            retained += other.getRetainedSize();
+      // Direct lookup of dominated children (O(1) access, O(children) iteration)
+      LongArrayList children = dominatorChildren.get(nodeId);
+      if (children != null) {
+        for (int j = 0; j < children.size(); j++) {
+          HeapObjectImpl child = objectsById.get(children.getLong(j));
+          if (child != null) {
+            retained += child.getRetainedSize();
           }
         }
       }

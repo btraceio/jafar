@@ -113,6 +113,140 @@ public final class HeapSession implements Session {
     return false;
   }
 
+  /**
+   * Computes approximate retained sizes with progress display (no prompt needed).
+   * This is faster than full dominator tree but less accurate.
+   */
+  public void computeApproximateRetainedSizes() {
+    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
+      if (impl.hasDominators()) {
+        return; // Already computed
+      }
+
+      System.err.println();
+      System.err.println("Computing approximate retained sizes...");
+      System.err.println(
+          String.format(
+              "Processing %,d objects (this is fast, ~3-5 seconds for 10M objects)",
+              dump.getObjectCount()));
+      System.err.println();
+
+      final String[] spinner = {"|", "/", "-", "\\"};
+      final int[] spinnerIndex = {0};
+      final long[] lastUpdate = {System.currentTimeMillis()};
+
+      impl.computeDominators(
+          (progress, message) -> {
+            long now = System.currentTimeMillis();
+            // Update every 200ms to avoid flickering
+            if (now - lastUpdate[0] >= 200) {
+              String progressBar = createProgressBar(progress, 30);
+              System.err.print(
+                  String.format(
+                      "\r%s [%s] %.0f%% - %s",
+                      spinner[spinnerIndex[0] % spinner.length],
+                      progressBar,
+                      progress * 100,
+                      message));
+              System.err.flush();
+              spinnerIndex[0]++;
+              lastUpdate[0] = now;
+            }
+          });
+
+      System.err.println();
+      System.err.println("Approximate retained size computation complete!");
+      System.err.println();
+    }
+  }
+
+  /**
+   * Prompts user and computes full dominator tree with interactive progress display.
+   *
+   * @return true if computation completed, false if user declined
+   */
+  public boolean promptAndComputeDominatorTree() {
+    if (hasFullDominatorTree()) {
+      return true; // Already computed
+    }
+
+    // Prompt user for confirmation
+    System.err.println();
+    System.err.println("Full dominator tree computation required for dominators() operator.");
+    System.err.println("This will compute exact retained sizes and dominator relationships.");
+    System.err.println(
+        String.format(
+            "Estimated time: 15-30 seconds for 10M objects (you have %,d objects)",
+            dump.getObjectCount()));
+    System.err.print("Proceed with computation? [y/N] ");
+    System.err.flush();
+
+    try {
+      java.io.Console console = System.console();
+      String response;
+      if (console != null) {
+        response = console.readLine();
+      } else {
+        // Fallback for environments without console
+        java.util.Scanner scanner = new java.util.Scanner(System.in);
+        response = scanner.nextLine();
+      }
+
+      if (response == null || !response.trim().equalsIgnoreCase("y")) {
+        System.err.println("Computation cancelled.");
+        return false;
+      }
+    } catch (Exception e) {
+      LOG.error("Failed to read user input", e);
+      return false;
+    }
+
+    // Compute with progress display
+    System.err.println();
+    System.err.println("Computing full dominator tree...");
+
+    final String[] spinner = {"|", "/", "-", "\\"};
+    final int[] spinnerIndex = {0};
+    final long[] lastUpdate = {System.currentTimeMillis()};
+
+    computeFullDominatorTree(
+        (progress, message) -> {
+          long now = System.currentTimeMillis();
+          // Update every 200ms to avoid flickering
+          if (now - lastUpdate[0] >= 200) {
+            String progressBar = createProgressBar(progress, 30);
+            System.err.print(
+                String.format(
+                    "\r%s [%s] %.0f%% - %s",
+                    spinner[spinnerIndex[0] % spinner.length], progressBar, progress * 100, message));
+            System.err.flush();
+            spinnerIndex[0]++;
+            lastUpdate[0] = now;
+          }
+        });
+
+    // Clear the progress line and print completion message
+    System.err.print("\r" + " ".repeat(80) + "\r");
+    System.err.println("Dominator tree computation complete!");
+    System.err.println();
+    return true;
+  }
+
+  private static String createProgressBar(double progress, int width) {
+    int filled = (int) (progress * width);
+    StringBuilder bar = new StringBuilder();
+    for (int i = 0; i < width; i++) {
+      if (i < filled) {
+        bar.append("=");
+      } else if (i == filled) {
+        bar.append(">");
+      } else {
+        bar.append(" ");
+      }
+    }
+    return bar.toString();
+  }
+
   @Override
   public Map<String, Object> getStatistics() {
     Map<String, Object> stats = new LinkedHashMap<>();
