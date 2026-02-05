@@ -132,7 +132,10 @@ public final class HdumpPath {
           HeadOp,
           TailOp,
           FilterOp,
-          DistinctOp {}
+          DistinctOp,
+          PathToRootOp,
+          CheckLeaksOp,
+          DominatorsOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -231,6 +234,84 @@ public final class HdumpPath {
 
   /** Distinct values. */
   public record DistinctOp(String field) implements PipelineOp {}
+
+  /**
+   * Find shortest path to GC root for each object in the result set.
+   *
+   * <p>Transforms object results into path representations. Each result becomes a path from a GC
+   * root to that object, showing the reference chain that keeps it alive.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/com.example.Cache[retained > 1GB] | pathToRoot | head(1)
+   * </pre>
+   */
+  public record PathToRootOp() implements PipelineOp {}
+
+  /**
+   * Check for memory leaks using built-in detectors or custom filters.
+   *
+   * <p>Supports two modes:
+   *
+   * <ul>
+   *   <li><strong>Built-in detector:</strong> {@code checkLeaks(detector="duplicate-strings",
+   *       threshold=100)}
+   *   <li><strong>Custom filter:</strong> {@code checkLeaks(filter=$myQuery)} where $myQuery is a
+   *       saved HdumpPath query
+   * </ul>
+   *
+   * <p>Built-in detectors:
+   *
+   * <ul>
+   *   <li>{@code duplicate-strings} - Find identical string values above threshold count
+   *   <li>{@code growing-collections} - Detect collections with large retained sizes
+   *   <li>{@code threadlocal-leak} - ThreadLocals not removed from threads
+   *   <li>{@code classloader-leak} - ClassLoaders that should be GC'd but aren't
+   *   <li>{@code listener-leak} - Event listeners not deregistered
+   *   <li>{@code finalizer-queue} - Objects stuck in finalizer queue
+   * </ul>
+   *
+   * @param detector name of built-in detector (mutually exclusive with filter)
+   * @param filter custom HdumpPath query (mutually exclusive with detector)
+   * @param threshold numeric threshold for detector (e.g., minimum duplicate count)
+   * @param minSize minimum size threshold for detector (e.g., collection size)
+   */
+  public record CheckLeaksOp(String detector, String filter, Integer threshold, Integer minSize)
+      implements PipelineOp {
+    public CheckLeaksOp {
+      if (detector != null && filter != null) {
+        throw new IllegalArgumentException("Cannot specify both detector and filter");
+      }
+      if (detector == null && filter == null) {
+        throw new IllegalArgumentException("Must specify either detector or filter");
+      }
+    }
+
+    public CheckLeaksOp(String detector, Integer threshold, Integer minSize) {
+      this(detector, null, threshold, minSize);
+    }
+
+    public CheckLeaksOp(String filter) {
+      this(null, filter, null, null);
+    }
+  }
+
+  /**
+   * Get objects dominated by the result set.
+   *
+   * <p>For each object in the result set, returns all objects that would be garbage collected if
+   * that object were removed. This helps understand the transitive closure of retained objects.
+   *
+   * <p>Requires approximate retained size computation to have been performed.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects[retained > 100MB] | dominators | groupBy(class)
+   * </pre>
+   */
+  public record DominatorsOp() implements PipelineOp {}
 
   // === Built-in field names for objects ===
 
