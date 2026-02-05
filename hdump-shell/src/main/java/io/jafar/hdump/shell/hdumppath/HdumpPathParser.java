@@ -372,6 +372,9 @@ public final class HdumpPathParser {
       case "tail" -> parseTailOp();
       case "filter", "where" -> parseFilterOp();
       case "distinct", "unique" -> parseDistinctOp();
+      case "pathtoroot", "pathroot", "path" -> parsePathToRootOp();
+      case "checkleaks", "leaks" -> parseCheckLeaksOp();
+      case "dominators", "dominated" -> parseDominatorsOp();
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };
   }
@@ -734,5 +737,88 @@ public final class HdumpPathParser {
 
   private String remaining() {
     return input.substring(pos);
+  }
+
+  private PathToRootOp parsePathToRootOp() {
+    // pathToRoot has no parameters - it's a zero-arg operator
+    // Optional empty parens allowed: pathToRoot() or pathToRoot
+    skipWs();
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      expect(')');
+    }
+    return new PathToRootOp();
+  }
+
+  private CheckLeaksOp parseCheckLeaksOp() {
+    expect('(');
+    String detector = null;
+    String filter = null;
+    Integer threshold = null;
+    Integer minSize = null;
+
+    do {
+      skipWs();
+      if (lookahead("detector=") || lookahead("detector =")) {
+        matchKeyword("detector");
+        skipWs();
+        expect('=');
+        skipWs();
+        detector = parseStringOrIdentifier();
+      } else if (lookahead("filter=") || lookahead("filter =")) {
+        matchKeyword("filter");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Filter is a variable reference like $myQuery
+        if (peek() == '$') {
+          advance();
+          filter = parseIdentifier();
+        } else {
+          filter = parseStringOrIdentifier();
+        }
+      } else if (lookahead("threshold=") || lookahead("threshold =")) {
+        matchKeyword("threshold");
+        skipWs();
+        expect('=');
+        skipWs();
+        threshold = parseNumber().intValue();
+      } else if (lookahead("minsize=") || lookahead("minsize =")) {
+        matchKeyword("minsize");
+        skipWs();
+        expect('=');
+        skipWs();
+        minSize = parseNumber().intValue();
+      } else {
+        throw new HdumpPathParseException(
+            "Expected detector=, filter=, threshold=, or minsize= parameter");
+      }
+      skipWs();
+    } while (matchChar(','));
+
+    expect(')');
+    return new CheckLeaksOp(detector, filter, threshold, minSize);
+  }
+
+  private DominatorsOp parseDominatorsOp() {
+    // dominators has no parameters - it's a zero-arg operator
+    // Optional empty parens allowed: dominators() or dominators
+    skipWs();
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      expect(')');
+    }
+    return new DominatorsOp();
+  }
+
+  private String parseStringOrIdentifier() {
+    skipWs();
+    if (peek() == '"' || peek() == '\'') {
+      return parseString();
+    } else {
+      return parseIdentifier();
+    }
   }
 }
