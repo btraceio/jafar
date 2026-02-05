@@ -464,22 +464,28 @@ public final class HeapDumpImpl implements HeapDump {
   @Override
   public void computeDominators() {
     if (dominatorsComputed) return;
-    LOG.debug("Computing dominators for {} objects...", objectCount);
-    // TODO: Implement Lengauer-Tarjan algorithm
+    LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
+    io.jafar.hdump.analysis.ApproximateRetainedSizeComputer.computeAll(
+        this, objectsById, gcRoots);
     dominatorsComputed = true;
+  }
+
+  /**
+   * Package-private method called by HeapObjectImpl when retained size is accessed. Ensures
+   * dominator computation (or approximation) has been performed before returning retained size.
+   */
+  void ensureDominatorsComputed() {
+    computeDominators();
   }
 
   @Override
   public boolean hasDominators() {
-    // Return false since dominator computation is not yet implemented.
-    // When implemented, this should return dominatorsComputed.
-    return false;
+    return dominatorsComputed;
   }
 
   @Override
   public List<HeapObject> findPathToGcRoot(HeapObject obj) {
-    // TODO: Implement BFS from GC roots
-    return Collections.emptyList();
+    return io.jafar.hdump.analysis.PathFinder.findShortestPath(this, obj, gcRoots);
   }
 
   @Override
