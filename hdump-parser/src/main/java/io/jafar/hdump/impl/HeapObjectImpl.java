@@ -22,6 +22,7 @@ final class HeapObjectImpl implements HeapObject {
 
   private int shallowSize;
   private long retainedSize = -1;
+  private HeapObjectImpl dominator; // Immediate dominator in dominator tree
   private int arrayLength = -1;
   private int primitiveArrayType = -1; // -1 = not primitive array
   private boolean isObjectArray = false;
@@ -44,6 +45,14 @@ final class HeapObjectImpl implements HeapObject {
 
   void setRetainedSize(long size) {
     this.retainedSize = size;
+  }
+
+  void setDominator(HeapObjectImpl dominator) {
+    this.dominator = dominator;
+  }
+
+  HeapObjectImpl getDominator() {
+    return dominator;
   }
 
   void setArrayLength(int length) {

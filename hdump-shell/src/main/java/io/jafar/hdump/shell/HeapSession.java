@@ -91,6 +91,28 @@ public final class HeapSession implements Session {
         .collect(Collectors.toSet());
   }
 
+  /**
+   * Computes full dominator tree with progress feedback.
+   *
+   * @param progressCallback callback for progress updates
+   */
+  public void computeFullDominatorTree(
+      io.jafar.hdump.impl.DominatorTreeComputer.ProgressCallback progressCallback) {
+    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
+      impl.computeFullDominatorTree(progressCallback);
+    }
+  }
+
+  /**
+   * Checks if full dominator tree has been computed.
+   */
+  public boolean hasFullDominatorTree() {
+    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
+      return impl.hasFullDominatorTree();
+    }
+    return false;
+  }
+
   @Override
   public Map<String, Object> getStatistics() {
     Map<String, Object> stats = new LinkedHashMap<>();

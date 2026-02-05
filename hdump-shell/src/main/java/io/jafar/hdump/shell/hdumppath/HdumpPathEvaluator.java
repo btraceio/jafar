@@ -723,6 +723,22 @@ public final class HdumpPathEvaluator {
 
   private static List<Map<String, Object>> applyDominators(
       HeapDump dump, List<Map<String, Object>> results) {
+
+    // Check if full dominator tree is computed
+    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl) {
+      io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl = (io.jafar.hdump.impl.HeapDumpImpl) dump;
+
+      if (!heapDumpImpl.hasFullDominatorTree()) {
+        // Return a message indicating full dominator tree is needed
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("message", "Full dominator tree computation required");
+        message.put("instruction", "Computing full dominator tree is expensive (15-30s for 10M objects)");
+        message.put("note", "Use 'compute dominators' command to proceed");
+        return List.of(message);
+      }
+    }
+
+    // Full dominator tree is computed - return dominated objects
     List<Map<String, Object>> dominated = new ArrayList<>();
 
     for (Map<String, Object> row : results) {
@@ -730,17 +746,21 @@ public final class HdumpPathEvaluator {
       if (idObj == null) continue;
 
       long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
-      HeapObject obj = dump.getObjectById(id).orElse(null);
-      if (obj == null) continue;
+      HeapObject dominator = dump.getObjectById(id).orElse(null);
+      if (dominator == null) continue;
 
-      // For now, return a placeholder since we need full dominator tree implementation
-      // In a complete implementation, this would traverse the dominator tree
-      // and return all objects dominated by this object
-      Map<String, Object> placeholder = new LinkedHashMap<>();
-      placeholder.put("dominator", obj.getId());
-      placeholder.put("dominatorClass", obj.getHeapClass() != null ? obj.getHeapClass().getName() : "unknown");
-      placeholder.put("message", "Dominator traversal not yet implemented - requires full dominator tree");
-      dominated.add(placeholder);
+      // Get all objects dominated by this object
+      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl) {
+        io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl = (io.jafar.hdump.impl.HeapDumpImpl) dump;
+        List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
+
+        for (HeapObject obj : dominatedObjects) {
+          Map<String, Object> result = objectToMap(obj);
+          result.put("dominator", dominator.getId());
+          result.put("dominatorClass", dominator.getHeapClass() != null ? dominator.getHeapClass().getName() : "unknown");
+          dominated.add(result);
+        }
+      }
     }
 
     return dominated;

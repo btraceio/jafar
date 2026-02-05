@@ -52,6 +52,7 @@ public final class HeapDumpImpl implements HeapDump {
   private int objectCount = 0;
   private long totalHeapSize = 0;
   private volatile boolean dominatorsComputed = false;
+  private volatile boolean fullDominatorTreeComputed = false;
 
   private HeapDumpImpl(Path path, HprofReader reader, ParserOptions options) {
     this.path = path;
@@ -477,9 +478,59 @@ public final class HeapDumpImpl implements HeapDump {
     computeDominators();
   }
 
+  /**
+   * Computes full dominator tree with exact retained sizes and dominator relationships.
+   *
+   * <p>This is more expensive than approximate computation but provides:
+   * <ul>
+   *   <li>Exact retained sizes (not approximations)
+   *   <li>Full dominator tree structure
+   *   <li>Ability to query dominated objects
+   * </ul>
+   *
+   * @param progressCallback optional callback for progress updates
+   */
+  public void computeFullDominatorTree(DominatorTreeComputer.ProgressCallback progressCallback) {
+    if (fullDominatorTreeComputed) return;
+    LOG.info("Computing full dominator tree for {} objects...", objectCount);
+    DominatorTreeComputer.computeFull(this, objectsById, gcRoots, progressCallback);
+    dominatorsComputed = true;
+    fullDominatorTreeComputed = true;
+  }
+
+  /**
+   * Returns whether full dominator tree has been computed.
+   */
+  public boolean hasFullDominatorTree() {
+    return fullDominatorTreeComputed;
+  }
+
   @Override
   public boolean hasDominators() {
     return dominatorsComputed;
+  }
+
+  /**
+   * Gets all objects dominated by the given object.
+   *
+   * <p>Requires full dominator tree to be computed first.
+   *
+   * @param dominator the dominating object
+   * @return list of dominated objects (empty if full tree not computed)
+   */
+  public List<HeapObject> getDominatedObjects(HeapObject dominator) {
+    if (!fullDominatorTreeComputed) {
+      return Collections.emptyList();
+    }
+
+    List<HeapObject> dominated = new ArrayList<>();
+    for (HeapObjectImpl obj : objectsById.values()) {
+      HeapObjectImpl idom = obj.getDominator();
+      if (idom != null && idom.getId() == dominator.getId()) {
+        dominated.add(obj);
+      }
+    }
+    return dominated;
   }
 
   @Override
