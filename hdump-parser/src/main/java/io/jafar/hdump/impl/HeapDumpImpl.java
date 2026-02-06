@@ -7,6 +7,8 @@ import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.index.InboundCountReader;
+import io.jafar.hdump.index.InboundIndexBuilder;
 import io.jafar.hdump.index.IndexFormat;
 import io.jafar.hdump.index.IndexWriter;
 import io.jafar.hdump.index.ObjectIndexReader;
@@ -57,8 +59,10 @@ public final class HeapDumpImpl implements HeapDump {
 
   // Index-based parsing fields - INDEXED MODE ONLY
   private ObjectIndexReader objectIndexReader;  // null in in-memory mode
+  private InboundCountReader inboundCountReader; // null until first retained-size query
   private Long2IntOpenHashMap addressToId32;    // 64-bit address -> 32-bit ID mapping
   private Path indexDir;                        // directory containing index files
+  private volatile boolean inboundIndexBuilt = false;
 
   // GC roots
   private final List<GcRootImpl> gcRoots = new ArrayList<>();
@@ -860,10 +864,68 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /**
+   * Ensures inbound reference index is built for retained size computation.
+   *
+   * <p>This is only needed for indexed parsing mode. In in-memory mode, inbound references
+   * are tracked directly if enabled via ParserOptions.
+   *
+   * <p>The inbound index is built on-demand when first needed (progressive indexing strategy).
+   * Once built, it's persisted to disk for instant reuse on subsequent opens.
+   *
+   * <p>Package-private for testing.
+   *
+   * @throws RuntimeException if index building fails
+   */
+  void ensureInboundIndexBuilt() {
+    if (inboundIndexBuilt || !options.useIndexedParsing()) {
+      return;
+    }
+
+    synchronized (this) {
+      if (inboundIndexBuilt) {
+        return; // Double-check after acquiring lock
+      }
+
+      try {
+        Path inboundIndexFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
+
+        if (Files.exists(inboundIndexFile)) {
+          // Index already exists, just open it
+          LOG.info("Loading existing inbound index from {}", inboundIndexFile);
+          inboundCountReader = new InboundCountReader(indexDir);
+        } else {
+          // Build inbound index on-demand
+          LOG.info("Building inbound reference index for {} objects (first retained-size query)...", objectCount);
+          long startTime = System.currentTimeMillis();
+
+          InboundIndexBuilder.buildInboundIndex(
+              path,
+              indexDir,
+              addressToId32,
+              (progress, message) -> LOG.debug("Index building {}: {}%", message, String.format("%.1f", progress * 100))
+          );
+
+          long elapsedMs = System.currentTimeMillis() - startTime;
+          LOG.info("Inbound index built in {} seconds", elapsedMs / 1000.0);
+
+          // Open the newly built index
+          inboundCountReader = new InboundCountReader(indexDir);
+        }
+
+        inboundIndexBuilt = true;
+      } catch (IOException e) {
+        throw new RuntimeException("Failed to build inbound reference index", e);
+      }
+    }
+  }
+
+  /**
    * Package-private method called by HeapObjectImpl when retained size is accessed. Ensures
    * dominator computation (or approximation) has been performed before returning retained size.
    */
   void ensureDominatorsComputed() {
+    // For indexed mode, build inbound index first if needed
+    ensureInboundIndexBuilt();
     computeDominators();
   }
 
@@ -1040,6 +1102,9 @@ public final class HeapDumpImpl implements HeapDump {
     reader.close();
     if (objectIndexReader != null) {
       objectIndexReader.close();
+    }
+    if (inboundCountReader != null) {
+      inboundCountReader.close();
     }
   }
 }

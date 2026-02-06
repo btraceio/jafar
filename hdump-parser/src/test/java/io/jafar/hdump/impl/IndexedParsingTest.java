@@ -105,4 +105,31 @@ class IndexedParsingTest {
         newModTime >= indexModTime,
         "Index should be reused or rebuilt (mod time should not decrease)");
   }
+
+  @Test
+  void testInboundIndexInfrastructure() throws IOException {
+    // This test verifies that the inbound index infrastructure works
+    // Full integration with ApproximateRetainedSizeComputer is deferred to M4
+
+    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    Path indexDir = testHeapDump.getParent().resolve(testHeapDump.getFileName() + ".idx");
+
+    // Parse with indexed mode to set up infrastructure
+    try (HeapDump dump = HeapDumpParser.parse(testHeapDump, options)) {
+      // Cast to implementation to access internal methods
+      HeapDumpImpl dumpImpl = (HeapDumpImpl) dump;
+
+      // Manually build inbound index to test infrastructure
+      dumpImpl.ensureInboundIndexBuilt();
+
+      // Verify inbound index file was created
+      assertTrue(
+          Files.exists(indexDir.resolve("inbound.idx")),
+          "Inbound index should be created by ensureInboundIndexBuilt()");
+
+      // Verify index can be read
+      long inboundSize = Files.size(indexDir.resolve("inbound.idx"));
+      assertTrue(inboundSize > 0, "Inbound index should not be empty");
+    }
+  }
 }
