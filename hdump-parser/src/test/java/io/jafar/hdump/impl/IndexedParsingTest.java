@@ -1,6 +1,9 @@
 package io.jafar.hdump.impl;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser;
@@ -109,7 +112,6 @@ class IndexedParsingTest {
   @Test
   void testInboundIndexInfrastructure() throws IOException {
     // This test verifies that the inbound index infrastructure works
-    // Full integration with ApproximateRetainedSizeComputer is deferred to M4
 
     ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
     Path indexDir = testHeapDump.getParent().resolve(testHeapDump.getFileName() + ".idx");
@@ -130,6 +132,42 @@ class IndexedParsingTest {
       // Verify index can be read
       long inboundSize = Files.size(indexDir.resolve("inbound.idx"));
       assertTrue(inboundSize > 0, "Inbound index should not be empty");
+    }
+  }
+
+  @Test
+  void testInboundIndexReadWrite() throws IOException {
+    // This test verifies that the inbound index can be built, written, and read correctly
+    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    Path indexDir = testHeapDump.getParent().resolve(testHeapDump.getFileName() + ".idx");
+
+    // First parse: build and write index
+    try (HeapDump dump = HeapDumpParser.parse(testHeapDump, options)) {
+      HeapDumpImpl dumpImpl = (HeapDumpImpl) dump;
+
+      // Build inbound index
+      dumpImpl.ensureInboundIndexBuilt();
+
+      // Verify it was created
+      assertTrue(
+          Files.exists(indexDir.resolve("inbound.idx")),
+          "Inbound index should be created");
+
+      assertNotNull(
+          dumpImpl.getInboundCountReader(),
+          "Inbound count reader should be initialized");
+    }
+
+    // Second parse: verify index can be read
+    try (HeapDump dump2 = HeapDumpParser.parse(testHeapDump, options)) {
+      HeapDumpImpl dumpImpl2 = (HeapDumpImpl) dump2;
+
+      // Read existing index
+      dumpImpl2.ensureInboundIndexBuilt();
+
+      assertNotNull(
+          dumpImpl2.getInboundCountReader(),
+          "Inbound count reader should be initialized from existing index");
     }
   }
 }

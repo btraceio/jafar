@@ -836,6 +836,26 @@ public final class HeapDumpImpl implements HeapDump {
     return objectCount;
   }
 
+  /**
+   * Returns the inbound count reader for indexed parsing mode.
+   * Package-private for use by ApproximateRetainedSizeComputer.
+   *
+   * @return inbound count reader, or null if in in-memory mode or not yet built
+   */
+  InboundCountReader getInboundCountReader() {
+    return inboundCountReader;
+  }
+
+  /**
+   * Returns the address-to-ID mapping for indexed parsing mode.
+   * Package-private for use by ApproximateRetainedSizeComputer.
+   *
+   * @return address-to-ID mapping, or null if in in-memory mode
+   */
+  Long2IntOpenHashMap getAddressToId32() {
+    return addressToId32;
+  }
+
   @Override
   public int getGcRootCount() {
     return gcRoots.size();

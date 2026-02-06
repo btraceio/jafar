@@ -2,6 +2,7 @@ package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.index.InboundCountReader;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -39,11 +40,15 @@ public final class ApproximateRetainedSizeComputer {
   /**
    * Computes approximate retained sizes for all objects in the heap dump.
    *
-   * <p>This method builds an inbound reference count map and then computes approximate retained
-   * sizes for all objects. The retained sizes are set directly on HeapObjectImpl instances via
-   * package-private setters.
+   * <p>This method adapts to both in-memory and indexed parsing modes:
+   * <ul>
+   *   <li><strong>In-memory mode:</strong> Builds inbound counts by scanning objectsById map
+   *   <li><strong>Indexed mode:</strong> Uses persistent InboundCountReader from disk
+   * </ul>
    *
-   * @param dump the heap dump
+   * <p>The retained sizes are set directly on HeapObjectImpl instances via package-private setters.
+   *
+   * @param dump the heap dump (provides access to inbound count reader if in indexed mode)
    * @param objectsById map of object IDs to objects
    * @param gcRoots list of GC roots
    * @param progressCallback optional callback for progress updates (0.0 to 1.0)
@@ -56,15 +61,34 @@ public final class ApproximateRetainedSizeComputer {
 
     int totalObjects = objectsById.size();
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.0, "Building inbound reference counts...");
-    }
-    LOG.debug("Computing inbound reference counts for {} objects...", totalObjects);
-    Long2IntOpenHashMap inboundCounts = buildInboundReferenceCounts(objectsById);
+    // Check if we're in indexed mode (inbound count reader will be non-null after ensureInboundIndexBuilt)
+    InboundCountReader inboundCountReader = dump.getInboundCountReader();
+    InboundCountAccessor inboundCounts;
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
+    if (inboundCountReader != null) {
+      // Indexed mode: use persistent inbound index
+      LOG.debug("Using persistent inbound index for {} objects", totalObjects);
+      inboundCounts = new IndexedInboundCountAccessor(inboundCountReader, dump.getAddressToId32());
+
+      // Skip progress for index building since it's already done
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
+      }
+    } else {
+      // In-memory mode: build inbound counts from object map
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.0, "Building inbound reference counts...");
+      }
+      LOG.debug("Computing inbound reference counts for {} objects...", totalObjects);
+      Long2IntOpenHashMap inboundCountMap =
+          buildInboundReferenceCounts(objectsById, totalObjects, progressCallback);
+      inboundCounts = new InMemoryInboundCountAccessor(inboundCountMap);
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
+      }
     }
+
     LOG.debug("Computing approximate retained sizes...");
 
     int computed = 0;
@@ -118,11 +142,11 @@ public final class ApproximateRetainedSizeComputer {
    * through the target object.
    *
    * @param target the object to compute retained size for
-   * @param inboundCounts map of object ID to inbound reference count
+   * @param inboundCounts accessor for inbound reference counts
    * @return approximate retained size in bytes
    */
   public static long computeMinRetainedSize(
-      HeapObject target, Long2IntOpenHashMap inboundCounts) {
+      HeapObject target, InboundCountAccessor inboundCounts) {
     if (target == null) {
       return 0;
     }
@@ -163,27 +187,117 @@ public final class ApproximateRetainedSizeComputer {
   }
 
   /**
+   * Overload for backward compatibility with Long2IntOpenHashMap.
+   * Used by code that builds inbound counts in-memory.
+   */
+  public static long computeMinRetainedSize(
+      HeapObject target, Long2IntOpenHashMap inboundCounts) {
+    return computeMinRetainedSize(target, new InMemoryInboundCountAccessor(inboundCounts));
+  }
+
+  /**
    * Builds a map of object ID to inbound reference count.
    *
    * <p>Iterates through all objects and counts how many times each object is referenced. This is a
    * one-time O(V + E) operation where V = objects, E = references.
    *
    * @param objectsById map of all objects in the heap
+   * @param totalObjects total number of objects for progress reporting
+   * @param progressCallback optional callback for progress updates
    * @return map from object ID to inbound reference count
    */
   private static Long2IntOpenHashMap buildInboundReferenceCounts(
-      Long2ObjectMap<HeapObjectImpl> objectsById) {
-    Long2IntOpenHashMap counts = new Long2IntOpenHashMap();
+      Long2ObjectMap<HeapObjectImpl> objectsById,
+      int totalObjects,
+      ProgressCallback progressCallback) {
+    // Pre-size map to avoid rehashing with 114M+ entries (fixes OOM)
+    // Each entry ~16 bytes, so 114M entries = ~1.8GB
+    Long2IntOpenHashMap counts = new Long2IntOpenHashMap(totalObjects);
     counts.defaultReturnValue(0);
 
+    int processed = 0;
+    int lastReportedPercent = 0;
+
     for (HeapObjectImpl obj : objectsById.values()) {
-      obj.getOutboundReferences()
-          .forEach(
-              ref -> {
-                counts.addTo(ref.getId(), 1);
-              });
+      // Use direct long[] access instead of Stream to avoid 1.14B allocations
+      long[] refIds = obj.getOutboundReferenceIds();
+      for (int i = 0; i < refIds.length; i++) {
+        counts.addTo(refIds[i], 1);
+      }
+
+      processed++;
+
+      // Report progress more frequently for large heaps (every 1% for >10M objects)
+      int reportingInterval =
+          totalObjects > 10_000_000 ? totalObjects / 100 : Math.max(totalObjects / 20, 100000);
+      if (progressCallback != null && processed % reportingInterval == 0) {
+        double progress = 0.3 * (processed / (double) totalObjects);
+        int percentComplete = (int) (progress * 100);
+        if (percentComplete > lastReportedPercent) {
+          progressCallback.onProgress(
+              progress,
+              String.format(
+                  "Scanning object references from heap dump (%d%%)...", percentComplete));
+          lastReportedPercent = percentComplete;
+        }
+      }
     }
 
     return counts;
+  }
+
+  /**
+   * Abstraction for accessing inbound reference counts.
+   * Allows transparent switching between in-memory and indexed modes.
+   */
+  interface InboundCountAccessor {
+    /**
+     * Returns the inbound reference count for an object.
+     *
+     * @param objectId 64-bit object ID
+     * @return inbound reference count (0 if object has no inbound references)
+     */
+    int get(long objectId);
+  }
+
+  /**
+   * In-memory accessor backed by Long2IntOpenHashMap.
+   * Used when parsing in in-memory mode.
+   */
+  static class InMemoryInboundCountAccessor implements InboundCountAccessor {
+    private final Long2IntOpenHashMap counts;
+
+    InMemoryInboundCountAccessor(Long2IntOpenHashMap counts) {
+      this.counts = counts;
+    }
+
+    @Override
+    public int get(long objectId) {
+      return counts.get(objectId);
+    }
+  }
+
+  /**
+   * Indexed accessor backed by InboundCountReader.
+   * Used when parsing in indexed mode with persistent inbound index.
+   */
+  static class IndexedInboundCountAccessor implements InboundCountAccessor {
+    private final InboundCountReader reader;
+    private final Long2IntOpenHashMap addressToId32;
+
+    IndexedInboundCountAccessor(InboundCountReader reader, Long2IntOpenHashMap addressToId32) {
+      this.reader = reader;
+      this.addressToId32 = addressToId32;
+    }
+
+    @Override
+    public int get(long objectId) {
+      // Map 64-bit object ID to 32-bit sequential ID
+      int id32 = addressToId32.get(objectId);
+      if (id32 == -1) {
+        return 0; // Object not found
+      }
+      return reader.getInboundCount(id32);
+    }
   }
 }
