@@ -26,7 +26,7 @@ class ShellCompleterFunctionParametersTest {
     // Use real JFR file so metadata loading works
     Path jfr = resource("test-ap.jfr"); // Use test-ap.jfr which has JDK events
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
     completer = new ShellCompleter(sessions, null);
   }

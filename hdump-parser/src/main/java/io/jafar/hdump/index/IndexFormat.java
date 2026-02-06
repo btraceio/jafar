@@ -182,6 +182,11 @@ public final class IndexFormat {
   /** Classes index filename. */
   public static final String CLASSES_INDEX_NAME = "classes.idx";
 
+  // === Magic Numbers (continued) ===
+
+  /** Magic number for inbound.idx file (ASCII: "JINB") - defined above but repeated for clarity */
+  // public static final int INBOUND_INDEX_MAGIC = 0x4A494E42; // Already defined above
+
   // === Memory Mapping Configuration ===
 
   /**

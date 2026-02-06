@@ -47,7 +47,7 @@ class CommandDispatcherTypesSummaryTest {
     when(session.getPrimitiveMetadataTypes()).thenReturn(Set.of("int", "long"));
     when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.A", "custom.C"));
 
-    SessionManager sm = new SessionManager(ParsingContext.create(), (p, c) -> session);
+    SessionManager sm = new SessionManager((p, c) -> session, ParsingContext.create());
     BufferIO io = new BufferIO();
     CommandDispatcher disp = new CommandDispatcher(sm, io, r -> {});
 

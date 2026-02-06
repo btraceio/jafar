@@ -350,6 +350,10 @@ public final class HdumpPath {
     public static final String OBJECT = "object";
     public static final String THREAD_SERIAL = "threadSerial";
     public static final String FRAME_NUMBER = "frameNumber";
+    public static final String SHALLOW = "shallow";
+    public static final String SHALLOW_SIZE = "shallowSize";
+    public static final String RETAINED = "retained";
+    public static final String RETAINED_SIZE = "retainedSize";
 
     private GcRootFields() {}
   }

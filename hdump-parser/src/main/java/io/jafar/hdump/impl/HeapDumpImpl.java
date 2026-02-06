@@ -98,7 +98,7 @@ public final class HeapDumpImpl implements HeapDump {
     HprofReader reader = new HprofReader(path);
     HeapDumpImpl dump = new HeapDumpImpl(path, reader, options);
 
-    if (options.useIndexedParsing()) {
+    if (options.parsingMode() == HeapDumpParser.ParsingMode.INDEXED) {
       dump.parseTwoPass(progressCallback);
     } else {
       dump.parseRecords(progressCallback);
@@ -174,7 +174,7 @@ public final class HeapDumpImpl implements HeapDump {
     }
 
     LongArrayList objectAddresses = new LongArrayList();
-    collectObjectAddresses(objectAddresses);
+    collectObjectAddresses(objectAddresses, progressCallback);
 
     // Sort and create address-to-ID mapping
     objectAddresses.sort(null);
@@ -215,8 +215,14 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /** Pass 1: Collect all object addresses in single scan. */
-  private void collectObjectAddresses(LongArrayList objectAddresses) throws IOException {
+  private void collectObjectAddresses(LongArrayList objectAddresses,
+                                     HeapDumpParser.ProgressCallback progressCallback)
+      throws IOException {
     reader.reset();
+
+    long fileSize = Files.size(path);
+    long lastProgressReport = 0;
+    long progressInterval = fileSize / 100; // Report every 1% of file
 
     while (reader.hasMoreRecords()) {
       RecordHeader header = reader.readRecordHeader();
@@ -229,11 +235,22 @@ public final class HeapDumpImpl implements HeapDump {
             collectAddressesFromHeapDump(header, objectAddresses);
         default -> reader.skipRecordBody(header);
       }
+
+      // Report progress periodically (Pass 1 is 0-30% of total)
+      if (progressCallback != null && fileSize > 0) {
+        long currentPos = reader.position();
+        if (currentPos - lastProgressReport > progressInterval) {
+          double fileProgress = (double) currentPos / fileSize;
+          double totalProgress = fileProgress * 0.3; // Pass 1 is 30% of total
+          progressCallback.onProgress(totalProgress, "Pass 1: Collecting addresses");
+          lastProgressReport = currentPos;
+        }
+      }
     }
   }
 
   private void collectAddressesFromHeapDump(
-      RecordHeader header, LongArrayList objectAddresses) {
+      RecordHeader header, LongArrayList objectAddresses) throws IOException {
     long endPos = header.bodyPosition() + header.length();
 
     while (reader.position() < endPos) {
@@ -265,8 +282,15 @@ public final class HeapDumpImpl implements HeapDump {
           int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
           reader.skip(length * elemSize);
         }
-        case HeapTag.CLASS_DUMP -> parseClassDump();  // Still need class metadata
-        default -> skipGcRoot(subTag);  // GC roots, etc.
+        case HeapTag.CLASS_DUMP -> parseClassDump();
+        default -> skipGcRoot(subTag);
+      }
+
+      // Verify we haven't read past segment end
+      if (reader.position() > endPos) {
+        throw new IOException("Read past HEAP_DUMP segment boundary! " +
+                              "Position: " + reader.position() + ", endPos: " + endPos +
+                              ", last subTag: 0x" + Integer.toHexString(subTag));
       }
     }
   }
@@ -405,16 +429,22 @@ public final class HeapDumpImpl implements HeapDump {
     }
   }
 
-  private void skipGcRoot(int subTag) {
+  private void skipGcRoot(int subTag) throws IOException {
     switch (subTag) {
+      // Standard GC roots (HPROF 1.0.2)
       case HeapTag.ROOT_UNKNOWN, HeapTag.ROOT_STICKY_CLASS, HeapTag.ROOT_MONITOR_USED -> reader.readId();
       case HeapTag.ROOT_JNI_GLOBAL -> {
         reader.readId();
         reader.readId();
       }
-      case HeapTag.ROOT_JNI_LOCAL, HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK -> {
-        reader.readId();
-        reader.readI4();
+      case HeapTag.ROOT_JNI_LOCAL -> {
+        reader.readId();     // objId
+        reader.readI4();     // threadSerial
+        reader.readI4();     // frameNum
+      }
+      case HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK -> {
+        reader.readId();     // objId
+        reader.readI4();     // threadSerial
       }
       case HeapTag.ROOT_JAVA_FRAME -> {
         reader.readId();
@@ -426,9 +456,34 @@ public final class HeapDumpImpl implements HeapDump {
         reader.readI4();
         reader.readI4();
       }
+      // Extended GC roots (HPROF 1.0.3 - Android/modern JDK)
+      case HeapTag.ROOT_INTERNED_STRING,
+           HeapTag.ROOT_FINALIZING,
+           HeapTag.ROOT_VM_INTERNAL,
+           HeapTag.ROOT_REFERENCE_CLEANUP -> reader.readId();
+      case HeapTag.ROOT_DEBUGGER -> {
+        reader.readId();
+        reader.readI4();
+      }
+      case HeapTag.ROOT_JNI_MONITOR -> {
+        reader.readId();
+        reader.readI4();
+        reader.readI4();
+      }
+      case HeapTag.HEAP_DUMP_INFO -> {
+        reader.readI4();
+        reader.readId();
+      }
+      case HeapTag.UNREACHABLE -> reader.readId();
       default -> {
-        // Unknown tag - shouldn't happen with well-formed dumps
-        LOG.warn("Unknown heap sub-tag during indexed parsing: 0x{}", Integer.toHexString(subTag));
+        // Unknown tag - can't continue safely!
+        LOG.error("Unknown heap sub-tag 0x{} at position {}. " +
+                 "Heap dump may be corrupted or use unsupported HPROF format. " +
+                 "Stopping parse to avoid data corruption.",
+                 Integer.toHexString(subTag), reader.position());
+        throw new IOException("Unsupported heap sub-tag: 0x" +
+                              Integer.toHexString(subTag) + " at position " +
+                              reader.position());
       }
     }
   }
@@ -881,7 +936,7 @@ public final class HeapDumpImpl implements HeapDump {
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
 
     // For indexed mode, ensure inbound index is built first (before loading all objects)
-    ensureInboundIndexBuilt();
+    ensureInboundIndexBuilt(progressCallback);
 
     // For indexed mode, ensure all objects are loaded
     ensureAllObjectsLoaded();
@@ -905,7 +960,7 @@ public final class HeapDumpImpl implements HeapDump {
    * @throws RuntimeException if loading fails
    */
   private void ensureAllObjectsLoaded() {
-    if (!options.useIndexedParsing()) {
+    if (options.parsingMode() != HeapDumpParser.ParsingMode.INDEXED) {
       return; // Already loaded in in-memory mode
     }
 
@@ -946,8 +1001,8 @@ public final class HeapDumpImpl implements HeapDump {
    *
    * @throws RuntimeException if index building fails
    */
-  void ensureInboundIndexBuilt() {
-    if (inboundIndexBuilt || !options.useIndexedParsing()) {
+  void ensureInboundIndexBuilt(ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
+    if (inboundIndexBuilt || options.parsingMode() != HeapDumpParser.ParsingMode.INDEXED) {
       return;
     }
 
@@ -968,11 +1023,18 @@ public final class HeapDumpImpl implements HeapDump {
           LOG.info("Building inbound reference index for {} objects (first retained-size query)...", objectCount);
           long startTime = System.currentTimeMillis();
 
+          // Pass progressCallback through instead of hardcoding LOG
+          // Convert ApproximateRetainedSizeComputer.ProgressCallback to InboundIndexBuilder.ProgressCallback
+          InboundIndexBuilder.ProgressCallback indexBuilderCallback =
+              progressCallback != null
+                  ? (progress, message) -> progressCallback.onProgress(progress, message)
+                  : (progress, message) -> LOG.debug("Index building {}: {}%", message, String.format("%.1f", progress * 100));
+
           InboundIndexBuilder.buildInboundIndex(
               path,
               indexDir,
               addressToId32,
-              (progress, message) -> LOG.debug("Index building {}: {}%", message, String.format("%.1f", progress * 100))
+              indexBuilderCallback
           );
 
           long elapsedMs = System.currentTimeMillis() - startTime;
@@ -995,7 +1057,7 @@ public final class HeapDumpImpl implements HeapDump {
    */
   void ensureDominatorsComputed() {
     // For indexed mode, build inbound index first if needed
-    ensureInboundIndexBuilt();
+    ensureInboundIndexBuilt(null);
     computeDominators();
   }
 

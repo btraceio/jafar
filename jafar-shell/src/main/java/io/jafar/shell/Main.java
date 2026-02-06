@@ -1,5 +1,6 @@
 package io.jafar.shell;
 
+import io.jafar.shell.plugin.PluginManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -24,6 +25,29 @@ public final class Main implements Callable<Integer> {
   private boolean quiet;
 
   public static void main(String[] args) {
+    // Initialize plugin system before BackendRegistry is accessed
+    PluginManager.initialize();
+
+    // Debug: Verify backends are available
+    if (System.getProperty("jfr.shell.completion.debug") != null) {
+      try {
+        io.jafar.shell.backend.BackendRegistry registry =
+            io.jafar.shell.backend.BackendRegistry.getInstance();
+        io.jafar.shell.backend.JfrBackend current = registry.getCurrent();
+        System.err.println("[DEBUG] BackendRegistry initialized");
+        System.err.println(
+            "[DEBUG] Current backend: " + current.getId() + " (priority: " + current.getPriority() + ")");
+        System.err.println(
+            "[DEBUG] Available backends: "
+                + registry.listAll().stream()
+                    .map(b -> b.getId() + ":" + b.getPriority())
+                    .collect(java.util.stream.Collectors.joining(", ")));
+      } catch (Exception e) {
+        System.err.println("[DEBUG] BackendRegistry initialization FAILED: " + e.getMessage());
+        e.printStackTrace(System.err);
+      }
+    }
+
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
   }

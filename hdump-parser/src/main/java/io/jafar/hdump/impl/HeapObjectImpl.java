@@ -16,7 +16,7 @@ final class HeapObjectImpl implements HeapObject {
 
   private final long id;
   private final HeapClassImpl heapClass;
-  private final int dataPosition; // Position in file where instance data starts
+  private final long dataPosition; // Position in file where instance data starts
   private final int dataSize;
   private final HeapDumpImpl dump;
 
@@ -31,8 +31,14 @@ final class HeapObjectImpl implements HeapObject {
   // Cached field values (lazily populated)
   private Map<String, Object> fieldValues;
 
+  // Cached outbound reference IDs (null = not cached, empty array = no refs)
+  private long[] cachedOutboundRefIds;
+
+  // Constant for objects with no references
+  private static final long[] EMPTY_LONG_ARRAY = new long[0];
+
   HeapObjectImpl(
-      long id, HeapClassImpl heapClass, int dataPosition, int dataSize, HeapDumpImpl dump) {
+      long id, HeapClassImpl heapClass, long dataPosition, int dataSize, HeapDumpImpl dump) {
     this.id = id;
     this.heapClass = heapClass;
     this.dataPosition = dataPosition;
@@ -130,7 +136,7 @@ final class HeapObjectImpl implements HeapObject {
 
     HprofReader reader = dump.getReader();
     int idSize = reader.getIdSize();
-    int savedPos = reader.position();
+    long savedPos = reader.position();
     try {
       reader.position(dataPosition);
 
@@ -155,21 +161,153 @@ final class HeapObjectImpl implements HeapObject {
     }
   }
 
-  @Override
-  public Stream<HeapObject> getOutboundReferences() {
-    if (isArray()) {
-      if (isObjectArray) {
-        Object[] elements = getArrayElements();
-        if (elements == null) return Stream.empty();
-        return Stream.of(elements).filter(e -> e instanceof HeapObject).map(e -> (HeapObject) e);
-      }
-      return Stream.empty(); // Primitive arrays have no references
+  /**
+   * Extracts outbound reference IDs from instance fields.
+   * Only reads object reference fields, skipping primitives for efficiency.
+   */
+  private long[] extractInstanceReferences() {
+    if (heapClass == null) {
+      return EMPTY_LONG_ARRAY;
     }
 
-    ensureFieldsLoaded();
-    return fieldValues.values().stream()
-        .filter(v -> v instanceof HeapObject)
-        .map(v -> (HeapObject) v);
+    // Get all fields including inherited
+    List<HeapField> allFields = heapClass.getAllInstanceFields();
+    if (allFields.isEmpty()) {
+      return EMPTY_LONG_ARRAY;
+    }
+
+    // Count object reference fields first
+    int refFieldCount = 0;
+    for (HeapField field : allFields) {
+      if (field.getType() == BasicType.OBJECT) {
+        refFieldCount++;
+      }
+    }
+
+    if (refFieldCount == 0) {
+      return EMPTY_LONG_ARRAY;
+    }
+
+    // Extract reference IDs
+    HprofReader reader = dump.getReader();
+    long savedPos = reader.position();
+    try {
+      reader.position(dataPosition);
+
+      long[] refIds = new long[refFieldCount];
+      int refIndex = 0;
+
+      for (HeapField field : allFields) {
+        int type = field.getType();
+        if (type == BasicType.OBJECT) {
+          long refId = reader.readId();
+          if (refId != 0) {
+            refIds[refIndex++] = refId;
+          }
+        } else {
+          // Skip primitive field
+          reader.skip(BasicType.sizeOf(type, reader.getIdSize()));
+        }
+      }
+
+      // Return array trimmed to actual non-null refs
+      if (refIndex < refFieldCount) {
+        long[] trimmed = new long[refIndex];
+        System.arraycopy(refIds, 0, trimmed, 0, refIndex);
+        return trimmed;
+      }
+      return refIds;
+    } finally {
+      reader.position(savedPos);
+    }
+  }
+
+  /**
+   * Extracts outbound reference IDs from object array elements.
+   * Reads the contiguous block of object IDs from the array.
+   */
+  private long[] extractArrayReferences() {
+    if (!isObjectArray || arrayLength == 0) {
+      return EMPTY_LONG_ARRAY;
+    }
+
+    HprofReader reader = dump.getReader();
+    long savedPos = reader.position();
+    try {
+      reader.position(dataPosition);
+
+      // Count non-null references first
+      long[] tempIds = new long[arrayLength];
+      int refCount = 0;
+
+      for (int i = 0; i < arrayLength; i++) {
+        long refId = reader.readId();
+        if (refId != 0) {
+          tempIds[refCount++] = refId;
+        }
+      }
+
+      // Return trimmed array
+      if (refCount == 0) {
+        return EMPTY_LONG_ARRAY;
+      }
+      if (refCount < arrayLength) {
+        long[] trimmed = new long[refCount];
+        System.arraycopy(tempIds, 0, trimmed, 0, refCount);
+        return trimmed;
+      }
+      return tempIds;
+    } finally {
+      reader.position(savedPos);
+    }
+  }
+
+  /**
+   * Extracts and caches outbound reference IDs.
+   * Called on first access to getOutboundReferences() or eagerly during parse.
+   */
+  void extractOutboundReferences() {
+    if (cachedOutboundRefIds != null) {
+      return; // Already cached
+    }
+
+    if (isArray()) {
+      if (isObjectArray) {
+        cachedOutboundRefIds = extractArrayReferences();
+      } else {
+        cachedOutboundRefIds = EMPTY_LONG_ARRAY; // Primitive array
+      }
+    } else {
+      cachedOutboundRefIds = extractInstanceReferences();
+    }
+  }
+
+  /**
+   * Returns cached outbound reference IDs as primitive array.
+   * For use in hot paths (dominator computation, graph traversal).
+   * Avoids Stream API overhead - use this instead of getOutboundReferences() in tight loops.
+   *
+   * @return array of object IDs referenced by this object (never null, may be empty)
+   */
+  public long[] getOutboundReferenceIds() {
+    if (cachedOutboundRefIds == null) {
+      extractOutboundReferences();
+    }
+    return cachedOutboundRefIds;
+  }
+
+  @Override
+  public Stream<HeapObject> getOutboundReferences() {
+    // Use getOutboundReferenceIds() to avoid duplication
+    long[] refIds = getOutboundReferenceIds();
+
+    if (refIds.length == 0) {
+      return Stream.empty();
+    }
+
+    return java.util.Arrays.stream(refIds)
+        .mapToObj(id -> (HeapObject) dump.getObjectByIdInternal(id))
+        .filter(obj -> obj != null);
   }
 
   @Override
@@ -196,7 +334,7 @@ final class HeapObjectImpl implements HeapObject {
 
     HprofReader reader = dump.getReader();
     int idSize = reader.getIdSize();
-    int savedPos = reader.position();
+    long savedPos = reader.position();
     try {
       reader.position(dataPosition);
       Object[] elements = new Object[arrayLength];

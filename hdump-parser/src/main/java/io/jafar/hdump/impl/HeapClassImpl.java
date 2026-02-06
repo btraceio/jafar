@@ -21,6 +21,9 @@ final class HeapClassImpl implements HeapClass {
   private List<HeapFieldImpl> instanceFields = Collections.emptyList();
   private int primitiveArrayType = -1; // -1 means not a primitive array
 
+  // Cache for all instance fields including inherited (lazily populated)
+  private List<HeapField> allInstanceFieldsCache;
+
   HeapClassImpl(long id, String name, HeapDumpImpl dump) {
     this.id = id;
     this.name = name;
@@ -83,13 +86,17 @@ final class HeapClassImpl implements HeapClass {
 
   @Override
   public List<HeapField> getAllInstanceFields() {
-    List<HeapField> all = new ArrayList<>();
-    HeapClass cls = this;
-    while (cls != null) {
-      all.addAll(0, cls.getInstanceFields()); // Add superclass fields first
-      cls = cls.getSuperClass();
+    if (allInstanceFieldsCache == null) {
+      // Lazily build and cache the full field list
+      List<HeapField> all = new ArrayList<>();
+      HeapClass cls = this;
+      while (cls != null) {
+        all.addAll(0, cls.getInstanceFields()); // Add superclass fields first
+        cls = cls.getSuperClass();
+      }
+      allInstanceFieldsCache = Collections.unmodifiableList(all);
     }
-    return all;
+    return allInstanceFieldsCache;
   }
 
   @Override

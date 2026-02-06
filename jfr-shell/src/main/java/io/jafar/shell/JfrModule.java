@@ -1,8 +1,10 @@
 package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
+import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -10,6 +12,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +88,25 @@ public final class JfrModule implements ShellModule {
   @Override
   public QueryEvaluator getQueryEvaluator() {
     return new JfrQueryEvaluator();
+  }
+
+  @Override
+  public org.jline.reader.Completer getCompleter(SessionManager sessions, Object context) {
+    // Provide the JFR-specific completer with full completion support
+    CommandDispatcher dispatcher =
+        context instanceof CommandDispatcher ? (CommandDispatcher) context : null;
+    return new io.jafar.shell.cli.ShellCompleter(sessions, dispatcher);
+  }
+
+  @Override
+  public List<String> getExamples() {
+    return List.of(
+        "show events/jdk.ExecutionSample | top(10)",
+        "show events/jdk.JavaMonitorEnter | groupBy(monitorClass.name)",
+        "show events/jdk.GarbageCollection | select(gcId, duration)",
+        "show metadata/jdk.ExecutionSample",
+        "show cp/Method[name='toString']",
+        "show chunks");
   }
 
   @Override

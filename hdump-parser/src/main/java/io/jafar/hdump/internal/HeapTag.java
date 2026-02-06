@@ -9,7 +9,7 @@ package io.jafar.hdump.internal;
 public final class HeapTag {
   private HeapTag() {}
 
-  // GC root types
+  // Standard GC root types (HPROF 1.0.2)
   public static final int ROOT_UNKNOWN = 0xFF;
   public static final int ROOT_JNI_GLOBAL = 0x01;
   public static final int ROOT_JNI_LOCAL = 0x02;
@@ -19,6 +19,16 @@ public final class HeapTag {
   public static final int ROOT_THREAD_BLOCK = 0x06;
   public static final int ROOT_MONITOR_USED = 0x07;
   public static final int ROOT_THREAD_OBJ = 0x08;
+
+  // Extended GC root types (HPROF 1.0.3 - Android/modern JDK)
+  public static final int ROOT_INTERNED_STRING = 0x89;
+  public static final int ROOT_FINALIZING = 0x8a;
+  public static final int ROOT_DEBUGGER = 0x8b;
+  public static final int ROOT_REFERENCE_CLEANUP = 0x8c;
+  public static final int ROOT_VM_INTERNAL = 0x8d;
+  public static final int ROOT_JNI_MONITOR = 0x8e;
+  public static final int UNREACHABLE = 0x90;
+  public static final int HEAP_DUMP_INFO = 0xfe;
 
   // Heap dump records
   public static final int CLASS_DUMP = 0x20;
@@ -38,6 +48,14 @@ public final class HeapTag {
       case ROOT_THREAD_BLOCK -> "ROOT_THREAD_BLOCK";
       case ROOT_MONITOR_USED -> "ROOT_MONITOR_USED";
       case ROOT_THREAD_OBJ -> "ROOT_THREAD_OBJ";
+      case ROOT_INTERNED_STRING -> "ROOT_INTERNED_STRING";
+      case ROOT_FINALIZING -> "ROOT_FINALIZING";
+      case ROOT_DEBUGGER -> "ROOT_DEBUGGER";
+      case ROOT_REFERENCE_CLEANUP -> "ROOT_REFERENCE_CLEANUP";
+      case ROOT_VM_INTERNAL -> "ROOT_VM_INTERNAL";
+      case ROOT_JNI_MONITOR -> "ROOT_JNI_MONITOR";
+      case UNREACHABLE -> "UNREACHABLE";
+      case HEAP_DUMP_INFO -> "HEAP_DUMP_INFO";
       case CLASS_DUMP -> "CLASS_DUMP";
       case INSTANCE_DUMP -> "INSTANCE_DUMP";
       case OBJ_ARRAY_DUMP -> "OBJ_ARRAY_DUMP";
@@ -49,13 +67,9 @@ public final class HeapTag {
   /** Returns true if this tag represents a GC root. */
   public static boolean isGcRoot(int tag) {
     return tag == ROOT_UNKNOWN
-        || tag == ROOT_JNI_GLOBAL
-        || tag == ROOT_JNI_LOCAL
-        || tag == ROOT_JAVA_FRAME
-        || tag == ROOT_NATIVE_STACK
-        || tag == ROOT_STICKY_CLASS
-        || tag == ROOT_THREAD_BLOCK
-        || tag == ROOT_MONITOR_USED
-        || tag == ROOT_THREAD_OBJ;
+        || (tag >= 0x01 && tag <= 0x08)  // Standard GC roots
+        || (tag >= 0x89 && tag <= 0x8e)  // Extended GC roots (HPROF 1.0.3)
+        || tag == 0x90  // UNREACHABLE
+        || tag == 0xfe;  // HEAP_DUMP_INFO
   }
 }

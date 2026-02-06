@@ -329,10 +329,11 @@ public final class DominatorTreeComputer {
     HeapObjectImpl obj = objectsById.get(nodeId);
     if (obj == null) return;
 
-    // Visit all outbound references
-    obj.getOutboundReferences().forEach(ref -> {
-      dfsPostOrder(objectsById, ref.getId(), visited, postOrder);
-    });
+    // Visit all outbound references (use direct array access for performance)
+    long[] refIds = obj.getOutboundReferenceIds();
+    for (int i = 0; i < refIds.length; i++) {
+      dfsPostOrder(objectsById, refIds[i], visited, postOrder);
+    }
 
     postOrder.add(nodeId);
   }
@@ -346,7 +347,9 @@ public final class DominatorTreeComputer {
       List<Long> rpo,
       ProgressCallback progressCallback) {
 
-    Map<Long, List<Long>> predecessors = new HashMap<>();
+    // Pre-size to avoid rehashing (estimate: ~10-20% of objects have predecessors)
+    int estimatedSize = Math.max(rpo.size() / 10, 16);
+    Map<Long, List<Long>> predecessors = new HashMap<>(estimatedSize);
     LongOpenHashSet reachable = new LongOpenHashSet(rpo);
 
     int processed = 0;
@@ -375,47 +378,46 @@ public final class DominatorTreeComputer {
           LOG.warn(arrayMsg);
         }
 
-        // Process references and count them
-        long[] refCount = {0};
-        long[] lastRefReportTime = {System.currentTimeMillis()};
+        // Process references with direct array access (avoid Stream overhead)
+        long[] refIds = obj.getOutboundReferenceIds();
+        long refCount = 0;
+        long lastRefReportTime = System.currentTimeMillis();
 
-        obj.getOutboundReferences()
-            .forEach(
-                ref -> {
-                  refCount[0]++;
-                  long refId = ref.getId();
-                  if (reachable.contains(refId)) {
-                    predecessors.computeIfAbsent(refId, k -> new ArrayList<>()).add(nodeId);
-                  }
+        for (int i = 0; i < refIds.length; i++) {
+          refCount++;
+          long refId = refIds[i];
+          if (reachable.contains(refId)) {
+            predecessors.computeIfAbsent(refId, k -> new ArrayList<>()).add(nodeId);
+          }
 
-                  // Report progress DURING reference iteration for huge objects
-                  if (refCount[0] % 100000 == 0) {
-                    long now = System.currentTimeMillis();
-                    long elapsed = now - objectStartTime;
-                    if (now - lastRefReportTime[0] > 5000) {
-                      String refMsg =
-                          String.format(
-                              "  ... processing object %s: %,d refs in %,dms (%.0f refs/sec)",
-                              Long.toHexString(nodeId),
-                              refCount[0],
-                              elapsed,
-                              elapsed > 0 ? (refCount[0] / (elapsed / 1000.0)) : 0);
-                      System.err.println(refMsg);
-                      lastRefReportTime[0] = now;
-                    }
-                  }
-                });
+          // Report progress DURING reference iteration for huge objects
+          if (refCount % 100000 == 0) {
+            long now = System.currentTimeMillis();
+            long elapsed = now - objectStartTime;
+            if (now - lastRefReportTime > 5000) {
+              String refMsg =
+                  String.format(
+                      "  ... processing object %s: %,d refs in %,dms (%.0f refs/sec)",
+                      Long.toHexString(nodeId),
+                      refCount,
+                      elapsed,
+                      elapsed > 0 ? (refCount / (elapsed / 1000.0)) : 0);
+              System.err.println(refMsg);
+              lastRefReportTime = now;
+            }
+          }
+        }
 
         long objectElapsed = System.currentTimeMillis() - objectStartTime;
 
         // Warn about objects that take >1 second to process OR have >100K references
-        if (objectElapsed > 1000 || refCount[0] > 100000) {
+        if (objectElapsed > 1000 || refCount > 100000) {
           String warnMsg =
               String.format(
                   "⚠ Slow object: %s (class: %s, refs: %d, time: %dms) - processed %d/%d",
                   Long.toHexString(nodeId),
                   className,
-                  refCount[0],
+                  refCount,
                   objectElapsed,
                   processed + 1,
                   totalObjects);

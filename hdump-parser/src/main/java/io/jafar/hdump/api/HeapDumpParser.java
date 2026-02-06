@@ -93,7 +93,71 @@ public final class HeapDumpParser {
       throws IOException {
     Objects.requireNonNull(path, "path must not be null");
     Objects.requireNonNull(options, "options must not be null");
+
+    // Auto-detect parsing mode based on heap dump size
+    options = resolveParsingMode(path, options);
+
     return HeapDumpImpl.parse(path, options, progressCallback);
+  }
+
+  /**
+   * Resolves AUTO parsing mode to IN_MEMORY or INDEXED based on heap dump file size.
+   * Files larger than 2GB use indexed mode, smaller files use in-memory mode.
+   */
+  private static ParserOptions resolveParsingMode(Path path, ParserOptions options) throws IOException {
+    if (options.parsingMode() != ParsingMode.AUTO) {
+      return options; // Already resolved
+    }
+
+    long fileSize = java.nio.file.Files.size(path);
+    boolean useIndexed = fileSize > INDEXED_MODE_THRESHOLD;
+
+    ParsingMode resolved = useIndexed ? ParsingMode.INDEXED : ParsingMode.IN_MEMORY;
+
+    // Log the decision for transparency
+    org.slf4j.LoggerFactory.getLogger(HeapDumpParser.class).info(
+        "Heap dump size: {} bytes ({}). Using {} parsing mode.",
+        fileSize,
+        formatBytes(fileSize),
+        resolved);
+
+    return new ParserOptions(
+        options.computeDominators(),
+        options.indexStrings(),
+        options.trackInboundRefs(),
+        resolved);
+  }
+
+  /** Threshold for switching from in-memory to indexed parsing (2 GB). */
+  private static final long INDEXED_MODE_THRESHOLD = 2L * 1024 * 1024 * 1024;
+
+  /** Formats byte count as human-readable string. */
+  private static String formatBytes(long bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+    if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+    return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+  }
+
+  /** Parsing mode for heap dump processing. */
+  public enum ParsingMode {
+    /**
+     * Automatically choose between IN_MEMORY and INDEXED based on heap dump size.
+     * Files &gt;2GB use indexed mode, smaller files use in-memory mode.
+     */
+    AUTO,
+
+    /**
+     * In-memory parsing mode. Fast for small heaps (&lt;10M objects, &lt;2GB file size).
+     * All objects stored in memory during parsing.
+     */
+    IN_MEMORY,
+
+    /**
+     * Index-based parsing mode. Scalable for large heaps (up to 114M+ objects).
+     * Uses disk-based indexes and memory-mapped I/O.
+     */
+    INDEXED
   }
 
   /** Parser configuration options. */
@@ -101,26 +165,32 @@ public final class HeapDumpParser {
       boolean computeDominators,
       boolean indexStrings,
       boolean trackInboundRefs,
-      boolean useIndexedParsing) {
+      ParsingMode parsingMode) {
 
     /**
-     * Default options: in-memory parsing, no dominators, no inbound refs.
-     * (indexStrings reserved for future use)
+     * Default options: auto-detect parsing mode, no dominators, no inbound refs.
+     * Files &gt;2GB automatically use indexed mode for scalability.
      */
-    public static final ParserOptions DEFAULT = new ParserOptions(false, true, false, false);
+    public static final ParserOptions DEFAULT = new ParserOptions(false, true, false, ParsingMode.AUTO);
 
-    /** Options for full analysis including dominator computation (in-memory). */
-    public static final ParserOptions FULL_ANALYSIS = new ParserOptions(true, true, true, false);
+    /** Options for full analysis including dominator computation (auto-detect mode). */
+    public static final ParserOptions FULL_ANALYSIS = new ParserOptions(true, true, true, ParsingMode.AUTO);
 
-    /** Options for minimal memory usage (in-memory). */
-    public static final ParserOptions MINIMAL = new ParserOptions(false, false, false, false);
+    /** Options for minimal memory usage (in-memory mode). */
+    public static final ParserOptions MINIMAL = new ParserOptions(false, false, false, ParsingMode.IN_MEMORY);
 
     /**
-     * Options for index-based parsing (for large heaps >10M objects).
+     * Options for index-based parsing (for large heaps &gt;10M objects).
      * Uses disk-based indexes instead of in-memory maps, enabling analysis
-     * of heaps up to 114M+ objects with <4GB heap.
+     * of heaps up to 114M+ objects with &lt;4GB heap.
      */
-    public static final ParserOptions INDEXED = new ParserOptions(false, true, false, true);
+    public static final ParserOptions INDEXED = new ParserOptions(false, true, false, ParsingMode.INDEXED);
+
+    /**
+     * Options for in-memory parsing (for small heaps &lt;10M objects).
+     * Fast but memory-intensive, all objects stored in memory.
+     */
+    public static final ParserOptions IN_MEMORY = new ParserOptions(false, true, false, ParsingMode.IN_MEMORY);
 
     public static Builder builder() {
       return new Builder();
@@ -130,7 +200,7 @@ public final class HeapDumpParser {
       private boolean computeDominators = false;
       private boolean indexStrings = true;
       private boolean trackInboundRefs = false;
-      private boolean useIndexedParsing = false;
+      private ParsingMode parsingMode = ParsingMode.AUTO;
 
       public Builder computeDominators(boolean value) {
         this.computeDominators = value;
@@ -147,13 +217,13 @@ public final class HeapDumpParser {
         return this;
       }
 
-      public Builder useIndexedParsing(boolean value) {
-        this.useIndexedParsing = value;
+      public Builder parsingMode(ParsingMode mode) {
+        this.parsingMode = Objects.requireNonNull(mode, "parsingMode must not be null");
         return this;
       }
 
       public ParserOptions build() {
-        return new ParserOptions(computeDominators, indexStrings, trackInboundRefs, useIndexedParsing);
+        return new ParserOptions(computeDominators, indexStrings, trackInboundRefs, parsingMode);
       }
     }
   }

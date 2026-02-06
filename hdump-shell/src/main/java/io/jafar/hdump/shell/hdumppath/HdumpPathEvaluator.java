@@ -30,6 +30,11 @@ public final class HdumpPathEvaluator {
   public static List<Map<String, Object>> evaluate(HeapSession session, Query query) {
     HeapDump dump = session.getHeapDump();
 
+    // Ensure approximate retained sizes are computed (with progress display if first time)
+    if (!dump.hasDominators()) {
+      session.computeApproximateRetainedSizes();
+    }
+
     // Get base stream based on root type
     List<Map<String, Object>> results =
         switch (query.root()) {
@@ -209,6 +214,16 @@ public final class HdumpPathEvaluator {
       map.put(
           GcRootFields.OBJECT,
           cls != null ? cls.getName() + "@" + Long.toHexString(obj.getId()) : "unknown");
+
+      // Add size fields from the rooted object
+      map.put(GcRootFields.SHALLOW, obj.getShallowSize());
+      map.put(GcRootFields.SHALLOW_SIZE, obj.getShallowSize());
+
+      long retained = obj.getRetainedSize();
+      if (retained >= 0) {
+        map.put(GcRootFields.RETAINED, retained);
+        map.put(GcRootFields.RETAINED_SIZE, retained);
+      }
     }
 
     int threadSerial = root.getThreadSerial();
@@ -349,7 +364,7 @@ public final class HdumpPathEvaluator {
       case DistinctOp d -> applyDistinct(results, d);
       case PathToRootOp p -> applyPathToRoot(session.getHeapDump(), results);
       case CheckLeaksOp c -> applyCheckLeaks(session, results, c);
-      case DominatorsOp d -> applyDominators(session.getHeapDump(), results);
+      case DominatorsOp d -> applyDominators(session, session.getHeapDump(), results);
     };
   }
 
@@ -722,19 +737,18 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> applyDominators(
-      HeapDump dump, List<Map<String, Object>> results) {
+      HeapSession session, HeapDump dump, List<Map<String, Object>> results) {
 
     // Check if full dominator tree is computed
     if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl) {
       io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl = (io.jafar.hdump.impl.HeapDumpImpl) dump;
 
       if (!heapDumpImpl.hasFullDominatorTree()) {
-        // Return a message indicating full dominator tree is needed
-        Map<String, Object> message = new LinkedHashMap<>();
-        message.put("message", "Full dominator tree computation required");
-        message.put("instruction", "Computing full dominator tree is expensive (15-30s for 10M objects)");
-        message.put("note", "Use 'compute dominators' command to proceed");
-        return List.of(message);
+        // Prompt user and compute if confirmed
+        if (!session.promptAndComputeDominatorTree()) {
+          // User declined - return empty result
+          return List.of();
+        }
       }
     }
 

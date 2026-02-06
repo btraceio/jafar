@@ -246,16 +246,17 @@ public final class HybridDominatorComputer {
   private static Long2ObjectMap<List<Long>> buildInboundReferences(
       Long2ObjectMap<HeapObjectImpl> objectsById) {
 
-    Long2ObjectMap<List<Long>> inboundRefs = new Long2ObjectOpenHashMap<>();
+    // Pre-size to avoid rehashing (estimate: ~10-20% of objects have inbound refs)
+    int estimatedSize = Math.max(objectsById.size() / 10, 16);
+    Long2ObjectMap<List<Long>> inboundRefs = new Long2ObjectOpenHashMap<>(estimatedSize);
 
     for (HeapObjectImpl obj : objectsById.values()) {
-      obj.getOutboundReferences()
-          .forEach(
-              ref -> {
-                inboundRefs
-                    .computeIfAbsent(ref.getId(), k -> new ArrayList<>())
-                    .add(obj.getId());
-              });
+      // Use direct array access to avoid Stream overhead
+      long[] refIds = obj.getOutboundReferenceIds();
+      long objId = obj.getId();
+      for (int i = 0; i < refIds.length; i++) {
+        inboundRefs.computeIfAbsent(refIds[i], k -> new ArrayList<>()).add(objId);
+      }
     }
 
     return inboundRefs;

@@ -343,12 +343,13 @@ public final class JfrPath {
   public static final class GroupByOp implements PipelineOp {
     public final List<String> keyPath; // path to group by
     public final String aggFunc; // "count", "sum", "avg", "min", "max"
-    public final List<String> valuePath; // for sum/avg/min/max
+    public final List<String> valuePath; // for sum/avg/min/max (simple path)
+    public final Expr valueExpr; // for computed expressions (takes precedence over valuePath)
     public final String sortBy; // "key" or "value" (null = no sorting)
     public final boolean ascending; // sort order
 
     public GroupByOp(List<String> keyPath, String aggFunc, List<String> valuePath) {
-      this(keyPath, aggFunc, valuePath, null, false);
+      this(keyPath, aggFunc, valuePath, null, null, false);
     }
 
     public GroupByOp(
@@ -357,9 +358,20 @@ public final class JfrPath {
         List<String> valuePath,
         String sortBy,
         boolean ascending) {
+      this(keyPath, aggFunc, valuePath, null, sortBy, ascending);
+    }
+
+    public GroupByOp(
+        List<String> keyPath,
+        String aggFunc,
+        List<String> valuePath,
+        Expr valueExpr,
+        String sortBy,
+        boolean ascending) {
       this.keyPath = List.copyOf(keyPath);
       this.aggFunc = aggFunc == null ? "count" : aggFunc;
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+      this.valueExpr = valueExpr;
       this.sortBy = sortBy;
       this.ascending = ascending;
     }

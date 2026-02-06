@@ -1,8 +1,10 @@
 package io.jafar.hdump.shell;
 
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
+import io.jafar.hdump.shell.cli.HdumpShellCompleter;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
+import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -10,7 +12,9 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.Set;
+import org.jline.reader.Completer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,6 +88,21 @@ public final class HdumpModule implements ShellModule {
   @Override
   public QueryEvaluator getQueryEvaluator() {
     return new HdumpQueryEvaluator();
+  }
+
+  @Override
+  public Completer getCompleter(SessionManager sessions, Object context) {
+    return new HdumpShellCompleter(sessions);
+  }
+
+  @Override
+  public List<String> getExamples() {
+    return List.of(
+        "show objects/java.lang.String | top(10, retainedSize)",
+        "show objects/java.util.HashMap | groupBy(class.name, count)",
+        "show objects/java.lang.Thread[name='main']",
+        "show classes/java.* | select(name, instanceCount, totalSize)",
+        "show gcroots | stats(retainedSize)");
   }
 
   @Override

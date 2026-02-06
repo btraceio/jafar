@@ -41,7 +41,7 @@ public final class HeapSession implements Session {
    * @throws IOException if the file cannot be read
    */
   public static HeapSession open(Path path) throws IOException {
-    return open(path, ParserOptions.DEFAULT);
+    return open(path, ParserOptions.DEFAULT); // AUTO mode: >2GB uses indexed, smaller uses in-memory
   }
 
   /**
@@ -54,13 +54,70 @@ public final class HeapSession implements Session {
    */
   public static HeapSession open(Path path, ParserOptions options) throws IOException {
     LOG.info("Opening heap dump: {}", path);
-    HeapDump dump = HeapDumpParser.parse(path, options);
-    LOG.info(
-        "Loaded {} classes, {} objects, {} GC roots",
-        dump.getClassCount(),
-        dump.getObjectCount(),
-        dump.getGcRootCount());
-    return new HeapSession(path, dump, options);
+
+    // Create delayed progress reporter (starts after 250ms)
+    DelayedProgressReporter progressReporter = new DelayedProgressReporter(250);
+
+    try {
+      HeapDump dump = HeapDumpParser.parse(path, options, progressReporter);
+      progressReporter.complete();
+
+      LOG.info(
+          "Loaded {} classes, {} objects, {} GC roots",
+          dump.getClassCount(),
+          dump.getObjectCount(),
+          dump.getGcRootCount());
+      return new HeapSession(path, dump, options);
+    } catch (Exception e) {
+      progressReporter.cancel();
+      throw e;
+    }
+  }
+
+  /** Progress reporter that starts displaying after a delay to avoid flicker for fast operations. */
+  private static class DelayedProgressReporter implements HeapDumpParser.ProgressCallback {
+    private final long delayMs;
+    private final long startTime;
+    private boolean started = false;
+    private String lastMessage = "";
+
+    DelayedProgressReporter(long delayMs) {
+      this.delayMs = delayMs;
+      this.startTime = System.currentTimeMillis();
+    }
+
+    @Override
+    public synchronized void onProgress(double progress, String message) {
+      long elapsed = System.currentTimeMillis() - startTime;
+
+      if (!started && elapsed < delayMs) {
+        return; // Don't show progress yet
+      }
+
+      if (!started) {
+        started = true;
+        System.err.print("Parsing heap dump... ");
+      }
+
+      // Update progress on same line
+      int percentage = (int) (progress * 100);
+      if (!message.equals(lastMessage) || percentage % 5 == 0) {
+        System.err.print("\rParsing heap dump... " + percentage + "%");
+        lastMessage = message;
+      }
+    }
+
+    synchronized void complete() {
+      if (started) {
+        System.err.println("\rParsing heap dump... 100% - Complete");
+      }
+    }
+
+    synchronized void cancel() {
+      if (started) {
+        System.err.println("\rParsing heap dump... Failed");
+      }
+    }
   }
 
   /** Returns the underlying HeapDump for direct access. */
@@ -127,7 +184,7 @@ public final class HeapSession implements Session {
       System.err.println("Computing approximate retained sizes...");
       System.err.println(
           String.format(
-              "Processing %,d objects (this is fast, ~3-5 seconds for 10M objects)",
+              "Scanning %,d objects from heap dump (may take a while for large dumps)",
               dump.getObjectCount()));
       System.err.println();
 

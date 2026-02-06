@@ -66,7 +66,7 @@ public class PropertyBasedCompletionTests {
 
     // Create SessionManager with ParsingContext
     ParsingContext ctx = ParsingContext.create();
-    sessionManager = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    sessionManager = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
 
     // Open the test session
     sessionManager.open(testJfr, "test");

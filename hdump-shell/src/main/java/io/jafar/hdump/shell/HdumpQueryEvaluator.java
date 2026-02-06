@@ -67,7 +67,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
     return switch (operator.toLowerCase()) {
       case "select" -> "select(field1, field2 as alias, ...) - Project specific fields";
       case "top" -> "top(n, field, [asc|desc]) - Get top N results sorted by field";
-      case "groupby", "group" -> "groupBy(field, agg=count|sum|avg|min|max) - Group and aggregate";
+      case "groupby", "group" ->
+          "groupBy(field, agg=count|sum|avg|min|max, value=expr) - Group and aggregate (expr supports +,-,*,/)";
       case "count" -> "count - Count total results";
       case "sum" -> "sum(field) - Sum numeric field values";
       case "stats" -> "stats(field) - Get statistics (min, max, avg, sum, count)";

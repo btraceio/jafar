@@ -165,6 +165,11 @@ public final class MetadataService {
   public Map<String, Object> getMetadata(String typeName) {
     Path currentPath = getRecordingPath();
     if (currentPath == null) {
+      if (System.getProperty("jfr.shell.completion.debug") != null) {
+        System.err.println(
+            "[DEBUG] MetadataService.getMetadata(): No recording path, session="
+                + sessions.getCurrent().map(s -> s.session.getType()).orElse("none"));
+      }
       return null;
     }
 
@@ -178,8 +183,26 @@ public final class MetadataService {
         typeName,
         name -> {
           try {
-            return MetadataProvider.loadClass(currentPath, name);
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println("[DEBUG] Loading metadata for: " + name + " from " + currentPath);
+            }
+            Map<String, Object> result = MetadataProvider.loadClass(currentPath, name);
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println(
+                  "[DEBUG] Metadata loaded: " + (result != null ? "SUCCESS" : "NULL"));
+              if (result != null) {
+                System.err.println("[DEBUG] Has fieldsByName: " + result.containsKey("fieldsByName"));
+              }
+            }
+            return result;
           } catch (Exception e) {
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println(
+                  "[DEBUG] MetadataProvider.loadClass() threw exception: "
+                      + e.getClass().getName());
+              System.err.println("[DEBUG] Message: " + e.getMessage());
+              e.printStackTrace(System.err);
+            }
             // Return null for types that can't be loaded
             return null;
           }

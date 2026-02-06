@@ -51,7 +51,7 @@ class IndexedParsingTest {
   @Test
   void testIndexedParsing() throws IOException {
     // Parse with indexed mode
-    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    ParserOptions options = ParserOptions.builder().parsingMode(HeapDumpParser.ParsingMode.INDEXED).build();
 
     try (HeapDump dump = HeapDumpParser.parse(testHeapDump, options)) {
       // Verify basic statistics
@@ -69,8 +69,8 @@ class IndexedParsingTest {
   @Test
   void testIndexedVsInMemoryConsistency() throws IOException {
     // Parse same heap dump with both modes
-    ParserOptions inMemoryOptions = ParserOptions.DEFAULT;
-    ParserOptions indexedOptions = ParserOptions.builder().useIndexedParsing(true).build();
+    ParserOptions inMemoryOptions = ParserOptions.IN_MEMORY;
+    ParserOptions indexedOptions = ParserOptions.builder().parsingMode(HeapDumpParser.ParsingMode.INDEXED).build();
 
     try (HeapDump inMemory = HeapDumpParser.parse(testHeapDump, inMemoryOptions);
         HeapDump indexed = HeapDumpParser.parse(testHeapDump, indexedOptions)) {
@@ -87,7 +87,7 @@ class IndexedParsingTest {
 
   @Test
   void testIndexReuse() throws IOException {
-    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    ParserOptions options = ParserOptions.builder().parsingMode(HeapDumpParser.ParsingMode.INDEXED).build();
 
     // First parse: builds indexes
     try (HeapDump dump1 = HeapDumpParser.parse(testHeapDump, options)) {
@@ -113,7 +113,7 @@ class IndexedParsingTest {
   void testInboundIndexInfrastructure() throws IOException {
     // This test verifies that the inbound index infrastructure works
 
-    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    ParserOptions options = ParserOptions.builder().parsingMode(HeapDumpParser.ParsingMode.INDEXED).build();
     Path indexDir = testHeapDump.getParent().resolve(testHeapDump.getFileName() + ".idx");
 
     // Parse with indexed mode to set up infrastructure
@@ -122,7 +122,7 @@ class IndexedParsingTest {
       HeapDumpImpl dumpImpl = (HeapDumpImpl) dump;
 
       // Manually build inbound index to test infrastructure
-      dumpImpl.ensureInboundIndexBuilt();
+      dumpImpl.ensureInboundIndexBuilt(null);
 
       // Verify inbound index file was created
       assertTrue(
@@ -138,7 +138,7 @@ class IndexedParsingTest {
   @Test
   void testInboundIndexReadWrite() throws IOException {
     // This test verifies that the inbound index can be built, written, and read correctly
-    ParserOptions options = ParserOptions.builder().useIndexedParsing(true).build();
+    ParserOptions options = ParserOptions.builder().parsingMode(HeapDumpParser.ParsingMode.INDEXED).build();
     Path indexDir = testHeapDump.getParent().resolve(testHeapDump.getFileName() + ".idx");
 
     // First parse: build and write index
@@ -146,7 +146,7 @@ class IndexedParsingTest {
       HeapDumpImpl dumpImpl = (HeapDumpImpl) dump;
 
       // Build inbound index
-      dumpImpl.ensureInboundIndexBuilt();
+      dumpImpl.ensureInboundIndexBuilt(null);
 
       // Verify it was created
       assertTrue(
@@ -163,7 +163,7 @@ class IndexedParsingTest {
       HeapDumpImpl dumpImpl2 = (HeapDumpImpl) dump2;
 
       // Read existing index
-      dumpImpl2.ensureInboundIndexBuilt();
+      dumpImpl2.ensureInboundIndexBuilt(null);
 
       assertNotNull(
           dumpImpl2.getInboundCountReader(),

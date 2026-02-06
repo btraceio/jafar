@@ -109,12 +109,12 @@ public final class HprofReader implements Closeable {
   }
 
   /** Returns the current position in the file. */
-  public int position() {
-    return (int) buffer.position();
+  public long position() {
+    return buffer.position();
   }
 
   /** Sets the current position in the file. */
-  public void position(int pos) {
+  public void position(long pos) {
     buffer.position(pos);
   }
 
@@ -130,7 +130,7 @@ public final class HprofReader implements Closeable {
     int tag = buffer.get() & 0xFF;
     int timeOffset = buffer.getInt();
     int length = buffer.getInt();
-    return new RecordHeader(tag, timeOffset, length, (int) buffer.position());
+    return new RecordHeader(tag, timeOffset, length, buffer.position());
   }
 
   /** Skips the body of the current record (assumes header was just read). */
@@ -210,7 +210,7 @@ public final class HprofReader implements Closeable {
   }
 
   /** Record header information. */
-  public record RecordHeader(int tag, int timeOffset, int length, int bodyPosition) {
+  public record RecordHeader(int tag, int timeOffset, int length, long bodyPosition) {
     public String tagName() {
       return HprofTag.nameOf(tag);
     }

@@ -32,7 +32,7 @@ class HelpSelectTest {
 
   @Test
   void helpShowShowsUsageAndExamples() {
-    var sessions = new SessionManager(ParsingContext.create(), (p, c) -> null);
+    var sessions = new SessionManager((p, c) -> null, ParsingContext.create());
     var io = new BufferIO();
     var disp = new CommandDispatcher(sessions, io, r -> {});
     boolean handled = disp.dispatch("help show");

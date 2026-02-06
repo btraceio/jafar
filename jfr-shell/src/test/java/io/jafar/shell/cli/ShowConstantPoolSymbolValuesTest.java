@@ -22,12 +22,12 @@ class ShowConstantPoolSymbolValuesTest {
   void symbolEntriesHaveNonEmptyString() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var query = JfrPathParser.parse("cp/jdk.types.Symbol");
-    List<Map<String, Object>> rows = evaluator.evaluate(sessions.getCurrent().get().session, query);
+    List<Map<String, Object>> rows = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, query);
 
     assertFalse(rows.isEmpty(), "Expected some cp/jdk.types.Symbol rows");
 

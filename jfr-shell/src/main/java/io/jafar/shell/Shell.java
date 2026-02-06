@@ -70,12 +70,17 @@ public final class Shell implements AutoCloseable {
             current -> {});
     java.util.Map<String, Object> vars = new java.util.HashMap<>();
     vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
+    // Create parser that doesn't treat backslash as escape char (for raw string literals)
+    org.jline.reader.impl.DefaultParser parser = new org.jline.reader.impl.DefaultParser();
+    parser.setEscapeChars(null); // Disable backslash escape processing
+
     this.lineReader =
         LineReaderBuilder.builder()
             .terminal(terminal)
             .variables(vars)
             .history(history)
             .completer(new ShellCompleter(sessions, dispatcher))
+            .parser(parser)
             .build();
   }
 

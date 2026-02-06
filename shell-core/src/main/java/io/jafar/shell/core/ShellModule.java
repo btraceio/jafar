@@ -60,6 +60,27 @@ public interface ShellModule {
   }
 
   /**
+   * Returns a format-specific completer for this module, if available. The completer provides
+   * rich completion for event types, field paths, operators, etc.
+   *
+   * @param sessions the session manager
+   * @param context module-specific context (may be null)
+   * @return completer instance, or null if completion is not supported
+   */
+  default org.jline.reader.Completer getCompleter(SessionManager sessions, Object context) {
+    return null;
+  }
+
+  /**
+   * Returns example queries for help text specific to this module.
+   *
+   * @return list of example query strings with descriptions
+   */
+  default java.util.List<String> getExamples() {
+    return java.util.List.of();
+  }
+
+  /**
    * Returns the priority of this module. Higher priority modules are preferred when multiple
    * modules can handle the same file.
    *

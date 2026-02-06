@@ -45,7 +45,7 @@ class JLine3CompletionTest {
   void setup() throws Exception {
     // Create SessionManager with ParsingContext
     ParsingContext ctx = ParsingContext.create();
-    sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
 
     // ShellCompleter can work with null dispatcher for these tests
     completer = new ShellCompleter(sessions, null);

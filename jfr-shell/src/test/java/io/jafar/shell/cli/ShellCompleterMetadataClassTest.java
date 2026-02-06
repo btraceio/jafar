@@ -19,14 +19,14 @@ class ShellCompleterMetadataClassTest {
   @Test
   void suggestsClassSubcommandAndTypesAndFlags() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAllMetadataTypes()).thenReturn(Set.of("jdk.types.Method", "java.lang.Thread"));
           return s;
         };
-    SessionManager sm = new SessionManager(ctx, factory);
+    SessionManager sm = new SessionManager(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);
