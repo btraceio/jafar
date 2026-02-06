@@ -879,8 +879,55 @@ public final class HeapDumpImpl implements HeapDump {
   public void computeDominators(ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
+
+    // For indexed mode, ensure all objects are loaded first
+    ensureAllObjectsLoaded();
+
     ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots, progressCallback);
     dominatorsComputed = true;
+  }
+
+  /**
+   * Ensures all objects are loaded into objectsById for algorithms that need full access.
+   *
+   * <p>This is only needed for indexed parsing mode when running algorithms like:
+   * <ul>
+   *   <li>Approximate retained size computation (needs to iterate all objects)
+   *   <li>Hybrid dominator computation (needs top N by retained size)
+   *   <li>Full dominator tree computation
+   * </ul>
+   *
+   * <p>In in-memory mode, objects are already loaded during parsing, so this is a no-op.
+   *
+   * @throws RuntimeException if loading fails
+   */
+  private void ensureAllObjectsLoaded() {
+    if (!options.useIndexedParsing()) {
+      return; // Already loaded in in-memory mode
+    }
+
+    if (objectsById.size() == objectCount) {
+      return; // Already loaded
+    }
+
+    LOG.info("Loading all {} objects from index for algorithm execution...", objectCount);
+    long startTime = System.currentTimeMillis();
+
+    // Load all objects by iterating through address mapping
+    // This triggers lazy loading via getObjectByIdInternal()
+    int loaded = 0;
+    for (var entry : addressToId32.long2IntEntrySet()) {
+      long objectId = entry.getLongKey();
+      getObjectByIdInternal(objectId); // Lazy load and cache
+
+      loaded++;
+      if (loaded % 100000 == 0) {
+        LOG.debug("Loaded {} / {} objects", loaded, objectCount);
+      }
+    }
+
+    long elapsedMs = System.currentTimeMillis() - startTime;
+    LOG.info("Loaded all {} objects in {} seconds", objectCount, elapsedMs / 1000.0);
   }
 
   /**
@@ -996,6 +1043,9 @@ public final class HeapDumpImpl implements HeapDump {
       int topN,
       Set<String> classPatterns,
       DominatorTreeComputer.ProgressCallback progressCallback) {
+
+    // For indexed mode, ensure all objects are loaded first
+    ensureAllObjectsLoaded();
 
     // Phase 1: Ensure approximate retained sizes computed for all objects
     if (!dominatorsComputed) {
