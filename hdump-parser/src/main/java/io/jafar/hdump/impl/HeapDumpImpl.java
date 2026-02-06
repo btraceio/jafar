@@ -880,7 +880,10 @@ public final class HeapDumpImpl implements HeapDump {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
 
-    // For indexed mode, ensure all objects are loaded first
+    // For indexed mode, ensure inbound index is built first (before loading all objects)
+    ensureInboundIndexBuilt();
+
+    // For indexed mode, ensure all objects are loaded
     ensureAllObjectsLoaded();
 
     ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots, progressCallback);
