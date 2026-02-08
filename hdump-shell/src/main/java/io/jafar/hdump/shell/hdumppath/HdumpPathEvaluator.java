@@ -1536,6 +1536,11 @@ public final class HdumpPathEvaluator {
       HeapSession session, List<Map<String, Object>> results, CheckLeaksOp op) {
 
     if (op.detector() != null) {
+      // Special case: "help" detector shows available detectors
+      if ("help".equals(op.detector())) {
+        return showLeakDetectorHelp();
+      }
+
       // Use built-in detector
       io.jafar.hdump.shell.leaks.LeakDetector detector =
           io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetector(op.detector());
@@ -1544,8 +1549,9 @@ public final class HdumpPathEvaluator {
         // Invalid detector name
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("error", "Unknown detector: " + op.detector());
-        error.put("availableDetectors",
-            io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetectorNames());
+        error.put(
+            "help",
+            "Use checkLeaks(detector=\"help\") to see available detectors");
         return List.of(error);
       }
 
@@ -1565,6 +1571,57 @@ public final class HdumpPathEvaluator {
     }
 
     return results;
+  }
+
+  /**
+   * Shows help for leak detectors - lists all available detectors with descriptions.
+   */
+  private static List<Map<String, Object>> showLeakDetectorHelp() {
+    List<Map<String, Object>> help = new ArrayList<>();
+
+    // Add introductory message
+    Map<String, Object> intro = new LinkedHashMap<>();
+    intro.put("message", "Available leak detectors");
+    intro.put(
+        "usage",
+        "checkLeaks(detector=\"<name>\", threshold=<number>, minSize=<number>)");
+    intro.put("note", "Detectors automatically compute retained sizes if needed");
+    help.add(intro);
+
+    // Add each detector
+    for (io.jafar.hdump.shell.leaks.LeakDetector detector :
+        io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getAllDetectors()) {
+      Map<String, Object> detectorInfo = new LinkedHashMap<>();
+      detectorInfo.put("detector", detector.getName());
+      detectorInfo.put("description", detector.getDescription());
+
+      // Add detector-specific parameter hints
+      String paramHint = switch (detector.getName()) {
+        case "duplicate-strings" -> "threshold = min duplicate count (default: 100)";
+        case "growing-collections" -> "minSize = min collection size";
+        case "threadlocal-leak", "classloader-leak", "listener-leak", "finalizer-queue" ->
+            "no parameters required";
+        default -> "";
+      };
+
+      if (!paramHint.isEmpty()) {
+        detectorInfo.put("parameters", paramHint);
+      }
+
+      help.add(detectorInfo);
+    }
+
+    // Add examples
+    Map<String, Object> examples = new LinkedHashMap<>();
+    examples.put("examples", List.of(
+        "checkLeaks(detector=\"duplicate-strings\")",
+        "checkLeaks(detector=\"duplicate-strings\", threshold=50)",
+        "checkLeaks(detector=\"growing-collections\", minSize=10000)",
+        "checkLeaks(detector=\"threadlocal-leak\")"
+    ));
+    help.add(examples);
+
+    return help;
   }
 
   private static List<Map<String, Object>> applyDominators(

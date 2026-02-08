@@ -50,6 +50,11 @@ public final class HdumpPathParser {
   private Query parseQuery() {
     skipWs();
 
+    // Special case: checkLeaks(...) without root defaults to "objects |"
+    if (matchKeyword("checkLeaks")) {
+      return parseCheckLeaksShorthand();
+    }
+
     // Parse root
     Root root = parseRoot();
     skipWs();
@@ -668,6 +673,19 @@ public final class HdumpPathParser {
     skipWs();
     expect(')');
     return new DistinctOp(field);
+  }
+
+  /**
+   * Parses checkLeaks shorthand: checkLeaks(...) → objects | checkLeaks(...)
+   * This allows users to type just "checkLeaks(detector="duplicate-strings")"
+   * instead of "show objects | checkLeaks(detector="duplicate-strings")"
+   */
+  private Query parseCheckLeaksShorthand() {
+    // We already matched "checkLeaks", now parse it as a pipeline op
+    PipelineOp checkLeaksOp = parseCheckLeaksOp();
+
+    // Create a query with Root.OBJECTS and the checkLeaks operation
+    return new Query(Root.OBJECTS, null, false, List.of(), List.of(checkLeaksOp));
   }
 
   // === Lexer utilities ===
