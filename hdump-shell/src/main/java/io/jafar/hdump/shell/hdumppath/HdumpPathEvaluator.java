@@ -385,6 +385,17 @@ public final class HdumpPathEvaluator {
     Stream<Map<String, Object>> stream = results.stream();
 
     if (op.orderBy() != null) {
+      // Check for common mistakes: trying to use retainedSize on classes
+      if ((op.orderBy().equals("retainedSize") || op.orderBy().equals("retained"))
+          && !results.isEmpty()
+          && results.get(0).containsKey(ClassFields.NAME)
+          && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
+        throw new IllegalArgumentException(
+            "Field '" + op.orderBy() + "' is not available on classes. "
+                + "To aggregate retained sizes by class, use: "
+                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+      }
+
       // Create comparator that compares actual values with null-safe handling
       Comparator<Map<String, Object>> cmp = (m1, m2) -> {
         Object v1 = m1.get(op.orderBy());
@@ -598,6 +609,17 @@ public final class HdumpPathEvaluator {
     Comparator<Map<String, Object>> cmp = null;
 
     for (SortField sf : op.fields()) {
+      // Check for common mistakes: trying to use retainedSize on classes
+      if ((sf.field().equals("retainedSize") || sf.field().equals("retained"))
+          && !results.isEmpty()
+          && results.get(0).containsKey(ClassFields.NAME)
+          && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
+        throw new IllegalArgumentException(
+            "Field '" + sf.field() + "' is not available on classes. "
+                + "To aggregate retained sizes by class, use: "
+                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+      }
+
       Comparator<Map<String, Object>> fieldCmp =
           Comparator.comparing(m -> toComparable(m.get(sf.field())));
       if (sf.descending()) {
