@@ -227,14 +227,22 @@ public final class HeapDumpImpl implements HeapDump {
       LOG.info("Found valid index files in {}, skipping heap scan", indexDir);
 
       if (progressCallback != null) {
-        progressCallback.onProgress(0.0, "Loading from existing indexes");
+        progressCallback.onProgress(0.0, "Loading object address mappings");
       }
 
       // Load address mappings from objectmap.idx (replaces Pass 1)
       loadObjectAddressMappings();
 
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.25, "Loading class metadata");
+      }
+
       // Parse class metadata (needed for queries)
       parseAllClasses(progressCallback);
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.50, "Loading reference indices");
+      }
 
       // Load inbound index if available (avoids rebuild on first retained size query)
       Path inboundIndexPath = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
@@ -248,6 +256,10 @@ public final class HeapDumpImpl implements HeapDump {
           inboundCountReader = null;
           inboundIndexBuilt = false;
         }
+      }
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.75, "Loading retained sizes");
       }
 
       // Load retained sizes if available (avoids recomputation on first query)
@@ -265,7 +277,7 @@ public final class HeapDumpImpl implements HeapDump {
       }
 
       if (progressCallback != null) {
-        progressCallback.onProgress(1.0, "Loading from existing indexes");
+        progressCallback.onProgress(1.0, "Index loading complete");
       }
 
       LOG.debug("Loaded indexes: {} address mappings, {} classes",
