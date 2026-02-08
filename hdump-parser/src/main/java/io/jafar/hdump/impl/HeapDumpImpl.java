@@ -212,7 +212,7 @@ public final class HeapDumpImpl implements HeapDump {
     // Initialize class address tracking
     classAddresses = new LongOpenHashSet();
 
-    // Pass 1: Collect addresses (30% of parse time)
+    // Pass 1: Collect addresses (28% of parse time - fast scan, no parsing)
     if (progressCallback != null) {
       progressCallback.onProgress(0.0, "Pass 1/2: Collecting addresses");
     }
@@ -236,6 +236,12 @@ public final class HeapDumpImpl implements HeapDump {
     objectCount = objectAddresses.size() - classAddresses.size();
     LOG.debug("Pass 1 complete: collected {} object addresses ({} classes, {} objects)",
         objectAddresses.size(), classAddresses.size(), objectCount);
+
+    // Parse class metadata (28-30% - classes needed for Pass 2 reference extraction)
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.28, "Pass 1/2: Parsing class metadata");
+    }
+    parseAllClasses(progressCallback);
 
     if (progressCallback != null) {
       progressCallback.onProgress(0.3, "Pass 1/2: Complete");
@@ -292,12 +298,12 @@ public final class HeapDumpImpl implements HeapDump {
         default -> reader.skipRecordBody(header);
       }
 
-      // Report progress periodically (Pass 1 is 0-30% of total)
+      // Report progress periodically (Pass 1 is 0-28% of total)
       if (progressCallback != null && fileSize > 0) {
         long currentPos = reader.position();
         if (currentPos - lastProgressReport > progressInterval) {
           double fileProgress = (double) currentPos / fileSize;
-          double totalProgress = fileProgress * 0.3; // Pass 1 is 30% of total
+          double totalProgress = fileProgress * 0.28; // Pass 1 is 28% of total
           progressCallback.onProgress(totalProgress, "Pass 1/2: Collecting addresses");
           lastProgressReport = currentPos;
         }
@@ -339,14 +345,40 @@ public final class HeapDumpImpl implements HeapDump {
           reader.skip(length * elemSize);
         }
         case HeapTag.CLASS_DUMP -> {
-          // Collect class address AND parse class metadata
+          // Just collect class address - defer parsing to separate phase
           long classId = reader.readId();
           objectAddresses.add(classId);
           classAddresses.add(classId); // Mark as class for filtering
 
-          // Reset position to re-read the CLASS_DUMP for parsing
-          reader.position(reader.position() - reader.getIdSize());
-          parseClassDump(); // Parse into classesById
+          // Skip the rest of CLASS_DUMP for now (will parse in separate phase)
+          reader.readI4(); // stack trace
+          reader.readId(); // super class
+          reader.readId(); // class loader
+          reader.readId(); // signers
+          reader.readId(); // protection domain
+          reader.readId(); // reserved
+          reader.readId(); // reserved
+          reader.readI4(); // instance size
+          // Skip constant pool
+          int cpSize = reader.readU2();
+          for (int i = 0; i < cpSize; i++) {
+            reader.readU2();
+            int type = reader.readU1();
+            reader.readValue(type);
+          }
+          // Skip static fields
+          int staticCount = reader.readU2();
+          for (int i = 0; i < staticCount; i++) {
+            reader.readId();
+            int type = reader.readU1();
+            reader.readValue(type);
+          }
+          // Skip instance fields
+          int fieldCount = reader.readU2();
+          for (int i = 0; i < fieldCount; i++) {
+            reader.readId();
+            reader.readU1();
+          }
         }
         default -> skipGcRoot(subTag);
       }
@@ -357,6 +389,76 @@ public final class HeapDumpImpl implements HeapDump {
                               "Position: " + reader.position() + ", endPos: " + endPos +
                               ", last subTag: 0x" + Integer.toHexString(subTag));
       }
+    }
+  }
+
+  /**
+   * Parse all CLASS_DUMP records to populate classesById.
+   * This is done after Pass 1 address collection but before Pass 2 index building.
+   */
+  private void parseAllClasses(HeapDumpParser.ProgressCallback progressCallback) throws IOException {
+    reader.reset();
+
+    while (reader.hasMoreRecords()) {
+      RecordHeader header = reader.readRecordHeader();
+      if (header == null) break;
+
+      if (header.tag() == HprofTag.HEAP_DUMP || header.tag() == HprofTag.HEAP_DUMP_SEGMENT) {
+        parseClassesFromHeapDump(header);
+      } else {
+        reader.skipRecordBody(header);
+      }
+    }
+
+    LOG.debug("Parsed {} classes", classesById.size());
+  }
+
+  /**
+   * Parse only CLASS_DUMP records from a heap dump segment.
+   */
+  private void parseClassesFromHeapDump(RecordHeader header) throws IOException {
+    long endPos = header.bodyPosition() + header.length();
+
+    while (reader.position() < endPos) {
+      int subTag = reader.readU1();
+
+      if (subTag == HeapTag.CLASS_DUMP) {
+        parseClassDump();
+      } else {
+        // Skip all other record types (we only want CLASS_DUMP)
+        skipNonClassRecord(subTag);
+      }
+    }
+  }
+
+  /**
+   * Skip a non-CLASS_DUMP heap record during class parsing phase.
+   */
+  private void skipNonClassRecord(int subTag) throws IOException {
+    switch (subTag) {
+      case HeapTag.INSTANCE_DUMP -> {
+        reader.readId(); // object ID
+        reader.readI4(); // stack trace
+        reader.readId(); // class ID
+        int dataSize = reader.readI4();
+        reader.skip(dataSize);
+      }
+      case HeapTag.OBJ_ARRAY_DUMP -> {
+        reader.readId(); // object ID
+        reader.readI4(); // stack trace
+        int length = reader.readI4();
+        reader.readId(); // array class ID
+        reader.skip(length * reader.getIdSize());
+      }
+      case HeapTag.PRIM_ARRAY_DUMP -> {
+        reader.readId(); // object ID
+        reader.readI4(); // stack trace
+        int length = reader.readI4();
+        int elemType = reader.readU1();
+        int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
+        reader.skip(length * elemSize);
+      }
+      default -> skipGcRoot(subTag);
     }
   }
 
