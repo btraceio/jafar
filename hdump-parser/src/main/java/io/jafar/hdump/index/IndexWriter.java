@@ -261,6 +261,70 @@ public final class IndexWriter implements AutoCloseable {
     currentTempFile = null;
   }
 
+  // === Object Address Map Writing ===
+
+  /**
+   * Begins writing objectmap.idx (object ID to address mapping).
+   *
+   * @param expectedEntries number of entries that will be written
+   * @throws IOException if file creation fails
+   */
+  public void beginObjectMapIndex(int expectedEntries) throws IOException {
+    currentTempFile = indexDir.resolve(IndexFormat.OBJECTMAP_INDEX_NAME + ".tmp");
+    currentStream =
+        new DataOutputStream(
+            new BufferedOutputStream(
+                new FileOutputStream(currentTempFile.toFile()),
+                1024 * 1024));
+
+    // Write header
+    currentStream.writeInt(IndexFormat.OBJECTMAP_INDEX_MAGIC);
+    currentStream.writeInt(IndexFormat.FORMAT_VERSION);
+    currentStream.writeLong(expectedEntries);
+    currentStream.writeInt(0); // flags
+
+    entriesWritten = 0;
+  }
+
+  /**
+   * Writes a single object address mapping entry.
+   *
+   * <p>Entry format: [objectId32:4][objectAddress64:8]
+   *
+   * @param objectId32 32-bit sequential object ID
+   * @param objectAddress64 original 64-bit object address from heap dump
+   * @throws IOException if write fails
+   */
+  public void writeObjectMapEntry(int objectId32, long objectAddress64) throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginObjectMapIndex() not called");
+    }
+
+    currentStream.writeInt(objectId32);
+    currentStream.writeLong(objectAddress64);
+
+    entriesWritten++;
+  }
+
+  /**
+   * Finishes writing objectmap.idx and atomically renames to final location.
+   *
+   * @throws IOException if flush or rename fails
+   */
+  public void finishObjectMapIndex() throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginObjectMapIndex() not called");
+    }
+
+    currentStream.flush();
+    currentStream.close();
+    currentStream = null;
+
+    Path targetFile = indexDir.resolve(IndexFormat.OBJECTMAP_INDEX_NAME);
+    Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    currentTempFile = null;
+  }
+
   /**
    * Begins writing the gcroots.idx file.
    *

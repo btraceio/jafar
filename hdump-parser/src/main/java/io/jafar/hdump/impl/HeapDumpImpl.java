@@ -203,18 +203,18 @@ public final class HeapDumpImpl implements HeapDump {
    * <p>Pass 1: Collect object addresses and build address-to-ID mapping
    * <p>Pass 2: Build indexes with object metadata
    *
+   * <p>Optimization: If valid indexes already exist (including objectmap.idx), skip BOTH passes.
+   *
    * <p>Memory usage: ~3.5 GB for 114M objects (vs 25 GB for in-memory)
-   * <p>Parse time: ~90 seconds for 114M objects (vs 15-20 minutes full index build)
+   * <p>Parse time: ~90 seconds for 114M objects first time, ~2-5 seconds with existing indexes
    */
   private void parseTwoPass(HeapDumpParser.ProgressCallback progressCallback) throws IOException {
     // Create index directory alongside heap dump
     indexDir = path.getParent().resolve(path.getFileName().toString() + ".idx");
     Files.createDirectories(indexDir);
 
-    LOG.debug("Two-pass parsing: building indexes in {}", indexDir);
-
-    // Initialize class address tracking
-    classAddresses = new LongOpenHashSet();
+    // Check if valid indexes already exist
+    boolean hasValidIndexes = checkValidIndexes();
 
     // Initialize bounded LRU cache for object instances (prevents OOM on large heaps)
     objectsByIdLru = new LruCache<>(options.objectCacheSize());
@@ -222,52 +222,94 @@ public final class HeapDumpImpl implements HeapDump {
         options.objectCacheSize(),
         (options.objectCacheSize() * 40L) / (1024 * 1024));
 
-    // Pass 1: Collect addresses (28% of parse time - fast scan, no parsing)
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.0, "Pass 1/2: Collecting addresses");
-    }
+    if (hasValidIndexes) {
+      // Fast path: Load from existing indexes, skip both Pass 1 and Pass 2
+      LOG.info("Found valid index files in {}, skipping heap scan", indexDir);
 
-    LongArrayList objectAddresses = new LongArrayList();
-    collectObjectAddresses(objectAddresses, progressCallback);
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.0, "Loading from existing indexes");
+      }
 
-    // Sort and create address-to-ID mapping
-    objectAddresses.sort(null);
-    addressToId32 = new Long2IntOpenHashMap(objectAddresses.size());
-    addressToId32.defaultReturnValue(-1);
-    id32ToAddress = new Int2LongOpenHashMap(objectAddresses.size());
-    id32ToAddress.defaultReturnValue(-1L);
-    for (int i = 0; i < objectAddresses.size(); i++) {
-      long address = objectAddresses.getLong(i);
-      addressToId32.put(address, i);
-      id32ToAddress.put(i, address);
-    }
+      // Load address mappings from objectmap.idx (replaces Pass 1)
+      loadObjectAddressMappings();
 
-    // objectCount excludes class objects (classes are accessed via getClasses(), not getObjects())
-    objectCount = objectAddresses.size() - classAddresses.size();
-    LOG.debug("Pass 1 complete: collected {} object addresses ({} classes, {} objects)",
-        objectAddresses.size(), classAddresses.size(), objectCount);
+      // Parse class metadata (needed for queries)
+      parseAllClasses(progressCallback);
 
-    // Parse class metadata (28-30% - classes needed for Pass 2 reference extraction)
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.28, "Pass 1/2: Parsing class metadata");
-    }
-    parseAllClasses(progressCallback);
+      // Load retained sizes if available (avoids recomputation on first query)
+      Path retainedIndexPath = indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME);
+      if (Files.exists(retainedIndexPath)) {
+        try {
+          retainedSizeReader = new io.jafar.hdump.index.RetainedSizeReader(indexDir);
+          dominatorsComputed = true; // Mark as computed to skip recomputation
+          LOG.debug("Loaded pre-computed retained sizes from {}", retainedIndexPath);
+        } catch (java.io.IOException e) {
+          LOG.warn("Failed to load retained.idx, will recompute on first query: {}", e.getMessage());
+          retainedSizeReader = null;
+          dominatorsComputed = false;
+        }
+      }
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Pass 1/2: Complete");
-    }
+      if (progressCallback != null) {
+        progressCallback.onProgress(1.0, "Loading from existing indexes");
+      }
 
-    // Pass 2: Build indexes (70% of parse time)
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Pass 2/2: Building indexes");
-    }
+      LOG.debug("Loaded indexes: {} address mappings, {} classes",
+          id32ToAddress.size(), classesById.size());
+    } else {
+      // Slow path: Full two-pass parsing
+      LOG.debug("Two-pass parsing: building indexes in {}", indexDir);
 
-    buildIndexes(progressCallback);
+      // Initialize class address tracking
+      classAddresses = new LongOpenHashSet();
 
-    LOG.debug("Pass 2 complete: indexes built");
+      // Pass 1: Collect addresses (28% of parse time - fast scan, no parsing)
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.0, "Pass 1/2: Collecting addresses");
+      }
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(1.0, "Pass 2/2: Complete");
+      LongArrayList objectAddresses = new LongArrayList();
+      collectObjectAddresses(objectAddresses, progressCallback);
+
+      // Sort and create address-to-ID mapping
+      objectAddresses.sort(null);
+      addressToId32 = new Long2IntOpenHashMap(objectAddresses.size());
+      addressToId32.defaultReturnValue(-1);
+      id32ToAddress = new Int2LongOpenHashMap(objectAddresses.size());
+      id32ToAddress.defaultReturnValue(-1L);
+      for (int i = 0; i < objectAddresses.size(); i++) {
+        long address = objectAddresses.getLong(i);
+        addressToId32.put(address, i);
+        id32ToAddress.put(i, address);
+      }
+
+      // objectCount excludes class objects (classes are accessed via getClasses(), not getObjects())
+      objectCount = objectAddresses.size() - classAddresses.size();
+      LOG.debug("Pass 1 complete: collected {} object addresses ({} classes, {} objects)",
+          objectAddresses.size(), classAddresses.size(), objectCount);
+
+      // Parse class metadata (28-30% - classes needed for Pass 2 reference extraction)
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.28, "Pass 1/2: Parsing class metadata");
+      }
+      parseAllClasses(progressCallback);
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.3, "Pass 1/2: Complete");
+      }
+
+      // Pass 2: Build indexes (70% of parse time)
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.3, "Pass 2/2: Building indexes");
+      }
+
+      buildIndexes(progressCallback);
+
+      LOG.debug("Pass 2 complete: indexes built");
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(1.0, "Pass 2/2: Complete");
+      }
     }
 
     // Open index reader for lazy loading
@@ -284,6 +326,153 @@ public final class HeapDumpImpl implements HeapDump {
         classesById.size(),
         objectCount,
         gcRoots.size());
+  }
+
+  /**
+   * Check if valid index files already exist.
+   * Validates magic numbers and versions for required index files.
+   *
+   * @return true if all required indexes exist and are valid, false otherwise
+   */
+  private boolean checkValidIndexes() {
+    try {
+      // Check if index directory exists
+      if (!Files.exists(indexDir) || !Files.isDirectory(indexDir)) {
+        return false;
+      }
+
+      // Required index files that must exist and be valid
+      Path objectsIndex = indexDir.resolve(IndexFormat.OBJECTS_INDEX_NAME);
+      Path objectmapIndex = indexDir.resolve(IndexFormat.OBJECTMAP_INDEX_NAME);
+      Path classmapIndex = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME);
+      Path gcrootsIndex = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME);
+
+      // Check all required files exist
+      if (!Files.exists(objectsIndex) || !Files.exists(objectmapIndex) ||
+          !Files.exists(classmapIndex) || !Files.exists(gcrootsIndex)) {
+        return false;
+      }
+
+      // Validate objects.idx
+      if (!validateIndexFile(objectsIndex, IndexFormat.OBJECTS_INDEX_MAGIC)) {
+        LOG.debug("Invalid objects.idx, will rebuild indexes");
+        return false;
+      }
+
+      // Validate objectmap.idx
+      if (!validateIndexFile(objectmapIndex, IndexFormat.OBJECTMAP_INDEX_MAGIC)) {
+        LOG.debug("Invalid objectmap.idx, will rebuild indexes");
+        return false;
+      }
+
+      // Validate classmap.idx
+      if (!validateIndexFile(classmapIndex, IndexFormat.CLASSMAP_INDEX_MAGIC)) {
+        LOG.debug("Invalid classmap.idx, will rebuild indexes");
+        return false;
+      }
+
+      // Validate gcroots.idx
+      if (!validateIndexFile(gcrootsIndex, IndexFormat.GCROOTS_INDEX_MAGIC)) {
+        LOG.debug("Invalid gcroots.idx, will rebuild indexes");
+        return false;
+      }
+
+      return true;
+    } catch (Exception e) {
+      LOG.debug("Error checking index validity: {}", e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Validate an index file's header (magic number and version).
+   *
+   * @param indexFile path to index file
+   * @param expectedMagic expected magic number
+   * @return true if file is valid, false otherwise
+   */
+  private boolean validateIndexFile(Path indexFile, int expectedMagic) {
+    try (var channel = java.nio.channels.FileChannel.open(indexFile, java.nio.file.StandardOpenOption.READ)) {
+      if (channel.size() < IndexFormat.HEADER_SIZE) {
+        return false; // File too small to contain header
+      }
+
+      var buffer = channel.map(
+          java.nio.channels.FileChannel.MapMode.READ_ONLY,
+          0,
+          IndexFormat.HEADER_SIZE);
+
+      // Check magic number
+      int magic = buffer.getInt();
+      if (magic != expectedMagic) {
+        return false;
+      }
+
+      // Check version
+      int version = buffer.getInt();
+      if (version != IndexFormat.FORMAT_VERSION) {
+        LOG.debug("Index file {} has version {}, expected {}",
+            indexFile.getFileName(), version, IndexFormat.FORMAT_VERSION);
+        return false;
+      }
+
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  /**
+   * Load object address mappings from objectmap.idx.
+   * This allows skipping Pass 1 (address collection) when reopening a heap dump.
+   *
+   * @throws IOException if file cannot be read
+   */
+  private void loadObjectAddressMappings() throws IOException {
+    Path objectmapFile = indexDir.resolve(IndexFormat.OBJECTMAP_INDEX_NAME);
+
+    try (var channel = java.nio.channels.FileChannel.open(objectmapFile, java.nio.file.StandardOpenOption.READ)) {
+      var buffer = channel.map(
+          java.nio.channels.FileChannel.MapMode.READ_ONLY,
+          0,
+          channel.size());
+
+      // Read header
+      int magic = buffer.getInt();
+      if (magic != IndexFormat.OBJECTMAP_INDEX_MAGIC) {
+        throw new IOException("Invalid objectmap.idx magic number: " + Integer.toHexString(magic));
+      }
+
+      int version = buffer.getInt();
+      if (version != IndexFormat.FORMAT_VERSION) {
+        throw new IOException("Unsupported objectmap.idx version: " + version);
+      }
+
+      long entryCount = buffer.getLong();
+      buffer.getInt(); // skip flags
+
+      // Initialize address mapping with correct size
+      addressToId32 = new Long2IntOpenHashMap((int) entryCount);
+      addressToId32.defaultReturnValue(-1);
+      id32ToAddress = new Int2LongOpenHashMap((int) entryCount);
+      id32ToAddress.defaultReturnValue(-1L);
+
+      // Load mappings
+      for (int i = 0; i < entryCount; i++) {
+        int objectId32 = buffer.getInt();
+        long objectAddress64 = buffer.getLong();
+
+        addressToId32.put(objectAddress64, objectId32);
+        id32ToAddress.put(objectId32, objectAddress64);
+      }
+
+      // Count classes vs objects (classes tracked separately)
+      classAddresses = new LongOpenHashSet();
+      // Class addresses will be loaded from classmap.idx
+      objectCount = (int) entryCount; // Will be adjusted after loading classmap
+
+      LOG.debug("Loaded {} address mappings from objectmap.idx", entryCount);
+    }
   }
 
   /** Pass 1: Collect all object addresses in single scan. */
@@ -539,6 +728,19 @@ public final class HeapDumpImpl implements HeapDump {
       writer.finishClassMapIndex();
 
       if (progressCallback != null) {
+        progressCallback.onProgress(0.87, "Pass 2/2: Writing object address map");
+      }
+
+      // Write object address mapping index (enables skipping Pass 1 on reopening)
+      writer.beginObjectMapIndex(id32ToAddress.size());
+      for (var entry : id32ToAddress.int2LongEntrySet()) {
+        int objectId32 = entry.getIntKey();
+        long objectAddress64 = entry.getLongValue();
+        writer.writeObjectMapEntry(objectId32, objectAddress64);
+      }
+      writer.finishObjectMapIndex();
+
+      if (progressCallback != null) {
         progressCallback.onProgress(0.90, "Pass 2/2: Writing GC roots");
       }
 
@@ -581,6 +783,11 @@ public final class HeapDumpImpl implements HeapDump {
     classId32ToAddress = new Int2LongOpenHashMap();
     classId32ToAddress.defaultReturnValue(-1L);
 
+    // Initialize classAddresses if not already (happens when loading from existing indexes)
+    if (classAddresses == null) {
+      classAddresses = new LongOpenHashSet();
+    }
+
     try (var channel = java.nio.channels.FileChannel.open(classmapFile, java.nio.file.StandardOpenOption.READ)) {
       var buffer = channel.map(
           java.nio.channels.FileChannel.MapMode.READ_ONLY,
@@ -606,6 +813,13 @@ public final class HeapDumpImpl implements HeapDump {
         int classId32 = buffer.getInt();
         long classAddress64 = buffer.getLong();
         classId32ToAddress.put(classId32, classAddress64);
+        classAddresses.add(classAddress64);
+      }
+
+      // Adjust objectCount: total addresses - class addresses
+      // (This is needed when loading from existing indexes where objectCount wasn't set yet)
+      if (id32ToAddress != null && objectCount == 0) {
+        objectCount = id32ToAddress.size() - classAddresses.size();
       }
 
       LOG.debug("Loaded {} class ID mappings", entryCount);

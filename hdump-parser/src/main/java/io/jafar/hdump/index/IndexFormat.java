@@ -3,10 +3,11 @@ package io.jafar.hdump.index;
 /**
  * Binary format constants for heap dump index files.
  *
- * <p>The index-based architecture uses seven main index files:
+ * <p>The index-based architecture uses eight main index files:
  *
  * <ul>
  *   <li><strong>objects.idx</strong>: Object metadata (location, size, class, array length)
+ *   <li><strong>objectmap.idx</strong>: Object address mapping (32-bit ID to 64-bit address)
  *   <li><strong>refs.idx</strong>: Outbound references (variable-length per object)
  *   <li><strong>inbound.idx</strong>: Inbound reference counts (for retained size computation)
  *   <li><strong>retained.idx</strong>: Retained sizes (pre-computed approximate retained sizes)
@@ -56,6 +57,9 @@ public final class IndexFormat {
 
   /** Magic number for classes.idx file (ASCII: "JCLS") */
   public static final int CLASSES_INDEX_MAGIC = 0x4A434C53;
+
+  /** Magic number for objectmap.idx file (ASCII: "JMAP") */
+  public static final int OBJECTMAP_INDEX_MAGIC = 0x4A4D4150;
 
   // === File Header Format ===
 
@@ -219,6 +223,9 @@ public final class IndexFormat {
   /** GC roots index filename. */
   public static final String GCROOTS_INDEX_NAME = "gcroots.idx";
 
+  /** Object address mapping index filename. */
+  public static final String OBJECTMAP_INDEX_NAME = "objectmap.idx";
+
   // === classmap.idx Format ===
 
   /** Magic number for classmap.idx file (ASCII: "JCMP") */
@@ -238,6 +245,26 @@ public final class IndexFormat {
 
   public static final int CLASSMAP_OFFSET_CLASS_ID32 = 0;
   public static final int CLASSMAP_OFFSET_CLASS_ADDRESS64 = 4;
+
+  // === objectmap.idx Format ===
+
+  /**
+   * Object address mapping entry format (12 bytes fixed):
+   *
+   * <pre>
+   * [objectId32:4][objectAddress64:8]
+   * </pre>
+   *
+   * <p>Sequential by objectId32 for direct offset calculation. Maps 32-bit sequential object IDs
+   * back to original 64-bit addresses from the heap dump. This index enables skipping Pass 1
+   * (address collection) when reopening a heap dump with existing indexes.
+   *
+   * <p>Example: 114M objects = 20 + (114,000,000 × 12) = 1.37 GB
+   */
+  public static final int OBJECTMAP_ENTRY_SIZE = 12;
+
+  public static final int OBJECTMAP_OFFSET_OBJECT_ID32 = 0;
+  public static final int OBJECTMAP_OFFSET_OBJECT_ADDRESS64 = 4;
 
   // === gcroots.idx Format ===
 
