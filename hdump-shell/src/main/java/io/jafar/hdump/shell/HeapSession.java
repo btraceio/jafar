@@ -96,26 +96,27 @@ public final class HeapSession implements Session {
 
       if (!started) {
         started = true;
-        System.err.print("Parsing heap dump... ");
+        // Don't print anything initially - first progress update will show message
       }
 
       // Update progress on same line
       int percentage = (int) (progress * 100);
       if (!message.equals(lastMessage) || percentage % 5 == 0) {
-        System.err.print("\rParsing heap dump... " + percentage + "%");
+        String statusMessage = message != null && !message.isEmpty() ? message : "Parsing";
+        System.err.print("\r" + statusMessage + "... " + percentage + "%");
         lastMessage = message;
       }
     }
 
     synchronized void complete() {
       if (started) {
-        System.err.println("\rParsing heap dump... 100% - Complete");
+        System.err.println("\r" + (lastMessage != null ? lastMessage : "Complete") + "... 100%");
       }
     }
 
     synchronized void cancel() {
       if (started) {
-        System.err.println("\rParsing heap dump... Failed");
+        System.err.println("\rFailed                                    ");
       }
     }
   }
