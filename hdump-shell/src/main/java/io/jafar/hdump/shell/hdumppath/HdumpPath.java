@@ -303,15 +303,36 @@ public final class HdumpPath {
    * <p>For each object in the result set, returns all objects that would be garbage collected if
    * that object were removed. This helps understand the transitive closure of retained objects.
    *
-   * <p>Requires approximate retained size computation to have been performed.
+   * <p><strong>Performance note:</strong> This operator requires full dominator tree computation to
+   * traverse dominator relationships. The initial hybrid retained size computation (automatic) only
+   * calculates sizes, not relationships. For large heaps, consider filtering to interesting objects
+   * first using {@code [retained > threshold]} to minimize full tree computation scope.
    *
-   * <p>Example:
+   * <p>Modes:
+   * <ul>
+   *   <li>"tree" (default) - Shows ASCII tree visualization of dominator relationships
+   *   <li>"byClass" - Groups dominated objects by class and aggregates retained sizes
+   *   <li>"objects" - Returns individual dominated objects
+   * </ul>
+   *
+   * <p>Examples:
    *
    * <pre>
-   * objects[retained > 100MB] | dominators | groupBy(class)
+   * # Visualize dominator tree (default)
+   * objects[retained > 100MB] | dominators()
+   *
+   * # Group dominated objects by class for better overview
+   * objects[retained > 100MB] | dominators("byClass")
+   *
+   * # Get individual objects for detailed analysis
+   * objects/java.util.HashMap | top(1, retainedSize) | dominators("objects")
    * </pre>
    */
-  public record DominatorsOp() implements PipelineOp {}
+  public record DominatorsOp(String mode) implements PipelineOp {
+    public DominatorsOp() {
+      this("tree"); // Default mode
+    }
+  }
 
   // === Built-in field names for objects ===
 

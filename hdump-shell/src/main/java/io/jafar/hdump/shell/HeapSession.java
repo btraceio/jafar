@@ -146,6 +146,7 @@ public final class HeapSession implements Session {
     return dump.getClasses().stream()
         .map(c -> c.getName())
         .filter(name -> name != null && !name.startsWith("[")) // Exclude array classes
+        .map(name -> name.replace('/', '.')) // Convert internal format to Java format
         .collect(Collectors.toSet());
   }
 
@@ -219,49 +220,24 @@ public final class HeapSession implements Session {
   }
 
   /**
-   * Prompts user and computes full dominator tree with interactive progress display.
+   * Computes full dominator tree with automatic progress display.
+   * No user prompt - computation starts immediately when called.
    *
-   * @return true if computation completed, false if user declined
+   * @return true if computation completed successfully
    */
   public boolean promptAndComputeDominatorTree() {
     if (hasFullDominatorTree()) {
       return true; // Already computed
     }
 
-    // Prompt user for confirmation
+    // Inform user about computation
     System.err.println();
-    System.err.println("Full dominator tree computation required for dominators() operator.");
-    System.err.println("This will compute exact retained sizes and dominator relationships.");
+    System.err.println("Computing full dominator tree for dominators() operator...");
     System.err.println(
         String.format(
-            "Estimated time: 15-30 seconds for 10M objects (you have %,d objects)",
+            "Analyzing %,d objects (estimated time: 15-30 seconds for 10M objects)",
             dump.getObjectCount()));
-    System.err.print("Proceed with computation? [y/N] ");
-    System.err.flush();
-
-    try {
-      java.io.Console console = System.console();
-      String response;
-      if (console != null) {
-        response = console.readLine();
-      } else {
-        // Fallback for environments without console
-        java.util.Scanner scanner = new java.util.Scanner(System.in);
-        response = scanner.nextLine();
-      }
-
-      if (response == null || !response.trim().equalsIgnoreCase("y")) {
-        System.err.println("Computation cancelled.");
-        return false;
-      }
-    } catch (Exception e) {
-      LOG.error("Failed to read user input", e);
-      return false;
-    }
-
-    // Compute with progress display
     System.err.println();
-    System.err.println("Computing full dominator tree...");
 
     final String[] spinner = {"|", "/", "-", "\\"};
     final int[] spinnerIndex = {0};

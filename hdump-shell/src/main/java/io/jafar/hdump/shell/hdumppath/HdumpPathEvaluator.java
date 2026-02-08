@@ -56,7 +56,7 @@ public final class HdumpPathEvaluator {
 
     // Filter by type pattern
     if (query.typePattern() != null) {
-      String pattern = query.typePattern();
+      String pattern = normalizeClassName(query.typePattern());
       if (query.instanceof_()) {
         // Include subclasses
         Set<String> matchingClasses = findMatchingClasses(dump, pattern, true);
@@ -100,7 +100,7 @@ public final class HdumpPathEvaluator {
 
     // Filter by type pattern
     if (query.typePattern() != null) {
-      String pattern = query.typePattern();
+      String pattern = normalizeClassName(query.typePattern());
       if (pattern.contains("*")) {
         Pattern regex = globToRegex(pattern);
         stream =
@@ -364,7 +364,7 @@ public final class HdumpPathEvaluator {
       case DistinctOp d -> applyDistinct(results, d);
       case PathToRootOp p -> applyPathToRoot(session.getHeapDump(), results);
       case CheckLeaksOp c -> applyCheckLeaks(session, results, c);
-      case DominatorsOp d -> applyDominators(session, session.getHeapDump(), results);
+      case DominatorsOp d -> applyDominators(session, session.getHeapDump(), results, d);
     };
   }
 
@@ -387,8 +387,14 @@ public final class HdumpPathEvaluator {
     Stream<Map<String, Object>> stream = results.stream();
 
     if (op.orderBy() != null) {
-      Comparator<Map<String, Object>> cmp =
-          Comparator.comparing(m -> toComparable(m.get(op.orderBy())));
+      // Create comparator that compares actual values with null-safe handling
+      Comparator<Map<String, Object>> cmp = (m1, m2) -> {
+        Object v1 = m1.get(op.orderBy());
+        Object v2 = m2.get(op.orderBy());
+        return compareValues(v1, v2);
+      };
+
+      // top() defaults to descending (largest first) - reverse for ascending if needed
       if (op.descending()) {
         cmp = cmp.reversed();
       }
@@ -396,6 +402,23 @@ public final class HdumpPathEvaluator {
     }
 
     return stream.limit(op.n()).collect(Collectors.toList());
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static int compareValues(Object v1, Object v2) {
+    if (v1 == null && v2 == null) return 0;
+    if (v1 == null) return 1; // nulls sort last
+    if (v2 == null) return -1;
+
+    if (v1 instanceof Comparable && v2 instanceof Comparable) {
+      try {
+        return ((Comparable) v1).compareTo(v2);
+      } catch (ClassCastException e) {
+        // Fall back to string comparison for incompatible types
+        return String.valueOf(v1).compareTo(String.valueOf(v2));
+      }
+    }
+    return String.valueOf(v1).compareTo(String.valueOf(v2));
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -607,6 +630,14 @@ public final class HdumpPathEvaluator {
 
   // === Utility methods ===
 
+  /**
+   * Normalizes a class name from Java format (java.util.HashMap) to internal JVM format (java/util/HashMap).
+   * Heap dumps store class names with slashes, but users naturally type them with dots.
+   */
+  private static String normalizeClassName(String className) {
+    return className.replace('.', '/');
+  }
+
   private static Set<String> findMatchingClasses(
       HeapDump dump, String pattern, boolean includeSubclasses) {
     Set<String> result = new HashSet<>();
@@ -737,22 +768,30 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> applyDominators(
-      HeapSession session, HeapDump dump, List<Map<String, Object>> results) {
+      HeapSession session, HeapDump dump, List<Map<String, Object>> results, DominatorsOp op) {
 
     // Check if full dominator tree is computed
-    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl) {
-      io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl = (io.jafar.hdump.impl.HeapDumpImpl) dump;
-
+    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
       if (!heapDumpImpl.hasFullDominatorTree()) {
-        // Prompt user and compute if confirmed
+        // Auto-compute dominator tree
         if (!session.promptAndComputeDominatorTree()) {
-          // User declined - return empty result
           return List.of();
         }
       }
     }
 
-    // Full dominator tree is computed - return dominated objects
+    String mode = op.mode() != null ? op.mode() : "objects";
+    return switch (mode) {
+      case "objects" -> applyDominatorsObjects(dump, results);
+      case "byClass" -> applyDominatorsByClass(dump, results);
+      case "tree" -> applyDominatorsTree(dump, results);
+      default -> throw new IllegalArgumentException("Unknown dominators mode: " + mode);
+    };
+  }
+
+  private static List<Map<String, Object>> applyDominatorsObjects(
+      HeapDump dump, List<Map<String, Object>> results) {
+    // Original behavior: return individual dominated objects
     List<Map<String, Object>> dominated = new ArrayList<>();
 
     for (Map<String, Object> row : results) {
@@ -764,19 +803,254 @@ public final class HdumpPathEvaluator {
       if (dominator == null) continue;
 
       // Get all objects dominated by this object
-      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl) {
-        io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl = (io.jafar.hdump.impl.HeapDumpImpl) dump;
+      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
         List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
 
         for (HeapObject obj : dominatedObjects) {
           Map<String, Object> result = objectToMap(obj);
           result.put("dominator", dominator.getId());
-          result.put("dominatorClass", dominator.getHeapClass() != null ? dominator.getHeapClass().getName() : "unknown");
+          result.put(
+              "dominatorClass",
+              dominator.getHeapClass() != null ? dominator.getHeapClass().getName() : "unknown");
           dominated.add(result);
         }
       }
     }
 
     return dominated;
+  }
+
+  private static List<Map<String, Object>> applyDominatorsByClass(
+      HeapDump dump, List<Map<String, Object>> results) {
+    // Group dominated objects by class and aggregate retained sizes
+    List<Map<String, Object>> aggregated = new ArrayList<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) continue;
+
+      long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject dominator = dump.getObjectById(id).orElse(null);
+      if (dominator == null) continue;
+
+      // Build class-level aggregation
+      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
+        List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
+
+        // Group by class name
+        Map<String, ClassAggregation> byClass = new LinkedHashMap<>();
+        for (HeapObject obj : dominatedObjects) {
+          String className =
+              obj.getHeapClass() != null
+                  ? obj.getHeapClass().getName().replace('/', '.')
+                  : "unknown";
+          ClassAggregation agg =
+              byClass.computeIfAbsent(className, k -> new ClassAggregation(className));
+          agg.count++;
+          agg.shallowSize += obj.getShallowSize();
+          agg.retainedSize += obj.getRetainedSize();
+        }
+
+        // Convert to result maps
+        for (ClassAggregation agg : byClass.values()) {
+          Map<String, Object> result = new LinkedHashMap<>();
+          result.put("dominator", dominator.getId());
+          result.put(
+              "dominatorClass",
+              dominator.getHeapClass() != null
+                  ? dominator.getHeapClass().getName().replace('/', '.')
+                  : "unknown");
+          result.put("className", agg.className);
+          result.put("count", agg.count);
+          result.put("shallowSize", agg.shallowSize);
+          result.put("retainedSize", agg.retainedSize);
+          aggregated.add(result);
+        }
+      }
+    }
+
+    return aggregated;
+  }
+
+  private static List<Map<String, Object>> applyDominatorsTree(
+      HeapDump dump, List<Map<String, Object>> results) {
+    // Build ASCII tree visualization of dominator relationships
+    List<Map<String, Object>> treeResults = new ArrayList<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) continue;
+
+      long id =
+          idObj instanceof Number
+              ? ((Number) idObj).longValue()
+              : Long.parseLong(idObj.toString());
+      HeapObject dominator = dump.getObjectById(id).orElse(null);
+      if (dominator == null) continue;
+
+      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
+        // Build recursive dominator tree
+        DominatorNode root = buildRecursiveDominatorTree(heapDumpImpl, dominator, 0, 3);
+
+        // Format as ASCII tree
+        StringBuilder tree = new StringBuilder();
+        String dominatorClassName =
+            dominator.getHeapClass() != null
+                ? dominator.getHeapClass().getName().replace('/', '.')
+                : "unknown";
+        tree.append(
+            String.format(
+                "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
+        formatDominatorTree(root, tree, "", true);
+
+        // Count total dominated objects recursively
+        int totalDominated = countDominatedObjects(root);
+
+        // Print tree to stderr to avoid table truncation
+        System.err.println();
+        System.err.println("=== Dominator Tree ===");
+        System.err.print(tree.toString());
+        System.err.println();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("dominator", dominator.getId());
+        result.put("dominatorClass", dominatorClassName);
+        result.put("dominatedCount", totalDominated);
+        result.put("retainedSize", dominator.getRetainedSize());
+        treeResults.add(result);
+      }
+    }
+
+    return treeResults;
+  }
+
+  private static DominatorNode buildRecursiveDominatorTree(
+      io.jafar.hdump.impl.HeapDumpImpl dump, HeapObject root, int depth, int maxDepth) {
+    // Stop recursion at max depth to avoid stack overflow
+    if (depth >= maxDepth) {
+      return new DominatorNode("...");
+    }
+
+    List<HeapObject> children = dump.getDominatedObjects(root);
+    if (children.isEmpty()) {
+      return new DominatorNode("(no children)");
+    }
+
+    // Group immediate children by class to avoid per-object recursion
+    Map<String, ClassNode> classToDominatorNode = new LinkedHashMap<>();
+
+    for (HeapObject child : children) {
+      String className =
+          child.getHeapClass() != null
+              ? child.getHeapClass().getName().replace('/', '.')
+              : "unknown";
+
+      ClassNode classNode =
+          classToDominatorNode.computeIfAbsent(className, k -> new ClassNode(k, child));
+      classNode.count++;
+      classNode.retainedSize += child.getRetainedSize();
+    }
+
+    // Convert to DominatorNode with limited recursion
+    // Only recurse for top 5 classes to prevent OOM/stack overflow
+    DominatorNode rootNode =
+        new DominatorNode(
+            root.getHeapClass() != null
+                ? root.getHeapClass().getName().replace('/', '.')
+                : "unknown");
+
+    List<ClassNode> sortedClasses = new ArrayList<>(classToDominatorNode.values());
+    sortedClasses.sort((a, b) -> Long.compare(b.retainedSize, a.retainedSize));
+
+    int shown = 0;
+    for (ClassNode classNode : sortedClasses) {
+      DominatorNode node = new DominatorNode(classNode.className);
+      node.count = classNode.count;
+      node.retainedSize = classNode.retainedSize;
+
+      // Only recurse for top 5 classes and not beyond depth limit
+      if (shown < 5 && depth + 1 < maxDepth && classNode.sampleObject != null) {
+        DominatorNode childTree =
+            buildRecursiveDominatorTree(dump, classNode.sampleObject, depth + 1, maxDepth);
+        if (childTree != null && !childTree.children.isEmpty()) {
+          node.children.addAll(childTree.children);
+        }
+      }
+
+      rootNode.children.add(node);
+      shown++;
+      if (shown >= 10) {
+        // Show at most 10 classes at this level
+        if (sortedClasses.size() > 10) {
+          DominatorNode more = new DominatorNode("... (" + (sortedClasses.size() - 10) + " more classes)");
+          rootNode.children.add(more);
+        }
+        break;
+      }
+    }
+
+    return rootNode;
+  }
+
+  private static class ClassNode {
+    final String className;
+    final HeapObject sampleObject; // One object from this class for recursion
+    int count = 0;
+    long retainedSize = 0;
+
+    ClassNode(String className, HeapObject sampleObject) {
+      this.className = className;
+      this.sampleObject = sampleObject;
+    }
+  }
+
+  private static int countDominatedObjects(DominatorNode node) {
+    int count = node.count;
+    for (DominatorNode child : node.children) {
+      count += countDominatedObjects(child);
+    }
+    return count;
+  }
+
+  private static void formatDominatorTree(
+      DominatorNode node, StringBuilder sb, String prefix, boolean isLast) {
+    if (node.children.isEmpty()) return;
+
+    for (int i = 0; i < node.children.size(); i++) {
+      DominatorNode child = node.children.get(i);
+      boolean last = i == node.children.size() - 1;
+
+      sb.append(prefix);
+      sb.append(last ? "└── " : "├── ");
+      sb.append(
+          String.format(
+              "%s (%,d objects, retained: %,d bytes)\n",
+              child.className, child.count, child.retainedSize));
+
+      String childPrefix = prefix + (last ? "    " : "│   ");
+      formatDominatorTree(child, sb, childPrefix, last);
+    }
+  }
+
+  private static class ClassAggregation {
+    final String className;
+    int count = 0;
+    long shallowSize = 0;
+    long retainedSize = 0;
+
+    ClassAggregation(String className) {
+      this.className = className;
+    }
+  }
+
+  private static class DominatorNode {
+    final String className;
+    int count = 0;
+    long retainedSize = 0;
+    final List<DominatorNode> children = new ArrayList<>();
+
+    DominatorNode(String className) {
+      this.className = className;
+    }
   }
 }

@@ -802,15 +802,20 @@ public final class HdumpPathParser {
   }
 
   private DominatorsOp parseDominatorsOp() {
-    // dominators has no parameters - it's a zero-arg operator
-    // Optional empty parens allowed: dominators() or dominators
+    // dominators accepts optional mode parameter
+    // Syntax: dominators() or dominators("byClass") or dominators("tree")
     skipWs();
+    String mode = null;
     if (peek() == '(') {
       advance();
       skipWs();
+      if (peek() != ')') {
+        mode = parseStringOrIdentifier();
+      }
+      skipWs();
       expect(')');
     }
-    return new DominatorsOp();
+    return mode != null ? new DominatorsOp(mode) : new DominatorsOp();
   }
 
   private String parseStringOrIdentifier() {
