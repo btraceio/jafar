@@ -50,7 +50,8 @@ class IndexIntegrationTest {
             64 + (i * 8), // dataSize
             i % 3, // classId (3 different classes)
             i < 5 ? i * 10 : -1, // arrayLength (first 5 are arrays)
-            i < 5 ? IndexFormat.FLAG_IS_OBJECT_ARRAY : (byte) 0 // flags
+            i < 5 ? IndexFormat.FLAG_IS_OBJECT_ARRAY : (byte) 0, // flags
+            (byte) 0 // elementType (object arrays)
             );
       }
 
@@ -98,7 +99,7 @@ class IndexIntegrationTest {
     try (IndexWriter writer = new IndexWriter(tempDir)) {
       writer.beginObjectsIndex(5);
       for (int i = 0; i < 5; i++) {
-        writer.writeObjectEntry(i, 1000L + i, 64, 0, -1, (byte) 0);
+        writer.writeObjectEntry(i, 1000L + i, 64, 0, -1, (byte) 0, (byte) 0);
       }
       writer.finishObjectsIndex();
     }
@@ -136,7 +137,7 @@ class IndexIntegrationTest {
     // Verify temp file is cleaned up
     try (IndexWriter writer = new IndexWriter(tempDir)) {
       writer.beginObjectsIndex(1);
-      writer.writeObjectEntry(0, 1000L, 64, 0, -1, (byte) 0);
+      writer.writeObjectEntry(0, 1000L, 64, 0, -1, (byte) 0, (byte) 0);
 
       // Temp file should exist during write
       Path tempFile = tempDir.resolve(IndexFormat.OBJECTS_INDEX_NAME + ".tmp");

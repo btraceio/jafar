@@ -1,15 +1,19 @@
 package io.jafar.hdump.index;
 
+import io.jafar.hdump.api.HeapClass;
+import io.jafar.hdump.api.HeapField;
 import io.jafar.hdump.internal.BasicType;
 import io.jafar.hdump.internal.HeapTag;
 import io.jafar.hdump.internal.HprofReader;
 import io.jafar.hdump.internal.HprofTag;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Builds inbound reference count index on-demand.
@@ -45,6 +49,7 @@ public final class InboundIndexBuilder {
    * @param heapDumpPath path to HPROF file
    * @param indexDir directory containing index files
    * @param addressToId32 mapping from 64-bit addresses to 32-bit IDs
+   * @param classesById mapping from 64-bit class IDs to class field information
    * @param progressCallback optional progress callback
    * @throws IOException if building fails
    */
@@ -52,6 +57,7 @@ public final class InboundIndexBuilder {
       Path heapDumpPath,
       Path indexDir,
       Long2IntOpenHashMap addressToId32,
+      Long2ObjectMap<? extends HeapClass> classesById,
       ProgressCallback progressCallback)
       throws IOException {
 
@@ -73,7 +79,7 @@ public final class InboundIndexBuilder {
         if (header == null) break;
 
         if (header.tag() == HprofTag.HEAP_DUMP || header.tag() == HprofTag.HEAP_DUMP_SEGMENT) {
-          scanReferencesFromHeapDump(reader, header, addressToId32, inboundCounts);
+          scanReferencesFromHeapDump(reader, header, addressToId32, classesById, inboundCounts);
         } else {
           reader.skipRecordBody(header);
         }
@@ -102,6 +108,7 @@ public final class InboundIndexBuilder {
       HprofReader reader,
       HprofReader.RecordHeader header,
       Long2IntOpenHashMap addressToId32,
+      Long2ObjectMap<? extends HeapClass> classesById,
       Int2IntOpenHashMap inboundCounts) {
 
     long endPos = header.bodyPosition() + header.length();
@@ -113,14 +120,35 @@ public final class InboundIndexBuilder {
         case HeapTag.INSTANCE_DUMP -> {
           reader.readId(); // object ID (not needed)
           reader.readI4(); // stack trace
-          long classId = reader.readId();
+          long classAddress = reader.readId();
           int dataSize = reader.readI4();
 
           // Extract outbound references from instance data
-          long dataStart = reader.position();
-          // TODO: We need class field information to extract references correctly
-          // For now, skip the data - we'll enhance this in M4
-          reader.skip(dataSize);
+          HeapClass heapClass = classesById.get(classAddress);
+          if (heapClass != null) {
+            // Get all instance fields including inherited
+            List<? extends HeapField> fields = heapClass.getAllInstanceFields();
+
+            // Read each field value and extract references
+            for (HeapField field : fields) {
+              if (field.getType() == BasicType.OBJECT) {
+                // This is an object reference field
+                long refAddress = reader.readId();
+                if (refAddress != 0) {
+                  int refId32 = addressToId32.get(refAddress);
+                  if (refId32 != -1) {
+                    inboundCounts.addTo(refId32, 1);
+                  }
+                }
+              } else {
+                // Skip primitive field value
+                reader.readValue(field.getType());
+              }
+            }
+          } else {
+            // Class not found, skip the data
+            reader.skip(dataSize);
+          }
         }
         case HeapTag.OBJ_ARRAY_DUMP -> {
           reader.readId(); // object ID (not needed)

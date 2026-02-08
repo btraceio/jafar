@@ -262,7 +262,8 @@ class TwoPassParsingTest {
           dataSize,
           classId,
           -1, // not an array
-          (byte) 0 // no flags
+          (byte) 0, // no flags
+          (byte) 0  // no elementType
       );
     }
 
@@ -292,7 +293,8 @@ class TwoPassParsingTest {
           dataSize,
           classId,
           length,
-          IndexFormat.FLAG_IS_OBJECT_ARRAY);
+          IndexFormat.FLAG_IS_OBJECT_ARRAY,
+          (byte) 0); // no elementType for object arrays
     }
 
     private void buildPrimArrayEntry(
@@ -323,7 +325,8 @@ class TwoPassParsingTest {
           dataSize,
           classId,
           length,
-          IndexFormat.FLAG_IS_PRIMITIVE_ARRAY);
+          IndexFormat.FLAG_IS_PRIMITIVE_ARRAY,
+          (byte) elemType); // preserve element type
     }
 
     private int getOrCreateClassId(long classAddress, Long2IntOpenHashMap classIdMap) {

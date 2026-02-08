@@ -3,13 +3,15 @@ package io.jafar.hdump.index;
 /**
  * Binary format constants for heap dump index files.
  *
- * <p>The index-based architecture uses four main index files:
+ * <p>The index-based architecture uses six main index files:
  *
  * <ul>
  *   <li><strong>objects.idx</strong>: Object metadata (location, size, class, array length)
  *   <li><strong>refs.idx</strong>: Outbound references (variable-length per object)
  *   <li><strong>inbound.idx</strong>: Inbound reference counts (for retained size computation)
  *   <li><strong>classes.idx</strong>: Class metadata (name, fields)
+ *   <li><strong>classmap.idx</strong>: Class ID mapping (32-bit ID to 64-bit address)
+ *   <li><strong>gcroots.idx</strong>: GC root metadata (type, object ID, thread, frame)
  * </ul>
  *
  * <p><strong>Design Philosophy:</strong>
@@ -70,12 +72,12 @@ public final class IndexFormat {
   // === objects.idx Format ===
 
   /**
-   * Object entry format (25 bytes fixed):
+   * Object entry format (26 bytes fixed):
    *
    * <pre>
-   * [objectId32:4][fileOffset:8][dataSize:4][classId:4][arrayLength:4][flags:1]
-   * Total: 20-byte header + (25 bytes × object count)
-   * Example: 114M objects = 20 + (114,000,000 × 25) = 2.85 GB
+   * [objectId32:4][fileOffset:8][dataSize:4][classId:4][arrayLength:4][flags:1][elementType:1]
+   * Total: 20-byte header + (26 bytes × object count)
+   * Example: 114M objects = 20 + (114,000,000 × 26) = 2.96 GB
    * </pre>
    *
    * <p>Fields:
@@ -87,9 +89,10 @@ public final class IndexFormat {
    *   <li><strong>classId</strong>: 32-bit class ID (index into classes.idx)
    *   <li><strong>arrayLength</strong>: Array length (-1 if not an array)
    *   <li><strong>flags</strong>: Bitfield (bit 0: isObjectArray, bit 1: isPrimitiveArray)
+   *   <li><strong>elementType</strong>: BasicType constant for primitive arrays (BYTE=8, INT=10, etc.), 0 otherwise
    * </ul>
    */
-  public static final int OBJECT_ENTRY_SIZE = 25;
+  public static final int OBJECT_ENTRY_SIZE = 26;
 
   public static final int OBJECT_OFFSET_ID32 = 0;
   public static final int OBJECT_OFFSET_FILE_OFFSET = 4;
@@ -97,6 +100,7 @@ public final class IndexFormat {
   public static final int OBJECT_OFFSET_CLASS_ID = 16;
   public static final int OBJECT_OFFSET_ARRAY_LENGTH = 20;
   public static final int OBJECT_OFFSET_FLAGS = 24;
+  public static final int OBJECT_OFFSET_ELEMENT_TYPE = 25;
 
   // Object flags
   public static final byte FLAG_IS_OBJECT_ARRAY = 0x01;
@@ -181,6 +185,63 @@ public final class IndexFormat {
 
   /** Classes index filename. */
   public static final String CLASSES_INDEX_NAME = "classes.idx";
+
+  /** Class mapping index filename. */
+  public static final String CLASSMAP_INDEX_NAME = "classmap.idx";
+
+  /** GC roots index filename. */
+  public static final String GCROOTS_INDEX_NAME = "gcroots.idx";
+
+  // === classmap.idx Format ===
+
+  /** Magic number for classmap.idx file (ASCII: "JCMP") */
+  public static final int CLASSMAP_INDEX_MAGIC = 0x4A434D50;
+
+  /**
+   * Class mapping entry format (12 bytes fixed):
+   *
+   * <pre>
+   * [classId32:4][classAddress64:8]
+   * </pre>
+   *
+   * <p>Sequential by classId32 for direct offset calculation. Maps 32-bit sequential class IDs
+   * back to original 64-bit class addresses from the heap dump.
+   */
+  public static final int CLASSMAP_ENTRY_SIZE = 12;
+
+  public static final int CLASSMAP_OFFSET_CLASS_ID32 = 0;
+  public static final int CLASSMAP_OFFSET_CLASS_ADDRESS64 = 4;
+
+  // === gcroots.idx Format ===
+
+  /** Magic number for gcroots.idx file (ASCII: "JGCR") */
+  public static final int GCROOTS_INDEX_MAGIC = 0x4A474352;
+
+  /**
+   * GC root entry format (13 bytes fixed):
+   *
+   * <pre>
+   * [type:1][objectId32:4][threadSerial:4][frameNumber:4]
+   * </pre>
+   *
+   * <p>Fields:
+   *
+   * <ul>
+   *   <li><strong>type</strong>: GcRoot.Type ordinal (0-based enum index)
+   *   <li><strong>objectId32</strong>: 32-bit object ID (mapped via addressToId32)
+   *   <li><strong>threadSerial</strong>: Thread serial number (-1 if not applicable)
+   *   <li><strong>frameNumber</strong>: Stack frame number (-1 if not applicable)
+   * </ul>
+   *
+   * <p>Sequential storage for efficient scan. Small index (~13 bytes per root, typically &lt;10K
+   * roots per heap).
+   */
+  public static final int GCROOT_ENTRY_SIZE = 13;
+
+  public static final int GCROOT_OFFSET_TYPE = 0;
+  public static final int GCROOT_OFFSET_OBJECT_ID32 = 1;
+  public static final int GCROOT_OFFSET_THREAD_SERIAL = 5;
+  public static final int GCROOT_OFFSET_FRAME_NUMBER = 9;
 
   // === Magic Numbers (continued) ===
 

@@ -17,6 +17,7 @@ import io.jafar.hdump.internal.HeapTag;
 import io.jafar.hdump.internal.HprofReader;
 import io.jafar.hdump.internal.HprofReader.RecordHeader;
 import io.jafar.hdump.internal.HprofTag;
+import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -61,6 +62,9 @@ public final class HeapDumpImpl implements HeapDump {
   private ObjectIndexReader objectIndexReader;  // null in in-memory mode
   private InboundCountReader inboundCountReader; // null until first retained-size query
   private Long2IntOpenHashMap addressToId32;    // 64-bit address -> 32-bit ID mapping
+  private it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap classId32ToAddress; // 32-bit class ID -> 64-bit address (INDEXED mode)
+  private it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap id32ToAddress; // 32-bit object ID -> 64-bit address (INDEXED mode, for GC roots)
+  private LongOpenHashSet classAddresses; // Addresses that are class objects (INDEXED mode)
   private Path indexDir;                        // directory containing index files
   private volatile boolean inboundIndexBuilt = false;
 
@@ -76,6 +80,43 @@ public final class HeapDumpImpl implements HeapDump {
   // Dominator children map: dominator ID -> list of dominated object IDs
   // Built during full dominator tree computation for O(1) lookup
   private Map<Long, List<Long>> dominatorChildrenMap;
+
+  /** Temporary storage for GC root data during Pass 2 (indexed mode). */
+  private static class GcRootData {
+    final GcRoot.Type type;
+    final long objectAddress;
+    final int threadSerial;
+    final int frameNumber;
+
+    GcRootData(GcRoot.Type type, long objectAddress, int threadSerial, int frameNumber) {
+      this.type = type;
+      this.objectAddress = objectAddress;
+      this.threadSerial = threadSerial;
+      this.frameNumber = frameNumber;
+    }
+  }
+
+  /** Temporary storage for object index entries during Pass 2. */
+  private static class ObjectEntry {
+    final int objectId32;
+    final long fileOffset;
+    final int dataSize;
+    final int classId;
+    final int arrayLength;
+    final byte flags;
+    final byte elementType;
+
+    ObjectEntry(int objectId32, long fileOffset, int dataSize, int classId,
+                int arrayLength, byte flags, byte elementType) {
+      this.objectId32 = objectId32;
+      this.fileOffset = fileOffset;
+      this.dataSize = dataSize;
+      this.classId = classId;
+      this.arrayLength = arrayLength;
+      this.flags = flags;
+      this.elementType = elementType;
+    }
+  }
 
   private HeapDumpImpl(Path path, HprofReader reader, ParserOptions options) {
     this.path = path;
@@ -168,6 +209,9 @@ public final class HeapDumpImpl implements HeapDump {
 
     LOG.debug("Two-pass parsing: building indexes in {}", indexDir);
 
+    // Initialize class address tracking
+    classAddresses = new LongOpenHashSet();
+
     // Pass 1: Collect addresses (30% of parse time)
     if (progressCallback != null) {
       progressCallback.onProgress(0.0, "Pass 1: Collecting addresses");
@@ -180,12 +224,18 @@ public final class HeapDumpImpl implements HeapDump {
     objectAddresses.sort(null);
     addressToId32 = new Long2IntOpenHashMap(objectAddresses.size());
     addressToId32.defaultReturnValue(-1);
+    id32ToAddress = new Int2LongOpenHashMap(objectAddresses.size());
+    id32ToAddress.defaultReturnValue(-1L);
     for (int i = 0; i < objectAddresses.size(); i++) {
-      addressToId32.put(objectAddresses.getLong(i), i);
+      long address = objectAddresses.getLong(i);
+      addressToId32.put(address, i);
+      id32ToAddress.put(i, address);
     }
 
-    objectCount = objectAddresses.size();
-    LOG.debug("Pass 1 complete: collected {} object addresses", objectCount);
+    // objectCount excludes class objects (classes are accessed via getClasses(), not getObjects())
+    objectCount = objectAddresses.size() - classAddresses.size();
+    LOG.debug("Pass 1 complete: collected {} object addresses ({} classes, {} objects)",
+        objectAddresses.size(), classAddresses.size(), objectCount);
 
     if (progressCallback != null) {
       progressCallback.onProgress(0.3, "Pass 1 complete");
@@ -206,6 +256,12 @@ public final class HeapDumpImpl implements HeapDump {
 
     // Open index reader for lazy loading
     objectIndexReader = new ObjectIndexReader(indexDir);
+
+    // Load class ID mapping for reverse lookup
+    loadClassIdMapping();
+
+    // Load GC roots from index
+    loadGcRoots();
 
     LOG.debug(
         "Parsed {} classes, {} objects, {} GC roots (indexed mode)",
@@ -282,7 +338,16 @@ public final class HeapDumpImpl implements HeapDump {
           int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
           reader.skip(length * elemSize);
         }
-        case HeapTag.CLASS_DUMP -> parseClassDump();
+        case HeapTag.CLASS_DUMP -> {
+          // Collect class address AND parse class metadata
+          long classId = reader.readId();
+          objectAddresses.add(classId);
+          classAddresses.add(classId); // Mark as class for filtering
+
+          // Reset position to re-read the CLASS_DUMP for parsing
+          reader.position(reader.position() - reader.getIdSize());
+          parseClassDump(); // Parse into classesById
+        }
         default -> skipGcRoot(subTag);
       }
 
@@ -298,11 +363,13 @@ public final class HeapDumpImpl implements HeapDump {
   /** Pass 2: Build indexes using address-to-ID mapping. */
   private void buildIndexes() throws IOException {
     try (IndexWriter writer = new IndexWriter(indexDir)) {
-      writer.beginObjectsIndex(objectCount);
-
       // Map for class addresses -> 32-bit class IDs
       Long2IntOpenHashMap classIdMap = new Long2IntOpenHashMap();
       classIdMap.defaultReturnValue(-1);
+
+      // Collect object entries and GC roots during Pass 2
+      List<ObjectEntry> objectEntries = new ArrayList<>();
+      List<GcRootData> gcRootDataList = new ArrayList<>();
 
       reader.reset();
 
@@ -312,17 +379,155 @@ public final class HeapDumpImpl implements HeapDump {
 
         switch (header.tag()) {
           case HprofTag.HEAP_DUMP, HprofTag.HEAP_DUMP_SEGMENT ->
-              buildIndexFromHeapDump(header, writer, classIdMap);
+              buildIndexFromHeapDump(header, objectEntries, classIdMap, gcRootDataList);
           default -> reader.skipRecordBody(header);
         }
       }
 
+      // Sort object entries by ID (required for ObjectIndexReader's offset calculation)
+      objectEntries.sort(java.util.Comparator.comparingInt(e -> e.objectId32));
+
+      // Write sorted entries to objects.idx
+      // Note: objectEntries includes both regular objects AND class objects (for GC root support)
+      writer.beginObjectsIndex(objectEntries.size());
+      for (ObjectEntry entry : objectEntries) {
+        writer.writeObjectEntry(entry.objectId32, entry.fileOffset, entry.dataSize,
+            entry.classId, entry.arrayLength, entry.flags, entry.elementType);
+      }
       writer.finishObjectsIndex();
+
+      // Write class ID mapping index
+      writer.beginClassMapIndex(classIdMap.size());
+      for (var entry : classIdMap.long2IntEntrySet()) {
+        int classId32 = entry.getIntValue();
+        long classAddress64 = entry.getLongKey();
+        writer.writeClassMapEntry(classId32, classAddress64);
+      }
+      writer.finishClassMapIndex();
+
+      // Write GC roots index - only count valid entries
+      int validGcRootCount = 0;
+      for (GcRootData gcRoot : gcRootDataList) {
+        int objectId32 = addressToId32.get(gcRoot.objectAddress);
+        if (objectId32 != -1) {
+          validGcRootCount++;
+        }
+      }
+
+      writer.beginGcRootsIndex(validGcRootCount);
+      for (GcRootData gcRoot : gcRootDataList) {
+        int objectId32 = addressToId32.get(gcRoot.objectAddress);
+        if (objectId32 != -1) {
+          writer.writeGcRootEntry(
+              (byte) gcRoot.type.ordinal(),
+              objectId32,
+              gcRoot.threadSerial,
+              gcRoot.frameNumber);
+        }
+      }
+      writer.finishGcRootsIndex();
+
+      LOG.debug("Persisted {} GC roots to index ({}  total collected)", validGcRootCount, gcRootDataList.size());
+    }
+  }
+
+  /**
+   * Loads class ID mapping from classmap.idx to enable reverse lookup.
+   * Creates mapping from 32-bit class IDs to 64-bit class addresses.
+   */
+  private void loadClassIdMapping() throws IOException {
+    Path classmapFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME);
+    if (!Files.exists(classmapFile)) {
+      throw new IOException("Class mapping index not found: " + classmapFile);
+    }
+
+    classId32ToAddress = new Int2LongOpenHashMap();
+    classId32ToAddress.defaultReturnValue(-1L);
+
+    try (var channel = java.nio.channels.FileChannel.open(classmapFile, java.nio.file.StandardOpenOption.READ)) {
+      var buffer = channel.map(
+          java.nio.channels.FileChannel.MapMode.READ_ONLY,
+          0,
+          channel.size());
+
+      // Read header
+      int magic = buffer.getInt();
+      if (magic != IndexFormat.CLASSMAP_INDEX_MAGIC) {
+        throw new IOException("Invalid classmap.idx magic number: " + Integer.toHexString(magic));
+      }
+
+      int version = buffer.getInt();
+      if (version != IndexFormat.FORMAT_VERSION) {
+        throw new IOException("Unsupported classmap.idx version: " + version);
+      }
+
+      long entryCount = buffer.getLong();
+      buffer.getInt(); // skip flags
+
+      // Read class mappings
+      for (int i = 0; i < entryCount; i++) {
+        int classId32 = buffer.getInt();
+        long classAddress64 = buffer.getLong();
+        classId32ToAddress.put(classId32, classAddress64);
+      }
+
+      LOG.debug("Loaded {} class ID mappings", entryCount);
+    }
+  }
+
+  /**
+   * Loads GC roots from gcroots.idx.
+   * Creates GcRootImpl objects from the persisted GC root data.
+   */
+  private void loadGcRoots() throws IOException {
+    Path gcrootsFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME);
+    if (!Files.exists(gcrootsFile)) {
+      LOG.debug("No GC roots index found, skipping");
+      return;
+    }
+
+    try (var channel = java.nio.channels.FileChannel.open(gcrootsFile, java.nio.file.StandardOpenOption.READ)) {
+      var buffer = channel.map(
+          java.nio.channels.FileChannel.MapMode.READ_ONLY,
+          0,
+          channel.size());
+
+      // Read header
+      int magic = buffer.getInt();
+      if (magic != IndexFormat.GCROOTS_INDEX_MAGIC) {
+        throw new IOException("Invalid gcroots.idx magic number: " + Integer.toHexString(magic));
+      }
+
+      int version = buffer.getInt();
+      if (version != IndexFormat.FORMAT_VERSION) {
+        throw new IOException("Unsupported gcroots.idx version: " + version);
+      }
+
+      long entryCount = buffer.getLong();
+      buffer.getInt(); // skip flags
+
+      // Read GC roots
+      for (int i = 0; i < entryCount; i++) {
+        byte typeOrdinal = buffer.get();
+        int objectId32 = buffer.getInt();
+        int threadSerial = buffer.getInt();
+        int frameNumber = buffer.getInt();
+
+        // Convert 32-bit ID back to 64-bit address using reverse mapping
+        long objectAddress = id32ToAddress.get(objectId32);
+
+        if (objectAddress != -1) {
+          GcRoot.Type type = GcRoot.Type.values()[typeOrdinal];
+          gcRoots.add(new GcRootImpl(type, objectAddress, threadSerial, frameNumber, this));
+        }
+      }
+
+      LOG.debug("Loaded {} GC roots from index", entryCount);
     }
   }
 
   private void buildIndexFromHeapDump(
-      RecordHeader header, IndexWriter writer, Long2IntOpenHashMap classIdMap)
+      RecordHeader header, List<ObjectEntry> objectEntries, Long2IntOpenHashMap classIdMap, List<GcRootData> gcRootDataList)
       throws IOException {
     long endPos = header.bodyPosition() + header.length();
 
@@ -341,7 +546,7 @@ public final class HeapDumpImpl implements HeapDump {
           int objectId32 = addressToId32.get(objAddress);
           int classId = getOrCreateClassId(classAddress, classIdMap);
 
-          writer.writeObjectEntry(objectId32, fileOffset, dataSize, classId, -1, (byte) 0);
+          objectEntries.add(new ObjectEntry(objectId32, fileOffset, dataSize, classId, -1, (byte) 0, (byte) 0));
         }
         case HeapTag.OBJ_ARRAY_DUMP -> {
           long objAddress = reader.readId();
@@ -355,8 +560,8 @@ public final class HeapDumpImpl implements HeapDump {
           int objectId32 = addressToId32.get(objAddress);
           int classId = getOrCreateClassId(arrayClassAddress, classIdMap);
 
-          writer.writeObjectEntry(
-              objectId32, fileOffset, dataSize, classId, length, IndexFormat.FLAG_IS_OBJECT_ARRAY);
+          objectEntries.add(new ObjectEntry(objectId32, fileOffset, dataSize, classId, length,
+              IndexFormat.FLAG_IS_OBJECT_ARRAY, (byte) 0));
         }
         case HeapTag.PRIM_ARRAY_DUMP -> {
           long objAddress = reader.readId();
@@ -370,16 +575,49 @@ public final class HeapDumpImpl implements HeapDump {
 
           int objectId32 = addressToId32.get(objAddress);
 
-          writer.writeObjectEntry(
-              objectId32,
-              fileOffset,
-              dataSize,
-              -1,
-              length,
-              IndexFormat.FLAG_IS_PRIMITIVE_ARRAY);
+          objectEntries.add(new ObjectEntry(objectId32, fileOffset, dataSize, -1, length,
+              IndexFormat.FLAG_IS_PRIMITIVE_ARRAY, (byte) elemType));
         }
-        case HeapTag.CLASS_DUMP -> skipClassDumpInPass2();
-        default -> skipGcRoot(subTag);
+        case HeapTag.CLASS_DUMP -> {
+          // Collect minimal entry for class object (for GC root support)
+          long classAddress = reader.readId();
+          int objectId32 = addressToId32.get(classAddress);
+          int classId = getOrCreateClassId(classAddress, classIdMap);
+
+          // Skip the rest of CLASS_DUMP (we already parsed it in in-memory pass)
+          reader.readI4(); // stack trace
+          reader.readId(); // super class
+          reader.readId(); // class loader
+          reader.readId(); // signers
+          reader.readId(); // protection domain
+          reader.readId(); // reserved
+          reader.readId(); // reserved
+          reader.readI4(); // instance size
+          // Skip constant pool
+          int cpSize = reader.readU2();
+          for (int i = 0; i < cpSize; i++) {
+            reader.readU2();
+            int type = reader.readU1();
+            reader.readValue(type);
+          }
+          // Skip static fields
+          int staticCount = reader.readU2();
+          for (int i = 0; i < staticCount; i++) {
+            reader.readId();
+            int type = reader.readU1();
+            reader.readValue(type);
+          }
+          // Skip instance fields
+          int fieldCount = reader.readU2();
+          for (int i = 0; i < fieldCount; i++) {
+            reader.readId();
+            reader.readU1();
+          }
+
+          // Add minimal entry (fileOffset=0, dataSize=0 for classes)
+          objectEntries.add(new ObjectEntry(objectId32, 0, 0, classId, -1, (byte) 0, (byte) 0));
+        }
+        default -> collectGcRoot(subTag, gcRootDataList);
       }
     }
   }
@@ -429,26 +667,21 @@ public final class HeapDumpImpl implements HeapDump {
     }
   }
 
+  /** Skip GC root during Pass 1 (only collecting object addresses). */
   private void skipGcRoot(int subTag) throws IOException {
     switch (subTag) {
-      // Standard GC roots (HPROF 1.0.2)
       case HeapTag.ROOT_UNKNOWN, HeapTag.ROOT_STICKY_CLASS, HeapTag.ROOT_MONITOR_USED -> reader.readId();
       case HeapTag.ROOT_JNI_GLOBAL -> {
         reader.readId();
         reader.readId();
       }
-      case HeapTag.ROOT_JNI_LOCAL -> {
-        reader.readId();     // objId
-        reader.readI4();     // threadSerial
-        reader.readI4();     // frameNum
-      }
-      case HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK -> {
-        reader.readId();     // objId
-        reader.readI4();     // threadSerial
-      }
-      case HeapTag.ROOT_JAVA_FRAME -> {
+      case HeapTag.ROOT_JNI_LOCAL, HeapTag.ROOT_JAVA_FRAME, HeapTag.ROOT_JNI_MONITOR -> {
         reader.readId();
         reader.readI4();
+        reader.readI4();
+      }
+      case HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK, HeapTag.ROOT_DEBUGGER -> {
+        reader.readId();
         reader.readI4();
       }
       case HeapTag.ROOT_THREAD_OBJ -> {
@@ -456,7 +689,66 @@ public final class HeapDumpImpl implements HeapDump {
         reader.readI4();
         reader.readI4();
       }
-      // Extended GC roots (HPROF 1.0.3 - Android/modern JDK)
+      case HeapTag.ROOT_INTERNED_STRING,
+           HeapTag.ROOT_FINALIZING,
+           HeapTag.ROOT_VM_INTERNAL,
+           HeapTag.ROOT_REFERENCE_CLEANUP -> reader.readId();
+      default -> {
+        // Unknown GC root type
+      }
+    }
+  }
+
+  /** Collect GC root during Pass 2 (building indexes). */
+  private void collectGcRoot(int subTag, List<GcRootData> gcRootDataList) throws IOException {
+    switch (subTag) {
+      // Standard GC roots (HPROF 1.0.2)
+      case HeapTag.ROOT_UNKNOWN -> {
+        long objId = reader.readId();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.UNKNOWN, objId, -1, -1));
+      }
+      case HeapTag.ROOT_STICKY_CLASS -> {
+        long objId = reader.readId();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.STICKY_CLASS, objId, -1, -1));
+      }
+      case HeapTag.ROOT_MONITOR_USED -> {
+        long objId = reader.readId();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.MONITOR_USED, objId, -1, -1));
+      }
+      case HeapTag.ROOT_JNI_GLOBAL -> {
+        long objId = reader.readId();
+        reader.readId(); // JNI global ref ID (not used)
+        gcRootDataList.add(new GcRootData(GcRoot.Type.JNI_GLOBAL, objId, -1, -1));
+      }
+      case HeapTag.ROOT_JNI_LOCAL -> {
+        long objId = reader.readId();
+        int threadSerial = reader.readI4();
+        int frameNum = reader.readI4();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.JNI_LOCAL, objId, threadSerial, frameNum));
+      }
+      case HeapTag.ROOT_NATIVE_STACK -> {
+        long objId = reader.readId();
+        int threadSerial = reader.readI4();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.NATIVE_STACK, objId, threadSerial, -1));
+      }
+      case HeapTag.ROOT_THREAD_BLOCK -> {
+        long objId = reader.readId();
+        int threadSerial = reader.readI4();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.THREAD_BLOCK, objId, threadSerial, -1));
+      }
+      case HeapTag.ROOT_JAVA_FRAME -> {
+        long objId = reader.readId();
+        int threadSerial = reader.readI4();
+        int frameNum = reader.readI4();
+        gcRootDataList.add(new GcRootData(GcRoot.Type.JAVA_FRAME, objId, threadSerial, frameNum));
+      }
+      case HeapTag.ROOT_THREAD_OBJ -> {
+        long objId = reader.readId();
+        int threadSerial = reader.readI4();
+        reader.readI4(); // stack trace serial (not used)
+        gcRootDataList.add(new GcRootData(GcRoot.Type.THREAD_OBJ, objId, threadSerial, -1));
+      }
+      // Extended GC roots (HPROF 1.0.3 - Android/modern JDK) - skip for now
       case HeapTag.ROOT_INTERNED_STRING,
            HeapTag.ROOT_FINALIZING,
            HeapTag.ROOT_VM_INTERNAL,
@@ -503,10 +795,8 @@ public final class HeapDumpImpl implements HeapDump {
     long classNameId = reader.readId();
 
     String className = strings.get(classNameId);
-    if (className != null) {
-      // Convert internal format (e.g., "java/lang/String") to external ("java.lang.String")
-      className = className.replace('/', '.');
-    }
+    // Keep internal format as-is (e.g., "java/lang/Object" not "java.lang.Object")
+    // This matches HPROF specification format
 
     HeapClassImpl cls = new HeapClassImpl(classId, className, this);
     classesById.put(classId, cls);
@@ -599,11 +889,16 @@ public final class HeapDumpImpl implements HeapDump {
     int instanceSize = reader.readI4();
 
     HeapClassImpl cls = classesById.get(classId);
-    if (cls != null) {
-      cls.setSuperClassId(superClassId);
-      cls.setClassLoaderId(classLoaderId);
-      cls.setInstanceSize(instanceSize);
+    if (cls == null) {
+      // Class doesn't have a LOAD_CLASS record - create it with synthetic name
+      String className = "Class@0x" + Long.toHexString(classId);
+      cls = new HeapClassImpl(classId, className, this);
+      classesById.put(classId, cls);
+      classesByName.put(className, cls);
     }
+    cls.setSuperClassId(superClassId);
+    cls.setClassLoaderId(classLoaderId);
+    cls.setInstanceSize(instanceSize);
 
     // Constant pool
     int cpSize = reader.readU2();
@@ -623,9 +918,7 @@ public final class HeapDumpImpl implements HeapDump {
       String name = strings.get(nameId);
       staticFields.add(new HeapFieldImpl(name, type, true, cls, value));
     }
-    if (cls != null) {
-      cls.setStaticFields(staticFields);
-    }
+    cls.setStaticFields(staticFields);
 
     // Instance fields
     int fieldCount = reader.readU2();
@@ -636,9 +929,7 @@ public final class HeapDumpImpl implements HeapDump {
       String name = strings.get(nameId);
       instanceFields.add(new HeapFieldImpl(name, type, false, cls, null));
     }
-    if (cls != null) {
-      cls.setInstanceFields(instanceFields);
-    }
+    cls.setInstanceFields(instanceFields);
   }
 
   private void parseInstanceDump() {
@@ -780,7 +1071,40 @@ public final class HeapDumpImpl implements HeapDump {
     // Load from index
     try {
       ObjectIndexReader.ObjectMetadata meta = objectIndexReader.readObject(id32);
-      HeapClassImpl cls = getClassByIdInternal(meta.classId);  // TODO: need to map classId correctly
+
+      HeapClassImpl cls;
+
+      // Special handling for primitive arrays (classId == -1)
+      if (meta.classId == -1 && meta.isPrimitiveArray()) {
+        // Create synthetic class name for primitive array
+        String arrayClassName =
+            switch (meta.elementType) {
+              case BasicType.BOOLEAN -> "[Z";
+              case BasicType.CHAR -> "[C";
+              case BasicType.FLOAT -> "[F";
+              case BasicType.DOUBLE -> "[D";
+              case BasicType.BYTE -> "[B";
+              case BasicType.SHORT -> "[S";
+              case BasicType.INT -> "[I";
+              case BasicType.LONG -> "[J";
+              default -> "[?";
+            };
+
+        cls = classesByName.get(arrayClassName);
+        if (cls == null) {
+          // Create synthetic class for primitive array
+          cls = new HeapClassImpl(0, arrayClassName, this);
+          cls.setPrimitiveArrayType(meta.elementType);
+          classesByName.put(arrayClassName, cls);
+        }
+      } else {
+        // Regular object or object array - lookup class by address
+        long classAddress64 = classId32ToAddress.get(meta.classId);
+        if (classAddress64 == -1) {
+          throw new IOException("Unknown class ID: " + meta.classId);
+        }
+        cls = getClassByIdInternal(classAddress64);
+      }
 
       // Create object with lazy loading support
       HeapObjectImpl obj =
@@ -792,8 +1116,8 @@ public final class HeapDumpImpl implements HeapDump {
         if (meta.isObjectArray()) {
           obj.setObjectArray(true);
         } else if (meta.isPrimitiveArray()) {
-          // Determine primitive type from class (if available)
-          obj.setPrimitiveArrayType(0); // TODO: extract from meta
+          // Apply primitive type from index
+          obj.setPrimitiveArrayType(meta.elementType);
         }
       }
 
@@ -851,24 +1175,36 @@ public final class HeapDumpImpl implements HeapDump {
 
   @Override
   public Stream<HeapObject> getObjects() {
+    // In indexed mode, iterate through all object addresses and lazy-load
+    // Filter out class objects (classes are accessed via getClasses(), not getObjects())
+    if (objectIndexReader != null) {
+      return addressToId32.keySet().stream()
+          .filter(addr -> !classAddresses.contains(addr)) // Exclude class objects
+          .map(this::getObjectByIdInternal)
+          .map(o -> (HeapObject) o);
+    }
+    // In-memory mode: return all cached objects
     return objectsById.values().stream().map(o -> (HeapObject) o);
   }
 
   @Override
   public Optional<HeapObject> getObjectById(long id) {
+    // In indexed mode, use lazy-loading mechanism
+    if (objectIndexReader != null) {
+      return Optional.ofNullable(getObjectByIdInternal(id));
+    }
+    // In-memory mode: direct cache lookup
     return Optional.ofNullable(objectsById.get(id));
   }
 
   @Override
   public Stream<HeapObject> getObjectsOfClass(HeapClass cls) {
-    return objectsById.values().stream()
-        .filter(o -> o.getHeapClass() == cls)
-        .map(o -> (HeapObject) o);
+    return getObjects().filter(o -> o.getHeapClass() == cls);
   }
 
   @Override
   public Stream<HeapObject> findObjects(Predicate<HeapObject> predicate) {
-    return objectsById.values().stream().map(o -> (HeapObject) o).filter(predicate);
+    return getObjects().filter(predicate);
   }
 
   @Override
@@ -1034,6 +1370,7 @@ public final class HeapDumpImpl implements HeapDump {
               path,
               indexDir,
               addressToId32,
+              classesById,
               indexBuilderCallback
           );
 

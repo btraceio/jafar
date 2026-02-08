@@ -99,40 +99,40 @@ public class SyntheticHeapDumpGenerator {
       int objectId = 1000;
 
       // boolean[] - type 4
-      writePrimArrayDump(h, objectId++, BasicType.BOOLEAN.code, new byte[] {1, 0, 1});
+      writePrimArrayDump(h, objectId++, BasicType.BOOLEAN, new byte[] {1, 0, 1});
 
       // char[] - type 5
       writePrimArrayDump(
           h,
           objectId++,
-          BasicType.CHAR.code,
+          BasicType.CHAR,
           new byte[] {0, 65, 0, 66, 0, 67}); // 'A', 'B', 'C'
 
       // float[] - type 6
-      writePrimArrayDump(h, objectId++, BasicType.FLOAT.code, floatArrayBytes(1.0f, 2.0f));
+      writePrimArrayDump(h, objectId++, BasicType.FLOAT, floatArrayBytes(1.0f, 2.0f));
 
       // double[] - type 7
-      writePrimArrayDump(h, objectId++, BasicType.DOUBLE.code, doubleArrayBytes(1.0, 2.0));
+      writePrimArrayDump(h, objectId++, BasicType.DOUBLE, doubleArrayBytes(1.0, 2.0));
 
       // byte[] - type 8
-      writePrimArrayDump(h, objectId++, BasicType.BYTE.code, new byte[] {1, 2, 3});
+      writePrimArrayDump(h, objectId++, BasicType.BYTE, new byte[] {1, 2, 3});
 
       // short[] - type 9
       writePrimArrayDump(
-          h, objectId++, BasicType.SHORT.code, new byte[] {0, 1, 0, 2, 0, 3}); // 1, 2, 3
+          h, objectId++, BasicType.SHORT, new byte[] {0, 1, 0, 2, 0, 3}); // 1, 2, 3
 
       // int[] - type 10
       writePrimArrayDump(
           h,
           objectId++,
-          BasicType.INT.code,
+          BasicType.INT,
           new byte[] {0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3}); // 1, 2, 3
 
       // long[] - type 11
       writePrimArrayDump(
           h,
           objectId++,
-          BasicType.LONG.code,
+          BasicType.LONG,
           new byte[] {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2}); // 1L, 2L
 
       // GC roots for all arrays
@@ -247,7 +247,7 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0); // static fields
       h.writeShort(1); // instance field count
       h.writeLong(2); // field name "next"
-      h.writeByte(BasicType.OBJECT.code); // field type
+      h.writeByte(BasicType.OBJECT); // field type
 
       // Create chain: 1000 -> 1001 -> 1002 -> 1003 -> null
       for (int i = 0; i < 4; i++) {
@@ -299,9 +299,9 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0); // static fields
       h.writeShort(2); // instance fields
       h.writeLong(2); // ref1
-      h.writeByte(BasicType.OBJECT.code);
+      h.writeByte(BasicType.OBJECT);
       h.writeLong(3); // ref2
-      h.writeByte(BasicType.OBJECT.code);
+      h.writeByte(BasicType.OBJECT);
 
       // Target class (no fields)
       writeClassDump(h, 101, 0, 0, 0, 0);
@@ -360,10 +360,10 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0); // constant pool
       h.writeShort(2); // static field count
       h.writeLong(2); // field name "CONSTANT"
-      h.writeByte(BasicType.INT.code);
+      h.writeByte(BasicType.INT);
       h.writeInt(42); // value
       h.writeLong(3); // field name "TARGET_OBJ"
-      h.writeByte(BasicType.OBJECT.code);
+      h.writeByte(BasicType.OBJECT);
       h.writeLong(2000); // reference to target
       h.writeShort(0); // instance field count
 
@@ -409,7 +409,7 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0);
       h.writeShort(1); // instance field
       h.writeLong(3); // baseField
-      h.writeByte(BasicType.INT.code);
+      h.writeByte(BasicType.INT);
 
       // Derived class (extends Base)
       h.writeByte(0x20);
@@ -426,7 +426,7 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0);
       h.writeShort(1); // instance field
       h.writeLong(4); // derivedField
-      h.writeByte(BasicType.INT.code);
+      h.writeByte(BasicType.INT);
 
       // Instance of Derived with both fields
       ByteArrayOutputStream fieldData = new ByteArrayOutputStream();
@@ -463,8 +463,8 @@ public class SyntheticHeapDumpGenerator {
       writeObjArrayDump(h, 1000, 100, new long[0]);
 
       // Zero-length primitive arrays
-      writePrimArrayDump(h, 1001, BasicType.INT.code, new byte[0]);
-      writePrimArrayDump(h, 1002, BasicType.BYTE.code, new byte[0]);
+      writePrimArrayDump(h, 1001, BasicType.INT, new byte[0]);
+      writePrimArrayDump(h, 1002, BasicType.BYTE, new byte[0]);
 
       h.writeByte(0xFF);
       h.writeLong(1000);
@@ -504,7 +504,7 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0);
       h.writeShort(1);
       h.writeLong(2); // field name
-      h.writeByte(BasicType.OBJECT.code);
+      h.writeByte(BasicType.OBJECT);
 
       // Instance with null field
       ByteArrayOutputStream fieldData = new ByteArrayOutputStream();
@@ -552,7 +552,7 @@ public class SyntheticHeapDumpGenerator {
       h.writeShort(0);
       h.writeShort(1);
       h.writeLong(2);
-      h.writeByte(BasicType.OBJECT.code);
+      h.writeByte(BasicType.OBJECT);
 
       // Self-referencing object: 1000 -> 1000
       ByteArrayOutputStream field1 = new ByteArrayOutputStream();
@@ -602,7 +602,7 @@ public class SyntheticHeapDumpGenerator {
 
       // Large primitive array
       byte[] largeBytes = new byte[100000];
-      writePrimArrayDump(h, 4000, BasicType.BYTE.code, largeBytes);
+      writePrimArrayDump(h, 4000, BasicType.BYTE, largeBytes);
 
       h.writeByte(0xFF);
       h.writeLong(1000);

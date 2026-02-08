@@ -49,15 +49,17 @@ public final class ObjectIndexReader implements AutoCloseable {
     public final int classId;
     public final int arrayLength; // -1 if not an array
     public final byte flags;
+    public final byte elementType; // BasicType constant for primitive arrays (BYTE=8, INT=10, etc.), 0 otherwise
 
     public ObjectMetadata(
-        int objectId32, long fileOffset, int dataSize, int classId, int arrayLength, byte flags) {
+        int objectId32, long fileOffset, int dataSize, int classId, int arrayLength, byte flags, byte elementType) {
       this.objectId32 = objectId32;
       this.fileOffset = fileOffset;
       this.dataSize = dataSize;
       this.classId = classId;
       this.arrayLength = arrayLength;
       this.flags = flags;
+      this.elementType = elementType;
     }
 
     public boolean isArray() {
@@ -130,13 +132,14 @@ public final class ObjectIndexReader implements AutoCloseable {
     // Calculate entry offset: header + (id32 × entry size)
     int offset = IndexFormat.HEADER_SIZE + (objectId32 * IndexFormat.OBJECT_ENTRY_SIZE);
 
-    // Read entry fields (33 bytes total)
+    // Read entry fields (26 bytes total)
     int id32 = buffer.getInt(offset);
     long fileOffset = buffer.getLong(offset + 4);
     int dataSize = buffer.getInt(offset + 12);
     int classId = buffer.getInt(offset + 16);
     int arrayLength = buffer.getInt(offset + 20);
     byte flags = buffer.get(offset + 24);
+    byte elementType = buffer.get(offset + 25);
 
     // Sanity check
     if (id32 != objectId32) {
@@ -145,7 +148,7 @@ public final class ObjectIndexReader implements AutoCloseable {
               "Corrupted index: expected ID %d at offset %d, found %d", objectId32, offset, id32));
     }
 
-    return new ObjectMetadata(id32, fileOffset, dataSize, classId, arrayLength, flags);
+    return new ObjectMetadata(id32, fileOffset, dataSize, classId, arrayLength, flags, elementType);
   }
 
   /**

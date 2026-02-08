@@ -82,7 +82,7 @@ public final class IndexWriter implements AutoCloseable {
   /**
    * Writes a single object entry to objects.idx.
    *
-   * <p>Entry format: [objectId32:4][fileOffset:8][dataSize:4][classId:4][arrayLength:4][flags:1]
+   * <p>Entry format: [objectId32:4][fileOffset:8][dataSize:4][classId:4][arrayLength:4][flags:1][elementType:1]
    *
    * @param objectId32 32-bit sequential object ID
    * @param fileOffset position in heap dump file where object data starts
@@ -90,10 +90,11 @@ public final class IndexWriter implements AutoCloseable {
    * @param classId 32-bit class ID
    * @param arrayLength array length (-1 if not an array)
    * @param flags bitfield (FLAG_IS_OBJECT_ARRAY, FLAG_IS_PRIMITIVE_ARRAY)
+   * @param elementType BasicType constant for primitive arrays (BYTE=8, INT=10, etc.), 0 otherwise
    * @throws IOException if write fails
    */
   public void writeObjectEntry(
-      int objectId32, long fileOffset, int dataSize, int classId, int arrayLength, byte flags)
+      int objectId32, long fileOffset, int dataSize, int classId, int arrayLength, byte flags, byte elementType)
       throws IOException {
 
     if (currentStream == null) {
@@ -106,6 +107,7 @@ public final class IndexWriter implements AutoCloseable {
     currentStream.writeInt(classId);
     currentStream.writeInt(arrayLength);
     currentStream.writeByte(flags);
+    currentStream.writeByte(elementType);
 
     entriesWritten++;
   }
@@ -191,6 +193,139 @@ public final class IndexWriter implements AutoCloseable {
     currentStream = null;
 
     Path targetFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
+    Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    currentTempFile = null;
+  }
+
+  /**
+   * Begins writing the classmap.idx file.
+   *
+   * @param expectedEntries expected number of class mapping entries
+   * @throws IOException if file cannot be created
+   */
+  public void beginClassMapIndex(int expectedEntries) throws IOException {
+    Path targetFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME);
+    currentTempFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME + ".tmp");
+
+    currentStream =
+        new DataOutputStream(
+            new BufferedOutputStream(
+                new FileOutputStream(currentTempFile.toFile()),
+                1024 * 1024));
+
+    // Write header
+    currentStream.writeInt(IndexFormat.CLASSMAP_INDEX_MAGIC);
+    currentStream.writeInt(IndexFormat.FORMAT_VERSION);
+    currentStream.writeLong(expectedEntries);
+    currentStream.writeInt(0); // flags
+
+    entriesWritten = 0;
+  }
+
+  /**
+   * Writes a single class mapping entry.
+   *
+   * <p>Entry format: [classId32:4][classAddress64:8]
+   *
+   * @param classId32 32-bit sequential class ID
+   * @param classAddress64 original 64-bit class address from heap dump
+   * @throws IOException if write fails
+   */
+  public void writeClassMapEntry(int classId32, long classAddress64) throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassMapIndex() not called");
+    }
+
+    currentStream.writeInt(classId32);
+    currentStream.writeLong(classAddress64);
+
+    entriesWritten++;
+  }
+
+  /**
+   * Finishes writing classmap.idx and atomically renames to final location.
+   *
+   * @throws IOException if flush or rename fails
+   */
+  public void finishClassMapIndex() throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassMapIndex() not called");
+    }
+
+    currentStream.flush();
+    currentStream.close();
+    currentStream = null;
+
+    Path targetFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME);
+    Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    currentTempFile = null;
+  }
+
+  /**
+   * Begins writing the gcroots.idx file.
+   *
+   * @param expectedEntries expected number of GC root entries
+   * @throws IOException if file cannot be created
+   */
+  public void beginGcRootsIndex(int expectedEntries) throws IOException {
+    Path targetFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME);
+    currentTempFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME + ".tmp");
+
+    currentStream =
+        new DataOutputStream(
+            new BufferedOutputStream(
+                new FileOutputStream(currentTempFile.toFile()),
+                1024 * 1024));
+
+    // Write header
+    currentStream.writeInt(IndexFormat.GCROOTS_INDEX_MAGIC);
+    currentStream.writeInt(IndexFormat.FORMAT_VERSION);
+    currentStream.writeLong(expectedEntries);
+    currentStream.writeInt(0); // flags
+
+    entriesWritten = 0;
+  }
+
+  /**
+   * Writes a single GC root entry.
+   *
+   * <p>Entry format: [type:1][objectId32:4][threadSerial:4][frameNumber:4]
+   *
+   * @param type GcRoot.Type ordinal (0-based enum index)
+   * @param objectId32 32-bit object ID
+   * @param threadSerial thread serial number (-1 if not applicable)
+   * @param frameNumber stack frame number (-1 if not applicable)
+   * @throws IOException if write fails
+   */
+  public void writeGcRootEntry(byte type, int objectId32, int threadSerial, int frameNumber)
+      throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginGcRootsIndex() not called");
+    }
+
+    currentStream.writeByte(type);
+    currentStream.writeInt(objectId32);
+    currentStream.writeInt(threadSerial);
+    currentStream.writeInt(frameNumber);
+
+    entriesWritten++;
+  }
+
+  /**
+   * Finishes writing gcroots.idx and atomically renames to final location.
+   *
+   * @throws IOException if flush or rename fails
+   */
+  public void finishGcRootsIndex() throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginGcRootsIndex() not called");
+    }
+
+    currentStream.flush();
+    currentStream.close();
+    currentStream = null;
+
+    Path targetFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME);
     Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     currentTempFile = null;
   }
