@@ -33,7 +33,31 @@ public final class HdumpPathEvaluator {
     // NOTE: Retained sizes are computed lazily when needed (e.g., by checkLeaks operations)
     // Do NOT eagerly compute them here - many queries don't need retained sizes!
 
-    // Get base stream based on root type
+    // Optimization: For large heaps with unfiltered "show objects | top(N)" queries,
+    // use streaming to avoid OOM from materializing all objects
+    if (query.root() == Root.OBJECTS
+        && query.typePattern() == null
+        && query.predicates().isEmpty()
+        && !query.pipeline().isEmpty()
+        && query.pipeline().get(0) instanceof TopOp topOp
+        && dump.getObjectCount() > 5_000_000) {
+      // Streaming path for simple top(N) queries on large heaps
+      System.err.println();
+      System.err.printf("Streaming through %,d objects (limiting to top %d)...%n",
+          dump.getObjectCount(), topOp.n());
+      System.err.flush();
+
+      List<Map<String, Object>> results = evaluateObjectsStreaming(dump, topOp);
+
+      // Apply remaining pipeline operations (skip the first top() we just applied)
+      for (int i = 1; i < query.pipeline().size(); i++) {
+        results = applyPipelineOp(session, results, query.pipeline().get(i));
+      }
+
+      return results;
+    }
+
+    // Standard path: materialize all results first
     List<Map<String, Object>> results =
         switch (query.root()) {
           case OBJECTS -> evaluateObjects(dump, query);
@@ -46,6 +70,62 @@ public final class HdumpPathEvaluator {
       results = applyPipelineOp(session, results, op);
     }
 
+    return results;
+  }
+
+  /**
+   * Streaming evaluation for "show objects | top(N)" on large heaps.
+   * Uses a bounded priority queue to avoid materializing all objects.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreaming(HeapDump dump, TopOp topOp) {
+    // Use a priority queue to keep only top N objects
+    Comparator<Map<String, Object>> comparator;
+    if (topOp.orderBy() != null) {
+      comparator = (m1, m2) -> {
+        Object v1 = m1.get(topOp.orderBy());
+        Object v2 = m2.get(topOp.orderBy());
+        int cmp = compareValues(v1, v2);
+        return topOp.descending() ? -cmp : cmp;
+      };
+    } else {
+      // No ordering - just take first N
+      comparator = (m1, m2) -> 0;
+    }
+
+    // Min-heap of size N (removes smallest when full)
+    java.util.PriorityQueue<Map<String, Object>> topN =
+        new java.util.PriorityQueue<>(topOp.n() + 1, comparator);
+
+    Stream<HeapObject> stream = dump.getObjects();
+    long[] counter = {0};
+    long[] lastReport = {System.currentTimeMillis()};
+    long totalObjects = dump.getObjectCount();
+
+    stream.forEach(obj -> {
+      Map<String, Object> map = objectToMap(obj);
+      topN.add(map);
+      if (topN.size() > topOp.n()) {
+        topN.poll(); // Remove smallest
+      }
+
+      counter[0]++;
+      // Report progress every 500ms
+      long now = System.currentTimeMillis();
+      if (now - lastReport[0] >= 500) {
+        double progress = (double) counter[0] / totalObjects * 100.0;
+        System.err.printf("\rScanning objects: %.1f%% (%,d/%,d)",
+            progress, counter[0], totalObjects);
+        System.err.flush();
+        lastReport[0] = now;
+      }
+    });
+
+    System.err.println();
+    System.err.println();
+
+    // Convert priority queue to list in correct order
+    List<Map<String, Object>> results = new ArrayList<>(topN);
+    results.sort(comparator.reversed()); // Reverse to get descending order
     return results;
   }
 
@@ -88,6 +168,16 @@ public final class HdumpPathEvaluator {
     // Apply predicates
     if (!query.predicates().isEmpty()) {
       stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
+    }
+
+    // Warn about memory usage for large unfiltered queries
+    long totalObjects = dump.getObjectCount();
+    if (totalObjects > 10_000_000 && query.typePattern() == null && query.predicates().isEmpty()) {
+      System.err.println();
+      System.err.printf("WARNING: Loading all %,d objects may cause out-of-memory errors.%n", totalObjects);
+      System.err.println("Consider filtering by type: show objects<ClassName>");
+      System.err.println("Or viewing classes instead: show classes | top(10, instanceCount)");
+      System.err.println();
     }
 
     return stream.map(HdumpPathEvaluator::objectToMap).collect(Collectors.toList());
