@@ -9,6 +9,7 @@ import io.jafar.hdump.internal.HprofTag;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -251,8 +252,10 @@ public final class InboundIndexBuilder {
     Path indexFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
     Path tempFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME + ".tmp");
 
+    // CRITICAL: Use BufferedOutputStream for 114M writes
     try (DataOutputStream out =
-        new DataOutputStream(Files.newOutputStream(tempFile))) {
+        new DataOutputStream(
+            new BufferedOutputStream(Files.newOutputStream(tempFile), 1024 * 1024))) {
 
       // Write header
       out.writeInt(IndexFormat.INBOUND_INDEX_MAGIC);

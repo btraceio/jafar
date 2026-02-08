@@ -38,7 +38,93 @@ public final class ApproximateRetainedSizeComputer {
   private ApproximateRetainedSizeComputer() {}
 
   /**
-   * Computes approximate retained sizes for all objects in the heap dump.
+   * Computes approximate retained sizes for all objects using streaming iteration with persistent storage.
+   *
+   * <p><strong>Streaming Mode:</strong> Designed for large heap dumps (100M+ objects) that cannot fit
+   * in memory. Objects are processed one-at-a-time from an iterator without caching in objectsById.
+   *
+   * <p><strong>Persistent Storage:</strong> Computed retained sizes are written to a RetainedSizeWriter
+   * which persists them to retained.idx for instant reuse on subsequent queries.
+   *
+   * <p><strong>Memory Characteristics:</strong>
+   * <ul>
+   *   <li>Heap usage: O(1) - only one object in memory during iteration
+   *   <li>Requires persistent inbound index (ensureInboundIndexBuilt must be called first)
+   *   <li>Writes sequential entries to retained.idx (objectId32:4 + retainedSize:8)
+   * </ul>
+   *
+   * @param dump the heap dump (provides access to inbound count reader)
+   * @param objectIterator streaming iterator over objects (NOT cached)
+   * @param totalObjects total object count for progress reporting
+   * @param gcRoots list of GC roots
+   * @param writer persistent storage for computed retained sizes
+   * @param progressCallback optional callback for progress updates (0.0 to 1.0)
+   */
+  public static void computeAll(
+      HeapDumpImpl dump,
+      Iterable<HeapObjectImpl> objectIterator,
+      int totalObjects,
+      List<GcRootImpl> gcRoots,
+      io.jafar.hdump.index.RetainedSizeWriter writer,
+      ProgressCallback progressCallback) {
+
+    // Indexed mode with streaming - must have inbound index
+    InboundCountReader inboundCountReader = dump.getInboundCountReader();
+    if (inboundCountReader == null) {
+      throw new IllegalStateException(
+          "Streaming mode requires persistent inbound index. Call ensureInboundIndexBuilt() first.");
+    }
+
+    LOG.debug("Computing approximate retained sizes in streaming mode for {} objects", totalObjects);
+    InboundCountAccessor inboundCounts =
+        new IndexedInboundCountAccessor(inboundCountReader, dump.getAddressToId32());
+
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.3, "Computing approximate retained sizes (streaming)...");
+    }
+
+    int computed = 0;
+    int lastReportedPercent = 0;
+
+    for (HeapObjectImpl obj : objectIterator) {
+      long approxRetained = computeMinRetainedSize(obj, inboundCounts);
+
+      // Write to persistent index instead of setting on object
+      // Uses original id32 from addressToId32 (includes classes with retained size = 0)
+      try {
+        int objectId32 = dump.getAddressToId32().get(obj.getId());
+        writer.writeEntry(objectId32, approxRetained);
+      } catch (java.io.IOException e) {
+        throw new RuntimeException("Failed to write retained size to index", e);
+      }
+
+      computed++;
+
+      // Report progress every 5% or every 100K objects (whichever is less frequent)
+      if (progressCallback != null && computed % Math.max(totalObjects / 20, 100000) == 0) {
+        double progress = 0.3 + (0.7 * (computed / (double) totalObjects));
+        int percentComplete = (int) (progress * 100);
+        if (percentComplete > lastReportedPercent) {
+          progressCallback.onProgress(
+              progress,
+              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
+          lastReportedPercent = percentComplete;
+        }
+      }
+
+      if (computed % 1000000 == 0) {
+        LOG.debug("Computed {} / {} retained sizes (streaming)", computed, totalObjects);
+      }
+    }
+
+    if (progressCallback != null) {
+      progressCallback.onProgress(1.0, "Approximate retained size computation complete (streaming)");
+    }
+    LOG.info("Completed streaming retained size computation for {} objects", computed);
+  }
+
+  /**
+   * Computes approximate retained sizes for all objects in the heap dump (in-memory mode).
    *
    * <p>This method adapts to both in-memory and indexed parsing modes:
    * <ul>

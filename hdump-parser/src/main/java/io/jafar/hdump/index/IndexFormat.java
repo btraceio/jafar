@@ -3,12 +3,13 @@ package io.jafar.hdump.index;
 /**
  * Binary format constants for heap dump index files.
  *
- * <p>The index-based architecture uses six main index files:
+ * <p>The index-based architecture uses seven main index files:
  *
  * <ul>
  *   <li><strong>objects.idx</strong>: Object metadata (location, size, class, array length)
  *   <li><strong>refs.idx</strong>: Outbound references (variable-length per object)
  *   <li><strong>inbound.idx</strong>: Inbound reference counts (for retained size computation)
+ *   <li><strong>retained.idx</strong>: Retained sizes (pre-computed approximate retained sizes)
  *   <li><strong>classes.idx</strong>: Class metadata (name, fields)
  *   <li><strong>classmap.idx</strong>: Class ID mapping (32-bit ID to 64-bit address)
  *   <li><strong>gcroots.idx</strong>: GC root metadata (type, object ID, thread, frame)
@@ -49,6 +50,9 @@ public final class IndexFormat {
 
   /** Magic number for inbound.idx file (ASCII: "JINB") */
   public static final int INBOUND_INDEX_MAGIC = 0x4A494E42;
+
+  /** Magic number for retained.idx file (ASCII: "JRET") */
+  public static final int RETAINED_INDEX_MAGIC = 0x4A524554;
 
   /** Magic number for classes.idx file (ASCII: "JCLS") */
   public static final int CLASSES_INDEX_MAGIC = 0x4A434C53;
@@ -142,6 +146,26 @@ public final class IndexFormat {
   public static final int INBOUND_OFFSET_OBJECT_ID32 = 0;
   public static final int INBOUND_OFFSET_COUNT = 4;
 
+  // === retained.idx Format ===
+
+  /**
+   * Retained size entry format (12 bytes fixed):
+   *
+   * <pre>
+   * [objectId32:4][retainedSize:8]
+   * </pre>
+   *
+   * <p>Sequential by objectId32 for direct offset calculation. Stores pre-computed approximate
+   * retained sizes to avoid recomputation. Computed once during first query that needs retained
+   * sizes, then persisted for instant access.
+   *
+   * <p>Example: 114M objects = 20 + (114,000,000 × 12) = 1.37 GB
+   */
+  public static final int RETAINED_ENTRY_SIZE = 12;
+
+  public static final int RETAINED_OFFSET_OBJECT_ID32 = 0;
+  public static final int RETAINED_OFFSET_SIZE = 4;
+
   // === classes.idx Format ===
 
   /**
@@ -182,6 +206,9 @@ public final class IndexFormat {
 
   /** Inbound counts index filename. */
   public static final String INBOUND_INDEX_NAME = "inbound.idx";
+
+  /** Retained sizes index filename. */
+  public static final String RETAINED_INDEX_NAME = "retained.idx";
 
   /** Classes index filename. */
   public static final String CLASSES_INDEX_NAME = "classes.idx";

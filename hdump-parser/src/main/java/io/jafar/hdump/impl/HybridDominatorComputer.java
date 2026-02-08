@@ -49,27 +49,28 @@ public final class HybridDominatorComputer {
    *   <li>Objects matching user-provided patterns
    * </ul>
    *
-   * @param objectsById all objects in heap dump
+   * @param dump the heap dump (uses lazy loading with LRU cache in indexed mode)
    * @param topN number of top retainers to include
    * @param classPatterns optional class name patterns to match (e.g., "*.cache.*", "ThreadLocal")
    * @return set of object IDs deemed interesting
    */
   public static LongOpenHashSet identifyInterestingObjects(
-      Long2ObjectMap<HeapObjectImpl> objectsById, int topN, Set<String> classPatterns) {
+      HeapDumpImpl dump, int topN, Set<String> classPatterns) {
 
     LOG.info("Identifying interesting objects (topN={}, patterns={})", topN, classPatterns);
 
     LongOpenHashSet interesting = new LongOpenHashSet();
 
     // Heuristic 1: Top N by approximate retained size
-    List<HeapObjectImpl> topRetainers =
-        objectsById.values().stream()
+    // Stream through all objects efficiently (uses lazy loading in indexed mode)
+    List<HeapObject> topRetainers =
+        dump.getObjects()
             .filter(obj -> obj.getRetainedSize() > 0)
-            .sorted(Comparator.comparingLong(HeapObjectImpl::getRetainedSize).reversed())
+            .sorted(Comparator.comparingLong(HeapObject::getRetainedSize).reversed())
             .limit(topN)
             .collect(Collectors.toList());
 
-    for (HeapObjectImpl obj : topRetainers) {
+    for (HeapObject obj : topRetainers) {
       interesting.add(obj.getId());
     }
 
@@ -90,7 +91,7 @@ public final class HybridDominatorComputer {
             "java.lang.ref.SoftReference");
 
     int leakProneCount = 0;
-    for (HeapObjectImpl obj : objectsById.values()) {
+    for (HeapObject obj : dump.getObjects().toList()) {
       HeapClass cls = obj.getHeapClass();
       if (cls != null && leakProneClasses.contains(cls.getName())) {
         // Only include if they're large enough
@@ -106,7 +107,7 @@ public final class HybridDominatorComputer {
     // Heuristic 3: User-provided class patterns
     if (classPatterns != null && !classPatterns.isEmpty()) {
       int patternCount = 0;
-      for (HeapObjectImpl obj : objectsById.values()) {
+      for (HeapObject obj : dump.getObjects().toList()) {
         HeapClass cls = obj.getHeapClass();
         if (cls != null) {
           String className = cls.getName();
@@ -132,15 +133,17 @@ public final class HybridDominatorComputer {
    * <p>This ensures exact computation includes all objects needed to compute accurate dominators
    * for the interesting set.
    *
-   * @param dump the heap dump
-   * @param objectsById all objects
+   * <p><b>Note for indexed mode:</b> This method streams through all objects to build inbound
+   * references. With LRU cache, objects are loaded on-demand and automatically evicted, keeping
+   * memory usage bounded (~40 bytes per cached object).
+   *
+   * @param dump the heap dump (uses lazy loading in indexed mode)
    * @param gcRoots GC roots
    * @param interesting initial set of interesting object IDs
    * @return expanded set including dominator paths
    */
   public static LongOpenHashSet expandToDominatorPaths(
       HeapDumpImpl dump,
-      Long2ObjectMap<HeapObjectImpl> objectsById,
       List<GcRootImpl> gcRoots,
       LongOpenHashSet interesting) {
 
@@ -148,8 +151,9 @@ public final class HybridDominatorComputer {
 
     LongOpenHashSet expanded = new LongOpenHashSet(interesting);
 
-    // Build reverse reference map for traversal
-    Long2ObjectMap<List<Long>> inboundRefs = buildInboundReferences(objectsById);
+    // Build reverse reference map for traversal (streams through all objects)
+    // In indexed mode with LRU cache, objects are loaded on-demand
+    Long2ObjectMap<List<Long>> inboundRefs = buildInboundReferences(dump);
 
     // For each interesting object, traverse backwards to GC roots
     Set<Long> gcRootIds =
@@ -160,7 +164,7 @@ public final class HybridDominatorComputer {
     }
 
     LOG.info("Expanded to {} objects ({}% of heap)", expanded.size(),
-        String.format("%.2f", expanded.size() * 100.0 / objectsById.size()));
+        String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
 
     return expanded;
   }
@@ -176,15 +180,13 @@ public final class HybridDominatorComputer {
    *   <li>Updates retained sizes and dominator relationships for subgraph objects
    * </ol>
    *
-   * @param dump the heap dump
-   * @param objectsById all objects
+   * @param dump the heap dump (uses lazy loading in indexed mode)
    * @param gcRoots all GC roots
    * @param interestingSet set of object IDs to compute exact dominators for
    * @param progressCallback optional progress callback
    */
   public static void computeExactForSubgraph(
       HeapDumpImpl dump,
-      Long2ObjectMap<HeapObjectImpl> objectsById,
       List<GcRootImpl> gcRoots,
       LongOpenHashSet interestingSet,
       DominatorTreeComputer.ProgressCallback progressCallback) {
@@ -192,9 +194,10 @@ public final class HybridDominatorComputer {
     LOG.info("Computing exact dominators for subgraph of {} objects", interestingSet.size());
 
     // Create filtered object map with only interesting objects
+    // In indexed mode, uses getObjectByIdInternal() which leverages LRU cache
     Long2ObjectMap<HeapObjectImpl> subgraphObjects = new Long2ObjectOpenHashMap<>();
     for (long objId : interestingSet) {
-      HeapObjectImpl obj = objectsById.get(objId);
+      HeapObjectImpl obj = dump.getObjectByIdInternal(objId);
       if (obj != null) {
         subgraphObjects.put(objId, obj);
       }
@@ -243,14 +246,20 @@ public final class HybridDominatorComputer {
   }
 
   /** Builds map of object ID to list of objects that reference it. */
-  private static Long2ObjectMap<List<Long>> buildInboundReferences(
-      Long2ObjectMap<HeapObjectImpl> objectsById) {
+  /**
+   * Builds inbound reference map by streaming through all objects.
+   * In indexed mode, objects are loaded on-demand via LRU cache.
+   */
+  private static Long2ObjectMap<List<Long>> buildInboundReferences(HeapDumpImpl dump) {
 
     // Pre-size to avoid rehashing (estimate: ~10-20% of objects have inbound refs)
-    int estimatedSize = Math.max(objectsById.size() / 10, 16);
+    int estimatedSize = Math.max(dump.getObjectCount() / 10, 16);
     Long2ObjectMap<List<Long>> inboundRefs = new Long2ObjectOpenHashMap<>(estimatedSize);
 
-    for (HeapObjectImpl obj : objectsById.values()) {
+    // Stream through all objects (uses lazy loading in indexed mode)
+    for (HeapObject heapObj : dump.getObjects().toList()) {
+      // Cast to impl for efficient array access
+      HeapObjectImpl obj = (HeapObjectImpl) heapObj;
       // Use direct array access to avoid Stream overhead
       long[] refIds = obj.getOutboundReferenceIds();
       long objId = obj.getId();

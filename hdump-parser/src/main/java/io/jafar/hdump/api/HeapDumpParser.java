@@ -125,7 +125,8 @@ public final class HeapDumpParser {
         options.computeDominators(),
         options.indexStrings(),
         options.trackInboundRefs(),
-        resolved);
+        resolved,
+        options.objectCacheSize());
   }
 
   /** Threshold for switching from in-memory to indexed parsing (2 GB). */
@@ -165,32 +166,39 @@ public final class HeapDumpParser {
       boolean computeDominators,
       boolean indexStrings,
       boolean trackInboundRefs,
-      ParsingMode parsingMode) {
+      ParsingMode parsingMode,
+      int objectCacheSize) {
+
+    /**
+     * Default object cache size for indexed mode (100,000 objects = ~3-4MB).
+     * Provides good balance between memory usage and query performance.
+     */
+    public static final int DEFAULT_OBJECT_CACHE_SIZE = 100_000;
 
     /**
      * Default options: auto-detect parsing mode, no dominators, no inbound refs.
      * Files &gt;2GB automatically use indexed mode for scalability.
      */
-    public static final ParserOptions DEFAULT = new ParserOptions(false, true, false, ParsingMode.AUTO);
+    public static final ParserOptions DEFAULT = new ParserOptions(false, true, false, ParsingMode.AUTO, DEFAULT_OBJECT_CACHE_SIZE);
 
     /** Options for full analysis including dominator computation (auto-detect mode). */
-    public static final ParserOptions FULL_ANALYSIS = new ParserOptions(true, true, true, ParsingMode.AUTO);
+    public static final ParserOptions FULL_ANALYSIS = new ParserOptions(true, true, true, ParsingMode.AUTO, DEFAULT_OBJECT_CACHE_SIZE);
 
     /** Options for minimal memory usage (in-memory mode). */
-    public static final ParserOptions MINIMAL = new ParserOptions(false, false, false, ParsingMode.IN_MEMORY);
+    public static final ParserOptions MINIMAL = new ParserOptions(false, false, false, ParsingMode.IN_MEMORY, DEFAULT_OBJECT_CACHE_SIZE);
 
     /**
      * Options for index-based parsing (for large heaps &gt;10M objects).
      * Uses disk-based indexes instead of in-memory maps, enabling analysis
      * of heaps up to 114M+ objects with &lt;4GB heap.
      */
-    public static final ParserOptions INDEXED = new ParserOptions(false, true, false, ParsingMode.INDEXED);
+    public static final ParserOptions INDEXED = new ParserOptions(false, true, false, ParsingMode.INDEXED, DEFAULT_OBJECT_CACHE_SIZE);
 
     /**
      * Options for in-memory parsing (for small heaps &lt;10M objects).
      * Fast but memory-intensive, all objects stored in memory.
      */
-    public static final ParserOptions IN_MEMORY = new ParserOptions(false, true, false, ParsingMode.IN_MEMORY);
+    public static final ParserOptions IN_MEMORY = new ParserOptions(false, true, false, ParsingMode.IN_MEMORY, DEFAULT_OBJECT_CACHE_SIZE);
 
     public static Builder builder() {
       return new Builder();
@@ -201,6 +209,7 @@ public final class HeapDumpParser {
       private boolean indexStrings = true;
       private boolean trackInboundRefs = false;
       private ParsingMode parsingMode = ParsingMode.AUTO;
+      private int objectCacheSize = DEFAULT_OBJECT_CACHE_SIZE;
 
       public Builder computeDominators(boolean value) {
         this.computeDominators = value;
@@ -222,8 +231,23 @@ public final class HeapDumpParser {
         return this;
       }
 
+      /**
+       * Sets the maximum number of HeapObject instances to cache in memory (indexed mode only).
+       * Higher values improve query performance but use more memory (~40 bytes per cached object).
+       *
+       * @param size maximum cache size (must be positive)
+       * @return this builder
+       */
+      public Builder objectCacheSize(int size) {
+        if (size <= 0) {
+          throw new IllegalArgumentException("objectCacheSize must be positive: " + size);
+        }
+        this.objectCacheSize = size;
+        return this;
+      }
+
       public ParserOptions build() {
-        return new ParserOptions(computeDominators, indexStrings, trackInboundRefs, parsingMode);
+        return new ParserOptions(computeDominators, indexStrings, trackInboundRefs, parsingMode, objectCacheSize);
       }
     }
   }
