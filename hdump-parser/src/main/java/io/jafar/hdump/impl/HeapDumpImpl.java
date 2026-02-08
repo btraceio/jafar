@@ -214,7 +214,7 @@ public final class HeapDumpImpl implements HeapDump {
 
     // Pass 1: Collect addresses (30% of parse time)
     if (progressCallback != null) {
-      progressCallback.onProgress(0.0, "Pass 1: Collecting addresses");
+      progressCallback.onProgress(0.0, "Pass 1/2: Collecting addresses");
     }
 
     LongArrayList objectAddresses = new LongArrayList();
@@ -238,12 +238,12 @@ public final class HeapDumpImpl implements HeapDump {
         objectAddresses.size(), classAddresses.size(), objectCount);
 
     if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Pass 1 complete");
+      progressCallback.onProgress(0.3, "Pass 1/2: Complete");
     }
 
     // Pass 2: Build indexes (70% of parse time)
     if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Pass 2: Building indexes");
+      progressCallback.onProgress(0.3, "Pass 2/2: Building indexes");
     }
 
     buildIndexes(progressCallback);
@@ -251,7 +251,7 @@ public final class HeapDumpImpl implements HeapDump {
     LOG.debug("Pass 2 complete: indexes built");
 
     if (progressCallback != null) {
-      progressCallback.onProgress(1.0, "Complete");
+      progressCallback.onProgress(1.0, "Pass 2/2: Complete");
     }
 
     // Open index reader for lazy loading
@@ -298,7 +298,7 @@ public final class HeapDumpImpl implements HeapDump {
         if (currentPos - lastProgressReport > progressInterval) {
           double fileProgress = (double) currentPos / fileSize;
           double totalProgress = fileProgress * 0.3; // Pass 1 is 30% of total
-          progressCallback.onProgress(totalProgress, "Pass 1: Collecting addresses");
+          progressCallback.onProgress(totalProgress, "Pass 1/2: Collecting addresses");
           lastProgressReport = currentPos;
         }
       }
@@ -386,14 +386,14 @@ public final class HeapDumpImpl implements HeapDump {
 
       // Report Pass 2 sub-phase progress
       if (progressCallback != null) {
-        progressCallback.onProgress(0.55, "Pass 2: Sorting entries");
+        progressCallback.onProgress(0.55, "Pass 2/2: Sorting entries");
       }
 
       // Sort object entries by ID (required for ObjectIndexReader's offset calculation)
       objectEntries.sort(java.util.Comparator.comparingInt(e -> e.objectId32));
 
       if (progressCallback != null) {
-        progressCallback.onProgress(0.60, "Pass 2: Writing object index");
+        progressCallback.onProgress(0.60, "Pass 2/2: Writing object index");
       }
 
       // Write sorted entries to objects.idx
@@ -408,13 +408,13 @@ public final class HeapDumpImpl implements HeapDump {
         // Report progress periodically (60-85% of total)
         if (progressCallback != null && i % progressInterval == 0) {
           double entryProgress = (double) i / objectEntries.size();
-          progressCallback.onProgress(0.60 + entryProgress * 0.25, "Pass 2: Writing object index");
+          progressCallback.onProgress(0.60 + entryProgress * 0.25, "Pass 2/2: Writing object index");
         }
       }
       writer.finishObjectsIndex();
 
       if (progressCallback != null) {
-        progressCallback.onProgress(0.85, "Pass 2: Writing class map");
+        progressCallback.onProgress(0.85, "Pass 2/2: Writing class map");
       }
 
       // Write class ID mapping index
@@ -427,7 +427,7 @@ public final class HeapDumpImpl implements HeapDump {
       writer.finishClassMapIndex();
 
       if (progressCallback != null) {
-        progressCallback.onProgress(0.90, "Pass 2: Writing GC roots");
+        progressCallback.onProgress(0.90, "Pass 2/2: Writing GC roots");
       }
 
       // Write GC roots index - only count valid entries
