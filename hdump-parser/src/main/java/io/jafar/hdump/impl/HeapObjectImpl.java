@@ -99,10 +99,8 @@ final class HeapObjectImpl implements HeapObject {
 
   @Override
   public long getRetainedSize() {
-    if (retainedSize < 0) {
-      // Auto-trigger approximate retained size computation on first access
-      dump.ensureDominatorsComputed();
-    }
+    // Return -1 if not computed (per API contract)
+    // Callers should explicitly call dump.computeDominators() if needed
     return retainedSize;
   }
 

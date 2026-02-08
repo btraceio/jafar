@@ -752,6 +752,9 @@ public final class HdumpPathEvaluator {
         return List.of(error);
       }
 
+      // Ensure retained sizes are computed (leak detectors need them)
+      session.promptAndComputeDominatorTree();
+
       // Run the detector
       return detector.detect(session.getHeapDump(), op.threshold(), op.minSize());
 
