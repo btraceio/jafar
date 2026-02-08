@@ -33,28 +33,86 @@ public final class HdumpPathEvaluator {
     // NOTE: Retained sizes are computed lazily when needed (e.g., by checkLeaks operations)
     // Do NOT eagerly compute them here - many queries don't need retained sizes!
 
-    // Optimization: For large heaps with unfiltered "show objects | top(N)" queries,
+    // Optimization: For large heaps with unfiltered object queries followed by aggregations,
     // use streaming to avoid OOM from materializing all objects
     if (query.root() == Root.OBJECTS
         && query.typePattern() == null
         && query.predicates().isEmpty()
         && !query.pipeline().isEmpty()
-        && query.pipeline().get(0) instanceof TopOp topOp
         && dump.getObjectCount() > 5_000_000) {
-      // Streaming path for simple top(N) queries on large heaps
-      System.err.println();
-      System.err.printf("Streaming through %,d objects (limiting to top %d)...%n",
-          dump.getObjectCount(), topOp.n());
-      System.err.flush();
 
-      List<Map<String, Object>> results = evaluateObjectsStreaming(dump, topOp);
+      PipelineOp firstOp = query.pipeline().get(0);
 
-      // Apply remaining pipeline operations (skip the first top() we just applied)
-      for (int i = 1; i < query.pipeline().size(); i++) {
-        results = applyPipelineOp(session, results, query.pipeline().get(i));
+      // Check if first operation is an aggregation that can be streamed
+      if (firstOp instanceof TopOp topOp) {
+        System.err.println();
+        System.err.printf("Streaming through %,d objects (top %d)...%n",
+            dump.getObjectCount(), topOp.n());
+        System.err.flush();
+
+        List<Map<String, Object>> results = evaluateObjectsStreamingTop(dump, topOp);
+
+        // Apply remaining pipeline operations
+        for (int i = 1; i < query.pipeline().size(); i++) {
+          results = applyPipelineOp(session, results, query.pipeline().get(i));
+        }
+        return results;
+
+      } else if (firstOp instanceof GroupByOp groupByOp) {
+        System.err.println();
+        System.err.printf("Streaming through %,d objects (grouping by %s)...%n",
+            dump.getObjectCount(), String.join(", ", groupByOp.groupFields()));
+        System.err.flush();
+
+        List<Map<String, Object>> results = evaluateObjectsStreamingGroupBy(dump, groupByOp);
+
+        // Apply remaining pipeline operations
+        for (int i = 1; i < query.pipeline().size(); i++) {
+          results = applyPipelineOp(session, results, query.pipeline().get(i));
+        }
+        return results;
+
+      } else if (firstOp instanceof CountOp) {
+        System.err.println();
+        System.err.printf("Streaming through %,d objects (counting)...%n", dump.getObjectCount());
+        System.err.flush();
+
+        List<Map<String, Object>> results = evaluateObjectsStreamingCount(dump);
+
+        // Apply remaining pipeline operations
+        for (int i = 1; i < query.pipeline().size(); i++) {
+          results = applyPipelineOp(session, results, query.pipeline().get(i));
+        }
+        return results;
+
+      } else if (firstOp instanceof SumOp sumOp) {
+        System.err.println();
+        System.err.printf("Streaming through %,d objects (sum of %s)...%n",
+            dump.getObjectCount(), sumOp.field());
+        System.err.flush();
+
+        List<Map<String, Object>> results = evaluateObjectsStreamingSum(dump, sumOp);
+
+        // Apply remaining pipeline operations
+        for (int i = 1; i < query.pipeline().size(); i++) {
+          results = applyPipelineOp(session, results, query.pipeline().get(i));
+        }
+        return results;
+
+      } else if (firstOp instanceof StatsOp statsOp) {
+        System.err.println();
+        System.err.printf("Streaming through %,d objects (stats for %s)...%n",
+            dump.getObjectCount(), statsOp.field());
+        System.err.flush();
+
+        List<Map<String, Object>> results = evaluateObjectsStreamingStats(dump, statsOp);
+
+        // Apply remaining pipeline operations
+        for (int i = 1; i < query.pipeline().size(); i++) {
+          results = applyPipelineOp(session, results, query.pipeline().get(i));
+        }
+        return results;
       }
-
-      return results;
     }
 
     // Standard path: materialize all results first
@@ -77,7 +135,7 @@ public final class HdumpPathEvaluator {
    * Streaming evaluation for "show objects | top(N)" on large heaps.
    * Uses a bounded priority queue to avoid materializing all objects.
    */
-  private static List<Map<String, Object>> evaluateObjectsStreaming(HeapDump dump, TopOp topOp) {
+  private static List<Map<String, Object>> evaluateObjectsStreamingTop(HeapDump dump, TopOp topOp) {
     // Use a priority queue to keep only top N objects
     Comparator<Map<String, Object>> comparator;
     if (topOp.orderBy() != null) {
@@ -127,6 +185,227 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> results = new ArrayList<>(topN);
     results.sort(comparator.reversed()); // Reverse to get descending order
     return results;
+  }
+
+  /**
+   * Streaming evaluation for "show objects | groupBy(...)" on large heaps.
+   * Accumulates groups as we stream to avoid materializing all objects.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingGroupBy(
+      HeapDump dump, GroupByOp op) {
+    Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
+    Stream<HeapObject> stream = dump.getObjects();
+    long[] counter = {0};
+    long[] lastReport = {System.currentTimeMillis()};
+    long totalObjects = dump.getObjectCount();
+
+    stream.forEach(obj -> {
+      Map<String, Object> map = objectToMap(obj);
+
+      // Extract group key
+      List<Object> key = new ArrayList<>();
+      for (String field : op.groupFields()) {
+        key.add(map.get(field));
+      }
+
+      // Get or create accumulator for this group
+      GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(k, op));
+      acc.accumulate(map, op);
+
+      counter[0]++;
+      // Report progress every 500ms
+      long now = System.currentTimeMillis();
+      if (now - lastReport[0] >= 500) {
+        double progress = (double) counter[0] / totalObjects * 100.0;
+        System.err.printf("\rScanning objects: %.1f%% (%,d/%,d, %,d groups)",
+            progress, counter[0], totalObjects, groups.size());
+        System.err.flush();
+        lastReport[0] = now;
+      }
+    });
+
+    System.err.println();
+    System.err.println();
+
+    // Convert groups to result maps
+    return groups.values().stream()
+        .map(acc -> acc.toResultMap(op))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Streaming evaluation for "show objects | count()" on large heaps.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingCount(HeapDump dump) {
+    Stream<HeapObject> stream = dump.getObjects();
+    long[] counter = {0};
+    long[] lastReport = {System.currentTimeMillis()};
+    long totalObjects = dump.getObjectCount();
+
+    stream.forEach(obj -> {
+      counter[0]++;
+      // Report progress every 500ms
+      long now = System.currentTimeMillis();
+      if (now - lastReport[0] >= 500) {
+        double progress = (double) counter[0] / totalObjects * 100.0;
+        System.err.printf("\rCounting objects: %.1f%% (%,d/%,d)",
+            progress, counter[0], totalObjects);
+        System.err.flush();
+        lastReport[0] = now;
+      }
+    });
+
+    System.err.println();
+    System.err.println();
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("count", counter[0]);
+    return List.of(result);
+  }
+
+  /**
+   * Streaming evaluation for "show objects | sum(field)" on large heaps.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingSum(
+      HeapDump dump, SumOp op) {
+    Stream<HeapObject> stream = dump.getObjects();
+    double[] sum = {0.0};
+    long[] counter = {0};
+    long[] lastReport = {System.currentTimeMillis()};
+    long totalObjects = dump.getObjectCount();
+
+    stream.forEach(obj -> {
+      Map<String, Object> map = objectToMap(obj);
+      Object value = map.get(op.field());
+      if (value instanceof Number num) {
+        sum[0] += num.doubleValue();
+      }
+
+      counter[0]++;
+      // Report progress every 500ms
+      long now = System.currentTimeMillis();
+      if (now - lastReport[0] >= 500) {
+        double progress = (double) counter[0] / totalObjects * 100.0;
+        System.err.printf("\rSumming %s: %.1f%% (%,d/%,d)",
+            op.field(), progress, counter[0], totalObjects);
+        System.err.flush();
+        lastReport[0] = now;
+      }
+    });
+
+    System.err.println();
+    System.err.println();
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("sum", sum[0]);
+    return List.of(result);
+  }
+
+  /**
+   * Streaming evaluation for "show objects | stats(field)" on large heaps.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingStats(
+      HeapDump dump, StatsOp op) {
+    Stream<HeapObject> stream = dump.getObjects();
+    double[] sum = {0.0};
+    double[] min = {Double.MAX_VALUE};
+    double[] max = {Double.MIN_VALUE};
+    long[] count = {0};
+    long[] counter = {0};
+    long[] lastReport = {System.currentTimeMillis()};
+    long totalObjects = dump.getObjectCount();
+
+    stream.forEach(obj -> {
+      Map<String, Object> map = objectToMap(obj);
+      Object value = map.get(op.field());
+      if (value instanceof Number num) {
+        double d = num.doubleValue();
+        sum[0] += d;
+        min[0] = Math.min(min[0], d);
+        max[0] = Math.max(max[0], d);
+        count[0]++;
+      }
+
+      counter[0]++;
+      // Report progress every 500ms
+      long now = System.currentTimeMillis();
+      if (now - lastReport[0] >= 500) {
+        double progress = (double) counter[0] / totalObjects * 100.0;
+        System.err.printf("\rComputing stats for %s: %.1f%% (%,d/%,d)",
+            op.field(), progress, counter[0], totalObjects);
+        System.err.flush();
+        lastReport[0] = now;
+      }
+    });
+
+    System.err.println();
+    System.err.println();
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("count", count[0]);
+    result.put("sum", sum[0]);
+    result.put("avg", count[0] > 0 ? sum[0] / count[0] : 0.0);
+    result.put("min", min[0]);
+    result.put("max", max[0]);
+    return List.of(result);
+  }
+
+  /**
+   * Helper class to accumulate aggregation results for a group.
+   */
+  private static class GroupAccumulator {
+    private final List<Object> key;
+    private long count = 0;
+    private double sum = 0.0;
+    private double min = Double.MAX_VALUE;
+    private double max = Double.MIN_VALUE;
+
+    GroupAccumulator(List<Object> key, GroupByOp op) {
+      this.key = key;
+    }
+
+    void accumulate(Map<String, Object> row, GroupByOp op) {
+      count++;
+
+      // Get value for aggregation
+      Object value;
+      if (op.valueExpr() != null) {
+        value = op.valueExpr().evaluate(row);
+      } else if (op.aggregation() != AggOp.COUNT) {
+        // For non-COUNT aggregations, need a value field
+        // Use first group field as default
+        value = row.get(op.groupFields().get(0));
+      } else {
+        value = null;
+      }
+
+      if (value instanceof Number num) {
+        double d = num.doubleValue();
+        sum += d;
+        min = Math.min(min, d);
+        max = Math.max(max, d);
+      }
+    }
+
+    Map<String, Object> toResultMap(GroupByOp op) {
+      Map<String, Object> result = new LinkedHashMap<>();
+
+      // Add group key fields
+      for (int i = 0; i < op.groupFields().size(); i++) {
+        result.put(op.groupFields().get(i), key.get(i));
+      }
+
+      // Add aggregation value
+      switch (op.aggregation()) {
+        case COUNT -> result.put("count", count);
+        case SUM -> result.put("sum", sum);
+        case AVG -> result.put("avg", count > 0 ? sum / count : 0.0);
+        case MIN -> result.put("min", min);
+        case MAX -> result.put("max", max);
+      }
+
+      return result;
+    }
   }
 
   private static List<Map<String, Object>> evaluateObjects(HeapDump dump, Query query) {
