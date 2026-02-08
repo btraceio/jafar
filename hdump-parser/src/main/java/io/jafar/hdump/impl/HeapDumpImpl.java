@@ -618,8 +618,9 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /**
-   * Parse all CLASS_DUMP records to populate classesById.
-   * This is done after Pass 1 address collection but before Pass 2 index building.
+   * Parse UTF8, LOAD_CLASS, and CLASS_DUMP records to populate class metadata.
+   * This is done after Pass 1 address collection but before Pass 2 index building,
+   * or during fast path when loading from existing indexes.
    */
   private void parseAllClasses(HeapDumpParser.ProgressCallback progressCallback) throws IOException {
     reader.reset();
@@ -628,14 +629,15 @@ public final class HeapDumpImpl implements HeapDump {
       RecordHeader header = reader.readRecordHeader();
       if (header == null) break;
 
-      if (header.tag() == HprofTag.HEAP_DUMP || header.tag() == HprofTag.HEAP_DUMP_SEGMENT) {
-        parseClassesFromHeapDump(header);
-      } else {
-        reader.skipRecordBody(header);
+      switch (header.tag()) {
+        case HprofTag.UTF8 -> parseUtf8(header);
+        case HprofTag.LOAD_CLASS -> parseLoadClass(header);
+        case HprofTag.HEAP_DUMP, HprofTag.HEAP_DUMP_SEGMENT -> parseClassesFromHeapDump(header);
+        default -> reader.skipRecordBody(header);
       }
     }
 
-    LOG.debug("Parsed {} classes", classesById.size());
+    LOG.debug("Parsed {} classes with {} string constants", classesById.size(), strings.size());
   }
 
   /**
