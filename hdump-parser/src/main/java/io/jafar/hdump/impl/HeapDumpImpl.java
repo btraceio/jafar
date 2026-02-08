@@ -246,7 +246,7 @@ public final class HeapDumpImpl implements HeapDump {
       progressCallback.onProgress(0.3, "Pass 2: Building indexes");
     }
 
-    buildIndexes();
+    buildIndexes(progressCallback);
 
     LOG.debug("Pass 2 complete: indexes built");
 
@@ -361,7 +361,7 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /** Pass 2: Build indexes using address-to-ID mapping. */
-  private void buildIndexes() throws IOException {
+  private void buildIndexes(HeapDumpParser.ProgressCallback progressCallback) throws IOException {
     try (IndexWriter writer = new IndexWriter(indexDir)) {
       // Map for class addresses -> 32-bit class IDs
       Long2IntOpenHashMap classIdMap = new Long2IntOpenHashMap();
@@ -384,17 +384,38 @@ public final class HeapDumpImpl implements HeapDump {
         }
       }
 
+      // Report Pass 2 sub-phase progress
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.55, "Pass 2: Sorting entries");
+      }
+
       // Sort object entries by ID (required for ObjectIndexReader's offset calculation)
       objectEntries.sort(java.util.Comparator.comparingInt(e -> e.objectId32));
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.60, "Pass 2: Writing object index");
+      }
 
       // Write sorted entries to objects.idx
       // Note: objectEntries includes both regular objects AND class objects (for GC root support)
       writer.beginObjectsIndex(objectEntries.size());
-      for (ObjectEntry entry : objectEntries) {
+      int progressInterval = Math.max(1, objectEntries.size() / 100); // Report every 1%
+      for (int i = 0; i < objectEntries.size(); i++) {
+        ObjectEntry entry = objectEntries.get(i);
         writer.writeObjectEntry(entry.objectId32, entry.fileOffset, entry.dataSize,
             entry.classId, entry.arrayLength, entry.flags, entry.elementType);
+
+        // Report progress periodically (60-85% of total)
+        if (progressCallback != null && i % progressInterval == 0) {
+          double entryProgress = (double) i / objectEntries.size();
+          progressCallback.onProgress(0.60 + entryProgress * 0.25, "Pass 2: Writing object index");
+        }
       }
       writer.finishObjectsIndex();
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.85, "Pass 2: Writing class map");
+      }
 
       // Write class ID mapping index
       writer.beginClassMapIndex(classIdMap.size());
@@ -404,6 +425,10 @@ public final class HeapDumpImpl implements HeapDump {
         writer.writeClassMapEntry(classId32, classAddress64);
       }
       writer.finishClassMapIndex();
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.90, "Pass 2: Writing GC roots");
+      }
 
       // Write GC roots index - only count valid entries
       int validGcRootCount = 0;
