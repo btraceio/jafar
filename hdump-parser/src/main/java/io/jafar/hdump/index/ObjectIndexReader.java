@@ -1,12 +1,10 @@
 package io.jafar.hdump.index;
 
+import io.jafar.utils.CustomByteBuffer;
+import io.jafar.utils.SplicedMappedByteBuffer;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
 /**
  * Memory-mapped reader for objects.idx with O(1) random access.
@@ -34,8 +32,10 @@ import java.nio.file.StandardOpenOption;
  */
 public final class ObjectIndexReader implements AutoCloseable {
 
-  private final FileChannel channel;
-  private final MappedByteBuffer buffer;
+  // Splice size for memory-mapped segments (1GB)
+  private static final int SPLICE_SIZE = 1024 * 1024 * 1024;
+
+  private final CustomByteBuffer buffer;
   private final int entryCount;
   private final int formatVersion;
 
@@ -84,12 +84,9 @@ public final class ObjectIndexReader implements AutoCloseable {
   public ObjectIndexReader(Path indexDir) throws IOException {
     Path indexFile = indexDir.resolve(IndexFormat.OBJECTS_INDEX_NAME);
 
-    // Open file channel
-    channel = FileChannel.open(indexFile, StandardOpenOption.READ);
-
-    // Memory-map entire file
-    buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
-    buffer.order(ByteOrder.BIG_ENDIAN); // Java default
+    // Create spliced memory-mapped buffer (handles files > 2GB automatically)
+    buffer = CustomByteBuffer.map(indexFile, SPLICE_SIZE);
+    buffer.order(ByteOrder.BIG_ENDIAN);
 
     // Read and validate header
     int magic = buffer.getInt();
@@ -130,16 +127,17 @@ public final class ObjectIndexReader implements AutoCloseable {
     }
 
     // Calculate entry offset: header + (id32 × entry size)
-    int offset = IndexFormat.HEADER_SIZE + (objectId32 * IndexFormat.OBJECT_ENTRY_SIZE);
+    long offset = IndexFormat.HEADER_SIZE + ((long) objectId32 * IndexFormat.OBJECT_ENTRY_SIZE);
 
-    // Read entry fields (26 bytes total)
-    int id32 = buffer.getInt(offset);
-    long fileOffset = buffer.getLong(offset + 4);
-    int dataSize = buffer.getInt(offset + 12);
-    int classId = buffer.getInt(offset + 16);
-    int arrayLength = buffer.getInt(offset + 20);
-    byte flags = buffer.get(offset + 24);
-    byte elementType = buffer.get(offset + 25);
+    // Position buffer and read entry fields sequentially (26 bytes total)
+    buffer.position(offset);
+    int id32 = buffer.getInt();
+    long fileOffset = buffer.getLong();
+    int dataSize = buffer.getInt();
+    int classId = buffer.getInt();
+    int arrayLength = buffer.getInt();
+    byte flags = buffer.get();
+    byte elementType = buffer.get();
 
     // Sanity check
     if (id32 != objectId32) {
@@ -171,11 +169,7 @@ public final class ObjectIndexReader implements AutoCloseable {
 
   @Override
   public void close() throws IOException {
-    // Note: MappedByteBuffer cannot be explicitly unmapped in standard Java
-    // The OS will reclaim the mapping when the buffer is GC'd
-    // We can only close the channel
-    if (channel != null && channel.isOpen()) {
-      channel.close();
-    }
+    // CustomByteBuffer provides close() for resource cleanup
+    buffer.close();
   }
 }
