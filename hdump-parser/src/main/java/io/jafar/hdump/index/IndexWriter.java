@@ -394,6 +394,133 @@ public final class IndexWriter implements AutoCloseable {
     currentTempFile = null;
   }
 
+  // === Class Instances Offset Index Writing ===
+
+  /**
+   * Begins writing classinstances-offset.idx (class ID to instance list mapping).
+   *
+   * @param expectedEntries number of class entries that will be written
+   * @throws IOException if file creation fails
+   */
+  public void beginClassInstancesOffsetIndex(int expectedEntries) throws IOException {
+    currentTempFile = indexDir.resolve(IndexFormat.CLASSINSTANCES_OFFSET_INDEX_NAME + ".tmp");
+    currentStream =
+        new DataOutputStream(
+            new BufferedOutputStream(
+                new FileOutputStream(currentTempFile.toFile()),
+                1024 * 1024));
+
+    // Write header
+    currentStream.writeInt(IndexFormat.CLASSINSTANCES_OFFSET_MAGIC);
+    currentStream.writeInt(IndexFormat.FORMAT_VERSION);
+    currentStream.writeLong(expectedEntries);
+    currentStream.writeInt(0); // flags
+
+    entriesWritten = 0;
+  }
+
+  /**
+   * Writes a single class instances offset entry.
+   *
+   * <p>Entry format: [classId32:4][dataFileOffset:8][instanceCount:4]
+   *
+   * @param classId32 32-bit class ID
+   * @param dataFileOffset offset in classinstances-data.idx where instances start
+   * @param instanceCount number of instances for this class
+   * @throws IOException if write fails
+   */
+  public void writeClassInstancesOffsetEntry(int classId32, long dataFileOffset, int instanceCount)
+      throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassInstancesOffsetIndex() not called");
+    }
+
+    currentStream.writeInt(classId32);
+    currentStream.writeLong(dataFileOffset);
+    currentStream.writeInt(instanceCount);
+
+    entriesWritten++;
+  }
+
+  /**
+   * Finishes writing classinstances-offset.idx and atomically renames to final location.
+   *
+   * @throws IOException if flush or rename fails
+   */
+  public void finishClassInstancesOffsetIndex() throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassInstancesOffsetIndex() not called");
+    }
+
+    currentStream.flush();
+    currentStream.close();
+    currentStream = null;
+
+    Path targetFile = indexDir.resolve(IndexFormat.CLASSINSTANCES_OFFSET_INDEX_NAME);
+    Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    currentTempFile = null;
+  }
+
+  // === Class Instances Data Index Writing ===
+
+  /**
+   * Begins writing classinstances-data.idx (sequential list of instance IDs).
+   *
+   * @param expectedInstances total number of instance IDs that will be written
+   * @throws IOException if file creation fails
+   */
+  public void beginClassInstancesDataIndex(long expectedInstances) throws IOException {
+    currentTempFile = indexDir.resolve(IndexFormat.CLASSINSTANCES_DATA_INDEX_NAME + ".tmp");
+    currentStream =
+        new DataOutputStream(
+            new BufferedOutputStream(
+                new FileOutputStream(currentTempFile.toFile()),
+                1024 * 1024));
+
+    // Write header
+    currentStream.writeInt(IndexFormat.CLASSINSTANCES_DATA_MAGIC);
+    currentStream.writeInt(IndexFormat.FORMAT_VERSION);
+    currentStream.writeLong(expectedInstances);
+    currentStream.writeInt(0); // flags
+
+    entriesWritten = 0;
+  }
+
+  /**
+   * Writes a single instance ID to the data index.
+   *
+   * @param objectId32 32-bit object ID
+   * @throws IOException if write fails
+   */
+  public void writeInstanceId(int objectId32) throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassInstancesDataIndex() not called");
+    }
+
+    currentStream.writeInt(objectId32);
+
+    entriesWritten++;
+  }
+
+  /**
+   * Finishes writing classinstances-data.idx and atomically renames to final location.
+   *
+   * @throws IOException if flush or rename fails
+   */
+  public void finishClassInstancesDataIndex() throws IOException {
+    if (currentStream == null) {
+      throw new IllegalStateException("beginClassInstancesDataIndex() not called");
+    }
+
+    currentStream.flush();
+    currentStream.close();
+    currentStream = null;
+
+    Path targetFile = indexDir.resolve(IndexFormat.CLASSINSTANCES_DATA_INDEX_NAME);
+    Files.move(currentTempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    currentTempFile = null;
+  }
+
   /**
    * Returns the number of entries written to the current index.
    *

@@ -61,6 +61,12 @@ public final class IndexFormat {
   /** Magic number for objectmap.idx file (ASCII: "JMAP") */
   public static final int OBJECTMAP_INDEX_MAGIC = 0x4A4D4150;
 
+  /** Magic number for classinstances-offset.idx file (ASCII: "JCIO") */
+  public static final int CLASSINSTANCES_OFFSET_MAGIC = 0x4A43494F;
+
+  /** Magic number for classinstances-data.idx file (ASCII: "JCID") */
+  public static final int CLASSINSTANCES_DATA_MAGIC = 0x4A434944;
+
   // === File Header Format ===
 
   /**
@@ -226,6 +232,12 @@ public final class IndexFormat {
   /** Object address mapping index filename. */
   public static final String OBJECTMAP_INDEX_NAME = "objectmap.idx";
 
+  /** Class instances offset index filename. */
+  public static final String CLASSINSTANCES_OFFSET_INDEX_NAME = "classinstances-offset.idx";
+
+  /** Class instances data index filename. */
+  public static final String CLASSINSTANCES_DATA_INDEX_NAME = "classinstances-data.idx";
+
   // === classmap.idx Format ===
 
   /** Magic number for classmap.idx file (ASCII: "JCMP") */
@@ -265,6 +277,40 @@ public final class IndexFormat {
 
   public static final int OBJECTMAP_OFFSET_OBJECT_ID32 = 0;
   public static final int OBJECTMAP_OFFSET_OBJECT_ADDRESS64 = 4;
+
+  // === classinstances-offset.idx Format ===
+
+  /**
+   * Class instances offset entry format (16 bytes fixed):
+   *
+   * <pre>
+   * [classId32:4][dataFileOffset:8][instanceCount:4]
+   * </pre>
+   *
+   * <p>Sequential by classId32 for direct offset calculation. Maps 32-bit class IDs to their
+   * instance list location in classinstances-data.idx. Enables O(1) lookup from class to its
+   * instances without scanning all objects.
+   *
+   * <p>Example: 10K classes = 20 + (10,000 × 16) = 160 KB
+   */
+  public static final int CLASSINSTANCES_OFFSET_ENTRY_SIZE = 16;
+
+  public static final int CLASSINSTANCES_OFFSET_CLASS_ID32 = 0;
+  public static final int CLASSINSTANCES_OFFSET_DATA_FILE_OFFSET = 4;
+  public static final int CLASSINSTANCES_OFFSET_INSTANCE_COUNT = 12;
+
+  // === classinstances-data.idx Format ===
+
+  /**
+   * Class instances data format (variable-length):
+   *
+   * <p>Sequential list of 32-bit object IDs (4 bytes each). Each class's instances are stored
+   * contiguously, accessed via offsets from classinstances-offset.idx. No per-entry structure -
+   * just raw int32 values representing object IDs.
+   *
+   * <p>Example: 114M objects = 20 + (114,000,000 × 4) = 456 MB
+   */
+  public static final int CLASSINSTANCES_DATA_OBJECT_ID_SIZE = 4;
 
   // === gcroots.idx Format ===
 

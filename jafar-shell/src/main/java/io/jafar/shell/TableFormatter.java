@@ -81,7 +81,7 @@ final class TableFormatter {
       Map<String, Object> row = rows.get(i);
       for (String col : columns) {
         Object value = row.get(col);
-        String strValue = formatValue(value);
+        String strValue = formatValue(col, value);
         int currentWidth = widths.get(col);
         widths.put(col, Math.min(Math.max(currentWidth, strValue.length()), MAX_CELL_WIDTH));
       }
@@ -106,7 +106,7 @@ final class TableFormatter {
       for (int j = 0; j < columns.size(); j++) {
         String col = columns.get(j);
         Object value = row.get(col);
-        String strValue = formatValue(value);
+        String strValue = formatValue(col, value);
         sb.append(padRight(truncate(strValue, widths.get(col)), widths.get(col)));
         if (j < columns.size() - 1) {
           sb.append("  ");
@@ -167,6 +167,21 @@ final class TableFormatter {
     }
 
     return sb.toString();
+  }
+
+  /**
+   * Formats a value for display in a table cell, with context from column name.
+   *
+   * @param columnName the column name (used to detect memory values)
+   * @param value the value to format
+   * @return formatted string
+   */
+  private static String formatValue(String columnName, Object value) {
+    // Check if this is a memory-related column
+    if (isMemoryColumn(columnName) && value instanceof Number num) {
+      return formatMemorySize(num.longValue());
+    }
+    return formatValue(value, 0);
   }
 
   /**
@@ -264,6 +279,47 @@ final class TableFormatter {
     // Default toString
     String str = value.toString();
     return str;
+  }
+
+  /**
+   * Checks if a column name indicates memory values.
+   *
+   * @param columnName the column name to check
+   * @return true if this column likely contains memory sizes
+   */
+  private static boolean isMemoryColumn(String columnName) {
+    if (columnName == null) {
+      return false;
+    }
+    String lower = columnName.toLowerCase();
+    return lower.endsWith("size")
+        || lower.contains("shallow")
+        || lower.contains("retained")
+        || lower.contains("memory")
+        || lower.equals("size")
+        || lower.equals("bytes");
+  }
+
+  /**
+   * Formats a memory size in bytes to human-readable format.
+   *
+   * @param bytes the size in bytes
+   * @return formatted string (e.g., "1.5 KB", "128.7 MB", "2.3 GB")
+   */
+  private static String formatMemorySize(long bytes) {
+    if (bytes < 0) {
+      return String.valueOf(bytes); // Negative values (e.g., -1 for uncomputed) shown as-is
+    }
+
+    if (bytes < 1024) {
+      return bytes + " B";
+    } else if (bytes < 1024 * 1024) {
+      return String.format("%.1f KB", bytes / 1024.0);
+    } else if (bytes < 1024 * 1024 * 1024) {
+      return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+    } else {
+      return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
   }
 
   /**
