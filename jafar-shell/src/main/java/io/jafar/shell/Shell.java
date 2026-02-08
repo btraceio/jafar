@@ -222,6 +222,11 @@ public final class Shell implements AutoCloseable {
           continue;
         }
 
+        if (input.startsWith("checkLeaks(")) {
+          handleShow(input);
+          continue;
+        }
+
         terminal.writer().println("Unknown command: " + input);
         terminal.writer().println("Type 'help' for available commands.");
         terminal.flush();
