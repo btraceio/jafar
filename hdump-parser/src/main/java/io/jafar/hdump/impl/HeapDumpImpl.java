@@ -1869,7 +1869,20 @@ public final class HeapDumpImpl implements HeapDump {
         if (!dominatorsComputed) {
           System.err.println();
           System.err.println("Computing retained sizes on first access (will be cached)...");
-          computeDominators();
+
+          // Create progress callback that prints to stderr
+          ApproximateRetainedSizeComputer.ProgressCallback progressCallback =
+              (progress, message) -> {
+                System.err.printf("\r%s: %.1f%%", message, progress * 100);
+                System.err.flush();
+              };
+
+          computeDominators(progressCallback);
+
+          // Clear progress line
+          System.err.print("\r" + " ".repeat(120) + "\r");
+          System.err.println("Retained sizes computed and cached.");
+          System.err.flush();
         }
       }
     }
