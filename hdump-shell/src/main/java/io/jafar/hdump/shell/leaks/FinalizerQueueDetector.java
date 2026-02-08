@@ -24,30 +24,32 @@ public final class FinalizerQueueDetector implements LeakDetector {
 
     // Look for java.lang.ref.Finalizer instances
     // These represent objects waiting for finalization
-    List<HeapObject> finalizers = new ArrayList<>();
-    dump.getObjectsOfClass("java.lang.ref.Finalizer").forEach(finalizers::add);
+    // Use streaming-friendly approach: count as we go, don't store objects
+    Map<String, Integer> finalizerCountsByClass = new HashMap<>();
+    int[] totalFinalizers = {0}; // Array for capturing in lambda
 
-    if (finalizers.size() >= minQueueSize) {
-      // Group finalizers by the class of the object being finalized
-      Map<String, List<HeapObject>> finalizersByClass = new HashMap<>();
+    dump.getObjectsOfClass("java.lang.ref.Finalizer")
+        .forEach(
+            finalizer -> {
+              totalFinalizers[0]++;
 
-      for (HeapObject finalizer : finalizers) {
-        // Finalizer has a 'referent' field pointing to the object being finalized
-        Object referent = finalizer.getFieldValue("referent");
-        if (referent instanceof HeapObject) {
-          HeapObject referentObj = (HeapObject) referent;
-          String className =
-              referentObj.getHeapClass() != null
-                  ? referentObj.getHeapClass().getName()
-                  : "unknown";
-          finalizersByClass.computeIfAbsent(className, k -> new ArrayList<>()).add(finalizer);
-        }
-      }
+              // Finalizer has a 'referent' field pointing to the object being finalized
+              Object referent = finalizer.getFieldValue("referent");
+              if (referent instanceof HeapObject) {
+                HeapObject referentObj = (HeapObject) referent;
+                String className =
+                    referentObj.getHeapClass() != null
+                        ? referentObj.getHeapClass().getName()
+                        : "unknown";
+                finalizerCountsByClass.merge(className, 1, Integer::sum);
+              }
+            });
 
+    if (totalFinalizers[0] >= minQueueSize) {
       // Report classes with many finalizers
-      for (Map.Entry<String, List<HeapObject>> entry : finalizersByClass.entrySet()) {
+      for (Map.Entry<String, Integer> entry : finalizerCountsByClass.entrySet()) {
         String className = entry.getKey();
-        int count = entry.getValue().size();
+        int count = entry.getValue();
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("class", className);
@@ -63,7 +65,7 @@ public final class FinalizerQueueDetector implements LeakDetector {
       // Add overall summary
       Map<String, Object> summary = new LinkedHashMap<>();
       summary.put("class", "TOTAL");
-      summary.put("queueSize", finalizers.size());
+      summary.put("queueSize", totalFinalizers[0]);
       summary.put(
           "suggestion",
           "Large finalizer queue detected. Finalization may be slow or blocked. "

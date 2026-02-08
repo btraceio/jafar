@@ -1556,7 +1556,10 @@ public final class HdumpPathEvaluator {
       }
 
       // Ensure retained sizes are computed (leak detectors need them)
-      session.promptAndComputeDominatorTree();
+      // Use approximate retained sizes which work in streaming mode (no OOME)
+      if (session.getHeapDump() instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
+        heapDumpImpl.ensureRetainedSizesComputed();
+      }
 
       // Run the detector
       return detector.detect(session.getHeapDump(), op.threshold(), op.minSize());

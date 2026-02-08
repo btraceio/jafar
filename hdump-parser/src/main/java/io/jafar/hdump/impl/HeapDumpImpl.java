@@ -1863,7 +1863,7 @@ public final class HeapDumpImpl implements HeapDump {
    * This is called automatically when retainedSize is accessed for the first time.
    * Thread-safe and idempotent.
    */
-  void ensureRetainedSizesComputed() {
+  public void ensureRetainedSizesComputed() {
     if (!dominatorsComputed) {
       synchronized (this) {
         if (!dominatorsComputed) {

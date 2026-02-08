@@ -19,38 +19,38 @@ public final class DuplicateStringsDetector implements LeakDetector {
   public List<Map<String, Object>> detect(HeapDump dump, Integer threshold, Integer minSize) {
     int minDuplicates = threshold != null ? threshold : 100;
 
-    // Group strings by value
-    Map<String, List<HeapObject>> stringsByValue = new HashMap<>();
+    // Group strings by value - store only metrics to avoid OOME
+    Map<String, StringGroupMetrics> stringsByValue = new HashMap<>();
 
     dump.getObjectsOfClass("java.lang.String")
         .forEach(
             obj -> {
               String value = obj.getStringValue();
               if (value != null) {
-                stringsByValue.computeIfAbsent(value, k -> new ArrayList<>()).add(obj);
+                stringsByValue
+                    .computeIfAbsent(value, k -> new StringGroupMetrics())
+                    .addInstance(obj);
               }
             });
 
     // Find duplicates above threshold
     List<Map<String, Object>> results = new ArrayList<>();
-    for (Map.Entry<String, List<HeapObject>> entry : stringsByValue.entrySet()) {
-      List<HeapObject> instances = entry.getValue();
-      if (instances.size() >= minDuplicates) {
+    for (Map.Entry<String, StringGroupMetrics> entry : stringsByValue.entrySet()) {
+      StringGroupMetrics metrics = entry.getValue();
+      if (metrics.count >= minDuplicates) {
         String value = entry.getKey();
-        int count = instances.size();
-        long totalShallow = instances.stream().mapToLong(HeapObject::getShallowSize).sum();
-        long totalRetained = instances.stream().mapToLong(HeapObject::getRetainedSize).sum();
+        long wastedBytes = metrics.totalShallow - metrics.exampleShallow;
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("count", count);
+        result.put("count", metrics.count);
         result.put("value", truncate(value, 100));
-        result.put("shallow", totalShallow);
-        result.put("retained", totalRetained);
-        result.put("wastedBytes", totalShallow - instances.get(0).getShallowSize());
+        result.put("shallow", metrics.totalShallow);
+        result.put("retained", metrics.totalRetained);
+        result.put("wastedBytes", wastedBytes);
         result.put(
             "suggestion",
             "Consider string deduplication or interning. Potential savings: "
-                + formatBytes(totalShallow - instances.get(0).getShallowSize()));
+                + formatBytes(wastedBytes));
 
         results.add(result);
       }
@@ -82,5 +82,29 @@ public final class DuplicateStringsDetector implements LeakDetector {
     if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
     if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
     return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+  }
+
+  /**
+   * Lightweight metrics tracker for string groups.
+   * Avoids storing full HeapObject references to prevent OOME.
+   */
+  private static class StringGroupMetrics {
+    int count = 0;
+    long totalShallow = 0;
+    long totalRetained = 0;
+    long exampleShallow = 0; // Shallow size of one instance (for waste calculation)
+
+    void addInstance(HeapObject obj) {
+      count++;
+      long shallow = obj.getShallowSize();
+      long retained = obj.getRetainedSize();
+      totalShallow += shallow;
+      totalRetained += retained;
+
+      // Keep first instance's shallow size as example
+      if (count == 1) {
+        exampleShallow = shallow;
+      }
+    }
   }
 }
