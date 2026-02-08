@@ -1859,6 +1859,23 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /**
+   * Ensures retained sizes are computed, triggering computation if needed.
+   * This is called automatically when retainedSize is accessed for the first time.
+   * Thread-safe and idempotent.
+   */
+  void ensureRetainedSizesComputed() {
+    if (!dominatorsComputed) {
+      synchronized (this) {
+        if (!dominatorsComputed) {
+          System.err.println();
+          System.err.println("Computing retained sizes on first access (will be cached)...");
+          computeDominators();
+        }
+      }
+    }
+  }
+
+  /**
    * Computes approximate retained sizes with optional progress callback.
    *
    * @param progressCallback optional callback for progress updates
