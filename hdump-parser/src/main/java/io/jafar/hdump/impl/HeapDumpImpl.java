@@ -1659,12 +1659,20 @@ public final class HeapDumpImpl implements HeapDump {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
 
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.0, "Initializing retained size computation");
+    }
+
     // For indexed mode, ensure inbound index is built first
     ensureInboundIndexBuilt(progressCallback);
 
     if (options.parsingMode() == HeapDumpParser.ParsingMode.INDEXED) {
       // Streaming mode with persistent storage - avoids loading all 114M objects into memory
       LOG.info("Using streaming computation with persistent retained size storage");
+
+      if (progressCallback != null) {
+        progressCallback.onProgress(0.01, "Creating retained size storage");
+      }
 
       try {
         // Create persistent storage writer for ALL id32 values (including classes)

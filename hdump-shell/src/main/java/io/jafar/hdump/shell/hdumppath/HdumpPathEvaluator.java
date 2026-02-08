@@ -30,10 +30,8 @@ public final class HdumpPathEvaluator {
   public static List<Map<String, Object>> evaluate(HeapSession session, Query query) {
     HeapDump dump = session.getHeapDump();
 
-    // Ensure approximate retained sizes are computed (with progress display if first time)
-    if (!dump.hasDominators()) {
-      session.computeApproximateRetainedSizes();
-    }
+    // NOTE: Retained sizes are computed lazily when needed (e.g., by checkLeaks operations)
+    // Do NOT eagerly compute them here - many queries don't need retained sizes!
 
     // Get base stream based on root type
     List<Map<String, Object>> results =
