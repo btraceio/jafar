@@ -140,6 +140,10 @@ public final class HeapDumpImpl implements HeapDump {
   public static HeapDump parse(
       Path path, ParserOptions options, HeapDumpParser.ProgressCallback progressCallback)
       throws IOException {
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.0, "Opening heap dump file");
+    }
+
     HprofReader reader = new HprofReader(path);
     HeapDumpImpl dump = new HeapDumpImpl(path, reader, options);
 
@@ -209,9 +213,17 @@ public final class HeapDumpImpl implements HeapDump {
    * <p>Parse time: ~90 seconds for 114M objects first time, ~2-5 seconds with existing indexes
    */
   private void parseTwoPass(HeapDumpParser.ProgressCallback progressCallback) throws IOException {
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.0, "Initializing heap dump parser");
+    }
+
     // Create index directory alongside heap dump
     indexDir = path.getParent().resolve(path.getFileName().toString() + ".idx");
     Files.createDirectories(indexDir);
+
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.0, "Checking for existing indexes");
+    }
 
     // Check if valid indexes already exist
     boolean hasValidIndexes = checkValidIndexes();
