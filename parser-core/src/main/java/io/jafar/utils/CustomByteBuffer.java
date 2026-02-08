@@ -170,6 +170,30 @@ public interface CustomByteBuffer {
   long getLong();
 
   /**
+   * Reads a byte at the given absolute offset without changing the buffer position.
+   *
+   * @param offset absolute position in buffer
+   * @return byte value at offset
+   */
+  byte get(long offset);
+
+  /**
+   * Reads an int at the given absolute offset without changing the buffer position.
+   *
+   * @param offset absolute position in buffer
+   * @return int value at offset
+   */
+  int getInt(long offset);
+
+  /**
+   * Reads a long at the given absolute offset without changing the buffer position.
+   *
+   * @param offset absolute position in buffer
+   * @return long value at offset
+   */
+  long getLong(long offset);
+
+  /**
    * Closes this buffer and releases any resources.
    *
    * @throws IOException if an I/O error occurs during closing
@@ -294,6 +318,21 @@ public interface CustomByteBuffer {
       //            long l = delegate.getLong(position);
       //            position += 8;
       //            return l;
+    }
+
+    @Override
+    public byte get(long offset) {
+      return delegate.get((int) offset);
+    }
+
+    @Override
+    public int getInt(long offset) {
+      return delegate.getInt((int) offset);
+    }
+
+    @Override
+    public long getLong(long offset) {
+      return delegate.getLong((int) offset);
     }
 
     @Override

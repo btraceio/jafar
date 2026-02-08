@@ -61,6 +61,12 @@ public interface CustomByteBuffer {
 
   long getLong();
 
+  byte get(long offset);
+
+  int getInt(long offset);
+
+  long getLong(long offset);
+
   void close() throws IOException;
 
   class ByteBufferWrapper implements CustomByteBuffer {
@@ -157,6 +163,21 @@ public interface CustomByteBuffer {
     @Override
     public long getLong() {
       return delegate.getLong();
+    }
+
+    @Override
+    public byte get(long offset) {
+      return delegate.get((int) offset);
+    }
+
+    @Override
+    public int getInt(long offset) {
+      return delegate.getInt((int) offset);
+    }
+
+    @Override
+    public long getLong(long offset) {
+      return delegate.getLong((int) offset);
     }
 
     @Override

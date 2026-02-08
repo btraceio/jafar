@@ -129,18 +129,14 @@ public final class ObjectIndexReader implements AutoCloseable {
     // Calculate entry offset: header + (id32 × entry size)
     long offset = IndexFormat.HEADER_SIZE + ((long) objectId32 * IndexFormat.OBJECT_ENTRY_SIZE);
 
-    // Create a slice view at the offset (avoids expensive position() calls)
-    CustomByteBuffer entry = buffer.slice(offset, IndexFormat.OBJECT_ENTRY_SIZE);
-    entry.order(ByteOrder.BIG_ENDIAN); // Ensure slice inherits byte order
-
-    // Read entry fields sequentially from the slice (26 bytes total)
-    int id32 = entry.getInt();
-    long fileOffset = entry.getLong();
-    int dataSize = entry.getInt();
-    int classId = entry.getInt();
-    int arrayLength = entry.getInt();
-    byte flags = entry.get();
-    byte elementType = entry.get();
+    // Read entry fields using absolute-position reads (NO slice creation - zero allocations!)
+    int id32 = buffer.getInt(offset);
+    long fileOffset = buffer.getLong(offset + 4);
+    int dataSize = buffer.getInt(offset + 12);
+    int classId = buffer.getInt(offset + 16);
+    int arrayLength = buffer.getInt(offset + 20);
+    byte flags = buffer.get(offset + 24);
+    byte elementType = buffer.get(offset + 25);
 
     // Sanity check
     if (id32 != objectId32) {

@@ -240,6 +240,52 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
   }
 
   @Override
+  public byte get(long offset) {
+    long absoluteOffset = sliceBase + offset;
+    int spliceIndex = (int) (absoluteOffset / spliceSize);
+    int spliceOffset = (int) (absoluteOffset % spliceSize);
+    return splices[spliceIndex].get(spliceOffset);
+  }
+
+  @Override
+  public int getInt(long offset) {
+    long absoluteOffset = sliceBase + offset;
+    int spliceIndex = (int) (absoluteOffset / spliceSize);
+    int spliceOffset = (int) (absoluteOffset % spliceSize);
+
+    // Check if int value fits within current splice
+    if (spliceOffset + 4 <= spliceSize) {
+      return splices[spliceIndex].getInt(spliceOffset);
+    } else {
+      // Value spans splice boundary - read byte-by-byte
+      byte[] temp = new byte[4];
+      for (int i = 0; i < 4; i++) {
+        temp[i] = get(offset + i);
+      }
+      return ByteBuffer.wrap(temp).order(splices[0].order()).getInt();
+    }
+  }
+
+  @Override
+  public long getLong(long offset) {
+    long absoluteOffset = sliceBase + offset;
+    int spliceIndex = (int) (absoluteOffset / spliceSize);
+    int spliceOffset = (int) (absoluteOffset % spliceSize);
+
+    // Check if long value fits within current splice
+    if (spliceOffset + 8 <= spliceSize) {
+      return splices[spliceIndex].getLong(spliceOffset);
+    } else {
+      // Value spans splice boundary - read byte-by-byte
+      byte[] temp = new byte[8];
+      for (int i = 0; i < 8; i++) {
+        temp[i] = get(offset + i);
+      }
+      return ByteBuffer.wrap(temp).order(splices[0].order()).getLong();
+    }
+  }
+
+  @Override
   public long limit() {
     return limit;
   }
