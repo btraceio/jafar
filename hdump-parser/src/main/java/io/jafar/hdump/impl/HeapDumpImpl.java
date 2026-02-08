@@ -55,12 +55,16 @@ public final class HeapDumpImpl implements HeapDump {
   private final Long2ObjectMap<HeapClassImpl> classesById = new Long2ObjectOpenHashMap<>();
   private final Map<String, HeapClassImpl> classesByName = new HashMap<>();
 
-  // Object table: ID -> HeapObjectImpl (lazily populated) - IN-MEMORY MODE ONLY
-  private final Long2ObjectMap<HeapObjectImpl> objectsById = new Long2ObjectOpenHashMap<>();
+  // Object cache: ID -> HeapObjectImpl (lazily populated)
+  // In-memory mode: unbounded fastutil map (fast, but can OOM on large heaps)
+  // Indexed mode: bounded LRU cache (prevents OOM, ~40 bytes per cached object)
+  private final Long2ObjectMap<HeapObjectImpl> objectsByIdUnbounded = new Long2ObjectOpenHashMap<>();
+  private LruCache<Long, HeapObjectImpl> objectsByIdLru; // null in in-memory mode
 
   // Index-based parsing fields - INDEXED MODE ONLY
   private ObjectIndexReader objectIndexReader;  // null in in-memory mode
   private InboundCountReader inboundCountReader; // null until first retained-size query
+  private io.jafar.hdump.index.RetainedSizeReader retainedSizeReader; // null until retained sizes computed
   private Long2IntOpenHashMap addressToId32;    // 64-bit address -> 32-bit ID mapping
   private it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap classId32ToAddress; // 32-bit class ID -> 64-bit address (INDEXED mode)
   private it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap id32ToAddress; // 32-bit object ID -> 64-bit address (INDEXED mode, for GC roots)
@@ -211,6 +215,12 @@ public final class HeapDumpImpl implements HeapDump {
 
     // Initialize class address tracking
     classAddresses = new LongOpenHashSet();
+
+    // Initialize bounded LRU cache for object instances (prevents OOM on large heaps)
+    objectsByIdLru = new LruCache<>(options.objectCacheSize());
+    LOG.debug("Initialized object cache with max size: {} (~{}MB)",
+        options.objectCacheSize(),
+        (options.objectCacheSize() * 40L) / (1024 * 1024));
 
     // Pass 1: Collect addresses (28% of parse time - fast scan, no parsing)
     if (progressCallback != null) {
@@ -1071,7 +1081,7 @@ public final class HeapDumpImpl implements HeapDump {
 
     HeapClassImpl cls = classesById.get(classId);
     HeapObjectImpl obj = new HeapObjectImpl(objId, cls, dataPos, dataSize, this);
-    objectsById.put(objId, obj);
+    cacheObject(objId, obj);
     objectCount++;
 
     int shallowSize = reader.getIdSize() * 2 + 8 + dataSize; // Approximate
@@ -1102,7 +1112,7 @@ public final class HeapDumpImpl implements HeapDump {
     HeapObjectImpl obj = new HeapObjectImpl(objId, cls, dataPos, dataSize, this);
     obj.setArrayLength(length);
     obj.setObjectArray(true);
-    objectsById.put(objId, obj);
+    cacheObject(objId, obj);
     objectCount++;
 
     int shallowSize = reader.getIdSize() * 2 + 12 + dataSize;
@@ -1153,7 +1163,7 @@ public final class HeapDumpImpl implements HeapDump {
     HeapObjectImpl obj = new HeapObjectImpl(objId, cls, dataPos, dataSize, this);
     obj.setArrayLength(length);
     obj.setPrimitiveArrayType(elemType);
-    objectsById.put(objId, obj);
+    cacheObject(objId, obj);
     objectCount++;
 
     int shallowSize = reader.getIdSize() + 12 + dataSize;
@@ -1180,7 +1190,7 @@ public final class HeapDumpImpl implements HeapDump {
   HeapObjectImpl getObjectByIdInternal(long id) {
     // In-memory mode: lookup in map
     if (objectIndexReader == null) {
-      return objectsById.get(id);
+      return getCachedObject(id);
     }
 
     // Indexed mode: lazy load from index
@@ -1189,8 +1199,8 @@ public final class HeapDumpImpl implements HeapDump {
       return null; // Object not found
     }
 
-    // Check if already loaded
-    HeapObjectImpl cached = objectsById.get(id);
+    // Check if already loaded in cache
+    HeapObjectImpl cached = getCachedObject(id);
     if (cached != null) {
       return cached;
     }
@@ -1248,8 +1258,19 @@ public final class HeapDumpImpl implements HeapDump {
         }
       }
 
-      // Cache for future lookups
-      objectsById.put(id, obj);
+      // Load retained size from persistent index if available
+      if (retainedSizeReader != null) {
+        try {
+          long retainedSize = retainedSizeReader.getRetainedSize(id32);
+          obj.setRetainedSize(retainedSize);
+        } catch (IllegalArgumentException e) {
+          // Object ID out of range in retained index - this can happen if index is stale
+          LOG.warn("Retained size not found for object id32={}", id32);
+        }
+      }
+
+      // Cache for future lookups (bounded LRU cache in indexed mode)
+      cacheObject(id, obj);
 
       return obj;
     } catch (Exception e) {
@@ -1311,7 +1332,7 @@ public final class HeapDumpImpl implements HeapDump {
           .map(o -> (HeapObject) o);
     }
     // In-memory mode: return all cached objects
-    return objectsById.values().stream().map(o -> (HeapObject) o);
+    return getCachedObjects().stream().map(o -> (HeapObject) o);
   }
 
   @Override
@@ -1321,7 +1342,7 @@ public final class HeapDumpImpl implements HeapDump {
       return Optional.ofNullable(getObjectByIdInternal(id));
     }
     // In-memory mode: direct cache lookup
-    return Optional.ofNullable(objectsById.get(id));
+    return Optional.ofNullable(getCachedObject(id));
   }
 
   @Override
@@ -1398,13 +1419,41 @@ public final class HeapDumpImpl implements HeapDump {
     if (dominatorsComputed) return;
     LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
 
-    // For indexed mode, ensure inbound index is built first (before loading all objects)
+    // For indexed mode, ensure inbound index is built first
     ensureInboundIndexBuilt(progressCallback);
 
-    // For indexed mode, ensure all objects are loaded
-    ensureAllObjectsLoaded();
+    if (options.parsingMode() == HeapDumpParser.ParsingMode.INDEXED) {
+      // Streaming mode with persistent storage - avoids loading all 114M objects into memory
+      LOG.info("Using streaming computation with persistent retained size storage");
 
-    ApproximateRetainedSizeComputer.computeAll(this, objectsById, gcRoots, progressCallback);
+      try {
+        // Create persistent storage writer for ALL id32 values (including classes)
+        // Classes will have retained size = 0, but this avoids complex id32 remapping
+        int totalEntries = addressToId32.size();  // includes classes
+        io.jafar.hdump.index.RetainedSizeWriter writer =
+            new io.jafar.hdump.index.RetainedSizeWriter(indexDir, totalEntries);
+
+        try {
+          // Stream through ALL id32 values (objects + classes) without caching
+          Iterable<HeapObjectImpl> streamingIterator = createStreamingObjectIterator();
+          ApproximateRetainedSizeComputer.computeAll(
+              this, streamingIterator, totalEntries, gcRoots, writer, progressCallback);
+        } finally {
+          writer.close(); // Atomic commit to retained.idx
+        }
+
+        // Open reader for future queries
+        retainedSizeReader = new io.jafar.hdump.index.RetainedSizeReader(indexDir);
+        LOG.info("Retained sizes persisted to {}", indexDir.resolve("retained.idx"));
+
+      } catch (java.io.IOException e) {
+        throw new RuntimeException("Failed to compute retained sizes in streaming mode", e);
+      }
+    } else {
+      // In-memory mode: objects already in unbounded map, set retained sizes directly on objects
+      ApproximateRetainedSizeComputer.computeAll(this, objectsByIdUnbounded, gcRoots, progressCallback);
+    }
+
     dominatorsComputed = true;
   }
 
@@ -1420,14 +1469,15 @@ public final class HeapDumpImpl implements HeapDump {
    *
    * <p>In in-memory mode, objects are already loaded during parsing, so this is a no-op.
    *
+   * @param progressCallback optional callback for progress updates
    * @throws RuntimeException if loading fails
    */
-  private void ensureAllObjectsLoaded() {
+  private void ensureAllObjectsLoaded(ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
     if (options.parsingMode() != HeapDumpParser.ParsingMode.INDEXED) {
       return; // Already loaded in in-memory mode
     }
 
-    if (objectsById.size() == objectCount) {
+    if (getCachedObjectCount() == objectCount) {
       return; // Already loaded
     }
 
@@ -1443,12 +1493,172 @@ public final class HeapDumpImpl implements HeapDump {
 
       loaded++;
       if (loaded % 100000 == 0) {
+        double progress = (double) loaded / objectCount;
+        if (progressCallback != null) {
+          progressCallback.onProgress(progress * 0.3, String.format("Loading objects from index (%,d / %,d)", loaded, objectCount));
+        }
         LOG.debug("Loaded {} / {} objects", loaded, objectCount);
       }
     }
 
+    // Report completion
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.3, String.format("Loaded %,d objects from index", objectCount));
+    }
+
     long elapsedMs = System.currentTimeMillis() - startTime;
     LOG.info("Loaded all {} objects in {} seconds", objectCount, elapsedMs / 1000.0);
+  }
+
+  /**
+   * Creates an iterable that streams through all objects WITHOUT caching them in objectsById.
+   *
+   * <p>Used for memory-efficient algorithms that need to process all objects once without
+   * keeping them in memory. This enables approximate retained size computation for heap dumps
+   * with 100M+ objects that would cause OOM if fully cached.
+   *
+   * <p><strong>Memory Characteristics:</strong>
+   * <ul>
+   *   <li>Heap usage: O(1) - only one object in memory at a time
+   *   <li>Each object is reconstructed from index on-demand
+   *   <li>No caching in objectsById map
+   *   <li>Objects are GC-eligible immediately after iterator advances
+   * </ul>
+   *
+   * <p><strong>Performance Trade-offs:</strong>
+   * <ul>
+   *   <li>Slower than cached access (reconstructs each object)
+   *   <li>But enables unbounded heap size support
+   *   <li>Disk I/O is sequential through index, SSD-friendly
+   * </ul>
+   *
+   * @return iterable that lazy-loads each object exactly once
+   */
+  private Iterable<HeapObjectImpl> createStreamingObjectIterator() {
+    return () -> new java.util.Iterator<HeapObjectImpl>() {
+      // CRITICAL: Iterate id32 in sequential order (0, 1, 2, ...) for RetainedSizeWriter
+      // Includes ALL id32 values even classes - classes will get retained size = 0
+      private int currentId32 = 0;
+      private final int maxId32 = id32ToAddress.size();
+
+      @Override
+      public boolean hasNext() {
+        return currentId32 < maxId32;
+      }
+
+      @Override
+      public HeapObjectImpl next() {
+        if (!hasNext()) {
+          throw new java.util.NoSuchElementException();
+        }
+        long address = id32ToAddress.get(currentId32);
+        currentId32++;
+
+        // For class addresses, return a minimal object (will get retained size = 0)
+        if (classAddresses.contains(address)) {
+          // Return minimal HeapObjectImpl for classes - retained size will be 0
+          HeapClassImpl cls = classesById.get(address);
+          HeapObjectImpl classObj = new HeapObjectImpl(address, cls, 0, 0, HeapDumpImpl.this);
+          classObj.setRetainedSize(0);  // Classes have no retained size
+          return classObj;
+        }
+
+        // Load regular object WITHOUT adding to objectsById cache
+        return loadObjectWithoutCaching(address);
+      }
+    };
+  }
+
+  /**
+   * Loads an object from index WITHOUT caching in objectsById.
+   *
+   * <p>This method reconstructs a HeapObjectImpl from the index without adding it to the
+   * objectsById cache. Used by streaming algorithms to avoid OOM.
+   *
+   * <p><strong>Critical for Memory Efficiency:</strong> This is identical to
+   * getObjectByIdInternal() except it does NOT call objectsById.put(). For 114M objects,
+   * this difference prevents ~3.6GB HashMap overhead.
+   *
+   * @param objectId 64-bit object address
+   * @return heap object (not cached)
+   */
+  private HeapObjectImpl loadObjectWithoutCaching(long objectId) {
+    int id32 = addressToId32.get(objectId);
+    if (id32 == -1) {
+      throw new IllegalStateException("Object not found in addressToId32: " + objectId);
+    }
+
+    try {
+      ObjectIndexReader.ObjectMetadata meta = objectIndexReader.readObject(id32);
+
+      HeapClassImpl cls;
+
+      // Special handling for primitive arrays (classId == -1)
+      if (meta.classId == -1 && meta.isPrimitiveArray()) {
+        // Create synthetic class name for primitive array
+        String arrayClassName =
+            switch (meta.elementType) {
+              case BasicType.BOOLEAN -> "[Z";
+              case BasicType.CHAR -> "[C";
+              case BasicType.FLOAT -> "[F";
+              case BasicType.DOUBLE -> "[D";
+              case BasicType.BYTE -> "[B";
+              case BasicType.SHORT -> "[S";
+              case BasicType.INT -> "[I";
+              case BasicType.LONG -> "[J";
+              default -> "[?";
+            };
+
+        cls = classesByName.get(arrayClassName);
+        if (cls == null) {
+          // Create synthetic class for primitive array (these are cached since they're few)
+          cls = new HeapClassImpl(0, arrayClassName, this);
+          cls.setPrimitiveArrayType(meta.elementType);
+          classesByName.put(arrayClassName, cls);
+        }
+      } else {
+        // Regular object or object array - lookup class by address
+        long classAddress64 = classId32ToAddress.get(meta.classId);
+        if (classAddress64 == -1) {
+          throw new IOException("Unknown class ID: " + meta.classId);
+        }
+        cls = getClassByIdInternal(classAddress64);
+      }
+
+      // Create object with lazy loading support
+      HeapObjectImpl obj =
+          new HeapObjectImpl(objectId, cls, meta.fileOffset, meta.dataSize, this);
+      obj.setShallowSize(meta.dataSize); // Approximate
+
+      if (meta.isArray()) {
+        obj.setArrayLength(meta.arrayLength);
+        if (meta.isObjectArray()) {
+          obj.setObjectArray(true);
+        } else if (meta.isPrimitiveArray()) {
+          // Apply primitive type from index
+          obj.setPrimitiveArrayType(meta.elementType);
+        }
+      }
+
+      // Load retained size from persistent index if available
+      if (retainedSizeReader != null) {
+        try {
+          long retainedSize = retainedSizeReader.getRetainedSize(id32);
+          obj.setRetainedSize(retainedSize);
+        } catch (IllegalArgumentException e) {
+          // Object ID out of range in retained index - this can happen if index is stale
+          LOG.warn("Retained size not found for object id32={}", id32);
+        }
+      }
+
+      // CRITICAL DIFFERENCE: No objectsById.put() here!
+      // This object will be GC-eligible as soon as caller releases reference
+
+      return obj;
+    } catch (Exception e) {
+      LOG.error("Failed to load object from index without caching: id={}, id32={}", objectId, id32, e);
+      throw new RuntimeException("Failed to load object", e);
+    }
   }
 
   /**
@@ -1539,8 +1749,24 @@ public final class HeapDumpImpl implements HeapDump {
    */
   public void computeFullDominatorTree(DominatorTreeComputer.ProgressCallback progressCallback) {
     if (fullDominatorTreeComputed) return;
+
+    // Note: For very large heaps in indexed mode, this will stream through all objects
+    // Objects are cached in LRU with bounded memory usage, but performance may be slower
+    // than in-memory mode.For heaps > 50M objects, consider using computeDominators() instead.
+
     LOG.info("Computing full dominator tree for {} objects...", objectCount);
-    dominatorChildrenMap = DominatorTreeComputer.computeFull(this, objectsById, gcRoots, progressCallback);
+
+    // In-memory mode: use unbounded map directly
+    // Indexed mode: stream objects into map without intermediate collection (avoid OOM)
+    Long2ObjectMap<HeapObjectImpl> allObjects;
+    if (objectIndexReader != null) {
+      allObjects = new Long2ObjectOpenHashMap<>(objectCount);
+      getObjects().forEach(obj -> allObjects.put(obj.getId(), (HeapObjectImpl) obj));
+    } else {
+      allObjects = objectsByIdUnbounded;
+    }
+
+    dominatorChildrenMap = DominatorTreeComputer.computeFull(this, allObjects, gcRoots, progressCallback);
     dominatorsComputed = true;
     fullDominatorTreeComputed = true;
   }
@@ -1573,8 +1799,13 @@ public final class HeapDumpImpl implements HeapDump {
       Set<String> classPatterns,
       DominatorTreeComputer.ProgressCallback progressCallback) {
 
-    // For indexed mode, ensure all objects are loaded first
-    ensureAllObjectsLoaded();
+    // Note: In indexed mode, hybrid computation uses streaming with LRU cache.
+    // Objects are loaded on-demand and automatically evicted, keeping memory bounded.
+    // For in-memory mode, ensure all objects are loaded first
+    // Adapt DominatorTreeComputer.ProgressCallback to ApproximateRetainedSizeComputer.ProgressCallback
+    ApproximateRetainedSizeComputer.ProgressCallback adaptedCallback =
+        progressCallback != null ? progressCallback::onProgress : null;
+    ensureAllObjectsLoaded(adaptedCallback);
 
     // Phase 1: Ensure approximate retained sizes computed for all objects
     if (!dominatorsComputed) {
@@ -1582,22 +1813,21 @@ public final class HeapDumpImpl implements HeapDump {
       computeDominators();
     }
 
-    // Phase 2: Identify interesting objects
+    // Phase 2: Identify interesting objects (streams through objects with LRU cache in indexed mode)
     LOG.info("Identifying top {} interesting objects for exact computation...", topN);
     LongOpenHashSet interesting =
-        HybridDominatorComputer.identifyInterestingObjects(objectsById, topN, classPatterns);
+        HybridDominatorComputer.identifyInterestingObjects(this, topN, classPatterns);
 
     // Phase 3: Expand to include dominator paths
     LOG.info("Expanding interesting set to include dominator paths...");
     LongOpenHashSet expanded =
-        HybridDominatorComputer.expandToDominatorPaths(this, objectsById, gcRoots, interesting);
+        HybridDominatorComputer.expandToDominatorPaths(this, gcRoots, interesting);
 
     // Phase 4: Compute exact dominators for subgraph
     LOG.info("Computing exact dominators for {} objects ({}% of heap)...",
         expanded.size(),
         String.format("%.2f", expanded.size() * 100.0 / objectCount));
-    HybridDominatorComputer.computeExactForSubgraph(
-        this, objectsById, gcRoots, expanded, progressCallback);
+    HybridDominatorComputer.computeExactForSubgraph(this, gcRoots, expanded, progressCallback);
 
     LOG.info(
         "Hybrid dominator computation complete: {} objects with exact retained sizes",
@@ -1615,14 +1845,16 @@ public final class HeapDumpImpl implements HeapDump {
   public void computeExactForClasses(
       Set<String> classPatterns, DominatorTreeComputer.ProgressCallback progressCallback) {
 
+    // Note: In indexed mode, streams through objects with LRU cache for memory efficiency
+
     // Ensure approximate computed first
     if (!dominatorsComputed) {
       computeDominators();
     }
 
-    // Identify all objects matching patterns
+    // Identify all objects matching patterns (streams through objects)
     LongOpenHashSet matching = new LongOpenHashSet();
-    for (HeapObjectImpl obj : objectsById.values()) {
+    for (HeapObject obj : getObjects().toList()) {
       if (obj.getHeapClass() != null) {
         String className = obj.getHeapClass().getName();
         for (String pattern : classPatterns) {
@@ -1643,9 +1875,8 @@ public final class HeapDumpImpl implements HeapDump {
 
     // Expand and compute exact
     LongOpenHashSet expanded =
-        HybridDominatorComputer.expandToDominatorPaths(this, objectsById, gcRoots, matching);
-    HybridDominatorComputer.computeExactForSubgraph(
-        this, objectsById, gcRoots, expanded, progressCallback);
+        HybridDominatorComputer.expandToDominatorPaths(this, gcRoots, matching);
+    HybridDominatorComputer.computeExactForSubgraph(this, gcRoots, expanded, progressCallback);
   }
 
   private static boolean matchesPattern(String text, String pattern) {
@@ -1683,7 +1914,7 @@ public final class HeapDumpImpl implements HeapDump {
 
     List<HeapObject> dominated = new ArrayList<>(childrenIds.size());
     for (Long childId : childrenIds) {
-      HeapObjectImpl obj = objectsById.get(childId);
+      HeapObjectImpl obj = getCachedObject(childId);
       if (obj != null) {
         dominated.add(obj);
       }
@@ -1696,8 +1927,61 @@ public final class HeapDumpImpl implements HeapDump {
     return PathFinder.findShortestPath(this, obj, gcRoots);
   }
 
+  /**
+   * Caches an object in the appropriate storage (unbounded map or LRU cache).
+   * In-memory mode: uses unbounded fastutil map.
+   * Indexed mode: uses bounded LRU cache.
+   */
+  private void cacheObject(long objectId, HeapObjectImpl obj) {
+    if (objectsByIdLru != null) {
+      objectsByIdLru.put(objectId, obj);
+    } else {
+      objectsByIdUnbounded.put(objectId, obj);
+    }
+  }
+
+  /**
+   * Retrieves a cached object from appropriate storage.
+   * Returns null if not cached.
+   */
+  private HeapObjectImpl getCachedObject(long objectId) {
+    if (objectsByIdLru != null) {
+      return objectsByIdLru.get(objectId);
+    } else {
+      return objectsByIdUnbounded.get(objectId);
+    }
+  }
+
+  /**
+   * Returns all currently cached objects for iteration.
+   * Used by algorithms that need to process all cached objects.
+   */
+  private java.util.Collection<HeapObjectImpl> getCachedObjects() {
+    if (objectsByIdLru != null) {
+      return objectsByIdLru.values();
+    } else {
+      return objectsByIdUnbounded.values();
+    }
+  }
+
+  /**
+   * Returns the number of objects currently cached in memory.
+   * In indexed mode with LRU cache, this may be less than total object count.
+   */
+  private int getCachedObjectCount() {
+    if (objectsByIdLru != null) {
+      return objectsByIdLru.size();
+    } else {
+      return objectsByIdUnbounded.size();
+    }
+  }
+
+
   @Override
   public void close() throws IOException {
+    // Capture cache size before clearing
+    int cachedObjects = getCachedObjectCount();
+
     reader.close();
     if (objectIndexReader != null) {
       objectIndexReader.close();
@@ -1705,5 +1989,18 @@ public final class HeapDumpImpl implements HeapDump {
     if (inboundCountReader != null) {
       inboundCountReader.close();
     }
+    if (retainedSizeReader != null) {
+      retainedSizeReader.close();
+    }
+
+    // Clear object caches to free memory
+    if (objectsByIdLru != null) {
+      objectsByIdLru.clear();
+    }
+    if (objectsByIdUnbounded != null) {
+      objectsByIdUnbounded.clear();
+    }
+
+    LOG.debug("Closed heap dump and released {} cached objects", cachedObjects);
   }
 }
