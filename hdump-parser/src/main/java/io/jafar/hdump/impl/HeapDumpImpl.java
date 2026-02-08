@@ -1889,6 +1889,28 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /**
+   * Gets retained size from the index for a given object ID.
+   * Returns -1 if not available.
+   * Package-private for use by HeapObjectImpl.
+   */
+  long getRetainedSizeFromIndex(long objectId) {
+    if (retainedSizeReader == null || addressToId32 == null) {
+      return -1;
+    }
+
+    int id32 = addressToId32.get(objectId);
+    if (id32 == -1) {
+      return -1;
+    }
+
+    try {
+      return retainedSizeReader.getRetainedSize(id32);
+    } catch (IllegalArgumentException e) {
+      return -1;
+    }
+  }
+
+  /**
    * Computes approximate retained sizes with optional progress callback.
    *
    * @param progressCallback optional callback for progress updates

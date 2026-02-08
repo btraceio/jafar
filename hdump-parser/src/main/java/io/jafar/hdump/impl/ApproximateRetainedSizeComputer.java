@@ -100,8 +100,8 @@ public final class ApproximateRetainedSizeComputer {
 
       computed++;
 
-      // Report progress every 5% or every 100K objects (whichever is less frequent)
-      if (progressCallback != null && computed % Math.max(totalObjects / 20, 100000) == 0) {
+      // Report progress every 1% or every 50K objects (whichever is less frequent)
+      if (progressCallback != null && computed % Math.max(totalObjects / 100, 50000) == 0) {
         double progress = 0.3 + (0.7 * (computed / (double) totalObjects));
         int percentComplete = (int) (progress * 100);
         if (percentComplete > lastReportedPercent) {
@@ -185,8 +185,8 @@ public final class ApproximateRetainedSizeComputer {
       obj.setRetainedSize(approxRetained);
       computed++;
 
-      // Report progress every 5% or every 100K objects (whichever is less frequent)
-      if (progressCallback != null && computed % Math.max(totalObjects / 20, 100000) == 0) {
+      // Report progress every 1% or every 50K objects (whichever is less frequent)
+      if (progressCallback != null && computed % Math.max(totalObjects / 100, 50000) == 0) {
         double progress = 0.3 + (0.7 * (computed / (double) totalObjects));
         int percentComplete = (int) (progress * 100);
         if (percentComplete > lastReportedPercent) {

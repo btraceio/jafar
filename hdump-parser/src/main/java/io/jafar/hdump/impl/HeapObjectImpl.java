@@ -102,6 +102,8 @@ final class HeapObjectImpl implements HeapObject {
     // Auto-compute retained sizes on first access if not available
     if (retainedSize == -1 && dump != null) {
       dump.ensureRetainedSizesComputed();
+      // After computation, read from index in indexed mode
+      retainedSize = dump.getRetainedSizeFromIndex(id);
     }
     return retainedSize;
   }

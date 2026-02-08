@@ -224,14 +224,8 @@ public final class HdumpPathEvaluator {
       if ("key".equals(op.sortBy())) {
         sortColumn = op.groupFields().get(0); // Sort by first group field
       } else if ("value".equals(op.sortBy())) {
-        // Translate to aggregation result column name
-        sortColumn = switch (op.aggregation()) {
-          case COUNT -> "count";
-          case SUM -> "sum";
-          case AVG -> "avg";
-          case MIN -> "min";
-          case MAX -> "max";
-        };
+        // Use same logic as toResultMap() to determine actual column name
+        sortColumn = getAggregationColumnName(op);
       } else {
         sortColumn = op.sortBy(); // Use as-is (shouldn't happen based on parser)
       }
@@ -527,13 +521,17 @@ public final class HdumpPathEvaluator {
         result.put(op.groupFields().get(i), key.get(i));
       }
 
+      // Determine column name for aggregation result
+      // If aggregating a memory field, use the field name to trigger memory formatting
+      String aggColumnName = HdumpPathEvaluator.getAggregationColumnName(op);
+
       // Add aggregation value
       switch (op.aggregation()) {
-        case COUNT -> result.put("count", count);
-        case SUM -> result.put("sum", sum);
-        case AVG -> result.put("avg", count > 0 ? sum / count : 0.0);
-        case MIN -> result.put("min", min);
-        case MAX -> result.put("max", max);
+        case COUNT -> result.put(aggColumnName, count);
+        case SUM -> result.put(aggColumnName, sum);
+        case AVG -> result.put(aggColumnName, count > 0 ? sum / count : 0.0);
+        case MIN -> result.put(aggColumnName, min);
+        case MAX -> result.put(aggColumnName, max);
       }
 
       return result;
@@ -1203,7 +1201,9 @@ public final class HdumpPathEvaluator {
                     .filter(v -> !Double.isNaN(v))
                     .toArray();
             if (values.length > 0) {
-              applyAggregation(row, op.aggregation(), values);
+              // Extract field name from valueExpr if it's a simple field reference
+              String fieldName = extractFieldNameFromExpr(valueExpr);
+              applyAggregation(row, op.aggregation(), values, fieldName);
             }
           } else {
             // Fall back to first numeric field
@@ -1216,7 +1216,7 @@ public final class HdumpPathEvaluator {
                       .mapToDouble(v -> ((Number) v).doubleValue())
                       .toArray();
               if (values.length > 0) {
-                applyAggregation(row, op.aggregation(), values);
+                applyAggregation(row, op.aggregation(), values, valueField);
               }
             }
           }
@@ -1257,30 +1257,87 @@ public final class HdumpPathEvaluator {
     return null;
   }
 
-  private static void applyAggregation(Map<String, Object> row, AggOp aggOp, double[] values) {
+  private static void applyAggregation(Map<String, Object> row, AggOp aggOp, double[] values, String valueField) {
+    // Use field name as column name if it's a memory field, otherwise use aggregation name
+    String columnName;
+    if (valueField != null && isMemoryFieldName(valueField)) {
+      columnName = valueField;
+    } else {
+      columnName = switch (aggOp) {
+        case COUNT -> "count";
+        case SUM -> "sum";
+        case AVG -> "avg";
+        case MIN -> "min";
+        case MAX -> "max";
+      };
+    }
+
     switch (aggOp) {
       case SUM -> {
         double sum = 0;
         for (double v : values) sum += v;
-        row.put("sum", sum);
+        row.put(columnName, sum);
       }
       case AVG -> {
         double sum = 0;
         for (double v : values) sum += v;
-        row.put("avg", sum / values.length);
+        row.put(columnName, sum / values.length);
       }
       case MIN -> {
         double min = Double.MAX_VALUE;
         for (double v : values) if (v < min) min = v;
-        row.put("min", min);
+        row.put(columnName, min);
       }
       case MAX -> {
         double max = Double.MIN_VALUE;
         for (double v : values) if (v > max) max = v;
-        row.put("max", max);
+        row.put(columnName, max);
       }
       default -> {}
     }
+  }
+
+  /** Checks if a field name indicates memory values. */
+  private static boolean isMemoryFieldName(String fieldName) {
+    if (fieldName == null) return false;
+    String lower = fieldName.toLowerCase();
+    return lower.endsWith("size")
+        || lower.contains("shallow")
+        || lower.contains("retained")
+        || lower.contains("memory")
+        || lower.equals("bytes");
+  }
+
+  /**
+   * Gets the column name for an aggregation result.
+   * If aggregating a memory field, returns the field name to trigger memory formatting.
+   * Otherwise returns standard aggregation names (sum, avg, etc.).
+   */
+  private static String getAggregationColumnName(GroupByOp op) {
+    // Try to extract field name from valueExpr
+    String fieldName = extractFieldNameFromExpr(op.valueExpr());
+
+    // If it's a memory-related field, use the field name to trigger memory formatting
+    if (fieldName != null && isMemoryFieldName(fieldName)) {
+      return fieldName;
+    }
+
+    // Otherwise use standard aggregation names
+    return switch (op.aggregation()) {
+      case COUNT -> "count";
+      case SUM -> "sum";
+      case AVG -> "avg";
+      case MIN -> "min";
+      case MAX -> "max";
+    };
+  }
+
+  /** Extracts field name from a ValueExpr if it's a simple field reference. */
+  private static String extractFieldNameFromExpr(io.jafar.shell.core.expr.ValueExpr expr) {
+    if (expr instanceof io.jafar.shell.core.expr.FieldRef ref) {
+      return ref.field();
+    }
+    return null;
   }
 
   private static List<Map<String, Object>> applyCount(List<Map<String, Object>> results) {
@@ -1298,7 +1355,9 @@ public final class HdumpPathEvaluator {
             .sum();
 
     Map<String, Object> row = new LinkedHashMap<>();
-    row.put("sum", sum);
+    // Use field name if it's a memory field, otherwise use "sum"
+    String columnName = isMemoryFieldName(op.field()) ? op.field() : "sum";
+    row.put(columnName, sum);
     return List.of(row);
   }
 
@@ -1312,11 +1371,13 @@ public final class HdumpPathEvaluator {
             .summaryStatistics();
 
     Map<String, Object> row = new LinkedHashMap<>();
+    // For stats, use field name as prefix if it's a memory field
+    boolean isMemory = isMemoryFieldName(op.field());
     row.put("count", stats.getCount());
-    row.put("sum", stats.getSum());
-    row.put("min", stats.getMin());
-    row.put("max", stats.getMax());
-    row.put("avg", stats.getAverage());
+    row.put(isMemory ? op.field() + "_sum" : "sum", stats.getSum());
+    row.put(isMemory ? op.field() + "_min" : "min", stats.getMin());
+    row.put(isMemory ? op.field() + "_max" : "max", stats.getMax());
+    row.put(isMemory ? op.field() + "_avg" : "avg", stats.getAverage());
     return List.of(row);
   }
 
