@@ -236,6 +236,20 @@ public final class HeapDumpImpl implements HeapDump {
       // Parse class metadata (needed for queries)
       parseAllClasses(progressCallback);
 
+      // Load inbound index if available (avoids rebuild on first retained size query)
+      Path inboundIndexPath = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
+      if (Files.exists(inboundIndexPath)) {
+        try {
+          inboundCountReader = new InboundCountReader(indexDir);
+          inboundIndexBuilt = true;
+          LOG.debug("Loaded pre-built inbound index from {}", inboundIndexPath);
+        } catch (java.io.IOException e) {
+          LOG.warn("Failed to load inbound.idx, will rebuild on first query: {}", e.getMessage());
+          inboundCountReader = null;
+          inboundIndexBuilt = false;
+        }
+      }
+
       // Load retained sizes if available (avoids recomputation on first query)
       Path retainedIndexPath = indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME);
       if (Files.exists(retainedIndexPath)) {
