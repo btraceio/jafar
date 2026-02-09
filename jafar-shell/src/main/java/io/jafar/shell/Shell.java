@@ -1,10 +1,12 @@
 package io.jafar.shell;
 
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.InteractiveMenu;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -219,6 +221,37 @@ public final class Shell implements AutoCloseable {
 
         if (input.startsWith("show ")) {
           handleShow(input.substring(5).trim());
+          continue;
+        }
+
+        if (input.equals("checkLeaks()")) {
+          // Launch interactive wizard
+          Optional<SessionManager.SessionRef> current = sessions.getCurrent();
+          if (current.isPresent()) {
+            Object session = current.get().session;
+            if (session.getClass().getName().endsWith(".HeapSession")) {
+              try {
+                // Use reflection to call runLeakDetectionWizard
+                var menuClass = Class.forName("io.jafar.shell.core.InteractiveMenu");
+                var menuConstructor = menuClass.getConstructor(Terminal.class, LineReader.class);
+                Object menu = menuConstructor.newInstance(terminal, lineReader);
+
+                var wizardMethod =
+                    session.getClass().getMethod("runLeakDetectionWizard", menuClass);
+                wizardMethod.invoke(session, menu);
+              } catch (Exception e) {
+                terminal.writer().println("Error launching wizard: " + e.getMessage());
+                e.printStackTrace();
+              }
+            } else {
+              terminal.writer().println("checkLeaks() requires an active heap dump session");
+              terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
+            }
+          } else {
+            terminal.writer().println("checkLeaks() requires an active heap dump session");
+            terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
+          }
+          terminal.writer().flush();
           continue;
         }
 

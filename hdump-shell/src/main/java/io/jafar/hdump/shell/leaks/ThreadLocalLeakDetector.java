@@ -21,7 +21,7 @@ public final class ThreadLocalLeakDetector implements LeakDetector {
     List<Map<String, Object>> results = new ArrayList<>();
 
     // Find ThreadLocal instances
-    dump.getObjectsOfClass("java.lang.ThreadLocal")
+    dump.getObjectsOfClass("java/lang/ThreadLocal")
         .filter(obj -> obj.getRetainedSize() >= minRetainedBytes)
         .forEach(
             obj -> {

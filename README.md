@@ -8,7 +8,6 @@ JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for par
 
 ## Requirements
 - Java 21+
-- Git LFS (recordings are stored with LFS). Install per GitHub docs: `https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage`
 
 ## Build
 1) Fetch binary resources: `./get_resources.sh`

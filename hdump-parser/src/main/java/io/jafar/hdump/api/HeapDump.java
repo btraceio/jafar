@@ -36,7 +36,20 @@ public interface HeapDump extends Closeable {
   /** Returns a class by its ID. */
   Optional<HeapClass> getClassById(long id);
 
-  /** Returns a class by its fully qualified name. */
+  /**
+   * Returns a class by its name.
+   *
+   * <p><strong>Important:</strong> Class names must be in <em>internal format</em> (e.g., {@code
+   * "java/lang/String"}), not qualified format ({@code "java.lang.String"}). This matches the
+   * native format stored in HPROF files.
+   *
+   * <p>Use {@link io.jafar.hdump.util.ClassNameUtil#toInternal(String)} to convert from qualified
+   * format if needed.
+   *
+   * @param name class name in internal format (slash-delimited, e.g., {@code "java/lang/String"})
+   * @return the class, or empty if not found
+   * @see io.jafar.hdump.util.ClassNameUtil#toInternal(String)
+   */
   Optional<HeapClass> getClassByName(String name);
 
   /** Returns classes matching the given predicate. */
@@ -53,7 +66,18 @@ public interface HeapDump extends Closeable {
   /** Returns objects of the given class (exact match, not including subclasses). */
   Stream<HeapObject> getObjectsOfClass(HeapClass cls);
 
-  /** Returns objects of the given class (exact match, not including subclasses). */
+  /**
+   * Returns objects of the given class (exact match, not including subclasses).
+   *
+   * <p><strong>Important:</strong> Class name must be in <em>internal format</em> (e.g., {@code
+   * "java/lang/String"}), not qualified format ({@code "java.lang.String"}).
+   *
+   * @param className class name in internal format (slash-delimited, e.g., {@code
+   *     "java/lang/String"})
+   * @return stream of objects of the specified class
+   * @see #getClassByName(String)
+   * @see io.jafar.hdump.util.ClassNameUtil#toInternal(String)
+   */
   default Stream<HeapObject> getObjectsOfClass(String className) {
     return getClassByName(className).map(this::getObjectsOfClass).orElse(Stream.empty());
   }

@@ -1,4 +1,4 @@
-package io.jafar.shell;
+package io.jafar.shell.core;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -9,7 +9,7 @@ import java.util.Map;
  * Formats query results as simple column-aligned output (like Unix ps/ls). Provides better
  * readability than JSON and is scriptable (no box-drawing characters).
  */
-final class TableFormatter {
+public final class TableFormatter {
 
   private static final int MAX_CELL_WIDTH = 40;
   private static final int MAX_ROWS_DEFAULT = 100;
@@ -22,7 +22,7 @@ final class TableFormatter {
    * @param maxRows maximum rows to display (remaining count shown)
    * @return formatted table string
    */
-  static String formatTable(List<?> results, int maxRows) {
+  public static String formatTable(List<?> results, int maxRows) {
     if (results.isEmpty()) {
       return "(no results)\n";
     }
@@ -351,7 +351,7 @@ final class TableFormatter {
   }
 
   /** Formats results with default max rows. */
-  static String formatTable(List<?> results) {
+  public static String formatTable(List<?> results) {
     return formatTable(results, MAX_ROWS_DEFAULT);
   }
 

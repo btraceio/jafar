@@ -16,15 +16,15 @@ public final class GrowingCollectionsDetector implements LeakDetector {
 
   private static final Set<String> COLLECTION_CLASSES =
       Set.of(
-          "java.util.HashMap",
-          "java.util.ArrayList",
-          "java.util.HashSet",
-          "java.util.LinkedHashMap",
-          "java.util.TreeMap",
-          "java.util.LinkedList",
-          "java.util.ConcurrentHashMap",
-          "java.util.concurrent.ConcurrentHashMap",
-          "java.util.WeakHashMap");
+          "java/util/HashMap",
+          "java/util/ArrayList",
+          "java/util/HashSet",
+          "java/util/LinkedHashMap",
+          "java/util/TreeMap",
+          "java/util/LinkedList",
+          "java/util/ConcurrentHashMap",
+          "java/util/concurrent/ConcurrentHashMap",
+          "java/util/WeakHashMap");
 
   @Override
   public List<Map<String, Object>> detect(HeapDump dump, Integer threshold, Integer minSize) {

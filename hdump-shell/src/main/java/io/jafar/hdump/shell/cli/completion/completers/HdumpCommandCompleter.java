@@ -12,7 +12,7 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
 
   private static final String[] COMMANDS = {
     "show", "open", "close", "use", "sessions", "info", "help", "exit", "quit", "set", "let",
-    "vars", "unset"
+    "vars", "unset", "checkLeaks"
   };
 
   @Override
@@ -28,7 +28,9 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
     for (String cmd : COMMANDS) {
       if (cmd.startsWith(partial)) {
         String description = getCommandDescription(cmd);
-        candidates.add(candidate(cmd, cmd, description));
+        // For checkLeaks, suggest with opening parenthesis to indicate it's a function call
+        String completion = cmd.equals("checkLeaks") ? "checkLeaks(" : cmd;
+        candidates.add(candidate(completion, cmd, description));
       }
     }
   }
@@ -46,6 +48,7 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
       case "set", "let" -> "set a variable";
       case "vars" -> "list variables";
       case "unset" -> "remove a variable";
+      case "checkLeaks" -> "run interactive leak detection wizard";
       default -> null;
     };
   }

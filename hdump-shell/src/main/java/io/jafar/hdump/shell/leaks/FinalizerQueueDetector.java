@@ -28,7 +28,7 @@ public final class FinalizerQueueDetector implements LeakDetector {
     Map<String, Integer> finalizerCountsByClass = new HashMap<>();
     int[] totalFinalizers = {0}; // Array for capturing in lambda
 
-    dump.getObjectsOfClass("java.lang.ref.Finalizer")
+    dump.getObjectsOfClass("java/lang/ref/Finalizer")
         .forEach(
             finalizer -> {
               totalFinalizers[0]++;

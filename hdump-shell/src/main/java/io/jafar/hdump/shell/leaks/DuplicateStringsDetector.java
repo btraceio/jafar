@@ -22,7 +22,7 @@ public final class DuplicateStringsDetector implements LeakDetector {
     // Group strings by value - store only metrics to avoid OOME
     Map<String, StringGroupMetrics> stringsByValue = new HashMap<>();
 
-    dump.getObjectsOfClass("java.lang.String")
+    dump.getObjectsOfClass("java/lang/String")
         .forEach(
             obj -> {
               String value = obj.getStringValue();

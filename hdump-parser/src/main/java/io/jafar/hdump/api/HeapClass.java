@@ -11,7 +11,15 @@ public interface HeapClass {
   /** Returns the class ID (unique within this heap dump). */
   long getId();
 
-  /** Returns the fully qualified class name (e.g., "java.lang.String"). */
+  /**
+   * Returns the class name in internal format (e.g., {@code "java/lang/String"}).
+   *
+   * <p>This matches the native format stored in HPROF files. To display to users, convert to
+   * qualified format using {@link io.jafar.hdump.util.ClassNameUtil#toQualified(String)}.
+   *
+   * @return class name in internal format (slash-delimited)
+   * @see io.jafar.hdump.util.ClassNameUtil#toQualified(String)
+   */
   String getName();
 
   /** Returns the simple class name (e.g., "String"). */

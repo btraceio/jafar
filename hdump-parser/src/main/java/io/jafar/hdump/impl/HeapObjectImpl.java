@@ -366,7 +366,7 @@ final class HeapObjectImpl implements HeapObject {
 
   @Override
   public String getStringValue() {
-    if (heapClass == null || !"java.lang.String".equals(heapClass.getName())) {
+    if (heapClass == null || !"java/lang/String".equals(heapClass.getName())) {
       return null;
     }
 
