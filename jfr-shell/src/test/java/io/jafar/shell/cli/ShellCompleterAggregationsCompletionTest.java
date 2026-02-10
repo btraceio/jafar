@@ -17,14 +17,14 @@ class ShellCompleterAggregationsCompletionTest {
   @Test
   void suggestsPipelineFunctions() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
           return s;
         };
-    SessionManager sm = new SessionManager(ctx, factory);
+    SessionManager sm = new SessionManager(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);
@@ -41,14 +41,14 @@ class ShellCompleterAggregationsCompletionTest {
   @Test
   void suggestsQuantilesTemplates() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
           return s;
         };
-    SessionManager sm = new SessionManager(ctx, factory);
+    SessionManager sm = new SessionManager(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);

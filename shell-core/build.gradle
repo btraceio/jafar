@@ -1,0 +1,53 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
+}
+
+def libraryName = "shell-core"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // JLine for terminal handling (REPL)
+    api 'org.jline:jline-terminal:3.21.0'
+    api 'org.jline:jline-reader:3.21.0'
+
+    // Command line parsing
+    api 'info.picocli:picocli:4.7.5'
+
+    // Utilities
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+
+    // JSON processing
+    api 'com.google.code.gson:gson:2.10.1'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Shared shell infrastructure for Jafar analysis tools'
+
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-shell-core', version.toString())
+}

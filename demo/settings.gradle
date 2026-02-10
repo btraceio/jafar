@@ -16,10 +16,10 @@ pluginManagement {
     }
 }
 
-// Include parent build to get access to parser module
+// Include parent build to get access to jfr-parser module
 includeBuild('..') {
     dependencySubstitution {
-        substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+        substitute(module("io.btrace:jafar-parser")).using(project(":jfr-parser"))
     }
 }
 

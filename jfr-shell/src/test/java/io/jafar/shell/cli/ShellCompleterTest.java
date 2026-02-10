@@ -66,13 +66,13 @@ class ShellCompleterTest {
   @Test
   void suggestsCommandsAndSessions() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           return s;
         };
-    SessionManager sm = new SessionManager(ctx, factory);
+    SessionManager sm = new SessionManager(factory, ctx);
     sm.open(Path.of("/tmp/one.jfr"), "one");
 
     ShellCompleter completer = new ShellCompleter(sm, null);

@@ -47,16 +47,17 @@ class CommandDispatcherTest {
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
+          when(s.getFilePath()).thenReturn(path);
           when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of());
           when(s.getHandlerCount()).thenReturn(0);
           when(s.hasRun()).thenReturn(false);
           return s;
         };
-    sm = new SessionManager(ctx, factory);
+    sm = new SessionManager(factory, ctx);
     io = new BufferIO();
     dispatcher = new CommandDispatcher(sm, io, r -> {});
   }

@@ -9,6 +9,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -125,7 +127,7 @@ public final class PluginManager {
   }
 
   /**
-   * Install a plugin from Maven repositories.
+   * Install a plugin from Maven repositories (simple, no dependency handling).
    *
    * <p>This downloads the plugin JAR from Maven Central/Sonatype, verifies its checksum, and
    * installs it to the plugin storage directory.
@@ -135,6 +137,125 @@ public final class PluginManager {
    */
   public void installPlugin(String pluginId) throws PluginInstallException {
     installer.install(pluginId);
+  }
+
+  /**
+   * Install a plugin with full dependency resolution.
+   *
+   * <p>This resolves all dependencies, prompts for recommended plugins, and installs in the correct
+   * order. Circular dependencies are detected and reported.
+   *
+   * @param pluginId Plugin identifier (e.g., "jdk")
+   * @param confirmRecommendations Callback to confirm recommended plugins. Called with list of
+   *     recommended plugin IDs, should return list of those to install. Pass null to skip
+   *     recommendations.
+   * @param progressCallback Callback for installation progress messages. Pass null to suppress.
+   * @return List of installed plugins in installation order
+   * @throws PluginInstallException if installation fails
+   */
+  public List<String> installPluginWithDependencies(
+      String pluginId,
+      Function<List<String>, List<String>> confirmRecommendations,
+      Consumer<String> progressCallback)
+      throws PluginInstallException {
+    return installer.installWithDependencies(pluginId, confirmRecommendations, progressCallback);
+  }
+
+  /**
+   * Uninstall a plugin.
+   *
+   * <p>This removes the plugin from storage. If other plugins depend on this plugin, the
+   * uninstallation is blocked unless force is true.
+   *
+   * @param pluginId Plugin identifier (e.g., "jdk")
+   * @param force If true, uninstall even if other plugins depend on this one
+   * @throws PluginInstallException if uninstallation fails or blocked by dependents
+   */
+  public void uninstallPlugin(String pluginId, boolean force) throws PluginInstallException {
+    try {
+      Map<String, PluginMetadata> installed = storageManager.loadInstalled();
+
+      if (!installed.containsKey(pluginId.toLowerCase())) {
+        throw new PluginInstallException("Plugin not installed: " + pluginId);
+      }
+
+      // Check for dependents
+      DependencyResolver resolver = new DependencyResolver(registry, installed);
+      List<String> dependents = resolver.findDependents(pluginId.toLowerCase());
+
+      if (!dependents.isEmpty() && !force) {
+        throw new PluginInstallException(
+            "Cannot uninstall '"
+                + pluginId
+                + "': the following plugins depend on it: "
+                + String.join(", ", dependents)
+                + ". Use --force to override.");
+      }
+
+      if (!dependents.isEmpty()) {
+        log.warn(
+            "Force uninstalling '{}' despite dependents: {}",
+            pluginId,
+            String.join(", ", dependents));
+      }
+
+      // Remove from installed.json
+      PluginMetadata metadata = installed.remove(pluginId.toLowerCase());
+      storageManager.saveInstalled(installed);
+
+      // Delete plugin files
+      Path versionDir = storageManager.getPluginVersionDir(metadata);
+      if (Files.exists(versionDir)) {
+        Files.walk(versionDir)
+            .sorted((a, b) -> b.compareTo(a)) // Delete files before directories
+            .forEach(
+                path -> {
+                  try {
+                    Files.deleteIfExists(path);
+                  } catch (IOException e) {
+                    log.warn("Failed to delete {}: {}", path, e.getMessage());
+                  }
+                });
+      }
+
+      log.info("Uninstalled plugin: {}", pluginId);
+
+    } catch (IOException e) {
+      throw new PluginInstallException("Failed to uninstall plugin: " + e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Get dependencies for a plugin.
+   *
+   * @param pluginId Plugin identifier
+   * @return List of hard dependencies, or empty list if plugin not found
+   */
+  public List<String> getPluginDependencies(String pluginId) {
+    return registry.get(pluginId).map(PluginRegistry.PluginDefinition::depends).orElse(List.of());
+  }
+
+  /**
+   * Get recommended plugins for a plugin.
+   *
+   * @param pluginId Plugin identifier
+   * @return List of recommended plugins, or empty list if plugin not found
+   */
+  public List<String> getPluginRecommendations(String pluginId) {
+    return registry
+        .get(pluginId)
+        .map(PluginRegistry.PluginDefinition::recommends)
+        .orElse(List.of());
+  }
+
+  /**
+   * Get capabilities provided by a plugin.
+   *
+   * @param pluginId Plugin identifier
+   * @return List of capabilities, or empty list if plugin not found
+   */
+  public List<String> getPluginProvides(String pluginId) {
+    return registry.get(pluginId).map(PluginRegistry.PluginDefinition::provides).orElse(List.of());
   }
 
   /**

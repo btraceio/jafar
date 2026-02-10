@@ -1,5 +1,6 @@
 package io.jafar.shell.cli;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextAnalyzer;
 import io.jafar.shell.cli.completion.ContextCompleter;
@@ -250,7 +251,7 @@ public final class ShellCompleter implements Completer {
         // Suggest type names after 'metadata class '
         if (sessions.getCurrent().isPresent()) {
           String cur = line.word();
-          for (String t : sessions.getCurrent().get().session.getAllMetadataTypes()) {
+          for (String t : ((JFRSession) sessions.getCurrent().get().session).getAllMetadataTypes()) {
             if (t.startsWith(cur)) {
               candidates.add(new Candidate(t));
             }
@@ -307,7 +308,7 @@ public final class ShellCompleter implements Completer {
     // Constant pool type completion
     if (sessions.getCurrent().isPresent()) {
       String cur = line.word();
-      for (String t : sessions.getCurrent().get().session.getAvailableConstantPoolTypes()) {
+      for (String t : ((JFRSession) sessions.getCurrent().get().session).getAvailableConstantPoolTypes()) {
         if (t.startsWith(cur)) {
           candidates.add(new Candidate(t));
         }

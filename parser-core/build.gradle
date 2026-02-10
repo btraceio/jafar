@@ -1,0 +1,99 @@
+plugins {
+    id 'java-library'
+    id 'com.vanniktech.maven.publish'
+}
+
+def libraryName = "jafar-parser-core"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        // Target Java 8 bytecode for maximum compatibility
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+// Multi-Release JAR setup: provide Java 13/21 overrides under META-INF/versions/<ver>
+sourceSets {
+    java13 {
+        java {
+            srcDirs = ["src/java13/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java21 {
+        java {
+            srcDirs = ["src/java21/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    java13Implementation {
+        extendsFrom configurations.implementation
+    }
+    java21Implementation {
+        extendsFrom configurations.implementation
+    }
+}
+
+tasks.register('compileJava13', JavaCompile) {
+    source = sourceSets.java13.java
+    classpath = sourceSets.java13.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java13"))
+    options.release.set(13)
+}
+
+tasks.register('compileJava21', JavaCompile) {
+    source = sourceSets.java21.java
+    classpath = sourceSets.java21.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java21"))
+    options.release.set(21)
+}
+
+// Ensure multi-release classes are compiled before packaging
+tasks.named('jar') {
+    dependsOn tasks.named('compileJava13')
+    dependsOn tasks.named('compileJava21')
+    manifest { attributes('Multi-Release': 'true') }
+    from(layout.buildDirectory.dir('classes/java/java13')) {
+        into('META-INF/versions/13')
+    }
+    from(layout.buildDirectory.dir('classes/java/java21')) {
+        into('META-INF/versions/21')
+    }
+}
+
+// Use Java 21 compiler for tests
+def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
+def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('test') {
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Core parsing utilities shared by Jafar parsers'
+
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-parser-core', version.toString())
+}

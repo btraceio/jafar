@@ -77,7 +77,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName)) return;
               Map<String, Object> map = ev.value;
@@ -89,7 +89,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName)) return;
               Map<String, Object> map = ev.value;
@@ -105,7 +105,7 @@ public final class JfrPathEvaluator {
         // No type specified: load all metadata types and filter
         // This handles: metadata or metadata/[filter]
         List<Map<String, Object>> allMetadata =
-            MetadataProvider.loadAllClasses(session.getRecordingPath());
+            MetadataProvider.loadAllClasses(session.getFilePath());
         if (query.predicates.isEmpty()) {
           return allMetadata;
         }
@@ -119,7 +119,7 @@ public final class JfrPathEvaluator {
       }
       // Specific type: metadata/TypeName or metadata/TypeName[filter]
       String typeName = query.segments.get(0);
-      Map<String, Object> meta = MetadataProvider.loadClass(session.getRecordingPath(), typeName);
+      Map<String, Object> meta = MetadataProvider.loadClass(session.getFilePath(), typeName);
       if (meta == null) return java.util.Collections.emptyList();
       if (matchesAll(meta, query.predicates)) {
         return java.util.List.of(meta);
@@ -136,7 +136,7 @@ public final class JfrPathEvaluator {
         // show chunks/0 - specific chunk by ID
         try {
           int chunkId = Integer.parseInt(query.segments.get(0));
-          Map<String, Object> chunk = ChunkProvider.loadChunk(session.getRecordingPath(), chunkId);
+          Map<String, Object> chunk = ChunkProvider.loadChunk(session.getFilePath(), chunkId);
           if (chunk == null) return java.util.Collections.emptyList();
           return matchesAll(chunk, query.predicates)
               ? java.util.List.of(chunk)
@@ -147,10 +147,10 @@ public final class JfrPathEvaluator {
       }
       // show chunks or show chunks[filter]
       if (query.predicates.isEmpty()) {
-        return ChunkProvider.loadAllChunks(session.getRecordingPath());
+        return ChunkProvider.loadAllChunks(session.getFilePath());
       } else {
         return ChunkProvider.loadChunks(
-            session.getRecordingPath(), row -> matchesAll(row, query.predicates));
+            session.getFilePath(), row -> matchesAll(row, query.predicates));
       }
     } else if (query.root == Root.CP) {
       if (!ConstantPoolProvider.isSupported()) {
@@ -161,9 +161,9 @@ public final class JfrPathEvaluator {
       if (!query.segments.isEmpty()) {
         String type = query.segments.get(0);
         return ConstantPoolProvider.loadEntries(
-            session.getRecordingPath(), type, row -> matchesAll(row, query.predicates));
+            session.getFilePath(), type, row -> matchesAll(row, query.predicates));
       } else {
-        return ConstantPoolProvider.loadSummary(session.getRecordingPath());
+        return ConstantPoolProvider.loadSummary(session.getFilePath());
       }
     } else {
       throw new UnsupportedOperationException("Unsupported root: " + query.root);
@@ -188,7 +188,7 @@ public final class JfrPathEvaluator {
 
     List<Map<String, Object>> out = new ArrayList<>();
     try (UntypedJafarParser p =
-        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
+        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getFilePath())) {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
@@ -242,7 +242,7 @@ public final class JfrPathEvaluator {
       List<String> proj = query.segments.subList(1, query.segments.size());
       List<Object> out = new ArrayList<>();
       source.streamEvents(
-          session.getRecordingPath(),
+          session.getFilePath(),
           ev -> {
             if (!eventType.equals(ev.typeName)) return; // filter type
             Map<String, Object> map = ev.value;
@@ -260,7 +260,7 @@ public final class JfrPathEvaluator {
       }
       String typeName = query.segments.get(0);
       List<String> proj = query.segments.subList(1, query.segments.size());
-      Map<String, Object> meta = MetadataProvider.loadClass(session.getRecordingPath(), typeName);
+      Map<String, Object> meta = MetadataProvider.loadClass(session.getFilePath(), typeName);
       if (meta == null) return java.util.Collections.emptyList();
       if (!matchesAll(meta, query.predicates)) return java.util.Collections.emptyList();
       // Special handling: 'fields[/<name>[/...]]' maps to fieldsByName
@@ -343,7 +343,7 @@ public final class JfrPathEvaluator {
       if (query.segments.isEmpty()) {
         throw new IllegalArgumentException("No projection path provided after 'chunks'");
       }
-      List<Map<String, Object>> rows = ChunkProvider.loadAllChunks(session.getRecordingPath());
+      List<Map<String, Object>> rows = ChunkProvider.loadAllChunks(session.getFilePath());
       List<Object> out = new ArrayList<>();
       for (Map<String, Object> row : rows) {
         extractWithIndexing(row, query.segments, out);
@@ -358,7 +358,7 @@ public final class JfrPathEvaluator {
       if (query.segments.isEmpty()) {
         // projection from summary rows
         List<Map<String, Object>> rows =
-            ConstantPoolProvider.loadSummary(session.getRecordingPath());
+            ConstantPoolProvider.loadSummary(session.getFilePath());
         List<Object> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
           Object v = Values.get(r, query.segments.toArray());
@@ -370,7 +370,7 @@ public final class JfrPathEvaluator {
         String type = query.segments.get(0);
         List<Map<String, Object>> rows =
             ConstantPoolProvider.loadEntries(
-                session.getRecordingPath(), type, r -> matchesAll(r, query.predicates));
+                session.getFilePath(), type, r -> matchesAll(r, query.predicates));
         List<String> proj = query.segments.subList(1, query.segments.size());
         List<Object> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
@@ -580,6 +580,45 @@ public final class JfrPathEvaluator {
     return null;
   }
 
+  /**
+   * Recursively unwraps "simple types" - maps with exactly one attribute. Continues unwrapping
+   * until reaching a non-map value or a map with multiple attributes.
+   */
+  private static Object unwrapSimpleType(Object v) {
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG] unwrapSimpleType() called");
+      System.err.println("[DEBUG]   input: " + v);
+      System.err.println("[DEBUG]   input type: " + (v != null ? v.getClass().getName() : "null"));
+      if (v instanceof java.util.Map<?, ?> m) {
+        System.err.println("[DEBUG]   is Map: true, size=" + m.size() + ", keys=" + m.keySet());
+      }
+    }
+
+    while (v instanceof java.util.Map<?, ?> m) {
+      if (m.size() == 1) {
+        // Get the single value and recurse
+        Object next = m.values().iterator().next();
+        if (System.getProperty("jfr.shell.query.debug") != null) {
+          System.err.println("[DEBUG]   unwrapping single-key map, next value: " + next);
+        }
+        v = next;
+      } else {
+        // Multiple attributes - stop unwrapping
+        if (System.getProperty("jfr.shell.query.debug") != null) {
+          System.err.println("[DEBUG]   stopping unwrap: map has " + m.size() + " keys");
+        }
+        break;
+      }
+    }
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG]   unwrapped result: " + v);
+      System.err.println("[DEBUG]   result type: " + (v != null ? v.getClass().getName() : "null"));
+    }
+
+    return v;
+  }
+
   private record Slice(int start, int end) {}
 
   // Aggregations
@@ -595,7 +634,7 @@ public final class JfrPathEvaluator {
           case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb -> aggregateGroupBy(
-              session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+              session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.valueExpr, gb.sortBy, gb.ascending);
           case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
@@ -730,7 +769,7 @@ public final class JfrPathEvaluator {
     }
 
     // Load chunk metadata to get timing info for conversion
-    List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getRecordingPath());
+    List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getFilePath());
     if (chunks.isEmpty()) {
       throw new IllegalStateException("No chunks found in recording");
     }
@@ -759,7 +798,7 @@ public final class JfrPathEvaluator {
       if (query.isMultiType) {
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -784,7 +823,7 @@ public final class JfrPathEvaluator {
       } else {
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1112,7 +1151,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               if (matchesAll(ev.value(), query.predicates)) c[0]++;
@@ -1121,7 +1160,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               if (matchesAll(ev.value(), query.predicates)) c[0]++;
@@ -1171,7 +1210,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1183,7 +1222,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1227,7 +1266,7 @@ public final class JfrPathEvaluator {
       String eventType = query.segments.get(0);
       List<String> path = vpath;
       source.streamEvents(
-          session.getRecordingPath(),
+          session.getFilePath(),
           ev -> {
             if (!eventType.equals(ev.typeName())) return;
             Map<String, Object> map = ev.value();
@@ -1292,7 +1331,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1307,7 +1346,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1344,6 +1383,7 @@ public final class JfrPathEvaluator {
       List<String> keyPath,
       String aggFunc,
       List<String> valuePath,
+      JfrPath.Expr valueExpr,
       String sortBy,
       boolean ascending)
       throws Exception {
@@ -1351,7 +1391,8 @@ public final class JfrPathEvaluator {
 
     // Pre-build path tokens for array iteration support
     List<Object> keyTokens = buildPathTokens(keyPath);
-    List<Object> valueTokens = valuePath.isEmpty() ? null : buildPathTokens(valuePath);
+    List<Object> valueTokens =
+        (valuePath.isEmpty() && valueExpr == null) ? null : buildPathTokens(valuePath);
 
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1364,7 +1405,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1378,6 +1419,12 @@ public final class JfrPathEvaluator {
 
                 if ("count".equals(aggFunc)) {
                   acc.add(1);
+                } else if (valueExpr != null) {
+                  // Use expression evaluation
+                  Object val = evaluateExpression(valueExpr, map);
+                  if (val instanceof Number n) {
+                    acc.add(n.doubleValue());
+                  }
                 } else {
                   List<Object> vals =
                       valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
@@ -1393,7 +1440,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1407,6 +1454,12 @@ public final class JfrPathEvaluator {
 
                 if ("count".equals(aggFunc)) {
                   acc.add(1);
+                } else if (valueExpr != null) {
+                  // Use expression evaluation
+                  Object val = evaluateExpression(valueExpr, map);
+                  if (val instanceof Number n) {
+                    acc.add(n.doubleValue());
+                  }
                 } else {
                   List<Object> vals =
                       valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
@@ -1431,6 +1484,12 @@ public final class JfrPathEvaluator {
 
           if ("count".equals(aggFunc)) {
             acc.add(1);
+          } else if (valueExpr != null) {
+            // Use expression evaluation
+            Object val = evaluateExpression(valueExpr, row);
+            if (val instanceof Number n) {
+              acc.add(n.doubleValue());
+            }
           } else {
             List<Object> vals =
                 valueTokens == null ? List.of() : extractAllValues(row, valueTokens);
@@ -1584,7 +1643,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1596,7 +1655,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1668,7 +1727,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1680,7 +1739,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1753,7 +1812,7 @@ public final class JfrPathEvaluator {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1765,7 +1824,7 @@ public final class JfrPathEvaluator {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
         source.streamEvents(
-            session.getRecordingPath(),
+            session.getFilePath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
@@ -1809,7 +1868,7 @@ public final class JfrPathEvaluator {
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
       source.streamEvents(
-          session.getRecordingPath(),
+          session.getFilePath(),
           ev -> {
             if (!eventType.equals(ev.typeName())) return;
             Map<String, Object> map = ev.value();
@@ -1853,7 +1912,7 @@ public final class JfrPathEvaluator {
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
       source.streamEvents(
-          session.getRecordingPath(),
+          session.getFilePath(),
           ev -> {
             if (!eventType.equals(ev.typeName())) return;
             Map<String, Object> map = ev.value();
@@ -1943,7 +2002,7 @@ public final class JfrPathEvaluator {
     List<String> proj = query.segments.subList(1, query.segments.size());
     List<Object> out = new ArrayList<>();
     try (UntypedJafarParser p =
-        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
+        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getFilePath())) {
       p.handle(
           (type, value, ctl) -> {
             if (!eventType.equals(type.getName())) return;
@@ -1984,6 +2043,8 @@ public final class JfrPathEvaluator {
       Map<String, Object> root, io.jafar.shell.jfrpath.JfrPath.BoolExpr expr) {
     if (expr instanceof io.jafar.shell.jfrpath.JfrPath.CompExpr ce) {
       Object val = evalValueExpr(root, ce.lhs);
+      // Unwrap simple types before comparison
+      val = unwrapSimpleType(val);
       return compare(val, ce.op, ce.literal);
     } else if (expr instanceof io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr fb) {
       String n = fb.name.toLowerCase(java.util.Locale.ROOT);
@@ -2106,7 +2167,15 @@ public final class JfrPathEvaluator {
       current = at.getArray();
     }
     if (idx >= path.size()) {
-      // At leaf; apply comparison to current
+      // At leaf; unwrap simple types (single-value maps) and apply comparison
+      if (System.getProperty("jfr.shell.query.debug") != null) {
+        System.err.println("[DEBUG] deepMatch() at leaf");
+        System.err.println("[DEBUG]   before unwrap: " + current + " (type: " + (current != null ? current.getClass().getName() : "null") + ")");
+      }
+      current = unwrapSimpleType(current);
+      if (System.getProperty("jfr.shell.query.debug") != null) {
+        System.err.println("[DEBUG]   after unwrap: " + current + " (type: " + (current != null ? current.getClass().getName() : "null") + ")");
+      }
       return compare(current, op, lit);
     }
     String seg = path.get(idx);
@@ -2191,17 +2260,39 @@ public final class JfrPathEvaluator {
 
   private static boolean compare(Object actual, Op op, Object lit) {
     if (actual == null) return false;
-    return switch (op) {
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG] compare()");
+      System.err.println("[DEBUG]   actual: " + actual + " (type: " + actual.getClass().getName() + ")");
+      System.err.println("[DEBUG]   op: " + op);
+      System.err.println("[DEBUG]   lit: " + lit);
+    }
+
+    boolean result = switch (op) {
       case EQ -> Objects.equals(coerce(actual, lit), lit);
       case NE -> !Objects.equals(coerce(actual, lit), lit);
       case GT -> compareNum(actual, lit) > 0;
       case GE -> compareNum(actual, lit) >= 0;
       case LT -> compareNum(actual, lit) < 0;
       case LE -> compareNum(actual, lit) <= 0;
-      case REGEX -> String.valueOf(actual).matches(String.valueOf(lit));
+      case REGEX -> {
+        String actualStr = String.valueOf(actual);
+        String pattern = String.valueOf(lit);
+        boolean matches = actualStr.matches(pattern);
+        if (System.getProperty("jfr.shell.query.debug") != null) {
+          System.err.println("[DEBUG]   REGEX: \"" + actualStr + "\" matches \"" + pattern + "\" = " + matches);
+        }
+        yield matches;
+      }
       case PLUS, MINUS, MULT, DIV -> throw new IllegalArgumentException(
           "Arithmetic operators not supported in comparisons");
     };
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG]   result: " + result);
+    }
+
+    return result;
   }
 
   private static Object coerce(Object actual, Object lit) {
@@ -2239,12 +2330,12 @@ public final class JfrPathEvaluator {
 
     // PASS 1: Collect decorator events with time ranges
     List<DecoratorTimeRange> decorators =
-        collectTimeRangeDecorators(session.getRecordingPath(), op);
+        collectTimeRangeDecorators(session.getFilePath(), op);
 
     // PASS 2: Stream primary events and decorate
     List<Map<String, Object>> result = new ArrayList<>();
     source.streamEvents(
-        session.getRecordingPath(),
+        session.getFilePath(),
         ev -> {
           if (!primaryType.equals(ev.typeName())) return;
           if (!matchesAll(ev.value(), query.predicates)) return;
@@ -2344,12 +2435,12 @@ public final class JfrPathEvaluator {
 
     // PASS 1: Collect decorator events indexed by correlation key
     Map<Object, List<Map<String, Object>>> decoratorIndex =
-        collectKeyedDecorators(session.getRecordingPath(), op);
+        collectKeyedDecorators(session.getFilePath(), op);
 
     // PASS 2: Stream primary events and decorate
     List<Map<String, Object>> result = new ArrayList<>();
     source.streamEvents(
-        session.getRecordingPath(),
+        session.getFilePath(),
         ev -> {
           if (!primaryType.equals(ev.typeName())) return;
           if (!matchesAll(ev.value(), query.predicates)) return;
@@ -2622,7 +2713,7 @@ public final class JfrPathEvaluator {
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
       case JfrPath.GroupByOp gb -> applyGroupBy(
-          rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+          rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.valueExpr, gb.sortBy, gb.ascending);
       case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
@@ -2720,6 +2811,7 @@ public final class JfrPathEvaluator {
       List<String> keyPath,
       String aggFunc,
       List<String> valuePath,
+      JfrPath.Expr valueExpr,
       String sortBy,
       boolean ascending) {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
@@ -2730,6 +2822,12 @@ public final class JfrPathEvaluator {
 
       if ("count".equals(aggFunc)) {
         acc.add(0); // Just increment count
+      } else if (valueExpr != null) {
+        // Use expression evaluation
+        Object val = evaluateExpression(valueExpr, row);
+        if (val instanceof Number n) {
+          acc.add(n.doubleValue());
+        }
       } else {
         Object val =
             valuePath.isEmpty()

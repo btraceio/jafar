@@ -4,13 +4,19 @@
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jdk",
       "latestVersion": "0.1.0-SNAPSHOT",
-      "repository": "sonatype-snapshots"
+      "repository": "sonatype-snapshots",
+      "depends": [],
+      "recommends": [],
+      "provides": ["jfr-backend"]
     },
     "jafar": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jafar",
       "latestVersion": "0.1.0-SNAPSHOT",
-      "repository": "sonatype-snapshots"
+      "repository": "sonatype-snapshots",
+      "depends": [],
+      "recommends": [],
+      "provides": ["jfr-backend"]
     }
   }
 }

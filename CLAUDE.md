@@ -26,7 +26,7 @@ Key architectural components:
 
 ### Prerequisites
 - Java 21+
-- Git LFS (for test recordings): `git lfs pull`
+- Test resources: Run `./get_resources.sh` before first build
 
 ### Essential Commands
 ```bash

@@ -1,5 +1,6 @@
 package io.jafar.shell.cli.completion;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
@@ -35,14 +36,14 @@ public final class MetadataService {
 
   /** Get the current recording path, or null if no session. */
   public Path getRecordingPath() {
-    return sessions.getCurrent().map(entry -> entry.session.getRecordingPath()).orElse(null);
+    return sessions.getCurrent().map(entry -> entry.session.getFilePath()).orElse(null);
   }
 
   /** Get all available event type names from the current session. */
   public Set<String> getEventTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableEventTypes())
+        .map(entry -> ((JFRSession) entry.session).getAvailableEventTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -50,7 +51,7 @@ public final class MetadataService {
   public Set<String> getAllMetadataTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAllMetadataTypes())
+        .map(entry -> ((JFRSession) entry.session).getAllMetadataTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -58,7 +59,7 @@ public final class MetadataService {
   public Set<String> getConstantPoolTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableConstantPoolTypes())
+        .map(entry -> ((JFRSession) entry.session).getAvailableConstantPoolTypes())
         .orElse(Collections.emptySet());
   }
 
@@ -66,7 +67,7 @@ public final class MetadataService {
   public List<Integer> getChunkIds() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableChunkIds())
+        .map(entry -> ((JFRSession) entry.session).getAvailableChunkIds())
         .orElse(Collections.emptyList());
   }
 
@@ -164,6 +165,11 @@ public final class MetadataService {
   public Map<String, Object> getMetadata(String typeName) {
     Path currentPath = getRecordingPath();
     if (currentPath == null) {
+      if (System.getProperty("jfr.shell.completion.debug") != null) {
+        System.err.println(
+            "[DEBUG] MetadataService.getMetadata(): No recording path, session="
+                + sessions.getCurrent().map(s -> s.session.getType()).orElse("none"));
+      }
       return null;
     }
 
@@ -177,8 +183,26 @@ public final class MetadataService {
         typeName,
         name -> {
           try {
-            return MetadataProvider.loadClass(currentPath, name);
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println("[DEBUG] Loading metadata for: " + name + " from " + currentPath);
+            }
+            Map<String, Object> result = MetadataProvider.loadClass(currentPath, name);
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println(
+                  "[DEBUG] Metadata loaded: " + (result != null ? "SUCCESS" : "NULL"));
+              if (result != null) {
+                System.err.println("[DEBUG] Has fieldsByName: " + result.containsKey("fieldsByName"));
+              }
+            }
+            return result;
           } catch (Exception e) {
+            if (System.getProperty("jfr.shell.completion.debug") != null) {
+              System.err.println(
+                  "[DEBUG] MetadataProvider.loadClass() threw exception: "
+                      + e.getClass().getName());
+              System.err.println("[DEBUG] Message: " + e.getMessage());
+              e.printStackTrace(System.err);
+            }
             // Return null for types that can't be loaded
             return null;
           }

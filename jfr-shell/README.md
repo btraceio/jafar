@@ -137,7 +137,7 @@ show events/jdk.FileRead/bytes | stats()
 show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)
 
 # Files read from /tmp
-show events/jdk.FileRead[path~"/tmp/.*"] --limit 20
+show events/jdk.FileRead[path ~ '/tmp/.*'] --limit 20  # Raw string for regex
 ```
 
 ### GC Analysis
@@ -176,7 +176,7 @@ chunks --summary
 cp jdk.types.Symbol
 
 # Find specific symbols
-show cp/jdk.types.Symbol[string~"java/lang/.*"]
+show cp/jdk.types.Symbol[string ~ 'java/lang/.*']  # Raw string for regex
 ```
 
 ## Non-Interactive Mode
@@ -514,6 +514,20 @@ JfrPath is a concise path-based query language for JFR data:
 - `chunks` - Chunk information
 - `cp/<type>` - Constant pool entries (e.g., `cp/jdk.types.Symbol`)
 
+### String Literals
+
+JfrPath supports two forms of string literals:
+
+**Single quotes `'...'` - Raw strings (recommended for regex)**:
+- Backslashes are literal (no escape processing)
+- Only `\'` is processed (escaped single quote)
+- Perfect for regex patterns: `'worker-\d+'` instead of `"worker-\\d+"`
+
+**Double quotes `"..."` - Escape processing**:
+- Process escape sequences: `\"`, `\\`, `\n`, `\t`
+- Required for string templates: `"${field} value"`
+- Regex needs double backslash: `"worker-\\d+"`
+
 ### Filters
 
 Simple comparisons:
@@ -526,7 +540,7 @@ Boolean expressions with functions:
 ```
 [contains(path, "substring")]
 [startsWith(path, "prefix")]
-[matches(path, "regex")]
+[matches(path, 'regex')]               # Raw string for regex
 [exists(path)]
 [empty(path)]
 [between(value, min, max)]
@@ -537,7 +551,7 @@ Logic operators: `and`, `or`, `not`, parentheses
 
 List matching:
 ```
-[any:stackTrace/frames[matches(method/name/string, ".*Foo.*")]]
+[any:stackTrace/frames[matches(method/name/string, '.*Foo.*')]]  # Raw string for regex
 [all:items[value>100]]
 [none:items[error=true]]
 ```

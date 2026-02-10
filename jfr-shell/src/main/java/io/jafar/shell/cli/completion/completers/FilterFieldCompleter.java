@@ -105,17 +105,22 @@ public final class FilterFieldCompleter implements ContextCompleter {
     }
 
     // Suggest field names
+    List<String> matchingFields = new java.util.ArrayList<>();
     if (lookupType != null && !lookupType.isEmpty()) {
       List<String> fieldNames = metadata.getFieldNames(lookupType);
       for (String fieldName : fieldNames) {
         if (fieldName.toLowerCase().startsWith(partial.toLowerCase())) {
           candidates.add(noSpace(fullPrefix + nestedPath + fieldName));
+          matchingFields.add(fieldName);
         }
       }
     }
 
-    // Suggest operators if we have a field typed
-    if (!fieldPath.isEmpty() && !fieldPath.endsWith("/")) {
+    // Suggest operators only if the partial text exactly matches a complete field name
+    // (not just a prefix of multiple fields)
+    boolean isCompleteFieldName =
+        !partial.isEmpty() && matchingFields.size() == 1 && matchingFields.get(0).equals(partial);
+    if (isCompleteFieldName) {
       for (String op : OPERATORS) {
         candidates.add(noSpace(currentWord + op));
       }

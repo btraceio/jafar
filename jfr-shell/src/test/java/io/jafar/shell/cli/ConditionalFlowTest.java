@@ -58,16 +58,17 @@ class ConditionalFlowTest {
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession session = Mockito.mock(JFRSession.class);
           Mockito.when(session.getRecordingPath()).thenReturn(path);
+          Mockito.when(session.getFilePath()).thenReturn(path);
           Mockito.when(session.getAvailableEventTypes()).thenReturn(java.util.Set.of());
           Mockito.when(session.getHandlerCount()).thenReturn(0);
           Mockito.when(session.hasRun()).thenReturn(false);
           return session;
         };
-    sm = new SessionManager(ctx, factory);
+    sm = new SessionManager(factory, ctx);
     io = new BufferIO();
     dispatcher = new CommandDispatcher(sm, io, ref -> {});
   }

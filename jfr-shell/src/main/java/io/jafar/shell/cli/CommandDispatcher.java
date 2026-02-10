@@ -6,7 +6,6 @@ import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
-import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -249,7 +248,7 @@ public class CommandDispatcher {
               + ref.id
               + (ref.alias != null ? " (" + ref.alias + ")" : "")
               + ": "
-              + ref.session.getRecordingPath());
+              + ref.session.getFilePath());
     }
     listener.onCurrentSessionChanged(ref);
   }
@@ -268,7 +267,7 @@ public class CommandDispatcher {
           isCurrent ? "*" : " ",
           ref.id,
           ref.alias != null ? ref.alias : "",
-          String.valueOf(ref.session.getRecordingPath()));
+          String.valueOf(ref.session.getFilePath()));
     }
   }
 
@@ -327,9 +326,9 @@ public class CommandDispatcher {
         return;
       }
     }
-    JFRSession s = ref.get().session;
+    JFRSession s = (JFRSession) ref.get().session;
     io.println("Session Information:");
-    io.println("  Recording: " + s.getRecordingPath());
+    io.println("  Recording: " + s.getFilePath());
     io.println("  Event Types: " + s.getAvailableEventTypes().size());
     io.println("  Handlers: " + s.getHandlerCount());
     io.println("  Has Run: " + s.hasRun());
@@ -524,7 +523,7 @@ public class CommandDispatcher {
 
     // Evaluate
     if (selector != null) {
-      List<java.util.Map<String, Object>> rows = selector.select(cur.get().session, expr);
+      List<java.util.Map<String, Object>> rows = selector.select((JFRSession) cur.get().session, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -539,7 +538,7 @@ public class CommandDispatcher {
     var eval = new JfrPathEvaluator(listMatchMode);
     // If aggregation pipeline present, always evaluate as rows (preempts other handlers)
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
-      var rows = eval.evaluate(cur.get().session, q);
+      var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -574,13 +573,13 @@ public class CommandDispatcher {
         }
         if (fieldName != null && !fieldName.isEmpty()) {
           TreeRenderer.renderFieldRecursive(
-              cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+              cur.get().session.getFilePath(), typeName, fieldName, io, maxDepth);
           return;
         }
       }
       // Otherwise, render the class tree for the requested type
       TreeRenderer.renderMetadataRecursive(
-          cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+          cur.get().session.getFilePath(), typeName, io, maxDepth);
       return;
     }
     if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty() && q.predicates.isEmpty()) {
@@ -593,7 +592,7 @@ public class CommandDispatcher {
       String fieldName = q.segments.get(1);
       if ("fields".equals(fieldName) || "fieldsByName".equals(fieldName)) {
         // Delegate to generic evaluator to support 'fields' and 'fieldsByName'
-        var values = eval.evaluateValues(cur.get().session, q);
+        var values = eval.evaluateValues((JFRSession) cur.get().session, q);
         if (limit != null && limit < values.size()) values = values.subList(0, limit);
         if ("json".equalsIgnoreCase(format)) {
           printJson(values, io);
@@ -606,7 +605,7 @@ public class CommandDispatcher {
       }
       var evalMeta = new JfrPathEvaluator();
       Map<String, Object> fm =
-          evalMeta.loadFieldMetadata(cur.get().session.getRecordingPath(), typeName, fieldName);
+          evalMeta.loadFieldMetadata(cur.get().session.getFilePath(), typeName, fieldName);
       if (fm == null) {
         io.println("(no rows)");
       } else {
@@ -628,8 +627,8 @@ public class CommandDispatcher {
     if (q.segments.size() > 1) {
       var values =
           (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateValuesWithLimit(cur.get().session, q, limit)
-              : eval.evaluateValues(cur.get().session, q);
+              ? eval.evaluateValuesWithLimit((JFRSession) cur.get().session, q, limit)
+              : eval.evaluateValues((JFRSession) cur.get().session, q);
       if (limit != null && limit < values.size()) values = values.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(values, io);
@@ -641,8 +640,8 @@ public class CommandDispatcher {
     } else {
       var rows =
           (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateWithLimit(cur.get().session, q, limit)
-              : eval.evaluate(cur.get().session, q);
+              ? eval.evaluateWithLimit((JFRSession) cur.get().session, q, limit)
+              : eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -1176,7 +1175,7 @@ public class CommandDispatcher {
       io.error("Failed to refresh types: " + e.getMessage());
       return;
     }
-    var sess = cur.get().session;
+    JFRSession sess = (JFRSession) cur.get().session;
     java.util.Set<String> all =
         primitives ? sess.getPrimitiveMetadataTypes() : sess.getNonPrimitiveMetadataTypes();
     java.util.Set<String> events = sess.getAvailableEventTypes();
@@ -1241,7 +1240,7 @@ public class CommandDispatcher {
             + nonEventsCnt
             + "]:");
     for (String t : types) {
-      Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+      Long typeId = ((JFRSession) cur.get().session).getMetadataTypeIds().get(t);
       String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
       io.println("  " + idStr + " - " + t);
     }
@@ -1297,7 +1296,7 @@ public class CommandDispatcher {
     }
     Map<String, Object> meta;
     try {
-      meta = MetadataProvider.loadClass(cur.get().session.getRecordingPath(), typeName);
+      meta = MetadataProvider.loadClass(cur.get().session.getFilePath(), typeName);
     } catch (Exception e) {
       io.error("Failed to load metadata: " + e.getMessage());
       return;
@@ -1314,7 +1313,7 @@ public class CommandDispatcher {
     if (tree) {
       // For --tree, render recursively starting from the requested type
       TreeRenderer.renderMetadataRecursive(
-          cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+          cur.get().session.getFilePath(), typeName, io, maxDepth);
       return;
     }
     if (fields) {
@@ -1396,7 +1395,7 @@ public class CommandDispatcher {
 
     if (summary) {
       Map<String, Object> stats =
-          ChunkProvider.getChunkSummary(cur.get().session.getRecordingPath());
+          ChunkProvider.getChunkSummary(cur.get().session.getFilePath());
       if ("json".equalsIgnoreCase(format)) {
         printJson(List.of(stats), io);
       } else if ("csv".equalsIgnoreCase(format)) {
@@ -1406,7 +1405,7 @@ public class CommandDispatcher {
       }
     } else {
       List<Map<String, Object>> chunks =
-          ChunkProvider.loadAllChunks(cur.get().session.getRecordingPath());
+          ChunkProvider.loadAllChunks(cur.get().session.getFilePath());
 
       // Apply range filter if provided: --range 0-5
       if (range != null) {
@@ -1464,7 +1463,7 @@ public class CommandDispatcher {
     }
 
     Map<String, Object> chunk =
-        ChunkProvider.loadChunk(cur.get().session.getRecordingPath(), chunkIndex);
+        ChunkProvider.loadChunk(cur.get().session.getFilePath(), chunkIndex);
 
     if (chunk == null) {
       io.error("Chunk " + chunkIndex + " not found");
@@ -1504,7 +1503,7 @@ public class CommandDispatcher {
     if (cleanArgs.isEmpty() || summary) {
       // cp or cp --summary: show type summary
       List<Map<String, Object>> summaryRows =
-          ConstantPoolProvider.loadSummary(cur.get().session.getRecordingPath());
+          ConstantPoolProvider.loadSummary(cur.get().session.getFilePath());
       if ("json".equalsIgnoreCase(format)) {
         printJson(summaryRows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
@@ -1516,7 +1515,7 @@ public class CommandDispatcher {
       // cp <type>: list entries
       String typeName = cleanArgs.get(0);
       List<Map<String, Object>> entries =
-          ConstantPoolProvider.loadEntries(cur.get().session.getRecordingPath(), typeName);
+          ConstantPoolProvider.loadEntries(cur.get().session.getFilePath(), typeName);
 
       // Apply range filter if needed
       if (range != null) {
@@ -1679,8 +1678,13 @@ public class CommandDispatcher {
         // Copy the variable value with independent state
         // For LazyQueryValue, create a new instance so each variable has independent cache
         Value valueToCopy = existingValue;
-        if (existingValue instanceof VariableStore.LazyQueryValue lazyValue) {
-          valueToCopy = lazyValue.copy();
+        if (existingValue instanceof LazyQueryValue lazyValue) {
+          Optional<SessionManager.SessionRef> cur = sessions.current();
+          if (cur.isEmpty()) {
+            io.error("No session open for variable copy");
+            return;
+          }
+          valueToCopy = lazyValue.copy(cur.get());
         }
         store.set(varName, valueToCopy);
         if (verbose) {
@@ -1718,7 +1722,7 @@ public class CommandDispatcher {
       // Scalar-producing query: evaluate immediately and store as scalar
       try {
         JfrPathEvaluator evaluator = new JfrPathEvaluator();
-        Object result = evaluator.evaluate(cur.get().session, query);
+        Object result = evaluator.evaluate((JFRSession) cur.get().session, query);
         Object scalarValue = extractScalarIfSingle(result);
         if (scalarValue != null) {
           store.set(varName, new ScalarValue(scalarValue));
@@ -1727,7 +1731,7 @@ public class CommandDispatcher {
           }
         } else {
           // Fallback: store as lazy (shouldn't happen for scalar queries)
-          LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+          LazyQueryValue lqv = new LazyQueryValue(exprPart, cur.get(), exprPart);
           lqv.setCachedResult(result);
           store.set(varName, lqv);
           if (verbose) {
@@ -1741,7 +1745,7 @@ public class CommandDispatcher {
       // Map-producing query: evaluate and store as MapValue
       try {
         JfrPathEvaluator evaluator = new JfrPathEvaluator();
-        Object result = evaluator.evaluate(cur.get().session, query);
+        Object result = evaluator.evaluate((JFRSession) cur.get().session, query);
 
         // Extract map from single-element list result
         if (result instanceof List<?> list && list.size() == 1) {
@@ -1759,7 +1763,7 @@ public class CommandDispatcher {
         }
 
         // Fallback: store as lazy if not a clean map result
-        LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+        LazyQueryValue lqv = new LazyQueryValue(exprPart, cur.get(), exprPart);
         lqv.setCachedResult(result);
         store.set(varName, lqv);
         if (verbose) {
@@ -1770,7 +1774,7 @@ public class CommandDispatcher {
       }
     } else {
       // Non-scalar query: store as lazy (not evaluated until accessed)
-      LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+      LazyQueryValue lqv = new LazyQueryValue(exprPart, cur.get(), exprPart);
       store.set(varName, lqv);
       if (verbose) {
         io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");

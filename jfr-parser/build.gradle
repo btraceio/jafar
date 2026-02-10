@@ -1,0 +1,260 @@
+plugins {
+    id 'java-library'
+    id 'com.vanniktech.maven.publish'
+}
+
+def libraryName="jafar-parser"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+}
+
+java {
+    toolchain {
+        // Target Java 8 bytecode for the parser module
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+// Multi-Release JAR setup: provide Java 9/13/21 overrides under META-INF/versions/<ver>
+sourceSets {
+    java9 {
+        java {
+            srcDirs = ["src/java9/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java13 {
+        java {
+            srcDirs = ["src/java13/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    java21 {
+        java {
+            srcDirs = ["src/java21/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    test8 {
+        java {
+            srcDirs = ["src/test8/java"]
+        }
+        resources {
+            // Reuse existing test resources (e.g., test-ap.jfr)
+            srcDirs = ["src/test/resources"]
+        }
+        compileClasspath += sourceSets.main.output + configurations.testCompileClasspath
+        runtimeClasspath += output + sourceSets.main.runtimeClasspath + configurations.testRuntimeClasspath
+    }
+    jmh {
+        java {
+            srcDirs = ["src/main/jmh/java"]
+        }
+        resources {
+            srcDirs = ["src/test/resources"]
+        }
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    java9Implementation {
+        extendsFrom configurations.implementation
+    }
+    java13Implementation {
+        extendsFrom configurations.implementation
+    }
+    java21Implementation {
+        extendsFrom configurations.implementation
+    }
+    test8Implementation {
+        extendsFrom configurations.testImplementation
+    }
+    test8RuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
+    }
+    jmhImplementation {
+        extendsFrom configurations.testImplementation
+    }
+    jmhRuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
+    }
+}
+
+tasks.register('compileJava9', JavaCompile) {
+    source = sourceSets.java9.java
+    classpath = sourceSets.java9.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java9"))
+    options.release.set(9)
+}
+
+tasks.register('compileJava13', JavaCompile) {
+    source = sourceSets.java13.java
+    classpath = sourceSets.java13.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java13"))
+    options.release.set(13)
+}
+
+tasks.register('compileJava21', JavaCompile) {
+    source = sourceSets.java21.java
+    classpath = sourceSets.java21.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/java21"))
+    options.release.set(21)
+}
+
+// Ensure Java 21 classes are compiled before packaging
+tasks.named('jar') {
+    dependsOn tasks.named('compileJava9')
+    dependsOn tasks.named('compileJava13')
+    dependsOn tasks.named('compileJava21')
+    manifest { attributes('Multi-Release': 'true') }
+    from(layout.buildDirectory.dir('classes/java/java9')) {
+        into('META-INF/versions/9')
+    }
+    from(layout.buildDirectory.dir('classes/java/java13')) {
+        into('META-INF/versions/13')
+    }
+    from(layout.buildDirectory.dir('classes/java/java21')) {
+        into('META-INF/versions/21')
+    }
+}
+
+// Allow test sources to use a newer language level while main targets 8
+def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
+def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('test') {
+    javaLauncher.set(j21LauncherProvider)
+    // Ensure JUnit 5 and fixed report locations for CI collection
+    useJUnitPlatform()
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test"))
+    }
+}
+
+// Java 8 core parser smoke tests (compile to 8, run on JDK 8)
+def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+
+tasks.register('compileTest8JavaCompat', JavaCompile) {
+    source = sourceSets.test8.java
+    classpath = sourceSets.test8.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/test8"))
+    options.release.set(8)
+    // Use JDK21 compiler to produce Java 8 bytecode via --release 8
+    javaCompiler.set(j21CompilerProvider)
+}
+
+tasks.register('test8', Test) {
+    description = 'Runs core parser smoke tests on JDK 8.'
+    group = 'verification'
+    testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
+    classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    shouldRunAfter tasks.named('test')
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileTest8JavaCompat')
+    // Run JUnit Jupiter tests on JDK 8 and align report locations with CI expectations
+    useJUnitPlatform()
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test8"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test8"))
+    }
+}
+
+// JMH benchmark compilation - configure the auto-created task
+tasks.named('compileJmhJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
+dependencies {
+    // Core parsing utilities (shared with hdump-parser)
+    api project(':parser-core')
+
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+    implementation 'org.slf4j:slf4j-simple:2.0.5'
+    implementation 'it.unimi.dsi:fastutil:8.5.12'
+    implementation 'org.ow2.asm:asm:9.7.1'
+
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
+    testImplementation 'org.mockito:mockito-core:5.12.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.12.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+
+    // JMH for benchmarks
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+
+    // Jafar annotation processor for build-time handler generation
+    jmhAnnotationProcessor project(':jafar-processor')
+}
+
+test {
+    jvmArgs '-Xmx8g', '-Xms1g'
+    // Keep default memory settings; platform and reports configured above in tasks.named('test')
+}
+
+// JMH benchmark task
+tasks.register('jmh', JavaExec) {
+    description = 'Runs JMH benchmarks'
+    group = 'verification'
+    dependsOn compileJmhJava, testClasses
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass.set('org.openjdk.jmh.Main')
+    javaLauncher.set(j21LauncherProvider)
+    // Set working directory to project root so benchmark can find test resources
+    workingDir = rootProject.projectDir
+
+    // Allow passing JMH args via -PjmhArgs
+    if (project.hasProperty('jmhArgs')) {
+        setArgs(Arrays.asList(project.jmhArgs.split(' ')))
+    }
+}
+
+tasks.register('sourcesJar', Jar) {
+    from sourceSets.main.allJava
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set("sources")
+    archiveVersion.set(component_version)
+}
+
+tasks.register('javadocJar', Jar) {
+    dependsOn javadoc
+    archiveBaseName.set(libraryName)
+    archiveClassifier.set('javadoc')
+    archiveVersion.set(component_version)
+    // Javadoc default output path
+    from(layout.buildDirectory.dir("docs/javadoc"))
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'JFR (Java Flight Recorder) parser library'
+
+// Override artifact name for Maven publishing
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-parser', version.toString())
+}
+
+// No shadow jar for parser; consumers may shade as needed

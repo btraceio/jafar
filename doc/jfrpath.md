@@ -15,6 +15,44 @@ JfrPath is a path-based query language for navigating and querying Java Flight R
 <pipeline>  ::= "|" <operator> ("|" <operator>)*
 ```
 
+## String Literals
+
+JfrPath supports two forms of string literals for different escaping needs:
+
+### Double Quotes `"..."` - Escape Processing
+
+Double-quoted strings process escape sequences like traditional programming languages:
+- `\"` - Double quote
+- `\\` - Backslash
+- `\n` - Newline
+- `\t` - Tab
+
+**Example - Regex patterns require double backslash:**
+```
+events/jdk.FileRead[path ~ "/tmp/.*"]           # Pattern: /tmp/.*
+events/jdk.ExecutionSample[thread/name ~ "worker-\\d+"]  # Pattern: worker-\d+ (digit class)
+events/jdk.FileRead[path ~ "C:\\\\temp\\\\.*"]  # Pattern: C:\\temp\\.* (Windows paths)
+```
+
+### Single Quotes `'...'` - Raw Strings (Recommended for Regex)
+
+Single-quoted strings preserve backslashes literally (except for `\'` to embed single quotes):
+- No escape processing
+- Backslashes are literal characters
+- Only `\'` is interpreted (escaped single quote)
+
+**Example - Raw strings make regex patterns clearer:**
+```
+events/jdk.FileRead[path ~ '/tmp/.*']           # Pattern: /tmp/.*
+events/jdk.ExecutionSample[thread/name ~ 'worker-\d+']   # Pattern: worker-\d+ (clearer!)
+events/jdk.FileRead[path ~ 'C:\\temp\\.*']      # Pattern: C:\\temp\\.* (Windows paths)
+events/jdk.ExecutionSample[thread/name ~ 'it\'s working']  # Only \' is processed
+```
+
+**When to use each:**
+- **Single quotes `'...'`**: Preferred for regex patterns (avoids double-escaping backslashes)
+- **Double quotes `"..."`**: Use when you need escape sequences like `\n`, `\t`, or templates with `${...}`
+
 ## Roots
 
 JfrPath queries start with one of four roots:
@@ -101,7 +139,7 @@ Simple field comparisons:
 ```
 events/jdk.FileRead[bytes>1000]
 events/jdk.ExecutionSample[thread/name="main"]
-events/jdk.FileRead[path~"/tmp/.*"]
+events/jdk.FileRead[path ~ '/tmp/.*']           # Raw string for regex
 metadata/jdk.types.Method[name="toString"]
 ```
 
@@ -118,7 +156,7 @@ Complex conditions with functions and logic:
 
 **Examples**:
 ```
-events/jdk.FileRead[bytes>1000 and path~"/tmp/.*"]
+events/jdk.FileRead[bytes>1000 and path ~ '/tmp/.*']     # Raw string for regex
 events/jdk.ExecutionSample[thread/name="main" or thread/name="worker"]
 events/jdk.FileRead[not (bytes<100)]
 ```
@@ -137,7 +175,7 @@ events/jdk.FileRead[not (bytes<100)]
 events/jdk.FileRead[contains(path, "tmp")]
 events/jdk.ExecutionSample[startsWith(thread/name, "pool-")]
 events/jdk.FileRead[endsWith(path, ".log")]
-events/jdk.ExecutionSample[matches(thread/name, "worker-[0-9]+")]
+events/jdk.ExecutionSample[matches(thread/name, 'worker-[0-9]+')]  # Raw string for regex
 ```
 
 #### Existence and Emptiness
@@ -686,7 +724,7 @@ events/jdk.ExecutionSample[thread/name="main"]/stackTrace
 Count matching events:
 ```
 events/jdk.FileRead[bytes>1000] | count()
-events/jdk.ExecutionSample[thread/name~"worker-.*"] | count()
+events/jdk.ExecutionSample[thread/name ~ 'worker-.*'] | count()  # Raw string for regex
 ```
 
 Aggregate values:
@@ -763,7 +801,7 @@ cp/jdk.types.Package
 
 Filter CP entries:
 ```
-cp/jdk.types.Symbol[string~"java/.*"]
+cp/jdk.types.Symbol[string ~ 'java/.*']        # Raw string for regex
 cp/jdk.types.Method[name="toString"]
 ```
 
@@ -807,7 +845,7 @@ show events/jdk.FileRead | top(10, by=bytes)
 show events/jdk.ExecutionSample | groupBy(thread/name)
 
 # File reads to /tmp, sum bytes
-show events/jdk.FileRead[path~"/tmp/.*"] | sum(bytes)
+show events/jdk.FileRead[path ~ '/tmp/.*'] | sum(bytes)
 
 # Execution samples with deep stacks
 show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 5
@@ -874,7 +912,7 @@ show cp
 show cp/jdk.types.Symbol
 
 # Symbols matching pattern
-show cp/jdk.types.Symbol[string~"java/.*"]
+show cp/jdk.types.Symbol[string ~ 'java/.*']  # Raw string for regex
 
 # Count symbols
 show cp/jdk.types.Symbol | count()

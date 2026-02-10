@@ -1,7 +1,6 @@
 package io.jafar.shell.cli;
 
 import io.jafar.shell.core.VariableStore;
-import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;

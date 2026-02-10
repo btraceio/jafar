@@ -47,7 +47,7 @@ class CommandDispatcherTypesFilterTest {
     when(session.getNonPrimitiveMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
     when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.A", "custom.C"));
 
-    SessionManager sm = new SessionManager(ParsingContext.create(), (p, c) -> session);
+    SessionManager sm = new SessionManager((p, c) -> session, ParsingContext.create());
     BufferIO io = new BufferIO();
     CommandDispatcher disp = new CommandDispatcher(sm, io, r -> {});
 

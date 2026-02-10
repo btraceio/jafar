@@ -18,6 +18,7 @@ class JfrPathEvaluatorMetadataTest {
     JFRSession session = Mockito.mock(JFRSession.class);
     Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
+    when(session.getFilePath()).thenReturn(jfr);
 
     var eval = new JfrPathEvaluator();
 

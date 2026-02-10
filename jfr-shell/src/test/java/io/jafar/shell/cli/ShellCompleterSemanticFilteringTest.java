@@ -25,14 +25,14 @@ class ShellCompleterSemanticFilteringTest {
   @BeforeEach
   void setUp() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    sessionManager = new SessionManager(ctx, createMockSessionFactory());
+    sessionManager = new SessionManager(createMockSessionFactory(), ctx);
     sessionManager.open(Path.of("/tmp/test.jfr"), null);
     completer = new ShellCompleter(sessionManager, null);
   }
 
   // ==================== Mock Setup ====================
 
-  private SessionManager.JFRSessionFactory createMockSessionFactory() {
+  private SessionManager.SessionFactory createMockSessionFactory() {
     return (path, context) -> {
       JFRSession session = Mockito.mock(JFRSession.class);
       when(session.getRecordingPath()).thenReturn(path);

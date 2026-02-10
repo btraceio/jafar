@@ -18,12 +18,12 @@ class JfrPathInterleavedFiltersTest {
   void gcHeapSummaryFilterBeforeProjection() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+    SessionManager sessions = new SessionManager((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var q = JfrPathParser.parse("events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace");
-    var values = evaluator.evaluateValues(sessions.getCurrent().get().session, q);
+    var values = evaluator.evaluateValues((JFRSession) sessions.getCurrent().get().session, q);
     assertFalse(values.isEmpty(), "Expected some heapSpace values after GC");
   }
 
@@ -31,12 +31,12 @@ class JfrPathInterleavedFiltersTest {
   void gcHeapSummaryFilterRelativeToProjection() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+    SessionManager sessions = new SessionManager((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var q = JfrPathParser.parse("events/jdk.GCHeapSummary/heapSpace[committedSize>0]/reservedSize");
-    var values = evaluator.evaluateValues(sessions.getCurrent().get().session, q);
+    var values = evaluator.evaluateValues((JFRSession) sessions.getCurrent().get().session, q);
     // Not all recordings include heapSpace entries; if present, ensure numeric
     for (Object v : values) {
       assertTrue(v instanceof Number, "reservedSize should be numeric");

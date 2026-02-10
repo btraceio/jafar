@@ -20,12 +20,12 @@ class JfrPathLenOpTest {
   void lenOnCpSymbolString() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var q = JfrPathParser.parse("cp/jdk.types.Symbol/string | len()");
-    List<Map<String, Object>> rows = evaluator.evaluate(sessions.getCurrent().get().session, q);
+    List<Map<String, Object>> rows = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, q);
     assertFalse(rows.isEmpty(), "Expected len() rows");
     // Validate first non-null
     Integer first = null;
@@ -39,7 +39,7 @@ class JfrPathLenOpTest {
     assertNotNull(first, "Expected numeric length");
     // Cross-check by reading raw string
     var q2 = JfrPathParser.parse("cp/jdk.types.Symbol/string");
-    var strings = evaluator.evaluateValues(sessions.getCurrent().get().session, q2);
+    var strings = evaluator.evaluateValues((JFRSession) sessions.getCurrent().get().session, q2);
     for (Object s : strings) {
       if (s instanceof String st && st.length() == first) {
         return;

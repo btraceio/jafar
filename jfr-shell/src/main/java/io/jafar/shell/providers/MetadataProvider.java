@@ -24,7 +24,24 @@ public final class MetadataProvider {
 
   /** Build a summarized metadata map for a given class name in the recording. */
   public static Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-    return getSource().loadClass(recording, typeName);
+    if (System.getProperty("jfr.shell.completion.debug") != null) {
+      System.err.println("[DEBUG] MetadataProvider.loadClass() called");
+      System.err.println("[DEBUG]   recording: " + recording);
+      System.err.println("[DEBUG]   typeName: " + typeName);
+    }
+
+    MetadataSource source = getSource();
+    if (System.getProperty("jfr.shell.completion.debug") != null) {
+      System.err.println("[DEBUG]   source: " + source.getClass().getName());
+    }
+
+    Map<String, Object> result = source.loadClass(recording, typeName);
+    if (System.getProperty("jfr.shell.completion.debug") != null) {
+      System.err.println(
+          "[DEBUG]   result: " + (result != null ? "non-null (" + result.size() + " keys)" : "NULL"));
+    }
+
+    return result;
   }
 
   /** Load metadata for a single field under a class name. */

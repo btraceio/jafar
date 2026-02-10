@@ -47,7 +47,7 @@ class CommandDispatcherTypesTest {
     when(session.getAllMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
     when(session.getNonPrimitiveMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
 
-    SessionManager sm = new SessionManager(ParsingContext.create(), (p, c) -> session);
+    SessionManager sm = new SessionManager((p, c) -> session, ParsingContext.create());
     BufferIO io = new BufferIO();
     CommandDispatcher disp = new CommandDispatcher(sm, io, r -> {});
 
@@ -85,7 +85,7 @@ class CommandDispatcherTypesTest {
     when(session.getAllMetadataTypes()).thenReturn(many);
     when(session.getNonPrimitiveMetadataTypes()).thenReturn(many);
 
-    SessionManager sm = new SessionManager(ParsingContext.create(), (p, c) -> session);
+    SessionManager sm = new SessionManager((p, c) -> session, ParsingContext.create());
     BufferIO io = new BufferIO();
     CommandDispatcher disp = new CommandDispatcher(sm, io, r -> {});
 

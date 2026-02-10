@@ -53,7 +53,7 @@ class MapVariablesTest {
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.JFRSessionFactory factory =
+    SessionManager.SessionFactory factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           Mockito.when(s.getRecordingPath()).thenReturn(path);
@@ -62,7 +62,7 @@ class MapVariablesTest {
           Mockito.when(s.hasRun()).thenReturn(false);
           return s;
         };
-    sm = new SessionManager(ctx, factory);
+    sm = new SessionManager(factory, ctx);
     io = new BufferIO();
     dispatcher = new CommandDispatcher(sm, io, r -> {});
   }

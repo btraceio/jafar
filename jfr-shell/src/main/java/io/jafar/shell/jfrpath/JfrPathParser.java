@@ -9,6 +9,12 @@ import java.util.Locale;
 /**
  * Minimal JfrPath parser v0. Supports: root segment (events|metadata|chunks|cp), path segments,
  * filters in brackets like: events/jdk.ExecutionSample[thread/name~"main"][duration>10]
+ *
+ * <p>String literals support two forms:
+ * <ul>
+ *   <li>Double quotes ("...") - process escape sequences (\n, \", \\, etc.)
+ *   <li>Single quotes ('...') - raw strings, only \' is processed (backslashes are literal)
+ * </ul>
  */
 public final class JfrPathParser {
   private final String input;
@@ -329,20 +335,74 @@ public final class JfrPathParser {
   private Object parseLiteral() {
     if (peek() == '"' || peek() == '\'') {
       char quote = (char) peek();
+      boolean isRawString = (quote == '\''); // Single quotes = raw string literal
+
+      if (System.getProperty("jfr.shell.parser.debug") != null) {
+        System.err.println("[PARSER] parseLiteral() starting");
+        System.err.println("[PARSER]   quote char: '" + quote + "'");
+        System.err.println("[PARSER]   isRawString: " + isRawString);
+        System.err.println("[PARSER]   remaining input: " + input.substring(pos));
+      }
+
       pos++;
       StringBuilder sb = new StringBuilder();
       while (!eof() && peek() != quote) {
         char c = (char) peek();
-        if (c == '\\') {
-          pos++;
-          if (eof()) break;
-          c = (char) peek();
+
+        if (System.getProperty("jfr.shell.parser.debug") != null) {
+          System.err.println("[PARSER]   char at pos " + pos + ": '" + c + "' (code: " + (int) c + ")");
         }
-        sb.append(c);
-        pos++;
+
+        if (c == '\\') {
+          pos++;  // Consume backslash
+          if (eof()) break;
+          char next = (char) peek();
+
+          if (System.getProperty("jfr.shell.parser.debug") != null) {
+            System.err.println("[PARSER]   BACKSLASH detected, next char: '" + next + "'");
+          }
+
+          if (isRawString) {
+            // Raw strings: only process \' to allow embedded single quotes
+            if (next == '\'') {
+              sb.append('\'');
+              pos++;
+            } else {
+              // Not an escaped quote - keep both backslash and next char literal
+              sb.append('\\');
+              sb.append(next);
+              pos++;
+
+              if (System.getProperty("jfr.shell.parser.debug") != null) {
+                System.err.println("[PARSER]   RAW STRING: appended backslash + '" + next + "'");
+                System.err.println("[PARSER]   sb now: " + sb.toString());
+              }
+            }
+          } else {
+            // Double-quoted strings: process all escape sequences
+            sb.append(next);
+            pos++;
+          }
+        } else {
+          sb.append(c);
+          pos++;
+        }
       }
       expect(quote);
-      return sb.toString();
+
+      String result = sb.toString();
+      if (System.getProperty("jfr.shell.parser.debug") != null) {
+        System.err.println("[PARSER] parseLiteral() result: '" + result + "'");
+        System.err.println("[PARSER]   result length: " + result.length());
+        StringBuilder codes = new StringBuilder();
+        for (int i = 0; i < result.length(); i++) {
+          if (i > 0) codes.append(", ");
+          codes.append((int) result.charAt(i));
+        }
+        System.err.println("[PARSER]   char codes: " + codes);
+      }
+
+      return result;
     }
     // boolean literals
     if (startsWithIgnoreCase("true")) {
@@ -500,6 +560,7 @@ public final class JfrPathParser {
       List<String> keyPath = List.of();
       String aggFunc = "count";
       List<String> aggValuePath = List.of();
+      JfrPath.Expr valueExpr = null;
       String sortBy = null;
       boolean ascending = false;
       if (peek() == '(') {
@@ -519,7 +580,12 @@ public final class JfrPathParser {
           } else if (startsWithIgnoreCase("value=")) {
             pos += 6;
             skipWs();
-            aggValuePath = parsePathArg();
+            // Parse as expression (supports arithmetic)
+            valueExpr = parseExpression();
+            // If it's a simple field reference, also populate valuePath for compatibility
+            if (valueExpr instanceof JfrPath.FieldRef fr) {
+              aggValuePath = fr.fieldPath;
+            }
           } else if (startsWithIgnoreCase("sortBy=")) {
             pos += 7;
             skipWs();
@@ -546,7 +612,7 @@ public final class JfrPathParser {
         }
         expect(')');
       }
-      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, sortBy, ascending);
+      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, valueExpr, sortBy, ascending);
     } else if ("sortby".equals(name)) {
       String field = null;
       boolean ascending = false;

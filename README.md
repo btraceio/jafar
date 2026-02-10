@@ -8,7 +8,6 @@ JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for par
 
 ## Requirements
 - Java 21+
-- Git LFS (recordings are stored with LFS). Install per GitHub docs: `https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage`
 
 ## Build
 1) Fetch binary resources: `./get_resources.sh`
@@ -478,18 +477,87 @@ jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, field
 
 See **[Event Decoration and Joining](doc/tutorials/jfr-shell-tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
+## Heap Dump Analysis (NEW)
+
+JAFAR now supports **heap dump (HPROF) analysis** using the same interactive shell. Query objects, classes, and GC roots with the HdumpPath query language.
+
+### Quick Example
+
+```bash
+# Open a heap dump
+jfr-shell dump.hprof
+
+jfr> objects | count
+| count   |
+|---------|
+| 1923456 |
+
+jfr> objects | groupBy(class, agg=count) | top(10, count)
+| class                      | count   |
+|---------------------------|---------|
+| java.util.HashMap$Node    | 249,734 |
+| java.lang.String          | 238,750 |
+| java.lang.Object[]        | 156,234 |
+
+jfr> objects/java.lang.String[shallow > 1KB] | stats(shallow)
+| count | sum       | min  | max    | avg    |
+|-------|-----------|------|--------|--------|
+| 1,234 | 2,456,789 | 1024 | 65,536 | 1,991  |
+
+jfr> gcroots | groupBy(type) | sortBy(count desc)
+| type         | count |
+|-------------|-------|
+| JAVA_FRAME  | 2,345 |
+| THREAD_OBJ  | 1,234 |
+```
+
+### Key Features
+
+- **Object queries**: Filter by class, size, type hierarchy
+- **Class analysis**: Instance counts, memory footprint
+- **GC root inspection**: Thread roots, JNI references, stack frames
+- **Aggregations**: count, sum, stats, groupBy, top
+- **Size units**: Use `1KB`, `1MB`, `1GB` in predicates
+- **Instanceof support**: Query all implementations of interfaces
+
+### HdumpPath Query Language
+
+```
+# Objects by class
+objects/java.lang.String | top(10, shallow)
+
+# Include subclasses
+objects/instanceof/java.util.Map | groupBy(class)
+
+# Filter with predicates
+objects[shallow > 1MB and class ~ "com.myapp.*"]
+
+# Class metadata
+classes[instanceCount > 1000] | sortBy(instanceCount desc)
+
+# GC roots
+gcroots/THREAD_OBJ | select(type, object, threadSerial)
+```
+
+See **[doc/hdump-shell-quickstart.md](doc/hdump-shell-quickstart.md)** for quick start and **[doc/hdumppath.md](doc/hdumppath.md)** for complete reference.
+
 ## Documentation
 
 ### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
 - **[doc/jfr-shell-architecture.md](doc/jfr-shell-architecture.md)** - Architecture overview with diagrams
 - **[doc/tutorials/jfr-shell-tutorial.md](doc/tutorials/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
-- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
-- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
-- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
+- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows
+- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial
+- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial
 - **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
 - **[doc/jfr-shell-backends.md](doc/jfr-shell-backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
 - **[doc/tutorials/backend-quickstart.md](doc/tutorials/backend-quickstart.md)** - Build a custom backend in 10 minutes
+
+### Heap Dump Analysis
+- **[doc/hdump-shell-quickstart.md](doc/hdump-shell-quickstart.md)** - Quick start guide for heap dump analysis
+- **[doc/tutorials/hdump-shell-tutorial.md](doc/tutorials/hdump-shell-tutorial.md)** - Complete heap dump analysis tutorial
+- **[doc/hdumppath.md](doc/hdumppath.md)** - HdumpPath query language reference
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes

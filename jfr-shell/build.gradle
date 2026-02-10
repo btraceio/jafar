@@ -23,7 +23,8 @@ java {
 }
 
 dependencies {
-    implementation project(':parser')
+    implementation project(':shell-core')
+    implementation project(':jfr-parser')
     implementation project(':tools')
 
     // Backend plugins available for testing (discovered via ServiceLoader)

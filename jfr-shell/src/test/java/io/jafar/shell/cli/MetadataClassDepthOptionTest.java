@@ -20,7 +20,7 @@ class MetadataClassDepthOptionTest {
   void depthZeroSuppressesNestedTypes() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     StringBuilder out = new StringBuilder();
@@ -58,7 +58,7 @@ class MetadataClassDepthOptionTest {
   void depthOneShowsNestedTypes() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager sessions = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     StringBuilder out = new StringBuilder();

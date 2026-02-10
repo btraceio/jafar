@@ -62,7 +62,7 @@ public class StatefulCompletionTests {
   @BeforeTry
   void setupPerTry() throws Exception {
     // Create fresh state for each try
-    sessionManager = new SessionManager(parsingContext, (path, c) -> new JFRSession(path, c));
+    sessionManager = new SessionManager((path, c) -> new JFRSession(path, (ParsingContext) c), parsingContext);
     variableStore = new VariableStore();
     completer = new ShellCompleter(sessionManager, null);
     metadataService = new MetadataService(sessionManager);

@@ -191,15 +191,17 @@ show events/jdk.FileRead[bytes>1000000]
 # String equality
 show events/jdk.ExecutionSample[state="RUNNABLE"]
 
-# Regex match
-show events/jdk.FileRead[path~"/tmp/.*"]
+# Regex match (use raw strings with single quotes for regex - no double escaping!)
+show events/jdk.FileRead[path ~ '/tmp/.*']
 
 # Nested field
-show events/jdk.ExecutionSample[thread/name~"main"]
+show events/jdk.ExecutionSample[thread/name ~ 'main']
 
-# Multiple conditions
-show events/jdk.FileRead[bytes>1000 and path~".*\\.log"]
+# Multiple conditions (raw string preserves backslashes)
+show events/jdk.FileRead[bytes>1000 and path ~ '.*\.log']
 ```
+
+**String Literal Tip:** Use single quotes `'...'` for raw strings (recommended for regex patterns) - backslashes are literal. Use double quotes `"..."` for escape processing (`\n`, `\t`, etc.).
 
 ### Operators
 
@@ -259,7 +261,7 @@ jfr> show events/jdk.FileRead[bytes>=1000000] --limit 5
 
 ```bash
 # Find file reads from /tmp
-jfr> show events/jdk.FileRead[path~"/tmp/.*"] --limit 10
+jfr> show events/jdk.FileRead[path ~ '/tmp/.*'] --limit 10  # Raw string for regex
 
 # Find high-latency operations
 jfr> show events/jdk.SocketRead[duration>10000000] --limit 10
@@ -365,7 +367,7 @@ jfr> show events/jdk.FileRead/bytes | stats()
 | 0    | 10485760 | 52428.5  | 123456.7 | 5432  |
 
 # Stats on filtered data
-jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | stats()
+jfr> show events/jdk.FileRead[path ~ '/tmp/.*']/bytes | stats()
 
 # Quantiles
 jfr> show events/jdk.FileRead/bytes | quantiles(0.5, 0.9, 0.99)
@@ -385,7 +387,7 @@ jfr> show events/jdk.FileRead/bytes | sum()
 Result: 524288000
 
 # Sum with filter
-jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
+jfr> show events/jdk.FileRead[path ~ '/tmp/.*']/bytes | sum()
 ```
 
 ## Advanced Queries
@@ -394,7 +396,7 @@ jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
 
 ```bash
 # Boolean logic
-jfr> show events/jdk.FileRead[bytes>1000 and path~".*\\.log"] --limit 10
+jfr> show events/jdk.FileRead[bytes>1000 and path ~ '.*\.log'] --limit 10  # Raw string
 
 # Function-based filters
 jfr> show events/jdk.FileRead[len(path)>50] --limit 10
@@ -1033,13 +1035,13 @@ jfr> show events/jdk.ExceptionStatistics | groupBy(throwables/name) | top(10, by
 
 ```bash
 # Find slow database operations (via socket reads)
-jfr> show events/jdk.SocketRead[address~".*postgres.*" and duration>100000000] --limit 20
+jfr> show events/jdk.SocketRead[address ~ '.*postgres.*' and duration>100000000] --limit 20
 
 # Database I/O statistics
-jfr> show events/jdk.SocketRead[address~".*postgres.*"]/duration | stats()
+jfr> show events/jdk.SocketRead[address ~ '.*postgres.*']/duration | stats()
 
 # Most active database connections
-jfr> show events/jdk.SocketRead[address~".*postgres.*"] | groupBy(address) | top(10, by=count)
+jfr> show events/jdk.SocketRead[address ~ '.*postgres.*'] | groupBy(address) | top(10, by=count)
 ```
 
 ## Tips and Tricks
