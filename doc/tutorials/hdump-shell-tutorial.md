@@ -275,9 +275,84 @@ jfr> gcroots/JNI_GLOBAL | count
 
 ## Memory Leak Detection
 
-### Pattern 1: Unusually Large Instance Counts
+### Built-in Leak Detectors
 
-Look for classes with unexpected instance counts:
+The shell includes 6 built-in leak detectors that can be run with `checkLeaks`:
+
+```bash
+# Run all detectors (interactive wizard)
+jfr> checkLeaks()
+
+# Run a specific detector
+jfr> checkLeaks(detector="threadlocal-leak")
+```
+
+**Available detectors:**
+
+| Detector | Description |
+|----------|-------------|
+| `threadlocal-leak` | Find ThreadLocal instances with large retained sizes attached to threads |
+| `classloader-leak` | Detect ClassLoader instances that should be GC'd but are retained |
+| `duplicate-strings` | Find identical string values with high instance counts |
+| `growing-collections` | Detect collections (HashMap, ArrayList, etc.) with large retained sizes |
+| `listener-leak` | Find event listeners that may not have been deregistered |
+| `finalizer-queue` | Detect objects stuck in the finalizer queue |
+
+**Detector parameters:**
+
+```bash
+# Set minimum size threshold (default varies by detector)
+jfr> checkLeaks(detector="growing-collections", minSize=10MB)
+
+# Set count threshold
+jfr> checkLeaks(detector="duplicate-strings", threshold=100)
+```
+
+### Retained Size Analysis
+
+Retained size shows how much memory would be freed if an object were garbage collected:
+
+```bash
+# Top objects by retained size
+jfr> objects | top(10, retained)
+
+# Classes by total retained memory
+jfr> objects | groupBy(class) | top(10, retained)
+
+# Large retained objects of specific type
+jfr> objects/java.util.HashMap[retained > 10MB] | top(10, retained)
+```
+
+### Path to GC Root
+
+Find why an object is kept alive:
+
+```bash
+# Find retention path for a specific object
+jfr> objects[id = 0x12345678] | pathToRoot
+
+# Find path for largest HashMap
+jfr> objects/java.util.HashMap | top(1, retained) | pathToRoot
+```
+
+### Dominator Tree
+
+See what objects dominate memory (keep other objects alive):
+
+```bash
+# Dominator tree for an object
+jfr> objects[id = 0x12345678] | dominators
+
+# Dominators grouped by class
+jfr> objects[id = 0x12345678] | dominators("byClass")
+
+# Full dominator tree view
+jfr> objects[id = 0x12345678] | dominators("tree")
+```
+
+### Manual Leak Patterns
+
+#### Pattern 1: Unusually Large Instance Counts
 
 ```bash
 # Classes with most instances
@@ -287,33 +362,27 @@ jfr> classes | top(20, instanceCount)
 jfr> classes/com.myapp.* | top(10, instanceCount)
 ```
 
-### Pattern 2: Growing Collections
-
-Look for large collections that might be accumulating:
+#### Pattern 2: Growing Collections
 
 ```bash
-# Large HashMaps
-jfr> objects/java.util.HashMap[shallow > 10KB] | top(10, shallow)
+# Large HashMaps by retained size
+jfr> objects/java.util.HashMap | top(10, retained)
 
 # Large ArrayLists
 jfr> objects/java.util.ArrayList[arrayLength > 1000] | head(10)
 ```
 
-### Pattern 3: Duplicate Strings
-
-String duplication wastes memory:
+#### Pattern 3: Duplicate Strings
 
 ```bash
-# String statistics
-jfr> objects/java.lang.String | stats(shallow)
+# Use the built-in detector
+jfr> checkLeaks(detector="duplicate-strings", threshold=50)
 
-# Unique class names holding strings (rough indicator)
-jfr> objects/java.lang.String | groupBy(class) | count
+# Or manual analysis
+jfr> objects/java.lang.String | stats(shallow)
 ```
 
-### Pattern 4: Cache Analysis
-
-Unbounded caches often cause leaks:
+#### Pattern 4: Cache Analysis
 
 ```bash
 # Find cache-like structures
@@ -436,6 +505,29 @@ objects/java.lang.String[shallow > 1KB] | groupBy(class) | top(10)
 
 # Less efficient: groupBy all, then filter
 objects/java.lang.String | groupBy(class) | filter(count > 100)
+```
+
+### 8. Start Leak Analysis with checkLeaks
+
+Use built-in detectors for quick wins:
+```bash
+# Interactive wizard runs all detectors
+checkLeaks()
+
+# Or target specific leak types
+checkLeaks(detector="threadlocal-leak")
+checkLeaks(detector="classloader-leak")
+```
+
+### 9. Use Retained Size for Impact Analysis
+
+Shallow size shows object's own memory; retained size shows total impact:
+```bash
+# Find objects with highest memory impact
+objects | top(10, retained)
+
+# Then trace why they're retained
+objects[id = 0x12345] | pathToRoot
 ```
 
 ## Next Steps

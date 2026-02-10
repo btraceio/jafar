@@ -111,24 +111,43 @@ objects/instanceof/java.util.Map      # Include subclasses
 | `stats(field)` | `objects \| stats(shallow)` |
 | `select(fields)` | `objects \| select(class, shallow)` |
 | `head(n)` | `objects \| head(100)` |
+| `tail(n)` | `objects \| tail(10)` |
 | `filter(pred)` | `objects \| filter(shallow > 1KB)` |
+| `distinct(field)` | `objects \| distinct(class)` |
+| `pathToRoot` | `objects[id = 123] \| pathToRoot` |
+| `checkLeaks` | `checkLeaks()` or `objects \| checkLeaks` |
+| `dominators` | `objects[id = 123] \| dominators` |
 
 ## Common Workflows
 
 ### Memory Leak Investigation
 
 ```bash
-# 1. Check total object count
-jfr> objects | count
+# Quick leak scan with built-in detectors
+jfr> checkLeaks()
 
-# 2. Find classes with many instances
+# Or run specific detectors
+jfr> checkLeaks(detector="threadlocal-leak")
+jfr> checkLeaks(detector="classloader-leak")
+jfr> checkLeaks(detector="growing-collections")
+
+# Manual investigation
 jfr> classes | top(20, instanceCount)
-
-# 3. Check your application classes
 jfr> classes/com.myapp.* | top(10, instanceCount)
-
-# 4. Look for large collections
 jfr> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
+```
+
+### Retained Size Analysis
+
+```bash
+# Top objects by retained size (memory kept alive)
+jfr> objects | top(10, retained)
+
+# Find path from object to GC root
+jfr> objects[id = 0x12345] | pathToRoot
+
+# Dominator tree (what dominates memory)
+jfr> objects[id = 0x12345] | dominators
 ```
 
 ### Heap Size Analysis
