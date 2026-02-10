@@ -38,7 +38,7 @@ public final class ThreadLocalLeakDetector implements LeakDetector {
                       .anyMatch(
                           p ->
                               p.getHeapClass() != null
-                                  && "java.lang.Thread".equals(p.getHeapClass().getName()));
+                                  && "java/lang/Thread".equals(p.getHeapClass().getName()));
 
               result.put("attachedToThread", attachedToThread);
               result.put(
@@ -50,7 +50,7 @@ public final class ThreadLocalLeakDetector implements LeakDetector {
             });
 
     // Also check ThreadLocal$ThreadLocalMap$Entry
-    dump.getObjectsOfClass("java.lang.ThreadLocal$ThreadLocalMap$Entry")
+    dump.getObjectsOfClass("java/lang/ThreadLocal$ThreadLocalMap$Entry")
         .filter(obj -> obj.getRetainedSize() >= minRetainedBytes)
         .forEach(
             obj -> {

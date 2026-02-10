@@ -1074,9 +1074,24 @@ public final class HdumpPathEvaluator {
           .filter(map -> matchesPredicate(map, f.predicate()))
           .collect(Collectors.toList());
       case DistinctOp d -> applyDistinct(results, d);
-      case PathToRootOp p -> applyPathToRoot(session.getHeapDump(), results);
-      case CheckLeaksOp c -> applyCheckLeaks(session, results, c);
-      case DominatorsOp d -> applyDominators(session, session.getHeapDump(), results, d);
+      case PathToRootOp p -> {
+        if (session == null) {
+          throw new IllegalStateException("pathToRoot requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyPathToRoot(session.getHeapDump(), results);
+      }
+      case CheckLeaksOp c -> {
+        if (session == null) {
+          throw new IllegalStateException("checkLeaks requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyCheckLeaks(session, results, c);
+      }
+      case DominatorsOp d -> {
+        if (session == null) {
+          throw new IllegalStateException("dominators requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyDominators(session, session.getHeapDump(), results, d);
+      }
     };
   }
 
