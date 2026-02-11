@@ -14,13 +14,15 @@ This tutorial teaches you how to use the Jafar MCP (Model Context Protocol) serv
 
 ## What is MCP?
 
-The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes five tools for JFR analysis:
+The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes seven tools for JFR analysis:
 
 - **jfr_open** - Open a JFR recording file for analysis
 - **jfr_list_types** - List available event types in a recording
 - **jfr_query** - Execute JfrPath queries against the recording
 - **jfr_close** - Close a recording session
 - **jfr_help** - Get JfrPath query language documentation
+- **jfr_flamegraph** - Generate aggregated stack trace data for flamegraph-style analysis
+- **jfr_callgraph** - Generate caller-callee relationship graph from stack traces
 
 This allows AI assistants to autonomously analyze JFR files, identify performance issues, and provide insights without manual intervention.
 
@@ -217,6 +219,103 @@ events/jdk.GCPhasePause | stats(duration)
 ...
 ```
 
+### jfr_flamegraph
+
+Generates aggregated stack trace data for flamegraph-style analysis. Returns stack paths with sample counts.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `eventType` | string | Yes | Event type (e.g., `jdk.ExecutionSample`, `jdk.ObjectAllocationSample`) |
+| `direction` | string | No | `bottom-up` (hot methods at root) or `top-down` (entry points at root). Default: `bottom-up` |
+| `format` | string | No | `folded` (semicolon-separated) or `tree` (JSON). Default: `folded` |
+| `sessionId` | string | No | Session ID or alias (uses current if not specified) |
+| `minSamples` | integer | No | Minimum sample count to include (default: 1) |
+| `maxDepth` | integer | No | Maximum stack depth (default: unlimited) |
+
+**Example Response (folded format):**
+```json
+{
+  "format": "folded",
+  "totalSamples": 96388,
+  "data": "java.lang.Thread.run;com.example.Main.main;com.example.Worker.process 1523\njava.lang.Thread.run;com.example.Main.main;com.example.Worker.compute 892\n..."
+}
+```
+
+The folded format is compatible with standard flamegraph tools (e.g., Brendan Gregg's FlameGraph).
+
+**Example Response (tree format):**
+```json
+{
+  "format": "tree",
+  "direction": "bottom-up",
+  "totalSamples": 96388,
+  "root": {
+    "name": "root",
+    "value": 96388,
+    "children": [
+      {
+        "name": "java.util.HashMap.get",
+        "value": 5000,
+        "children": [...]
+      }
+    ]
+  }
+}
+```
+
+**Use Cases:**
+- **bottom-up**: See where CPU time is spent (hot methods as roots)
+- **top-down**: See call paths from entry points to hot spots
+
+### jfr_callgraph
+
+Generates a call graph showing caller-callee relationships from stack traces. Unlike flamegraph (which preserves full paths), this shows which methods call which, revealing convergence points.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `eventType` | string | Yes | Event type (e.g., `jdk.ExecutionSample`) |
+| `format` | string | No | `dot` (graphviz) or `json`. Default: `dot` |
+| `sessionId` | string | No | Session ID or alias (uses current if not specified) |
+| `minWeight` | integer | No | Minimum edge weight to include (default: 1) |
+
+**Example Response (DOT format):**
+```json
+{
+  "format": "dot",
+  "totalSamples": 96388,
+  "nodeCount": 250,
+  "edgeCount": 480,
+  "data": "digraph callgraph {\n  rankdir=TB;\n  \"Thread.run\" -> \"Main.main\" [label=\"96388\"];\n  \"Main.main\" -> \"Worker.process\" [label=\"50000\"];\n  \"Worker.process\" -> \"HashMap.get\" [label=\"5000\"];\n  \"Worker.compute\" -> \"HashMap.get\" [label=\"3000\"];\n}\n"
+}
+```
+
+Note: `HashMap.get` has two incoming edges - this is a convergence point called from multiple places.
+
+**Example Response (JSON format):**
+```json
+{
+  "format": "json",
+  "totalSamples": 96388,
+  "nodes": [
+    {"id": "java.lang.Thread.run", "samples": 96388},
+    {"id": "com.example.Worker.process", "samples": 50000},
+    {"id": "java.util.HashMap.get", "samples": 8000, "inDegree": 2}
+  ],
+  "edges": [
+    {"from": "com.example.Worker.process", "to": "java.util.HashMap.get", "weight": 5000},
+    {"from": "com.example.Worker.compute", "to": "java.util.HashMap.get", "weight": 3000}
+  ]
+}
+```
+
+**Use Cases:**
+- **Convergence analysis**: Find methods called from many places (high `inDegree`)
+- **Dependency mapping**: See what method X calls and what calls X
+- **Hot edge detection**: Identify the most frequent caller-callee pairs
+- **Visualization**: DOT format can be rendered with graphviz tools
+
 ## Using with Claude Desktop
 
 Add the MCP server to your Claude Desktop configuration:
@@ -359,6 +458,40 @@ kill $SSE_PID 2>/dev/null
    ```
    jfr_query: query="events/jdk.SocketRead | groupBy(address) | top(10)"
    ```
+
+### Profiler Analysis Workflow
+
+Use flamegraph and callgraph tools for deep CPU and allocation analysis:
+
+1. **Generate CPU flamegraph (bottom-up)**
+   ```
+   jfr_flamegraph: eventType="jdk.ExecutionSample", format="tree"
+   ```
+   Shows hot methods at the root - where CPU time is actually spent.
+
+2. **Generate CPU flamegraph (top-down)**
+   ```
+   jfr_flamegraph: eventType="jdk.ExecutionSample", direction="top-down", format="tree"
+   ```
+   Shows call paths from entry points (main, run) down to hot spots.
+
+3. **Find convergence points with callgraph**
+   ```
+   jfr_callgraph: eventType="jdk.ExecutionSample", format="json"
+   ```
+   Look for nodes with high `inDegree` - methods called from many places.
+
+4. **Analyze allocation hotspots**
+   ```
+   jfr_flamegraph: eventType="jdk.ObjectAllocationSample", format="folded"
+   ```
+   The folded format can be used with standard flamegraph visualization tools.
+
+5. **Export for visualization**
+   ```
+   jfr_callgraph: eventType="jdk.ExecutionSample", format="dot", minWeight=100
+   ```
+   The DOT format can be visualized with graphviz: `dot -Tpng output.dot -o graph.png`
 
 ## Troubleshooting
 

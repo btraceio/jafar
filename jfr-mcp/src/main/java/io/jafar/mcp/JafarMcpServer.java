@@ -126,7 +126,9 @@ public final class JafarMcpServer {
         createJfrQueryTool(),
         createJfrListTypesTool(),
         createJfrCloseTool(),
-        createJfrHelpTool());
+        createJfrHelpTool(),
+        createJfrFlamegraphTool(),
+        createJfrCallgraphTool());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -924,6 +926,498 @@ public final class JafarMcpServer {
         - `duration` - Event duration (nanoseconds)
         - `startTime` - Event start time
         """;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_flamegraph
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrFlamegraphTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "description": "Event type to analyze (e.g., jdk.ExecutionSample, jdk.ObjectAllocationSample)"
+            },
+            "direction": {
+              "type": "string",
+              "description": "Stack direction: bottom-up (hot methods at root) or top-down (entry points at root)",
+              "enum": ["bottom-up", "top-down"],
+              "default": "bottom-up"
+            },
+            "format": {
+              "type": "string",
+              "description": "Output format: folded (semicolon-separated) or tree (JSON)",
+              "enum": ["folded", "tree"],
+              "default": "folded"
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "minSamples": {
+              "type": "integer",
+              "description": "Minimum sample count to include in output (default: 1)"
+            },
+            "maxDepth": {
+              "type": "integer",
+              "description": "Maximum stack depth to include (default: unlimited)"
+            }
+          },
+          "required": ["eventType"]
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_flamegraph",
+            "Generates aggregated stack trace data for flamegraph-style analysis. "
+                + "Returns stack paths with sample counts in folded or tree format. "
+                + "Use direction=bottom-up to see hot methods (where time is spent), "
+                + "or direction=top-down to see call paths from entry points. "
+                + "Folded format is semicolon-separated paths compatible with standard flamegraph tools.",
+            schema),
+        (exchange, args) -> handleJfrFlamegraph(args));
+  }
+
+  private CallToolResult handleJfrFlamegraph(Map<String, Object> args) {
+    String eventType = (String) args.get("eventType");
+    String direction = (String) args.getOrDefault("direction", "bottom-up");
+    String format = (String) args.getOrDefault("format", "folded");
+    String sessionId = (String) args.get("sessionId");
+    Integer minSamples = args.get("minSamples") instanceof Number n ? n.intValue() : 1;
+    Integer maxDepth = args.get("maxDepth") instanceof Number n ? n.intValue() : null;
+
+    if (eventType == null || eventType.isBlank()) {
+      return errorResult("eventType is required");
+    }
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      // Query all events with non-empty stack traces
+      String query = "events/" + eventType;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      // Build aggregation tree
+      FlameNode root = new FlameNode("root");
+      int processedEvents = 0;
+
+      for (Map<String, Object> event : events) {
+        List<String> frames = extractFrames(event, direction, maxDepth);
+        if (!frames.isEmpty()) {
+          root.addPath(frames);
+          processedEvents++;
+        }
+      }
+
+      // Format output
+      if ("tree".equals(format)) {
+        return formatFlamegraphTree(root, direction, processedEvents, minSamples);
+      } else {
+        return formatFlamegraphFolded(root, minSamples);
+      }
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("Flamegraph error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to generate flamegraph: {}", e.getMessage(), e);
+      return errorResult("Failed to generate flamegraph: " + e.getMessage());
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
+    List<String> frames = new ArrayList<>();
+
+    Object stackTrace = event.get("stackTrace");
+    if (stackTrace == null) {
+      return frames;
+    }
+
+    Object framesObj = null;
+    if (stackTrace instanceof Map<?, ?> stMap) {
+      framesObj = stMap.get("frames");
+    }
+
+    if (framesObj == null) {
+      return frames;
+    }
+
+    // Handle array of frames
+    Object[] frameArray = null;
+    if (framesObj.getClass().isArray()) {
+      int len = java.lang.reflect.Array.getLength(framesObj);
+      frameArray = new Object[len];
+      for (int i = 0; i < len; i++) {
+        frameArray[i] = java.lang.reflect.Array.get(framesObj, i);
+      }
+    } else if (framesObj instanceof List<?> list) {
+      frameArray = list.toArray();
+    }
+
+    if (frameArray == null || frameArray.length == 0) {
+      return frames;
+    }
+
+    // Extract method names from frames
+    for (Object frame : frameArray) {
+      String methodName = extractMethodName(frame);
+      if (methodName != null) {
+        frames.add(methodName);
+      }
+      if (maxDepth != null && frames.size() >= maxDepth) {
+        break;
+      }
+    }
+
+    // For bottom-up: frames[0] is the hot method (leaf), walk to callers
+    // JFR stores frames with index 0 = top of stack (most recent call)
+    // So for bottom-up we keep order as-is (hot method first)
+    // For top-down we reverse (entry point first)
+    if ("top-down".equals(direction)) {
+      java.util.Collections.reverse(frames);
+    }
+
+    return frames;
+  }
+
+  @SuppressWarnings("unchecked")
+  private String extractMethodName(Object frame) {
+    if (frame == null) {
+      return null;
+    }
+
+    Map<String, Object> frameMap = null;
+    if (frame instanceof Map<?, ?> fm) {
+      frameMap = (Map<String, Object>) fm;
+    } else {
+      return null;
+    }
+
+    Object method = frameMap.get("method");
+    if (method == null) {
+      return null;
+    }
+
+    Map<String, Object> methodMap = null;
+    if (method instanceof Map<?, ?> mm) {
+      methodMap = (Map<String, Object>) mm;
+    } else {
+      return null;
+    }
+
+    // Get class name
+    String className = "";
+    Object type = methodMap.get("type");
+    if (type instanceof Map<?, ?> typeMap) {
+      Object name = typeMap.get("name");
+      if (name instanceof Map<?, ?> nameMap) {
+        Object str = nameMap.get("string");
+        if (str != null) {
+          className = str.toString();
+        }
+      } else if (name != null) {
+        className = name.toString();
+      }
+    }
+
+    // Get method name
+    String methodName = "";
+    Object nameObj = methodMap.get("name");
+    if (nameObj instanceof Map<?, ?> nameMap) {
+      Object str = nameMap.get("string");
+      if (str != null) {
+        methodName = str.toString();
+      }
+    } else if (nameObj != null) {
+      methodName = nameObj.toString();
+    }
+
+    if (className.isEmpty() && methodName.isEmpty()) {
+      return null;
+    }
+
+    return className.isEmpty() ? methodName : className + "." + methodName;
+  }
+
+  private CallToolResult formatFlamegraphFolded(FlameNode root, int minSamples) {
+    StringBuilder sb = new StringBuilder();
+    List<String> path = new ArrayList<>();
+    collectFoldedPaths(root, path, sb, minSamples);
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("format", "folded");
+    result.put("totalSamples", root.value);
+    result.put("data", sb.toString());
+    return successResult(result);
+  }
+
+  private void collectFoldedPaths(FlameNode node, List<String> path, StringBuilder sb, int minSamples) {
+    if (node.children.isEmpty()) {
+      // Leaf node - output the path
+      if (node.value >= minSamples && !path.isEmpty()) {
+        sb.append(String.join(";", path)).append(" ").append(node.value).append("\n");
+      }
+    } else {
+      for (Map.Entry<String, FlameNode> entry : node.children.entrySet()) {
+        path.add(entry.getKey());
+        collectFoldedPaths(entry.getValue(), path, sb, minSamples);
+        path.remove(path.size() - 1);
+      }
+    }
+  }
+
+  private CallToolResult formatFlamegraphTree(FlameNode root, String direction, int processedEvents, int minSamples) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("format", "tree");
+    result.put("direction", direction);
+    result.put("totalSamples", processedEvents);
+    result.put("root", nodeToMap(root, minSamples));
+    return successResult(result);
+  }
+
+  private Map<String, Object> nodeToMap(FlameNode node, int minSamples) {
+    Map<String, Object> map = new LinkedHashMap<>();
+    map.put("name", node.name);
+    map.put("value", node.value);
+
+    if (!node.children.isEmpty()) {
+      List<Map<String, Object>> children = new ArrayList<>();
+      for (FlameNode child : node.children.values()) {
+        if (child.value >= minSamples) {
+          children.add(nodeToMap(child, minSamples));
+        }
+      }
+      // Sort children by value descending
+      children.sort((a, b) -> Long.compare((Long) b.get("value"), (Long) a.get("value")));
+      map.put("children", children);
+    }
+    return map;
+  }
+
+  /** Tree node for flamegraph aggregation. */
+  private static class FlameNode {
+    final String name;
+    long value;
+    final Map<String, FlameNode> children = new LinkedHashMap<>();
+
+    FlameNode(String name) {
+      this.name = name;
+    }
+
+    void addPath(List<String> frames) {
+      value++;
+      if (!frames.isEmpty()) {
+        String head = frames.get(0);
+        children.computeIfAbsent(head, FlameNode::new)
+            .addPath(frames.subList(1, frames.size()));
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_callgraph
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrCallgraphTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "description": "Event type to analyze (e.g., jdk.ExecutionSample, jdk.ObjectAllocationSample)"
+            },
+            "format": {
+              "type": "string",
+              "description": "Output format: dot (graphviz) or json",
+              "enum": ["dot", "json"],
+              "default": "dot"
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "minWeight": {
+              "type": "integer",
+              "description": "Minimum edge weight to include (default: 1)"
+            }
+          },
+          "required": ["eventType"]
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_callgraph",
+            "Generates a call graph showing caller-callee relationships from stack traces. "
+                + "Unlike flamegraph (which preserves full paths), this shows which methods call which, "
+                + "revealing convergence points where multiple callers invoke the same method. "
+                + "DOT format can be visualized with graphviz. JSON format includes node and edge data.",
+            schema),
+        (exchange, args) -> handleJfrCallgraph(args));
+  }
+
+  private CallToolResult handleJfrCallgraph(Map<String, Object> args) {
+    String eventType = (String) args.get("eventType");
+    String format = (String) args.getOrDefault("format", "dot");
+    String sessionId = (String) args.get("sessionId");
+    Integer minWeight = args.get("minWeight") instanceof Number n ? n.intValue() : 1;
+
+    if (eventType == null || eventType.isBlank()) {
+      return errorResult("eventType is required");
+    }
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      // Query all events
+      String query = "events/" + eventType;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      // Build call graph
+      CallGraph graph = new CallGraph();
+      int processedEvents = 0;
+
+      for (Map<String, Object> event : events) {
+        List<String> frames = extractFrames(event, "top-down", null); // top-down for caller->callee order
+        if (!frames.isEmpty()) {
+          graph.addStack(frames);
+          processedEvents++;
+        }
+      }
+
+      // Format output
+      if ("json".equals(format)) {
+        return formatCallgraphJson(graph, processedEvents, minWeight);
+      } else {
+        return formatCallgraphDot(graph, minWeight);
+      }
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("Callgraph error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to generate callgraph: {}", e.getMessage(), e);
+      return errorResult("Failed to generate callgraph: " + e.getMessage());
+    }
+  }
+
+  private CallToolResult formatCallgraphDot(CallGraph graph, int minWeight) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("digraph callgraph {\n");
+    sb.append("  rankdir=TB;\n");
+    sb.append("  node [shape=box, fontsize=10];\n");
+    sb.append("  edge [fontsize=8];\n\n");
+
+    // Output edges
+    for (Map.Entry<String, Long> edge : graph.edges.entrySet()) {
+      if (edge.getValue() < minWeight) {
+        continue;
+      }
+      String[] parts = edge.getKey().split("->");
+      if (parts.length == 2) {
+        String from = escapeForDot(parts[0]);
+        String to = escapeForDot(parts[1]);
+        sb.append("  \"").append(from).append("\" -> \"").append(to)
+            .append("\" [label=\"").append(edge.getValue()).append("\"];\n");
+      }
+    }
+
+    sb.append("}\n");
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("format", "dot");
+    result.put("totalSamples", graph.totalSamples);
+    result.put("nodeCount", graph.nodeSamples.size());
+    result.put("edgeCount", graph.edges.size());
+    result.put("data", sb.toString());
+    return successResult(result);
+  }
+
+  private String escapeForDot(String s) {
+    return s.replace("\\", "\\\\").replace("\"", "\\\"");
+  }
+
+  private CallToolResult formatCallgraphJson(CallGraph graph, int processedEvents, int minWeight) {
+    // Build nodes list
+    List<Map<String, Object>> nodes = new ArrayList<>();
+    for (Map.Entry<String, Long> entry : graph.nodeSamples.entrySet()) {
+      Map<String, Object> node = new LinkedHashMap<>();
+      node.put("id", entry.getKey());
+      node.put("samples", entry.getValue());
+      Integer inDegree = graph.inDegree.get(entry.getKey());
+      if (inDegree != null && inDegree > 1) {
+        node.put("inDegree", inDegree);  // Only show if convergence point
+      }
+      nodes.add(node);
+    }
+    // Sort by samples descending
+    nodes.sort((a, b) -> Long.compare((Long) b.get("samples"), (Long) a.get("samples")));
+
+    // Build edges list
+    List<Map<String, Object>> edges = new ArrayList<>();
+    for (Map.Entry<String, Long> entry : graph.edges.entrySet()) {
+      if (entry.getValue() < minWeight) {
+        continue;
+      }
+      String[] parts = entry.getKey().split("->");
+      if (parts.length == 2) {
+        Map<String, Object> edge = new LinkedHashMap<>();
+        edge.put("from", parts[0]);
+        edge.put("to", parts[1]);
+        edge.put("weight", entry.getValue());
+        edges.add(edge);
+      }
+    }
+    // Sort by weight descending
+    edges.sort((a, b) -> Long.compare((Long) b.get("weight"), (Long) a.get("weight")));
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("format", "json");
+    result.put("totalSamples", processedEvents);
+    result.put("nodes", nodes);
+    result.put("edges", edges);
+    return successResult(result);
+  }
+
+  /** Graph structure for caller-callee relationship aggregation. */
+  private static class CallGraph {
+    final Map<String, Long> nodeSamples = new LinkedHashMap<>();
+    final Map<String, Long> edges = new LinkedHashMap<>();
+    final Map<String, Integer> inDegree = new HashMap<>();
+    long totalSamples = 0;
+
+    void addStack(List<String> frames) {
+      totalSamples++;
+
+      // Process caller->callee pairs
+      for (int i = 0; i < frames.size() - 1; i++) {
+        String caller = frames.get(i);
+        String callee = frames.get(i + 1);
+        String edge = caller + "->" + callee;
+
+        edges.merge(edge, 1L, Long::sum);
+        nodeSamples.merge(caller, 1L, Long::sum);
+
+        // Track unique callers per callee for inDegree
+        inDegree.merge(callee, 1, (old, v) -> old);
+      }
+
+      // Count the leaf node too
+      if (!frames.isEmpty()) {
+        String leaf = frames.get(frames.size() - 1);
+        nodeSamples.merge(leaf, 1L, Long::sum);
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

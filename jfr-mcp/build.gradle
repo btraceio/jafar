@@ -39,11 +39,15 @@ dependencies {
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
     useJUnitPlatform()
+    // Increase heap for processing JFR files with stack traces
+    minHeapSize = "256m"
+    maxHeapSize = "2g"
 }
 
 // Shadow JAR for standalone distribution
