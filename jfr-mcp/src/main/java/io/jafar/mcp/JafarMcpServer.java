@@ -9,6 +9,7 @@ import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
+import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
@@ -16,7 +17,6 @@ import io.modelcontextprotocol.spec.McpSchema.Tool;
 import jakarta.servlet.Servlet;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -60,10 +60,69 @@ public final class JafarMcpServer {
 
   public static void main(String[] args) {
     var server = new JafarMcpServer();
-    server.run();
+
+    // Check for --stdio flag
+    boolean useStdio = false;
+    for (String arg : args) {
+      if ("--stdio".equals(arg)) {
+        useStdio = true;
+        break;
+      }
+    }
+
+    if (useStdio) {
+      server.runStdio();
+    } else {
+      server.runSse();
+    }
   }
 
-  public void run() {
+  /** Run server with stdio transport (for Claude Code integration). */
+  public void runStdio() {
+    LOG.info("Starting Jafar MCP Server with stdio transport");
+
+    try {
+      // Create stdio transport
+      var transportProvider = new StdioServerTransportProvider(MAPPER);
+
+      // Build MCP server
+      // Note: The SDK's StdioServerTransportProvider starts reading from stdin
+      // automatically when the server is built
+      McpSyncServer mcpServer =
+          McpServer.sync(transportProvider)
+              .serverInfo("jafar-mcp", "0.10.0")
+              .capabilities(ServerCapabilities.builder().tools(true).logging().build())
+              .tools(createToolSpecifications())
+              .build();
+
+      LOG.info("Jafar MCP Server ready (stdio mode)");
+
+      // Shutdown hook for cleanup
+      Runtime.getRuntime()
+          .addShutdownHook(
+              new Thread(
+                  () -> {
+                    LOG.info("Shutting down...");
+                    sessionRegistry.shutdown();
+                    mcpServer.close();
+                  }));
+
+      // Keep the main thread alive - use a latch that never counts down
+      // The server will exit when stdin closes (EOF) or on SIGTERM
+      var latch = new java.util.concurrent.CountDownLatch(1);
+      latch.await();
+
+    } catch (InterruptedException e) {
+      LOG.info("Server interrupted, shutting down");
+      Thread.currentThread().interrupt();
+    } catch (Exception e) {
+      LOG.error("Failed to start server: {}", e.getMessage(), e);
+      System.exit(1);
+    }
+  }
+
+  /** Run server with HTTP/SSE transport (for web clients). */
+  public void runSse() {
     int port = Integer.getInteger("mcp.port", 3000);
     LOG.info("Starting Jafar MCP Server on port {}", port);
 
@@ -128,7 +187,10 @@ public final class JafarMcpServer {
         createJfrCloseTool(),
         createJfrHelpTool(),
         createJfrFlamegraphTool(),
-        createJfrCallgraphTool());
+        createJfrCallgraphTool(),
+        createJfrExceptionsTool(),
+        createJfrSummaryTool(),
+        createJfrHotmethodsTool());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1031,6 +1093,19 @@ public final class JafarMcpServer {
     }
   }
 
+  /**
+   * Unwraps Jafar wrapper types (ArrayType, ComplexType) to their underlying values.
+   */
+  private Object unwrapValue(Object obj) {
+    if (obj instanceof io.jafar.parser.api.ArrayType arr) {
+      return arr.getArray();
+    }
+    if (obj instanceof io.jafar.parser.api.ComplexType ct) {
+      return ct.getValue();
+    }
+    return obj;
+  }
+
   @SuppressWarnings("unchecked")
   private List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
     List<String> frames = new ArrayList<>();
@@ -1049,9 +1124,12 @@ public final class JafarMcpServer {
       return frames;
     }
 
+    // Unwrap {type: ..., array: [...]} wrapper if present
+    framesObj = unwrapValue(framesObj);
+
     // Handle array of frames
     Object[] frameArray = null;
-    if (framesObj.getClass().isArray()) {
+    if (framesObj != null && framesObj.getClass().isArray()) {
       int len = java.lang.reflect.Array.getLength(framesObj);
       frameArray = new Object[len];
       for (int i = 0; i < len; i++) {
@@ -1105,6 +1183,9 @@ public final class JafarMcpServer {
       return null;
     }
 
+    // Unwrap {value: ...} wrapper if present (Datadog format)
+    method = unwrapValue(method);
+
     Map<String, Object> methodMap = null;
     if (method instanceof Map<?, ?> mm) {
       methodMap = (Map<String, Object>) mm;
@@ -1112,11 +1193,11 @@ public final class JafarMcpServer {
       return null;
     }
 
-    // Get class name
+    // Get class name - handle nested value wrappers
     String className = "";
-    Object type = methodMap.get("type");
+    Object type = unwrapValue(methodMap.get("type"));
     if (type instanceof Map<?, ?> typeMap) {
-      Object name = typeMap.get("name");
+      Object name = unwrapValue(typeMap.get("name"));
       if (name instanceof Map<?, ?> nameMap) {
         Object str = nameMap.get("string");
         if (str != null) {
@@ -1127,9 +1208,9 @@ public final class JafarMcpServer {
       }
     }
 
-    // Get method name
+    // Get method name - handle nested value wrappers
     String methodName = "";
-    Object nameObj = methodMap.get("name");
+    Object nameObj = unwrapValue(methodMap.get("name"));
     if (nameObj instanceof Map<?, ?> nameMap) {
       Object str = nameMap.get("string");
       if (str != null) {
@@ -1418,6 +1499,711 @@ public final class JafarMcpServer {
         nodeSamples.merge(leaf, 1L, Long::sum);
       }
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_exceptions
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrExceptionsTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "description": "Exception event type (e.g., datadog.ExceptionSample, jdk.JavaExceptionThrow). Auto-detects if not specified."
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "minCount": {
+              "type": "integer",
+              "description": "Minimum exception count to include in results (default: 1)"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of exception types to return (default: 50)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_exceptions",
+            "Analyzes exception events in a JFR recording. Extracts exception types from stack traces, "
+                + "groups by exception class, and identifies throw sites. Works with both JDK exception events "
+                + "(jdk.JavaExceptionThrow) and profiler exception samples (datadog.ExceptionSample). "
+                + "Returns exception type counts, throw site locations, and patterns.",
+            schema),
+        (exchange, args) -> handleJfrExceptions(args));
+  }
+
+  private CallToolResult handleJfrExceptions(Map<String, Object> args) {
+    String eventType = (String) args.get("eventType");
+    String sessionId = (String) args.get("sessionId");
+    int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
+    int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      // Auto-detect exception event type if not specified
+      if (eventType == null || eventType.isBlank()) {
+        eventType = detectExceptionEventType(sessionInfo);
+        if (eventType == null) {
+          return errorResult("No exception events found in recording. "
+              + "Specify eventType explicitly (e.g., jdk.JavaExceptionThrow or datadog.ExceptionSample)");
+        }
+      }
+
+      // Query exception events
+      String query = "events/" + eventType;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      if (events.isEmpty()) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("eventType", eventType);
+        result.put("totalExceptions", 0);
+        result.put("message", "No exception events found for type: " + eventType);
+        return successResult(result);
+      }
+
+      // Analyze exceptions
+      ExceptionAnalysis analysis = analyzeExceptions(events);
+
+      // Build result
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("eventType", eventType);
+      result.put("totalExceptions", events.size());
+
+      // Exception types by frequency
+      List<Map<String, Object>> byType = new ArrayList<>();
+      analysis.exceptionTypes.entrySet().stream()
+          .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+          .filter(e -> e.getValue() >= minCount)
+          .limit(limit)
+          .forEach(e -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            String fullName = e.getKey();
+            entry.put("type", extractSimpleName(fullName));
+            entry.put("fullType", fullName);
+            entry.put("count", e.getValue());
+            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+            // Add top throw site for this exception type
+            String topSite = analysis.topThrowSiteByType.get(fullName);
+            if (topSite != null) {
+              entry.put("topThrowSite", topSite);
+            }
+            byType.add(entry);
+          });
+      result.put("byType", byType);
+
+      // Top throw sites overall
+      List<Map<String, Object>> throwSites = new ArrayList<>();
+      analysis.throwSites.entrySet().stream()
+          .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+          .filter(e -> e.getValue() >= minCount)
+          .limit(20)
+          .forEach(e -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("site", e.getKey());
+            entry.put("count", e.getValue());
+            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+            throwSites.add(entry);
+          });
+      result.put("topThrowSites", throwSites);
+
+      // Summary statistics
+      Map<String, Object> summary = new LinkedHashMap<>();
+      summary.put("uniqueExceptionTypes", analysis.exceptionTypes.size());
+      summary.put("uniqueThrowSites", analysis.throwSites.size());
+      if (analysis.exceptionTypes.size() > 0) {
+        String topException = analysis.exceptionTypes.entrySet().stream()
+            .max(Comparator.comparingLong(Map.Entry::getValue))
+            .map(e -> extractSimpleName(e.getKey()))
+            .orElse("unknown");
+        summary.put("mostCommonException", topException);
+      }
+      result.put("summary", summary);
+
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("Exception analysis error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to analyze exceptions: {}", e.getMessage(), e);
+      return errorResult("Failed to analyze exceptions: " + e.getMessage());
+    }
+  }
+
+  private String detectExceptionEventType(SessionRegistry.SessionInfo sessionInfo) {
+    // Check for common exception event types
+    String[] candidateTypes = {
+        "jdk.JavaExceptionThrow",
+        "datadog.ExceptionSample",
+        "jdk.ExceptionStatistics"
+    };
+
+    for (String type : candidateTypes) {
+      try {
+        String query = "events/" + type + " | count()";
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
+        if (!result.isEmpty()) {
+          Object countObj = result.get(0).get("count");
+          if (countObj instanceof Number n && n.longValue() > 0) {
+            return type;
+          }
+        }
+      } catch (Exception ignored) {
+        // Try next type
+      }
+    }
+    return null;
+  }
+
+  @SuppressWarnings("unchecked")
+  private ExceptionAnalysis analyzeExceptions(List<Map<String, Object>> events) {
+    ExceptionAnalysis analysis = new ExceptionAnalysis();
+
+    for (Map<String, Object> event : events) {
+      ExceptionInfo info = extractExceptionInfo(event);
+      if (info.exceptionType != null) {
+        analysis.exceptionTypes.merge(info.exceptionType, 1L, Long::sum);
+
+        if (info.throwSite != null) {
+          analysis.throwSites.merge(info.throwSite, 1L, Long::sum);
+
+          // Track top throw site per exception type
+          analysis.throwSitesByType
+              .computeIfAbsent(info.exceptionType, k -> new HashMap<>())
+              .merge(info.throwSite, 1L, Long::sum);
+        }
+      }
+    }
+
+    // Compute top throw site for each exception type
+    for (Map.Entry<String, Map<String, Long>> entry : analysis.throwSitesByType.entrySet()) {
+      entry.getValue().entrySet().stream()
+          .max(Comparator.comparingLong(Map.Entry::getValue))
+          .ifPresent(e -> analysis.topThrowSiteByType.put(entry.getKey(), e.getKey()));
+    }
+
+    return analysis;
+  }
+
+  @SuppressWarnings("unchecked")
+  private ExceptionInfo extractExceptionInfo(Map<String, Object> event) {
+    ExceptionInfo info = new ExceptionInfo();
+
+    // First, check for explicit exception type field (jdk.JavaExceptionThrow has thrownClass)
+    Object thrownClass = event.get("thrownClass");
+    if (thrownClass != null) {
+      info.exceptionType = extractClassName(thrownClass);
+    }
+
+    // Extract from stack trace
+    Object stackTrace = event.get("stackTrace");
+    if (stackTrace instanceof Map<?, ?> stMap) {
+      Object framesObj = stMap.get("frames");
+      framesObj = unwrapValue(framesObj);
+
+      Object[] frameArray = toObjectArray(framesObj);
+      if (frameArray != null && frameArray.length > 0) {
+        // Find exception type from <init> chain
+        String lastExceptionInit = null;
+        String firstNonInitFrame = null;
+
+        for (Object frame : frameArray) {
+          String methodName = extractMethodName(frame);
+          if (methodName == null) continue;
+
+          if (methodName.endsWith(".<init>")) {
+            String className = methodName.substring(0, methodName.length() - 7);
+            if (isExceptionClass(className)) {
+              lastExceptionInit = className;
+            }
+          } else if (lastExceptionInit != null && firstNonInitFrame == null) {
+            firstNonInitFrame = methodName;
+          }
+        }
+
+        // If we found exception type from stack, use it (more specific than thrownClass)
+        if (lastExceptionInit != null) {
+          info.exceptionType = lastExceptionInit;
+        }
+        if (firstNonInitFrame != null) {
+          info.throwSite = firstNonInitFrame;
+        }
+      }
+    }
+
+    return info;
+  }
+
+  private boolean isExceptionClass(String className) {
+    return className.endsWith("Exception")
+        || className.endsWith("Error")
+        || className.endsWith("Throwable")
+        || className.contains("/Exception")
+        || className.contains("/Error");
+  }
+
+  @SuppressWarnings("unchecked")
+  private String extractClassName(Object classObj) {
+    classObj = unwrapValue(classObj);
+    if (classObj instanceof Map<?, ?> classMap) {
+      Object name = classMap.get("name");
+      name = unwrapValue(name);
+      if (name instanceof Map<?, ?> nameMap) {
+        Object str = nameMap.get("string");
+        if (str != null) return str.toString();
+      } else if (name != null) {
+        return name.toString();
+      }
+    }
+    return null;
+  }
+
+  private Object[] toObjectArray(Object obj) {
+    if (obj == null) return null;
+    if (obj.getClass().isArray()) {
+      int len = java.lang.reflect.Array.getLength(obj);
+      Object[] result = new Object[len];
+      for (int i = 0; i < len; i++) {
+        result[i] = java.lang.reflect.Array.get(obj, i);
+      }
+      return result;
+    } else if (obj instanceof List<?> list) {
+      return list.toArray();
+    }
+    return null;
+  }
+
+  private String extractSimpleName(String fullName) {
+    if (fullName == null) return "unknown";
+    int lastSlash = fullName.lastIndexOf('/');
+    return lastSlash >= 0 ? fullName.substring(lastSlash + 1) : fullName;
+  }
+
+  private static class ExceptionAnalysis {
+    final Map<String, Long> exceptionTypes = new LinkedHashMap<>();
+    final Map<String, Long> throwSites = new LinkedHashMap<>();
+    final Map<String, Map<String, Long>> throwSitesByType = new HashMap<>();
+    final Map<String, String> topThrowSiteByType = new HashMap<>();
+  }
+
+  private static class ExceptionInfo {
+    String exceptionType;
+    String throwSite;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_summary
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrSummaryTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_summary",
+            "Provides a quick overview of a JFR recording including duration, event counts, "
+                + "and key highlights like GC statistics, exception rates, and top CPU consumers. "
+                + "Useful for getting oriented with a new recording before deeper analysis.",
+            schema),
+        (exchange, args) -> handleJfrSummary(args));
+  }
+
+  private CallToolResult handleJfrSummary(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      Map<String, Object> result = new LinkedHashMap<>();
+
+      // Recording metadata
+      result.put("recordingPath", sessionInfo.recordingPath().toString());
+      result.put("sessionId", sessionInfo.id());
+
+      // Get all event types and counts
+      Map<String, Long> eventCounts = new LinkedHashMap<>();
+      long totalEvents = 0;
+
+      // Query for event type counts
+      Set<String> types = sessionInfo.session().getAvailableTypes();
+      for (String type : types) {
+        try {
+          String query = "events/" + type + " | count()";
+          JfrPath.Query parsed = JfrPathParser.parse(query);
+          List<Map<String, Object>> countResult = evaluator.evaluate(sessionInfo.session(), parsed);
+          if (!countResult.isEmpty()) {
+            Object countObj = countResult.get(0).get("count");
+            if (countObj instanceof Number n) {
+              long count = n.longValue();
+              if (count > 0) {
+                eventCounts.put(type, count);
+                totalEvents += count;
+              }
+            }
+          }
+        } catch (Exception ignored) {
+          // Skip types that fail to query
+        }
+      }
+
+      result.put("totalEvents", totalEvents);
+      result.put("totalEventTypes", eventCounts.size());
+
+      // Top event types
+      final long finalTotalEvents = totalEvents; // Make effectively final for lambda
+      List<Map<String, Object>> topTypes = new ArrayList<>();
+      eventCounts.entrySet().stream()
+          .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+          .limit(15)
+          .forEach(e -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("type", e.getKey());
+            entry.put("count", e.getValue());
+            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
+            topTypes.add(entry);
+          });
+      result.put("topEventTypes", topTypes);
+
+      // Compute highlights
+      Map<String, Object> highlights = new LinkedHashMap<>();
+
+      // GC statistics
+      try {
+        highlights.put("gc", computeGcStats(sessionInfo));
+      } catch (Exception e) {
+        highlights.put("gc", Map.of("error", "Unable to compute GC stats"));
+      }
+
+      // Exception statistics
+      Long exceptionCount = eventCounts.entrySet().stream()
+          .filter(e -> e.getKey().contains("Exception") || e.getKey().endsWith("ExceptionSample"))
+          .mapToLong(Map.Entry::getValue)
+          .sum();
+      if (exceptionCount > 0) {
+        Map<String, Object> exceptionStats = new LinkedHashMap<>();
+        exceptionStats.put("totalExceptions", exceptionCount);
+        highlights.put("exceptions", exceptionStats);
+      }
+
+      // CPU sampling statistics
+      Long cpuSamples = eventCounts.entrySet().stream()
+          .filter(e -> e.getKey().endsWith("ExecutionSample") || e.getKey().equals("jdk.ExecutionSample"))
+          .mapToLong(Map.Entry::getValue)
+          .sum();
+      if (cpuSamples > 0) {
+        Map<String, Object> cpuStats = new LinkedHashMap<>();
+        cpuStats.put("totalSamples", cpuSamples);
+
+        // Try to get top CPU method
+        try {
+          String topMethod = getTopCpuMethod(sessionInfo);
+          if (topMethod != null) {
+            cpuStats.put("topMethod", topMethod);
+          }
+        } catch (Exception ignored) {
+          // Skip if can't determine
+        }
+
+        highlights.put("cpu", cpuStats);
+      }
+
+      result.put("highlights", highlights);
+
+      return successResult(result);
+
+    } catch (Exception e) {
+      LOG.error("Failed to generate summary: {}", e.getMessage(), e);
+      return errorResult("Failed to generate summary: " + e.getMessage());
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> computeGcStats(SessionRegistry.SessionInfo sessionInfo) {
+    Map<String, Object> stats = new LinkedHashMap<>();
+
+    // Try different GC event types
+    String[] gcTypes = {
+        "jdk.GarbageCollection",
+        "jdk.YoungGarbageCollection",
+        "jdk.OldGarbageCollection",
+        "jdk.G1GarbageCollection"
+    };
+
+    long totalGCs = 0;
+    long totalPauseNs = 0;
+    String gcType = null;
+
+    for (String type : gcTypes) {
+      try {
+        String query = "events/" + type;
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+        if (!events.isEmpty()) {
+          gcType = type;
+          totalGCs += events.size();
+
+          // Sum pause times (duration field in nanoseconds)
+          for (Map<String, Object> event : events) {
+            Object duration = event.get("duration");
+            if (duration instanceof Number n) {
+              totalPauseNs += n.longValue();
+            }
+          }
+        }
+      } catch (Exception ignored) {
+        // Try next type
+      }
+    }
+
+    if (totalGCs > 0) {
+      stats.put("totalCollections", totalGCs);
+      stats.put("totalPauseMs", totalPauseNs / 1_000_000);
+      stats.put("avgPauseMs", (totalPauseNs / totalGCs) / 1_000_000);
+      if (gcType != null) {
+        stats.put("primaryType", gcType);
+      }
+    }
+
+    return stats;
+  }
+
+  private String getTopCpuMethod(SessionRegistry.SessionInfo sessionInfo) {
+    // Find execution sample event type
+    String eventType = null;
+    Set<String> types = sessionInfo.session().getAvailableTypes();
+    if (types.contains("datadog.ExecutionSample")) {
+      eventType = "datadog.ExecutionSample";
+    } else if (types.contains("jdk.ExecutionSample")) {
+      eventType = "jdk.ExecutionSample";
+    }
+
+    if (eventType == null) {
+      return null;
+    }
+
+    // Query and extract top frame
+    try {
+      String query = "events/" + eventType;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      if (events.isEmpty()) {
+        return null;
+      }
+
+      // Count leaf methods
+      Map<String, Long> methodCounts = new HashMap<>();
+      for (Map<String, Object> event : events) {
+        List<String> frames = extractFrames(event, "bottom-up", 1);
+        if (!frames.isEmpty()) {
+          String method = frames.get(0);
+          methodCounts.merge(method, 1L, Long::sum);
+        }
+      }
+
+      // Return top method
+      return methodCounts.entrySet().stream()
+          .max(Comparator.comparingLong(Map.Entry::getValue))
+          .map(e -> {
+            long count = e.getValue();
+            double pct = count * 100.0 / events.size();
+            return String.format("%s (%.1f%%)", e.getKey(), pct);
+          })
+          .orElse(null);
+
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_hotmethods
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrHotmethodsTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "description": "Execution sample event type (e.g., datadog.ExecutionSample, jdk.ExecutionSample). Auto-detects if not specified."
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of methods to return (default: 20)"
+            },
+            "includeNative": {
+              "type": "boolean",
+              "description": "Include native/VM methods (default: true)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_hotmethods",
+            "Returns the hottest methods (leaf frames) from CPU profiling samples. "
+                + "Simpler and more compact than full flamegraph - just shows which methods are consuming CPU. "
+                + "Useful for quick CPU hotspot identification.",
+            schema),
+        (exchange, args) -> handleJfrHotmethods(args));
+  }
+
+  private CallToolResult handleJfrHotmethods(Map<String, Object> args) {
+    String eventType = (String) args.get("eventType");
+    String sessionId = (String) args.get("sessionId");
+    int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
+    boolean includeNative = args.get("includeNative") instanceof Boolean b ? b : true;
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      // Auto-detect execution sample event type if not specified
+      if (eventType == null || eventType.isBlank()) {
+        eventType = detectExecutionEventType(sessionInfo);
+        if (eventType == null) {
+          return errorResult("No execution sample events found in recording. "
+              + "Specify eventType explicitly (e.g., jdk.ExecutionSample or datadog.ExecutionSample)");
+        }
+      }
+
+      // Query execution events
+      String query = "events/" + eventType;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      if (events.isEmpty()) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("eventType", eventType);
+        result.put("totalSamples", 0);
+        result.put("message", "No execution sample events found for type: " + eventType);
+        return successResult(result);
+      }
+
+      // Count leaf methods
+      Map<String, Long> methodCounts = new HashMap<>();
+      for (Map<String, Object> event : events) {
+        List<String> frames = extractFrames(event, "bottom-up", 1);
+        if (!frames.isEmpty()) {
+          String method = frames.get(0);
+          methodCounts.merge(method, 1L, Long::sum);
+        }
+      }
+
+      // Build result
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("eventType", eventType);
+      result.put("totalSamples", events.size());
+      result.put("uniqueMethods", methodCounts.size());
+
+      // Top methods
+      List<Map<String, Object>> methods = new ArrayList<>();
+      methodCounts.entrySet().stream()
+          .filter(e -> includeNative || !isNativeMethod(e.getKey()))
+          .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+          .limit(limit)
+          .forEach(e -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            String methodName = e.getKey();
+            entry.put("method", methodName);
+            entry.put("samples", e.getValue());
+            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+            entry.put("type", isNativeMethod(methodName) ? "native" : "java");
+            methods.add(entry);
+          });
+      result.put("methods", methods);
+
+      // Category breakdown
+      Map<String, Long> categoryBreakdown = new LinkedHashMap<>();
+      long nativeSamples = 0;
+      long javaSamples = 0;
+      for (Map.Entry<String, Long> entry : methodCounts.entrySet()) {
+        if (isNativeMethod(entry.getKey())) {
+          nativeSamples += entry.getValue();
+        } else {
+          javaSamples += entry.getValue();
+        }
+      }
+      categoryBreakdown.put("native", nativeSamples);
+      categoryBreakdown.put("java", javaSamples);
+      result.put("categoryBreakdown", categoryBreakdown);
+
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("Hotmethods error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to analyze hot methods: {}", e.getMessage(), e);
+      return errorResult("Failed to analyze hot methods: " + e.getMessage());
+    }
+  }
+
+  private String detectExecutionEventType(SessionRegistry.SessionInfo sessionInfo) {
+    String[] candidateTypes = {
+        "jdk.ExecutionSample",
+        "datadog.ExecutionSample",
+        "jdk.NativeMethodSample"
+    };
+
+    for (String type : candidateTypes) {
+      try {
+        String query = "events/" + type + " | count()";
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
+        if (!result.isEmpty()) {
+          Object countObj = result.get(0).get("count");
+          if (countObj instanceof Number n && n.longValue() > 0) {
+            return type;
+          }
+        }
+      } catch (Exception ignored) {
+        // Try next type
+      }
+    }
+    return null;
+  }
+
+  private boolean isNativeMethod(String methodName) {
+    if (methodName == null) return false;
+    // C++ mangled names typically have < > :: or start with special chars
+    return methodName.contains("<")
+        || methodName.contains(">::")
+        || methodName.contains("::")
+        || methodName.startsWith("_")
+        || methodName.toLowerCase().contains("atomic");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

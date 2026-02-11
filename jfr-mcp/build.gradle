@@ -50,6 +50,11 @@ test {
     maxHeapSize = "2g"
 }
 
+// Exclude duplicate SLF4J provider (we use logback-classic)
+configurations.runtimeClasspath {
+    exclude group: 'org.slf4j', module: 'slf4j-simple'
+}
+
 // Shadow JAR for standalone distribution
 shadowJar {
     group 'Build'
