@@ -21,7 +21,7 @@ class ShellCompleterShowListMatchTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
-          when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
+          when(s.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
           return s;
         };
     SessionManager sm = new SessionManager(ctx, factory);

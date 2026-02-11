@@ -25,7 +25,7 @@ class ShellCompleterMetadataTest {
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAllMetadataTypes())
               .thenReturn(Set.of("java.lang.Thread", "jdk.JavaMonitorEnter"));
-          when(s.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead"));
+          when(s.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead"));
           return s;
         };
     SessionManager sm = new SessionManager(ctx, factory);

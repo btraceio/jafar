@@ -45,7 +45,7 @@ class CommandDispatcherTypesFilterTest {
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/one.jfr"));
     when(session.getAllMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
     when(session.getNonPrimitiveMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.A", "custom.C"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.A", "custom.C"));
 
     SessionManager sm = new SessionManager(ParsingContext.create(), (p, c) -> session);
     BufferIO io = new BufferIO();

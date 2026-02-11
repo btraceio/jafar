@@ -62,7 +62,7 @@ class ConditionalFlowTest {
         (path, c) -> {
           JFRSession session = Mockito.mock(JFRSession.class);
           Mockito.when(session.getRecordingPath()).thenReturn(path);
-          Mockito.when(session.getAvailableEventTypes()).thenReturn(java.util.Set.of());
+          Mockito.when(session.getAvailableTypes()).thenReturn(java.util.Set.of());
           Mockito.when(session.getHandlerCount()).thenReturn(0);
           Mockito.when(session.hasRun()).thenReturn(false);
           return session;

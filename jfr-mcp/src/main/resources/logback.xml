@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Log to stderr to avoid interfering with stdio MCP protocol -->
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Quiet down noisy loggers -->
+    <logger name="io.modelcontextprotocol" level="WARN"/>
+    <logger name="io.jafar.parser" level="WARN"/>
+
+    <!-- Our loggers -->
+    <logger name="io.jafar.mcp" level="INFO"/>
+
+    <root level="WARN">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

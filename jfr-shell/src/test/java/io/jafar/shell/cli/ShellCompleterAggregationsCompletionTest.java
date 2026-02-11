@@ -21,7 +21,7 @@ class ShellCompleterAggregationsCompletionTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
-          when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
+          when(s.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
           return s;
         };
     SessionManager sm = new SessionManager(ctx, factory);
@@ -45,7 +45,7 @@ class ShellCompleterAggregationsCompletionTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
-          when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
+          when(s.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.FileRead"));
           return s;
         };
     SessionManager sm = new SessionManager(ctx, factory);

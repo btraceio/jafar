@@ -1,0 +1,69 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+def libraryName = "jfr-mcp"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Official MCP Java SDK (v0.12.1 per official docs)
+    implementation platform('io.modelcontextprotocol.sdk:mcp-bom:0.12.1')
+    implementation 'io.modelcontextprotocol.sdk:mcp'
+
+    // Jafar dependencies
+    implementation project(':jfr-shell')
+    implementation project(':parser')
+
+    // Backend plugins (discovered via ServiceLoader)
+    runtimeOnly project(':jfr-shell-jafar')
+
+    // Embedded Jetty for HTTP transport
+    implementation 'org.eclipse.jetty:jetty-server:12.0.16'
+    implementation 'org.eclipse.jetty.ee10:jetty-ee10-servlet:12.0.16'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.16'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.18'
+
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// Shadow JAR for standalone distribution
+shadowJar {
+    group 'Build'
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('all')
+
+    mergeServiceFiles()
+
+    manifest {
+        attributes 'Main-Class': 'io.jafar.mcp.JafarMcpServer'
+    }
+}
+
+tasks.named('build') {
+    dependsOn shadowJar
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'MCP Server for JFR analysis - enables AI agents to analyze Java Flight Recordings'
