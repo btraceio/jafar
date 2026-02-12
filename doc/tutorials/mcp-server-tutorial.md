@@ -14,15 +14,24 @@ This tutorial teaches you how to use the Jafar MCP (Model Context Protocol) serv
 
 ## What is MCP?
 
-The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes seven tools for JFR analysis:
+The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes thirteen tools for JFR analysis:
 
+**Core Tools:**
 - **jfr_open** - Open a JFR recording file for analysis
 - **jfr_list_types** - List available event types in a recording
 - **jfr_query** - Execute JfrPath queries against the recording
 - **jfr_close** - Close a recording session
 - **jfr_help** - Get JfrPath query language documentation
+
+**Analysis Tools:**
+- **jfr_diagnose** - Comprehensive automated diagnosis with multi-dimensional analysis
+- **jfr_summary** - Quick overview with duration, event counts, and key highlights
 - **jfr_flamegraph** - Generate aggregated stack trace data for flamegraph-style analysis
 - **jfr_callgraph** - Generate caller-callee relationship graph from stack traces
+- **jfr_exceptions** - Analyze exception patterns and throw sites
+- **jfr_hotmethods** - Identify CPU-intensive methods with sample counts
+- **jfr_use** - USE Method analysis (Utilization, Saturation, Errors) for resource bottlenecks
+- **jfr_tsa** - Thread State Analysis showing time distribution across thread states
 
 This allows AI assistants to autonomously analyze JFR files, identify performance issues, and provide insights without manual intervention.
 
@@ -328,7 +337,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "jafar": {
       "command": "java",
-      "args": ["-jar", "/path/to/jafar/jfr-mcp/build/libs/jfr-mcp-0.10.0-SNAPSHOT-all.jar"],
+      "args": ["-jar", "/path/to/jafar/jfr-mcp/build/libs/jfr-mcp-0.10.0-SNAPSHOT-all.jar", "--stdio"],
       "env": {}
     }
   }

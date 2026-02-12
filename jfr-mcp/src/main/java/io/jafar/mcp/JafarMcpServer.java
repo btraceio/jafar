@@ -53,6 +53,7 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code jfr_hotmethods} - Hot method identification
  *   <li>{@code jfr_use} - USE Method resource analysis (Utilization, Saturation, Errors)
  *   <li>{@code jfr_tsa} - Thread State Analysis (TSA Method)
+ *   <li>{@code jfr_diagnose} - Automated performance diagnosis
  * </ul>
  */
 public final class JafarMcpServer {
@@ -352,10 +353,10 @@ public final class JafarMcpServer {
 
     } catch (IllegalArgumentException e) {
       LOG.warn("Query error: {}", e.getMessage());
-      return errorResult("Query error: " + e.getMessage());
+      return errorResult(e.getMessage());
     } catch (Exception e) {
       LOG.error("Failed to execute query: {}", e.getMessage(), e);
-      return errorResult("Query execution failed: " + e.getMessage());
+      return errorResult("Failed to execute query: " + e.getMessage());
     }
   }
 
@@ -1077,6 +1078,12 @@ public final class JafarMcpServer {
     if (eventType == null || eventType.isBlank()) {
       return errorResult("eventType is required");
     }
+    if (minSamples != null && minSamples < 1) {
+      return errorResult("minSamples must be >= 1");
+    }
+    if (maxDepth != null && maxDepth < 1) {
+      return errorResult("maxDepth must be >= 1");
+    }
 
     try {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
@@ -1376,6 +1383,9 @@ public final class JafarMcpServer {
     if (eventType == null || eventType.isBlank()) {
       return errorResult("eventType is required");
     }
+    if (minWeight < 1) {
+      return errorResult("minWeight must be >= 1");
+    }
 
     try {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
@@ -1397,6 +1407,9 @@ public final class JafarMcpServer {
           processedEvents++;
         }
       }
+
+      // Compute inDegree for convergence point detection
+      graph.computeInDegree();
 
       // Format output
       if ("json".equals(format)) {
@@ -1515,15 +1528,24 @@ public final class JafarMcpServer {
 
         edges.merge(edge, 1L, Long::sum);
         nodeSamples.merge(caller, 1L, Long::sum);
-
-        // Track unique callers per callee for inDegree
-        inDegree.merge(callee, 1, (old, v) -> old);
       }
 
       // Count the leaf node too
       if (!frames.isEmpty()) {
         String leaf = frames.get(frames.size() - 1);
         nodeSamples.merge(leaf, 1L, Long::sum);
+      }
+    }
+
+    /** Compute inDegree from edges map (number of unique callers per method). */
+    void computeInDegree() {
+      inDegree.clear();
+      for (String edge : edges.keySet()) {
+        String[] parts = edge.split("->");
+        if (parts.length == 2) {
+          String callee = parts[1];
+          inDegree.merge(callee, 1, Integer::sum);
+        }
       }
     }
   }
