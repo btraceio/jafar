@@ -2,6 +2,7 @@ package io.jafar.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.parser.api.Values;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -20,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +45,14 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code jfr_query} - Execute JfrPath queries
  *   <li>{@code jfr_list_types} - List available event types
  *   <li>{@code jfr_close} - Close a recording session
+ *   <li>{@code jfr_help} - JfrPath query language documentation
+ *   <li>{@code jfr_flamegraph} - Generate flamegraphs
+ *   <li>{@code jfr_callgraph} - Generate call graphs
+ *   <li>{@code jfr_exceptions} - Analyze exception patterns
+ *   <li>{@code jfr_summary} - Recording overview
+ *   <li>{@code jfr_hotmethods} - Hot method identification
+ *   <li>{@code jfr_use} - USE Method resource analysis (Utilization, Saturation, Errors)
+ *   <li>{@code jfr_tsa} - Thread State Analysis (TSA Method)
  * </ul>
  */
 public final class JafarMcpServer {
@@ -190,7 +200,9 @@ public final class JafarMcpServer {
         createJfrCallgraphTool(),
         createJfrExceptionsTool(),
         createJfrSummaryTool(),
-        createJfrHotmethodsTool());
+        createJfrHotmethodsTool(),
+        createJfrUseTool(),
+        createJfrTsaTool());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -518,9 +530,12 @@ public final class JafarMcpServer {
         LOG.info("Closed all {} sessions", count);
         return successResult(
             Map.of(
-                "success", true,
-                "message", "Closed " + count + " session(s)",
-                "remainingSessions", 0));
+                "success",
+                true,
+                "message",
+                "Closed " + count + " session(s)",
+                "remainingSessions",
+                0));
       }
 
       if (sessionId == null || sessionId.isBlank()) {
@@ -536,9 +551,12 @@ public final class JafarMcpServer {
         LOG.info("Closed session: {}", sessionId);
         return successResult(
             Map.of(
-                "success", true,
-                "message", "Session " + sessionId + " closed successfully",
-                "remainingSessions", sessionRegistry.size()));
+                "success",
+                true,
+                "message",
+                "Session " + sessionId + " closed successfully",
+                "remainingSessions",
+                sessionRegistry.size()));
       } else {
         return errorResult("Session not found: " + sessionId);
       }
@@ -592,7 +610,9 @@ public final class JafarMcpServer {
           case "functions" -> getFunctionsHelp();
           case "examples" -> getExamplesHelp();
           case "event_types" -> getEventTypesHelp();
-          default -> "Unknown topic: " + topic + ". Available: overview, filters, pipeline, functions, examples, event_types";
+          default -> "Unknown topic: "
+              + topic
+              + ". Available: overview, filters, pipeline, functions, examples, event_types";
         };
 
     return new CallToolResult(List.of(new TextContent(content)), false);
@@ -1093,9 +1113,7 @@ public final class JafarMcpServer {
     }
   }
 
-  /**
-   * Unwraps Jafar wrapper types (ArrayType, ComplexType) to their underlying values.
-   */
+  /** Unwraps Jafar wrapper types (ArrayType, ComplexType) to their underlying values. */
   private Object unwrapValue(Object obj) {
     if (obj instanceof io.jafar.parser.api.ArrayType arr) {
       return arr.getArray();
@@ -1107,7 +1125,8 @@ public final class JafarMcpServer {
   }
 
   @SuppressWarnings("unchecked")
-  private List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
+  private List<String> extractFrames(
+      Map<String, Object> event, String direction, Integer maxDepth) {
     List<String> frames = new ArrayList<>();
 
     Object stackTrace = event.get("stackTrace");
@@ -1239,7 +1258,8 @@ public final class JafarMcpServer {
     return successResult(result);
   }
 
-  private void collectFoldedPaths(FlameNode node, List<String> path, StringBuilder sb, int minSamples) {
+  private void collectFoldedPaths(
+      FlameNode node, List<String> path, StringBuilder sb, int minSamples) {
     if (node.children.isEmpty()) {
       // Leaf node - output the path
       if (node.value >= minSamples && !path.isEmpty()) {
@@ -1254,7 +1274,8 @@ public final class JafarMcpServer {
     }
   }
 
-  private CallToolResult formatFlamegraphTree(FlameNode root, String direction, int processedEvents, int minSamples) {
+  private CallToolResult formatFlamegraphTree(
+      FlameNode root, String direction, int processedEvents, int minSamples) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("format", "tree");
     result.put("direction", direction);
@@ -1296,8 +1317,7 @@ public final class JafarMcpServer {
       value++;
       if (!frames.isEmpty()) {
         String head = frames.get(0);
-        children.computeIfAbsent(head, FlameNode::new)
-            .addPath(frames.subList(1, frames.size()));
+        children.computeIfAbsent(head, FlameNode::new).addPath(frames.subList(1, frames.size()));
       }
     }
   }
@@ -1369,7 +1389,8 @@ public final class JafarMcpServer {
       int processedEvents = 0;
 
       for (Map<String, Object> event : events) {
-        List<String> frames = extractFrames(event, "top-down", null); // top-down for caller->callee order
+        List<String> frames =
+            extractFrames(event, "top-down", null); // top-down for caller->callee order
         if (!frames.isEmpty()) {
           graph.addStack(frames);
           processedEvents++;
@@ -1408,8 +1429,13 @@ public final class JafarMcpServer {
       if (parts.length == 2) {
         String from = escapeForDot(parts[0]);
         String to = escapeForDot(parts[1]);
-        sb.append("  \"").append(from).append("\" -> \"").append(to)
-            .append("\" [label=\"").append(edge.getValue()).append("\"];\n");
+        sb.append("  \"")
+            .append(from)
+            .append("\" -> \"")
+            .append(to)
+            .append("\" [label=\"")
+            .append(edge.getValue())
+            .append("\"];\n");
       }
     }
 
@@ -1437,7 +1463,7 @@ public final class JafarMcpServer {
       node.put("samples", entry.getValue());
       Integer inDegree = graph.inDegree.get(entry.getKey());
       if (inDegree != null && inDegree > 1) {
-        node.put("inDegree", inDegree);  // Only show if convergence point
+        node.put("inDegree", inDegree); // Only show if convergence point
       }
       nodes.add(node);
     }
@@ -1555,8 +1581,9 @@ public final class JafarMcpServer {
       if (eventType == null || eventType.isBlank()) {
         eventType = detectExceptionEventType(sessionInfo);
         if (eventType == null) {
-          return errorResult("No exception events found in recording. "
-              + "Specify eventType explicitly (e.g., jdk.JavaExceptionThrow or datadog.ExceptionSample)");
+          return errorResult(
+              "No exception events found in recording. "
+                  + "Specify eventType explicitly (e.g., jdk.JavaExceptionThrow or datadog.ExceptionSample)");
         }
       }
 
@@ -1587,20 +1614,21 @@ public final class JafarMcpServer {
           .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
           .filter(e -> e.getValue() >= minCount)
           .limit(limit)
-          .forEach(e -> {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            String fullName = e.getKey();
-            entry.put("type", extractSimpleName(fullName));
-            entry.put("fullType", fullName);
-            entry.put("count", e.getValue());
-            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
-            // Add top throw site for this exception type
-            String topSite = analysis.topThrowSiteByType.get(fullName);
-            if (topSite != null) {
-              entry.put("topThrowSite", topSite);
-            }
-            byType.add(entry);
-          });
+          .forEach(
+              e -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                String fullName = e.getKey();
+                entry.put("type", extractSimpleName(fullName));
+                entry.put("fullType", fullName);
+                entry.put("count", e.getValue());
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                // Add top throw site for this exception type
+                String topSite = analysis.topThrowSiteByType.get(fullName);
+                if (topSite != null) {
+                  entry.put("topThrowSite", topSite);
+                }
+                byType.add(entry);
+              });
       result.put("byType", byType);
 
       // Top throw sites overall
@@ -1609,13 +1637,14 @@ public final class JafarMcpServer {
           .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
           .filter(e -> e.getValue() >= minCount)
           .limit(20)
-          .forEach(e -> {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("site", e.getKey());
-            entry.put("count", e.getValue());
-            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
-            throwSites.add(entry);
-          });
+          .forEach(
+              e -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("site", e.getKey());
+                entry.put("count", e.getValue());
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                throwSites.add(entry);
+              });
       result.put("topThrowSites", throwSites);
 
       // Summary statistics
@@ -1623,10 +1652,11 @@ public final class JafarMcpServer {
       summary.put("uniqueExceptionTypes", analysis.exceptionTypes.size());
       summary.put("uniqueThrowSites", analysis.throwSites.size());
       if (analysis.exceptionTypes.size() > 0) {
-        String topException = analysis.exceptionTypes.entrySet().stream()
-            .max(Comparator.comparingLong(Map.Entry::getValue))
-            .map(e -> extractSimpleName(e.getKey()))
-            .orElse("unknown");
+        String topException =
+            analysis.exceptionTypes.entrySet().stream()
+                .max(Comparator.comparingLong(Map.Entry::getValue))
+                .map(e -> extractSimpleName(e.getKey()))
+                .orElse("unknown");
         summary.put("mostCommonException", topException);
       }
       result.put("summary", summary);
@@ -1645,9 +1675,7 @@ public final class JafarMcpServer {
   private String detectExceptionEventType(SessionRegistry.SessionInfo sessionInfo) {
     // Check for common exception event types
     String[] candidateTypes = {
-        "jdk.JavaExceptionThrow",
-        "datadog.ExceptionSample",
-        "jdk.ExceptionStatistics"
+      "jdk.JavaExceptionThrow", "datadog.ExceptionSample", "jdk.ExceptionStatistics"
     };
 
     for (String type : candidateTypes) {
@@ -1681,7 +1709,8 @@ public final class JafarMcpServer {
           analysis.throwSites.merge(info.throwSite, 1L, Long::sum);
 
           // Track top throw site per exception type
-          analysis.throwSitesByType
+          analysis
+              .throwSitesByType
               .computeIfAbsent(info.exceptionType, k -> new HashMap<>())
               .merge(info.throwSite, 1L, Long::sum);
         }
@@ -1879,13 +1908,14 @@ public final class JafarMcpServer {
       eventCounts.entrySet().stream()
           .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
           .limit(15)
-          .forEach(e -> {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("type", e.getKey());
-            entry.put("count", e.getValue());
-            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
-            topTypes.add(entry);
-          });
+          .forEach(
+              e -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("type", e.getKey());
+                entry.put("count", e.getValue());
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
+                topTypes.add(entry);
+              });
       result.put("topEventTypes", topTypes);
 
       // Compute highlights
@@ -1899,10 +1929,12 @@ public final class JafarMcpServer {
       }
 
       // Exception statistics
-      Long exceptionCount = eventCounts.entrySet().stream()
-          .filter(e -> e.getKey().contains("Exception") || e.getKey().endsWith("ExceptionSample"))
-          .mapToLong(Map.Entry::getValue)
-          .sum();
+      Long exceptionCount =
+          eventCounts.entrySet().stream()
+              .filter(
+                  e -> e.getKey().contains("Exception") || e.getKey().endsWith("ExceptionSample"))
+              .mapToLong(Map.Entry::getValue)
+              .sum();
       if (exceptionCount > 0) {
         Map<String, Object> exceptionStats = new LinkedHashMap<>();
         exceptionStats.put("totalExceptions", exceptionCount);
@@ -1910,10 +1942,14 @@ public final class JafarMcpServer {
       }
 
       // CPU sampling statistics
-      Long cpuSamples = eventCounts.entrySet().stream()
-          .filter(e -> e.getKey().endsWith("ExecutionSample") || e.getKey().equals("jdk.ExecutionSample"))
-          .mapToLong(Map.Entry::getValue)
-          .sum();
+      Long cpuSamples =
+          eventCounts.entrySet().stream()
+              .filter(
+                  e ->
+                      e.getKey().endsWith("ExecutionSample")
+                          || e.getKey().equals("jdk.ExecutionSample"))
+              .mapToLong(Map.Entry::getValue)
+              .sum();
       if (cpuSamples > 0) {
         Map<String, Object> cpuStats = new LinkedHashMap<>();
         cpuStats.put("totalSamples", cpuSamples);
@@ -1947,10 +1983,10 @@ public final class JafarMcpServer {
 
     // Try different GC event types
     String[] gcTypes = {
-        "jdk.GarbageCollection",
-        "jdk.YoungGarbageCollection",
-        "jdk.OldGarbageCollection",
-        "jdk.G1GarbageCollection"
+      "jdk.GarbageCollection",
+      "jdk.YoungGarbageCollection",
+      "jdk.OldGarbageCollection",
+      "jdk.G1GarbageCollection"
     };
 
     long totalGCs = 0;
@@ -2029,11 +2065,12 @@ public final class JafarMcpServer {
       // Return top method
       return methodCounts.entrySet().stream()
           .max(Comparator.comparingLong(Map.Entry::getValue))
-          .map(e -> {
-            long count = e.getValue();
-            double pct = count * 100.0 / events.size();
-            return String.format("%s (%.1f%%)", e.getKey(), pct);
-          })
+          .map(
+              e -> {
+                long count = e.getValue();
+                double pct = count * 100.0 / events.size();
+                return String.format("%s (%.1f%%)", e.getKey(), pct);
+              })
           .orElse(null);
 
     } catch (Exception e) {
@@ -2094,8 +2131,9 @@ public final class JafarMcpServer {
       if (eventType == null || eventType.isBlank()) {
         eventType = detectExecutionEventType(sessionInfo);
         if (eventType == null) {
-          return errorResult("No execution sample events found in recording. "
-              + "Specify eventType explicitly (e.g., jdk.ExecutionSample or datadog.ExecutionSample)");
+          return errorResult(
+              "No execution sample events found in recording. "
+                  + "Specify eventType explicitly (e.g., jdk.ExecutionSample or datadog.ExecutionSample)");
         }
       }
 
@@ -2134,15 +2172,16 @@ public final class JafarMcpServer {
           .filter(e -> includeNative || !isNativeMethod(e.getKey()))
           .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
           .limit(limit)
-          .forEach(e -> {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            String methodName = e.getKey();
-            entry.put("method", methodName);
-            entry.put("samples", e.getValue());
-            entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
-            entry.put("type", isNativeMethod(methodName) ? "native" : "java");
-            methods.add(entry);
-          });
+          .forEach(
+              e -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                String methodName = e.getKey();
+                entry.put("method", methodName);
+                entry.put("samples", e.getValue());
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                entry.put("type", isNativeMethod(methodName) ? "native" : "java");
+                methods.add(entry);
+              });
       result.put("methods", methods);
 
       // Category breakdown
@@ -2173,9 +2212,7 @@ public final class JafarMcpServer {
 
   private String detectExecutionEventType(SessionRegistry.SessionInfo sessionInfo) {
     String[] candidateTypes = {
-        "jdk.ExecutionSample",
-        "datadog.ExecutionSample",
-        "jdk.NativeMethodSample"
+      "jdk.ExecutionSample", "datadog.ExecutionSample", "jdk.NativeMethodSample"
     };
 
     for (String type : candidateTypes) {
@@ -2204,6 +2241,1091 @@ public final class JafarMcpServer {
         || methodName.contains("::")
         || methodName.startsWith("_")
         || methodName.toLowerCase().contains("atomic");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_use - USE Method Analysis (Utilization, Saturation, Errors)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrUseTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "startTime": {
+              "type": "integer",
+              "description": "Start time in nanoseconds from recording start (optional)"
+            },
+            "endTime": {
+              "type": "integer",
+              "description": "End time in nanoseconds from recording start (optional)"
+            },
+            "resources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["cpu", "memory", "threads", "io", "all"]
+              },
+              "description": "Which resources to analyze (default: all)"
+            },
+            "includeInsights": {
+              "type": "boolean",
+              "description": "Include actionable insights and recommendations (default: true)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_use",
+            "Analyzes JFR recording using Brendan Gregg's USE Method (Utilization, Saturation, Errors). "
+                + "Examines CPU, Memory, Threads/Locks, and I/O resources to identify bottlenecks. "
+                + "Returns metrics for utilization (how busy), saturation (queued work), and errors for each resource.",
+            schema),
+        (exchange, args) -> handleJfrUse(args));
+  }
+
+  private CallToolResult handleJfrUse(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+    Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
+    Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
+    boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
+
+    @SuppressWarnings("unchecked")
+    List<String> resourcesList =
+        args.get("resources") instanceof List<?> l ? (List<String>) l : List.of("all");
+    Set<String> resources =
+        resourcesList.contains("all")
+            ? Set.of("cpu", "memory", "threads", "io")
+            : Set.copyOf(resourcesList);
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+      String timeFilter = buildTimeFilter(startTimeNs, endTimeNs);
+
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("method", "USE");
+      result.put("recordingPath", sessionInfo.recordingPath().toString());
+      if (startTimeNs != null || endTimeNs != null) {
+        Map<String, Object> timeWindow = new LinkedHashMap<>();
+        if (startTimeNs != null) timeWindow.put("startTime", startTimeNs);
+        if (endTimeNs != null) timeWindow.put("endTime", endTimeNs);
+        result.put("timeWindow", timeWindow);
+      }
+
+      Map<String, Object> resourceMetrics = new LinkedHashMap<>();
+
+      // CPU Resource Analysis
+      if (resources.contains("cpu")) {
+        resourceMetrics.put("cpu", analyzeCpuResource(sessionInfo, timeFilter));
+      }
+
+      // Memory Resource Analysis
+      if (resources.contains("memory")) {
+        resourceMetrics.put("memory", analyzeMemoryResource(sessionInfo, timeFilter));
+      }
+
+      // Threads/Locks Resource Analysis
+      if (resources.contains("threads")) {
+        resourceMetrics.put("threads", analyzeThreadsResource(sessionInfo, timeFilter));
+      }
+
+      // I/O Resource Analysis
+      if (resources.contains("io")) {
+        resourceMetrics.put("io", analyzeIoResource(sessionInfo, timeFilter));
+      }
+
+      result.put("resources", resourceMetrics);
+
+      // Generate insights and summary
+      if (includeInsights) {
+        result.put("insights", generateUseInsights(resourceMetrics));
+        result.put("summary", generateUseSummary(resourceMetrics));
+      }
+
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("USE analysis error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to perform USE analysis: {}", e.getMessage(), e);
+      return errorResult("Failed to perform USE analysis: " + e.getMessage());
+    }
+  }
+
+  private Map<String, Object> analyzeCpuResource(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, Object> cpu = new LinkedHashMap<>();
+
+    try {
+      // Detect execution event type
+      String eventType = detectExecutionEventType(sessionInfo);
+      if (eventType == null) {
+        cpu.put("error", "No execution sample events found");
+        return cpu;
+      }
+
+      // Get execution samples
+      String query = "events/" + eventType + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      if (samples.isEmpty()) {
+        cpu.put("message", "No execution samples in time window");
+        return cpu;
+      }
+
+      // Count samples by state
+      Map<String, Long> stateCount = new HashMap<>();
+      long runnableCount = 0;
+      long saturatedCount = 0;
+
+      for (Map<String, Object> event : samples) {
+        String state = extractState(event);
+        stateCount.merge(state, 1L, Long::sum);
+
+        if ("RUNNABLE".equals(state)) {
+          runnableCount++;
+        } else if (Set.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING").contains(state)) {
+          saturatedCount++;
+        }
+      }
+
+      long totalSamples = samples.size();
+      double utilizationPct = (runnableCount * 100.0) / totalSamples;
+      double saturationPct = (saturatedCount * 100.0) / totalSamples;
+
+      // Utilization
+      Map<String, Object> utilization = new LinkedHashMap<>();
+      utilization.put("value", Math.round(utilizationPct * 10) / 10.0);
+      utilization.put("unit", "%");
+      utilization.put(
+          "detail", String.format("%.1f%% of samples in RUNNABLE state", utilizationPct));
+      Map<String, Object> utilizationSamples = new LinkedHashMap<>();
+      utilizationSamples.put("runnable", runnableCount);
+      utilizationSamples.put("total", totalSamples);
+      utilization.put("samples", utilizationSamples);
+      cpu.put("utilization", utilization);
+
+      // Saturation
+      Map<String, Object> saturation = new LinkedHashMap<>();
+      saturation.put("value", Math.round(saturationPct * 10) / 10.0);
+      saturation.put("unit", "%");
+      saturation.put("detail", String.format("%.1f%% of samples waiting/blocked", saturationPct));
+      Map<String, Object> saturationSamples = new LinkedHashMap<>();
+      for (String state : List.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING")) {
+        if (stateCount.containsKey(state)) {
+          saturationSamples.put(state.toLowerCase(), stateCount.get(state));
+        }
+      }
+      saturationSamples.put("total", saturatedCount);
+      saturation.put("samples", saturationSamples);
+      cpu.put("saturation", saturation);
+
+      // Errors
+      Map<String, Object> errors = new LinkedHashMap<>();
+      errors.put("value", 0);
+      errors.put("detail", "No compilation failures detected");
+      cpu.put("errors", errors);
+
+      // Assessment
+      cpu.put("assessment", assessCpuUtilization(utilizationPct));
+
+    } catch (Exception e) {
+      cpu.put("error", "Failed to analyze CPU: " + e.getMessage());
+    }
+
+    return cpu;
+  }
+
+  private Map<String, Object> analyzeMemoryResource(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, Object> memory = new LinkedHashMap<>();
+
+    try {
+      // Get heap usage (after GC)
+      String heapQuery = "events/jdk.GCHeapSummary" + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(heapQuery);
+      List<Map<String, Object>> heapEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      Map<String, Object> utilization = new LinkedHashMap<>();
+      if (!heapEvents.isEmpty()) {
+        // Find most recent "After GC" event
+        Map<String, Object> latestHeap = null;
+        for (Map<String, Object> event : heapEvents) {
+          Object when = Values.get(event, "when", "when");
+          if ("After GC".equals(String.valueOf(when))) {
+            latestHeap = event;
+          }
+        }
+
+        if (latestHeap != null) {
+          Object heapUsedObj = Values.get(latestHeap, "heapUsed");
+          Object heapCommittedObj = Values.get(latestHeap, "heapSpace", "committedSize");
+
+          if (heapUsedObj instanceof Number && heapCommittedObj instanceof Number) {
+            long heapUsed = ((Number) heapUsedObj).longValue();
+            long heapCommitted = ((Number) heapCommittedObj).longValue();
+            double heapPct = (heapUsed * 100.0) / heapCommitted;
+
+            utilization.put("value", Math.round(heapPct * 10) / 10.0);
+            utilization.put("unit", "%");
+            utilization.put("detail", String.format("Heap %.1f%% full after GC", heapPct));
+            utilization.put("heapUsedMB", heapUsed / (1024 * 1024));
+            utilization.put("heapCommittedMB", heapCommitted / (1024 * 1024));
+          }
+        }
+      }
+
+      if (utilization.isEmpty()) {
+        utilization.put("value", "N/A");
+        utilization.put("detail", "No GCHeapSummary events found");
+      }
+      memory.put("utilization", utilization);
+
+      // Get GC pause statistics
+      String gcQuery = "events/jdk.GCPhasePause" + timeFilter;
+      parsed = JfrPathParser.parse(gcQuery);
+      List<Map<String, Object>> gcEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      Map<String, Object> saturation = new LinkedHashMap<>();
+      if (!gcEvents.isEmpty()) {
+        long totalPauseNs = 0;
+        long maxPauseNs = 0;
+        for (Map<String, Object> event : gcEvents) {
+          Object durationObj = Values.get(event, "duration");
+          if (durationObj instanceof Number) {
+            long durationNs = ((Number) durationObj).longValue();
+            totalPauseNs += durationNs;
+            maxPauseNs = Math.max(maxPauseNs, durationNs);
+          }
+        }
+
+        double totalPauseMs = totalPauseNs / 1_000_000.0;
+        double avgPauseMs = totalPauseMs / gcEvents.size();
+        double maxPauseMs = maxPauseNs / 1_000_000.0;
+
+        saturation.put("gcPauseTimeMs", Math.round(totalPauseMs * 10) / 10.0);
+        saturation.put("gcCount", gcEvents.size());
+        saturation.put("avgPauseMs", Math.round(avgPauseMs * 10) / 10.0);
+        saturation.put("maxPauseMs", Math.round(maxPauseMs * 10) / 10.0);
+      } else {
+        saturation.put("message", "No GC pause events found");
+      }
+      memory.put("saturation", saturation);
+
+      // Get top allocators
+      String allocQuery = "events/jdk.ObjectAllocationSample" + timeFilter;
+      try {
+        parsed = JfrPathParser.parse(allocQuery);
+        List<Map<String, Object>> allocEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+        if (!allocEvents.isEmpty()) {
+          Map<String, Long> allocByClass = new HashMap<>();
+          for (Map<String, Object> event : allocEvents) {
+            Object classObj = Values.get(event, "objectClass", "name");
+            if (classObj == null) {
+              classObj = Values.get(event, "objectClass");
+            }
+            String className = classObj != null ? String.valueOf(classObj) : "unknown";
+            Object weightObj = Values.get(event, "weight");
+            long weight = weightObj instanceof Number ? ((Number) weightObj).longValue() : 1;
+            allocByClass.merge(className, weight, Long::sum);
+          }
+
+          List<Map<String, Object>> topAllocators = new ArrayList<>();
+          allocByClass.entrySet().stream()
+              .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+              .limit(10)
+              .forEach(
+                  e -> {
+                    Map<String, Object> alloc = new LinkedHashMap<>();
+                    alloc.put("class", e.getKey());
+                    alloc.put("bytes", e.getValue());
+                    alloc.put("mb", Math.round(e.getValue() / (1024.0 * 1024.0) * 10) / 10.0);
+                    topAllocators.add(alloc);
+                  });
+
+          memory.put("topAllocators", topAllocators);
+        }
+      } catch (Exception ignored) {
+        // Allocation events optional
+      }
+
+      // Errors
+      Map<String, Object> errors = new LinkedHashMap<>();
+      errors.put("value", 0);
+      errors.put("detail", "No allocation failures detected");
+      memory.put("errors", errors);
+
+      // Assessment
+      double heapPct = utilization.get("value") instanceof Number n ? n.doubleValue() : 0.0;
+      double gcTimePct = 0.0; // Would need recording duration to calculate
+      memory.put("assessment", assessMemoryPressure(heapPct, gcTimePct));
+
+    } catch (Exception e) {
+      memory.put("error", "Failed to analyze memory: " + e.getMessage());
+    }
+
+    return memory;
+  }
+
+  private Map<String, Object> analyzeThreadsResource(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, Object> threads = new LinkedHashMap<>();
+
+    try {
+      // Get unique thread count from execution samples
+      String eventType = detectExecutionEventType(sessionInfo);
+      if (eventType != null) {
+        String query = "events/" + eventType + timeFilter;
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
+
+        Set<String> uniqueThreads = new HashSet<>();
+        for (Map<String, Object> event : samples) {
+          uniqueThreads.add(extractThreadId(event));
+        }
+
+        Map<String, Object> utilization = new LinkedHashMap<>();
+        utilization.put("value", uniqueThreads.size());
+        utilization.put("unit", "threads");
+        utilization.put("detail", uniqueThreads.size() + " active threads observed");
+        threads.put("utilization", utilization);
+      }
+
+      // Get monitor contention
+      String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
+      try {
+        JfrPath.Query parsed = JfrPathParser.parse(monitorQuery);
+        List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+        Map<String, Object> saturation = new LinkedHashMap<>();
+        if (!monitorEvents.isEmpty()) {
+          long totalContentionNs = 0;
+          long maxContentionNs = 0;
+          Map<String, Long> contentionByClass = new HashMap<>();
+
+          for (Map<String, Object> event : monitorEvents) {
+            Object durationObj = Values.get(event, "duration");
+            if (durationObj instanceof Number) {
+              long durationNs = ((Number) durationObj).longValue();
+              totalContentionNs += durationNs;
+              maxContentionNs = Math.max(maxContentionNs, durationNs);
+            }
+
+            Object classObj = Values.get(event, "monitorClass", "name");
+            if (classObj == null) {
+              classObj = Values.get(event, "monitorClass");
+            }
+            String className = classObj != null ? String.valueOf(classObj) : "unknown";
+            contentionByClass.merge(className, 1L, Long::sum);
+          }
+
+          double totalContentionMs = totalContentionNs / 1_000_000.0;
+          double avgContentionMs = totalContentionMs / monitorEvents.size();
+          double maxContentionMs = maxContentionNs / 1_000_000.0;
+
+          saturation.put("contentionEvents", monitorEvents.size());
+          saturation.put("totalContentionMs", Math.round(totalContentionMs * 10) / 10.0);
+          saturation.put("avgContentionMs", Math.round(avgContentionMs * 10) / 10.0);
+          saturation.put("maxContentionMs", Math.round(maxContentionMs * 10) / 10.0);
+
+          // Find top contended class
+          contentionByClass.entrySet().stream()
+              .max(Map.Entry.comparingByValue())
+              .ifPresent(e -> saturation.put("topContendedClass", e.getKey()));
+
+          saturation.put(
+              "assessment", monitorEvents.size() < 100 ? "LOW_CONTENTION" : "MODERATE_CONTENTION");
+        } else {
+          saturation.put("message", "No monitor contention detected");
+          saturation.put("assessment", "NO_CONTENTION");
+        }
+        threads.put("saturation", saturation);
+      } catch (Exception ignored) {
+        Map<String, Object> saturation = new LinkedHashMap<>();
+        saturation.put("message", "No monitor events available");
+        threads.put("saturation", saturation);
+      }
+
+      // Errors
+      Map<String, Object> errors = new LinkedHashMap<>();
+      errors.put("value", "N/A");
+      errors.put("detail", "Deadlock detection not available in JFR");
+      threads.put("errors", errors);
+
+    } catch (Exception e) {
+      threads.put("error", "Failed to analyze threads: " + e.getMessage());
+    }
+
+    return threads;
+  }
+
+  private Map<String, Object> analyzeIoResource(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, Object> io = new LinkedHashMap<>();
+
+    try {
+      long totalOps = 0;
+      long totalDurationNs = 0;
+      List<Long> durations = new ArrayList<>();
+
+      // Aggregate file and socket I/O
+      for (String eventType :
+          List.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")) {
+        try {
+          String query = "events/" + eventType + timeFilter;
+          JfrPath.Query parsed = JfrPathParser.parse(query);
+          List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+
+          for (Map<String, Object> event : events) {
+            totalOps++;
+            Object durationObj = Values.get(event, "duration");
+            if (durationObj instanceof Number) {
+              long durationNs = ((Number) durationObj).longValue();
+              totalDurationNs += durationNs;
+              durations.add(durationNs);
+            }
+          }
+        } catch (Exception ignored) {
+          // Event type not available
+        }
+      }
+
+      if (totalOps > 0) {
+        Map<String, Object> utilization = new LinkedHashMap<>();
+        utilization.put("totalOperations", totalOps);
+        utilization.put("totalTimeMs", Math.round(totalDurationNs / 1_000_000.0 * 10) / 10.0);
+        io.put("utilization", utilization);
+
+        // Calculate percentiles
+        if (!durations.isEmpty()) {
+          durations.sort(Long::compareTo);
+          int p95Idx = (int) (durations.size() * 0.95);
+          int p99Idx = (int) (durations.size() * 0.99);
+          long p95Ns = durations.get(Math.min(p95Idx, durations.size() - 1));
+          long p99Ns = durations.get(Math.min(p99Idx, durations.size() - 1));
+
+          Map<String, Object> saturation = new LinkedHashMap<>();
+          saturation.put("p95DurationMs", Math.round(p95Ns / 1_000_000.0 * 10) / 10.0);
+          saturation.put("p99DurationMs", Math.round(p99Ns / 1_000_000.0 * 10) / 10.0);
+
+          long slowCount = durations.stream().filter(d -> d > 10_000_000).count(); // >10ms
+          saturation.put("slowOperations", slowCount);
+          saturation.put("slowThreshold", "10ms");
+          io.put("saturation", saturation);
+        }
+
+        io.put("assessment", totalOps < 1000 ? "LOW_IO" : "MODERATE_IO");
+      } else {
+        io.put("message", "No I/O events detected");
+        io.put("assessment", "NO_IO");
+      }
+
+      // Errors
+      Map<String, Object> errors = new LinkedHashMap<>();
+      errors.put("value", "N/A");
+      errors.put("detail", "I/O failure tracking not available in standard JFR");
+      io.put("errors", errors);
+
+    } catch (Exception e) {
+      io.put("error", "Failed to analyze I/O: " + e.getMessage());
+    }
+
+    return io;
+  }
+
+  private Map<String, Object> generateUseInsights(Map<String, Object> resourceMetrics) {
+    Map<String, Object> insights = new LinkedHashMap<>();
+    List<String> recommendations = new ArrayList<>();
+    List<String> bottlenecks = new ArrayList<>();
+
+    // Analyze CPU
+    @SuppressWarnings("unchecked")
+    Map<String, Object> cpu = (Map<String, Object>) resourceMetrics.get("cpu");
+    if (cpu != null && !cpu.containsKey("error")) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> cpuSat = (Map<String, Object>) cpu.get("saturation");
+      if (cpuSat != null && cpuSat.get("value") instanceof Number) {
+        double satPct = ((Number) cpuSat.get("value")).doubleValue();
+        if (satPct > 30) {
+          bottlenecks.add("cpu_saturation");
+          recommendations.add(
+              String.format(
+                  "Investigate thread blocking: %.1f%% of CPU time spent waiting/blocked", satPct));
+        }
+      }
+    }
+
+    // Analyze Memory
+    @SuppressWarnings("unchecked")
+    Map<String, Object> memory = (Map<String, Object>) resourceMetrics.get("memory");
+    if (memory != null && !memory.containsKey("error")) {
+      String assessment = (String) memory.get("assessment");
+      if ("HIGH_PRESSURE".equals(assessment) || "MODERATE_PRESSURE".equals(assessment)) {
+        bottlenecks.add("memory_pressure");
+        recommendations.add("Consider heap tuning or reducing allocation rate");
+      }
+    }
+
+    // Analyze Threads
+    @SuppressWarnings("unchecked")
+    Map<String, Object> threadsRes = (Map<String, Object>) resourceMetrics.get("threads");
+    if (threadsRes != null && !threadsRes.containsKey("error")) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> threadsSat = (Map<String, Object>) threadsRes.get("saturation");
+      if (threadsSat != null && threadsSat.containsKey("contentionEvents")) {
+        Object events = threadsSat.get("contentionEvents");
+        if (events instanceof Number && ((Number) events).intValue() > 100) {
+          bottlenecks.add("thread_contention");
+          Object topClass = threadsSat.get("topContendedClass");
+          if (topClass != null) {
+            recommendations.add(
+                "Lock contention detected on " + topClass + " - review synchronization");
+          }
+        }
+      }
+    }
+
+    if (recommendations.isEmpty()) {
+      recommendations.add("No significant bottlenecks detected - system appears healthy");
+    }
+
+    insights.put("recommendations", recommendations);
+    insights.put("bottlenecks", bottlenecks);
+
+    return insights;
+  }
+
+  private Map<String, Object> generateUseSummary(Map<String, Object> resourceMetrics) {
+    Map<String, Object> summary = new LinkedHashMap<>();
+
+    // Find worst resource
+    String worstResource = null;
+    String worstMetric = null;
+    double worstValue = 0;
+
+    for (Map.Entry<String, Object> entry : resourceMetrics.entrySet()) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> resource = (Map<String, Object>) entry.getValue();
+      if (resource.containsKey("error")) continue;
+
+      // Check saturation
+      @SuppressWarnings("unchecked")
+      Map<String, Object> saturation = (Map<String, Object>) resource.get("saturation");
+      if (saturation != null && saturation.get("value") instanceof Number) {
+        double value = ((Number) saturation.get("value")).doubleValue();
+        if (value > worstValue) {
+          worstValue = value;
+          worstResource = entry.getKey();
+          worstMetric = "saturation";
+        }
+      }
+    }
+
+    if (worstResource != null) {
+      summary.put("worstResource", worstResource);
+      summary.put("worstMetric", worstMetric);
+      summary.put("overallAssessment", worstValue > 50 ? "NEEDS_ATTENTION" : "ACCEPTABLE");
+    } else {
+      summary.put("overallAssessment", "HEALTHY");
+    }
+
+    return summary;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_tsa - Thread State Analysis (TSA Method)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrTsaTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "startTime": {
+              "type": "integer",
+              "description": "Start time in nanoseconds from recording start (optional)"
+            },
+            "endTime": {
+              "type": "integer",
+              "description": "End time in nanoseconds from recording start (optional)"
+            },
+            "topThreads": {
+              "type": "integer",
+              "description": "Number of top threads to analyze per state (default: 10)"
+            },
+            "minSamples": {
+              "type": "integer",
+              "description": "Minimum samples for a thread to be included (default: 5)"
+            },
+            "correlateBlocking": {
+              "type": "boolean",
+              "description": "Correlate blocking states with lock/monitor events (default: true)"
+            },
+            "includeInsights": {
+              "type": "boolean",
+              "description": "Include actionable insights and recommendations (default: true)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_tsa",
+            "Analyzes JFR recording using Thread State Analysis (TSA) methodology. "
+                + "Shows how threads spend their time across different states (RUNNABLE, WAITING, BLOCKED, etc.). "
+                + "Identifies problematic threads and correlates blocking states with contended locks/monitors.",
+            schema),
+        (exchange, args) -> handleJfrTsa(args));
+  }
+
+  private CallToolResult handleJfrTsa(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+    Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
+    Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
+    int topThreads = args.get("topThreads") instanceof Number n ? n.intValue() : 10;
+    int minSamples = args.get("minSamples") instanceof Number n ? n.intValue() : 5;
+    boolean correlateBlocking = args.get("correlateBlocking") instanceof Boolean b ? b : true;
+    boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+      String timeFilter = buildTimeFilter(startTimeNs, endTimeNs);
+
+      // Detect execution event type
+      String eventType = detectExecutionEventType(sessionInfo);
+      if (eventType == null) {
+        return errorResult("No execution sample events found in recording");
+      }
+
+      // Get all execution samples
+      String query = "events/" + eventType + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(query);
+      List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      if (samples.isEmpty()) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("method", "TSA");
+        result.put("message", "No execution samples in time window");
+        return successResult(result);
+      }
+
+      // Collect thread state metrics
+      Map<String, ThreadStateMetrics> threadMetrics = new HashMap<>();
+      Map<String, Long> globalStateCount = new HashMap<>();
+
+      for (Map<String, Object> event : samples) {
+        String threadId = extractThreadId(event);
+        String threadName = extractThreadName(event);
+        String state = extractState(event);
+
+        ThreadStateMetrics metrics =
+            threadMetrics.computeIfAbsent(
+                threadId, k -> new ThreadStateMetrics(threadId, threadName));
+        metrics.totalSamples++;
+        metrics.stateCount.merge(state, 1L, Long::sum);
+        globalStateCount.merge(state, 1L, Long::sum);
+      }
+
+      // Filter by minSamples
+      threadMetrics.values().removeIf(m -> m.totalSamples < minSamples);
+
+      long totalSamples = samples.size();
+
+      // Correlate with blocking events if requested
+      Map<String, MonitorCorrelation> correlations = new HashMap<>();
+      if (correlateBlocking) {
+        correlations = correlateWithBlockingEvents(sessionInfo, timeFilter);
+      }
+
+      // Build result
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("method", "TSA");
+      result.put("recordingPath", sessionInfo.recordingPath().toString());
+      if (startTimeNs != null || endTimeNs != null) {
+        Map<String, Object> timeWindow = new LinkedHashMap<>();
+        if (startTimeNs != null) timeWindow.put("startTime", startTimeNs);
+        if (endTimeNs != null) timeWindow.put("endTime", endTimeNs);
+        result.put("timeWindow", timeWindow);
+      }
+      result.put("totalSamples", totalSamples);
+      result.put("totalThreads", threadMetrics.size());
+
+      // Global state distribution
+      Map<String, Object> stateDistribution = new LinkedHashMap<>();
+      for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
+        Map<String, Object> stateInfo = new LinkedHashMap<>();
+        stateInfo.put("samples", entry.getValue());
+        stateInfo.put("percentage", Math.round(entry.getValue() * 1000.0 / totalSamples) / 10.0);
+        stateDistribution.put(entry.getKey(), stateInfo);
+      }
+      result.put("stateDistribution", stateDistribution);
+
+      // Top threads by state
+      Map<String, Object> topThreadsByState =
+          buildTopThreadsByState(threadMetrics, globalStateCount, topThreads);
+      result.put("topThreadsByState", topThreadsByState);
+
+      // Thread profiles
+      List<Map<String, Object>> threadProfiles =
+          buildThreadProfiles(threadMetrics, totalSamples, correlations);
+      result.put("threadProfiles", threadProfiles);
+
+      // Correlations
+      if (!correlations.isEmpty()) {
+        result.put("correlations", buildCorrelationsOutput(correlations));
+      }
+
+      // Insights
+      if (includeInsights) {
+        result.put(
+            "insights",
+            generateTsaInsights(threadMetrics, globalStateCount, totalSamples, correlations));
+      }
+
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("TSA analysis error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to perform TSA analysis: {}", e.getMessage(), e);
+      return errorResult("Failed to perform TSA analysis: " + e.getMessage());
+    }
+  }
+
+  private Map<String, MonitorCorrelation> correlateWithBlockingEvents(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, MonitorCorrelation> correlations = new HashMap<>();
+
+    try {
+      String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(monitorQuery);
+      List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      for (Map<String, Object> event : monitorEvents) {
+        Object classObj = Values.get(event, "monitorClass", "name");
+        if (classObj == null) {
+          classObj = Values.get(event, "monitorClass");
+        }
+        String monitorClass = classObj != null ? String.valueOf(classObj) : "unknown";
+
+        MonitorCorrelation corr =
+            correlations.computeIfAbsent(monitorClass, MonitorCorrelation::new);
+        corr.samples++;
+
+        Object durationObj = Values.get(event, "duration");
+        if (durationObj instanceof Number) {
+          long durationNs = ((Number) durationObj).longValue();
+          corr.totalDurationNs += durationNs;
+        }
+
+        String threadId = extractThreadId(event);
+        corr.threads.add(threadId);
+      }
+
+    } catch (Exception e) {
+      LOG.debug("Failed to correlate blocking events: {}", e.getMessage());
+    }
+
+    return correlations;
+  }
+
+  private Map<String, Object> buildTopThreadsByState(
+      Map<String, ThreadStateMetrics> threadMetrics, Map<String, Long> globalStateCount, int topN) {
+    Map<String, Object> topThreadsByState = new LinkedHashMap<>();
+
+    for (String state : globalStateCount.keySet()) {
+      List<Map<String, Object>> topThreads =
+          threadMetrics.values().stream()
+              .filter(m -> m.stateCount.containsKey(state))
+              .sorted(
+                  (a, b) ->
+                      Long.compare(
+                          b.stateCount.getOrDefault(state, 0L),
+                          a.stateCount.getOrDefault(state, 0L)))
+              .limit(topN)
+              .map(
+                  m -> {
+                    Map<String, Object> thread = new LinkedHashMap<>();
+                    thread.put("threadId", m.threadId);
+                    thread.put("threadName", m.threadName);
+                    long stateSamples = m.stateCount.get(state);
+                    thread.put("samples", stateSamples);
+                    thread.put(
+                        "percentage",
+                        Math.round(stateSamples * 1000.0 / globalStateCount.get(state)) / 10.0);
+                    thread.put(
+                        "percentOfTotal",
+                        Math.round(stateSamples * 1000.0 / m.totalSamples) / 10.0);
+                    return thread;
+                  })
+              .toList();
+
+      if (!topThreads.isEmpty()) {
+        topThreadsByState.put(state, topThreads);
+      }
+    }
+
+    return topThreadsByState;
+  }
+
+  private List<Map<String, Object>> buildThreadProfiles(
+      Map<String, ThreadStateMetrics> threadMetrics,
+      long totalSamples,
+      Map<String, MonitorCorrelation> correlations) {
+    return threadMetrics.values().stream()
+        .sorted((a, b) -> Long.compare(b.totalSamples, a.totalSamples))
+        .limit(20) // Top 20 threads by sample count
+        .map(
+            m -> {
+              Map<String, Object> profile = new LinkedHashMap<>();
+              profile.put("threadId", m.threadId);
+              profile.put("threadName", m.threadName);
+              profile.put("totalSamples", m.totalSamples);
+              profile.put(
+                  "percentOfRecording", Math.round(m.totalSamples * 1000.0 / totalSamples) / 10.0);
+
+              // State breakdown
+              Map<String, Object> stateBreakdown = new LinkedHashMap<>();
+              for (Map.Entry<String, Long> entry : m.stateCount.entrySet()) {
+                Map<String, Object> stateInfo = new LinkedHashMap<>();
+                stateInfo.put("samples", entry.getValue());
+                stateInfo.put("pct", Math.round(entry.getValue() * 1000.0 / m.totalSamples) / 10.0);
+                stateBreakdown.put(entry.getKey(), stateInfo);
+              }
+              profile.put("stateBreakdown", stateBreakdown);
+
+              // Assessment
+              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples));
+
+              return profile;
+            })
+        .toList();
+  }
+
+  private Map<String, Object> buildCorrelationsOutput(
+      Map<String, MonitorCorrelation> correlations) {
+    Map<String, Object> output = new LinkedHashMap<>();
+
+    Map<String, Object> blockedOn = new LinkedHashMap<>();
+    correlations.entrySet().stream()
+        .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+        .limit(10)
+        .forEach(
+            e -> {
+              MonitorCorrelation corr = e.getValue();
+              Map<String, Object> info = new LinkedHashMap<>();
+              info.put("samples", corr.samples);
+              info.put("threads", corr.threads.size());
+              if (corr.totalDurationNs > 0) {
+                double avgMs = (corr.totalDurationNs / corr.samples) / 1_000_000.0;
+                info.put("avgBlockTimeMs", Math.round(avgMs * 10) / 10.0);
+              }
+              info.put("monitorClass", e.getKey());
+              blockedOn.put(e.getKey(), info);
+            });
+
+    if (!blockedOn.isEmpty()) {
+      output.put("blockedOn", blockedOn);
+    }
+
+    return output;
+  }
+
+  private Map<String, Object> generateTsaInsights(
+      Map<String, ThreadStateMetrics> threadMetrics,
+      Map<String, Long> globalStateCount,
+      long totalSamples,
+      Map<String, MonitorCorrelation> correlations) {
+    Map<String, Object> insights = new LinkedHashMap<>();
+    List<String> patterns = new ArrayList<>();
+    List<Map<String, Object>> problematicThreads = new ArrayList<>();
+    List<String> recommendations = new ArrayList<>();
+
+    // Analyze global state distribution
+    for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
+      double pct = (entry.getValue() * 100.0) / totalSamples;
+      String state = entry.getKey();
+
+      if ("RUNNABLE".equals(state)) {
+        if (pct > 70) {
+          patterns.add(String.format("High CPU utilization (%.1f%% RUNNABLE)", pct));
+        } else if (pct < 30) {
+          patterns.add(
+              String.format("Low CPU utilization (%.1f%% RUNNABLE) - threads mostly waiting", pct));
+        } else {
+          patterns.add(String.format("Healthy CPU utilization (%.1f%% RUNNABLE)", pct));
+        }
+      } else if ("WAITING".equals(state) || "TIMED_WAITING".equals(state)) {
+        if (pct > 30) {
+          patterns.add(
+              String.format(
+                  "Significant time in %s (%.1f%%) - likely I/O or queue waits", state, pct));
+        }
+      } else if ("BLOCKED".equals(state)) {
+        if (pct > 10) {
+          patterns.add(String.format("High lock contention (%.1f%% BLOCKED)", pct));
+          recommendations.add(
+              "Investigate lock contention - threads spending significant time blocked on monitors");
+        }
+      }
+    }
+
+    // Find problematic threads
+    for (ThreadStateMetrics m : threadMetrics.values()) {
+      String assessment = assessThreadBehavior(m.stateCount, m.totalSamples);
+      if ("LOCK_CONTENTION".equals(assessment)) {
+        Map<String, Object> problem = new LinkedHashMap<>();
+        problem.put("thread", m.threadName);
+        long blockedSamples = m.stateCount.getOrDefault("BLOCKED", 0L);
+        double blockedPct = (blockedSamples * 100.0) / m.totalSamples;
+        problem.put("issue", String.format("%.1f%% of time spent BLOCKED on locks", blockedPct));
+        problem.put("recommendation", "Review synchronization strategy for this thread");
+        problematicThreads.add(problem);
+      }
+    }
+
+    // Analyze correlations
+    if (!correlations.isEmpty()) {
+      MonitorCorrelation topContention =
+          correlations.values().stream().max(Comparator.comparingLong(c -> c.samples)).orElse(null);
+      if (topContention != null && topContention.samples > 50) {
+        recommendations.add(
+            String.format(
+                "Monitor class '%s' has high contention (%d events) - consider lock-free alternatives",
+                topContention.monitorClass, topContention.samples));
+      }
+    }
+
+    if (patterns.isEmpty()) {
+      patterns.add("No significant patterns detected");
+    }
+    if (recommendations.isEmpty()) {
+      recommendations.add("Thread state distribution appears healthy");
+    }
+
+    insights.put("patterns", patterns);
+    if (!problematicThreads.isEmpty()) {
+      insights.put("problematicThreads", problematicThreads);
+    }
+    insights.put("recommendations", recommendations);
+
+    return insights;
+  }
+
+  /** Helper class to track per-thread state metrics. */
+  private static class ThreadStateMetrics {
+    final String threadId;
+    final String threadName;
+    long totalSamples = 0;
+    final Map<String, Long> stateCount = new HashMap<>();
+
+    ThreadStateMetrics(String threadId, String threadName) {
+      this.threadId = threadId;
+      this.threadName = threadName;
+    }
+  }
+
+  /** Helper class to track monitor correlation data. */
+  private static class MonitorCorrelation {
+    final String monitorClass;
+    long samples = 0;
+    long totalDurationNs = 0;
+    final Set<String> threads = new HashSet<>();
+
+    MonitorCorrelation(String monitorClass) {
+      this.monitorClass = monitorClass;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Shared helper methods for USE and TSA analysis
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /** Extract thread state from ExecutionSample event (handles both jdk and datadog formats). */
+  private String extractState(Map<String, Object> event) {
+    Object state = Values.get(event, "state", "name");
+    if (state == null) {
+      state = Values.get(event, "state");
+    }
+    return state != null ? String.valueOf(unwrapValue(state)) : "UNKNOWN";
+  }
+
+  /** Extract thread ID from event. */
+  private String extractThreadId(Map<String, Object> event) {
+    Object tid = Values.get(event, "eventThread", "javaThreadId");
+    return tid != null ? String.valueOf(tid) : "unknown";
+  }
+
+  /** Extract thread name from event. */
+  private String extractThreadName(Map<String, Object> event) {
+    Object name = Values.get(event, "eventThread", "javaName");
+    if (name == null) {
+      name = Values.get(event, "eventThread", "osName");
+    }
+    return name != null ? String.valueOf(name) : "unknown";
+  }
+
+  /** Build JfrPath time filter for time-window queries. */
+  private String buildTimeFilter(Long startNs, Long endNs) {
+    if (startNs == null && endNs == null) {
+      return "";
+    }
+    List<String> conditions = new ArrayList<>();
+    if (startNs != null) {
+      conditions.add("startTime>=" + startNs);
+    }
+    if (endNs != null) {
+      conditions.add("startTime<=" + endNs);
+    }
+    return "[" + String.join(" and ", conditions) + "]";
+  }
+
+  /** Assess CPU utilization level. */
+  private String assessCpuUtilization(double pct) {
+    if (pct < 30) return "LOW";
+    if (pct < 70) return "MODERATE_UTILIZATION";
+    if (pct < 90) return "HIGH_UTILIZATION";
+    return "SATURATED";
+  }
+
+  /** Assess memory pressure based on heap usage and GC time. */
+  private String assessMemoryPressure(double heapPct, double gcTimePct) {
+    if (heapPct > 90 || gcTimePct > 10) return "HIGH_PRESSURE";
+    if (heapPct > 75 || gcTimePct > 5) return "MODERATE_PRESSURE";
+    return "HEALTHY";
+  }
+
+  /** Assess thread behavior based on state distribution. */
+  private String assessThreadBehavior(Map<String, Long> states, long total) {
+    if (total == 0) return "NO_SAMPLES";
+    double runnablePct = states.getOrDefault("RUNNABLE", 0L) * 100.0 / total;
+    double waitingPct =
+        (states.getOrDefault("WAITING", 0L) + states.getOrDefault("TIMED_WAITING", 0L))
+            * 100.0
+            / total;
+    double blockedPct = states.getOrDefault("BLOCKED", 0L) * 100.0 / total;
+
+    if (runnablePct > 80) return "CPU_INTENSIVE";
+    if (waitingPct > 70) return "IO_WAITING";
+    if (blockedPct > 20) return "LOCK_CONTENTION";
+    return "BALANCED";
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
