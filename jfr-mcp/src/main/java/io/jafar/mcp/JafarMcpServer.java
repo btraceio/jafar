@@ -202,7 +202,8 @@ public final class JafarMcpServer {
         createJfrSummaryTool(),
         createJfrHotmethodsTool(),
         createJfrUseTool(),
-        createJfrTsaTool());
+        createJfrTsaTool(),
+        createJfrDiagnoseTool());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -2254,6 +2255,33 @@ public final class JafarMcpServer {
     return null;
   }
 
+  private String detectAllocationEventType(SessionRegistry.SessionInfo sessionInfo) {
+    // Check for Datadog allocation profiling first, then JDK native allocation events
+    String[] candidateTypes = {
+      "datadog.ObjectSample",
+      "jdk.ObjectAllocationSample",
+      "jdk.ObjectAllocationInNewTLAB",
+      "jdk.ObjectAllocationOutsideTLAB"
+    };
+
+    for (String type : candidateTypes) {
+      try {
+        String query = "events/" + type + " | count()";
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
+        if (!result.isEmpty()) {
+          Object countObj = result.get(0).get("count");
+          if (countObj instanceof Number n && n.longValue() > 0) {
+            return type;
+          }
+        }
+      } catch (Exception ignored) {
+        // Try next type
+      }
+    }
+    return null;
+  }
+
   private boolean isNativeMethod(String methodName) {
     if (methodName == null) return false;
     // C++ mangled names typically have < > :: or start with special chars
@@ -2386,78 +2414,211 @@ public final class JafarMcpServer {
     Map<String, Object> cpu = new LinkedHashMap<>();
 
     try {
-      // Detect execution event type
-      String eventType = detectExecutionEventType(sessionInfo);
-      if (eventType == null) {
-        cpu.put("error", "No execution sample events found");
-        return cpu;
-      }
+      // Query jdk.CPULoad events for actual CPU utilization
+      String cpuLoadQuery = "events/jdk.CPULoad" + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(cpuLoadQuery);
+      List<Map<String, Object>> cpuLoadEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
-      // Get execution samples
-      String query = "events/" + eventType + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
-      List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
+      if (!cpuLoadEvents.isEmpty()) {
+        // Calculate statistics from jdk.CPULoad events
+        List<Double> machineTotals = new ArrayList<>();
+        List<Double> jvmUsers = new ArrayList<>();
+        List<Double> jvmSystems = new ArrayList<>();
 
-      if (samples.isEmpty()) {
-        cpu.put("message", "No execution samples in time window");
-        return cpu;
-      }
+        for (Map<String, Object> event : cpuLoadEvents) {
+          Object machineTotal = Values.get(event, "machineTotal");
+          Object jvmUser = Values.get(event, "jvmUser");
+          Object jvmSystem = Values.get(event, "jvmSystem");
 
-      // Count samples by state
-      Map<String, Long> stateCount = new HashMap<>();
-      long runnableCount = 0;
-      long saturatedCount = 0;
-
-      for (Map<String, Object> event : samples) {
-        String state = extractState(event);
-        stateCount.merge(state, 1L, Long::sum);
-
-        if ("RUNNABLE".equals(state)) {
-          runnableCount++;
-        } else if (Set.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING").contains(state)) {
-          saturatedCount++;
+          if (machineTotal instanceof Number) {
+            machineTotals.add(((Number) machineTotal).doubleValue());
+          }
+          if (jvmUser instanceof Number) {
+            jvmUsers.add(((Number) jvmUser).doubleValue());
+          }
+          if (jvmSystem instanceof Number) {
+            jvmSystems.add(((Number) jvmSystem).doubleValue());
+          }
         }
-      }
 
-      long totalSamples = samples.size();
-      double utilizationPct = (runnableCount * 100.0) / totalSamples;
-      double saturationPct = (saturatedCount * 100.0) / totalSamples;
+        if (!machineTotals.isEmpty()) {
+          // Sort for percentile calculation
+          machineTotals.sort(Double::compareTo);
+          jvmUsers.sort(Double::compareTo);
+          jvmSystems.sort(Double::compareTo);
 
-      // Utilization
-      Map<String, Object> utilization = new LinkedHashMap<>();
-      utilization.put("value", Math.round(utilizationPct * 10) / 10.0);
-      utilization.put("unit", "%");
-      utilization.put(
-          "detail", String.format("%.1f%% of samples in RUNNABLE state", utilizationPct));
-      Map<String, Object> utilizationSamples = new LinkedHashMap<>();
-      utilizationSamples.put("runnable", runnableCount);
-      utilizationSamples.put("total", totalSamples);
-      utilization.put("samples", utilizationSamples);
-      cpu.put("utilization", utilization);
+          double avgMachineTotal = machineTotals.stream().mapToDouble(d -> d).average().orElse(0.0);
+          double avgJvmUser = jvmUsers.stream().mapToDouble(d -> d).average().orElse(0.0);
+          double avgJvmSystem = jvmSystems.stream().mapToDouble(d -> d).average().orElse(0.0);
 
-      // Saturation
-      Map<String, Object> saturation = new LinkedHashMap<>();
-      saturation.put("value", Math.round(saturationPct * 10) / 10.0);
-      saturation.put("unit", "%");
-      saturation.put("detail", String.format("%.1f%% of samples waiting/blocked", saturationPct));
-      Map<String, Object> saturationSamples = new LinkedHashMap<>();
-      for (String state : List.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING")) {
-        if (stateCount.containsKey(state)) {
-          saturationSamples.put(state.toLowerCase(), stateCount.get(state));
+          double minMachineTotal = machineTotals.get(0);
+          double maxMachineTotal = machineTotals.get(machineTotals.size() - 1);
+
+          int p95Idx = (int) (machineTotals.size() * 0.95);
+          int p99Idx = (int) (machineTotals.size() * 0.99);
+          double p95MachineTotal =
+              machineTotals.get(Math.min(p95Idx, machineTotals.size() - 1));
+          double p99MachineTotal =
+              machineTotals.get(Math.min(p99Idx, machineTotals.size() - 1));
+
+          // Utilization
+          Map<String, Object> utilization = new LinkedHashMap<>();
+          utilization.put("value", Math.round(avgMachineTotal * 1000) / 10.0); // to percentage
+          utilization.put("unit", "%");
+          utilization.put(
+              "detail",
+              String.format(
+                  "Avg %.1f%%, min %.1f%%, max %.1f%%, p95 %.1f%%, p99 %.1f%%",
+                  avgMachineTotal * 100,
+                  minMachineTotal * 100,
+                  maxMachineTotal * 100,
+                  p95MachineTotal * 100,
+                  p99MachineTotal * 100));
+
+          Map<String, Object> breakdown = new LinkedHashMap<>();
+          breakdown.put("machineTotal", Math.round(avgMachineTotal * 1000) / 10.0);
+          breakdown.put("jvmUser", Math.round(avgJvmUser * 1000) / 10.0);
+          breakdown.put("jvmSystem", Math.round(avgJvmSystem * 1000) / 10.0);
+          breakdown.put("otherProcesses", Math.round((avgMachineTotal - avgJvmUser - avgJvmSystem) * 1000) / 10.0);
+          utilization.put("breakdown", breakdown);
+
+          Map<String, Object> stats = new LinkedHashMap<>();
+          stats.put("samples", machineTotals.size());
+          stats.put("min", Math.round(minMachineTotal * 1000) / 10.0);
+          stats.put("max", Math.round(maxMachineTotal * 1000) / 10.0);
+          stats.put("avg", Math.round(avgMachineTotal * 1000) / 10.0);
+          stats.put("p95", Math.round(p95MachineTotal * 1000) / 10.0);
+          stats.put("p99", Math.round(p99MachineTotal * 1000) / 10.0);
+          utilization.put("stats", stats);
+
+          cpu.put("utilization", utilization);
+
+          // Check for container CPU throttling
+          Map<String, Object> saturation = new LinkedHashMap<>();
+          try {
+            String throttleQuery = "events/jdk.ContainerCPUThrottling" + timeFilter;
+            JfrPath.Query throttleParsed = JfrPathParser.parse(throttleQuery);
+            List<Map<String, Object>> throttleEvents =
+                evaluator.evaluate(sessionInfo.session(), throttleParsed);
+
+            long totalThrottledTime = 0;
+            long totalThrottledSlices = 0;
+            long totalElapsedSlices = 0;
+
+            for (Map<String, Object> event : throttleEvents) {
+              Object throttledTime = Values.get(event, "cpuThrottledTime");
+              Object throttledSlices = Values.get(event, "cpuThrottledSlices");
+              Object elapsedSlices = Values.get(event, "cpuElapsedSlices");
+
+              if (throttledTime instanceof Number) {
+                totalThrottledTime += ((Number) throttledTime).longValue();
+              }
+              if (throttledSlices instanceof Number) {
+                totalThrottledSlices += ((Number) throttledSlices).longValue();
+              }
+              if (elapsedSlices instanceof Number) {
+                totalElapsedSlices += ((Number) elapsedSlices).longValue();
+              }
+            }
+
+            if (!throttleEvents.isEmpty()) {
+              saturation.put("throttledTimeNs", totalThrottledTime);
+              saturation.put("throttledSlices", totalThrottledSlices);
+              saturation.put("elapsedSlices", totalElapsedSlices);
+
+              if (totalThrottledTime > 0) {
+                saturation.put("value", totalThrottledSlices);
+                saturation.put("unit", "slices");
+                saturation.put(
+                    "detail",
+                    String.format(
+                        "Container throttled %d times, %d ns total",
+                        totalThrottledSlices, totalThrottledTime));
+              } else {
+                saturation.put("value", 0);
+                saturation.put("detail", "No container CPU throttling detected");
+              }
+            } else {
+              saturation.put("value", 0);
+              saturation.put("detail", "Container throttling events not available");
+            }
+          } catch (Exception e) {
+            saturation.put("value", "N/A");
+            saturation.put("detail", "Could not check container throttling: " + e.getMessage());
+          }
+
+          cpu.put("saturation", saturation);
+
+          // Errors
+          Map<String, Object> errors = new LinkedHashMap<>();
+          errors.put("value", 0);
+          errors.put("detail", "No compilation failures detected");
+          cpu.put("errors", errors);
+
+          // Assessment based on actual CPU load
+          cpu.put("assessment", assessCpuUtilization(avgMachineTotal * 100));
+        } else {
+          cpu.put("message", "No valid CPU load data found");
         }
+      } else {
+        // Fallback to thread state analysis if jdk.CPULoad not available
+        cpu.put(
+            "warning",
+            "jdk.CPULoad events not found, falling back to thread state analysis");
+
+        String eventType = detectExecutionEventType(sessionInfo);
+        if (eventType == null) {
+          cpu.put("error", "No execution sample events found");
+          return cpu;
+        }
+
+        String query = "events/" + eventType + timeFilter;
+        JfrPath.Query stateParsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), stateParsed);
+
+        if (samples.isEmpty()) {
+          cpu.put("message", "No execution samples in time window");
+          return cpu;
+        }
+
+        long runnableCount = 0;
+        long saturatedCount = 0;
+
+        for (Map<String, Object> event : samples) {
+          String state = extractState(event);
+          if ("RUNNABLE".equals(state)) {
+            runnableCount++;
+          } else if (Set.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING").contains(state)) {
+            saturatedCount++;
+          }
+        }
+
+        long totalSamples = samples.size();
+        double threadStatePct = (runnableCount * 100.0) / totalSamples;
+
+        Map<String, Object> utilization = new LinkedHashMap<>();
+        utilization.put("value", Math.round(threadStatePct * 10) / 10.0);
+        utilization.put("unit", "%");
+        utilization.put(
+            "detail",
+            String.format(
+                "%.1f%% of samples in RUNNABLE state (not actual CPU load)", threadStatePct));
+        utilization.put(
+            "note", "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
+        cpu.put("utilization", utilization);
+
+        Map<String, Object> saturation = new LinkedHashMap<>();
+        saturation.put("value", saturatedCount);
+        saturation.put("detail", saturatedCount + " samples in blocking states");
+        cpu.put("saturation", saturation);
+
+        Map<String, Object> errors = new LinkedHashMap<>();
+        errors.put("value", 0);
+        errors.put("detail", "No compilation failures detected");
+        cpu.put("errors", errors);
+
+        cpu.put("assessment", "UNKNOWN");
       }
-      saturationSamples.put("total", saturatedCount);
-      saturation.put("samples", saturationSamples);
-      cpu.put("saturation", saturation);
-
-      // Errors
-      Map<String, Object> errors = new LinkedHashMap<>();
-      errors.put("value", 0);
-      errors.put("detail", "No compilation failures detected");
-      cpu.put("errors", errors);
-
-      // Assessment
-      cpu.put("assessment", assessCpuUtilization(utilizationPct));
 
     } catch (Exception e) {
       cpu.put("error", "Failed to analyze CPU: " + e.getMessage());
@@ -3706,6 +3867,208 @@ public final class JafarMcpServer {
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Helper methods
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_diagnose
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrDiagnoseTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "includeAnalysis": {
+              "type": "boolean",
+              "description": "Include full analysis results from triggered tools (default: true)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_diagnose",
+            "Intelligently diagnoses performance issues in a JFR recording by automatically "
+                + "running appropriate analysis tools based on recording characteristics. "
+                + "Analyzes exception rates, GC pressure, CPU patterns, and suggests next steps. "
+                + "Use this as a first step when exploring an unfamiliar recording.",
+            schema),
+        (exchange, args) -> handleJfrDiagnose(args));
+  }
+
+  @SuppressWarnings("unchecked")
+  private CallToolResult handleJfrDiagnose(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+    Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      Map<String, Object> diagnosis = new LinkedHashMap<>();
+      diagnosis.put("recordingPath", sessionInfo.recordingPath().toString());
+      diagnosis.put("sessionId", sessionInfo.id());
+
+      // Step 1: Get summary data
+      CallToolResult summaryResult = handleJfrSummary(args);
+      if (summaryResult.isError()) {
+        return summaryResult;
+      }
+
+      // Parse summary JSON
+      String summaryJson = ((TextContent) summaryResult.content().get(0)).text();
+      Map<String, Object> summary = MAPPER.readValue(summaryJson, Map.class);
+
+      // Extract key metrics
+      Long totalEvents = ((Number) summary.get("totalEvents")).longValue();
+      Map<String, Object> highlights = (Map<String, Object>) summary.get("highlights");
+
+      List<String> findings = new ArrayList<>();
+      List<String> recommendations = new ArrayList<>();
+      Map<String, Object> analyses = new LinkedHashMap<>();
+
+      // Step 2: Analyze exception patterns
+      if (highlights.containsKey("exceptions")) {
+        Map<String, Object> exceptionStats = (Map<String, Object>) highlights.get("exceptions");
+        Long exceptionCount = ((Number) exceptionStats.get("totalExceptions")).longValue();
+
+        if (exceptionCount > 1000) {
+          findings.add(
+              String.format(
+                  "HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+
+          // Run exception analysis
+          CallToolResult exceptionsResult = handleJfrExceptions(args);
+          if (!exceptionsResult.isError() && includeAnalysis) {
+            String exceptionsJson = ((TextContent) exceptionsResult.content().get(0)).text();
+            analyses.put("exceptions", MAPPER.readValue(exceptionsJson, Map.class));
+          }
+
+          recommendations.add(
+              "Investigate exception types - high exception rates often indicate misconfiguration "
+                  + "or error handling issues");
+        } else if (exceptionCount > 100) {
+          findings.add(
+              String.format(
+                  "MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+        }
+      }
+
+      // Step 3: Analyze GC pressure
+      if (highlights.containsKey("gc")) {
+        Map<String, Object> gcStats = (Map<String, Object>) highlights.get("gc");
+        if (gcStats.containsKey("totalCollections")) {
+          Long gcCount = ((Number) gcStats.get("totalCollections")).longValue();
+          Double avgPauseMs = ((Number) gcStats.get("avgPauseMs")).doubleValue();
+          Double totalPauseMs = ((Number) gcStats.get("totalPauseMs")).doubleValue();
+
+          if (avgPauseMs > 100 || totalPauseMs > 10000) {
+            findings.add(
+                String.format(
+                    "HIGH GC PRESSURE: %,d collections, %.1fms avg pause, %.1fs total pause",
+                    gcCount, avgPauseMs, totalPauseMs / 1000.0));
+
+            recommendations.add(
+                "GC pressure indicates memory saturation - consider running jfr_use to analyze "
+                    + "memory resource utilization");
+
+            // Detect and recommend appropriate allocation event type
+            String allocEventType = detectAllocationEventType(sessionInfo);
+            if (allocEventType != null) {
+              recommendations.add(
+                  String.format(
+                      "Run jfr_flamegraph with %s to identify allocation hotspots",
+                      allocEventType));
+            } else {
+              recommendations.add(
+                  "Allocation profiling not enabled in this recording - consider enabling "
+                      + "for future recordings to identify allocation hotspots");
+            }
+          } else if (avgPauseMs > 50 || totalPauseMs > 5000) {
+            findings.add(
+                String.format(
+                    "MODERATE GC PRESSURE: %,d collections, %.1fms avg pause",
+                    gcCount, avgPauseMs));
+          }
+        }
+      }
+
+      // Step 4: Analyze CPU patterns
+      if (highlights.containsKey("cpu")) {
+        Map<String, Object> cpuStats = (Map<String, Object>) highlights.get("cpu");
+        Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
+
+        if (cpuSamples > 5000) {
+          findings.add(
+              String.format(
+                  "CPU INTENSIVE: %,d execution samples captured", cpuSamples));
+
+          // Run hotmethods analysis
+          CallToolResult hotmethodsResult = handleJfrHotmethods(args);
+          if (!hotmethodsResult.isError() && includeAnalysis) {
+            String hotmethodsJson = ((TextContent) hotmethodsResult.content().get(0)).text();
+            analyses.put("hotmethods", MAPPER.readValue(hotmethodsJson, Map.class));
+          }
+
+          recommendations.add(
+              "Run jfr_flamegraph with execution samples to understand full call stacks");
+          recommendations.add(
+              "Consider running jfr_tsa (Thread State Analysis) to understand thread behavior");
+        }
+      }
+
+      // Step 5: Check allocation profiling availability
+      String allocEventType = detectAllocationEventType(sessionInfo);
+      if (allocEventType != null) {
+        findings.add(
+            String.format(
+                "ALLOCATION PROFILING: %s events available for analysis", allocEventType));
+      } else {
+        findings.add(
+            "ALLOCATION PROFILING: Not enabled in this recording");
+        recommendations.add(
+            "Consider enabling allocation profiling (JDK: -XX:StartFlightRecording:settings=profile, "
+                + "Datadog: included by default) for memory analysis");
+      }
+
+      // Step 6: Check for blocking patterns (always recommend USE/TSA for comprehensive view)
+      if (totalEvents > 10000) {
+        recommendations.add(
+            "Run jfr_use (USE Method) for comprehensive resource bottleneck analysis "
+                + "(CPU, Memory, Threads, I/O)");
+      }
+
+      // Step 7: Build response
+      diagnosis.put("findings", findings.isEmpty()
+          ? List.of("No significant issues detected")
+          : findings);
+      diagnosis.put("recommendations", recommendations);
+
+      if (includeAnalysis && !analyses.isEmpty()) {
+        diagnosis.put("detailedAnalysis", analyses);
+      }
+
+      // Add summary for context
+      diagnosis.put("summary", Map.of(
+          "totalEvents", totalEvents,
+          "eventTypes", summary.get("totalEventTypes"),
+          "highlights", highlights));
+
+      return successResult(diagnosis);
+
+    } catch (Exception e) {
+      LOG.error("Failed to diagnose recording: {}", e.getMessage(), e);
+      return errorResult("Failed to diagnose recording: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Utility methods
   // ─────────────────────────────────────────────────────────────────────────────
 
   private CallToolResult successResult(Map<String, Object> data) {
