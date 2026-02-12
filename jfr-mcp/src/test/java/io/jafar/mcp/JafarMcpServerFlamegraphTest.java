@@ -127,14 +127,20 @@ class JafarMcpServerFlamegraphTest {
     addStack.invoke(graph, List.of("A", "C"));
     addStack.invoke(graph, List.of("B", "C"));
 
+    // Compute inDegree (done after all stacks are added)
+    Method computeInDegree = callGraphClass.getDeclaredMethod("computeInDegree");
+    computeInDegree.setAccessible(true);
+    computeInDegree.invoke(graph);
+
     // Verify inDegree tracks convergence
     Field inDegreeField = callGraphClass.getDeclaredField("inDegree");
     inDegreeField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, Integer> inDegree = (Map<String, Integer>) inDegreeField.get(graph);
 
-    // C has inDegree but due to implementation quirk, value is 1 (counted once per first edge)
+    // C has inDegree=2 (called from both A and B)
     assertTrue(inDegree.containsKey("C"));
+    assertEquals(2, inDegree.get("C"));
   }
 
   @Test
