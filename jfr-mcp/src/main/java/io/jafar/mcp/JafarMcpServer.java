@@ -2233,6 +2233,27 @@ public final class JafarMcpServer {
     return null;
   }
 
+  private String detectQueueTimeEventType(SessionRegistry.SessionInfo sessionInfo) {
+    String[] candidateTypes = {"datadog.QueueTime"};
+
+    for (String type : candidateTypes) {
+      try {
+        String query = "events/" + type + " | count()";
+        JfrPath.Query parsed = JfrPathParser.parse(query);
+        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
+        if (!result.isEmpty()) {
+          Object countObj = result.get(0).get("count");
+          if (countObj instanceof Number n && n.longValue() > 0) {
+            return type;
+          }
+        }
+      } catch (Exception ignored) {
+        // Try next type
+      }
+    }
+    return null;
+  }
+
   private boolean isNativeMethod(String methodName) {
     if (methodName == null) return false;
     // C++ mangled names typically have < > :: or start with special chars
@@ -2656,6 +2677,134 @@ public final class JafarMcpServer {
         threads.put("saturation", saturation);
       }
 
+      // Get queue saturation
+      String queueEventType = detectQueueTimeEventType(sessionInfo);
+      if (queueEventType != null) {
+        try {
+          String queueQuery = "events/" + queueEventType + timeFilter;
+          JfrPath.Query parsed = JfrPathParser.parse(queueQuery);
+          List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+          if (!queueEvents.isEmpty()) {
+            Map<String, QueueCorrelation> queueMetrics = new HashMap<>();
+            long totalQueueTimeNs = 0;
+            int totalQueuedItems = 0;
+
+            for (Map<String, Object> event : queueEvents) {
+              Object durationObj = Values.get(event, "duration");
+              if (!(durationObj instanceof Number)) continue;
+
+              long durationNs = ((Number) durationObj).longValue();
+              totalQueueTimeNs += durationNs;
+              totalQueuedItems++;
+
+              // Extract scheduler and queue type (use simple names)
+              Object schedulerObj = Values.get(event, "scheduler", "name");
+              if (schedulerObj == null) {
+                schedulerObj = Values.get(event, "scheduler");
+              }
+              String scheduler =
+                  extractSimpleClassName(
+                      schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
+
+              Object queueTypeObj = Values.get(event, "queueType", "name");
+              if (queueTypeObj == null) {
+                queueTypeObj = Values.get(event, "queueType");
+              }
+              String queueType =
+                  extractSimpleClassName(
+                      queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
+
+              String threadId = extractThreadId(event);
+              String key = scheduler + "|" + queueType;
+
+              QueueCorrelation corr =
+                  queueMetrics.computeIfAbsent(key, k -> new QueueCorrelation(scheduler, queueType));
+              corr.addSample(durationNs, threadId);
+            }
+
+            // Build queue saturation output
+            Map<String, Object> queueSaturation = new LinkedHashMap<>();
+            queueSaturation.put(
+                "totalQueueTimeMs", Math.round(totalQueueTimeNs / 1_000_000.0 * 10) / 10.0);
+            queueSaturation.put("totalQueuedItems", totalQueuedItems);
+
+            double avgQueueMs =
+                totalQueuedItems > 0
+                    ? (totalQueueTimeNs / (double) totalQueuedItems) / 1_000_000.0
+                    : 0.0;
+            queueSaturation.put("avgQueueTimeMs", Math.round(avgQueueMs * 10) / 10.0);
+
+            // Find max queue time
+            long maxQueueNs =
+                queueMetrics.values().stream().mapToLong(c -> c.maxDurationNs).max().orElse(0);
+            queueSaturation.put("maxQueueTimeMs", Math.round(maxQueueNs / 1_000_000.0 * 10) / 10.0);
+
+            // Group by scheduler
+            Map<String, Object> byScheduler = new LinkedHashMap<>();
+            queueMetrics.entrySet().stream()
+                .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+                .limit(10)
+                .forEach(
+                    e -> {
+                      QueueCorrelation corr = e.getValue();
+                      Map<String, Object> schedulerInfo = new LinkedHashMap<>();
+                      schedulerInfo.put("queueType", corr.queueType);
+                      schedulerInfo.put("count", corr.samples);
+                      schedulerInfo.put(
+                          "totalTimeMs",
+                          Math.round(corr.totalDurationNs / 1_000_000.0 * 10) / 10.0);
+                      schedulerInfo.put("avgTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
+                      schedulerInfo.put(
+                          "maxTimeMs", Math.round(corr.maxDurationNs / 1_000_000.0 * 10) / 10.0);
+                      schedulerInfo.put("p95Ms", Math.round(corr.getP95DurationMs() * 10) / 10.0);
+                      schedulerInfo.put("p99Ms", Math.round(corr.getP99DurationMs() * 10) / 10.0);
+                      byScheduler.put(corr.scheduler, schedulerInfo);
+                    });
+            queueSaturation.put("byScheduler", byScheduler);
+
+            // Calculate p95 for assessment
+            double globalP95 =
+                queueMetrics.values().stream()
+                    .mapToDouble(QueueCorrelation::getP95DurationMs)
+                    .average()
+                    .orElse(0.0);
+            queueSaturation.put("assessment", assessQueueSaturation(avgQueueMs, globalP95));
+
+            // Merge with existing saturation (lock contention)
+            if (threads.containsKey("saturation")) {
+              @SuppressWarnings("unchecked")
+              Map<String, Object> existingSat = (Map<String, Object>) threads.get("saturation");
+
+              // Restructure to have both lock and queue saturation
+              Map<String, Object> lockContention = new LinkedHashMap<>();
+              lockContention.put("contentionEvents", existingSat.remove("contentionEvents"));
+              lockContention.put("totalContentionMs", existingSat.remove("totalContentionMs"));
+              lockContention.put("avgContentionMs", existingSat.remove("avgContentionMs"));
+              lockContention.put("maxContentionMs", existingSat.remove("maxContentionMs"));
+              Object topContendedClass = existingSat.remove("topContendedClass");
+              if (topContendedClass != null) {
+                lockContention.put("topContendedClass", topContendedClass);
+              }
+              Object message = existingSat.remove("message");
+              if (message != null) {
+                lockContention.put("message", message);
+              }
+              lockContention.put("assessment", existingSat.remove("assessment"));
+
+              existingSat.put("lockContention", lockContention);
+              existingSat.put("queueSaturation", queueSaturation);
+            } else {
+              Map<String, Object> saturation = new LinkedHashMap<>();
+              saturation.put("queueSaturation", queueSaturation);
+              threads.put("saturation", saturation);
+            }
+          }
+        } catch (Exception e) {
+          LOG.debug("Failed to analyze queue saturation: {}", e.getMessage());
+        }
+      }
+
       // Errors
       Map<String, Object> errors = new LinkedHashMap<>();
       errors.put("value", "N/A");
@@ -2782,14 +2931,54 @@ public final class JafarMcpServer {
     if (threadsRes != null && !threadsRes.containsKey("error")) {
       @SuppressWarnings("unchecked")
       Map<String, Object> threadsSat = (Map<String, Object>) threadsRes.get("saturation");
-      if (threadsSat != null && threadsSat.containsKey("contentionEvents")) {
-        Object events = threadsSat.get("contentionEvents");
-        if (events instanceof Number && ((Number) events).intValue() > 100) {
+      if (threadsSat != null) {
+        // Check lock contention (may be nested or flat structure)
+        Object contentionEvents = threadsSat.get("contentionEvents");
+        if (contentionEvents == null && threadsSat.containsKey("lockContention")) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> lockCont = (Map<String, Object>) threadsSat.get("lockContention");
+          contentionEvents = lockCont.get("contentionEvents");
+        }
+        if (contentionEvents instanceof Number && ((Number) contentionEvents).intValue() > 100) {
           bottlenecks.add("thread_contention");
           Object topClass = threadsSat.get("topContendedClass");
+          if (topClass == null && threadsSat.containsKey("lockContention")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> lockCont = (Map<String, Object>) threadsSat.get("lockContention");
+            topClass = lockCont.get("topContendedClass");
+          }
           if (topClass != null) {
             recommendations.add(
                 "Lock contention detected on " + topClass + " - review synchronization");
+          }
+        }
+
+        // Check queue saturation
+        if (threadsSat.containsKey("queueSaturation")) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> queueSat = (Map<String, Object>) threadsSat.get("queueSaturation");
+          String queueAssessment = (String) queueSat.get("assessment");
+          if ("HIGH_QUEUE_SATURATION".equals(queueAssessment)) {
+            bottlenecks.add("queue_saturation");
+            Object avgQueueMs = queueSat.get("avgQueueTimeMs");
+            recommendations.add(
+                String.format(
+                    "High queue saturation detected (avg: %.1f ms) - consider increasing executor pool sizes",
+                    avgQueueMs instanceof Number ? ((Number) avgQueueMs).doubleValue() : 0.0));
+          } else if ("MODERATE_QUEUE_SATURATION".equals(queueAssessment)) {
+            recommendations.add("Moderate queue saturation - monitor executor capacity");
+          }
+        }
+
+        // Warn if Datadog profiler but no queue events
+        String eventType = null;
+        if (threadsRes.containsKey("utilization")) {
+          // Try to detect if Datadog profiler is being used
+          // This is a heuristic - we check if we have any Datadog-specific data
+          if (threadsSat != null && !threadsSat.containsKey("queueSaturation")) {
+            // Check if we might be using Datadog profiler
+            // For now, we skip this warning as we can't reliably detect profiler type
+            // without additional context
           }
         }
       }
@@ -2949,8 +3138,10 @@ public final class JafarMcpServer {
 
       // Correlate with blocking events if requested
       Map<String, MonitorCorrelation> correlations = new HashMap<>();
+      Map<String, QueueCorrelation> queueCorrelations = new HashMap<>();
       if (correlateBlocking) {
         correlations = correlateWithBlockingEvents(sessionInfo, timeFilter);
+        queueCorrelations = correlateWithQueueEvents(sessionInfo, timeFilter);
       }
 
       // Build result
@@ -2983,19 +3174,27 @@ public final class JafarMcpServer {
 
       // Thread profiles
       List<Map<String, Object>> threadProfiles =
-          buildThreadProfiles(threadMetrics, totalSamples, correlations);
+          buildThreadProfiles(threadMetrics, totalSamples, correlations, queueCorrelations);
       result.put("threadProfiles", threadProfiles);
 
       // Correlations
-      if (!correlations.isEmpty()) {
-        result.put("correlations", buildCorrelationsOutput(correlations));
+      if (!correlations.isEmpty() || !queueCorrelations.isEmpty()) {
+        Map<String, Object> allCorrelations = new LinkedHashMap<>();
+        if (!correlations.isEmpty()) {
+          allCorrelations.putAll(buildCorrelationsOutput(correlations));
+        }
+        if (!queueCorrelations.isEmpty()) {
+          allCorrelations.putAll(buildQueueCorrelationsOutput(queueCorrelations));
+        }
+        result.put("correlations", allCorrelations);
       }
 
       // Insights
       if (includeInsights) {
         result.put(
             "insights",
-            generateTsaInsights(threadMetrics, globalStateCount, totalSamples, correlations));
+            generateTsaInsights(
+                threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
       }
 
       return successResult(result);
@@ -3046,6 +3245,60 @@ public final class JafarMcpServer {
     return correlations;
   }
 
+  private Map<String, QueueCorrelation> correlateWithQueueEvents(
+      SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
+    Map<String, QueueCorrelation> correlations = new HashMap<>();
+
+    try {
+      String queueEventType = detectQueueTimeEventType(sessionInfo);
+      if (queueEventType == null) return correlations;
+
+      String queueQuery = "events/" + queueEventType + timeFilter;
+      JfrPath.Query parsed = JfrPathParser.parse(queueQuery);
+      List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      for (Map<String, Object> event : queueEvents) {
+        // Extract scheduler (use simple name)
+        Object schedulerObj = Values.get(event, "scheduler", "name");
+        if (schedulerObj == null) {
+          schedulerObj = Values.get(event, "scheduler");
+        }
+        String scheduler =
+            extractSimpleClassName(
+                schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
+
+        // Extract queue type (use simple name)
+        Object queueTypeObj = Values.get(event, "queueType", "name");
+        if (queueTypeObj == null) {
+          queueTypeObj = Values.get(event, "queueType");
+        }
+        String queueType =
+            extractSimpleClassName(queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
+
+        // Use eventThread (thread that dequeued and executed)
+        String threadId = extractThreadId(event);
+        String key = scheduler;
+
+        QueueCorrelation corr =
+            correlations.computeIfAbsent(key, k -> new QueueCorrelation(scheduler, queueType));
+
+        Object durationObj = Values.get(event, "duration");
+        if (durationObj instanceof Number) {
+          long durationNs = ((Number) durationObj).longValue();
+          corr.addSample(durationNs, threadId);
+        } else {
+          corr.samples++;
+          corr.threads.add(threadId);
+        }
+      }
+
+    } catch (Exception e) {
+      LOG.debug("Failed to correlate queue events: {}", e.getMessage());
+    }
+
+    return correlations;
+  }
+
   private Map<String, Object> buildTopThreadsByState(
       Map<String, ThreadStateMetrics> threadMetrics, Map<String, Long> globalStateCount, int topN) {
     Map<String, Object> topThreadsByState = new LinkedHashMap<>();
@@ -3088,7 +3341,8 @@ public final class JafarMcpServer {
   private List<Map<String, Object>> buildThreadProfiles(
       Map<String, ThreadStateMetrics> threadMetrics,
       long totalSamples,
-      Map<String, MonitorCorrelation> correlations) {
+      Map<String, MonitorCorrelation> correlations,
+      Map<String, QueueCorrelation> queueCorrelations) {
     return threadMetrics.values().stream()
         .sorted((a, b) -> Long.compare(b.totalSamples, a.totalSamples))
         .limit(20) // Top 20 threads by sample count
@@ -3113,6 +3367,18 @@ public final class JafarMcpServer {
 
               // Assessment
               profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples));
+
+              // Add queue correlation info if available
+              if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
+                List<String> queuedOnExecutors =
+                    queueCorrelations.entrySet().stream()
+                        .filter(e -> e.getValue().threads.contains(m.threadId))
+                        .map(Map.Entry::getKey)
+                        .toList();
+                if (!queuedOnExecutors.isEmpty()) {
+                  profile.put("queuedOn", queuedOnExecutors);
+                }
+              }
 
               return profile;
             })
@@ -3148,11 +3414,42 @@ public final class JafarMcpServer {
     return output;
   }
 
+  private Map<String, Object> buildQueueCorrelationsOutput(
+      Map<String, QueueCorrelation> queueCorrelations) {
+    Map<String, Object> output = new LinkedHashMap<>();
+
+    Map<String, Object> queuedOn = new LinkedHashMap<>();
+    queueCorrelations.entrySet().stream()
+        .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+        .limit(10)
+        .forEach(
+            e -> {
+              QueueCorrelation corr = e.getValue();
+              Map<String, Object> info = new LinkedHashMap<>();
+              info.put("queueType", corr.queueType);
+              info.put("samples", corr.samples);
+              info.put("threads", corr.threads.size());
+              if (corr.totalDurationNs > 0 && corr.samples > 0) {
+                info.put("avgQueueTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
+                info.put(
+                    "maxQueueTimeMs", Math.round(corr.maxDurationNs / 1_000_000.0 * 10) / 10.0);
+              }
+              queuedOn.put(e.getKey(), info);
+            });
+
+    if (!queuedOn.isEmpty()) {
+      output.put("queuedOn", queuedOn);
+    }
+
+    return output;
+  }
+
   private Map<String, Object> generateTsaInsights(
       Map<String, ThreadStateMetrics> threadMetrics,
       Map<String, Long> globalStateCount,
       long totalSamples,
-      Map<String, MonitorCorrelation> correlations) {
+      Map<String, MonitorCorrelation> correlations,
+      Map<String, QueueCorrelation> queueCorrelations) {
     Map<String, Object> insights = new LinkedHashMap<>();
     List<String> patterns = new ArrayList<>();
     List<Map<String, Object>> problematicThreads = new ArrayList<>();
@@ -3213,6 +3510,25 @@ public final class JafarMcpServer {
       }
     }
 
+    // Analyze queue correlations
+    if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
+      QueueCorrelation maxQueue =
+          queueCorrelations.values().stream()
+              .max(Comparator.comparingDouble(QueueCorrelation::getAvgDurationMs))
+              .orElse(null);
+
+      if (maxQueue != null && maxQueue.getAvgDurationMs() > 50) {
+        patterns.add(
+            String.format(
+                "High executor queue times on %s (avg: %.1f ms, p95: %.1f ms)",
+                maxQueue.scheduler, maxQueue.getAvgDurationMs(), maxQueue.getP95DurationMs()));
+        recommendations.add(
+            String.format(
+                "Consider increasing thread pool size for %s or optimizing task submission rate",
+                maxQueue.scheduler));
+      }
+    }
+
     if (patterns.isEmpty()) {
       patterns.add("No significant patterns detected");
     }
@@ -3254,6 +3570,50 @@ public final class JafarMcpServer {
     }
   }
 
+  /** Helper class to track queue correlation data. */
+  private static class QueueCorrelation {
+    final String scheduler;
+    final String queueType;
+    long samples = 0;
+    long totalDurationNs = 0;
+    long maxDurationNs = 0;
+    final List<Long> durations = new ArrayList<>();
+    final Set<String> threads = new HashSet<>();
+
+    QueueCorrelation(String scheduler, String queueType) {
+      this.scheduler = scheduler;
+      this.queueType = queueType;
+    }
+
+    void addSample(long durationNs, String threadId) {
+      samples++;
+      totalDurationNs += durationNs;
+      maxDurationNs = Math.max(maxDurationNs, durationNs);
+      durations.add(durationNs);
+      threads.add(threadId);
+    }
+
+    double getAvgDurationMs() {
+      return samples > 0 ? (totalDurationNs / (double) samples) / 1_000_000.0 : 0.0;
+    }
+
+    double getP95DurationMs() {
+      if (durations.isEmpty()) return 0.0;
+      List<Long> sorted = new ArrayList<>(durations);
+      sorted.sort(Long::compareTo);
+      int idx = (int) (sorted.size() * 0.95);
+      return sorted.get(Math.min(idx, sorted.size() - 1)) / 1_000_000.0;
+    }
+
+    double getP99DurationMs() {
+      if (durations.isEmpty()) return 0.0;
+      List<Long> sorted = new ArrayList<>(durations);
+      sorted.sort(Long::compareTo);
+      int idx = (int) (sorted.size() * 0.99);
+      return sorted.get(Math.min(idx, sorted.size() - 1)) / 1_000_000.0;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Shared helper methods for USE and TSA analysis
   // ─────────────────────────────────────────────────────────────────────────────
@@ -3280,6 +3640,15 @@ public final class JafarMcpServer {
       name = Values.get(event, "eventThread", "osName");
     }
     return name != null ? String.valueOf(name) : "unknown";
+  }
+
+  /** Extract simple class name from fully qualified name. */
+  private String extractSimpleClassName(String fullClassName) {
+    if (fullClassName == null || fullClassName.isEmpty()) return "unknown";
+    int lastDot = fullClassName.lastIndexOf('.');
+    int lastDollar = fullClassName.lastIndexOf('$');
+    int splitIdx = Math.max(lastDot, lastDollar);
+    return splitIdx >= 0 ? fullClassName.substring(splitIdx + 1) : fullClassName;
   }
 
   /** Build JfrPath time filter for time-window queries. */
@@ -3326,6 +3695,13 @@ public final class JafarMcpServer {
     if (waitingPct > 70) return "IO_WAITING";
     if (blockedPct > 20) return "LOCK_CONTENTION";
     return "BALANCED";
+  }
+
+  /** Assess queue saturation level based on average and p95 queue times. */
+  private String assessQueueSaturation(double avgQueueMs, double p95QueueMs) {
+    if (avgQueueMs > 100 || p95QueueMs > 250) return "HIGH_QUEUE_SATURATION";
+    if (avgQueueMs > 20 || p95QueueMs > 100) return "MODERATE_QUEUE_SATURATION";
+    return "LOW_QUEUE_SATURATION";
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
