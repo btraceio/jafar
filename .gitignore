@@ -15,6 +15,7 @@ hs_err_pid*
 replay_pid*
 
 build/
+bin/
 .gradle
 .idea
 
@@ -38,3 +39,6 @@ gradle.properties
 /.vscode/settings.json
 
 **/.last_build_hash
+
+# Temporary documentation
+doc/temp/

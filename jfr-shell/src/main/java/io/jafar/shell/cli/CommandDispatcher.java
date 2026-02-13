@@ -330,7 +330,7 @@ public class CommandDispatcher {
     JFRSession s = ref.get().session;
     io.println("Session Information:");
     io.println("  Recording: " + s.getRecordingPath());
-    io.println("  Event Types: " + s.getAvailableEventTypes().size());
+    io.println("  Event Types: " + s.getAvailableTypes().size());
     io.println("  Handlers: " + s.getHandlerCount());
     io.println("  Has Run: " + s.hasRun());
     if (s.hasRun()) {
@@ -1179,7 +1179,7 @@ public class CommandDispatcher {
     var sess = cur.get().session;
     java.util.Set<String> all =
         primitives ? sess.getPrimitiveMetadataTypes() : sess.getNonPrimitiveMetadataTypes();
-    java.util.Set<String> events = sess.getAvailableEventTypes();
+    java.util.Set<String> events = sess.getAvailableTypes();
     java.util.List<String> types = new java.util.ArrayList<>();
     if (primitives) {
       // primitives: ignore eventsOnly flag and just show primitives

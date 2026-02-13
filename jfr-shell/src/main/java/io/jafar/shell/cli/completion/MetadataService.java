@@ -42,7 +42,7 @@ public final class MetadataService {
   public Set<String> getEventTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableEventTypes())
+        .map(entry -> entry.session.getAvailableTypes())
         .orElse(Collections.emptySet());
   }
 

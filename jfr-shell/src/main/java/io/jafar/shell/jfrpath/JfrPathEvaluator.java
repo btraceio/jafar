@@ -2509,7 +2509,7 @@ public final class JfrPathEvaluator {
 
   private void validateEventTypes(JFRSession session, List<String> requestedTypes)
       throws Exception {
-    Set<String> availableTypes = session.getAvailableEventTypes();
+    Set<String> availableTypes = session.getAvailableTypes();
 
     // Skip validation if event type information is not available
     if (availableTypes == null || availableTypes.isEmpty()) {

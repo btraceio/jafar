@@ -18,7 +18,7 @@ class JfrPathEvaluatorMultiEventTest {
   void evaluatesMultiEventTypeQuery() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
+    when(session.getAvailableTypes())
         .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead"));
 
     var src =
@@ -48,7 +48,7 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryRespectsFilters() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -80,7 +80,7 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryWorksWithCount() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
+    when(session.getAvailableTypes())
         .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead"));
 
     var src =
@@ -104,7 +104,7 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryWorksWithSum() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -126,7 +126,7 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventQueryWorksWithGroupBy() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -162,7 +162,7 @@ class JfrPathEvaluatorMultiEventTest {
   void throwsWhenEventTypeNotFound() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -182,7 +182,7 @@ class JfrPathEvaluatorMultiEventTest {
   void providesHelpfulSuggestionForTypo() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -202,7 +202,7 @@ class JfrPathEvaluatorMultiEventTest {
   void worksWithThreeOrMoreEventTypes() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes())
+    when(session.getAvailableTypes())
         .thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite"));
 
     var src =
@@ -226,7 +226,7 @@ class JfrPathEvaluatorMultiEventTest {
   void singleTypeInParenthesesStillWorks() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead"));
 
     var src =
         (JfrPathEvaluator.EventSource)
@@ -247,7 +247,7 @@ class JfrPathEvaluatorMultiEventTest {
   void multiEventWithComplexFiltersAndPipeline() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
-    when(session.getAvailableEventTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("jdk.FileRead", "jdk.FileWrite"));
 
     var src =
         (JfrPathEvaluator.EventSource)

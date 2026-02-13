@@ -1,0 +1,128 @@
+plugins {
+    id 'java'
+    id 'jacoco'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+def libraryName = "jfr-mcp"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Official MCP Java SDK (v0.12.1 per official docs)
+    implementation platform('io.modelcontextprotocol.sdk:mcp-bom:0.12.1')
+    implementation 'io.modelcontextprotocol.sdk:mcp'
+
+    // Jafar dependencies
+    implementation project(':jfr-shell')
+    implementation project(':parser')
+
+    // Backend plugins (discovered via ServiceLoader)
+    runtimeOnly project(':jfr-shell-jafar')
+
+    // Embedded Jetty for HTTP transport
+    implementation 'org.eclipse.jetty:jetty-server:12.0.16'
+    implementation 'org.eclipse.jetty.ee10:jetty-ee10-servlet:12.0.16'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.16'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.18'
+
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testImplementation 'org.mockito:mockito-core:5.15.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // JMC Writer API for creating test JFR files
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
+}
+
+test {
+    useJUnitPlatform()
+    // Allocate sufficient heap for tests that load real JFR files
+    jvmArgs '-Xmx2g', '-Xms512m'
+
+    // Exclude integration tests by default (require large JFR files)
+    // Run with -DenableIntegrationTests=true to include them
+    if (System.getProperty('enableIntegrationTests') != 'true') {
+        exclude '**/JafarMcpServer*Test.class'
+        exclude '**/HandlerLogicIntegrationTest.class'
+        exclude '**/SessionRegistryTest.class'
+    }
+
+    // Configure Mockito as Java agent for inline mocking in Java 25
+    doFirst {
+        def mockitoAgent = configurations.testRuntimeClasspath.files.find { it.name.contains('mockito-core') }
+        if (mockitoAgent) {
+            jvmArgs "-javaagent:${mockitoAgent}"
+        }
+    }
+
+    // Open Java modules for Mockito instrumentation in Java 25
+    jvmArgs '--add-opens', 'java.base/java.lang=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.util=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
+
+    finalizedBy jacocoTestReport
+}
+
+// Integration tests task (slow, loads real JFR files)
+tasks.register('integrationTest', Test) {
+    description = 'Runs integration tests that load real JFR files (slow)'
+    group = 'verification'
+
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+
+    // Integration tests need more heap for processing JFR files
+    jvmArgs '-Xmx4g', '-Xms512m'
+
+    shouldRunAfter test
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+}
+
+// Exclude duplicate SLF4J provider (we use logback-classic)
+configurations.runtimeClasspath {
+    exclude group: 'org.slf4j', module: 'slf4j-simple'
+}
+
+// Shadow JAR for standalone distribution
+shadowJar {
+    group 'Build'
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('all')
+
+    mergeServiceFiles()
+
+    manifest {
+        attributes 'Main-Class': 'io.jafar.mcp.JafarMcpServer'
+    }
+}
+
+tasks.named('build') {
+    dependsOn shadowJar
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'MCP Server for JFR analysis - enables AI agents to analyze Java Flight Recordings'

@@ -187,11 +187,11 @@ public final class JFRSession implements AutoCloseable {
   }
 
   /**
-   * Get available event types discovered in this recording.
+   * Get available types discovered in this recording.
    *
-   * @return set of event type names
+   * @return set of type names
    */
-  public Set<String> getAvailableEventTypes() {
+  public Set<String> getAvailableTypes() {
     return eventTypeCounts.keySet();
   }
 

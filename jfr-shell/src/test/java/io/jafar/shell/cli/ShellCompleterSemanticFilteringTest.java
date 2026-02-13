@@ -36,7 +36,7 @@ class ShellCompleterSemanticFilteringTest {
     return (path, context) -> {
       JFRSession session = Mockito.mock(JFRSession.class);
       when(session.getRecordingPath()).thenReturn(path);
-      when(session.getAvailableEventTypes())
+      when(session.getAvailableTypes())
           .thenReturn(
               Set.of(
                   "test.NumericOnlyEvent",

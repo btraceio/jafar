@@ -57,7 +57,7 @@ class MapVariablesTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           Mockito.when(s.getRecordingPath()).thenReturn(path);
-          Mockito.when(s.getAvailableEventTypes()).thenReturn(Set.of());
+          Mockito.when(s.getAvailableTypes()).thenReturn(Set.of());
           Mockito.when(s.getHandlerCount()).thenReturn(0);
           Mockito.when(s.hasRun()).thenReturn(false);
           return s;

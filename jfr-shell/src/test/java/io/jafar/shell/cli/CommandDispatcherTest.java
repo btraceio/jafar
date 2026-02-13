@@ -51,7 +51,7 @@ class CommandDispatcherTest {
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
-          when(s.getAvailableEventTypes()).thenReturn(java.util.Set.of());
+          when(s.getAvailableTypes()).thenReturn(java.util.Set.of());
           when(s.getHandlerCount()).thenReturn(0);
           when(s.hasRun()).thenReturn(false);
           return s;

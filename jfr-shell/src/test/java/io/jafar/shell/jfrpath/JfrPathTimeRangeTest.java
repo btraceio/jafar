@@ -17,7 +17,7 @@ class JfrPathTimeRangeTest {
     JFRSession session = Mockito.mock(JFRSession.class);
     Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
-    when(session.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
+    when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
 
     var eval = new JfrPathEvaluator();
     var q = JfrPathParser.parse("events/jdk.ExecutionSample | timerange()");
@@ -62,7 +62,7 @@ class JfrPathTimeRangeTest {
     JFRSession session = Mockito.mock(JFRSession.class);
     Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
-    when(session.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
+    when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
 
     var eval = new JfrPathEvaluator();
     var q = JfrPathParser.parse("events/jdk.ExecutionSample | timerange(startTime)");
@@ -102,7 +102,7 @@ class JfrPathTimeRangeTest {
     JFRSession session = Mockito.mock(JFRSession.class);
     Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
-    when(session.getAvailableEventTypes()).thenReturn(java.util.Set.of("jdk.NonExistentEvent"));
+    when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.NonExistentEvent"));
 
     var eval = new JfrPathEvaluator();
     // Use a filter that matches no events

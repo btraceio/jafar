@@ -64,15 +64,18 @@ public final class MutableConstantPool implements ConstantPool {
             o = typed;
           } else {
             GenericValueReader r = stream.getContext().get(GenericValueReader.class);
-            MapValueBuilder builder = (MapValueBuilder) r.getProcessor();
-            builder.onComplexValueStart(null, null, clazz);
-            try {
-              r.readValue(stream, clazz);
-            } catch (java.io.IOException ioe) {
-              throw new RuntimeException(ioe);
+            if (r != null) {
+              MapValueBuilder builder = (MapValueBuilder) r.getProcessor();
+              builder.onComplexValueStart(null, null, clazz);
+              try {
+                r.readValue(stream, clazz);
+              } catch (java.io.IOException ioe) {
+                throw new RuntimeException(ioe);
+              }
+              builder.onComplexValueEnd(null, null, clazz);
+              o = builder.getRoot();
             }
-            builder.onComplexValueEnd(null, null, clazz);
-            o = builder.getRoot();
+            // If GenericValueReader is not available, o remains null
           }
           entries.put(id, o);
         } finally {
