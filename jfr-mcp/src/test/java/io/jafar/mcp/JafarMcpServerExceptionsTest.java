@@ -13,17 +13,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_exceptions MCP tool. */
-class JafarMcpServerExceptionsTest {
+
+class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final String TEST_DD_JFR = System.getProperty("user.dir") + "/../parser/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
 
   @BeforeEach
   void setUp() throws Exception {
     server = new JafarMcpServer();
-    openSession(TEST_DD_JFR);
+    openSession(getComprehensiveJfr());
   }
 
   @Test
@@ -34,7 +34,7 @@ class JafarMcpServerExceptionsTest {
 
     CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
 
-    assertFalse(result.isError());
+    assertFalse(result.isError(), () -> "Error: " + extractTextContent(result));
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 

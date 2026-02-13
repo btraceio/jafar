@@ -21,15 +21,15 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * <p>Tests require a real JFR file to be available at /tmp/main.jfr.
  */
 @EnabledIf("testFileExists")
-class JafarMcpServerUseTest {
+
+class JafarMcpServerUseTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private JafarMcpServer server;
-  private static final String TEST_JFR_PATH = "/tmp/main.jfr";
 
   static boolean testFileExists() {
-    return Paths.get(TEST_JFR_PATH).toFile().exists();
+    return Paths.get(getComprehensiveJfr()).toFile().exists();
   }
 
   @BeforeEach
@@ -41,7 +41,7 @@ class JafarMcpServerUseTest {
     handleJfrOpen.setAccessible(true);
 
     Map<String, Object> openArgs = new HashMap<>();
-    openArgs.put("path", TEST_JFR_PATH);
+    openArgs.put("path", getComprehensiveJfr());
 
     CallToolResult openResult = (CallToolResult) handleJfrOpen.invoke(server, openArgs);
     assertFalse(openResult.isError(), "Failed to open test recording");

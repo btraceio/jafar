@@ -40,16 +40,51 @@ dependencies {
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
-    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'org.mockito:mockito-core:5.15.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // JMC Writer API for creating test JFR files
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
 }
 
 test {
-    useJUnitPlatform()
-    // Increase heap for processing large JFR files with stack traces
-    // Note: Tests now properly close sessions in @AfterEach to prevent memory leaks
-    jvmArgs '-Xmx4g', '-Xms512m'
+    useJUnitPlatform {
+        // Exclude slow integration tests by default
+        // TEMPORARILY COMMENTED OUT FOR COVERAGE MEASUREMENT
+        // excludeTags 'integration'
+    }
+    // Unit tests are lightweight and don't need much heap
+    jvmArgs '-Xmx512m', '-Xms256m'
+
+    // Configure Mockito as Java agent for inline mocking in Java 25
+    doFirst {
+        def mockitoAgent = configurations.testRuntimeClasspath.files.find { it.name.contains('mockito-core') }
+        if (mockitoAgent) {
+            jvmArgs "-javaagent:${mockitoAgent}"
+        }
+    }
+
+    // Open Java modules for Mockito instrumentation in Java 25
+    jvmArgs '--add-opens', 'java.base/java.lang=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.util=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
+
     finalizedBy jacocoTestReport
+}
+
+// Integration tests task (slow, loads real JFR files)
+tasks.register('integrationTest', Test) {
+    description = 'Runs integration tests that load real JFR files (slow)'
+    group = 'verification'
+
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+
+    // Integration tests need more heap for processing JFR files
+    jvmArgs '-Xmx4g', '-Xms512m'
+
+    shouldRunAfter test
 }
 
 jacocoTestReport {

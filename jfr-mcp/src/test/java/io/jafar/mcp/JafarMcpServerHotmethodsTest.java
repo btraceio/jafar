@@ -14,10 +14,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_hotmethods MCP tool. */
-class JafarMcpServerHotmethodsTest {
+
+class JafarMcpServerHotmethodsTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final String TEST_JFR = System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
 
@@ -151,7 +151,7 @@ class JafarMcpServerHotmethodsTest {
     Method handleJfrOpen = getMethod("handleJfrOpen", Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("path", TEST_JFR);
+    args.put("path", getComprehensiveJfr());
 
     CallToolResult result = (CallToolResult) handleJfrOpen.invoke(server, args);
     assertFalse(result.isError());

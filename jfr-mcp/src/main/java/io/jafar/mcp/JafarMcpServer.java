@@ -1,11 +1,13 @@
 package io.jafar.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jafar.mcp.query.DefaultQueryEvaluator;
+import io.jafar.mcp.query.DefaultQueryParser;
+import io.jafar.mcp.query.QueryEvaluator;
+import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.parser.api.Values;
 import io.jafar.shell.jfrpath.JfrPath;
-import io.jafar.shell.jfrpath.JfrPathEvaluator;
-import io.jafar.shell.jfrpath.JfrPathParser;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -62,11 +64,26 @@ public final class JafarMcpServer {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final SessionRegistry sessionRegistry;
-  private final JfrPathEvaluator evaluator;
+  private final QueryEvaluator evaluator;
+  private final QueryParser queryParser;
 
+  /** Creates a server with default dependencies for production use. */
   public JafarMcpServer() {
-    this.sessionRegistry = new SessionRegistry();
-    this.evaluator = new JfrPathEvaluator();
+    this(new SessionRegistry(), new DefaultQueryEvaluator(), new DefaultQueryParser());
+  }
+
+  /**
+   * Creates a server with custom dependencies (for testing).
+   *
+   * @param sessionRegistry the session registry
+   * @param evaluator the query evaluator
+   * @param queryParser the query parser
+   */
+  public JafarMcpServer(
+      SessionRegistry sessionRegistry, QueryEvaluator evaluator, QueryParser queryParser) {
+    this.sessionRegistry = sessionRegistry;
+    this.evaluator = evaluator;
+    this.queryParser = queryParser;
   }
 
   public static void main(String[] args) {
@@ -321,13 +338,16 @@ public final class JafarMcpServer {
     if (query == null || query.isBlank()) {
       return errorResult("Query is required");
     }
+    if (limit != null && limit <= 0) {
+      return errorResult("Limit must be positive");
+    }
 
     int resultLimit = (limit != null && limit > 0) ? limit : 100;
 
     try {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
 
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       LOG.debug("Parsed query: {}", parsed);
 
       List<Map<String, Object>> results = evaluator.evaluate(sessionInfo.session(), parsed);
@@ -428,7 +448,7 @@ public final class JafarMcpServer {
         for (String eventType : filteredTypes) {
           try {
             String query = "events/" + eventType + " | count()";
-            JfrPath.Query parsed = JfrPathParser.parse(query);
+            JfrPath.Query parsed = queryParser.parse(query);
             List<Map<String, Object>> results = evaluator.evaluate(sessionInfo.session(), parsed);
 
             if (!results.isEmpty() && results.get(0).containsKey("count")) {
@@ -1076,7 +1096,13 @@ public final class JafarMcpServer {
     Integer maxDepth = args.get("maxDepth") instanceof Number n ? n.intValue() : null;
 
     if (eventType == null || eventType.isBlank()) {
-      return errorResult("eventType is required");
+      return errorResult("Event type is required");
+    }
+    if (!"bottom-up".equals(direction) && !"top-down".equals(direction)) {
+      return errorResult("direction must be 'bottom-up' or 'top-down'");
+    }
+    if (!"folded".equals(format) && !"tree".equals(format)) {
+      return errorResult("format must be 'folded' or 'tree'");
     }
     if (minSamples != null && minSamples < 1) {
       return errorResult("minSamples must be >= 1");
@@ -1090,7 +1116,7 @@ public final class JafarMcpServer {
 
       // Query all events with non-empty stack traces
       String query = "events/" + eventType;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       // Build aggregation tree
@@ -1381,7 +1407,10 @@ public final class JafarMcpServer {
     Integer minWeight = args.get("minWeight") instanceof Number n ? n.intValue() : 1;
 
     if (eventType == null || eventType.isBlank()) {
-      return errorResult("eventType is required");
+      return errorResult("Event type is required");
+    }
+    if (!"dot".equals(format) && !"json".equals(format)) {
+      return errorResult("format must be 'dot' or 'json'");
     }
     if (minWeight < 1) {
       return errorResult("minWeight must be >= 1");
@@ -1392,7 +1421,7 @@ public final class JafarMcpServer {
 
       // Query all events
       String query = "events/" + eventType;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       // Build call graph
@@ -1612,7 +1641,7 @@ public final class JafarMcpServer {
 
       // Query exception events
       String query = "events/" + eventType;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       if (events.isEmpty()) {
@@ -1704,7 +1733,7 @@ public final class JafarMcpServer {
     for (String type : candidateTypes) {
       try {
         String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
         if (!result.isEmpty()) {
           Object countObj = result.get(0).get("count");
@@ -1905,7 +1934,7 @@ public final class JafarMcpServer {
       for (String type : types) {
         try {
           String query = "events/" + type + " | count()";
-          JfrPath.Query parsed = JfrPathParser.parse(query);
+          JfrPath.Query parsed = queryParser.parse(query);
           List<Map<String, Object>> countResult = evaluator.evaluate(sessionInfo.session(), parsed);
           if (!countResult.isEmpty()) {
             Object countObj = countResult.get(0).get("count");
@@ -2019,7 +2048,7 @@ public final class JafarMcpServer {
     for (String type : gcTypes) {
       try {
         String query = "events/" + type;
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
         if (!events.isEmpty()) {
@@ -2068,7 +2097,7 @@ public final class JafarMcpServer {
     // Query and extract top frame
     try {
       String query = "events/" + eventType;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       if (events.isEmpty()) {
@@ -2162,7 +2191,7 @@ public final class JafarMcpServer {
 
       // Query execution events
       String query = "events/" + eventType;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       if (events.isEmpty()) {
@@ -2241,7 +2270,7 @@ public final class JafarMcpServer {
     for (String type : candidateTypes) {
       try {
         String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
         if (!result.isEmpty()) {
           Object countObj = result.get(0).get("count");
@@ -2262,7 +2291,7 @@ public final class JafarMcpServer {
     for (String type : candidateTypes) {
       try {
         String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
         if (!result.isEmpty()) {
           Object countObj = result.get(0).get("count");
@@ -2289,7 +2318,7 @@ public final class JafarMcpServer {
     for (String type : candidateTypes) {
       try {
         String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
         if (!result.isEmpty()) {
           Object countObj = result.get(0).get("count");
@@ -2438,7 +2467,7 @@ public final class JafarMcpServer {
     try {
       // Query jdk.CPULoad events for actual CPU utilization
       String cpuLoadQuery = "events/jdk.CPULoad" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(cpuLoadQuery);
+      JfrPath.Query parsed = queryParser.parse(cpuLoadQuery);
       List<Map<String, Object>> cpuLoadEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
       if (!cpuLoadEvents.isEmpty()) {
@@ -2519,7 +2548,7 @@ public final class JafarMcpServer {
           Map<String, Object> saturation = new LinkedHashMap<>();
           try {
             String throttleQuery = "events/jdk.ContainerCPUThrottling" + timeFilter;
-            JfrPath.Query throttleParsed = JfrPathParser.parse(throttleQuery);
+            JfrPath.Query throttleParsed = queryParser.parse(throttleQuery);
             List<Map<String, Object>> throttleEvents =
                 evaluator.evaluate(sessionInfo.session(), throttleParsed);
 
@@ -2595,7 +2624,7 @@ public final class JafarMcpServer {
         }
 
         String query = "events/" + eventType + timeFilter;
-        JfrPath.Query stateParsed = JfrPathParser.parse(query);
+        JfrPath.Query stateParsed = queryParser.parse(query);
         List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), stateParsed);
 
         if (samples.isEmpty()) {
@@ -2656,7 +2685,7 @@ public final class JafarMcpServer {
     try {
       // Get heap usage (after GC)
       String heapQuery = "events/jdk.GCHeapSummary" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(heapQuery);
+      JfrPath.Query parsed = queryParser.parse(heapQuery);
       List<Map<String, Object>> heapEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
       Map<String, Object> utilization = new LinkedHashMap<>();
@@ -2696,7 +2725,7 @@ public final class JafarMcpServer {
 
       // Get GC pause statistics
       String gcQuery = "events/jdk.GCPhasePause" + timeFilter;
-      parsed = JfrPathParser.parse(gcQuery);
+      parsed = queryParser.parse(gcQuery);
       List<Map<String, Object>> gcEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
       Map<String, Object> saturation = new LinkedHashMap<>();
@@ -2728,7 +2757,7 @@ public final class JafarMcpServer {
       // Get top allocators
       String allocQuery = "events/jdk.ObjectAllocationSample" + timeFilter;
       try {
-        parsed = JfrPathParser.parse(allocQuery);
+        parsed = queryParser.parse(allocQuery);
         List<Map<String, Object>> allocEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
         if (!allocEvents.isEmpty()) {
@@ -2790,7 +2819,7 @@ public final class JafarMcpServer {
       String eventType = detectExecutionEventType(sessionInfo);
       if (eventType != null) {
         String query = "events/" + eventType + timeFilter;
-        JfrPath.Query parsed = JfrPathParser.parse(query);
+        JfrPath.Query parsed = queryParser.parse(query);
         List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
 
         Set<String> uniqueThreads = new HashSet<>();
@@ -2808,7 +2837,7 @@ public final class JafarMcpServer {
       // Get monitor contention
       String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
       try {
-        JfrPath.Query parsed = JfrPathParser.parse(monitorQuery);
+        JfrPath.Query parsed = queryParser.parse(monitorQuery);
         List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
         Map<String, Object> saturation = new LinkedHashMap<>();
@@ -2865,7 +2894,7 @@ public final class JafarMcpServer {
       if (queueEventType != null) {
         try {
           String queueQuery = "events/" + queueEventType + timeFilter;
-          JfrPath.Query parsed = JfrPathParser.parse(queueQuery);
+          JfrPath.Query parsed = queryParser.parse(queueQuery);
           List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
           if (!queueEvents.isEmpty()) {
@@ -3015,7 +3044,7 @@ public final class JafarMcpServer {
           List.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")) {
         try {
           String query = "events/" + eventType + timeFilter;
-          JfrPath.Query parsed = JfrPathParser.parse(query);
+          JfrPath.Query parsed = queryParser.parse(query);
           List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
           for (Map<String, Object> event : events) {
@@ -3287,7 +3316,7 @@ public final class JafarMcpServer {
 
       // Get all execution samples
       String query = "events/" + eventType + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(query);
+      JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
 
       if (samples.isEmpty()) {
@@ -3397,7 +3426,7 @@ public final class JafarMcpServer {
 
     try {
       String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(monitorQuery);
+      JfrPath.Query parsed = queryParser.parse(monitorQuery);
       List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
       for (Map<String, Object> event : monitorEvents) {
@@ -3437,7 +3466,7 @@ public final class JafarMcpServer {
       if (queueEventType == null) return correlations;
 
       String queueQuery = "events/" + queueEventType + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(queueQuery);
+      JfrPath.Query parsed = queryParser.parse(queueQuery);
       List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
 
       for (Map<String, Object> event : queueEvents) {

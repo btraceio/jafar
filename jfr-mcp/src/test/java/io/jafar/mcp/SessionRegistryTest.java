@@ -10,10 +10,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for SessionRegistry session management. */
-class SessionRegistryTest {
+
+class SessionRegistryTest extends BaseJfrTest {
 
   private SessionRegistry registry;
-  private static final Path TEST_JFR = Paths.get(System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr");
 
   @BeforeEach
   void setUp() {
@@ -27,25 +27,25 @@ class SessionRegistryTest {
 
   @Test
   void openCreatesNewSession() throws Exception {
-    SessionRegistry.SessionInfo session = registry.open(TEST_JFR, null);
+    SessionRegistry.SessionInfo session = registry.open(Paths.get(getComprehensiveJfr()), null);
 
     assertNotNull(session);
     assertNotNull(session.id());
     assertNotNull(session.session());
-    assertEquals(TEST_JFR, session.recordingPath());
+    assertEquals(Paths.get(getComprehensiveJfr()), session.recordingPath());
   }
 
   @Test
   void openWithAliasCreatesNamedSession() throws Exception {
-    SessionRegistry.SessionInfo session = registry.open(TEST_JFR, "test-alias");
+    SessionRegistry.SessionInfo session = registry.open(Paths.get(getComprehensiveJfr()), "test-alias");
 
     assertNotNull(session);
-    assertEquals(TEST_JFR, session.recordingPath());
+    assertEquals(Paths.get(getComprehensiveJfr()), session.recordingPath());
   }
 
   @Test
   void getOrCurrentReturnsCurrentSession() throws Exception {
-    SessionRegistry.SessionInfo session1 = registry.open(TEST_JFR, null);
+    SessionRegistry.SessionInfo session1 = registry.open(Paths.get(getComprehensiveJfr()), null);
 
     SessionRegistry.SessionInfo current = registry.getOrCurrent(null);
 
@@ -59,7 +59,7 @@ class SessionRegistryTest {
 
   @Test
   void getOrCurrentFindsSessionById() throws Exception {
-    SessionRegistry.SessionInfo session1 = registry.open(TEST_JFR, null);
+    SessionRegistry.SessionInfo session1 = registry.open(Paths.get(getComprehensiveJfr()), null);
 
     SessionRegistry.SessionInfo found = registry.getOrCurrent(String.valueOf(session1.id()));
 
@@ -68,7 +68,7 @@ class SessionRegistryTest {
 
   @Test
   void getOrCurrentFindsSessionByAlias() throws Exception {
-    registry.open(TEST_JFR, "my-alias");
+    registry.open(Paths.get(getComprehensiveJfr()), "my-alias");
 
     SessionRegistry.SessionInfo found = registry.getOrCurrent("my-alias");
 
@@ -83,7 +83,7 @@ class SessionRegistryTest {
 
   @Test
   void closeRemovesSession() throws Exception {
-    SessionRegistry.SessionInfo session = registry.open(TEST_JFR, null);
+    SessionRegistry.SessionInfo session = registry.open(Paths.get(getComprehensiveJfr()), null);
     String sessionId = String.valueOf(session.id());
 
     registry.close(sessionId);
@@ -93,7 +93,7 @@ class SessionRegistryTest {
 
   @Test
   void closeByAliasRemovesSession() throws Exception {
-    registry.open(TEST_JFR, "test-alias");
+    registry.open(Paths.get(getComprehensiveJfr()), "test-alias");
 
     registry.close("test-alias");
 
@@ -101,14 +101,15 @@ class SessionRegistryTest {
   }
 
   @Test
-  void closeThrowsForUnknownSession() {
-    assertThrows(IllegalArgumentException.class, () -> registry.close("nonexistent"));
+  void closeReturnsFalseForUnknownSession() throws Exception {
+    boolean result = registry.close("nonexistent");
+    assertFalse(result);
   }
 
   @Test
   void closeAllRemovesAllSessions() throws Exception {
-    registry.open(TEST_JFR, "alias1");
-    registry.open(TEST_JFR, "alias2");
+    registry.open(Paths.get(getComprehensiveJfr()), "alias1");
+    registry.open(Paths.get(getComprehensiveJfr()), "alias2");
 
     registry.closeAll();
 
@@ -117,8 +118,8 @@ class SessionRegistryTest {
 
   @Test
   void getAllSessionsReturnsAllActiveSessions() throws Exception {
-    registry.open(TEST_JFR, "session1");
-    registry.open(TEST_JFR, "session2");
+    registry.open(Paths.get(getComprehensiveJfr()), "session1");
+    registry.open(Paths.get(getComprehensiveJfr()), "session2");
 
     var sessions = registry.list();
 
@@ -127,8 +128,8 @@ class SessionRegistryTest {
 
   @Test
   void multipleSessionsCoexist() throws Exception {
-    SessionRegistry.SessionInfo session1 = registry.open(TEST_JFR, "first");
-    SessionRegistry.SessionInfo session2 = registry.open(TEST_JFR, "second");
+    SessionRegistry.SessionInfo session1 = registry.open(Paths.get(getComprehensiveJfr()), "first");
+    SessionRegistry.SessionInfo session2 = registry.open(Paths.get(getComprehensiveJfr()), "second");
 
     assertNotEquals(session1.id(), session2.id());
 
@@ -141,8 +142,8 @@ class SessionRegistryTest {
 
   @Test
   void sessionIdIsUnique() throws Exception {
-    SessionRegistry.SessionInfo session1 = registry.open(TEST_JFR, null);
-    SessionRegistry.SessionInfo session2 = registry.open(TEST_JFR, null);
+    SessionRegistry.SessionInfo session1 = registry.open(Paths.get(getComprehensiveJfr()), null);
+    SessionRegistry.SessionInfo session2 = registry.open(Paths.get(getComprehensiveJfr()), null);
 
     assertNotEquals(session1.id(), session2.id());
   }
