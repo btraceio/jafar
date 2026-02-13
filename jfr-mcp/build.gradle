@@ -52,6 +52,14 @@ test {
     // Allocate sufficient heap for tests that load real JFR files
     jvmArgs '-Xmx2g', '-Xms512m'
 
+    // Exclude integration tests by default (require large JFR files)
+    // Run with -DenableIntegrationTests=true to include them
+    if (System.getProperty('enableIntegrationTests') != 'true') {
+        exclude '**/JafarMcpServer*Test.class'
+        exclude '**/HandlerLogicIntegrationTest.class'
+        exclude '**/SessionRegistryTest.class'
+    }
+
     // Configure Mockito as Java agent for inline mocking in Java 25
     doFirst {
         def mockitoAgent = configurations.testRuntimeClasspath.files.find { it.name.contains('mockito-core') }

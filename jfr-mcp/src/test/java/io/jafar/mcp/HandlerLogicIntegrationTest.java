@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>These tests exercise deep JFR processing logic (flamegraph, callgraph, exception analysis)
  * with real production-size JFR recordings. They are slower than synthetic file tests.
+ *
+ * <p>These tests are excluded by default in build.gradle and require -DenableIntegrationTests=true
+ * to run, as they need large JFR files that may not be available in all environments.
  */
 class HandlerLogicIntegrationTest {
 

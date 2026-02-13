@@ -8,6 +8,9 @@ import org.junit.jupiter.api.BeforeAll;
  *
  * <p>Tests extending this class use real JFR recordings from parser test resources. These tests
  * exercise the full processing pipeline with realistic data.
+ *
+ * <p>These tests are excluded by default in build.gradle and require -DenableIntegrationTests=true
+ * to run, as they need large JFR files that may not be available in all environments.
  */
 public abstract class BaseJfrTest {
 
