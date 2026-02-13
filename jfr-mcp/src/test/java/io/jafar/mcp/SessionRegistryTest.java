@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.mcp.session.SessionRegistry;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -12,11 +13,16 @@ import org.junit.jupiter.api.Test;
 class SessionRegistryTest {
 
   private SessionRegistry registry;
-  private static final Path TEST_JFR = Paths.get(System.getProperty("user.dir") + "/parser/src/test/resources/test-jfr.jfr");
+  private static final Path TEST_JFR = Paths.get(System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr");
 
   @BeforeEach
   void setUp() {
     registry = new SessionRegistry();
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    registry.closeAll();
   }
 
   @Test

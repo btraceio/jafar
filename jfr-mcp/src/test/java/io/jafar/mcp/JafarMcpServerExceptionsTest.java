@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 class JafarMcpServerExceptionsTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final String TEST_DD_JFR = System.getProperty("user.dir") + "/parser/src/test/resources/test-dd.jfr";
+  private static final String TEST_DD_JFR = System.getProperty("user.dir") + "/../parser/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
 

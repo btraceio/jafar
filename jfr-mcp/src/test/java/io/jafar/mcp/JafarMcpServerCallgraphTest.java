@@ -9,6 +9,7 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class JafarMcpServerCallgraphTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final String TEST_JFR = System.getProperty("user.dir") + "/parser/src/test/resources/test-jfr.jfr";
+  private static final String TEST_DD_JFR = System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
 
@@ -24,6 +25,14 @@ class JafarMcpServerCallgraphTest {
   void setUp() throws Exception {
     server = new JafarMcpServer();
     openSession();
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    Method handleJfrClose = getMethod("handleJfrClose", Map.class);
+    Map<String, Object> args = new HashMap<>();
+    args.put("closeAll", true);
+    handleJfrClose.invoke(server, args);
   }
 
   @Test
@@ -162,7 +171,7 @@ class JafarMcpServerCallgraphTest {
     Method handleJfrOpen = getMethod("handleJfrOpen", Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("path", TEST_JFR);
+    args.put("path", TEST_DD_JFR);
 
     CallToolResult result = (CallToolResult) handleJfrOpen.invoke(server, args);
     assertFalse(result.isError());

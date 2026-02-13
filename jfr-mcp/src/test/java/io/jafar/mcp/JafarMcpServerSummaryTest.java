@@ -9,6 +9,7 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class JafarMcpServerSummaryTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final String TEST_JFR = System.getProperty("user.dir") + "/parser/src/test/resources/test-jfr.jfr";
+  private static final String TEST_JFR = System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
   private String sessionId;
@@ -25,6 +26,14 @@ class JafarMcpServerSummaryTest {
   void setUp() throws Exception {
     server = new JafarMcpServer();
     sessionId = openSession();
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    Method handleJfrClose = getMethod("handleJfrClose", Map.class);
+    Map<String, Object> args = new HashMap<>();
+    args.put("closeAll", true);
+    handleJfrClose.invoke(server, args);
   }
 
   @Test

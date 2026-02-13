@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,13 +19,21 @@ class JafarMcpServerCoreToolsTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final String TEST_JFR =
-      System.getProperty("user.dir") + "/parser/src/test/resources/test-jfr.jfr";
+      System.getProperty("user.dir") + "/../demo/src/test/resources/test-dd.jfr";
 
   private JafarMcpServer server;
 
   @BeforeEach
   void setUp() {
     server = new JafarMcpServer();
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    Method handleJfrClose = getMethod("handleJfrClose", Map.class);
+    Map<String, Object> args = new HashMap<>();
+    args.put("closeAll", true);
+    handleJfrClose.invoke(server, args);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +54,7 @@ class JafarMcpServerCoreToolsTest {
     JsonNode node = MAPPER.readTree(json);
 
     assertTrue(node.has("id"));
-    assertTrue(node.has("recordingPath"));
+    assertTrue(node.has("path"));
     assertTrue(node.has("message"));
   }
 

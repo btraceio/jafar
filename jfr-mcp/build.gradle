@@ -46,9 +46,9 @@ dependencies {
 
 test {
     useJUnitPlatform()
-    // Increase heap for processing JFR files with stack traces
-    minHeapSize = "256m"
-    maxHeapSize = "2g"
+    // Increase heap for processing large JFR files with stack traces
+    // Note: Tests now properly close sessions in @AfterEach to prevent memory leaks
+    jvmArgs '-Xmx4g', '-Xms512m'
     finalizedBy jacocoTestReport
 }
 
