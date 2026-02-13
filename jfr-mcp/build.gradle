@@ -48,13 +48,9 @@ dependencies {
 }
 
 test {
-    useJUnitPlatform {
-        // Exclude slow integration tests by default
-        // TEMPORARILY COMMENTED OUT FOR COVERAGE MEASUREMENT
-        // excludeTags 'integration'
-    }
-    // Unit tests are lightweight and don't need much heap
-    jvmArgs '-Xmx512m', '-Xms256m'
+    useJUnitPlatform()
+    // Allocate sufficient heap for tests that load real JFR files
+    jvmArgs '-Xmx2g', '-Xms512m'
 
     // Configure Mockito as Java agent for inline mocking in Java 25
     doFirst {

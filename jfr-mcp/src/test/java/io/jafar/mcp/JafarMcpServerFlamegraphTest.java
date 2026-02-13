@@ -22,7 +22,6 @@ import org.junit.jupiter.api.Test;
  * <p>Tests the aggregation logic using synthetic stack trace data to avoid memory issues with large
  * JFR files.
  */
-
 class JafarMcpServerFlamegraphTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();

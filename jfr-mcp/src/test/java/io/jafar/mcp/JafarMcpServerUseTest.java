@@ -21,7 +21,6 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * <p>Tests require a real JFR file to be available at /tmp/main.jfr.
  */
 @EnabledIf("testFileExists")
-
 class JafarMcpServerUseTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -354,8 +353,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     // (may be empty if no lock events in recording)
     if (node.has("correlations")) {
       assertTrue(
-          node.get("correlations").has("blockedOn")
-              || node.get("correlations").has("waitingOn"));
+          node.get("correlations").has("blockedOn") || node.get("correlations").has("waitingOn"));
     }
   }
 
@@ -518,8 +516,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
             }
           }
 
-          assertTrue(
-              mentionedInInsights, "High queue times should be mentioned in insights");
+          assertTrue(mentionedInInsights, "High queue times should be mentioned in insights");
         }
       }
     }

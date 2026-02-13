@@ -3,14 +3,12 @@ package io.jafar.mcp;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.mcp.session.SessionRegistry;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for SessionRegistry session management. */
-
 class SessionRegistryTest extends BaseJfrTest {
 
   private SessionRegistry registry;
@@ -37,7 +35,8 @@ class SessionRegistryTest extends BaseJfrTest {
 
   @Test
   void openWithAliasCreatesNamedSession() throws Exception {
-    SessionRegistry.SessionInfo session = registry.open(Paths.get(getComprehensiveJfr()), "test-alias");
+    SessionRegistry.SessionInfo session =
+        registry.open(Paths.get(getComprehensiveJfr()), "test-alias");
 
     assertNotNull(session);
     assertEquals(Paths.get(getComprehensiveJfr()), session.recordingPath());
@@ -77,8 +76,7 @@ class SessionRegistryTest extends BaseJfrTest {
 
   @Test
   void getOrCurrentThrowsForUnknownSession() {
-    assertThrows(
-        IllegalArgumentException.class, () -> registry.getOrCurrent("nonexistent"));
+    assertThrows(IllegalArgumentException.class, () -> registry.getOrCurrent("nonexistent"));
   }
 
   @Test
@@ -129,7 +127,8 @@ class SessionRegistryTest extends BaseJfrTest {
   @Test
   void multipleSessionsCoexist() throws Exception {
     SessionRegistry.SessionInfo session1 = registry.open(Paths.get(getComprehensiveJfr()), "first");
-    SessionRegistry.SessionInfo session2 = registry.open(Paths.get(getComprehensiveJfr()), "second");
+    SessionRegistry.SessionInfo session2 =
+        registry.open(Paths.get(getComprehensiveJfr()), "second");
 
     assertNotEquals(session1.id(), session2.id());
 

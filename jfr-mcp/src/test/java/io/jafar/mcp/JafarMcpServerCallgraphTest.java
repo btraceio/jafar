@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_callgraph MCP tool. */
-
 class JafarMcpServerCallgraphTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();

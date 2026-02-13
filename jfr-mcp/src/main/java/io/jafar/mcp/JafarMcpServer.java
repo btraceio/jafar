@@ -2507,10 +2507,8 @@ public final class JafarMcpServer {
 
           int p95Idx = (int) (machineTotals.size() * 0.95);
           int p99Idx = (int) (machineTotals.size() * 0.99);
-          double p95MachineTotal =
-              machineTotals.get(Math.min(p95Idx, machineTotals.size() - 1));
-          double p99MachineTotal =
-              machineTotals.get(Math.min(p99Idx, machineTotals.size() - 1));
+          double p95MachineTotal = machineTotals.get(Math.min(p95Idx, machineTotals.size() - 1));
+          double p99MachineTotal = machineTotals.get(Math.min(p99Idx, machineTotals.size() - 1));
 
           // Utilization
           Map<String, Object> utilization = new LinkedHashMap<>();
@@ -2530,7 +2528,9 @@ public final class JafarMcpServer {
           breakdown.put("machineTotal", Math.round(avgMachineTotal * 1000) / 10.0);
           breakdown.put("jvmUser", Math.round(avgJvmUser * 1000) / 10.0);
           breakdown.put("jvmSystem", Math.round(avgJvmSystem * 1000) / 10.0);
-          breakdown.put("otherProcesses", Math.round((avgMachineTotal - avgJvmUser - avgJvmSystem) * 1000) / 10.0);
+          breakdown.put(
+              "otherProcesses",
+              Math.round((avgMachineTotal - avgJvmUser - avgJvmSystem) * 1000) / 10.0);
           utilization.put("breakdown", breakdown);
 
           Map<String, Object> stats = new LinkedHashMap<>();
@@ -2613,9 +2613,7 @@ public final class JafarMcpServer {
         }
       } else {
         // Fallback to thread state analysis if jdk.CPULoad not available
-        cpu.put(
-            "warning",
-            "jdk.CPULoad events not found, falling back to thread state analysis");
+        cpu.put("warning", "jdk.CPULoad events not found, falling back to thread state analysis");
 
         String eventType = detectExecutionEventType(sessionInfo);
         if (eventType == null) {
@@ -2655,7 +2653,8 @@ public final class JafarMcpServer {
             String.format(
                 "%.1f%% of samples in RUNNABLE state (not actual CPU load)", threadStatePct));
         utilization.put(
-            "note", "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
+            "note",
+            "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
         cpu.put("utilization", utilization);
 
         Map<String, Object> saturation = new LinkedHashMap<>();
@@ -2931,7 +2930,8 @@ public final class JafarMcpServer {
               String key = scheduler + "|" + queueType;
 
               QueueCorrelation corr =
-                  queueMetrics.computeIfAbsent(key, k -> new QueueCorrelation(scheduler, queueType));
+                  queueMetrics.computeIfAbsent(
+                      key, k -> new QueueCorrelation(scheduler, queueType));
               corr.addSample(durationNs, threadId);
             }
 
@@ -2966,7 +2966,8 @@ public final class JafarMcpServer {
                       schedulerInfo.put(
                           "totalTimeMs",
                           Math.round(corr.totalDurationNs / 1_000_000.0 * 10) / 10.0);
-                      schedulerInfo.put("avgTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
+                      schedulerInfo.put(
+                          "avgTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
                       schedulerInfo.put(
                           "maxTimeMs", Math.round(corr.maxDurationNs / 1_000_000.0 * 10) / 10.0);
                       schedulerInfo.put("p95Ms", Math.round(corr.getP95DurationMs() * 10) / 10.0);
@@ -3476,8 +3477,7 @@ public final class JafarMcpServer {
           schedulerObj = Values.get(event, "scheduler");
         }
         String scheduler =
-            extractSimpleClassName(
-                schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
+            extractSimpleClassName(schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
 
         // Extract queue type (use simple name)
         Object queueTypeObj = Values.get(event, "queueType", "name");
@@ -3990,8 +3990,7 @@ public final class JafarMcpServer {
 
         if (exceptionCount > 1000) {
           findings.add(
-              String.format(
-                  "HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
 
           // Run exception analysis
           CallToolResult exceptionsResult = handleJfrExceptions(args);
@@ -4005,8 +4004,7 @@ public final class JafarMcpServer {
                   + "or error handling issues");
         } else if (exceptionCount > 100) {
           findings.add(
-              String.format(
-                  "MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format("MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
         }
       }
 
@@ -4055,9 +4053,7 @@ public final class JafarMcpServer {
         Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
 
         if (cpuSamples > 5000) {
-          findings.add(
-              String.format(
-                  "CPU INTENSIVE: %,d execution samples captured", cpuSamples));
+          findings.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
           CallToolResult hotmethodsResult = handleJfrHotmethods(args);
@@ -4080,8 +4076,7 @@ public final class JafarMcpServer {
             String.format(
                 "ALLOCATION PROFILING: %s events available for analysis", allocEventType));
       } else {
-        findings.add(
-            "ALLOCATION PROFILING: Not enabled in this recording");
+        findings.add("ALLOCATION PROFILING: Not enabled in this recording");
         recommendations.add(
             "Consider enabling allocation profiling (JDK: -XX:StartFlightRecording:settings=profile, "
                 + "Datadog: included by default) for memory analysis");
@@ -4095,9 +4090,8 @@ public final class JafarMcpServer {
       }
 
       // Step 7: Build response
-      diagnosis.put("findings", findings.isEmpty()
-          ? List.of("No significant issues detected")
-          : findings);
+      diagnosis.put(
+          "findings", findings.isEmpty() ? List.of("No significant issues detected") : findings);
       diagnosis.put("recommendations", recommendations);
 
       if (includeAnalysis && !analyses.isEmpty()) {
@@ -4105,10 +4099,12 @@ public final class JafarMcpServer {
       }
 
       // Add summary for context
-      diagnosis.put("summary", Map.of(
-          "totalEvents", totalEvents,
-          "eventTypes", summary.get("totalEventTypes"),
-          "highlights", highlights));
+      diagnosis.put(
+          "summary",
+          Map.of(
+              "totalEvents", totalEvents,
+              "eventTypes", summary.get("totalEventTypes"),
+              "highlights", highlights));
 
       return successResult(diagnosis);
 

@@ -13,7 +13,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_exceptions MCP tool. */
-
 class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -116,8 +115,7 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
     String eventType = node.get("eventType").asText();
     assertTrue(
-        eventType.equals("datadog.ExceptionSample")
-            || eventType.equals("jdk.JavaExceptionThrow"));
+        eventType.equals("datadog.ExceptionSample") || eventType.equals("jdk.JavaExceptionThrow"));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

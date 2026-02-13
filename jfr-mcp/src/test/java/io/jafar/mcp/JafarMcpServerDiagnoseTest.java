@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_diagnose MCP tool - automated performance diagnosis. */
-
 class JafarMcpServerDiagnoseTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();

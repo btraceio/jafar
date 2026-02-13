@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_tsa (Thread State Analysis) MCP tool. */
-
 class JafarMcpServerTsaTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();

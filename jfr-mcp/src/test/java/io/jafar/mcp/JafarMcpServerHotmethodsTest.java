@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_hotmethods MCP tool. */
-
 class JafarMcpServerHotmethodsTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -119,8 +118,7 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
 
     String eventType = node.get("eventType").asText();
     assertTrue(
-        eventType.equals("jdk.ExecutionSample")
-            || eventType.equals("datadog.ExecutionSample"));
+        eventType.equals("jdk.ExecutionSample") || eventType.equals("datadog.ExecutionSample"));
   }
 
   @Test

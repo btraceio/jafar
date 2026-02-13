@@ -45,7 +45,9 @@ class ParameterValidationTest {
 
   @Test
   void openRejectsNonexistentFile() throws Exception {
-    var result = invokeHandler("handleJfrOpen", Map.of("path", "/tmp/nonexistent-" + System.nanoTime() + ".jfr"));
+    var result =
+        invokeHandler(
+            "handleJfrOpen", Map.of("path", "/tmp/nonexistent-" + System.nanoTime() + ".jfr"));
     assertError(result, "File not found");
   }
 

@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Tests for jfr_summary MCP tool. */
-
 class JafarMcpServerSummaryTest extends BaseJfrTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -94,8 +93,7 @@ class JafarMcpServerSummaryTest extends BaseJfrTest {
     JsonNode highlights = node.get("highlights");
 
     // At least one of these should be present
-    assertTrue(
-        highlights.has("gc") || highlights.has("exceptions") || highlights.has("cpu"));
+    assertTrue(highlights.has("gc") || highlights.has("exceptions") || highlights.has("cpu"));
   }
 
   @Test
