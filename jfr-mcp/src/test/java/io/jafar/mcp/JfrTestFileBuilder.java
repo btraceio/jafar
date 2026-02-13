@@ -198,16 +198,50 @@ public final class JfrTestFileBuilder {
                 type.addField("name", Types.Builtin.STRING);
               });
 
-      // Write execution samples
+      // Write execution samples with realistic distributions
+      // Create diverse stacks showing clear hot methods and call patterns
       String[][] stacks = {
-        {"hotMethod1", "callerMethod1", "main"},
-        {"hotMethod2", "callerMethod2", "main"},
-        {"compute", "process", "main"}
+        // Hot method #1 - appears 40% of the time (database query)
+        {"java.sql.ResultSet.next", "com.app.dao.UserDao.findAll", "com.app.service.UserService.listUsers", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+        {"java.sql.PreparedStatement.executeQuery", "com.app.dao.UserDao.findAll", "com.app.service.UserService.listUsers", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+        {"com.mysql.jdbc.MysqlIO.readAllResults", "com.app.dao.UserDao.findAll", "com.app.service.UserService.listUsers", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+
+        // Hot method #2 - appears 30% of the time (JSON serialization)
+        {"com.fasterxml.jackson.databind.ObjectMapper.writeValueAsString", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+        {"com.fasterxml.jackson.core.JsonGenerator.writeString", "com.fasterxml.jackson.databind.ObjectMapper.writeValueAsString", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+
+        // Hot method #3 - appears 20% of the time (business logic)
+        {"com.app.service.UserService.validateUser", "com.app.service.UserService.listUsers", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+        {"com.app.service.UserService.enrichUserData", "com.app.service.UserService.listUsers", "com.app.controller.UserController.getUsers", "javax.servlet.http.HttpServlet.service"},
+
+        // Other methods - 10% background noise
+        {"java.lang.Thread.sleep", "com.app.scheduler.BackgroundTask.run"},
+        {"java.util.HashMap.put", "com.app.cache.LRUCache.put", "com.app.service.CacheService.cache"},
+        {"java.io.BufferedWriter.write", "com.app.logging.FileLogger.log"}
       };
 
-      for (int i = 0; i < 20; i++) {
-        final String[] stack = stacks[i % stacks.length];
-        final long timestamp = System.nanoTime() + i * 1000;
+      // Generate 100 samples with weighted randomization for realistic hotspot patterns
+      java.util.Random random = new java.util.Random(42); // Fixed seed for reproducibility
+      for (int i = 0; i < 100; i++) {
+        // Use weighted random distribution to create clear hotspots
+        int roll = random.nextInt(100);
+        int stackIndex;
+        if (roll < 40) {
+          // 40% database operations (hotspot #1)
+          stackIndex = random.nextInt(3);
+        } else if (roll < 70) {
+          // 30% JSON serialization (hotspot #2)
+          stackIndex = 3 + random.nextInt(2);
+        } else if (roll < 90) {
+          // 20% business logic (hotspot #3)
+          stackIndex = 5 + random.nextInt(2);
+        } else {
+          // 10% background noise
+          stackIndex = 7 + random.nextInt(3);
+        }
+
+        final String[] stack = stacks[stackIndex];
+        final long timestamp = System.nanoTime() + i * 1000 + random.nextInt(500); // Add jitter
         recording.writeEvent(
             execSampleType.asValue(
                 v -> {
@@ -225,15 +259,48 @@ public final class JfrTestFileBuilder {
                 }));
       }
 
-      // Write exception events
+      // Write exception events with variety and realistic patterns
+      // Define exception types and messages
       String[] exceptionTypes = {
-        "java.lang.NullPointerException", "java.lang.RuntimeException"
+        "java.lang.NullPointerException",
+        "java.lang.IllegalArgumentException",
+        "java.io.IOException",
+        "java.sql.SQLException",
+        "java.util.concurrent.TimeoutException",
+        "com.app.exception.ValidationException"
+      };
+      String[] exceptionMessages = {
+        "Cannot invoke method on null object",
+        "Invalid user ID format",
+        "Connection timeout",
+        "Deadlock detected",
+        "Operation timed out after 30s",
+        "Email format invalid"
+      };
+      String[][] exceptionStacks = {
+        {"java.lang.NullPointerException.<init>", "com.app.service.UserService.getUser", "com.app.controller.UserController.show"},
+        {"java.lang.IllegalArgumentException.<init>", "com.app.util.Validator.validateId", "com.app.service.UserService.findById"},
+        {"java.io.IOException.<init>", "java.net.Socket.connect", "com.app.http.HttpClient.send"},
+        {"java.sql.SQLException.<init>", "com.mysql.jdbc.PreparedStatement.executeQuery", "com.app.dao.UserDao.findAll"},
+        {"java.util.concurrent.TimeoutException.<init>", "java.util.concurrent.FutureTask.get", "com.app.async.AsyncService.waitForResult"},
+        {"com.app.exception.ValidationException.<init>", "com.app.service.UserService.validateEmail", "com.app.service.UserService.createUser"}
       };
 
-      for (int i = 0; i < 5; i++) {
-        final String exType = exceptionTypes[i % exceptionTypes.length];
-        final String message = "Test exception " + i;
+      // Generate 20 exception events with realistic distribution
+      java.util.Random exRandom = new java.util.Random(42); // Fixed seed for reproducibility
+      for (int i = 0; i < 20; i++) {
+        // Weight common exceptions (NPE, IAE) higher
+        int patternIndex;
+        int roll = exRandom.nextInt(100);
+        if (roll < 40) patternIndex = 0; // 40% NPE
+        else if (roll < 60) patternIndex = 1; // 20% IAE
+        else patternIndex = 2 + exRandom.nextInt(4); // 40% others
+
+        final String exType = exceptionTypes[patternIndex];
+        final String message = exceptionMessages[patternIndex] + " (#" + i + ")";
+        final String[] stack = exceptionStacks[patternIndex];
         final long timestamp = System.nanoTime() + i * 2000;
+
         recording.writeEvent(
             exceptionType.asValue(
                 v -> {
@@ -254,7 +321,6 @@ public final class JfrTestFileBuilder {
                       "stackTrace",
                       stackTraceType.asValue(
                           st -> {
-                            String[] stack = {exType + ".<init>", "throwException", "main"};
                             st.putField(
                                 "frames",
                                 createFrames(types, frameType, methodType, classType, stack));
