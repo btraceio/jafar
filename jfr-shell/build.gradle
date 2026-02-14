@@ -23,6 +23,11 @@ java {
     }
 }
 
+// Create baseline configuration for japicmp
+configurations {
+    japicmpBaseline
+}
+
 dependencies {
     implementation project(':parser')
     implementation project(':tools')
@@ -64,11 +69,6 @@ dependencies {
 
     // Baseline for API compatibility checking
     japicmpBaseline "io.btrace:jafar-shell:0.9.0@jar"
-}
-
-// Create baseline configuration
-configurations {
-    japicmpBaseline
 }
 
 // API compatibility checking for backend plugin API
