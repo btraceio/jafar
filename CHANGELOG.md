@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+
+### Fixed
+
+## [0.11.1] - 2026-02-14
+
+### Fixed
+- **Release workflow** - Added jfr-mcp to release and CI workflows
+  - jfr-mcp module was missing from 0.11.0 release
+  - Fixed both release.yml and ci.yml to include jfr-mcp publishing
+
+## [0.11.0] - 2026-02-14
+
+### Added
+
+### Changed
 - **Backend plugin versioning** - Plugins now follow main project version
   - `jfr-shell-jdk` and `jfr-shell-jafar` sync with main project version
   - API compatibility enforced via japicmp for breaking change detection

@@ -3,13 +3,13 @@
     "jdk": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jdk",
-      "latestVersion": "0.11.0",
+      "latestVersion": "0.11.1",
       "repository": "maven-central"
     },
     "jafar": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jafar",
-      "latestVersion": "0.11.0",
+      "latestVersion": "0.11.1",
       "repository": "maven-central"
     }
   }
