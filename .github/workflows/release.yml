@@ -250,11 +250,14 @@ jobs:
 
           cd catalog
 
-          # Update jbang-catalog.json (both jafar-shell and jfr-mcp)
-          sed -i.bak "s|io.btrace:jafar-shell:[^\"]*|io.btrace:jafar-shell:$VERSION|g" jbang-catalog.json
-          sed -i.bak "s|io.btrace:jfr-mcp:[^\"]*|io.btrace:jfr-mcp:$VERSION|g" jbang-catalog.json
+          # Update jbang-catalog.json using jq for precise updates
+          # Update jafar-shell-latest (Maven Central release)
+          jq --arg ver "$VERSION" '.aliases["jafar-shell-latest"]["script-ref"] = "io.btrace:jafar-shell:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
 
-          # Update jafar-shell.java
+          # Update jfr-mcp (stable release, not jfr-mcp-dev)
+          jq --arg ver "$VERSION" '.aliases["jfr-mcp"]["script-ref"] = "io.btrace:jfr-mcp:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
+
+          # Update jafar-shell.java (//DEPS for snapshot/dev builds)
           sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
 
           # Update jfr-mcp.java (if exists)
