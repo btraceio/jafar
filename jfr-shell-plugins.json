@@ -3,14 +3,14 @@
     "jdk": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jdk",
-      "latestVersion": "0.11.0-SNAPSHOT",
-      "repository": "sonatype-snapshots"
+      "latestVersion": "0.11.0",
+      "repository": "maven-central"
     },
     "jafar": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jafar",
-      "latestVersion": "0.11.0-SNAPSHOT",
-      "repository": "sonatype-snapshots"
+      "latestVersion": "0.11.0",
+      "repository": "maven-central"
     }
   }
 }
