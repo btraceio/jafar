@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - API compatibility enforced via japicmp for breaking change detection
 
 ### Fixed
+- **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
+  - Added mavenPublishing configuration to publish fat JAR as main artifact
+  - jfr-mcp now includes all dependencies and proper Main-Class manifest
 
 ## [0.10.0] - 2026-02-14
 
