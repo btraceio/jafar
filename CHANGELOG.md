@@ -13,6 +13,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.10.0] - 2026-02-14
+
+### Added
+- **JFR Shell backend plugin system** - Extensible architecture for custom JFR backends (#48)
+  - Plugin discovery and loading with version management
+  - Plugin-specific backends with configurable settings
+  - Remote plugin registry support with fallback to local registry
+  - Command-line plugin management (`--plugin`, `--list-plugins`)
+  - Comprehensive plugin API for third-party extensions
+- **MCP server for AI-assisted JFR analysis** - Model Context Protocol server integration (#53, #54)
+  - Natural language queries for JFR analysis
+  - JfrPath query generation and execution
+  - Session management with multiple concurrent recordings
+  - Built-in diagnostic tools (USE method, TSA, flamegraphs, hotmethods)
+  - Integration with Claude and other AI assistants
+  - Comprehensive documentation and tutorials
+- **Advanced map operations** - Enhanced variable system with map support (#38, #39)
+  - `toMap()` function for converting lists to maps
+  - `merge()` function for combining maps
+  - Map variable support with nested operations
+- **Time range support** - Query filtering by time ranges (#46)
+  - Time range syntax for filtering events by timestamp
+  - Duration-based queries
+- **Comprehensive test coverage** - Extensive JFR Shell testing (#45)
+  - Unit tests for shell commands and operations
+  - Integration tests for complex workflows
+  - Fuzzy testing for robustness (#46)
+
+### Changed
+- **JFR Shell completion system** - Major improvements to code completion (#47)
+  - Context-aware completion for JfrPath queries
+  - Field name completion from metadata
+  - Function and operator suggestions
+  - File path completion
+- **Syntax highlighting** - Enhanced visual feedback in shell (#46)
+  - Keyword highlighting
+  - String and number coloring
+  - Operator and function highlighting
+- **Documentation restructure** - Organized documentation by component (#54)
+  - Separate directories for parser, CLI, MCP, JBang
+  - Improved navigation and discoverability
+  - PascalCase naming convention for all docs
+
+### Fixed
+- **Array iteration** - Fixed array handling in JfrPath queries (#42)
+- **Conditional flow** - Corrected parameter handling in shell conditionals (#43)
+- **CI workflows** - Fixed protected branch handling and catalog updates (#49)
+- **Plugin registry tests** - Prevented remote registry fetches during testing (#50, #51)
+
 ## [0.6.0] - 2026-01-04
 
 ### Added
