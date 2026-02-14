@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'jacoco'
     id 'com.gradleup.shadow' version '9.0.0'
+    id 'com.vanniktech.maven.publish'
 }
 
 def libraryName = "jfr-mcp"

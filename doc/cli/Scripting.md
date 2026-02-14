@@ -178,7 +178,7 @@ set db = {"host": "localhost", "port": 5432, "credentials": {"user": "admin"}}
 set paths = {"logs": "/var/log/.*", "temp": "/tmp/.*", "home": "/home/.*"}
 ```
 
-Maps use JSON-like syntax and support strings, numbers, booleans, null, and nested maps. See [Map Variables Tutorial](map-variables.md) for complete reference.
+Maps use JSON-like syntax and support strings, numbers, booleans, null, and nested maps. See [Map Variables Tutorial](../parser/MapVariables.md) for complete reference.
 
 ### Variable Scopes
 
@@ -1216,6 +1216,6 @@ JFR Shell scripting provides:
 - ✅ **CI/CD Integration** - Automate performance testing and monitoring
 
 For more examples and tutorials, see:
-- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md)
+- [JFR Shell Tutorial](Tutorial.md)
 - [Example Scripts](../jfr-shell/src/main/resources/examples/)
-- [JfrPath Query Language](jfrpath.md)
+- [JfrPath Query Language](JFRPath.md)

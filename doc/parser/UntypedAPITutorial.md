@@ -762,13 +762,11 @@ public class IOAnalyzer {
 
 ## Next Steps
 
-- Learn about the [Typed API](typed-api-tutorial.md) for type-safe parsing
-- Explore [JFR Shell](jfr-shell-tutorial.md) for interactive analysis
-- Read the [Parser Architecture](../parser/ARCHITECTURE.md) for internals
-- Check [PERFORMANCE.md](../PERFORMANCE.md) for optimization tips
+- Learn about the [Typed API](TypedAPITutorial.md) for type-safe parsing
+- Explore [JFR Shell](../cli/Tutorial.md) for interactive analysis
+- Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 
 ## Related Documentation
 
 - [README.md](../README.md) - Project overview and quick start
-- [LIMITATIONS.md](../LIMITATIONS.md) - Known limitations
 - [Values API](../parser/src/main/java/io/jafar/parser/api/Values.java) - Field access utilities

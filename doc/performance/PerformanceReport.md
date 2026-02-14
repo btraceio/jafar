@@ -369,6 +369,6 @@ BuildTimeHandlerBenchmark.coldStartRuntimeGeneration                        thrp
 
 ## See Also
 
-- [Build-Time Benchmarks Documentation](BUILD_TIME_BENCHMARKS.md)
+- [Build-Time Benchmarks Documentation](BuildTimeBenchmarks.md)
 - [Annotation Processor Implementation](../jafar-processor/)
 - [Handler Factory API](../parser/src/main/java/io/jafar/parser/api/HandlerFactory.java)

@@ -402,7 +402,7 @@ jbang --offline jfr-shell@btraceio recording.jfr
 ## See Also
 
 - [JFR Shell README](../jfr-shell/README.md) - Main documentation
-- [JfrPath Reference](jfrpath.md) - Query language syntax
-- [JFR Shell Usage Guide](../JFR-SHELL-USAGE.md) - Complete feature overview
+- [JfrPath Reference](../cli/JFRPath.md) - Query language syntax
+- [JFR Shell Usage Guide](../cli/Usage.md) - Complete feature overview
 - [JBang Documentation](https://www.jbang.dev) - Official JBang docs
 - [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog) - JBang catalog repository

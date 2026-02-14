@@ -301,7 +301,7 @@ graph TB
 ```bash
 java -jar jfr-shell.jar --install-plugin /path/to/plugin.jar
 ```
-See [Backend Plugin Guide](jfr-shell-backends.md#offlineairgapped-installation) for details.
+See [Backend Plugin Guide](Backends.md#offlineairgapped-installation) for details.
 
 ---
 
@@ -622,7 +622,7 @@ jfr-shell/src/main/java/io/jafar/shell/
 
 ## See Also
 
-- [JFR Shell Usage Guide](jfr_shell_usage.md)
-- [JfrPath Query Language](jfrpath.md)
-- [Backend Plugin Guide](jfr-shell-backends.md)
-- [Backend Quickstart Tutorial](tutorials/backend-quickstart.md)
+- [JFR Shell Usage Guide](Usage.md)
+- [JfrPath Query Language](JFRPath.md)
+- [Backend Plugin Guide](Backends.md)
+- [Backend Quickstart Tutorial](BackendQuickstart.md)

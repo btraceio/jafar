@@ -269,7 +269,7 @@ show events/jdk.ExecutionSample | select(sampledThread/javaName as thread)
 - String concatenation takes precedence: `"bytes: " + 1024` → `"bytes: 1024"`
 - Type coercion for arithmetic: strings and objects convert to numbers where needed
 
-For complete grammar and operator reference, see [doc/jfrpath.md](jfrpath.md).
+For complete grammar and operator reference, see [JFRPath.md](JFRPath.md).
 
 ## Aggregations
 
@@ -292,7 +292,7 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| contains([path], "substr")` — Boolean: string contains substring.
 - `| replace([path], "a", "b")` — String replace occurrences of `a` with `b`.
 
-For complete operator reference and grammar details, see [doc/jfrpath.md](jfrpath.md).
+For complete operator reference and grammar details, see [JFRPath.md](JFRPath.md).
 
 **Aggregation Examples:**
 - `show events/jdk.FileRead | count()`

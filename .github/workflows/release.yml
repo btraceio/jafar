@@ -250,11 +250,17 @@ jobs:
 
           cd catalog
 
-          # Update jbang-catalog.json
+          # Update jbang-catalog.json (both jafar-shell and jfr-mcp)
           sed -i.bak "s|io.btrace:jafar-shell:[^\"]*|io.btrace:jafar-shell:$VERSION|g" jbang-catalog.json
+          sed -i.bak "s|io.btrace:jfr-mcp:[^\"]*|io.btrace:jfr-mcp:$VERSION|g" jbang-catalog.json
 
           # Update jafar-shell.java
           sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
+
+          # Update jfr-mcp.java (if exists)
+          if [ -f jfr-mcp.java ]; then
+            sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$VERSION|g" jfr-mcp.java
+          fi
 
           # Clean up backup files
           rm -f *.bak
@@ -279,8 +285,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Stage all modified catalog files
           git add jbang-catalog.json jafar-shell.java
-          if git commit -m "Update jafar-shell to version $VERSION"; then
+          [ -f jfr-mcp.java ] && git add jfr-mcp.java
+
+          if git commit -m "Update jafar-shell and jfr-mcp to version $VERSION"; then
             git push || echo "⚠️ Push failed - update catalog manually at https://github.com/btraceio/jbang-catalog"
           fi
 

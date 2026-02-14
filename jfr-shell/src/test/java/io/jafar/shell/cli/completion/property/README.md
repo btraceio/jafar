@@ -304,7 +304,7 @@ void myNewPropertyTest(@ForAll("myNewQueries") GeneratedQuery query) {
 
 - **jqwik Documentation**: https://jqwik.net/docs/current/user-guide.html
 - **Property-Based Testing**: https://en.wikipedia.org/wiki/Property_testing
-- **JfrPath Grammar**: `/doc/jfrpath.md` in project root
+- **JfrPath Grammar**: `/doc/cli/JFRPath.md` in project root
 - **Completion System**: `/jfr-shell/src/main/java/io/jafar/shell/cli/completion/`
 
 ## Contributing

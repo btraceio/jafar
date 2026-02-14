@@ -603,13 +603,11 @@ public class ThreadAnalyzer {
 
 ## Next Steps
 
-- Learn about the [Untyped API](untyped-api-tutorial.md) for dynamic event handling
-- Explore [JFR Shell](jfr-shell-tutorial.md) for interactive analysis
-- Read the [Parser Architecture](../parser/ARCHITECTURE.md) for internals
-- Check [PERFORMANCE.md](../PERFORMANCE.md) for optimization tips
+- Learn about the [Untyped API](unTypedAPITutorial.md) for dynamic event handling
+- Explore [JFR Shell](../cli/Tutorial.md) for interactive analysis
+- Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 
 ## Related Documentation
 
 - [README.md](../README.md) - Project overview and quick start
-- [LIMITATIONS.md](../LIMITATIONS.md) - Known limitations
 - [Gradle Plugin](../README.md#gradle-plugin-generate-jafar-type-interfaces) - Auto-generate event interfaces

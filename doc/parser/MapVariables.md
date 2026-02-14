@@ -359,6 +359,6 @@ Current implementation is **Phase 1** of map variables. Future phases may includ
 
 ## See Also
 
-- [Scripting Guide](jfr-shell-scripting.md#variables) - Using maps in scripts
-- [Usage Guide](jfr_shell_usage.md) - Complete command reference
-- [JfrPath Reference](jfrpath.md) - Query language syntax
+- [Scripting Guide](../cli/Scripting.md#variables) - Using maps in scripts
+- [Usage Guide](../cli/Usage.md) - Complete command reference
+- [JfrPath Reference](../cli/JFRPath.md) - Query language syntax
