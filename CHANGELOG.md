@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
   - Added mavenPublishing configuration to publish fat JAR as main artifact
   - jfr-mcp now includes all dependencies and proper Main-Class manifest
+- **JBang catalog update** - Fixed workflow to preserve dev/snapshot entries
+  - Changed from sed global replacement to jq precise JSON updates
+  - `jfr-mcp` alias updated to releases, `jfr-mcp-dev` stays on SNAPSHOT
+  - `jafar-shell-latest` alias updated to releases, `jafar-shell` stays on java file
 
 ## [0.10.0] - 2026-02-14
 
