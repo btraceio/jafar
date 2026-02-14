@@ -106,9 +106,9 @@ jobs:
         run: |
           ./gradlew :parser:jar :parser:sourcesJar :parser:publishToMavenLocal --no-daemon --stacktrace
 
-      - name: Publish parser, tools, jfr-shell to Maven Central
+      - name: Publish parser, tools, jfr-shell, jfr-mcp to Maven Central
         run: |
-          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :parser:publishAllPublicationsToMavenCentralRepository :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
       - name: Publish backend plugins to Maven Central
         run: |
@@ -348,7 +348,7 @@ jobs:
             const body = `## 🎉 Release ${version} Published Successfully
 
             This release has been published to:
-            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
+            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jfr-mcp:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
             - ✅ Maven Central - Backend Plugins: \`io.btrace:jfr-shell-jdk:${version}\`, \`io.btrace:jfr-shell-jafar:${version}\`
             - ✅ GitHub Packages: \`io.btrace:jafar-gradle-plugin:${version}\` (available immediately while waiting for Maven Central approval)
             - ✅ JBang Catalog: Updated to ${version}
@@ -381,6 +381,13 @@ jobs:
             <dependency>
               <groupId>io.btrace</groupId>
               <artifactId>jafar-shell</artifactId>
+              <version>${version}</version>
+            </dependency>
+
+            <!-- JFR MCP Server -->
+            <dependency>
+              <groupId>io.btrace</groupId>
+              <artifactId>jfr-mcp</artifactId>
               <version>${version}</version>
             </dependency>
             \`\`\`
