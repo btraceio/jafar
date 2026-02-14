@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+- **Backend plugin versioning** - Plugins now follow main project version
+  - `jfr-shell-jdk` and `jfr-shell-jafar` sync with main project version
+  - API compatibility enforced via japicmp for breaking change detection
 
 ### Fixed
 

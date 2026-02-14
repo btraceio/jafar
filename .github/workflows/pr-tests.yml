@@ -64,6 +64,19 @@ jobs:
             ./gradlew --stacktrace --no-daemon build
           fi
 
+      - name: Check API compatibility (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          ./gradlew --stacktrace --no-daemon :jfr-shell:japicmp --continue
+
+      - name: Upload japicmp report (JDK 21)
+        if: always() && matrix.java == '21'
+        uses: actions/upload-artifact@v4
+        with:
+          name: japicmp-report
+          path: jfr-shell/build/reports/japicmp.*
+          retention-days: 14
+
       - name: Publish parser to mavenLocal for plugin tests (JDK 21)
         if: matrix.java == '21'
         run: |

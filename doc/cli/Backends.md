@@ -406,6 +406,14 @@ java -jar jfr-shell.jar --plugin-dir /custom/plugins --install-plugin backend.ja
 5. **Test with the TCK** - Run the TCK before releasing your backend
 6. **Use appropriate priority** - Don't use priority > 100 unless your backend should be preferred over Jafar
 
+## API Compatibility
+
+The backend plugin API is stable and follows semantic versioning. See [PluginAPICompatibility.md](PluginAPICompatibility.md) for details on:
+- What changes break compatibility
+- Safe evolution patterns
+- Version requirements
+- Automated enforcement with japicmp
+
 ## See Also
 
 - [Backend Quickstart (10 minutes)](BackendQuickstart.md) - Build a working backend fast

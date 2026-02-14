@@ -250,6 +250,12 @@ jfr> threadStats.sort { -it.value }.take(5)
 jfr> export(threadStats, "results.json")
 ```
 
+### Backend Plugin Development
+- Plugins sync with main project version (no independent versioning)
+- API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)
+- Breaking plugin API changes require major version bump
+- See doc/cli/PluginAPICompatibility.md for full policy
+
 ## Rules
 - When fixing an issue, always check the alternative implementation for other Java versions
 - When adding or modifying features, always update user documentation, help and tutorials

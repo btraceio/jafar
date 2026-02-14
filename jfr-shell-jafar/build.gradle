@@ -4,8 +4,8 @@ plugins {
 }
 
 def libraryName = "jfr-shell-jafar"
-// Independent versioning for backend plugins
-def component_version = "0.1.0-SNAPSHOT"
+// Backend plugins sync with main project version
+def component_version = rootProject.version
 
 repositories {
     mavenCentral()
