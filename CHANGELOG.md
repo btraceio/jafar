@@ -13,12 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.11.2] - 2026-02-14
+
+### Fixed
+- **Release workflow** - Fixed jfr-mcp publishing to Maven Central
+  - Cherry-picked workflow fixes from main to release branch
+  - jfr-mcp now properly included in release.yml publish step
+
 ## [0.11.1] - 2026-02-14
 
 ### Fixed
 - **Release workflow** - Added jfr-mcp to release and CI workflows
   - jfr-mcp module was missing from 0.11.0 release
   - Fixed both release.yml and ci.yml to include jfr-mcp publishing
+  - Note: workflow changes were not on release branch, fixed in 0.11.2
 
 ## [0.11.0] - 2026-02-14
 

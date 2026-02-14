@@ -196,7 +196,7 @@ final class PluginRegistry {
    * Compare two version strings using semantic versioning rules.
    *
    * @param v1 First version string (e.g., "0.9.0-SNAPSHOT")
-   * @param v2 Second version string (e.g., "0.11.1")
+   * @param v2 Second version string (e.g., "0.11.2")
    * @return negative if v1 < v2, positive if v1 > v2, zero if equal
    */
   private int compareVersions(String v1, String v2) {
