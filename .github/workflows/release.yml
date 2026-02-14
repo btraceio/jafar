@@ -349,6 +349,7 @@ jobs:
 
             This release has been published to:
             - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
+            - ✅ Maven Central - Backend Plugins: \`io.btrace:jfr-shell-jdk:${version}\`, \`io.btrace:jfr-shell-jafar:${version}\`
             - ✅ GitHub Packages: \`io.btrace:jafar-gradle-plugin:${version}\` (available immediately while waiting for Maven Central approval)
             - ✅ JBang Catalog: Updated to ${version}
 
@@ -389,6 +390,18 @@ jobs:
             plugins {
               id 'io.btrace.jafar-gradle-plugin' version '${version}'
             }
+            \`\`\`
+
+            **Backend Plugins (for JFR Shell):**
+            \`\`\`bash
+            # Install JDK backend plugin
+            java -jar jfr-shell.jar --install-plugin io.btrace:jfr-shell-jdk:${version}
+
+            # Install Jafar backend plugin
+            java -jar jfr-shell.jar --install-plugin io.btrace:jfr-shell-jafar:${version}
+
+            # Use specific backend
+            java -jar jfr-shell.jar --backend jdk recording.jfr
             \`\`\`
 
             ### Links
