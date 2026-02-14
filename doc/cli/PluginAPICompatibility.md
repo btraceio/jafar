@@ -5,7 +5,7 @@
 The backend plugin API (`io.jafar.shell.backend.*`) follows strict semantic versioning:
 
 - **MAJOR** (1.0.0 → 2.0.0): Breaking changes to plugin API allowed
-- **MINOR** (0.10.0 → 0.11.2): Backward-compatible additions only
+- **MINOR** (0.10.0 → 0.11.3): Backward-compatible additions only
 - **PATCH** (0.10.0 → 0.10.1): Bug fixes, no API changes
 
 ## What Constitutes a Breaking Change

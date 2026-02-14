@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.11.3] - 2026-02-14
+
+### Fixed
+- **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
+  - Added mavenPublishing configuration to publish fat JAR as main artifact
+  - jfr-mcp now includes all dependencies and proper Main-Class manifest
+  - JBang can now run jfr-mcp without "no main class" error
+
 ## [0.11.2] - 2026-02-14
 
 ### Fixed
@@ -26,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release workflow** - Added jfr-mcp to release and CI workflows
   - jfr-mcp module was missing from 0.11.0 release
   - Fixed both release.yml and ci.yml to include jfr-mcp publishing
-  - Note: workflow changes were not on release branch, fixed in 0.11.2
+  - Note: workflow changes were not on release branch, fixed in 0.11.3
 
 ## [0.11.0] - 2026-02-14
 

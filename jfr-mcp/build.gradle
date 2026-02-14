@@ -127,3 +127,29 @@ tasks.named('build') {
 group = 'io.btrace'
 version = component_version
 description = 'MCP Server for JFR analysis - enables AI agents to analyze Java Flight Recordings'
+
+// Configure Maven publishing to use shadow JAR
+mavenPublishing {
+    coordinates('io.btrace', 'jfr-mcp', version.toString())
+}
+
+// Override publication to use shadow JAR instead of regular JAR
+afterEvaluate {
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                // Remove the regular jar artifact added by vanniktech plugin
+                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Add shadow JAR as main artifact
+                artifact(shadowJar) {
+                    classifier = ''  // Publish without classifier
+                }
+            }
+        }
+    }
+}
+
+// Disable Gradle module metadata for jfr-mcp (it's a distribution, not a library)
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
+}
