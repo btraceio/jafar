@@ -408,7 +408,7 @@ java -jar jfr-shell.jar --plugin-dir /custom/plugins --install-plugin backend.ja
 
 ## See Also
 
-- [Backend Quickstart (10 minutes)](tutorials/backend-quickstart.md) - Build a working backend fast
-- [JFR Shell Usage Guide](jfr_shell_usage.md)
-- [JfrPath Query Language](jfrpath.md)
-- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md)
+- [Backend Quickstart (10 minutes)](BackendQuickstart.md) - Build a working backend fast
+- [JFR Shell Usage Guide](Usage.md)
+- [JfrPath Query Language](JFRPath.md)
+- [JFR Shell Tutorial](Tutorial.md)

@@ -823,7 +823,7 @@ Event decoration enables powerful cross-event analysis:
 - **Memory-efficient**: Lazy field access, selective field extraction
 - **Flexible**: Works with any event types
 
-See the [JfrPath Reference](jfrpath.md) for complete syntax details and [examples/](../jfr-shell/src/main/resources/examples/) for more use cases.
+See the [JfrPath Reference](JFRPath.md) for complete syntax details and [examples/](../jfr-shell/src/main/resources/examples/) for more use cases.
 
 ## Multi-Session Management
 
@@ -1155,14 +1155,14 @@ jfr> show events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | 
 ## Next Steps
 
 - Master [Event Decoration](#event-decoration-and-joining) for advanced correlation analysis
-- Learn the [Typed API](typed-api-tutorial.md) for programmatic parsing
-- Explore the [Untyped API](untyped-api-tutorial.md) for flexible parsing
-- Read [JfrPath Reference](jfrpath.md) for complete syntax
-- Check [PERFORMANCE.md](../PERFORMANCE.md) for optimization tips
+- Learn the [Typed API](../parser/TypedAPITutorial.md) for programmatic parsing
+- Explore the [Untyped API](../parser/unTypedAPITutorial.md) for flexible parsing
+- Read [JfrPath Reference](JFRPath.md) for complete syntax
+- Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 
 ## Related Documentation
 
 - [JFR Shell README](../jfr-shell/README.md) - Installation and features
-- [JfrPath Grammar](jfrpath.md) - Complete syntax reference
-- [JFR Shell Usage](jfr_shell_usage.md) - Command reference
-- [JBang Usage](jbang-usage.md) - JBang installation guide
+- [JfrPath Grammar](JFRPath.md) - Complete syntax reference
+- [JFR Shell Usage](Usage.md) - Command reference
+- [JBang Usage](../jbang/JFRShellUsage.md) - JBang installation guide

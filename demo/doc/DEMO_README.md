@@ -306,7 +306,7 @@ jfr-shell show recording.jfr \
 
 - **API Docs:** See JavaDoc in source files
 - **JFR Shell:** See [JFR_SHELL_DEMO.md](JFR_SHELL_DEMO.md)
-- **JfrPath Reference:** See `../doc/jfrpath.md`
+- **JfrPath Reference:** See `../doc/cli/JFRPath.md`
 - **Project README:** See `../README.md`
 
 ## Troubleshooting

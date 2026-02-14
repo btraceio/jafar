@@ -37,7 +37,42 @@ This allows AI assistants to autonomously analyze JFR files, identify performanc
 
 ## Installation
 
+### Via JBang (Recommended)
+
+The simplest way to install and use the MCP server:
+
+**Stable Release:**
+```bash
+# Install stable version
+jbang app install jfr-mcp@btraceio
+
+# Use anywhere
+jfr-mcp                    # HTTP mode on port 3000
+jfr-mcp --stdio            # STDIO mode for Claude Desktop
+jfr-mcp -Dmcp.port=8080    # Custom port
+```
+
+**Development Snapshot (Latest Features):**
+```bash
+# Install development version
+jbang app install jfr-mcp-dev@btraceio
+
+# Use
+jfr-mcp-dev                # HTTP mode with latest snapshot
+jfr-mcp-dev --stdio        # STDIO mode with latest snapshot
+
+# Force refresh to get absolute latest
+jbang --fresh jfr-mcp-dev@btraceio
+```
+
+**Prerequisites:** JBang (installs automatically)
+```bash
+curl -Ls https://sh.jbang.dev | bash -s - app setup
+```
+
 ### Build from Source
+
+For development or custom builds:
 
 ```bash
 git clone https://github.com/btraceio/jafar.git
@@ -47,8 +82,7 @@ cd jafar
 
 The server JAR will be created at `jfr-mcp/build/libs/jfr-mcp-*-all.jar`.
 
-### Prerequisites
-
+**Prerequisites:**
 - Java 21 or later
 - A JFR recording file to analyze
 
@@ -330,8 +364,36 @@ Note: `HashMap.get` has two incoming edges - this is a convergence point called 
 Add the MCP server to your Claude Desktop configuration:
 
 ### macOS
+
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
+**With JBang (Recommended):**
+```json
+{
+  "mcpServers": {
+    "jafar": {
+      "command": "jbang",
+      "args": ["jfr-mcp@btraceio", "--stdio"],
+      "env": {}
+    }
+  }
+}
+```
+
+**With Development Snapshots:**
+```json
+{
+  "mcpServers": {
+    "jafar-dev": {
+      "command": "jbang",
+      "args": ["jfr-mcp-dev@btraceio", "--stdio"],
+      "env": {}
+    }
+  }
+}
+```
+
+**With Manual JAR:**
 ```json
 {
   "mcpServers": {
@@ -345,7 +407,8 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```
 
 ### Windows
-Edit `%APPDATA%\Claude\claude_desktop_config.json` with similar content.
+
+Edit `%APPDATA%\Claude\claude_desktop_config.json` with similar content (JBang works on Windows too).
 
 After configuration, restart Claude Desktop. You can then ask Claude to analyze JFR files:
 
@@ -504,15 +567,50 @@ Use flamegraph and callgraph tools for deep CPU and allocation analysis:
 
 ## Troubleshooting
 
-### Server Won't Start
+### Port Already in Use
 
-**Port already in use:**
+**Automatic Detection (v0.10.0+):**
+The server automatically detects if another instance is already running on the requested port and exits silently. You can:
+- Use the existing instance on port 3000
+- Start on a different port: `jfr-mcp -Dmcp.port=8080` or `jfr-mcp-dev -Dmcp.port=8080`
+- Stop the existing instance and restart
+
+**Manual Check:**
 ```bash
 # Check what's using port 3000
 lsof -i :3000
 
 # Use a different port
-java -Dmcp.port=8080 -jar jfr-mcp-*-all.jar
+jfr-mcp -Dmcp.port=8080              # With JBang
+java -Dmcp.port=8080 -jar jfr-mcp-*-all.jar  # With JAR
+```
+
+**Note:** STDIO mode (for Claude Desktop) always starts a fresh instance since it doesn't use network ports.
+
+### Switching Between Stable and Development Versions
+
+**Install both as different commands:**
+```bash
+# Install both versions
+jbang app install jfr-mcp@btraceio
+jbang app install jfr-mcp-dev@btraceio
+
+# Use stable
+jfr-mcp --stdio
+
+# Use dev
+jfr-mcp-dev --stdio
+```
+
+**Or uninstall before switching:**
+```bash
+# Switch to dev
+jbang app uninstall jfr-mcp
+jbang app install jfr-mcp-dev@btraceio
+
+# Switch back to stable
+jbang app uninstall jfr-mcp-dev
+jbang app install jfr-mcp@btraceio
 ```
 
 ### Tool Calls Not Working
@@ -552,6 +650,6 @@ Ensure port 3000 (or your custom port) is accessible.
 
 ## See Also
 
-- [JFR Shell Tutorial](jfr-shell-tutorial.md) - Interactive CLI for JFR analysis
-- [JfrPath Query Language](../jfrpath-reference.md) - Complete query language reference
+- [JFR Shell Tutorial](../cli/Tutorial.md) - Interactive CLI for JFR analysis
+- [JfrPath Query Language](../cli/JFRPath.md) - Complete query language reference
 - [MCP Specification](https://modelcontextprotocol.io) - Official MCP documentation

@@ -2,7 +2,7 @@
 
 An interactive CLI for exploring and analyzing Java Flight Recorder (JFR) files with a powerful query language.
 
-**Quick Links**: [Usage Guide](../doc/jfr_shell_usage.md) | [JfrPath Reference](../doc/jfrpath.md)
+**Quick Links**: [Usage Guide](../doc/cli/Usage.md) | [JfrPath Reference](../doc/cli/JFRPath.md)
 
 ## Features
 
@@ -39,7 +39,7 @@ jbang app install jfr-shell@btraceio
 jfr-shell recording.jfr
 ```
 
-See [JBang Usage Guide](../doc/jbang-usage.md) for more options.
+See [JBang Usage Guide](../doc/jbang/JFRShellUsage.md) for more options.
 
 #### Option 2: Standalone Distribution (Bundled JRE)
 
@@ -339,7 +339,7 @@ jfr> invalidate data         # Clear lazy variable cache
 jfr> echo "Value: ${myvar}"  # Print with substitution
 ```
 
-See [Scripting Guide](../doc/jfr-shell-scripting.md#variables) and [Map Variables Tutorial](../doc/map-variables.md) for complete reference.
+See [Scripting Guide](../doc/cli/Scripting.md#variables) and [Map Variables Tutorial](../doc/parser/MapVariables.md) for complete reference.
 
 ## Conditionals
 
@@ -390,7 +390,7 @@ if ${scenario} == "prod" or ${scenario} == "staging"
 if ${path} contains "/tmp/" and ${bytes} > 1000
 ```
 
-See [Scripting Guide](../doc/jfr-shell-scripting.md#conditionals) for complete reference.
+See [Scripting Guide](../doc/cli/Scripting.md#conditionals) for complete reference.
 
 ## Scripting
 
@@ -496,9 +496,9 @@ Check `jfr-shell/src/main/resources/examples/` for ready-to-use scripts:
 
 ### Documentation
 
-- [Scripting Guide](../doc/jfr-shell-scripting.md) - Complete scripting reference
-- [Script Execution Tutorial](../doc/tutorials/script-execution-tutorial.md) - Learn by example
-- [Command Recording Tutorial](../doc/tutorials/command-recording-tutorial.md) - Record and replay workflows
+- [Scripting Guide](../doc/cli/Scripting.md) - Complete scripting reference
+- [Script Execution Tutorial](../doc/cli/ScriptExecution.md) - Learn by example
+- [Command Recording Tutorial](../doc/cli/CommandRecording.md) - Record and replay workflows
 
 ## JfrPath Query Language
 
@@ -619,7 +619,7 @@ show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name)
 ```
 
-See [doc/jfrpath.md](../doc/jfrpath.md) for complete reference.
+See [doc/JFRPath.md](../doc/cli/JFRPath.md) for complete reference.
 
 ## Available Commands
 
@@ -686,5 +686,5 @@ java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser/src/test/resources/test
 
 ## Documentation
 
-- [jfr_shell_usage.md](../doc/jfr_shell_usage.md) - Complete usage guide
-- [jfrpath.md](../doc/jfrpath.md) - JfrPath grammar and operator reference
+- [jfr_shell_Usage.md](../doc/cli/Usage.md) - Complete usage guide
+- [JFRPath.md](../doc/cli/JFRPath.md) - JfrPath grammar and operator reference

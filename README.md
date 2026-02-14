@@ -122,7 +122,7 @@ JAFAR now supports **build-time handler generation** via annotation processor, p
 - **Equivalent throughput** (no performance penalty)
 - **Predictable latency** (no GC jitter)
 
-[→ See Full Performance Report](doc/PERFORMANCE_REPORT.md)
+[→ See Full Performance Report](doc/performance/PerformanceReport.md)
 
 ### How It Works
 
@@ -262,7 +262,7 @@ For processing **1 million ExecutionSample events:**
 | GC Pause Time | ~2-3 seconds | ~200-300ms | **-2.7 seconds** |
 | Throughput | ~189k events/sec | ~187k events/sec | Equivalent |
 
-[→ Full Benchmark Results](doc/BUILD_TIME_BENCHMARKS.md)
+[→ Full Benchmark Results](doc/performance/BuildTimeBenchmarks.md)
 
 ## Core API overview
 
@@ -476,20 +476,20 @@ jfr> show events/jdk.FileRead | top(10, by=bytes)
 jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 ```
 
-See **[Event Decoration and Joining](doc/tutorials/jfr-shell-tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
+See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
 ## Documentation
 
 ### JFR Shell
 - **[jfr-shell/README.md](jfr-shell/README.md)** - Interactive JFR analysis tool
-- **[doc/jfr-shell-architecture.md](doc/jfr-shell-architecture.md)** - Architecture overview with diagrams
-- **[doc/tutorials/jfr-shell-tutorial.md](doc/tutorials/jfr-shell-tutorial.md)** - Complete JFR Shell tutorial with event decoration
-- **[doc/jfr-shell-scripting.md](doc/jfr-shell-scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
-- **[doc/tutorials/script-execution-tutorial.md](doc/tutorials/script-execution-tutorial.md)** - Script execution tutorial ⭐ NEW
-- **[doc/tutorials/command-recording-tutorial.md](doc/tutorials/command-recording-tutorial.md)** - Command recording tutorial ⭐ NEW
-- **[doc/jfrpath.md](doc/jfrpath.md)** - JfrPath query language reference
-- **[doc/jfr-shell-backends.md](doc/jfr-shell-backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
-- **[doc/tutorials/backend-quickstart.md](doc/tutorials/backend-quickstart.md)** - Build a custom backend in 10 minutes
+- **[doc/cli/Architecture.md](doc/cli/Architecture.md)** - Architecture overview with diagrams
+- **[doc/cli/Tutorial.md](doc/cli/Tutorial.md)** - Complete JFR Shell tutorial with event decoration
+- **[doc/cli/Scripting.md](doc/cli/Scripting.md)** - Scripting guide: automate analysis workflows ⭐ NEW
+- **[doc/cli/ScriptExecution.md](doc/cli/ScriptExecution.md)** - Script execution tutorial ⭐ NEW
+- **[doc/cli/CommandRecording.md](doc/cli/CommandRecording.md)** - Command recording tutorial ⭐ NEW
+- **[doc/cli/JFRPath.md](doc/cli/JFRPath.md)** - JfrPath query language reference
+- **[doc/cli/Backends.md](doc/cli/Backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
+- **[doc/cli/BackendQuickstart.md](doc/cli/BackendQuickstart.md)** - Build a custom backend in 10 minutes
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes

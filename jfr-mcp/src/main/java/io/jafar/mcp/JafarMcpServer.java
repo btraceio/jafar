@@ -18,6 +18,9 @@ import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import jakarta.servlet.Servlet;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -152,6 +155,13 @@ public final class JafarMcpServer {
   /** Run server with HTTP/SSE transport (for web clients). */
   public void runSse() {
     int port = Integer.getInteger("mcp.port", 3000);
+
+    // Check if server is already running on this port
+    if (isPortInUse(port)) {
+      // Silent exit - server already running
+      return;
+    }
+
     LOG.info("Starting Jafar MCP Server on port {}", port);
 
     try {
@@ -204,6 +214,21 @@ public final class JafarMcpServer {
     } catch (Exception e) {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
       System.exit(1);
+    }
+  }
+
+  /**
+   * Checks if a port is already in use.
+   *
+   * @param port the port to check
+   * @return true if port is in use, false if available
+   */
+  private boolean isPortInUse(int port) {
+    try (Socket socket = new Socket()) {
+      socket.connect(new InetSocketAddress("localhost", port), 500);
+      return true; // Port is in use
+    } catch (IOException e) {
+      return false; // Port is available
     }
   }
 

@@ -293,7 +293,7 @@ events/datadog.ExceptionSample | groupBy(exceptionType/name) | top(10, by=count)
 
 ## Next Steps
 
-- Explore the full JfrPath documentation in `doc/jfrpath.md`
-- Check `doc/jfr_shell_usage.md` for complete command reference
+- Explore the full JfrPath documentation in `doc/cli/JFRPath.md`
+- Check `doc/jfr_shell_Usage.md` for complete command reference
 - Experiment with your own JFR recordings
 - Automate common analyses with shell scripts

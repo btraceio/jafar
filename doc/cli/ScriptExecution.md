@@ -6,7 +6,7 @@ This tutorial teaches you how to create and execute JFR Shell scripts for automa
 
 - JFR Shell installed (via JBang or built from source)
 - At least one JFR recording file for testing
-- Basic understanding of JfrPath queries (see [jfrpath.md](../jfrpath.md))
+- Basic understanding of JfrPath queries (see [JFRPath.md](JFRPath.md))
 
 ## Learning Path
 
@@ -369,8 +369,8 @@ Now that you know how to execute scripts:
 
 1. **Practice**: Create scripts for your common analysis tasks
 2. **Explore Examples**: Check out scripts in `jfr-shell/src/main/resources/examples/`
-3. **Learn Recording**: See [command-recording-tutorial.md](command-recording-tutorial.md)
-4. **Master JfrPath**: Deep dive into [jfrpath.md](../jfrpath.md)
+3. **Learn Recording**: See [CommandRecording.md](CommandRecording.md)
+4. **Master JfrPath**: Deep dive into [JFRPath.md](JFRPath.md)
 5. **Share Scripts**: Create a team library of analysis templates
 
 ## Exercises

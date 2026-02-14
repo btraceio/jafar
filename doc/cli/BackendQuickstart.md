@@ -262,7 +262,7 @@ Your backend works! To enhance it:
 | Constant pools | `CONSTANT_POOLS` | `ConstantPoolSource` |
 | Context reuse | `CONTEXT_REUSE` | Cache in `BackendContext` |
 
-See the [Backend Plugin Guide](../jfr-shell-backends.md) for complete API reference.
+See the [Backend Plugin Guide](Backends.md) for complete API reference.
 
 ## Complete Source
 
