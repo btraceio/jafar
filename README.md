@@ -2,7 +2,7 @@
 
 Fast, modern JFR (Java Flight Recorder) parser for the JVM with a small, focused API.
 
-**Status**: Early public release (v0.6.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
+**Status**: Early public release (v0.11.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for parsing JFR recordings with minimal ceremony. It emphasizes performance, low allocation, and ease of use.
 
