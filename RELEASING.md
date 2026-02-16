@@ -27,6 +27,23 @@ Also update `jafar-gradle-plugin/build.gradle`:
 version = "0.4.0"  // Remove -SNAPSHOT suffix
 ```
 
+Update `jfr-shell-plugins.json` with the release version for both backend plugins:
+
+```json
+{
+  "plugins": {
+    "jdk": {
+      "latestVersion": "0.4.0",
+      ...
+    },
+    "jafar": {
+      "latestVersion": "0.4.0",
+      ...
+    }
+  }
+}
+```
+
 ### 2. Update CHANGELOG.md
 
 Ensure the changelog has an entry for the new version:
@@ -45,7 +62,7 @@ Ensure the changelog has an entry for the new version:
 ### 3. Commit and Push
 
 ```bash
-git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
+git add build.gradle jafar-gradle-plugin/build.gradle jfr-shell-plugins.json CHANGELOG.md
 git commit -m "Prepare for release v0.4.0"
 git push origin main
 ```
@@ -124,6 +141,22 @@ Edit `jafar-gradle-plugin/build.gradle`:
 version = "0.5.0-SNAPSHOT"
 ```
 
+Update `jfr-shell-plugins.json` to next SNAPSHOT version:
+```json
+{
+  "plugins": {
+    "jdk": {
+      "latestVersion": "0.5.0-SNAPSHOT",
+      ...
+    },
+    "jafar": {
+      "latestVersion": "0.5.0-SNAPSHOT",
+      ...
+    }
+  }
+}
+```
+
 Update CHANGELOG.md:
 ```markdown
 ## [Unreleased]
@@ -136,7 +169,7 @@ Update CHANGELOG.md:
 
 Commit:
 ```bash
-git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
+git add build.gradle jafar-gradle-plugin/build.gradle jfr-shell-plugins.json CHANGELOG.md
 git commit -m "Prepare for next development iteration"
 git push origin main
 ```
