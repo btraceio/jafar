@@ -125,7 +125,7 @@ The release workflow (`.github/workflows/release.yml`) automatically:
 - **Root version**: Defined in `build.gradle` as `project.version="X.Y.Z"`
 - **Subprojects**: Use `rootProject.version` (automatic sync)
 - **Gradle plugin**: Has separate version in `jafar-gradle-plugin/build.gradle`
-- **Backend plugins registry**: `jfr-shell-plugins.json` (must match release version)
+- **Backend plugins registry**: `jfr-shell-plugins.json` (must always point to the latest **released** version, never SNAPSHOT — see below)
 - **Development versions**: Use `-SNAPSHOT` suffix (e.g., `0.4.0-SNAPSHOT`)
 
 ### Post-Release
@@ -136,13 +136,19 @@ After release completes, prepare for next development iteration:
 # Update to next SNAPSHOT version
 # Edit build.gradle: project.version="0.5.0-SNAPSHOT"
 # Edit jafar-gradle-plugin/build.gradle: version = "0.5.0-SNAPSHOT"
-# Edit jfr-shell-plugins.json: latestVersion for all plugins to "0.5.0-SNAPSHOT"
+# Do NOT update jfr-shell-plugins.json — it must keep pointing to the latest release
 # Update CHANGELOG.md with [Unreleased] section
 
-git add build.gradle jafar-gradle-plugin/build.gradle jfr-shell-plugins.json CHANGELOG.md
+git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
 git commit -m "Prepare for next development iteration"
 git push origin main
 ```
+
+### Plugin Catalog Versioning Rule
+
+`jfr-shell-plugins.json` is fetched at runtime from the `main` branch by `PluginRegistry` to resolve backend plugin versions for installation. It must **always** contain the latest released version and `"repository": "maven-central"`. Never set it to a SNAPSHOT version — doing so breaks backend installation for all users.
+
+The catalog version must never be downgraded across major/minor boundaries. For example, if the catalog already points to `0.12.0` and a patch release `0.11.5` is published, the catalog must remain at `0.12.0`.
 
 ### Testing Releases
 

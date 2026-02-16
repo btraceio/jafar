@@ -141,21 +141,7 @@ Edit `jafar-gradle-plugin/build.gradle`:
 version = "0.5.0-SNAPSHOT"
 ```
 
-Update `jfr-shell-plugins.json` to next SNAPSHOT version:
-```json
-{
-  "plugins": {
-    "jdk": {
-      "latestVersion": "0.5.0-SNAPSHOT",
-      ...
-    },
-    "jafar": {
-      "latestVersion": "0.5.0-SNAPSHOT",
-      ...
-    }
-  }
-}
-```
+> **Do NOT update `jfr-shell-plugins.json`** — it was already set to the release version in step 1 and must stay that way. The plugin catalog is fetched at runtime from the `main` branch by `PluginRegistry` and must always point to the latest released version available on Maven Central. Setting it to a SNAPSHOT version breaks backend installation for all users.
 
 Update CHANGELOG.md:
 ```markdown
@@ -169,10 +155,14 @@ Update CHANGELOG.md:
 
 Commit:
 ```bash
-git add build.gradle jafar-gradle-plugin/build.gradle jfr-shell-plugins.json CHANGELOG.md
+git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
 git commit -m "Prepare for next development iteration"
 git push origin main
 ```
+
+### Plugin Catalog Version Rule
+
+The `jfr-shell-plugins.json` catalog version must never be downgraded across major/minor boundaries. For example, if the catalog already points to `0.12.0` and a patch release `0.11.5` is published, the catalog must remain at `0.12.0`.
 
 ## Troubleshooting
 
