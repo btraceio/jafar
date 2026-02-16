@@ -161,8 +161,8 @@ public final class Main implements Callable<Integer> {
 
   /**
    * Attempt to auto-install the default "jafar" backend from Maven repositories. After successful
-   * installation, reinitializes the plugin system and re-discovers backends so the tool can continue
-   * without a restart.
+   * installation, reinitializes the plugin system and re-discovers backends so the tool can
+   * continue without a restart.
    *
    * @return true if a backend was installed and is now available
    */

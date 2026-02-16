@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.11.4] - 2026-02-16
+
+### Fixed
+- **Backend auto-install** - Automatically install the default "jafar" backend from Maven when no backends are available, so `jbang jfr-shell@btraceio` works on first run without manual plugin installation
+
 ## [0.11.3] - 2026-02-14
 
 ### Fixed
