@@ -117,6 +117,13 @@ public final class Main implements Callable<Integer> {
   private boolean validateBackend() {
     try {
       BackendRegistry registry = BackendRegistry.getInstance();
+
+      // Auto-install default backend if none available
+      if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
+        System.err.println("Error: No JFR backends available");
+        return false;
+      }
+
       JfrBackend current = registry.getCurrent();
 
       // If user specified a backend, verify it was selected
@@ -152,6 +159,32 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /**
+   * Attempt to auto-install the default "jafar" backend from Maven repositories. After successful
+   * installation, reinitializes the plugin system and re-discovers backends so the tool can continue
+   * without a restart.
+   *
+   * @return true if a backend was installed and is now available
+   */
+  static boolean autoInstallDefaultBackend() {
+    String pluginId = "jafar";
+    PluginManager pm = PluginManager.getInstance();
+    if (!pm.canInstall(pluginId)) {
+      return false;
+    }
+    System.err.print("No backends found. Installing default backend from Maven... ");
+    try {
+      pm.installPlugin(pluginId);
+      PluginManager.reinitialize();
+      BackendRegistry.getInstance().rediscover();
+      System.err.println("done.");
+      return !BackendRegistry.getInstance().listAll().isEmpty();
+    } catch (Exception e) {
+      System.err.println("failed: " + e.getMessage());
+      return false;
+    }
+  }
+
   // Base class for non-interactive commands
   abstract static class NonInteractiveCommand implements Callable<Integer> {
     @CommandLine.Parameters(index = "0", description = "Path to JFR recording file")
@@ -171,6 +204,13 @@ public final class Main implements Callable<Integer> {
       // Validate backend
       try {
         BackendRegistry registry = BackendRegistry.getInstance();
+
+        // Auto-install default backend if none available
+        if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
+          System.err.println("Error: No JFR backends available");
+          return 1;
+        }
+
         JfrBackend current = registry.getCurrent();
         if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
           // Check if plugin can be auto-installed
@@ -438,6 +478,13 @@ public final class Main implements Callable<Integer> {
       // Validate backend
       try {
         BackendRegistry registry = BackendRegistry.getInstance();
+
+        // Auto-install default backend if none available
+        if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
+          System.err.println("Error: No JFR backends available");
+          return 1;
+        }
+
         JfrBackend current = registry.getCurrent();
         if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
           // Check if plugin can be auto-installed

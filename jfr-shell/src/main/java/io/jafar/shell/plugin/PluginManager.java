@@ -71,6 +71,16 @@ public final class PluginManager {
   }
 
   /**
+   * Reinitialize the plugin system after new plugins have been installed at runtime.
+   *
+   * <p>This reloads all plugin JARs and recreates the ClassLoader so that newly installed plugins
+   * become visible to ServiceLoader without restarting the application.
+   */
+  public static void reinitialize() {
+    INSTANCE.loadInstalledPlugins();
+  }
+
+  /**
    * Load all installed plugins and create the plugin ClassLoader.
    *
    * <p>This reads the plugin storage directory and constructs a ClassLoader with all installed
