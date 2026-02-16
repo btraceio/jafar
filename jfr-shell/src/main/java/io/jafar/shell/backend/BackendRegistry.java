@@ -50,6 +50,18 @@ public final class BackendRegistry {
     return Holder.INSTANCE;
   }
 
+  /**
+   * Re-run backend discovery after new plugins have been installed and the PluginManager has been
+   * reinitialized. Clears the current backend selection so it will be re-evaluated on next access.
+   */
+  public void rediscover() {
+    synchronized (this) {
+      backends.clear();
+      current = null;
+      discoverBackends();
+    }
+  }
+
   private void discoverBackends() {
     // Use plugin-aware ClassLoader to discover backends from both built-in and plugin JARs
     // Falls back to thread context classloader for testing when PluginManager isn't initialized
