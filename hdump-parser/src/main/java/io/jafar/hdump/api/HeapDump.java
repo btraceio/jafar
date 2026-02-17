@@ -126,10 +126,12 @@ public interface HeapDump extends Closeable {
   /**
    * Finds the shortest path from any GC root to the given object.
    *
-   * <p>Uses BFS traversal from GC roots to find the shortest reference path.
+   * <p>Uses BFS traversal from GC roots to find the shortest reference path. Each {@link PathStep}
+   * carries the object at that position and the field name of the reference from the previous step
+   * ({@code null} for the GC root).
    *
    * @param obj the target object
-   * @return list of objects from GC root to target, or empty list if no path found
+   * @return list of path steps from GC root to target, or empty list if no path found
    */
-  List<HeapObject> findPathToGcRoot(HeapObject obj);
+  List<PathStep> findPathToGcRoot(HeapObject obj);
 }

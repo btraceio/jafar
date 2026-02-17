@@ -7,6 +7,7 @@ import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.api.PathStep;
 import io.jafar.hdump.index.InboundCountReader;
 import io.jafar.hdump.index.InboundIndexBuilder;
 import io.jafar.hdump.index.IndexFormat;
@@ -2431,7 +2432,7 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   @Override
-  public List<HeapObject> findPathToGcRoot(HeapObject obj) {
+  public List<PathStep> findPathToGcRoot(HeapObject obj) {
     return PathFinder.findShortestPath(this, obj, gcRoots);
   }
 

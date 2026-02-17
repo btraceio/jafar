@@ -3,6 +3,7 @@ package io.jafar.hdump.impl;
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.api.PathStep;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Finds paths from heap objects to GC roots using breadth-first search.
@@ -48,7 +50,10 @@ public final class PathFinder {
    * @param gcRoots list of GC roots
    * @return path from GC root to target, or empty list if unreachable
    */
-  public static List<HeapObject> findShortestPath(
+  /** Tracks the incoming edge for each visited object: the parent and the field name used. */
+  private record Edge(HeapObject parent, String fieldName) {}
+
+  public static List<PathStep> findShortestPath(
       HeapDump dump, HeapObject target, List<GcRootImpl> gcRoots) {
     if (target == null || gcRoots == null || gcRoots.isEmpty()) {
       return List.of();
@@ -59,23 +64,22 @@ public final class PathFinder {
     // Check if target is itself a GC root
     for (GcRoot root : gcRoots) {
       if (root.getObjectId() == targetId) {
-        return List.of(target);
+        return List.of(new PathStep(target, null));
       }
     }
 
-    // BFS from GC roots
-    // We track parent pointers to reconstruct the path
-    Long2ObjectOpenHashMap<HeapObject> parents = new Long2ObjectOpenHashMap<>();
+    // BFS from GC roots, tracking the incoming edge (parent + field name) per object
+    Long2ObjectOpenHashMap<Edge> parents = new Long2ObjectOpenHashMap<>();
     LongOpenHashSet visited = new LongOpenHashSet();
     Deque<HeapObject> queue = new ArrayDeque<>();
 
-    // Initialize with all GC root objects
+    // Initialize with all GC root objects (no incoming edge)
     for (GcRoot root : gcRoots) {
       dump.getObjectById(root.getObjectId()).ifPresent(rootObj -> {
         if (!visited.contains(rootObj.getId())) {
           visited.add(rootObj.getId());
           queue.add(rootObj);
-          parents.put(rootObj.getId(), null); // Root has no parent
+          parents.put(rootObj.getId(), new Edge(null, null));
         }
       });
     }
@@ -90,34 +94,58 @@ public final class PathFinder {
         break;
       }
 
-      // Explore outbound references
-      current
-          .getOutboundReferences()
-          .forEach(
-              ref -> {
-                if (!visited.contains(ref.getId())) {
-                  visited.add(ref.getId());
-                  parents.put(ref.getId(), current);
-                  queue.add(ref);
-                }
-              });
+      visitOutboundEdges(current, (fieldName, ref) -> {
+        if (!visited.contains(ref.getId())) {
+          visited.add(ref.getId());
+          parents.put(ref.getId(), new Edge(current, fieldName));
+          queue.add(ref);
+        }
+      });
     }
 
     if (!found) {
-      return List.of(); // No path found - object is unreachable
+      return List.of();
     }
 
     // Reconstruct path by following parent pointers backwards
-    List<HeapObject> path = new ArrayList<>();
+    List<PathStep> path = new ArrayList<>();
     HeapObject current = target;
     while (current != null) {
-      path.add(current);
-      current = parents.get(current.getId());
+      Edge edge = parents.get(current.getId());
+      path.add(new PathStep(current, edge != null ? edge.fieldName() : null));
+      current = edge != null ? edge.parent() : null;
     }
 
     // Reverse to get path from root to target
     Collections.reverse(path);
     return path;
+  }
+
+  /**
+   * Visits all outbound object references of {@code obj}, calling {@code visitor} with the field
+   * name and the referenced object. For array elements the name has the form {@code [i]}.
+   */
+  private static void visitOutboundEdges(HeapObject obj, EdgeVisitor visitor) {
+    if (obj.isArray()) {
+      Object[] elements = obj.getArrayElements();
+      if (elements == null) return;
+      for (int i = 0; i < elements.length; i++) {
+        if (elements[i] instanceof HeapObject ref) {
+          visitor.visit("[" + i + "]", ref);
+        }
+      }
+    } else {
+      for (Map.Entry<String, Object> entry : obj.getFieldValues().entrySet()) {
+        if (entry.getValue() instanceof HeapObject ref) {
+          visitor.visit(entry.getKey(), ref);
+        }
+      }
+    }
+  }
+
+  @FunctionalInterface
+  private interface EdgeVisitor {
+    void visit(String fieldName, HeapObject ref);
   }
 
   /**

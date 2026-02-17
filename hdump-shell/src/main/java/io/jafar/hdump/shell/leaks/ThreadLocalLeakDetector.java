@@ -2,6 +2,7 @@ package io.jafar.hdump.shell.leaks;
 
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.api.PathStep;
 import java.util.*;
 
 /**
@@ -32,13 +33,13 @@ public final class ThreadLocalLeakDetector implements LeakDetector {
               result.put("retained", obj.getRetainedSize());
 
               // Try to determine if it's still attached to a thread
-              List<HeapObject> path = dump.findPathToGcRoot(obj);
+              List<PathStep> path = dump.findPathToGcRoot(obj);
               boolean attachedToThread =
                   path.stream()
                       .anyMatch(
-                          p ->
-                              p.getHeapClass() != null
-                                  && "java/lang/Thread".equals(p.getHeapClass().getName()));
+                          s ->
+                              s.object().getHeapClass() != null
+                                  && "java/lang/Thread".equals(s.object().getHeapClass().getName()));
 
               result.put("attachedToThread", attachedToThread);
               result.put(
