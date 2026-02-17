@@ -369,7 +369,7 @@ public final class HdumpPathParser {
       case "select" -> parseSelectOp();
       case "top" -> parseTopOp();
       case "groupby", "group" -> parseGroupByOp();
-      case "count" -> new CountOp();
+      case "count" -> { consumeOptionalEmptyParens(); yield new CountOp(); }
       case "sum" -> parseSumOp();
       case "stats" -> parseStatsOp();
       case "sortby", "sort", "orderby", "order" -> parseSortByOp();
@@ -751,6 +751,16 @@ public final class HdumpPathParser {
           "Expected '" + c + "' at position " + pos + ", found '" + peek() + "'");
     }
     advance();
+  }
+
+  /** Consumes {@code ()} if present, allowing no-arg ops to be written as either {@code op} or {@code op()}. */
+  private void consumeOptionalEmptyParens() {
+    skipWs();
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      expect(')');
+    }
   }
 
   private String remaining() {

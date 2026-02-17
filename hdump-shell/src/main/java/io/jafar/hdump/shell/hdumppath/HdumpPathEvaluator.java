@@ -47,37 +47,58 @@ public final class HdumpPathEvaluator {
         System.err.println();
 
         TopOp defaultTop = new TopOp(100, null, false);
-        return evaluateObjectsStreamingWithFilters(dump, query, defaultTop, List.of());
+        return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
       }
 
-      PipelineOp firstOp = query.pipeline().get(0);
+      // Peel any leading FilterOps into the query predicates so they are applied during streaming
+      List<Predicate> mergedPredicates = new ArrayList<>(query.predicates());
+      int firstNonFilter = 0;
+      List<PipelineOp> pipeline = query.pipeline();
+      while (firstNonFilter < pipeline.size() && pipeline.get(firstNonFilter) instanceof FilterOp f) {
+        mergedPredicates.add(f.predicate());
+        firstNonFilter++;
+      }
+      Query streamingQuery = firstNonFilter > 0
+          ? new Query(query.root(), query.typePattern(), query.instanceof_(), mergedPredicates, pipeline.subList(firstNonFilter, pipeline.size()))
+          : query;
+      List<PipelineOp> streamingPipeline = streamingQuery.pipeline();
+
+      if (streamingPipeline.isEmpty()) {
+        // Only filters remain — need a limit
+        System.err.println();
+        System.err.printf(
+            "WARNING: Large heap (%,d objects) - defaulting to first 100 results.%n",
+            dump.getObjectCount());
+        System.err.println("Use '| top(N)' to specify limit, or '| groupBy(...)' to aggregate.");
+        System.err.println();
+        TopOp defaultTop = new TopOp(100, null, false);
+        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, defaultTop, List.of());
+      }
+
+      PipelineOp firstOp = streamingPipeline.get(0);
+      List<PipelineOp> remaining = streamingPipeline.subList(1, streamingPipeline.size());
 
       // Check if first operation is an aggregation that can be streamed
       if (firstOp instanceof TopOp topOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, query, topOp, query.pipeline().subList(1, query.pipeline().size()));
+        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, topOp, remaining);
 
       } else if (firstOp instanceof GroupByOp groupByOp) {
         // Check if followed by top(N) - if so, use bounded accumulation
-        List<PipelineOp> remaining = query.pipeline().subList(1, query.pipeline().size());
         if (!remaining.isEmpty() && remaining.get(0) instanceof TopOp topOp) {
-          // Bounded groupBy + top optimization
-          return evaluateObjectsStreamingGroupByTop(dump, query, groupByOp, topOp, remaining.subList(1, remaining.size()));
+          return evaluateObjectsStreamingGroupByTop(dump, session, streamingQuery, groupByOp, topOp, remaining.subList(1, remaining.size()));
         } else {
-          return evaluateObjectsStreamingWithFilters(dump, query, groupByOp, remaining);
+          return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, groupByOp, remaining);
         }
 
       } else if (firstOp instanceof CountOp countOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, query, countOp, query.pipeline().subList(1, query.pipeline().size()));
+        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, countOp, remaining);
 
       } else if (firstOp instanceof SumOp sumOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, query, sumOp, query.pipeline().subList(1, query.pipeline().size()));
+        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, sumOp, remaining);
 
       } else if (firstOp instanceof StatsOp statsOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, query, statsOp, query.pipeline().subList(1, query.pipeline().size()));
+        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, statsOp, remaining);
+
       } else {
         // Other operations - default to top(100) to prevent OOME
         System.err.println();
@@ -89,10 +110,10 @@ public final class HdumpPathEvaluator {
 
         TopOp defaultTop = new TopOp(100, null, false);
         List<Map<String, Object>> results =
-            evaluateObjectsStreamingWithFilters(dump, query, defaultTop, List.of());
+            evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, defaultTop, List.of());
 
-        // Apply the full pipeline to the limited results
-        for (PipelineOp op : query.pipeline()) {
+        // Apply the remaining (non-filter) pipeline ops to the limited results
+        for (PipelineOp op : streamingPipeline) {
           results = applyPipelineOp(session, results, op);
         }
         return results;
@@ -246,7 +267,7 @@ public final class HdumpPathEvaluator {
    * Uses bounded priority queue to avoid materializing all groups.
    */
   private static List<Map<String, Object>> evaluateObjectsStreamingGroupByTop(
-      HeapDump dump, Query query, GroupByOp groupByOp, TopOp topOp, List<PipelineOp> remainingOps) {
+      HeapDump dump, HeapSession session, Query query, GroupByOp groupByOp, TopOp topOp, List<PipelineOp> remainingOps) {
 
     // Build filtered stream
     Stream<HeapObject> stream = dump.getObjects();
@@ -349,7 +370,7 @@ public final class HdumpPathEvaluator {
 
     // Apply remaining pipeline operations
     for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(null, results, op);
+      results = applyPipelineOp(session, results, op);
     }
 
     return results;
@@ -606,22 +627,11 @@ public final class HdumpPathEvaluator {
     }
 
     List<Map<String, Object>> getTopN(int n) {
+      String aggField = getAggregationColumnName(op);
       // Final sort and return top N
       List<Map<String, Object>> results = groups.values().stream()
           .map(acc -> acc.toResultMap(op))
-          .sorted((m1, m2) -> {
-            // Sort by aggregation value descending
-            String aggField = switch (op.aggregation()) {
-              case COUNT -> "count";
-              case SUM -> "sum";
-              case AVG -> "avg";
-              case MIN -> "min";
-              case MAX -> "max";
-            };
-            Object v1 = m1.get(aggField);
-            Object v2 = m2.get(aggField);
-            return -compareValues(v1, v2); // Descending
-          })
+          .sorted((m1, m2) -> -compareValues(m1.get(aggField), m2.get(aggField))) // Descending
           .limit(n)
           .collect(Collectors.toList());
       return results;
@@ -635,6 +645,11 @@ public final class HdumpPathEvaluator {
    */
   private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
       HeapDump dump, Query query, PipelineOp firstOp, List<PipelineOp> remainingOps) {
+    return evaluateObjectsStreamingWithFilters(dump, null, query, firstOp, remainingOps);
+  }
+
+  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
+      HeapDump dump, HeapSession session, Query query, PipelineOp firstOp, List<PipelineOp> remainingOps) {
 
     // Build filtered stream
     Stream<HeapObject> stream;
@@ -1519,12 +1534,13 @@ public final class HdumpPathEvaluator {
       if (obj == null) continue;
 
       // Find path to GC root
-      List<HeapObject> path = dump.findPathToGcRoot(obj);
+      List<PathStep> path = dump.findPathToGcRoot(obj);
       if (path.isEmpty()) continue;
 
-      // Convert path to result format - one row per object in path
+      // Convert path to result format - one row per step in path
       for (int i = 0; i < path.size(); i++) {
-        HeapObject pathObj = path.get(i);
+        PathStep step = path.get(i);
+        HeapObject pathObj = step.object();
         Map<String, Object> pathRow = new LinkedHashMap<>();
         pathRow.put("step", i);
         pathRow.put("id", pathObj.getId());
@@ -1532,13 +1548,7 @@ public final class HdumpPathEvaluator {
         pathRow.put("shallow", pathObj.getShallowSize());
         pathRow.put("retained", pathObj.getRetainedSize());
         pathRow.put("description", pathObj.getDescription());
-
-        // Add reference type for steps after the root
-        if (i > 0) {
-          pathRow.put("referenceType", i == 0 ? "GC Root" : "field/array reference");
-        } else {
-          pathRow.put("referenceType", "GC Root");
-        }
+        pathRow.put("referenceType", step.fieldName() != null ? step.fieldName() : "GC Root");
 
         paths.add(pathRow);
       }
