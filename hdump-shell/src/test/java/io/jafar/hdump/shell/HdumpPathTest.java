@@ -209,6 +209,22 @@ class HdumpPathTest {
   }
 
   @Test
+  void testParseGroupByWithSortByAlias() {
+    // sortBy= should work as alias for sort=
+    Query sortByQuery = HdumpPathParser.parse("classes | groupBy(name, agg=count, sortBy=key)");
+    HdumpPath.GroupByOp sortByOp = (HdumpPath.GroupByOp) sortByQuery.pipeline().get(0);
+    assertEquals("key", sortByOp.sortBy());
+    assertFalse(sortByOp.ascending());
+
+    Query sortByValueQuery =
+        HdumpPathParser.parse("classes | groupBy(name, agg=sum, sortBy=value, asc=true)");
+    HdumpPath.GroupByOp sortByValueOp =
+        (HdumpPath.GroupByOp) sortByValueQuery.pipeline().get(0);
+    assertEquals("value", sortByValueOp.sortBy());
+    assertTrue(sortByValueOp.ascending());
+  }
+
+  @Test
   void testValueExprEvaluation() {
     Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
 
@@ -229,6 +245,72 @@ class HdumpPathTest {
             ValueExpr.ArithOp.MUL,
             new NumberLiteral(2));
     assertEquals(22.0, complexExpr.evaluate(row));
+  }
+
+  // === Array Type Parser Tests ===
+
+  @Test
+  void testParseJvmObjectArrayDescriptor() {
+    Query query = HdumpPathParser.parse("objects/[Ljava.lang.Object;");
+    assertEquals("[Ljava.lang.Object;", query.typePattern());
+    assertFalse(query.instanceof_());
+    assertTrue(query.predicates().isEmpty());
+  }
+
+  @Test
+  void testParseJvmObjectArrayDescriptorWithPredicate() {
+    Query query = HdumpPathParser.parse("objects/[Ljava.lang.Object;[shallow > 1MB]");
+    assertEquals("[Ljava.lang.Object;", query.typePattern());
+    assertEquals(1, query.predicates().size());
+  }
+
+  @Test
+  void testParseJvmPrimitiveArrayDescriptors() {
+    assertEquals("[I", HdumpPathParser.parse("objects/[I").typePattern());
+    assertEquals("[J", HdumpPathParser.parse("objects/[J").typePattern());
+    assertEquals("[B", HdumpPathParser.parse("objects/[B").typePattern());
+    assertEquals("[Z", HdumpPathParser.parse("objects/[Z").typePattern());
+    assertEquals("[C", HdumpPathParser.parse("objects/[C").typePattern());
+    assertEquals("[F", HdumpPathParser.parse("objects/[F").typePattern());
+    assertEquals("[D", HdumpPathParser.parse("objects/[D").typePattern());
+    assertEquals("[S", HdumpPathParser.parse("objects/[S").typePattern());
+  }
+
+  @Test
+  void testParseJvmMultidimensionalArrayDescriptor() {
+    Query query = HdumpPathParser.parse("objects/[[I");
+    assertEquals("[[I", query.typePattern());
+    query = HdumpPathParser.parse("objects/[[Ljava.lang.String;");
+    assertEquals("[[Ljava.lang.String;", query.typePattern());
+  }
+
+  @Test
+  void testParseJavaArrayNotationObject() {
+    Query query = HdumpPathParser.parse("objects/java.lang.Object[]");
+    assertEquals("[Ljava.lang.Object;", query.typePattern());
+  }
+
+  @Test
+  void testParseJavaArrayNotationPrimitive() {
+    assertEquals("[I", HdumpPathParser.parse("objects/int[]").typePattern());
+    assertEquals("[J", HdumpPathParser.parse("objects/long[]").typePattern());
+    assertEquals("[B", HdumpPathParser.parse("objects/byte[]").typePattern());
+    assertEquals("[Z", HdumpPathParser.parse("objects/boolean[]").typePattern());
+  }
+
+  @Test
+  void testParseJavaArrayNotationMultidimensional() {
+    Query query = HdumpPathParser.parse("objects/java.lang.String[][]");
+    assertEquals("[[Ljava.lang.String;", query.typePattern());
+    query = HdumpPathParser.parse("objects/int[][]");
+    assertEquals("[[I", query.typePattern());
+  }
+
+  @Test
+  void testParseJavaArrayNotationWithPredicate() {
+    Query query = HdumpPathParser.parse("objects/java.lang.Object[][arrayLength > 100]");
+    assertEquals("[Ljava.lang.Object;", query.typePattern());
+    assertEquals(1, query.predicates().size());
   }
 
   @Test

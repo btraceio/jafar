@@ -77,8 +77,9 @@ public final class HdumpPathParser {
         }
       }
 
-      // Parse class/type pattern
-      if (peek() != '[' && peek() != '|' && !isAtEnd()) {
+      // Parse class/type pattern.
+      // Allow '[' only when it starts a JVM array descriptor (e.g. [Ljava.lang.Object; or [I).
+      if (peek() != '|' && !isAtEnd() && (peek() != '[' || isArrayDescriptorAhead())) {
         typePattern = parseTypePattern();
       }
     }
@@ -126,10 +127,89 @@ public final class HdumpPathParser {
 
   private String parseTypePattern() {
     StringBuilder sb = new StringBuilder();
-    while (!isAtEnd() && peek() != '[' && peek() != '|' && !Character.isWhitespace(peek())) {
-      sb.append(advance());
+    if (peek() == '[') {
+      // JVM array descriptor: [I, [Ljava.lang.Object;, [[I, etc.
+      parseArrayDescriptor(sb);
+    } else {
+      // Regular class name: read until '[', '|', or whitespace
+      while (!isAtEnd() && peek() != '[' && peek() != '|' && !Character.isWhitespace(peek())) {
+        sb.append(advance());
+      }
+      // Handle Java array notation suffix: ClassName[] or ClassName[][]
+      if (!isAtEnd() && peek() == '[' && pos + 1 < input.length() && input.charAt(pos + 1) == ']') {
+        String className = sb.toString();
+        sb.setLength(0);
+        int dims = 0;
+        while (!isAtEnd() && peek() == '[' && pos + 1 < input.length() && input.charAt(pos + 1) == ']') {
+          dims++;
+          advance(); // consume '['
+          advance(); // consume ']'
+        }
+        for (int i = 0; i < dims; i++) {
+          sb.append('[');
+        }
+        String primitiveCode = primitiveArrayCode(className);
+        if (primitiveCode != null) {
+          sb.append(primitiveCode);
+        } else {
+          sb.append('L').append(className).append(';');
+        }
+      }
     }
     return sb.toString().isEmpty() ? null : sb.toString();
+  }
+
+  /**
+   * Parses a JVM array type descriptor into {@code sb}.
+   * Handles: {@code [I}, {@code [Ljava.lang.Object;}, {@code [[Z}, etc.
+   */
+  private void parseArrayDescriptor(StringBuilder sb) {
+    if (isAtEnd() || peek() != '[') {
+      throw new HdumpPathParseException("Expected '[' for array type descriptor at position " + pos);
+    }
+    sb.append(advance()); // consume '['
+    if (isAtEnd()) {
+      throw new HdumpPathParseException("Incomplete array type descriptor at position " + pos);
+    }
+    char next = peek();
+    if (next == '[') {
+      parseArrayDescriptor(sb);
+    } else if (next == 'L') {
+      sb.append(advance()); // consume 'L'
+      while (!isAtEnd() && peek() != ';' && peek() != '|' && !Character.isWhitespace(peek())) {
+        sb.append(advance());
+      }
+      if (!isAtEnd() && peek() == ';') {
+        sb.append(advance()); // consume ';'
+      }
+    } else if ("ZCIJFDSB".indexOf(next) >= 0) {
+      sb.append(advance()); // consume primitive type code
+    } else {
+      throw new HdumpPathParseException(
+          "Invalid array type descriptor at position " + pos + ": expected L, [, or primitive code (Z/C/I/J/F/D/S/B)");
+    }
+  }
+
+  /** Returns true when the current position holds {@code [} and the next char looks like a JVM array descriptor. */
+  private boolean isArrayDescriptorAhead() {
+    if (pos + 1 >= input.length()) return false;
+    char next = input.charAt(pos + 1);
+    return next == '[' || next == 'L' || "ZCIJFDSB".indexOf(next) >= 0;
+  }
+
+  /** Maps a Java primitive type name to its JVM array type code, or {@code null} if not primitive. */
+  private static String primitiveArrayCode(String name) {
+    return switch (name) {
+      case "boolean" -> "Z";
+      case "char" -> "C";
+      case "int" -> "I";
+      case "long" -> "J";
+      case "float" -> "F";
+      case "double" -> "D";
+      case "short" -> "S";
+      case "byte" -> "B";
+      default -> null;
+    };
   }
 
   private List<Predicate> parsePredicates() {
@@ -467,8 +547,13 @@ public final class HdumpPathParser {
         expect('=');
         skipWs();
         valueExpr = parseValueExpr();
-      } else if (lookahead("sort=") || lookahead("sort =")) {
-        matchKeyword("sort");
+      } else if (lookahead("sortBy=") || lookahead("sortBy =") || lookahead("sort=")
+          || lookahead("sort =")) {
+        if (lookahead("sortBy")) {
+          matchKeyword("sortBy");
+        } else {
+          matchKeyword("sort");
+        }
         skipWs();
         expect('=');
         skipWs();
@@ -476,7 +561,8 @@ public final class HdumpPathParser {
         if ("key".equals(sortValue) || "value".equals(sortValue)) {
           sortBy = sortValue;
         } else {
-          throw new HdumpPathParseException("sort= must be 'key' or 'value', got: " + sortValue);
+          throw new HdumpPathParseException(
+              "sortBy=/sort= must be 'key' or 'value', got: " + sortValue);
         }
       } else if (lookahead("asc=") || lookahead("asc =")) {
         matchKeyword("asc");

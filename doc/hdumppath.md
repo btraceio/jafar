@@ -115,6 +115,44 @@ objects/instanceof/java.util.Map           # HashMap, TreeMap, ConcurrentHashMap
 objects/instanceof/java.io.Serializable    # All serializable objects
 ```
 
+### Array Types
+Query array instances using Java notation or JVM descriptor format:
+
+**Java notation (recommended):**
+```
+objects/java.lang.Object[]               # Object arrays
+objects/java.lang.String[]               # String arrays
+objects/int[]                            # int arrays
+objects/byte[]                           # byte arrays
+objects/java.lang.Object[][]             # 2D Object arrays
+```
+
+**JVM descriptor format:**
+```
+objects/[Ljava.lang.Object;              # Object arrays
+objects/[I                               # int arrays
+objects/[B                               # byte arrays
+objects/[[Ljava.lang.String;             # 2D String arrays
+```
+
+Both notations can be combined with predicates and pipeline operations:
+```
+objects/java.lang.Object[][arrayLength > 1000] | top(10, shallow)
+objects/[Ljava.lang.Object;[retained > 100MB] | pathToRoot
+```
+
+**Primitive array type codes** (JVM format):
+| Java type | Code |
+|-----------|------|
+| `boolean` | `Z`  |
+| `char`    | `C`  |
+| `int`     | `I`  |
+| `long`    | `J`  |
+| `float`   | `F`  |
+| `double`  | `D`  |
+| `short`   | `S`  |
+| `byte`    | `B`  |
+
 ## Predicates (Filters)
 
 Predicates filter results using conditions in square brackets.
@@ -206,6 +244,12 @@ objects | groupBy(class, agg=avg)          # Average shallow size by class
 objects | groupBy(class, agg=min)          # Min shallow size by class
 objects | groupBy(class, agg=max)          # Max shallow size by class
 ```
+
+**Parameters:**
+- `agg` - Aggregation function (default: `count`)
+- `value` - Value expression for sum/avg/min/max
+- `sortBy` (or `sort`) - Sort results by `key` (grouping key) or `value` (aggregated value)
+- `asc` - Sort ascending (default: `false`, descending)
 
 **Aggregation operations:**
 - `count` - Count items in group (default)
@@ -328,8 +372,14 @@ objects/instanceof/java.util.Collection | groupBy(class, agg=sum) | top(10, sum)
 ### Finding Specific Objects
 
 ```
-# Large arrays
+# Large arrays (any type)
 objects[isArray and shallow > 1MB] | top(10, shallow)
+
+# Large Object arrays specifically
+objects/java.lang.Object[][arrayLength > 1000] | top(10, shallow)
+
+# Find what retains large Object arrays
+objects/java.lang.Object[][retained > 100MB] | top(5, retained) | pathToRoot
 
 # String contents (if looking for specific strings)
 objects/java.lang.String[stringValue ~ ".*ERROR.*"] | head(10)
