@@ -830,11 +830,16 @@ cp/jdk.types.Symbol | count()
 cp/jdk.types.Symbol/string | len()
 ```
 
-## Operator Limitations
+## Pipeline Chaining
 
-- Pipeline operators are **not chainable**: `| count() | sum()` is not supported
-- Each query can have at most one pipeline operator
-- For multi-step analytics, use interactive commands or scripting
+Pipeline operators can be chained to build multi-step transformations:
+
+```
+events/jdk.FileRead | groupBy(path) | sortBy(count desc) | top(10)
+events/jdk.ExecutionSample | groupBy(thread/name) | select(key, count) | sortBy(count desc)
+```
+
+The first operator receives the raw event/metadata rows. Each subsequent operator receives the output of the previous one.
 
 ## Design Principles
 
