@@ -2,7 +2,7 @@
 
 Fast, modern JFR (Java Flight Recorder) parser for the JVM with a small, focused API.
 
-**Status**: Early public release (v0.11.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
+**Status**: Early public release (v0.12.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for parsing JFR recordings with minimal ceremony. It emphasizes performance, low allocation, and ease of use.
 
@@ -140,8 +140,8 @@ JAFAR now supports **build-time handler generation** via annotation processor, p
 **Gradle:**
 ```gradle
 dependencies {
-    implementation 'io.btrace:jafar-parser:0.11.0'
-    annotationProcessor 'io.btrace:jafar-processor:0.11.0'
+    implementation 'io.btrace:jafar-parser:0.12.0'
+    annotationProcessor 'io.btrace:jafar-processor:0.12.0'
 }
 ```
 
@@ -151,7 +151,7 @@ dependencies {
     <dependency>
         <groupId>io.btrace</groupId>
         <artifactId>jafar-parser</artifactId>
-        <version>0.11.0</version>
+        <version>0.12.0</version>
     </dependency>
 </dependencies>
 
@@ -165,7 +165,7 @@ dependencies {
                     <path>
                         <groupId>io.btrace</groupId>
                         <artifactId>jafar-processor</artifactId>
-                        <version>0.11.0</version>
+                        <version>0.12.0</version>
                     </path>
                 </annotationProcessorPaths>
             </configuration>
@@ -383,7 +383,7 @@ This ensures that events with the same simple name but different namespaces gene
 
 ```gradle
 plugins {
-  id 'io.btrace.jafar-gradle-plugin' version '0.11.0'
+  id 'io.btrace.jafar-gradle-plugin' version '0.12.0'
 }
 
 repositories {
