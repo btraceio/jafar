@@ -135,6 +135,13 @@ Simple field comparisons:
 - `<=` : Less than or equal
 - `~` : Regex match
 
+**Size units**: Numeric literals support `KB`/`K`, `MB`/`M`, `GB`/`G` suffixes (case-insensitive, binary: 1KB = 1024):
+```
+events/jdk.FileRead[bytes > 10KB]               # 10 * 1024
+events/jdk.FileRead[bytes > 1MB]                # 1 * 1024^2
+events/jdk.ObjectAllocationSample[weight > 1GB] # 1 * 1024^3
+```
+
 **Examples**:
 ```
 events/jdk.FileRead[bytes>1000]

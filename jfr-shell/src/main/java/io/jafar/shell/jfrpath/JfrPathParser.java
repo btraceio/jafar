@@ -432,9 +432,32 @@ public final class JfrPathParser {
     }
     if (pos == start) throw error("Expected literal");
     String num = input.substring(start, pos);
+
+    // Size suffixes: KB/K, MB/M, GB/G (case-insensitive)
+    long multiplier = 1;
+    if (startsWithIgnoreCase("KB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024;
+    } else if (startsWithIgnoreCase("MB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024 * 1024;
+    } else if (startsWithIgnoreCase("GB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024L * 1024 * 1024;
+    } else if (startsWithIgnoreCase("K") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024;
+    } else if (startsWithIgnoreCase("M") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024 * 1024;
+    } else if (startsWithIgnoreCase("G") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024L * 1024 * 1024;
+    }
+
     try {
-      if (dot) return Double.parseDouble(num);
-      return Long.parseLong(num);
+      if (dot) return Double.parseDouble(num) * multiplier;
+      return Long.parseLong(num) * multiplier;
     } catch (NumberFormatException e) {
       throw error("Invalid number literal: " + num);
     }

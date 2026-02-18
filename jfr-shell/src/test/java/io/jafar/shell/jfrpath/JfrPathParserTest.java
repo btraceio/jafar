@@ -369,4 +369,40 @@ class JfrPathParserTest {
     assertEquals("bytes", sort.fields.get(0).field());
     assertFalse(sort.fields.get(0).descending());
   }
+
+  @Test
+  void parsesSizeUnitKB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 10KB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(10L * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(10L * 1024, ((Number) ce.literal).longValue());
+    }
+  }
+
+  @Test
+  void parsesSizeUnitMB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 1MB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(1L * 1024 * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(1L * 1024 * 1024, ((Number) ce.literal).longValue());
+    }
+  }
+
+  @Test
+  void parsesSizeUnitGB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 2GB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(2L * 1024 * 1024 * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(2L * 1024 * 1024 * 1024, ((Number) ce.literal).longValue());
+    }
+  }
 }
