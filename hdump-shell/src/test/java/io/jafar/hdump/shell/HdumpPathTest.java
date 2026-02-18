@@ -262,6 +262,24 @@ class HdumpPathTest {
   }
 
   @Test
+  void testSingleQuotesAreRawStrings() {
+    // Single quotes should preserve backslashes literally (raw string)
+    Query q = HdumpPathParser.parse("objects[className ~ '.*\\.HashMap']");
+    HdumpPath.ExprPredicate pred = (HdumpPath.ExprPredicate) q.predicates().get(0);
+    HdumpPath.CompExpr comp = (HdumpPath.CompExpr) pred.expr();
+    assertEquals(".*\\.HashMap", comp.literal().toString());
+  }
+
+  @Test
+  void testDoubleQuotesProcessEscapes() {
+    // Double quotes should process escape sequences
+    Query q = HdumpPathParser.parse("objects[className ~ \".*\\.HashMap\"]");
+    HdumpPath.ExprPredicate pred = (HdumpPath.ExprPredicate) q.predicates().get(0);
+    HdumpPath.CompExpr comp = (HdumpPath.CompExpr) pred.expr();
+    assertEquals(".*.HashMap", comp.literal().toString());
+  }
+
+  @Test
   void testValueExprEvaluation() {
     Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
 

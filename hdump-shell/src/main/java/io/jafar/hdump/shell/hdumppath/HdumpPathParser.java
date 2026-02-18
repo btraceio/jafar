@@ -353,23 +353,35 @@ public final class HdumpPathParser {
 
   private String parseStringLiteral() {
     char quote = advance();
+    boolean isRaw = (quote == '\''); // Single quotes = raw string (backslashes literal)
     StringBuilder sb = new StringBuilder();
 
     while (!isAtEnd() && peek() != quote) {
       if (peek() == '\\') {
         advance(); // consume backslash
         if (!isAtEnd()) {
-          char escaped = advance();
-          sb.append(
-              switch (escaped) {
-                case 'n' -> '\n';
-                case 'r' -> '\r';
-                case 't' -> '\t';
-                case '\\' -> '\\';
-                case '"' -> '"';
-                case '\'' -> '\'';
-                default -> escaped;
-              });
+          if (isRaw) {
+            // Raw strings: only process \' to allow embedded single quotes
+            char next = advance();
+            if (next == '\'') {
+              sb.append('\'');
+            } else {
+              sb.append('\\');
+              sb.append(next);
+            }
+          } else {
+            // Double-quoted strings: process escape sequences
+            char escaped = advance();
+            sb.append(
+                switch (escaped) {
+                  case 'n' -> '\n';
+                  case 'r' -> '\r';
+                  case 't' -> '\t';
+                  case '\\' -> '\\';
+                  case '"' -> '"';
+                  default -> escaped;
+                });
+          }
         }
       } else {
         sb.append(advance());

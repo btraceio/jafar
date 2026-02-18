@@ -153,6 +153,19 @@ objects/[Ljava.lang.Object;[retained > 100MB] | pathToRoot
 | `short`   | `S`  |
 | `byte`    | `B`  |
 
+## String Literals
+
+HdumpPath supports two quote styles with different semantics:
+
+- **Double quotes (`"..."`)** — escape sequences processed: `\n`, `\t`, `\\`, `\"`
+- **Single quotes (`'...'`)** — raw strings: backslashes are literal (only `\'` escapes)
+
+Use single quotes for regex patterns to avoid double-escaping:
+```
+objects[className ~ '.*\.HashMap']        # Raw: backslash preserved for regex
+objects[className ~ ".*\\.HashMap"]       # Escaped: need \\\\ for literal backslash
+```
+
 ## Predicates (Filters)
 
 Predicates filter results using conditions in square brackets.
