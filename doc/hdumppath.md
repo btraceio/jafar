@@ -205,6 +205,25 @@ Combine conditions with `and`, `or`, `not`:
 [(shallow > 1MB) or (instanceCount > 1000)]
 ```
 
+### Filter Functions
+Use function-style predicates for string matching and range checks:
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `contains(field, "str")` | Substring match | `[contains(className, "HashMap")]` |
+| `startsWith(field, "prefix")` | Prefix match | `[startsWith(className, "java/util")]` |
+| `endsWith(field, "suffix")` | Suffix match | `[endsWith(className, "Map")]` |
+| `matches(field, 'regex')` | Regex match | `[matches(className, '.*Cache.*')]` |
+| `between(field, min, max)` | Range check (inclusive) | `[between(shallow, 1KB, 1MB)]` |
+| `exists(field)` | Field is non-null | `[exists(stringValue)]` |
+| `empty(field)` | Field is null or empty | `[empty(stringValue)]` |
+
+Filter functions can be combined with boolean operators:
+```
+objects[contains(className, "Map") and shallow > 1KB]
+objects[startsWith(className, "java/util") or startsWith(className, "java/lang")]
+```
+
 ### Examples
 ```
 # Large strings

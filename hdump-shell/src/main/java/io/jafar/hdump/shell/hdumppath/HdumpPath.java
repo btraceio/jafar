@@ -107,10 +107,17 @@ public final class HdumpPath {
   // === Boolean expressions ===
 
   /** Boolean expression hierarchy for complex filters. */
-  public sealed interface BoolExpr permits CompExpr, LogicalExpr, NotExpr {}
+  public sealed interface BoolExpr permits CompExpr, FuncExpr, LogicalExpr, NotExpr {}
 
   /** Comparison expression: path op literal */
   public record CompExpr(List<String> fieldPath, Op op, Object literal) implements BoolExpr {}
+
+  /** Function predicate: contains(field, "str"), startsWith(field, "prefix"), etc. */
+  public record FuncExpr(String name, List<Object> args) implements BoolExpr {
+    public FuncExpr {
+      args = List.copyOf(args);
+    }
+  }
 
   /** Logical expression combining two boolean expressions. */
   public record LogicalExpr(BoolExpr left, LogicalOp op, BoolExpr right) implements BoolExpr {}

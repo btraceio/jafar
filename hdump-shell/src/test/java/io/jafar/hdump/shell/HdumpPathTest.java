@@ -723,4 +723,73 @@ class HdumpPathTest {
     Query query = HdumpPathParser.parse("objects | ceil(retained)");
     assertInstanceOf(HdumpPath.CeilOp.class, query.pipeline().get(0));
   }
+
+  @Test
+  void testParseContainsPredicate() {
+    Query query = HdumpPathParser.parse("objects[contains(className, \"HashMap\")]");
+    assertEquals(1, query.predicates().size());
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    assertInstanceOf(HdumpPath.FuncExpr.class, ep.expr());
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("contains", fe.name());
+    assertEquals(2, fe.args().size());
+    assertEquals("className", fe.args().get(0));
+    assertEquals("HashMap", fe.args().get(1));
+  }
+
+  @Test
+  void testParseStartsWithPredicate() {
+    Query query = HdumpPathParser.parse("objects[startsWith(className, \"java/util\")]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("startswith", fe.name());
+  }
+
+  @Test
+  void testParseEndsWithPredicate() {
+    Query query = HdumpPathParser.parse("objects[endsWith(className, \"Map\")]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("endswith", fe.name());
+  }
+
+  @Test
+  void testParseMatchesPredicate() {
+    Query query = HdumpPathParser.parse("objects[matches(className, '.*HashMap.*')]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("matches", fe.name());
+    assertEquals("className", fe.args().get(0));
+    assertEquals(".*HashMap.*", fe.args().get(1));
+  }
+
+  @Test
+  void testParseBetweenPredicate() {
+    Query query = HdumpPathParser.parse("objects[between(shallow, 100, 1000)]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("between", fe.name());
+    assertEquals(3, fe.args().size());
+    assertEquals("shallow", fe.args().get(0));
+  }
+
+  @Test
+  void testParseExistsPredicate() {
+    Query query = HdumpPathParser.parse("objects[exists(stringValue)]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    var fe = (HdumpPath.FuncExpr) ep.expr();
+    assertEquals("exists", fe.name());
+    assertEquals(1, fe.args().size());
+  }
+
+  @Test
+  void testParseFuncPredicateWithLogical() {
+    Query query =
+        HdumpPathParser.parse("objects[contains(className, \"Map\") and shallow > 100]");
+    var ep = (HdumpPath.ExprPredicate) query.predicates().get(0);
+    assertInstanceOf(HdumpPath.LogicalExpr.class, ep.expr());
+    var le = (HdumpPath.LogicalExpr) ep.expr();
+    assertInstanceOf(HdumpPath.FuncExpr.class, le.left());
+    assertInstanceOf(HdumpPath.CompExpr.class, le.right());
+  }
 }

@@ -1005,6 +1005,56 @@ public final class HdumpPathEvaluator {
         }
       }
       case NotExpr ne -> !evaluateBoolExpr(map, ne.inner());
+      case FuncExpr fe -> evaluateFuncExpr(map, fe);
+    };
+  }
+
+  private static boolean evaluateFuncExpr(Map<String, Object> map, FuncExpr fe) {
+    List<Object> args = fe.args();
+    return switch (fe.name()) {
+      case "contains" -> {
+        if (args.size() < 2) throw new IllegalArgumentException("contains() requires 2 arguments");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val != null && String.valueOf(val).contains(String.valueOf(args.get(1)));
+      }
+      case "startswith" -> {
+        if (args.size() < 2)
+          throw new IllegalArgumentException("startsWith() requires 2 arguments");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val != null && String.valueOf(val).startsWith(String.valueOf(args.get(1)));
+      }
+      case "endswith" -> {
+        if (args.size() < 2) throw new IllegalArgumentException("endsWith() requires 2 arguments");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val != null && String.valueOf(val).endsWith(String.valueOf(args.get(1)));
+      }
+      case "matches" -> {
+        if (args.size() < 2) throw new IllegalArgumentException("matches() requires 2 arguments");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val != null && String.valueOf(val).matches(String.valueOf(args.get(1)));
+      }
+      case "between" -> {
+        if (args.size() < 3) throw new IllegalArgumentException("between() requires 3 arguments");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        if (val instanceof Number num) {
+          double v = num.doubleValue();
+          double min = ((Number) args.get(1)).doubleValue();
+          double max = ((Number) args.get(2)).doubleValue();
+          yield v >= min && v <= max;
+        }
+        yield false;
+      }
+      case "exists" -> {
+        if (args.isEmpty()) throw new IllegalArgumentException("exists() requires 1 argument");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val != null;
+      }
+      case "empty" -> {
+        if (args.isEmpty()) throw new IllegalArgumentException("empty() requires 1 argument");
+        Object val = extractFieldValue(map, List.of(String.valueOf(args.get(0))));
+        yield val == null || String.valueOf(val).isEmpty();
+      }
+      default -> throw new IllegalArgumentException("Unknown filter function: " + fe.name());
     };
   }
 

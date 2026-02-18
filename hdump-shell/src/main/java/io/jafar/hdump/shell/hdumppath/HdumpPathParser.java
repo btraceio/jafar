@@ -279,7 +279,36 @@ public final class HdumpPathParser {
       return expr;
     }
 
-    // Parse comparison: fieldPath op literal
+    // Check if this is a function call: identifier followed by '('
+    int saved = pos;
+    String ident = parseIdentifier();
+    skipWs();
+    if (peek() == '(') {
+      // Function predicate: contains(field, "str"), startsWith(...), etc.
+      advance(); // consume '('
+      List<Object> args = new ArrayList<>();
+      skipWs();
+      while (peek() != ')') {
+        if (!args.isEmpty()) {
+          expect(',');
+          skipWs();
+        }
+        if (peek() == '"' || peek() == '\'') {
+          args.add(parseStringLiteral());
+        } else if (Character.isDigit(peek()) || peek() == '-') {
+          args.add(parseLiteral());
+        } else {
+          // Field name as argument
+          args.add(parseIdentifier());
+        }
+        skipWs();
+      }
+      expect(')');
+      return new FuncExpr(ident.toLowerCase(), args);
+    }
+
+    // Not a function — backtrack and parse as comparison: fieldPath op literal
+    pos = saved;
     List<String> fieldPath = parseFieldPath();
     skipWs();
     Op op = parseOp();
