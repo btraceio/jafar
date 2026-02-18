@@ -491,9 +491,31 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
+    // Extract --limit and --format flags from query string
+    Integer limit = null;
+    String format = ref.outputFormat;
+    String cleanQuery = query;
+
+    java.util.regex.Matcher limitMatcher =
+        java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(cleanQuery);
+    if (limitMatcher.find()) {
+      limit = Integer.parseInt(limitMatcher.group(1));
+      cleanQuery = limitMatcher.replaceFirst("").trim();
+    }
+
+    java.util.regex.Matcher formatMatcher =
+        java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(cleanQuery);
+    if (formatMatcher.find()) {
+      format = formatMatcher.group(1).toLowerCase();
+      cleanQuery = formatMatcher.replaceFirst("").trim();
+    }
+
     try {
-      Object result = evaluator.evaluate(ref.session, query);
-      printResult(result);
+      Object result = evaluator.evaluate(ref.session, cleanQuery);
+      if (limit != null && result instanceof List<?> list) {
+        result = list.subList(0, Math.min(limit, list.size()));
+      }
+      printResult(result, format);
     } catch (Exception e) {
       terminal.writer().println("Query error: " + e.getMessage());
       e.printStackTrace();
@@ -502,33 +524,118 @@ public final class Shell implements AutoCloseable {
   }
 
   private void printResult(Object result) {
+    printResult(result, "table");
+  }
+
+  private void printResult(Object result, String format) {
     if (result instanceof List<?> list) {
-      boolean isInteractive = System.console() != null;
-      int maxRows = Integer.MAX_VALUE;
+      if ("json".equalsIgnoreCase(format)) {
+        terminal.writer().println(toJson(result, 0));
+      } else if ("csv".equalsIgnoreCase(format)) {
+        printCsv(list);
+      } else {
+        boolean isInteractive = System.console() != null;
+        int maxRows = Integer.MAX_VALUE;
 
-      if (isInteractive) {
-        // Detect terminal height and reserve lines for header + summary message
-        try {
-          int termHeight = terminal.getHeight();
-          if (termHeight > 0) {
-            // Reserve 10 lines: header line + summary message + prompt + margin
-            maxRows = Math.max(10, termHeight - 10);
-          } else {
-            maxRows = 50; // Fallback if height detection fails
+        if (isInteractive) {
+          try {
+            int termHeight = terminal.getHeight();
+            if (termHeight > 0) {
+              maxRows = Math.max(10, termHeight - 10);
+            } else {
+              maxRows = 50;
+            }
+          } catch (Exception e) {
+            maxRows = 50;
           }
-        } catch (Exception e) {
-          maxRows = 50; // Fallback on error
         }
-      }
 
-      String formatted = TableFormatter.formatTable(list, maxRows);
-      terminal.writer().print(formatted);
+        String formatted = TableFormatter.formatTable(list, maxRows);
+        terminal.writer().print(formatted);
+      }
     } else if (result instanceof Number) {
       terminal.writer().println(result);
     } else {
       terminal.writer().println("Result: " + result);
     }
     terminal.flush();
+  }
+
+  @SuppressWarnings("unchecked")
+  private void printCsv(List<?> rows) {
+    if (rows.isEmpty()) {
+      terminal.writer().println("(no rows)");
+      return;
+    }
+    if (!(rows.get(0) instanceof Map)) {
+      for (Object v : rows) terminal.writer().println(escapeCsv(String.valueOf(v)));
+      return;
+    }
+    var mapRows = (List<Map<String, Object>>) rows;
+    var cols = new java.util.LinkedHashSet<String>();
+    for (var row : mapRows) cols.addAll(row.keySet());
+    var headers = new ArrayList<>(cols);
+    terminal.writer().println(String.join(",", headers));
+    for (var row : mapRows) {
+      var sb = new StringBuilder();
+      for (int i = 0; i < headers.size(); i++) {
+        if (i > 0) sb.append(',');
+        sb.append(escapeCsv(String.valueOf(row.getOrDefault(headers.get(i), ""))));
+      }
+      terminal.writer().println(sb);
+    }
+  }
+
+  private static String escapeCsv(String s) {
+    if (s.contains(",") || s.contains("\"") || s.contains("\n")) {
+      return '"' + s.replace("\"", "\"\"") + '"';
+    }
+    return s;
+  }
+
+  private static String toJson(Object obj, int indent) {
+    String ind = "  ".repeat(indent);
+    if (obj == null) return "null";
+    if (obj instanceof String s) return '"' + escapeJson(s) + '"';
+    if (obj instanceof Number || obj instanceof Boolean) return String.valueOf(obj);
+    if (obj instanceof Map<?, ?> m) {
+      var sb = new StringBuilder("{\n");
+      boolean first = true;
+      for (var e : m.entrySet()) {
+        if (!first) sb.append(",\n");
+        first = false;
+        sb.append(ind).append("  \"").append(escapeJson(String.valueOf(e.getKey())))
+            .append("\": ").append(toJson(e.getValue(), indent + 1));
+      }
+      return sb.append("\n").append(ind).append("}").toString();
+    }
+    if (obj instanceof Iterable<?> coll) {
+      var sb = new StringBuilder("[\n");
+      boolean first = true;
+      for (Object v : coll) {
+        if (!first) sb.append(",\n");
+        first = false;
+        sb.append(ind).append("  ").append(toJson(v, indent + 1));
+      }
+      return sb.append("\n").append(ind).append("]").toString();
+    }
+    return '"' + escapeJson(String.valueOf(obj)) + '"';
+  }
+
+  private static String escapeJson(String s) {
+    var sb = new StringBuilder();
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      switch (c) {
+        case '"' -> sb.append("\\\"");
+        case '\\' -> sb.append("\\\\");
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        default -> { if (c < 0x20) sb.append(String.format("\\u%04x", (int) c)); else sb.append(c); }
+      }
+    }
+    return sb.toString();
   }
 
   private void printBanner() {

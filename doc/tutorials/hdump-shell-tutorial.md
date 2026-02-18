@@ -442,6 +442,12 @@ jfr> objects/java.lang.String | count
 ```bash
 # Export to JSON for external tools
 jfr> objects | groupBy(class, agg=count) | top(100, count) --format json > classes.json
+
+# CSV output
+jfr> classes | top(20, instanceCount) --format csv > top-classes.csv
+
+# Limit output rows
+jfr> objects | top(100, shallow) --limit 10
 ```
 
 ## Tips and Best Practices

@@ -176,6 +176,25 @@ jfr> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
 jfr> objects/java.lang.String | count
 ```
 
+## Output Options
+
+### Limit Results
+```bash
+jfr> objects | top(10, shallow) --limit 5
+```
+
+### Output Formats
+```bash
+# Table (default)
+jfr> objects | top(10, shallow)
+
+# JSON
+jfr> objects | top(10, shallow) --format json
+
+# CSV
+jfr> objects | top(10, shallow) --format csv
+```
+
 ## Next Steps
 
 - [Full Tutorial](tutorials/hdump-shell-tutorial.md) - Complete heap dump analysis guide
