@@ -40,6 +40,8 @@ public final class DominatorTreeComputer {
 
   private static final Logger LOG = LoggerFactory.getLogger(DominatorTreeComputer.class);
   private static final long UNDEFINED = -1;
+  /** Synthetic node ID that acts as the unique entry dominating all GC roots. */
+  private static final long VIRTUAL_ROOT = Long.MIN_VALUE;
 
   private DominatorTreeComputer() {}
 
@@ -73,6 +75,11 @@ public final class DominatorTreeComputer {
     List<Long> rpo = buildReversePostOrder(objectsById, gcRoots);
     LOG.debug("Built RPO with {} reachable objects", rpo.size());
 
+    // Prepend virtual root at position 0 so all GC roots share a common dominator.
+    // Without this, intersect(root1, root2) has no common ancestor and the iteration
+    // oscillates instead of converging for nodes reachable from multiple GC roots.
+    rpo.add(0, VIRTUAL_ROOT);
+
     // Build RPO index map once (reused millions of times in intersect())
     Long2IntOpenHashMap rpoIndex = new Long2IntOpenHashMap(rpo.size());
     rpoIndex.defaultReturnValue(-1);
@@ -91,17 +98,24 @@ public final class DominatorTreeComputer {
     Long2LongOpenHashMap idom = new Long2LongOpenHashMap(rpo.size());
     idom.defaultReturnValue(UNDEFINED);
 
-    // Initialize: GC roots dominate themselves
+    // Virtual root dominates itself; all GC roots are dominated by the virtual root.
+    idom.put(VIRTUAL_ROOT, VIRTUAL_ROOT);
     LongOpenHashSet rootIds = new LongOpenHashSet();
     for (GcRoot root : gcRoots) {
       rootIds.add(root.getObjectId());
-      idom.put(root.getObjectId(), root.getObjectId());
+      idom.put(root.getObjectId(), VIRTUAL_ROOT);
     }
 
-    // Iterate until fixed point with convergence-based progress tracking
+    // Iterate until fixed point with convergence-based progress tracking.
+    // Stagnation guard: if changeCount stops decreasing for STAGNATION_PATIENCE consecutive
+    // iterations it means we are stuck in a flip-flop cycle (common when the reference graph
+    // has cycles that prevent the RPO from being a perfect topological order).
+    // For heap analysis, the handful of affected nodes is negligible.
+    final int STAGNATION_PATIENCE = 20;
     boolean changed = true;
     int iteration = 0;
     int lastChangeCount = Integer.MAX_VALUE;
+    int stagnantIterations = 0;
     long totalIterationTime = 0;
 
     while (changed) {
@@ -194,8 +208,27 @@ public final class DominatorTreeComputer {
                 "Computing dominators (iteration %d, %d changes, %dms)...",
                 iteration, changeCount, iterationElapsed));
 
-        lastChangeCount = changeCount;
       }
+
+      // Stagnation guard: stop if changeCount has not decreased for STAGNATION_PATIENCE
+      // consecutive iterations. This handles flip-flop cycles caused by cyclic reference graphs
+      // where a handful of nodes oscillate indefinitely. The result is approximate but
+      // negligibly so relative to heap size.
+      if (changeCount > 0 && changeCount >= lastChangeCount) {
+        stagnantIterations++;
+        if (stagnantIterations >= STAGNATION_PATIENCE) {
+          String msg = String.format(
+              "⚠ Dominator computation stagnated at %d change(s) after %d iterations "
+                  + "— stopping early (result is approximate, %d node(s) may have incorrect idom)",
+              changeCount, iteration, changeCount);
+          LOG.warn(msg);
+          System.err.println(msg);
+          changed = false;
+        }
+      } else {
+        stagnantIterations = 0;
+      }
+      lastChangeCount = changeCount;
     }
 
     LOG.debug(
@@ -210,19 +243,20 @@ public final class DominatorTreeComputer {
       progressCallback.onProgress(0.7, "Computing retained sizes...");
     }
 
-    // Step 4: Set immediate dominators on objects and build dominator children map
+    // Step 4: Set immediate dominators on objects and build dominator children map.
+    // Skip the virtual root — it has no corresponding heap object.
     Map<Long, LongArrayList> dominatorChildren = new HashMap<>();
     for (long nodeId : rpo) {
+      if (nodeId == VIRTUAL_ROOT) continue;
       long idomId = idom.get(nodeId);
-      if (idomId != UNDEFINED && idomId != nodeId) {
-        HeapObjectImpl obj = objectsById.get(nodeId);
-        HeapObjectImpl dominator = objectsById.get(idomId);
-        if (obj != null && dominator != null) {
-          obj.setDominator(dominator);
-        }
-        // Build children map for efficient retained size computation
-        dominatorChildren.computeIfAbsent(idomId, k -> new LongArrayList()).add(nodeId);
+      if (idomId == UNDEFINED || idomId == VIRTUAL_ROOT || idomId == nodeId) continue;
+      HeapObjectImpl obj = objectsById.get(nodeId);
+      HeapObjectImpl dominator = objectsById.get(idomId);
+      if (obj != null && dominator != null) {
+        obj.setDominator(dominator);
       }
+      // Build children map for efficient retained size computation
+      dominatorChildren.computeIfAbsent(idomId, k -> new LongArrayList()).add(nodeId);
     }
 
     if (progressCallback != null) {
@@ -265,31 +299,20 @@ public final class DominatorTreeComputer {
     while (b1 != b2) {
       int pos1 = rpoIndex.get(b1);
       int pos2 = rpoIndex.get(b2);
+      if (pos1 < 0 || pos2 < 0) return UNDEFINED;
 
       while (pos1 > pos2) {
-        long prevB1 = b1;
         b1 = idom.get(b1);
         if (b1 == UNDEFINED) return UNDEFINED;
-
-        // If b1 dominates itself (GC root), we've reached the top
-        if (b1 == prevB1) {
-          return b1; // GC root is the common dominator
-        }
-
         pos1 = rpoIndex.get(b1);
+        if (pos1 < 0) return UNDEFINED;
       }
 
       while (pos2 > pos1) {
-        long prevB2 = b2;
         b2 = idom.get(b2);
         if (b2 == UNDEFINED) return UNDEFINED;
-
-        // If b2 dominates itself (GC root), we've reached the top
-        if (b2 == prevB2) {
-          return b2; // GC root is the common dominator
-        }
-
         pos2 = rpoIndex.get(b2);
+        if (pos2 < 0) return UNDEFINED;
       }
     }
     return b1;

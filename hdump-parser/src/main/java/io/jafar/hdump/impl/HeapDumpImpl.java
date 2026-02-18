@@ -2423,7 +2423,10 @@ public final class HeapDumpImpl implements HeapDump {
 
     List<HeapObject> dominated = new ArrayList<>(childrenIds.size());
     for (Long childId : childrenIds) {
-      HeapObjectImpl obj = getCachedObject(childId);
+      // Use getObjectByIdInternal so indexed-mode objects are loaded from disk if not in LRU cache.
+      // getCachedObject() only returns objects already in memory, leaving the list empty for any
+      // child that was evicted, which causes dominatedCount=0 even when retainedSize > 0.
+      HeapObjectImpl obj = getObjectByIdInternal(childId);
       if (obj != null) {
         dominated.add(obj);
       }
