@@ -527,3 +527,10 @@ classes[instanceCount > 1000]
 5. **Use size units**: `1MB` is more readable than `1048576`.
 
 6. **Pipeline efficiently**: Apply filters early to reduce data volume.
+
+## See Also
+
+- [JfrPath Reference](jfrpath.md) — Query language for JFR event analysis (same shell, similar syntax)
+- [Heap Dump Quick Start](hdump-shell-quickstart.md) — Get started in 5 minutes
+- [Heap Dump Tutorial](tutorials/hdump-shell-tutorial.md) — Full analysis guide
+- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) — JFR analysis tutorial

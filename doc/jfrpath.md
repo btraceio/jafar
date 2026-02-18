@@ -988,3 +988,10 @@ All non-interactive commands:
 - Execute without prompts (suitable for CI/scripting)
 
 See `jfr-shell --help` and `jfr-shell <command> --help` for full options.
+
+## See Also
+
+- [HdumpPath Reference](hdumppath.md) — Query language for heap dump analysis (same shell, similar syntax)
+- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) — Interactive tutorial
+- [Heap Dump Tutorial](tutorials/hdump-shell-tutorial.md) — Heap dump analysis tutorial
+- [JFR Shell Usage](jfr_shell_usage.md) — Command reference

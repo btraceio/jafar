@@ -1161,6 +1161,7 @@ jfr> show events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | 
 - Explore the [Untyped API](untyped-api-tutorial.md) for flexible parsing
 - Read [JfrPath Reference](jfrpath.md) for complete syntax
 - Check [PERFORMANCE.md](../PERFORMANCE.md) for optimization tips
+- Try [Heap Dump Analysis](hdump-shell-tutorial.md) for memory analysis (same shell!)
 
 ## Related Documentation
 
@@ -1168,3 +1169,5 @@ jfr> show events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | 
 - [JfrPath Grammar](jfrpath.md) - Complete syntax reference
 - [JFR Shell Usage](jfr_shell_usage.md) - Command reference
 - [JBang Usage](jbang-usage.md) - JBang installation guide
+- [HdumpPath Reference](../hdumppath.md) - Heap dump query language reference
+- [Heap Dump Quick Start](../hdump-shell-quickstart.md) - Heap dump analysis quick start
