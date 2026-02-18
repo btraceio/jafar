@@ -26,4 +26,14 @@ public interface ParserContextFactory {
    * @return a new parser context
    */
   ParserContext newContext(ParserContext parent, int chunkIndex);
+
+  /**
+   * Called by the parser after chunk metadata has been loaded, allowing the factory to perform
+   * post-metadata initialization (e.g. resolving deserializer caches) without the parser needing to
+   * know about implementation details.
+   *
+   * @param context the current parser context for the chunk
+   * @param header the chunk header
+   */
+  default void onChunkMetadata(ParserContext context, ChunkHeader header) {}
 }

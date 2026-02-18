@@ -1,6 +1,7 @@
 package io.jafar.parser.impl;
 
 import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.DeserializerCache;
 import io.jafar.parser.internal_api.GlobalHandlerCache;
 import io.jafar.parser.internal_api.MutableConstantPools;
@@ -67,6 +68,16 @@ public final class TypedParserContextFactory implements ParserContextFactory {
     // Cache will be resolved after metadata load
     return new TypedParserContext(
         lazyParent.getTypeFilter(), chunkIndex, metadataLookup, constantPools, null, this);
+  }
+
+  @Override
+  public void onChunkMetadata(ParserContext context, ChunkHeader header) {
+    if (context instanceof TypedParserContext) {
+      TypedParserContext typedCtx = (TypedParserContext) context;
+      if (typedCtx.getDeserializerCache() == null) {
+        resolveDeserializerCache(header.order, typedCtx.getMetadataLookup(), typedCtx);
+      }
+    }
   }
 
   /**
