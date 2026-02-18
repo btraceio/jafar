@@ -287,4 +287,50 @@ class JfrPathParserTest {
     var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
     assertEquals("timerange(startTime, duration=dur)", op.toString());
   }
+
+  @Test
+  void parsesGroupBySortByParam() {
+    var q =
+        JfrPathParser.parse("events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)");
+    assertEquals(1, q.pipeline.size());
+    var gb = (JfrPath.GroupByOp) q.pipeline.get(0);
+    assertEquals("value", gb.sortBy);
+  }
+
+  @Test
+  void parsesGroupBySortParam() {
+    var q =
+        JfrPathParser.parse("events/jdk.ExecutionSample | groupBy(thread/name, sort=key)");
+    assertEquals(1, q.pipeline.size());
+    var gb = (JfrPath.GroupByOp) q.pipeline.get(0);
+    assertEquals("key", gb.sortBy);
+  }
+
+  @Test
+  void parsesTopWithNamedParams() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(10, by=bytes, asc=true)");
+    assertEquals(1, q.pipeline.size());
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(10, top.n);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertTrue(top.ascending);
+  }
+
+  @Test
+  void parsesTopWithPositionalFieldAndBareKeyword() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(5, bytes, desc)");
+    assertEquals(1, q.pipeline.size());
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(5, top.n);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertFalse(top.ascending);
+  }
+
+  @Test
+  void parsesTopWithPositionalFieldAsc() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(5, bytes, asc)");
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertTrue(top.ascending);
+  }
 }

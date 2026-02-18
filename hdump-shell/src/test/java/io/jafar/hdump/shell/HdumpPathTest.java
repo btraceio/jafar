@@ -225,6 +225,33 @@ class HdumpPathTest {
   }
 
   @Test
+  void testParseTopWithNamedParams() {
+    // by= named param style (JfrPath-compatible)
+    Query byQuery = HdumpPathParser.parse("objects | top(10, by=shallow)");
+    HdumpPath.TopOp byOp = (HdumpPath.TopOp) byQuery.pipeline().get(0);
+    assertEquals(10, byOp.n());
+    assertEquals("shallow", byOp.orderBy());
+    assertTrue(byOp.descending()); // default
+
+    // by= with asc=true
+    Query ascQuery = HdumpPathParser.parse("objects | top(5, by=retained, asc=true)");
+    HdumpPath.TopOp ascOp = (HdumpPath.TopOp) ascQuery.pipeline().get(0);
+    assertEquals(5, ascOp.n());
+    assertEquals("retained", ascOp.orderBy());
+    assertFalse(ascOp.descending());
+  }
+
+  @Test
+  void testParseTopPositionalStyle() {
+    // Existing positional style still works
+    Query q = HdumpPathParser.parse("objects | top(10, shallow, asc)");
+    HdumpPath.TopOp op = (HdumpPath.TopOp) q.pipeline().get(0);
+    assertEquals(10, op.n());
+    assertEquals("shallow", op.orderBy());
+    assertFalse(op.descending());
+  }
+
+  @Test
   void testValueExprEvaluation() {
     Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
 
@@ -466,5 +493,139 @@ class HdumpPathTest {
 
     System.out.println("\n=== Large Strings (>100 bytes) ===");
     System.out.printf("  Count: %,d%n", ((Number) results.get(0).get("count")).intValue());
+  }
+
+  // === RetentionPaths parser tests ===
+
+  @Test
+  void testRetentionPathsNoArgs() {
+    Query query = HdumpPathParser.parse("objects | retentionPaths()");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.RetentionPathsOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testRetentionPathsNoParens() {
+    Query query = HdumpPathParser.parse("objects/java.lang.String | retentionPaths");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.RetentionPathsOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testRetentionPathsAlias() {
+    Query query = HdumpPathParser.parse("objects | classPaths()");
+    assertInstanceOf(HdumpPath.RetentionPathsOp.class, query.pipeline().get(0));
+  }
+
+  // === RetainedBreakdown parser tests ===
+
+  @Test
+  void testRetainedBreakdownNoArgs() {
+    Query query = HdumpPathParser.parse("objects | retainedBreakdown()");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.RetainedBreakdownOp op = (HdumpPath.RetainedBreakdownOp) query.pipeline().get(0);
+    assertEquals(4, op.maxDepth()); // default
+  }
+
+  @Test
+  void testRetainedBreakdownNoParens() {
+    Query query = HdumpPathParser.parse("objects | retainedBreakdown");
+    assertInstanceOf(HdumpPath.RetainedBreakdownOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testRetainedBreakdownWithDepth() {
+    Query query = HdumpPathParser.parse("objects | retainedBreakdown(depth=6)");
+    HdumpPath.RetainedBreakdownOp op = (HdumpPath.RetainedBreakdownOp) query.pipeline().get(0);
+    assertEquals(6, op.maxDepth());
+  }
+
+  @Test
+  void testRetainedBreakdownWithPositionalDepth() {
+    Query query = HdumpPathParser.parse("objects | retainedBreakdown(3)");
+    HdumpPath.RetainedBreakdownOp op = (HdumpPath.RetainedBreakdownOp) query.pipeline().get(0);
+    assertEquals(3, op.maxDepth());
+  }
+
+  @Test
+  void testRetainedBreakdownAlias() {
+    Query query = HdumpPathParser.parse("objects | breakdown()");
+    assertInstanceOf(HdumpPath.RetainedBreakdownOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testRetainedBreakdownFromClassesQuery() {
+    // Verify that the parser accepts retainedBreakdown after a classes/ root
+    Query query = HdumpPathParser.parse("classes/java.util.HashMap | retainedBreakdown()");
+    assertEquals(HdumpPath.Root.CLASSES, query.root());
+    assertEquals("java.util.HashMap", query.typePattern());
+    assertInstanceOf(HdumpPath.RetainedBreakdownOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testRetainedBreakdownFromClassesQueryWithPipeline() {
+    Query query = HdumpPathParser.parse(
+        "classes | top(5, instanceCount) | retainedBreakdown(depth=3)");
+    assertEquals(HdumpPath.Root.CLASSES, query.root());
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.TopOp.class, query.pipeline().get(0));
+    HdumpPath.RetainedBreakdownOp op = (HdumpPath.RetainedBreakdownOp) query.pipeline().get(1);
+    assertEquals(3, op.maxDepth());
+  }
+
+  // === Dominators parser tests ===
+
+  @Test
+  void testDominatorsNoArgs() {
+    Query query = HdumpPathParser.parse("objects | dominators()");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertNull(op.mode());
+    assertNull(op.groupBy());
+    assertEquals(1024 * 1024L, op.minRetained()); // default 1MB
+  }
+
+  @Test
+  void testDominatorsGroupByClass() {
+    Query query = HdumpPathParser.parse("objects | dominators(groupBy=\"class\")");
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertNull(op.mode());
+    assertEquals("class", op.groupBy());
+    assertEquals(0L, op.minRetained()); // groupBy default is 0
+  }
+
+  @Test
+  void testDominatorsGroupByPackage() {
+    Query query = HdumpPathParser.parse("objects | dominators(groupBy=\"package\")");
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertNull(op.mode());
+    assertEquals("package", op.groupBy());
+    assertEquals(0L, op.minRetained());
+  }
+
+  @Test
+  void testDominatorsGroupByWithMinRetained() {
+    Query query = HdumpPathParser.parse("objects | dominators(groupBy=\"class\", minRetained=5MB)");
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertEquals("class", op.groupBy());
+    assertEquals(5 * 1024 * 1024L, op.minRetained());
+  }
+
+  @Test
+  void testDominatorsTreeMode() {
+    Query query = HdumpPathParser.parse("objects | dominators(\"tree\")");
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertEquals("tree", op.mode());
+    assertNull(op.groupBy());
+    assertEquals(0L, op.minRetained());
+  }
+
+  @Test
+  void testDominatorsObjectsModeWithMinRetained() {
+    Query query = HdumpPathParser.parse("objects | dominators(\"objects\", minRetained=10MB)");
+    HdumpPath.DominatorsOp op = (HdumpPath.DominatorsOp) query.pipeline().get(0);
+    assertEquals("objects", op.mode());
+    assertNull(op.groupBy());
+    assertEquals(10 * 1024 * 1024L, op.minRetained());
   }
 }

@@ -322,7 +322,7 @@ events/jdk.FileRead | sketch(bytes)
 
 ### Group By
 ```
-| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
+| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy|sort=key|value, asc=false])
 ```
 
 Group results by key and apply aggregation function with optional sorting.
@@ -331,7 +331,7 @@ Group results by key and apply aggregation function with optional sorting.
 - `keyPath` - Field path to group by
 - `agg` - Aggregation function (default: `count`)
 - `value` - Value path for sum/avg/min/max
-- `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
+- `sortBy` (or `sort`) - Sort results by `key` (grouping key) or `value` (aggregated value)
 - `asc` - Sort ascending (default: `false`, descending)
 
 **Returns**: `{ "key": groupKey, "<agg>": result }`
@@ -378,21 +378,24 @@ events/jdk.FileRead | len(path) | sortBy(len)                          # Sort by
 
 ### Top
 ```
-| top(n[, by=path, asc=false])
+| top(n[, by=field|field, asc|desc])
 ```
 
-Sort and return top N rows.
+Sort and return top N rows. Accepts both named (`by=field, asc=true`) and positional (`field, asc`) styles.
 
 **Parameters**:
 - `n` - Number of results to return
-- `by` - Path to sort by (default: `value`)
-- `asc` - Sort ascending (default: `false`, descending)
+- `by` (or positional) - Field to sort by (default: `value`)
+- `asc`/`desc` (or `asc=true`/`asc=false`) - Sort direction (default: descending)
 
 **Examples**:
 ```
-events/jdk.FileRead | top(10, by=bytes)                   # Top 10 by bytes (descending)
+events/jdk.FileRead | top(10, by=bytes)                   # Named style
+events/jdk.FileRead | top(10, bytes)                      # Positional style (equivalent)
+events/jdk.FileRead | top(10, bytes, desc)                # Explicit descending
 events/jdk.FileRead/bytes | top(5)                         # Top 5 values
-events/jdk.FileRead | top(10, by=bytes, asc=true)         # Bottom 10 by bytes (ascending)
+events/jdk.FileRead | top(10, by=bytes, asc=true)         # Bottom 10 (named)
+events/jdk.FileRead | top(10, bytes, asc)                 # Bottom 10 (positional)
 ```
 
 ### Decorate By Time

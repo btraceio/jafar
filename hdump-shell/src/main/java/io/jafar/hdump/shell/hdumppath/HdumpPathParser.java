@@ -458,6 +458,11 @@ public final class HdumpPathParser {
       case "filter", "where" -> parseFilterOp();
       case "distinct", "unique" -> parseDistinctOp();
       case "pathtoroot", "pathroot", "path" -> parsePathToRootOp();
+      case "retentionpaths", "retentionpath", "classpaths", "classpathtoroot" -> {
+        consumeOptionalEmptyParens();
+        yield new RetentionPathsOp();
+      }
+      case "retainedbreakdown", "breakdown", "expanddominators" -> parseRetainedBreakdownOp();
       case "checkleaks", "leaks" -> parseCheckLeaksOp();
       case "dominators", "dominated" -> parseDominatorsOp();
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
@@ -496,19 +501,31 @@ public final class HdumpPathParser {
     boolean descending = true;
 
     skipWs();
-    if (matchChar(',')) {
+    // Parse optional field and sort direction — accepts both positional and named param styles
+    while (matchChar(',')) {
       skipWs();
-      orderBy = parseIdentifier();
-      skipWs();
-
-      if (matchChar(',')) {
+      if (lookahead("by=") || lookahead("by =")) {
+        matchKeyword("by");
         skipWs();
-        if (matchKeyword("asc")) {
-          descending = false;
-        } else if (matchKeyword("desc")) {
-          descending = true;
-        }
+        expect('=');
+        skipWs();
+        orderBy = parseIdentifier();
+      } else if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        descending = !("true".equals(ascValue) || "yes".equals(ascValue));
+      } else if (matchKeyword("asc")) {
+        descending = false;
+      } else if (matchKeyword("desc")) {
+        descending = true;
+      } else {
+        // Positional field name
+        orderBy = parseIdentifier();
       }
+      skipWs();
     }
 
     expect(')');
@@ -916,20 +933,62 @@ public final class HdumpPathParser {
   }
 
   private DominatorsOp parseDominatorsOp() {
-    // dominators accepts optional mode parameter
-    // Syntax: dominators() or dominators("byClass") or dominators("tree")
+    // Syntax: dominators()
+    //         | dominators("tree") | dominators("tree", minRetained=50MB)
+    //         | dominators(groupBy="class")
+    //         | dominators(groupBy="package", minRetained=10MB)
     skipWs();
     String mode = null;
+    String groupBy = null;
+    long minRetained = -1; // -1 = use record default
     if (peek() == '(') {
       advance();
       skipWs();
       if (peek() != ')') {
-        mode = parseStringOrIdentifier();
+        do {
+          skipWs();
+          if (lookahead("minRetained=") || lookahead("minretained=") || lookahead("min=")) {
+            while (peek() != '=') advance();
+            advance(); // consume '='
+            skipWs();
+            minRetained = parseNumber().longValue();
+          } else if (lookahead("groupBy=") || lookahead("groupby=")) {
+            while (peek() != '=') advance();
+            advance(); // consume '='
+            skipWs();
+            groupBy = parseStringOrIdentifier();
+          } else {
+            mode = parseStringOrIdentifier();
+          }
+          skipWs();
+        } while (matchChar(','));
       }
       skipWs();
       expect(')');
     }
-    return mode != null ? new DominatorsOp(mode) : new DominatorsOp();
+    long effectiveMin = minRetained < 0 ? (mode == null && groupBy == null ? 1024 * 1024L : 0L) : minRetained;
+    return new DominatorsOp(mode, groupBy, effectiveMin);
+  }
+
+  private RetainedBreakdownOp parseRetainedBreakdownOp() {
+    // Syntax: retainedBreakdown() | retainedBreakdown(depth=N) | retainedBreakdown(N)
+    skipWs();
+    int maxDepth = 4; // default
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      if (peek() != ')') {
+        if (lookahead("depth=") || lookahead("depth =")) {
+          while (peek() != '=') advance();
+          advance(); // consume '='
+          skipWs();
+        }
+        maxDepth = parseNumber().intValue();
+        skipWs();
+      }
+      expect(')');
+    }
+    return new RetainedBreakdownOp(maxDepth);
   }
 
   private String parseStringOrIdentifier() {

@@ -487,6 +487,12 @@ public final class JfrPathParser {
     return true;
   }
 
+  /** Returns true if position {@code idx} is at end-of-input or a non-identifier character. */
+  private boolean isWordBoundaryAt(int idx) {
+    return idx >= input.length()
+        || (!Character.isLetterOrDigit(input.charAt(idx)) && input.charAt(idx) != '_');
+  }
+
   private JfrPath.PipelineOp parsePipelineOp() {
     String name = readIdent().toLowerCase(Locale.ROOT);
     skipWs();
@@ -586,12 +592,12 @@ public final class JfrPathParser {
             if (valueExpr instanceof JfrPath.FieldRef fr) {
               aggValuePath = fr.fieldPath;
             }
-          } else if (startsWithIgnoreCase("sortBy=")) {
-            pos += 7;
+          } else if (startsWithIgnoreCase("sortBy=") || startsWithIgnoreCase("sort=")) {
+            pos += startsWithIgnoreCase("sortBy=") ? 7 : 5;
             skipWs();
             String sortVal = readIdent().toLowerCase(Locale.ROOT);
             if (!"key".equals(sortVal) && !"value".equals(sortVal)) {
-              throw error("sortBy= expects 'key' or 'value'");
+              throw error("sortBy=/sort= expects 'key' or 'value'");
             }
             sortBy = sortVal;
           } else if (startsWithIgnoreCase("asc=")) {
@@ -606,7 +612,7 @@ public final class JfrPathParser {
               throw error("asc= expects 'true' or 'false'");
             }
           } else {
-            throw error("groupBy() expects agg=, value=, sortBy=, or asc= parameters");
+            throw error("groupBy() expects agg=, value=, sortBy=/sort=, or asc= parameters");
           }
           skipWs();
         }
@@ -657,7 +663,7 @@ public final class JfrPathParser {
         if (!(lit instanceof Number)) throw error("top() expects numeric count");
         n = ((Number) lit).intValue();
         skipWs();
-        // Parse optional by= and asc= parameters
+        // Parse optional by=/asc= named params or positional field + asc/desc keywords
         while (peek() == ',') {
           pos++;
           skipWs();
@@ -670,8 +676,15 @@ public final class JfrPathParser {
             skipWs();
             Object boolLit = parseLiteral();
             ascending = Boolean.TRUE.equals(boolLit);
+          } else if (startsWithIgnoreCase("asc") && isWordBoundaryAt(pos + 3)) {
+            pos += 3;
+            ascending = true;
+          } else if (startsWithIgnoreCase("desc") && isWordBoundaryAt(pos + 4)) {
+            pos += 4;
+            ascending = false;
           } else {
-            throw error("top() expects by= or asc= parameters");
+            // Positional field name (HdumpPath-compatible syntax)
+            byPath = parsePathArg();
           }
           skipWs();
         }

@@ -224,12 +224,14 @@ objects | select(id, shallow as size)
 classes | select(name, instanceCount as count)
 ```
 
-### `top(n, field, [asc|desc])`
-Get top N results sorted by field. Default is descending.
+### `top(n, by=field|field, [asc|desc])`
+Get top N results sorted by field. Default is descending. Accepts both named (`by=field, asc=true`) and positional (`field, asc`) styles.
 
 ```
-objects | top(10, shallow)                 # Top 10 by shallow size (desc)
+objects | top(10, shallow)                 # Positional style
+objects | top(10, by=shallow)              # Named style (equivalent)
 objects | top(10, shallow, asc)            # Bottom 10 by shallow size
+objects | top(10, by=shallow, asc=true)    # Bottom 10 (named style)
 classes | top(5, instanceCount, desc)      # Top 5 by instance count
 ```
 
@@ -327,6 +329,95 @@ Get distinct values of a field.
 objects | distinct(class)                  # Unique class names
 gcroots | distinct(type)                   # Unique root types
 ```
+
+### `retentionPaths()`
+Find all paths to GC root for each input object, then merge them at the class level.
+Individual object IDs are discarded; identical class-level paths are counted together.
+
+Output columns: `count`, `depth`, `retainedSize`, `path` (class names from GC root to target, joined with ` → `), sorted by `count` descending.
+
+```
+# Which class chains retain the most ConcurrentHashMap instances?
+objects/java.util.concurrent.ConcurrentHashMap | retentionPaths()
+
+# Top 5 retention paths for large strings
+objects/java.lang.String[retained > 1MB] | retentionPaths() | head(5)
+```
+
+Aliases: `classPaths()`, `classPathToRoot()`.
+
+### `retainedBreakdown([depth=N])`
+Recursively expands the dominator subtrees of input objects and aggregates the size breakdown at
+the class level. Depth 0 = direct dominatees; depth 1 = their dominatees; and so on.
+
+Accepts both **object rows** (`objects/…`) and **class rows** (`classes/…`). When fed class rows,
+all instances of those classes are found automatically and used as the starting points.
+
+Requires the dominator tree to have been computed (run `dominators()` first, or any query that
+triggers computation).
+
+Output columns: `depth`, `className`, `count`, `shallowSize`, `retainedSize`.
+Rows are sorted by depth ascending then retainedSize descending.
+An ASCII tree is also printed to stderr for quick visual inspection.
+
+```
+# What does a large HashMap actually retain, level by level?
+objects/java.util.HashMap[retained > 10MB] | retainedBreakdown()
+
+# Same starting from a class query — all HashMap instances
+classes/java.util.HashMap | retainedBreakdown()
+
+# Top 5 classes by retained size: drill into each one
+classes | top(5, instanceCount) | retainedBreakdown(depth=3)
+
+# Limit to 3 levels and filter significant classes at depth 2
+objects/java.util.HashMap[retained > 10MB] | retainedBreakdown(depth=3) | filter(depth = 2) | top(5, retainedSize)
+```
+
+Aliases: `breakdown()`, `expandDominators()`.
+
+### `dominators([mode] [, groupBy="class"|"package"] [, minRetained=size])`
+Analyse retained memory using the dominator tree.
+
+**Default (no arguments):** top-10 input objects sorted by retained size (≥ 1 MB).
+
+```
+objects | dominators()
+```
+
+**`groupBy="class"`:** heap-wide retained-size histogram by class, ignoring the input stream.
+
+```
+objects | dominators(groupBy="class")
+objects | dominators(groupBy="class", minRetained=5MB)
+```
+
+Output columns: `className`, `count`, `shallowSize`, `retainedSize`.
+
+**`groupBy="package"`:** same histogram grouped by package name.
+
+```
+objects | dominators(groupBy="package")
+objects | dominators(groupBy="package", minRetained=10MB)
+```
+
+Output columns: `package`, `count`, `shallowSize`, `retainedSize`.
+
+**`"objects"`:** list dominated objects for each input object (expand the tree).
+
+```
+objects[retained > 100MB] | dominators("objects")
+objects[retained > 100MB] | dominators("objects", minRetained=1MB)
+```
+
+**`"tree"`:** print ASCII dominator tree to stderr and return summary rows.
+
+```
+objects[retained > 500MB] | dominators("tree")
+objects[retained > 500MB] | dominators("tree", minRetained=10MB)
+```
+
+**`minRetained`** accepts size suffixes: `1KB`, `10MB`, `1GB`.
 
 ## Complete Examples
 

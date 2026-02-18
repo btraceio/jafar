@@ -735,11 +735,11 @@ public class CommandDispatcher {
       io.println("    | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
       io.println("    | sketch([path])           → stats + p50,p90,p99");
       io.println(
-          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])");
+          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy|sort=key|value, asc=false])");
       io.println(
           "                                    → group by key and aggregate with optional sorting");
       io.println("    | sortBy(field[, asc=false])   → sort rows by field");
-      io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
+      io.println("    | top(n[, by=field|field, asc|desc]) → top N rows sorted by field");
       io.println(
           "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");
       io.println("  Field projection:");
