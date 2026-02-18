@@ -478,6 +478,37 @@ jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, field
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
+## MCP Server
+
+JAFAR includes an MCP (Model Context Protocol) server that enables AI agents like Claude to analyze JFR recordings. See **[jfr-mcp/README.md](jfr-mcp/README.md)** for details.
+
+### Quick Install
+
+```bash
+curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | bash
+```
+
+This installs [JBang](https://www.jbang.dev) (if needed) and the `jfr-mcp` command in one step.
+
+### Claude Code
+
+```bash
+claude mcp add jafar -- jbang jfr-mcp@btraceio --stdio
+```
+
+### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "jafar": {
+      "command": "jbang",
+      "args": ["jfr-mcp@btraceio", "--stdio"]
+    }
+  }
+}
+```
+
 ## Documentation
 
 ### JFR Shell
@@ -490,6 +521,11 @@ See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-jo
 - **[doc/cli/JFRPath.md](doc/cli/JFRPath.md)** - JfrPath query language reference
 - **[doc/cli/Backends.md](doc/cli/Backends.md)** - Backend plugin guide and TCK (Technology Compatibility Kit)
 - **[doc/cli/BackendQuickstart.md](doc/cli/BackendQuickstart.md)** - Build a custom backend in 10 minutes
+
+### MCP Server
+- **[jfr-mcp/README.md](jfr-mcp/README.md)** - MCP server overview and quick install
+- **[doc/mcp/Tutorial.md](doc/mcp/Tutorial.md)** - Full MCP server tutorial
+- **[doc/mcp/JBANGUsage.md](doc/mcp/JBANGUsage.md)** - JBang installation and usage
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes

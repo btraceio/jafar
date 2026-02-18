@@ -1,8 +1,6 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.impl.TypedParserContext;
-import io.jafar.parser.impl.TypedParserContextFactory;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.EOFException;
 import java.io.IOException;
@@ -199,15 +197,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     MetadataEvent m = new MetadataEvent(stream, forceConstantPools);
 
     ParserContext ctx = stream.getContext();
-
-    // Resolve deserializer cache via factory if this is a typed context
-    if (ctx instanceof TypedParserContext) {
-      TypedParserContext typedCtx = (TypedParserContext) ctx;
-      TypedParserContextFactory factory = typedCtx.getFactory();
-      if (factory != null && typedCtx.getDeserializerCache() == null) {
-        factory.resolveDeserializerCache(header.order, typedCtx.getMetadataLookup(), typedCtx);
-      }
-    }
+    contextFactory.onChunkMetadata(ctx, header);
 
     if (!listener.onMetadata(ctx, m)) {
       return false;
