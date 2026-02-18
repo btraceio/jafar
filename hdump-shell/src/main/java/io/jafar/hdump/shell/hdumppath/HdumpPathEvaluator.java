@@ -6,6 +6,7 @@ import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
 import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.expr.ValueExpr;
 import java.util.*;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -1089,11 +1090,57 @@ public final class HdumpPathEvaluator {
           .filter(map -> matchesPredicate(map, f.predicate()))
           .collect(Collectors.toList());
       case DistinctOp d -> applyDistinct(results, d);
+      case LenOp l -> applyStringTransform(results, l.field(), v -> {
+        if (v instanceof String s) return (long) s.length();
+        if (v instanceof java.util.Collection<?> c) return (long) c.size();
+        return v;
+      });
+      case UppercaseOp u -> applyStringTransform(results, u.field(),
+          v -> v instanceof String s ? s.toUpperCase() : v);
+      case LowercaseOp l -> applyStringTransform(results, l.field(),
+          v -> v instanceof String s ? s.toLowerCase() : v);
+      case TrimOp t -> applyStringTransform(results, t.field(),
+          v -> v instanceof String s ? s.trim() : v);
+      case ReplaceOp r -> applyStringTransform(results, r.field(),
+          v -> v instanceof String s ? s.replace(r.target(), r.replacement()) : v);
+      case AbsOp a -> applyStringTransform(results, a.field(), v -> {
+        if (v instanceof Long l) return Math.abs(l);
+        if (v instanceof Double d2) return Math.abs(d2);
+        if (v instanceof Number n) return Math.abs(n.doubleValue());
+        return v;
+      });
+      case RoundOp r -> applyStringTransform(results, r.field(), v -> {
+        if (v instanceof Double d2) return Math.round(d2);
+        if (v instanceof Number n) return Math.round(n.doubleValue());
+        return v;
+      });
+      case FloorOp f -> applyStringTransform(results, f.field(), v -> {
+        if (v instanceof Double d2) return (long) Math.floor(d2);
+        if (v instanceof Number n) return (long) Math.floor(n.doubleValue());
+        return v;
+      });
+      case CeilOp c -> applyStringTransform(results, c.field(), v -> {
+        if (v instanceof Double d2) return (long) Math.ceil(d2);
+        if (v instanceof Number n) return (long) Math.ceil(n.doubleValue());
+        return v;
+      });
       case PathToRootOp p -> {
         if (session == null) {
           throw new IllegalStateException("pathToRoot requires heap session context (not available after streaming aggregation)");
         }
         yield applyPathToRoot(session.getHeapDump(), results);
+      }
+      case RetentionPathsOp r -> {
+        if (session == null) {
+          throw new IllegalStateException("retentionPaths requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyRetentionPaths(session.getHeapDump(), results);
+      }
+      case RetainedBreakdownOp b -> {
+        if (session == null) {
+          throw new IllegalStateException("retainedBreakdown requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyRetainedBreakdown(session.getHeapDump(), results, b.maxDepth());
       }
       case CheckLeaksOp c -> {
         if (session == null) {
@@ -1455,6 +1502,20 @@ public final class HdumpPathEvaluator {
         .collect(Collectors.toList());
   }
 
+  private static List<Map<String, Object>> applyStringTransform(
+      List<Map<String, Object>> results, String field, Function<Object, Object> transform) {
+    return results.stream()
+        .map(row -> {
+          Map<String, Object> newRow = new LinkedHashMap<>(row);
+          Object val = newRow.get(field);
+          if (val != null) {
+            newRow.put(field, transform.apply(val));
+          }
+          return newRow;
+        })
+        .collect(Collectors.toList());
+  }
+
   // === Utility methods ===
 
   /**
@@ -1555,6 +1616,207 @@ public final class HdumpPathEvaluator {
     }
 
     return paths;
+  }
+
+  /**
+   * Aggregates paths-to-GC-root at the class level across all input objects.
+   *
+   * <p>For every input object we find the shortest path to a GC root, collapse each step to its
+   * class name, and then merge identical class-level paths. The result is a list of rows sorted
+   * by {@code count} descending with columns {@code count}, {@code depth}, {@code retainedSize},
+   * and {@code path} (class names joined with " → ", from GC root to the target).
+   */
+  private static List<Map<String, Object>> applyRetentionPaths(
+      HeapDump dump, List<Map<String, Object>> results) {
+
+    // path string → (count, total retainedSize)
+    Map<String, long[]> pathStats = new LinkedHashMap<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) continue;
+
+      long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject obj = dump.getObjectById(id).orElse(null);
+      if (obj == null) continue;
+
+      List<PathStep> path = dump.findPathToGcRoot(obj);
+      if (path.isEmpty()) continue;
+
+      // Build class-level path string: "GCRoot[TYPE] → ClassName1 → … → TargetClass"
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < path.size(); i++) {
+        if (i > 0) sb.append(" → ");
+        PathStep step = path.get(i);
+        HeapObject stepObj = step.object();
+        HeapClass cls = stepObj.getHeapClass();
+        if (cls != null) {
+          sb.append(cls.getName().replace('/', '.'));
+        } else {
+          sb.append("unknown");
+        }
+      }
+      String pathKey = sb.toString();
+
+      long retained = obj.getRetainedSize();
+      long[] stats = pathStats.computeIfAbsent(pathKey, k -> new long[]{0L, 0L, path.size()});
+      stats[0]++;                                  // count
+      stats[1] += Math.max(retained, 0L);          // total retainedSize
+      // depth is the same for all objects on the same class path, already set at init
+    }
+
+    return pathStats.entrySet().stream()
+        .sorted((a, b) -> Long.compare(b.getValue()[0], a.getValue()[0]))
+        .map(e -> {
+          Map<String, Object> result = new LinkedHashMap<>();
+          result.put("count", e.getValue()[0]);
+          result.put("depth", (int) e.getValue()[2]);
+          result.put("retainedSize", e.getValue()[1]);
+          result.put("path", e.getKey());
+          return result;
+        })
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Recursively expands the dominator subtrees of input objects and aggregates at class level.
+   *
+   * <p>Key: {@code depth + "\0" + className} so the same class at different depths is separate.
+   * Values: {@code [count, shallowSize, retainedSize]}.
+   */
+  private static List<Map<String, Object>> applyRetainedBreakdown(
+      HeapDump dump, List<Map<String, Object>> results, int maxDepth) {
+
+    if (!(dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl)
+        || !heapDumpImpl.hasFullDominatorTree()) {
+      Map<String, Object> err = new LinkedHashMap<>();
+      err.put("error", "retainedBreakdown requires a computed dominator tree — run dominators() first");
+      return List.of(err);
+    }
+
+    // (depth, className) → [count, shallowSize, retainedSize]
+    // Use insertion-ordered map so depth-0 entries stay before depth-1, etc.
+    Map<String, long[]> agg = new LinkedHashMap<>();
+
+    // Detect input type: class rows (from classes/ query) have "instanceCount" but no "retained".
+    // Object rows (from objects/ query) have "retained".
+    boolean classInput = !results.isEmpty()
+        && results.get(0).containsKey(ClassFields.INSTANCE_COUNT)
+        && !results.get(0).containsKey(ObjectFields.RETAINED);
+
+    if (classInput) {
+      // Collect the class names from the class rows
+      Set<String> classNames = new java.util.HashSet<>();
+      for (Map<String, Object> row : results) {
+        Object name = row.get(ClassFields.NAME);
+        if (name instanceof String s) classNames.add(normalizeClassName(s));
+      }
+      if (!classNames.isEmpty()) {
+        System.err.println();
+        System.err.printf(
+            "Scanning instances of %d class(es) for retained breakdown...%n", classNames.size());
+        System.err.flush();
+        dump.getObjects()
+            .filter(obj -> {
+              HeapClass cls = obj.getHeapClass();
+              return cls != null && classNames.contains(cls.getName());
+            })
+            .forEach(obj -> walkDominatedSubtree(heapDumpImpl, obj, 0, maxDepth, agg));
+      }
+    } else {
+      for (Map<String, Object> row : results) {
+        Object idObj = row.get("id");
+        if (idObj == null) continue;
+        long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+        HeapObject root = dump.getObjectById(id).orElse(null);
+        if (root == null) continue;
+        walkDominatedSubtree(heapDumpImpl, root, 0, maxDepth, agg);
+      }
+    }
+
+    if (agg.isEmpty()) {
+      return List.of();
+    }
+
+    // Build result rows sorted by depth asc, retainedSize desc
+    List<Map<String, Object>> rows = agg.entrySet().stream()
+        .map(e -> {
+          int sep = e.getKey().indexOf('\0');
+          int depth = Integer.parseInt(e.getKey().substring(0, sep));
+          String className = e.getKey().substring(sep + 1);
+          long[] s = e.getValue();
+          Map<String, Object> r = new LinkedHashMap<>();
+          r.put("depth", depth);
+          r.put("className", className);
+          r.put("count", s[0]);
+          r.put("shallowSize", s[1]);
+          r.put("retainedSize", s[2]);
+          return r;
+        })
+        .sorted(Comparator.comparingInt((Map<String, Object> r) -> (int) r.get("depth"))
+            .thenComparingLong(r -> -((Long) r.get("retainedSize"))))
+        .collect(Collectors.toList());
+
+    // Print ASCII tree to stderr for quick visual inspection
+    printRetainedBreakdownTree(rows, maxDepth);
+
+    return rows;
+  }
+
+  private static void walkDominatedSubtree(
+      io.jafar.hdump.impl.HeapDumpImpl dump,
+      HeapObject obj,
+      int depth,
+      int maxDepth,
+      Map<String, long[]> agg) {
+
+    List<HeapObject> children = dump.getDominatedObjects(obj);
+    if (children.isEmpty() || depth >= maxDepth) return;
+
+    for (HeapObject child : children) {
+      HeapClass cls = child.getHeapClass();
+      String className = cls != null ? cls.getName().replace('/', '.') : "unknown";
+      String key = depth + "\0" + className;
+      long[] s = agg.computeIfAbsent(key, k -> new long[3]);
+      s[0]++;
+      s[1] += child.getShallowSize();
+      s[2] += child.getRetainedSize();
+      walkDominatedSubtree(dump, child, depth + 1, maxDepth, agg);
+    }
+  }
+
+  /** Prints a depth-indented ASCII summary of the breakdown to stderr. */
+  private static void printRetainedBreakdownTree(List<Map<String, Object>> rows, int maxDepth) {
+    System.err.println();
+    System.err.println("=== Retained Breakdown ===");
+
+    // Group rows by depth for display
+    int prevDepth = -1;
+    for (Map<String, Object> row : rows) {
+      int depth = (int) row.get("depth");
+      if (depth > prevDepth + 1) continue; // skip orphaned deep entries (shouldn't happen)
+      prevDepth = depth;
+
+      String indent = "    ".repeat(depth);
+      String connector = depth == 0 ? "├── " : "└── ";
+      String className = (String) row.get("className");
+      long count = (long) row.get("count");
+      long retained = (long) row.get("retainedSize");
+      long shallow = (long) row.get("shallowSize");
+
+      System.err.printf(
+          "%s%s%s  ×%,d  shallow=%s  retained=%s%n",
+          indent, connector, className, count,
+          formatBytes(shallow), formatBytes(retained));
+    }
+    System.err.println();
+  }
+
+  private static String formatBytes(long bytes) {
+    if (bytes < 1024) return bytes + "B";
+    if (bytes < 1024 * 1024) return String.format("%.1fKB", bytes / 1024.0);
+    if (bytes < 1024L * 1024 * 1024) return String.format("%.1fMB", bytes / (1024.0 * 1024));
+    return String.format("%.2fGB", bytes / (1024.0 * 1024 * 1024));
   }
 
   private static List<Map<String, Object>> applyCheckLeaks(
@@ -1665,18 +1927,43 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    String mode = op.mode() != null ? op.mode() : "objects";
+    long minRetained = op.minRetained();
+
+    // groupBy takes priority: heap-wide retained histogram grouped by class or package
+    if (op.groupBy() != null) {
+      return applyDominatorsGroupBy(dump, op.groupBy(), minRetained);
+    }
+
+    String mode = op.mode();
+    if (mode == null) {
+      // Default: top-retainers view — input objects ranked by retained size, no expansion
+      return applyDominatorsTopRetainers(results, minRetained);
+    }
     return switch (mode) {
-      case "objects" -> applyDominatorsObjects(dump, results);
-      case "byClass" -> applyDominatorsByClass(dump, results);
-      case "tree" -> applyDominatorsTree(dump, results);
+      case "objects" -> applyDominatorsObjects(dump, results, minRetained);
+      case "tree" -> applyDominatorsTree(dump, results, minRetained);
       default -> throw new IllegalArgumentException("Unknown dominators mode: " + mode);
     };
   }
 
+  /** Default mode: input objects ranked by retained size, no expansion. */
+  private static List<Map<String, Object>> applyDominatorsTopRetainers(
+      List<Map<String, Object>> results, long minRetained) {
+    return results.stream()
+        .filter(row -> retainedOf(row) >= minRetained)
+        .sorted((a, b) -> Long.compare(retainedOf(b), retainedOf(a)))
+        .limit(10)
+        .collect(Collectors.toList());
+  }
+
+  private static long retainedOf(Map<String, Object> row) {
+    Object v = row.get("retained");
+    if (v == null) v = row.get("retainedSize");
+    return v instanceof Number ? ((Number) v).longValue() : 0L;
+  }
+
   private static List<Map<String, Object>> applyDominatorsObjects(
-      HeapDump dump, List<Map<String, Object>> results) {
-    // Original behavior: return individual dominated objects
+      HeapDump dump, List<Map<String, Object>> results, long minRetained) {
     List<Map<String, Object>> dominated = new ArrayList<>();
 
     for (Map<String, Object> row : results) {
@@ -1687,11 +1974,11 @@ public final class HdumpPathEvaluator {
       HeapObject dominator = dump.getObjectById(id).orElse(null);
       if (dominator == null) continue;
 
-      // Get all objects dominated by this object
       if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
         List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
 
         for (HeapObject obj : dominatedObjects) {
+          if (obj.getRetainedSize() < minRetained) continue;
           Map<String, Object> result = objectToMap(obj);
           result.put("dominator", dominator.getId());
           result.put(
@@ -1702,67 +1989,62 @@ public final class HdumpPathEvaluator {
       }
     }
 
+    dominated.sort((a, b) -> Long.compare(retainedOf(b), retainedOf(a)));
     return dominated;
   }
 
-  private static List<Map<String, Object>> applyDominatorsByClass(
-      HeapDump dump, List<Map<String, Object>> results) {
-    // Group dominated objects by class and aggregate retained sizes
-    List<Map<String, Object>> aggregated = new ArrayList<>();
+  private static List<Map<String, Object>> applyDominatorsGroupBy(
+      HeapDump dump, String groupBy, long minRetained) {
+    // Produce a retained-size histogram over the entire heap grouped by class or package.
+    // The input stream is ignored — it is always capped by the streaming limit and would
+    // produce misleading or empty results. The useful answer is always heap-wide.
+    boolean byPackage = "package".equalsIgnoreCase(groupBy);
+    String keyLabel = byPackage ? "package" : "className";
+    Map<String, ClassAggregation> groups = new LinkedHashMap<>();
 
-    for (Map<String, Object> row : results) {
-      Object idObj = row.get("id");
-      if (idObj == null) continue;
+    dump.getObjects().forEach(obj -> {
+      String className =
+          obj.getHeapClass() != null
+              ? obj.getHeapClass().getName().replace('/', '.')
+              : "unknown";
+      String key;
+      if (byPackage) {
+        int lastDot = className.lastIndexOf('.');
+        key = lastDot > 0 ? className.substring(0, lastDot) : "(default package)";
+      } else {
+        key = className;
+      }
+      ClassAggregation agg = groups.computeIfAbsent(key, k -> new ClassAggregation(k));
+      agg.count++;
+      agg.shallowSize += obj.getShallowSize();
+      agg.retainedSize += obj.getRetainedSize();
+    });
 
-      long id = idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
-      HeapObject dominator = dump.getObjectById(id).orElse(null);
-      if (dominator == null) continue;
-
-      // Build class-level aggregation
-      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-        List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
-
-        // Group by class name
-        Map<String, ClassAggregation> byClass = new LinkedHashMap<>();
-        for (HeapObject obj : dominatedObjects) {
-          String className =
-              obj.getHeapClass() != null
-                  ? obj.getHeapClass().getName().replace('/', '.')
-                  : "unknown";
-          ClassAggregation agg =
-              byClass.computeIfAbsent(className, k -> new ClassAggregation(className));
-          agg.count++;
-          agg.shallowSize += obj.getShallowSize();
-          agg.retainedSize += obj.getRetainedSize();
-        }
-
-        // Convert to result maps
-        for (ClassAggregation agg : byClass.values()) {
+    return groups.values().stream()
+        .filter(agg -> agg.retainedSize >= minRetained)
+        .sorted((a, b) -> Long.compare(b.retainedSize, a.retainedSize))
+        .map(agg -> {
           Map<String, Object> result = new LinkedHashMap<>();
-          result.put("dominator", dominator.getId());
-          result.put(
-              "dominatorClass",
-              dominator.getHeapClass() != null
-                  ? dominator.getHeapClass().getName().replace('/', '.')
-                  : "unknown");
-          result.put("className", agg.className);
+          result.put(keyLabel, agg.className);
           result.put("count", agg.count);
           result.put("shallowSize", agg.shallowSize);
           result.put("retainedSize", agg.retainedSize);
-          aggregated.add(result);
-        }
-      }
-    }
-
-    return aggregated;
+          return result;
+        })
+        .collect(Collectors.toList());
   }
 
   private static List<Map<String, Object>> applyDominatorsTree(
-      HeapDump dump, List<Map<String, Object>> results) {
-    // Build ASCII tree visualization of dominator relationships
+      HeapDump dump, List<Map<String, Object>> results, long minRetained) {
     List<Map<String, Object>> treeResults = new ArrayList<>();
 
-    for (Map<String, Object> row : results) {
+    // Pre-filter and sort by retained size so only significant objects get expanded.
+    List<Map<String, Object>> filtered = results.stream()
+        .filter(row -> retainedOf(row) >= minRetained)
+        .sorted((a, b) -> Long.compare(retainedOf(b), retainedOf(a)))
+        .collect(Collectors.toList());
+
+    for (Map<String, Object> row : filtered) {
       Object idObj = row.get("id");
       if (idObj == null) continue;
 
@@ -1774,10 +2056,8 @@ public final class HdumpPathEvaluator {
       if (dominator == null) continue;
 
       if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-        // Build recursive dominator tree
         DominatorNode root = buildRecursiveDominatorTree(heapDumpImpl, dominator, 0, 3);
 
-        // Format as ASCII tree
         StringBuilder tree = new StringBuilder();
         String dominatorClassName =
             dominator.getHeapClass() != null
@@ -1788,10 +2068,8 @@ public final class HdumpPathEvaluator {
                 "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
         formatDominatorTree(root, tree, "", true);
 
-        // Count total dominated objects recursively
         int totalDominated = countDominatedObjects(root);
 
-        // Print tree to stderr to avoid table truncation
         System.err.println();
         System.err.println("=== Dominator Tree ===");
         System.err.print(tree.toString());

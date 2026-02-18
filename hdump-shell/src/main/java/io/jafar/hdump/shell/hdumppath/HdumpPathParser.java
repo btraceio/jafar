@@ -8,6 +8,7 @@ import io.jafar.shell.core.expr.ValueExpr.ArithOp;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * Recursive descent parser for HdumpPath query language.
@@ -469,6 +470,15 @@ public final class HdumpPathParser {
       case "tail" -> parseTailOp();
       case "filter", "where" -> parseFilterOp();
       case "distinct", "unique" -> parseDistinctOp();
+      case "len", "length" -> parseFieldOp(LenOp::new);
+      case "uppercase", "upper" -> parseFieldOp(UppercaseOp::new);
+      case "lowercase", "lower" -> parseFieldOp(LowercaseOp::new);
+      case "trim" -> parseFieldOp(TrimOp::new);
+      case "replace" -> parseReplaceOp();
+      case "abs" -> parseFieldOp(AbsOp::new);
+      case "round" -> parseFieldOp(RoundOp::new);
+      case "floor" -> parseFieldOp(FloorOp::new);
+      case "ceil" -> parseFieldOp(CeilOp::new);
       case "pathtoroot", "pathroot", "path" -> parsePathToRootOp();
       case "retentionpaths", "retentionpath", "classpaths", "classpathtoroot" -> {
         consumeOptionalEmptyParens();
@@ -811,6 +821,32 @@ public final class HdumpPathParser {
     skipWs();
     expect(')');
     return new DistinctOp(field);
+  }
+
+  private <T extends PipelineOp> T parseFieldOp(Function<String, T> factory) {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(')');
+    return factory.apply(field);
+  }
+
+  private ReplaceOp parseReplaceOp() {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(',');
+    skipWs();
+    String target = parseStringLiteral();
+    skipWs();
+    expect(',');
+    skipWs();
+    String replacement = parseStringLiteral();
+    skipWs();
+    expect(')');
+    return new ReplaceOp(field, target, replacement);
   }
 
   /**

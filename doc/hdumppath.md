@@ -514,6 +514,31 @@ classes[instanceCount > 1000]
   | select(name, instanceCount, instanceSize)
 ```
 
+## Value Transform Functions
+
+Transform individual field values in the pipeline.
+
+### String Transforms
+- `| len(field)` — String length (or collection size). Alias: `length`.
+- `| uppercase(field)` — Convert to uppercase. Alias: `upper`.
+- `| lowercase(field)` — Convert to lowercase. Alias: `lower`.
+- `| trim(field)` — Trim whitespace.
+- `| replace(field, "old", "new")` — Replace occurrences.
+
+### Numeric Transforms
+- `| abs(field)` — Absolute value.
+- `| round(field)` — Round to nearest integer.
+- `| floor(field)` — Round down.
+- `| ceil(field)` — Round up.
+
+### Examples
+```
+objects/java.lang.String | len(stringValue)
+objects | select(class, shallow) | uppercase(class)
+objects | replace(className, "java/lang/", "j.l.")
+objects | select(class, shallow) | abs(shallow)
+```
+
 ## Tips and Best Practices
 
 1. **Start broad, then filter**: Begin with `objects` or `classes`, then add predicates.

@@ -133,7 +133,18 @@ public final class HdumpPath {
           TailOp,
           FilterOp,
           DistinctOp,
+          LenOp,
+          UppercaseOp,
+          LowercaseOp,
+          TrimOp,
+          ReplaceOp,
+          AbsOp,
+          RoundOp,
+          FloorOp,
+          CeilOp,
           PathToRootOp,
+          RetentionPathsOp,
+          RetainedBreakdownOp,
           CheckLeaksOp,
           DominatorsOp {}
 
@@ -235,6 +246,33 @@ public final class HdumpPath {
   /** Distinct values. */
   public record DistinctOp(String field) implements PipelineOp {}
 
+  /** String or list length. */
+  public record LenOp(String field) implements PipelineOp {}
+
+  /** Convert to uppercase. */
+  public record UppercaseOp(String field) implements PipelineOp {}
+
+  /** Convert to lowercase. */
+  public record LowercaseOp(String field) implements PipelineOp {}
+
+  /** Trim whitespace. */
+  public record TrimOp(String field) implements PipelineOp {}
+
+  /** Replace occurrences. */
+  public record ReplaceOp(String field, String target, String replacement) implements PipelineOp {}
+
+  /** Absolute value. */
+  public record AbsOp(String field) implements PipelineOp {}
+
+  /** Round to nearest integer. */
+  public record RoundOp(String field) implements PipelineOp {}
+
+  /** Round down. */
+  public record FloorOp(String field) implements PipelineOp {}
+
+  /** Round up. */
+  public record CeilOp(String field) implements PipelineOp {}
+
   /**
    * Find shortest path to GC root for each object in the result set.
    *
@@ -248,6 +286,59 @@ public final class HdumpPath {
    * </pre>
    */
   public record PathToRootOp() implements PipelineOp {}
+
+  /**
+   * Aggregate paths to GC root at the class level across all input objects.
+   *
+   * <p>For each input object, finds the shortest path to a GC root, then collapses all individual
+   * object paths into class-level paths by replacing each object with its class name. Identical
+   * class paths are merged and counted.
+   *
+   * <p>Output columns: {@code count}, {@code depth}, {@code retainedSize}, {@code path}
+   * (class names joined with " → ", from GC root to target).
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * # Which classes retain the most ConcurrentHashMap instances?
+   * objects/java.util.concurrent.ConcurrentHashMap | retentionPaths()
+   *
+   * # Top retention paths for large strings
+   * objects/java.lang.String[retained > 1MB] | retentionPaths() | head(10)
+   * </pre>
+   */
+  public record RetentionPathsOp() implements PipelineOp {}
+
+  /**
+   * Recursively expand the dominator subtree of each input object and aggregate the result at the
+   * class level.
+   *
+   * <p>For every input object the dominated subtree is walked up to {@code maxDepth} levels deep.
+   * All visited objects are grouped by {@code (depth, className)} and their counts and sizes are
+   * summed. Depth 0 = immediate dominatees of the input objects; depth 1 = their dominatees; etc.
+   *
+   * <p>Output columns: {@code depth}, {@code className}, {@code count}, {@code shallowSize},
+   * {@code retainedSize}. Rows are sorted by depth ascending then retainedSize descending.
+   *
+   * <p>An ASCII tree is also printed to stderr for quick visual inspection.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * # Break down what a set of large HashMaps actually retains
+   * objects/java.util.HashMap[retained > 10MB] | retainedBreakdown()
+   *
+   * # Limit to 3 levels and filter only the significant classes
+   * objects/java.util.HashMap[retained > 10MB] | retainedBreakdown(depth=3)
+   * </pre>
+   *
+   * @param maxDepth maximum recursion depth (default 4)
+   */
+  public record RetainedBreakdownOp(int maxDepth) implements PipelineOp {
+    public RetainedBreakdownOp() {
+      this(4);
+    }
+  }
 
   /**
    * Check for memory leaks using built-in detectors or custom filters.
@@ -298,39 +389,50 @@ public final class HdumpPath {
   }
 
   /**
-   * Get objects dominated by the result set.
+   * Analyse memory retained by the input objects.
    *
-   * <p>For each object in the result set, returns all objects that would be garbage collected if
-   * that object were removed. This helps understand the transitive closure of retained objects.
+   * <p><strong>Default (no arguments):</strong> ranks input objects by retained size, showing only
+   * those above {@code minRetained} (default 1 MB). This is the fastest way to identify the biggest
+   * memory holders without expanding the full dominated set.
    *
-   * <p><strong>Performance note:</strong> This operator requires full dominator tree computation to
-   * traverse dominator relationships. The initial hybrid retained size computation (automatic) only
-   * calculates sizes, not relationships. For large heaps, consider filtering to interesting objects
-   * first using {@code [retained > threshold]} to minimize full tree computation scope.
-   *
-   * <p>Modes:
+   * <p><strong>Named modes:</strong>
    * <ul>
-   *   <li>"tree" (default) - Shows ASCII tree visualization of dominator relationships
-   *   <li>"byClass" - Groups dominated objects by class and aggregates retained sizes
-   *   <li>"objects" - Returns individual dominated objects
+   *   <li>"tree" - ASCII dominator tree for each input object (use after pre-filtering)
+   *   <li>"objects" - Individual dominated objects (use after pre-filtering)
+   * </ul>
+   *
+   * <p><strong>Parameters:</strong>
+   * <ul>
+   *   <li>{@code groupBy="class"|"package"} - retained-size histogram over the whole heap grouped
+   *       by class name or package name. Ignores the input stream (always heap-wide).
+   *   <li>{@code minRetained=<bytes>} - minimum retained size to include (default 1 MB for default
+   *       mode, 0 for named modes). Supports size suffixes: 1KB, 10MB, 1GB.
    * </ul>
    *
    * <p>Examples:
    *
    * <pre>
-   * # Visualize dominator tree (default)
-   * objects[retained > 100MB] | dominators()
+   * # Top retainers ≥ 1 MB (default)
+   * objects | dominators()
    *
-   * # Group dominated objects by class for better overview
-   * objects[retained > 100MB] | dominators("byClass")
+   * # Retained-size histogram by class
+   * objects | dominators(groupBy="class")
    *
-   * # Get individual objects for detailed analysis
-   * objects/java.util.HashMap | top(1, retainedSize) | dominators("objects")
+   * # Retained-size histogram by package, ≥ 10 MB
+   * objects | dominators(groupBy="package", minRetained=10MB)
+   *
+   * # Full dominator tree for large objects
+   * objects[retained > 100MB] | dominators("tree")
    * </pre>
    */
-  public record DominatorsOp(String mode) implements PipelineOp {
+  public record DominatorsOp(String mode, String groupBy, long minRetained) implements PipelineOp {
+    /** Default: top-retainers view with 1 MB minimum. */
     public DominatorsOp() {
-      this("tree"); // Default mode
+      this(null, null, 1024 * 1024L);
+    }
+    /** Named mode with default minRetained (0 = no filter). */
+    public DominatorsOp(String mode) {
+      this(mode, null, 0L);
     }
   }
 

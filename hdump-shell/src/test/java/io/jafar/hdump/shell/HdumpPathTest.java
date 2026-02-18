@@ -656,4 +656,71 @@ class HdumpPathTest {
     assertNull(op.groupBy());
     assertEquals(10 * 1024 * 1024L, op.minRetained());
   }
+
+  @Test
+  void testParseLenOp() {
+    Query query = HdumpPathParser.parse("objects | len(className)");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.LenOp.class, query.pipeline().get(0));
+    assertEquals("className", ((HdumpPath.LenOp) query.pipeline().get(0)).field());
+  }
+
+  @Test
+  void testParseLengthAlias() {
+    Query query = HdumpPathParser.parse("objects | length(className)");
+    assertInstanceOf(HdumpPath.LenOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseUppercaseOp() {
+    Query query = HdumpPathParser.parse("objects | uppercase(className)");
+    assertInstanceOf(HdumpPath.UppercaseOp.class, query.pipeline().get(0));
+    assertEquals("className", ((HdumpPath.UppercaseOp) query.pipeline().get(0)).field());
+  }
+
+  @Test
+  void testParseLowercaseOp() {
+    Query query = HdumpPathParser.parse("objects | lowercase(className)");
+    assertInstanceOf(HdumpPath.LowercaseOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseTrimOp() {
+    Query query = HdumpPathParser.parse("objects | trim(stringValue)");
+    assertInstanceOf(HdumpPath.TrimOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseReplaceOp() {
+    Query query = HdumpPathParser.parse("objects | replace(className, \"foo\", \"bar\")");
+    assertInstanceOf(HdumpPath.ReplaceOp.class, query.pipeline().get(0));
+    HdumpPath.ReplaceOp op = (HdumpPath.ReplaceOp) query.pipeline().get(0);
+    assertEquals("className", op.field());
+    assertEquals("foo", op.target());
+    assertEquals("bar", op.replacement());
+  }
+
+  @Test
+  void testParseAbsOp() {
+    Query query = HdumpPathParser.parse("objects | abs(shallow)");
+    assertInstanceOf(HdumpPath.AbsOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseRoundOp() {
+    Query query = HdumpPathParser.parse("objects | round(retained)");
+    assertInstanceOf(HdumpPath.RoundOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseFloorOp() {
+    Query query = HdumpPathParser.parse("objects | floor(retained)");
+    assertInstanceOf(HdumpPath.FloorOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseCeilOp() {
+    Query query = HdumpPathParser.parse("objects | ceil(retained)");
+    assertInstanceOf(HdumpPath.CeilOp.class, query.pipeline().get(0));
+  }
 }
