@@ -493,6 +493,18 @@ public final class JfrPathParser {
         || (!Character.isLetterOrDigit(input.charAt(idx)) && input.charAt(idx) != '_');
   }
 
+  /** Parse an optional bare asc/desc keyword at the current position. Returns the descending flag. */
+  private boolean parseSortDirection(boolean defaultDescending) {
+    if (startsWithIgnoreCase("asc") && isWordBoundaryAt(pos + 3)) {
+      pos += 3;
+      return false;
+    } else if (startsWithIgnoreCase("desc") && isWordBoundaryAt(pos + 4)) {
+      pos += 4;
+      return true;
+    }
+    return defaultDescending;
+  }
+
   private JfrPath.PipelineOp parsePipelineOp() {
     String name = readIdent().toLowerCase(Locale.ROOT);
     skipWs();
@@ -619,38 +631,46 @@ public final class JfrPathParser {
         expect(')');
       }
       return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, valueExpr, sortBy, ascending);
-    } else if ("sortby".equals(name)) {
-      String field = null;
-      boolean ascending = false;
+    } else if ("sortby".equals(name) || "sort".equals(name) || "orderby".equals(name)
+        || "order".equals(name)) {
+      List<JfrPath.SortField> sortFields = new ArrayList<>();
       if (peek() == '(') {
         pos++;
         skipWs();
-        field = readIdent(); // required field name
+        String field = readIdent();
+        boolean descending = true; // default descending
         skipWs();
-        // Optional asc= parameter
+        // Check for immediate asc/desc after field
+        descending = parseSortDirection(descending);
+        sortFields.add(new JfrPath.SortField(field, descending));
+        skipWs();
         while (peek() == ',') {
           pos++;
           skipWs();
+          // After comma: could be asc=/asc/desc modifier for previous field, or a new field
           if (startsWithIgnoreCase("asc=")) {
+            // Named param: modify the last field's direction
             pos += 4;
             skipWs();
             String ascVal = readIdent().toLowerCase(Locale.ROOT);
-            if ("true".equals(ascVal)) {
-              ascending = true;
-            } else if (!"false".equals(ascVal)) {
-              throw error("sortBy() asc= expects 'true' or 'false'");
-            }
+            JfrPath.SortField last = sortFields.remove(sortFields.size() - 1);
+            sortFields.add(new JfrPath.SortField(last.field(), !"true".equals(ascVal)));
           } else {
-            throw error("sortBy() expects asc= parameter");
+            // New sort field
+            field = readIdent();
+            descending = true;
+            skipWs();
+            descending = parseSortDirection(descending);
+            sortFields.add(new JfrPath.SortField(field, descending));
           }
           skipWs();
         }
         expect(')');
       }
-      if (field == null || field.isEmpty()) {
-        throw error("sortBy() requires a field name");
+      if (sortFields.isEmpty()) {
+        throw error("sortBy() requires at least one field name");
       }
-      return new JfrPath.SortByOp(field, ascending);
+      return new JfrPath.SortByOp(sortFields);
     } else if ("top".equals(name)) {
       int n = 10; // default
       List<String> byPath = List.of("value");

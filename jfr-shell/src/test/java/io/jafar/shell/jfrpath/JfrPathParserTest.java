@@ -333,4 +333,40 @@ class JfrPathParserTest {
     assertEquals(java.util.List.of("bytes"), top.byPath);
     assertTrue(top.ascending);
   }
+
+  @Test
+  void parsesSortByMultiField() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | sortBy(path asc, bytes desc)");
+    assertEquals(1, q.pipeline.size());
+    var sort = (JfrPath.SortByOp) q.pipeline.get(0);
+    assertEquals(2, sort.fields.size());
+    assertEquals("path", sort.fields.get(0).field());
+    assertFalse(sort.fields.get(0).descending());
+    assertEquals("bytes", sort.fields.get(1).field());
+    assertTrue(sort.fields.get(1).descending());
+  }
+
+  @Test
+  void parsesSortByAliases() {
+    // sort alias
+    var q1 = JfrPathParser.parse("events/jdk.FileRead | sort(bytes)");
+    assertTrue(q1.pipeline.get(0) instanceof JfrPath.SortByOp);
+
+    // orderBy alias
+    var q2 = JfrPathParser.parse("events/jdk.FileRead | orderBy(bytes)");
+    assertTrue(q2.pipeline.get(0) instanceof JfrPath.SortByOp);
+
+    // order alias
+    var q3 = JfrPathParser.parse("events/jdk.FileRead | order(bytes)");
+    assertTrue(q3.pipeline.get(0) instanceof JfrPath.SortByOp);
+  }
+
+  @Test
+  void parsesSortByWithAscParam() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | sortBy(bytes, asc=true)");
+    var sort = (JfrPath.SortByOp) q.pipeline.get(0);
+    assertEquals(1, sort.fields.size());
+    assertEquals("bytes", sort.fields.get(0).field());
+    assertFalse(sort.fields.get(0).descending());
+  }
 }

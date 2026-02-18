@@ -354,14 +354,15 @@ events/jdk.FileRead | groupBy(path, agg=sum, value=bytes, sortBy=value)     # So
 
 ### Sort By
 ```
-| sortBy(field[, asc=false])
+| sortBy(field1 [asc|desc], field2 [asc|desc], ...)
 ```
 
-Sort rows by any field in the current result set. Works after any operator that produces multiple rows.
+Sort rows by one or more fields. Works after any operator that produces multiple rows.
+Aliases: `sort`, `orderBy`, `order`.
 
 **Parameters**:
 - `field` - Field name to sort by (must exist in current row structure)
-- `asc` - Sort ascending (default: `false`, descending)
+- `asc`/`desc` (or `asc=true`/`asc=false`) - Sort direction per field (default: descending)
 
 **Key constraint**: Can only sort by fields available after previous operators:
 - After `select(a, b)` → only `a`, `b` available
@@ -371,9 +372,11 @@ Sort rows by any field in the current result set. Works after any operator that 
 **Examples**:
 ```
 events/jdk.FileRead | select(path, bytes) | sortBy(bytes)              # Sort by bytes descending
-events/jdk.FileRead | select(path, bytes) | sortBy(path, asc=true)     # Sort by path ascending
-events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count)      # Sort grouped results by count
-events/jdk.FileRead | len(path) | sortBy(len)                          # Sort by computed length
+events/jdk.FileRead | select(path, bytes) | sortBy(path asc)           # Sort by path ascending
+events/jdk.FileRead | select(path, bytes) | sortBy(path, asc=true)     # Same, named param style
+events/jdk.FileRead | sortBy(path asc, bytes desc)                     # Multi-field sort
+events/jdk.ExecutionSample | groupBy(thread/name) | sort(count)        # Alias: sort
+events/jdk.FileRead | len(path) | orderBy(len)                         # Alias: orderBy
 ```
 
 ### Top

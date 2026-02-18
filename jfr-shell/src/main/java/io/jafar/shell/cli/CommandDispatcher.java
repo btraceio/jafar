@@ -738,7 +738,7 @@ public class CommandDispatcher {
           "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy|sort=key|value, asc=false])");
       io.println(
           "                                    → group by key and aggregate with optional sorting");
-      io.println("    | sortBy(field[, asc=false])   → sort rows by field");
+      io.println("    | sortBy(field [asc|desc], ...) → sort rows (aliases: sort, orderBy, order)");
       io.println("    | top(n[, by=field|field, asc|desc]) → top N rows sorted by field");
       io.println(
           "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");

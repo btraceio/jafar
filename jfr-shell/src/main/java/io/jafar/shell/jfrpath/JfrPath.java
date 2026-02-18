@@ -377,13 +377,23 @@ public final class JfrPath {
     }
   }
 
-  public static final class SortByOp implements PipelineOp {
-    public final String field; // field name to sort by
-    public final boolean ascending; // sort order (default: false = descending)
+  /** A sort field with direction. */
+  public record SortField(String field, boolean descending) {
+    public SortField(String field) {
+      this(field, true); // default descending
+    }
+  }
 
+  public static final class SortByOp implements PipelineOp {
+    public final List<SortField> fields;
+
+    public SortByOp(List<SortField> fields) {
+      this.fields = List.copyOf(fields);
+    }
+
+    /** Convenience constructor for single-field sort. */
     public SortByOp(String field, boolean ascending) {
-      this.field = field;
-      this.ascending = ascending;
+      this(List.of(new SortField(field, !ascending)));
     }
   }
 

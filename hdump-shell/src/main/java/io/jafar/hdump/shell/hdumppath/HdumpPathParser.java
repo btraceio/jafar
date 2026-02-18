@@ -721,25 +721,48 @@ public final class HdumpPathParser {
   private SortByOp parseSortByOp() {
     expect('(');
     List<SortField> fields = new ArrayList<>();
+    skipWs();
 
-    do {
-      skipWs();
-      String field = parseIdentifier();
-      boolean descending = false;
-      skipWs();
+    // Parse first sort field
+    String field = parseIdentifier();
+    boolean descending = parseSortFieldDirection();
+    fields.add(new SortField(field, descending));
+    skipWs();
 
-      if (matchKeyword("desc")) {
-        descending = true;
-      } else if (matchKeyword("asc")) {
-        descending = false;
+    while (matchChar(',')) {
+      skipWs();
+      // After comma: could be asc=/asc modifier for previous field, or a new field
+      if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        SortField last = fields.remove(fields.size() - 1);
+        fields.add(
+            new SortField(last.field(), !("true".equals(ascValue) || "yes".equals(ascValue))));
+      } else {
+        // New sort field
+        field = parseIdentifier();
+        descending = parseSortFieldDirection();
+        fields.add(new SortField(field, descending));
       }
-
-      fields.add(new SortField(field, descending));
       skipWs();
-    } while (matchChar(','));
+    }
 
     expect(')');
     return new SortByOp(fields);
+  }
+
+  /** Parse an optional bare asc/desc keyword at the current position. */
+  private boolean parseSortFieldDirection() {
+    skipWs();
+    if (matchKeyword("desc")) {
+      return true;
+    } else if (matchKeyword("asc")) {
+      return false;
+    }
+    return false; // default ascending
   }
 
   private HeadOp parseHeadOp() {

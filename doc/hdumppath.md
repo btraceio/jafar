@@ -291,10 +291,12 @@ Output:
 ```
 
 ### `sortBy(field [asc|desc], ...)`
-Sort results by one or more fields.
+Sort results by one or more fields. Aliases: `sort`, `orderBy`, `order`.
+Accepts both bare keywords (`asc`/`desc`) and named param (`asc=true`/`asc=false`).
 
 ```
 objects | sortBy(shallow desc)             # Sort by size descending
+objects | sortBy(shallow, asc=false)       # Same, named param style
 classes | sortBy(name asc)                 # Sort alphabetically
 objects | sortBy(class asc, shallow desc)  # Multi-field sort
 ```

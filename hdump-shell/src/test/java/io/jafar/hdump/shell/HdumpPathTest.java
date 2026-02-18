@@ -252,6 +252,16 @@ class HdumpPathTest {
   }
 
   @Test
+  void testParseSortByWithAscNamedParam() {
+    // asc=true named param style (JfrPath-compatible)
+    Query q = HdumpPathParser.parse("objects | sortBy(shallow, asc=true)");
+    HdumpPath.SortByOp op = (HdumpPath.SortByOp) q.pipeline().get(0);
+    assertEquals(1, op.fields().size());
+    assertEquals("shallow", op.fields().get(0).field());
+    assertFalse(op.fields().get(0).descending());
+  }
+
+  @Test
   void testValueExprEvaluation() {
     Map<String, Object> row = Map.of("instanceCount", 10, "instanceSize", 24);
 

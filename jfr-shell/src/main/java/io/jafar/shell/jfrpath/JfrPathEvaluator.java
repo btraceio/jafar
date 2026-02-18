@@ -635,7 +635,7 @@ public final class JfrPathEvaluator {
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb -> aggregateGroupBy(
               session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.valueExpr, gb.sortBy, gb.ascending);
-          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
+          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.fields);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
           case JfrPath.UppercaseOp up -> aggregateStringTransform(
@@ -1520,11 +1520,11 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> aggregateSortBy(
-      JFRSession session, Query query, String field, boolean ascending) throws Exception {
+      JFRSession session, Query query, List<JfrPath.SortField> sortFields) throws Exception {
     // Materialize all rows first, then sort
     List<Map<String, Object>> rows =
         evaluate(session, new Query(query.root, query.segments, query.predicates));
-    return applySortBy(rows, field, ascending);
+    return applySortBy(rows, sortFields);
   }
 
   private List<Map<String, Object>> aggregateTop(
@@ -2714,7 +2714,7 @@ public final class JfrPathEvaluator {
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
       case JfrPath.GroupByOp gb -> applyGroupBy(
           rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.valueExpr, gb.sortBy, gb.ascending);
-      case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
+      case JfrPath.SortByOp sort -> applySortBy(rows, sort.fields);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
@@ -2890,21 +2890,26 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> applySortBy(
-      List<Map<String, Object>> rows, String field, boolean ascending) {
-    if (rows.isEmpty()) return rows;
+      List<Map<String, Object>> rows, List<JfrPath.SortField> sortFields) {
+    if (rows.isEmpty() || sortFields.isEmpty()) return rows;
 
-    // Validate field exists in first row (all rows have same structure after pipeline ops)
-    if (!rows.get(0).containsKey(field)) {
-      throw new IllegalArgumentException(
-          "sortBy: field '" + field + "' not found. Available: " + rows.get(0).keySet());
+    // Validate all fields exist in first row
+    for (JfrPath.SortField sf : sortFields) {
+      if (!rows.get(0).containsKey(sf.field())) {
+        throw new IllegalArgumentException(
+            "sortBy: field '" + sf.field() + "' not found. Available: " + rows.get(0).keySet());
+      }
     }
 
     List<Map<String, Object>> result = new ArrayList<>(rows);
-    Comparator<Map<String, Object>> comparator =
-        (a, b) -> compareValues(a.get(field), b.get(field));
-    if (!ascending) {
-      comparator = comparator.reversed();
-    }
+    Comparator<Map<String, Object>> comparator = (a, b) -> {
+      for (JfrPath.SortField sf : sortFields) {
+        int cmp = compareValues(a.get(sf.field()), b.get(sf.field()));
+        if (sf.descending()) cmp = -cmp;
+        if (cmp != 0) return cmp;
+      }
+      return 0;
+    };
     result.sort(comparator);
     return result;
   }
