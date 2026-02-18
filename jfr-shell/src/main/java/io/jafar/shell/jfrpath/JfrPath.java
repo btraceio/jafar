@@ -288,6 +288,10 @@ public final class JfrPath {
           GroupByOp,
           SortByOp,
           TopOp,
+          HeadOp,
+          TailOp,
+          FilterOp,
+          DistinctOp,
           LenOp,
           UppercaseOp,
           LowercaseOp,
@@ -406,6 +410,38 @@ public final class JfrPath {
       this.n = n;
       this.byPath = byPath == null ? List.of("value") : List.copyOf(byPath);
       this.ascending = ascending;
+    }
+  }
+
+  public static final class HeadOp implements PipelineOp {
+    public final int n;
+
+    public HeadOp(int n) {
+      this.n = n;
+    }
+  }
+
+  public static final class TailOp implements PipelineOp {
+    public final int n;
+
+    public TailOp(int n) {
+      this.n = n;
+    }
+  }
+
+  public static final class FilterOp implements PipelineOp {
+    public final Predicate predicate;
+
+    public FilterOp(Predicate predicate) {
+      this.predicate = predicate;
+    }
+  }
+
+  public static final class DistinctOp implements PipelineOp {
+    public final String field;
+
+    public DistinctOp(String field) {
+      this.field = field;
     }
   }
 

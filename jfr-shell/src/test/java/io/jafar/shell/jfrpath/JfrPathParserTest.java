@@ -405,4 +405,57 @@ class JfrPathParserTest {
       assertEquals(2L * 1024 * 1024 * 1024, ((Number) ce.literal).longValue());
     }
   }
+
+  @Test
+  void parsesHeadOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | head(20)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.HeadOp.class, q.pipeline.get(0));
+    assertEquals(20, ((JfrPath.HeadOp) q.pipeline.get(0)).n);
+  }
+
+  @Test
+  void parsesTailOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | tail(5)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.TailOp.class, q.pipeline.get(0));
+    assertEquals(5, ((JfrPath.TailOp) q.pipeline.get(0)).n);
+  }
+
+  @Test
+  void parsesFilterOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | groupBy(path) | filter(count > 100)");
+    assertEquals(2, q.pipeline.size());
+    assertInstanceOf(JfrPath.FilterOp.class, q.pipeline.get(1));
+    var filter = (JfrPath.FilterOp) q.pipeline.get(1);
+    assertInstanceOf(JfrPath.ExprPredicate.class, filter.predicate);
+    var ep = (JfrPath.ExprPredicate) filter.predicate;
+    assertInstanceOf(JfrPath.CompExpr.class, ep.expr);
+    var ce = (JfrPath.CompExpr) ep.expr;
+    assertEquals(JfrPath.Op.GT, ce.op);
+    assertEquals(100L, ((Number) ce.literal).longValue());
+  }
+
+  @Test
+  void parsesWhereAlias() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | where(bytes > 1000)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.FilterOp.class, q.pipeline.get(0));
+  }
+
+  @Test
+  void parsesDistinctOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | distinct(path)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.DistinctOp.class, q.pipeline.get(0));
+    assertEquals("path", ((JfrPath.DistinctOp) q.pipeline.get(0)).field);
+  }
+
+  @Test
+  void parsesUniqueAlias() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | unique(path)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.DistinctOp.class, q.pipeline.get(0));
+    assertEquals("path", ((JfrPath.DistinctOp) q.pipeline.get(0)).field);
+  }
 }

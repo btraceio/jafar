@@ -284,6 +284,10 @@ Append pipeline functions with `|` to compute aggregates over results.
 - `| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])` — Group by key and aggregate with optional sorting.
 - `| sortBy(field[, asc=false])` — Sort rows by field (works after any multi-row operator).
 - `| top(n[, by=path, asc=false])` — Sort and return top N rows (descending by default).
+- `| head(n)` — Take first N rows.
+- `| tail(n)` — Take last N rows.
+- `| filter(predicate)` — Filter rows mid-pipeline (alias: `where`).
+- `| distinct(field)` — Unique values of a field (alias: `unique`).
 
 **Value Transform Functions:**
 - `| len([path])` — For attributes: length of a string or list/array. Errors on unsupported types.

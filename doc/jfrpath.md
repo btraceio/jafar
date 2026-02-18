@@ -408,6 +408,53 @@ events/jdk.FileRead | top(10, by=bytes, asc=true)         # Bottom 10 (named)
 events/jdk.FileRead | top(10, bytes, asc)                 # Bottom 10 (positional)
 ```
 
+### Head
+```
+| head(n)
+```
+
+Take first N results.
+
+```
+events/jdk.FileRead | head(100)                          # First 100 events
+events/jdk.ExecutionSample | sortBy(duration desc) | head(10)  # First 10 after sorting
+```
+
+### Tail
+```
+| tail(n)
+```
+
+Take last N results.
+
+```
+events/jdk.FileRead | sortBy(bytes) | tail(10)           # Last 10 by bytes
+```
+
+### Filter
+```
+| filter(predicate)
+```
+
+Filter results mid-pipeline. Alias: `where`.
+
+```
+events/jdk.FileRead | groupBy(path) | filter(count > 100)
+events/jdk.ExecutionSample | groupBy(thread/name) | where(count > 50)
+```
+
+### Distinct
+```
+| distinct(field)
+```
+
+Get distinct values of a field. Alias: `unique`.
+
+```
+events/jdk.FileRead | distinct(path)                     # Unique file paths
+events/jdk.ExecutionSample | distinct(state)             # Unique thread states
+```
+
 ### Decorate By Time
 ```
 | decorateByTime(decoratorEventType, fields=field1,field2[, threadPath=..., decoratorThreadPath=...])

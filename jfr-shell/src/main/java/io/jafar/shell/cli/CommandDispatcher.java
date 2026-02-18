@@ -740,6 +740,10 @@ public class CommandDispatcher {
           "                                    → group by key and aggregate with optional sorting");
       io.println("    | sortBy(field [asc|desc], ...) → sort rows (aliases: sort, orderBy, order)");
       io.println("    | top(n[, by=field|field, asc|desc]) → top N rows sorted by field");
+      io.println("    | head(n)                       → take first N rows");
+      io.println("    | tail(n)                       → take last N rows");
+      io.println("    | filter(predicate)             → filter rows mid-pipeline (alias: where)");
+      io.println("    | distinct(field)               → unique values of field (alias: unique)");
       io.println(
           "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");
       io.println("  Field projection:");

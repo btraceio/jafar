@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -659,6 +660,22 @@ public final class JfrPathEvaluator {
           case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
           case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
           case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
+          case JfrPath.HeadOp head -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield rows.subList(0, Math.min(head.n, rows.size()));
+          }
+          case JfrPath.TailOp tail -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield rows.subList(Math.max(0, rows.size() - tail.n), rows.size());
+          }
+          case JfrPath.FilterOp filter -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield applyFilter(rows, filter.predicate);
+          }
+          case JfrPath.DistinctOp dist -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield applyDistinct(rows, dist.field);
+          }
         };
 
     // Apply remaining operators in sequence
@@ -1517,6 +1534,11 @@ public final class JfrPathEvaluator {
     }
 
     return result;
+  }
+
+  private List<Map<String, Object>> collectAllRows(JFRSession session, Query query)
+      throws Exception {
+    return evaluate(session, new Query(query.root, query.segments, query.predicates));
   }
 
   private List<Map<String, Object>> aggregateSortBy(
@@ -2726,6 +2748,11 @@ public final class JfrPathEvaluator {
       case JfrPath.CeilOp ce -> applyNumberTransform(rows, ce.valuePath, Math::ceil);
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
+      case JfrPath.HeadOp head -> rows.subList(0, Math.min(head.n, rows.size()));
+      case JfrPath.TailOp tail ->
+          rows.subList(Math.max(0, rows.size() - tail.n), rows.size());
+      case JfrPath.FilterOp filter -> applyFilter(rows, filter.predicate);
+      case JfrPath.DistinctOp dist -> applyDistinct(rows, dist.field);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
       case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
@@ -3033,6 +3060,83 @@ public final class JfrPathEvaluator {
         }
       }
       result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyFilter(
+      List<Map<String, Object>> rows, JfrPath.Predicate predicate) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      if (matchesPredicate(row, predicate)) {
+        result.add(row);
+      }
+    }
+    return result;
+  }
+
+  private boolean matchesPredicate(Map<String, Object> row, JfrPath.Predicate predicate) {
+    if (predicate instanceof JfrPath.FieldPredicate fp) {
+      // For pipeline filter, field path is typically a single column name
+      Object val = Values.get(row, fp.fieldPath.toArray());
+      return matchOp(val, fp.op, fp.literal);
+    } else if (predicate instanceof JfrPath.ExprPredicate ep) {
+      return matchBoolExpr(row, ep.expr);
+    }
+    return false;
+  }
+
+  private boolean matchBoolExpr(Map<String, Object> row, JfrPath.BoolExpr expr) {
+    if (expr instanceof JfrPath.CompExpr ce) {
+      Object val;
+      if (ce.lhs instanceof JfrPath.PathRef pr) {
+        val = Values.get(row, pr.path.toArray());
+      } else if (ce.lhs instanceof JfrPath.FuncValueExpr fve) {
+        // Evaluate function on row - simplified: just use the first path arg
+        val = null;
+        for (JfrPath.Arg arg : fve.args) {
+          if (arg instanceof JfrPath.PathArg pa) {
+            val = Values.get(row, pa.path.toArray());
+            break;
+          }
+        }
+      } else {
+        val = null;
+      }
+      return matchOp(val, ce.op, ce.literal);
+    } else if (expr instanceof JfrPath.LogicalExpr le) {
+      boolean left = matchBoolExpr(row, le.left);
+      boolean right = matchBoolExpr(row, le.right);
+      return le.op == JfrPath.LogicalExpr.Lop.AND ? left && right : left || right;
+    } else if (expr instanceof JfrPath.NotExpr ne) {
+      return !matchBoolExpr(row, ne.inner);
+    }
+    return false;
+  }
+
+  private boolean matchOp(Object val, JfrPath.Op op, Object literal) {
+    if (val == null) return false;
+    int cmp = compareValues(val, literal);
+    return switch (op) {
+      case EQ -> cmp == 0;
+      case NE -> cmp != 0;
+      case GT -> cmp > 0;
+      case GE -> cmp >= 0;
+      case LT -> cmp < 0;
+      case LE -> cmp <= 0;
+      case REGEX -> String.valueOf(val).matches(String.valueOf(literal));
+      default -> false;
+    };
+  }
+
+  private List<Map<String, Object>> applyDistinct(List<Map<String, Object>> rows, String field) {
+    Set<Object> seen = new LinkedHashSet<>();
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Object val = row.get(field);
+      if (seen.add(val)) {
+        result.add(row);
+      }
     }
     return result;
   }

@@ -734,6 +734,45 @@ public final class JfrPathParser {
         expect(')');
       }
       return new JfrPath.TopOp(n, byPath, ascending);
+    } else if ("head".equals(name)) {
+      int n = 10;
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("head() expects numeric count");
+        n = ((Number) lit).intValue();
+        skipWs();
+        expect(')');
+      }
+      return new JfrPath.HeadOp(n);
+    } else if ("tail".equals(name)) {
+      int n = 10;
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("tail() expects numeric count");
+        n = ((Number) lit).intValue();
+        skipWs();
+        expect(')');
+      }
+      return new JfrPath.TailOp(n);
+    } else if ("filter".equals(name) || "where".equals(name)) {
+      expect('(');
+      skipWs();
+      Predicate pred = parsePredicate();
+      skipWs();
+      expect(')');
+      return new JfrPath.FilterOp(pred);
+    } else if ("distinct".equals(name) || "unique".equals(name)) {
+      expect('(');
+      skipWs();
+      String field = readIdent();
+      if (field.isEmpty()) throw error("distinct() requires a field name");
+      skipWs();
+      expect(')');
+      return new JfrPath.DistinctOp(field);
     } else if ("len".equals(name)) {
       if (peek() == '(') {
         pos++;
