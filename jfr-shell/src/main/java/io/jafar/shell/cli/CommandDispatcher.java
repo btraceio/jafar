@@ -446,7 +446,7 @@ public class CommandDispatcher {
     }
     if (tokens.isEmpty()) {
       io.error(
-          "Usage: show <expr> [--limit N] [--format table|json|csv] [--tree] [--depth N] [--list-match any|all|none]");
+          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N] [--list-match any|all|none]");
       return;
     }
     // Extract expression from fullLine to preserve pipe operators that get lost in tokenization
@@ -503,6 +503,8 @@ public class CommandDispatcher {
                 printJson(rows, io);
               } else if ("csv".equalsIgnoreCase(format)) {
                 CsvRenderer.render(rows, io);
+              } else if ("tui".equalsIgnoreCase(format)) {
+                TuiTableRenderer.render(rows, io);
               } else {
                 TableRenderer.render(rows, io);
               }
@@ -530,6 +532,8 @@ public class CommandDispatcher {
         printJson(rows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(rows, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(rows, io);
       } else {
         TableRenderer.render(rows, io);
       }
@@ -545,6 +549,8 @@ public class CommandDispatcher {
         printJson(rows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(rows, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(rows, io);
       } else {
         TableRenderer.render(rows, io);
       }
@@ -573,14 +579,24 @@ public class CommandDispatcher {
           fieldName = seg1.substring("fieldsByName.".length());
         }
         if (fieldName != null && !fieldName.isEmpty()) {
-          TreeRenderer.renderFieldRecursive(
-              cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+          if ("tui".equalsIgnoreCase(format)) {
+            TuiTreeRenderer.renderFieldRecursive(
+                cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+          } else {
+            TreeRenderer.renderFieldRecursive(
+                cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+          }
           return;
         }
       }
       // Otherwise, render the class tree for the requested type
-      TreeRenderer.renderMetadataRecursive(
-          cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      if ("tui".equalsIgnoreCase(format)) {
+        TuiTreeRenderer.renderMetadataRecursive(
+            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      } else {
+        TreeRenderer.renderMetadataRecursive(
+            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      }
       return;
     }
     if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty() && q.predicates.isEmpty()) {
@@ -599,6 +615,8 @@ public class CommandDispatcher {
           printJson(values, io);
         } else if ("csv".equalsIgnoreCase(format)) {
           CsvRenderer.renderValues(values, io);
+        } else if ("tui".equalsIgnoreCase(format)) {
+          TuiTableRenderer.renderValues(values, io);
         } else {
           TableRenderer.renderValues(values, io);
         }
@@ -616,6 +634,10 @@ public class CommandDispatcher {
           java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>(fm);
           copy.remove("annotationsFull");
           CsvRenderer.render(java.util.List.of(copy), io);
+        } else if ("tui".equalsIgnoreCase(format)) {
+          java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>(fm);
+          copy.remove("annotationsFull");
+          TuiTableRenderer.render(java.util.List.of(copy), io);
         } else {
           // Hide internal columns for field-level table view
           java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>(fm);
@@ -635,6 +657,8 @@ public class CommandDispatcher {
         printJson(values, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.renderValues(values, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.renderValues(values, io);
       } else {
         TableRenderer.renderValues(values, io);
       }
@@ -659,6 +683,19 @@ public class CommandDispatcher {
           rows = java.util.List.of(copy);
         }
         CsvRenderer.render(rows, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        // Hide internal columns for metadata tables (TUI view)
+        if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
+          java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>(rows.get(0));
+          copy.remove("fieldsByName");
+          copy.remove("classAnnotations");
+          copy.remove("classAnnotationsFull");
+          copy.remove("settings");
+          copy.remove("settingsByName");
+          copy.remove("fieldCount");
+          rows = java.util.List.of(copy);
+        }
+        TuiTableRenderer.render(rows, io);
       } else {
         // Hide internal columns for metadata tables (default table view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
@@ -715,7 +752,7 @@ public class CommandDispatcher {
     String sub = args.get(0).toLowerCase(Locale.ROOT);
     if ("show".equals(sub) || "select".equals(sub)) {
       io.println(
-          "Usage: show <expr> [--limit N] [--format table|json|csv] [--tree] [--depth N] [--list-match any|all|none]");
+          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N] [--list-match any|all|none]");
       io.println("Where <expr> is a JfrPath like:");
       io.println("  events/<type>[field/path op literal][...]");
       io.println("  metadata/<type>[/field][...]   (use --tree [--depth N] for recursive tree)");
@@ -850,7 +887,7 @@ public class CommandDispatcher {
       return;
     }
     if ("chunks".equals(sub)) {
-      io.println("Usage: chunks [--summary] [--range N-M] [--format table|json|csv]");
+      io.println("Usage: chunks [--summary] [--range N-M] [--format table|json|csv|tui]");
       io.println("List chunks in the current recording.");
       io.println("Options:");
       io.println(
@@ -877,7 +914,7 @@ public class CommandDispatcher {
       return;
     }
     if ("cp".equals(sub)) {
-      io.println("Usage: cp [--summary] [<type>] [--range N-M] [--format table|json|csv]");
+      io.println("Usage: cp [--summary] [<type>] [--range N-M] [--format table|json|csv|tui]");
       io.println("Browse constant pools in the current recording.");
       io.println("Options:");
       io.println("  --summary      Show per-type counts only (default when no type specified)");
@@ -922,7 +959,7 @@ public class CommandDispatcher {
       io.println("");
       io.println("Output Format:");
       io.println("  set output <format>    Set default output format for this session");
-      io.println("  Valid formats: table, json, csv");
+      io.println("  Valid formats: table, json, csv, tui");
       io.println("  The --format flag on commands overrides this setting");
       io.println("");
       io.println("Examples:");
@@ -1313,8 +1350,14 @@ public class CommandDispatcher {
     }
     if (tree) {
       // For --tree, render recursively starting from the requested type
-      TreeRenderer.renderMetadataRecursive(
-          cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      String metaFormat = cur.get().outputFormat;
+      if ("tui".equalsIgnoreCase(metaFormat)) {
+        TuiTreeRenderer.renderMetadataRecursive(
+            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      } else {
+        TreeRenderer.renderMetadataRecursive(
+            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+      }
       return;
     }
     if (fields) {
@@ -1401,6 +1444,8 @@ public class CommandDispatcher {
         printJson(List.of(stats), io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(List.of(stats), io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(List.of(stats), io);
       } else {
         TableRenderer.render(List.of(stats), io);
       }
@@ -1429,6 +1474,8 @@ public class CommandDispatcher {
         printJson(chunks, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(chunks, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(chunks, io);
       } else {
         TableRenderer.render(chunks, io);
       }
@@ -1509,6 +1556,8 @@ public class CommandDispatcher {
         printJson(summaryRows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(summaryRows, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(summaryRows, io);
       } else {
         TableRenderer.render(summaryRows, io);
       }
@@ -1530,6 +1579,8 @@ public class CommandDispatcher {
         printJson(entries, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(entries, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(entries, io);
       } else {
         TableRenderer.render(entries, io);
       }
@@ -1791,9 +1842,9 @@ public class CommandDispatcher {
     }
 
     String format = args.get(0).toLowerCase(Locale.ROOT);
-    if (!format.matches("table|json|csv")) {
+    if (!format.matches("table|json|csv|tui")) {
       io.error("Invalid format: " + format);
-      io.error("Valid formats: table, json, csv");
+      io.error("Valid formats: table, json, csv, tui");
       return;
     }
 

@@ -15,6 +15,12 @@ repositories {
     maven {
         url "https://oss.sonatype.org/content/repositories/snapshots/"
     }
+    maven {
+        url "https://central.sonatype.com/repository/maven-snapshots/"
+        mavenContent {
+            snapshotsOnly()
+        }
+    }
 }
 
 java {
@@ -42,6 +48,10 @@ dependencies {
     // JLine for better terminal handling
     implementation 'org.jline:jline-terminal:3.21.0'
     implementation 'org.jline:jline-reader:3.21.0'
+
+    // TamboUI for rich terminal output rendering (tables, trees)
+    implementation 'dev.tamboui:tamboui-core:0.2.0-SNAPSHOT'
+    implementation 'dev.tamboui:tamboui-widgets:0.2.0-SNAPSHOT'
 
     // Utilities
     implementation 'org.slf4j:slf4j-api:2.0.5'
@@ -138,6 +148,7 @@ shadowJar {
     relocate 'org.apache.maven.resolver', 'io.jafar.shaded.resolver'
     relocate 'org.apache.http', 'io.jafar.shaded.http'
     relocate 'com.google.gson', 'io.jafar.shaded.gson'
+    relocate 'dev.tamboui', 'io.jafar.shaded.tamboui'
 
     // Ensure main class is set
     manifest {
