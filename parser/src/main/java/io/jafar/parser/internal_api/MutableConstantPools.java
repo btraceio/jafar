@@ -2,8 +2,7 @@ package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ConstantPools;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import java.util.stream.Stream;
 
 /**
@@ -15,7 +14,7 @@ import java.util.stream.Stream;
  */
 public final class MutableConstantPools implements ConstantPools {
   /** Map of type IDs to their corresponding constant pool instances. */
-  private final Long2ObjectMap<MutableConstantPool> poolMap = new Long2ObjectOpenHashMap<>();
+  private final LongObjectHashMap<MutableConstantPool> poolMap = new LongObjectHashMap<>();
 
   /** Flag indicating whether all constant pools are ready for use. */
   private boolean ready = false;

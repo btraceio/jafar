@@ -1,9 +1,8 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.MetadataLookup;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,7 +27,7 @@ public final class MutableMetadataLookup implements MetadataLookup {
   private String[] strings;
 
   /** Map of class IDs to their metadata class instances. */
-  private final Long2ObjectMap<MetadataClass> classes = new Long2ObjectOpenHashMap<>();
+  private final LongObjectHashMap<MetadataClass> classes = new LongObjectHashMap<>();
 
   private final Map<String, MetadataClass> classesByName = new HashMap<>();
 

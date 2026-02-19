@@ -120,6 +120,10 @@ test {
     systemProperty 'jqwik.shrinking.mode', 'FULL'
 }
 
+processResources {
+    from(rootProject.file('jfr-shell-plugins.json'))
+}
+
 shadowJar {
     group 'Build'
     archiveBaseName = libraryName

@@ -594,27 +594,28 @@ public final class JfrPathEvaluator {
           case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
           case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
-          case JfrPath.GroupByOp gb -> aggregateGroupBy(
-              session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+          case JfrPath.GroupByOp gb ->
+              aggregateGroupBy(
+                  session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
           case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
-          case JfrPath.UppercaseOp up -> aggregateStringTransform(
-              session, query, up.valuePath, "uppercase");
-          case JfrPath.LowercaseOp lo -> aggregateStringTransform(
-              session, query, lo.valuePath, "lowercase");
+          case JfrPath.UppercaseOp up ->
+              aggregateStringTransform(session, query, up.valuePath, "uppercase");
+          case JfrPath.LowercaseOp lo ->
+              aggregateStringTransform(session, query, lo.valuePath, "lowercase");
           case JfrPath.TrimOp tr -> aggregateStringTransform(session, query, tr.valuePath, "trim");
           case JfrPath.AbsOp ab -> aggregateNumberTransform(session, query, ab.valuePath, "abs");
-          case JfrPath.RoundOp ro -> aggregateNumberTransform(
-              session, query, ro.valuePath, "round");
-          case JfrPath.FloorOp flo -> aggregateNumberTransform(
-              session, query, flo.valuePath, "floor");
-          case JfrPath.CeilOp cei -> aggregateNumberTransform(
-              session, query, cei.valuePath, "ceil");
-          case JfrPath.ContainsOp co -> aggregateStringPredicate(
-              session, query, co.valuePath, "contains", co.substr);
-          case JfrPath.ReplaceOp rp -> aggregateStringReplace(
-              session, query, rp.valuePath, rp.target, rp.replacement);
+          case JfrPath.RoundOp ro ->
+              aggregateNumberTransform(session, query, ro.valuePath, "round");
+          case JfrPath.FloorOp flo ->
+              aggregateNumberTransform(session, query, flo.valuePath, "floor");
+          case JfrPath.CeilOp cei ->
+              aggregateNumberTransform(session, query, cei.valuePath, "ceil");
+          case JfrPath.ContainsOp co ->
+              aggregateStringPredicate(session, query, co.valuePath, "contains", co.substr);
+          case JfrPath.ReplaceOp rp ->
+              aggregateStringReplace(session, query, rp.valuePath, rp.target, rp.replacement);
           case JfrPath.DecorateByTimeOp dt -> evaluateDecorateByTime(session, query, dt);
           case JfrPath.DecorateByKeyOp dk -> evaluateDecorateByKey(session, query, dk);
           case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
@@ -2199,8 +2200,8 @@ public final class JfrPathEvaluator {
       case LT -> compareNum(actual, lit) < 0;
       case LE -> compareNum(actual, lit) <= 0;
       case REGEX -> String.valueOf(actual).matches(String.valueOf(lit));
-      case PLUS, MINUS, MULT, DIV -> throw new IllegalArgumentException(
-          "Arithmetic operators not supported in comparisons");
+      case PLUS, MINUS, MULT, DIV ->
+          throw new IllegalArgumentException("Arithmetic operators not supported in comparisons");
     };
   }
 
@@ -2621,8 +2622,8 @@ public final class JfrPathEvaluator {
       case JfrPath.SumOp sum -> applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
-      case JfrPath.GroupByOp gb -> applyGroupBy(
-          rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
+      case JfrPath.GroupByOp gb ->
+          applyGroupBy(rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
       case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);

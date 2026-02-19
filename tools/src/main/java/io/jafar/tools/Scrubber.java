@@ -8,6 +8,7 @@ import io.jafar.parser.internal_api.ParserContextFactory;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.TypeSkipper;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
@@ -28,14 +29,36 @@ public final class Scrubber {
 
   private static final String SCRUBBING_INFO_KEY = "scrubbingInfo";
 
-  record SkipInfo(long startPos, long endPos) {}
+  static final class SkipInfo {
+    final long startPos;
+    final long endPos;
 
-  record TypeScrubbing(
-      long typeId,
-      TypeSkipper skipper,
-      int scrubFieldIndex,
-      int scrubGuardIndex,
-      BiFunction<String, String, Boolean> guard) {
+    SkipInfo(long startPos, long endPos) {
+      this.startPos = startPos;
+      this.endPos = endPos;
+    }
+  }
+
+  static final class TypeScrubbing {
+    final long typeId;
+    final TypeSkipper skipper;
+    final int scrubFieldIndex;
+    final int scrubGuardIndex;
+    final BiFunction<String, String, Boolean> guard;
+
+    TypeScrubbing(
+        long typeId,
+        TypeSkipper skipper,
+        int scrubFieldIndex,
+        int scrubGuardIndex,
+        BiFunction<String, String, Boolean> guard) {
+      this.typeId = typeId;
+      this.skipper = skipper;
+      this.scrubFieldIndex = scrubFieldIndex;
+      this.scrubGuardIndex = scrubGuardIndex;
+      this.guard = guard;
+    }
+
     @Override
     public boolean equals(Object o) {
       if (o == null || getClass() != o.getClass()) return false;
@@ -248,7 +271,7 @@ public final class Scrubber {
     @Override
     public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
       ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
-      for (var md : metadata.getClasses()) {
+      for (MetadataClass md : metadata.getClasses()) {
         ScrubField scrubField = scrubDefinition.apply(md.getName());
         if (scrubField != null) {
           info.targetClassMap.computeIfAbsent(
@@ -288,7 +311,7 @@ public final class Scrubber {
         throw new IllegalStateException("invalid parser state, no scrubbing info found");
       }
 
-      var targetScrub = info.targetClassMap.get(typeId);
+      TypeScrubbing targetScrub = info.targetClassMap.get(typeId);
       if (targetScrub != null) {
         RecordingStream stream = context.get(RecordingStream.class);
         assert stream != null;
@@ -344,7 +367,7 @@ public final class Scrubber {
 
     @Override
     public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-      var info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
+      ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
       globalSkipInfo.addAll(info.skipInfo);
       return true;
     }

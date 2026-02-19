@@ -3,10 +3,12 @@ package io.jafar.shell.plugin;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -40,6 +42,8 @@ final class PluginRegistry {
 
   private final PluginStorageManager storageManager;
   private final Path mavenRepositoryPath;
+  private final String remoteRegistryUrl;
+  private Map<String, PluginDefinition> bundledPlugins;
   private Map<String, PluginDefinition> localMavenPlugins;
   private Map<String, PluginDefinition> remotePlugins;
   private Instant lastRemoteFetch;
@@ -52,6 +56,45 @@ final class PluginRegistry {
   PluginRegistry(PluginStorageManager storageManager, Path mavenRepositoryPath) {
     this.storageManager = storageManager;
     this.mavenRepositoryPath = mavenRepositoryPath;
+    this.remoteRegistryUrl = REMOTE_REGISTRY_URL;
+    // null signals loadBundledPlugins() to load from classpath
+    this.bundledPlugins = null;
+    this.localMavenPlugins = new HashMap<>();
+    this.remotePlugins = new HashMap<>();
+    refreshDiscovery();
+  }
+
+  /**
+   * Constructor for testing that accepts bundled JSON directly, bypassing classpath resource
+   * loading.
+   *
+   * @param storageManager the storage manager
+   * @param mavenRepositoryPath path to local Maven repository
+   * @param bundledJson bundled plugin JSON (non-null bypasses classpath loading)
+   */
+  PluginRegistry(
+      PluginStorageManager storageManager, Path mavenRepositoryPath, String bundledJson) {
+    this(storageManager, mavenRepositoryPath, bundledJson, REMOTE_REGISTRY_URL);
+  }
+
+  /**
+   * Constructor for testing that accepts bundled JSON and a custom remote URL.
+   *
+   * @param storageManager the storage manager
+   * @param mavenRepositoryPath path to local Maven repository
+   * @param bundledJson bundled plugin JSON (non-null bypasses classpath loading)
+   * @param remoteUrl remote registry URL (use unreachable URL to simulate network failure)
+   */
+  PluginRegistry(
+      PluginStorageManager storageManager,
+      Path mavenRepositoryPath,
+      String bundledJson,
+      String remoteUrl) {
+    this.storageManager = storageManager;
+    this.mavenRepositoryPath = mavenRepositoryPath;
+    this.remoteRegistryUrl = remoteUrl != null ? remoteUrl : REMOTE_REGISTRY_URL;
+    // Non-null bundledJson (even empty) bypasses classpath loading
+    this.bundledPlugins = bundledJson != null ? parsePluginJson(bundledJson) : null;
     this.localMavenPlugins = new HashMap<>();
     this.remotePlugins = new HashMap<>();
     refreshDiscovery();
@@ -121,13 +164,15 @@ final class PluginRegistry {
 
   /** Refresh both local and remote plugin discovery. */
   private void refreshDiscovery() {
+    loadBundledPlugins();
     log.debug("Discovering local Maven plugins");
     this.localMavenPlugins = discoverLocalMavenPlugins();
     this.lastLocalScan = Instant.now();
     log.debug("Loading remote plugin registry");
     loadRemotePlugins();
     log.debug(
-        "Plugin discovery complete: {} local, {} remote",
+        "Plugin discovery complete: {} bundled, {} local, {} remote",
+        bundledPlugins.size(),
         localMavenPlugins.size(),
         remotePlugins.size());
   }
@@ -231,6 +276,124 @@ final class PluginRegistry {
     }
   }
 
+  /** Load bundled plugins from classpath resource. */
+  private void loadBundledPlugins() {
+    // If bundledPlugins was already set (e.g. via test constructor), keep it
+    if (this.bundledPlugins != null) {
+      log.debug("Using pre-loaded bundled plugins: {}", bundledPlugins.size());
+      return;
+    }
+    try (InputStream is = getClass().getResourceAsStream("/jfr-shell-plugins.json")) {
+      if (is != null) {
+        String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        this.bundledPlugins = parsePluginJson(json);
+        log.debug("Loaded {} bundled plugins from classpath", bundledPlugins.size());
+      } else {
+        log.debug("No bundled plugins resource found on classpath");
+        this.bundledPlugins = new HashMap<>();
+      }
+    } catch (Exception e) {
+      log.debug("Failed to load bundled plugins", e);
+      this.bundledPlugins = new HashMap<>();
+    }
+  }
+
+  /**
+   * Parse plugin registry JSON into a map of plugin definitions.
+   *
+   * @param json the JSON string to parse
+   * @return map of plugin ID to definition, or empty map on parse error
+   */
+  static Map<String, PluginDefinition> parsePluginJson(String json) {
+    Map<String, PluginDefinition> result = new HashMap<>();
+    try {
+      JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+      JsonObject plugins = root.getAsJsonObject("plugins");
+      if (plugins != null) {
+        for (String pluginId : plugins.keySet()) {
+          JsonObject pluginData = plugins.getAsJsonObject(pluginId);
+          String groupId = pluginData.get("groupId").getAsString();
+          String artifactId = pluginData.get("artifactId").getAsString();
+          String latestVersion = pluginData.get("latestVersion").getAsString();
+          String repository = pluginData.get("repository").getAsString();
+          result.put(
+              pluginId.toLowerCase(),
+              new PluginDefinition(groupId, artifactId, latestVersion, repository));
+        }
+      }
+    } catch (Exception e) {
+      // Parse error - return empty map
+    }
+    return result;
+  }
+
+  /**
+   * Check if a remote registry is compatible with the bundled registry. For pre-1.0 (major == 0):
+   * compatible when remote minor version matches bundled minor version for all shared plugins. For
+   * 1.0+: compatible when remote major version matches bundled major version.
+   *
+   * @param remote the remote plugin definitions
+   * @param bundled the bundled plugin definitions
+   * @return true if remote is compatible with bundled
+   */
+  static boolean isRemoteCompatible(
+      Map<String, PluginDefinition> remote, Map<String, PluginDefinition> bundled) {
+    if (bundled.isEmpty()) {
+      return true; // No bundled baseline - accept any remote
+    }
+    for (Map.Entry<String, PluginDefinition> entry : bundled.entrySet()) {
+      PluginDefinition remotePlugin = remote.get(entry.getKey());
+      if (remotePlugin == null) {
+        continue; // Plugin not in remote - not a compatibility issue
+      }
+      PluginDefinition bundledPlugin = entry.getValue();
+      int[] remoteVersion = parseVersion(remotePlugin.version());
+      int[] bundledVersion = parseVersion(bundledPlugin.version());
+      if (bundledVersion[0] == 0) {
+        // Pre-1.0: minor must match
+        if (remoteVersion[0] != bundledVersion[0] || remoteVersion[1] != bundledVersion[1]) {
+          log.debug(
+              "Remote plugin '{}' version {} incompatible with bundled {} (minor mismatch)",
+              entry.getKey(),
+              remotePlugin.version(),
+              bundledPlugin.version());
+          return false;
+        }
+      } else {
+        // 1.0+: major must match
+        if (remoteVersion[0] != bundledVersion[0]) {
+          log.debug(
+              "Remote plugin '{}' version {} incompatible with bundled {} (major mismatch)",
+              entry.getKey(),
+              remotePlugin.version(),
+              bundledPlugin.version());
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Parse a version string into [major, minor, patch] array.
+   *
+   * @param version version string (e.g. "0.11.4" or "1.2.3-SNAPSHOT")
+   * @return int array of [major, minor, patch]
+   */
+  private static int[] parseVersion(String version) {
+    String base = version.split("-", 2)[0];
+    String[] parts = base.split("\\.");
+    int[] result = new int[3];
+    for (int i = 0; i < Math.min(parts.length, 3); i++) {
+      try {
+        result[i] = Integer.parseInt(parts[i]);
+      } catch (NumberFormatException e) {
+        result[i] = 0;
+      }
+    }
+    return result;
+  }
+
   /** Load remote plugin registry from GitHub or cache. */
   private void loadRemotePlugins() {
     try {
@@ -250,7 +413,7 @@ final class PluginRegistry {
         registryJson = cachedJson;
       } else {
         // Fetch from remote
-        log.debug("Fetching remote plugin registry from {}", REMOTE_REGISTRY_URL);
+        log.debug("Fetching remote plugin registry from {}", remoteRegistryUrl);
         registryJson = fetchRemoteRegistry();
         if (registryJson != null) {
           storageManager.saveRegistryCache(registryJson);
@@ -261,21 +424,28 @@ final class PluginRegistry {
             log.info("Failed to fetch remote registry, using stale cache");
             registryJson = cachedJson;
           } else {
-            log.info("No remote registry available (network failure, no cache)");
-            // Mark remote fetch as attempted to avoid retrying on every call
+            log.info("No remote registry available (network failure, no cache), using bundled");
+            this.remotePlugins = new HashMap<>(bundledPlugins);
             this.lastRemoteFetch = Instant.now();
             return;
           }
         }
       }
 
-      parseRemoteRegistry(registryJson);
+      Map<String, PluginDefinition> parsed = parsePluginJson(registryJson);
+      if (isRemoteCompatible(parsed, bundledPlugins)) {
+        this.remotePlugins = parsed;
+        log.debug("Remote registry accepted (compatible with bundled)");
+      } else {
+        log.info("Remote registry incompatible with bundled, falling back to bundled plugins");
+        this.remotePlugins = new HashMap<>(bundledPlugins);
+      }
       this.lastRemoteFetch = Instant.now();
       log.debug("Remote plugin registry loaded successfully");
 
     } catch (IOException e) {
       log.warn("Failed to load remote plugin registry", e);
-      // Mark as attempted to avoid infinite retries
+      this.remotePlugins = new HashMap<>(bundledPlugins);
       this.lastRemoteFetch = Instant.now();
     }
   }
@@ -287,7 +457,7 @@ final class PluginRegistry {
 
       HttpRequest request =
           HttpRequest.newBuilder()
-              .uri(URI.create(REMOTE_REGISTRY_URL))
+              .uri(URI.create(remoteRegistryUrl))
               .timeout(Duration.ofSeconds(5))
               .GET()
               .build();
@@ -301,32 +471,6 @@ final class PluginRegistry {
     } catch (Exception e) {
       // Network failure - return null
       return null;
-    }
-  }
-
-  /** Parse remote registry JSON and populate remotePlugins map. */
-  private void parseRemoteRegistry(String json) {
-    try {
-      JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-      JsonObject plugins = root.getAsJsonObject("plugins");
-
-      if (plugins != null) {
-        Map<String, PluginDefinition> newRemote = new HashMap<>();
-        for (String pluginId : plugins.keySet()) {
-          JsonObject pluginData = plugins.getAsJsonObject(pluginId);
-          String groupId = pluginData.get("groupId").getAsString();
-          String artifactId = pluginData.get("artifactId").getAsString();
-          String latestVersion = pluginData.get("latestVersion").getAsString();
-          String repository = pluginData.get("repository").getAsString();
-
-          newRemote.put(
-              pluginId.toLowerCase(),
-              new PluginDefinition(groupId, artifactId, latestVersion, repository));
-        }
-        this.remotePlugins = newRemote;
-      }
-    } catch (Exception e) {
-      // Parse error - keep existing remote plugins
     }
   }
 

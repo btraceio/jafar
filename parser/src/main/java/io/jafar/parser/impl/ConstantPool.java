@@ -1,7 +1,6 @@
 package io.jafar.parser.impl;
 
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import java.util.Map;
 
 /**
@@ -18,7 +17,7 @@ public final class ConstantPool {
   private final boolean immutable;
 
   /** The underlying map storing constant pool entries. */
-  private final Long2ObjectMap<Map<String, Object>> cpool = new Long2ObjectOpenHashMap<>();
+  private final LongObjectHashMap<Map<String, Object>> cpool = new LongObjectHashMap<>();
 
   /**
    * Constructs a new ConstantPool with the specified mutability.

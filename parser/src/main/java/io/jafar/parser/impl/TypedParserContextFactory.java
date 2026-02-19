@@ -7,9 +7,8 @@ import io.jafar.parser.internal_api.GlobalHandlerCache;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.ParserContextFactory;
+import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
 import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import java.util.Set;
 
 /**
@@ -30,16 +29,16 @@ public final class TypedParserContextFactory implements ParserContextFactory {
   public TypedParserContextFactory() {}
 
   /** Map of chunk index to metadata lookup instances. */
-  private final Int2ObjectMap<MutableMetadataLookup> chunkMetadataLookup =
-      new Int2ObjectOpenHashMap<>();
+  private final IntObjectArrayMap<MutableMetadataLookup> chunkMetadataLookup =
+      new IntObjectArrayMap<>();
 
   /** Map of chunk index to constant pools instances. */
-  private final Int2ObjectMap<MutableConstantPools> chunkConstantPools =
-      new Int2ObjectOpenHashMap<>();
+  private final IntObjectArrayMap<MutableConstantPools> chunkConstantPools =
+      new IntObjectArrayMap<>();
 
   /** Map of chunk index to metadata fingerprints. */
-  private final Int2ObjectMap<MetadataFingerprint> chunkFingerprints =
-      new Int2ObjectOpenHashMap<>();
+  private final IntObjectArrayMap<MetadataFingerprint> chunkFingerprints =
+      new IntObjectArrayMap<>();
 
   /**
    * Creates a new parser context for the specified chunk.

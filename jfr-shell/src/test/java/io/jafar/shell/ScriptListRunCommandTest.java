@@ -56,7 +56,9 @@ class ScriptListRunCommandTest {
   void scriptExecutionByPath(@TempDir Path tempDir) throws Exception {
     // Create a test script with simple commands
     Path scriptPath = tempDir.resolve("test.jfrs");
-    Files.writeString(scriptPath, """
+    Files.writeString(
+        scriptPath,
+        """
         # Test script
         echo Test output
         """);
@@ -136,7 +138,8 @@ class ScriptListRunCommandTest {
   void scriptWithOnlyComments(@TempDir Path tempDir) throws Exception {
     Path scriptPath = testScriptsDir.resolve("comments.jfrs");
     Files.writeString(
-        scriptPath, """
+        scriptPath,
+        """
         # Comment 1
         # Comment 2
         # Comment 3

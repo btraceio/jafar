@@ -3,11 +3,9 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
+import io.jafar.parser.internal_api.collections.LongLongHashMap;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
-import it.unimi.dsi.fastutil.longs.Long2LongMap;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 /**
  * Mutable implementation of ConstantPool that allows adding offsets and lazy-loading entries.
@@ -18,10 +16,10 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
  */
 public final class MutableConstantPool implements ConstantPool {
   /** Map of constant pool entry IDs to their file offsets. */
-  private final Long2LongMap offsets;
+  private final LongLongHashMap offsets;
 
   /** Map of constant pool entry IDs to their deserialized objects. */
-  private final Long2ObjectMap<Object> entries;
+  private final LongObjectHashMap<Object> entries;
 
   /** The recording stream for reading constant pool data. */
   private final RecordingStream stream;
@@ -37,8 +35,8 @@ public final class MutableConstantPool implements ConstantPool {
    * @param count the expected number of constant pool entries
    */
   public MutableConstantPool(RecordingStream chunkStream, long typeId, int count) {
-    this.offsets = new Long2LongOpenHashMap(count);
-    this.entries = new Long2ObjectOpenHashMap<>(count);
+    this.offsets = new LongLongHashMap(count);
+    this.entries = new LongObjectHashMap<>(count);
     this.stream = chunkStream;
     ParserContext context = chunkStream.getContext();
     clazz = context.getMetadataLookup().getClass(typeId);
@@ -77,7 +75,9 @@ public final class MutableConstantPool implements ConstantPool {
             }
             // If GenericValueReader is not available, o remains null
           }
-          entries.put(id, o);
+          if (o != null) {
+            entries.put(id, o);
+          }
         } finally {
           stream.position(pos);
         }
@@ -96,7 +96,7 @@ public final class MutableConstantPool implements ConstantPool {
   public java.util.Iterator<Long> ids() {
     // Prefer a primitive long iterator if available
     return new java.util.Iterator<Long>() {
-      final it.unimi.dsi.fastutil.longs.LongIterator it = offsets.keySet().iterator();
+      final LongLongHashMap.LongIterator it = offsets.keyIterator();
 
       @Override
       public boolean hasNext() {

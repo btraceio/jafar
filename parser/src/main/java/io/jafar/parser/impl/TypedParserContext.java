@@ -5,9 +5,9 @@ import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.DeserializerCache;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +29,7 @@ public final class TypedParserContext extends ParserContext {
   private final Map<String, Class<?>> classTargetTypeMap = new ConcurrentHashMap<>();
 
   /** Map of class IDs to their handler classes. */
-  private Long2ObjectMap<Class<?>> classTypeMap = null;
+  private LongObjectHashMap<Class<?>> classTypeMap = null;
 
   /**
    * Key for identifying and caching deserializers.
@@ -209,7 +209,7 @@ public final class TypedParserContext extends ParserContext {
    *
    * @param map the map of class IDs to handler classes
    */
-  public void setClassTypeMap(Long2ObjectMap<Class<?>> map) {
+  public void setClassTypeMap(LongObjectHashMap<Class<?>> map) {
     classTypeMap = map;
   }
 
@@ -218,7 +218,7 @@ public final class TypedParserContext extends ParserContext {
    *
    * @return the map of class IDs to handler classes
    */
-  public Long2ObjectMap<Class<?>> getClassTypeMap() {
+  public LongObjectHashMap<Class<?>> getClassTypeMap() {
     return classTypeMap;
   }
 

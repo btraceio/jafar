@@ -51,7 +51,6 @@ dependencies {
     implementation 'io.btrace:jafar-parser:0.3.0-SNAPSHOT'
     implementation 'io.btrace:jafar-tools:0.3.0-SNAPSHOT'
 
-    implementation 'it.unimi.dsi:fastutil:8.5.12'
     implementation 'org.jctools:jctools-core:4.0.3'
     implementation 'org.openjdk.jmc:flightrecorder:8.3.1'
 }

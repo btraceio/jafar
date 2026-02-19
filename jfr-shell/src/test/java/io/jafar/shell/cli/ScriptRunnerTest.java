@@ -63,7 +63,9 @@ class ScriptRunnerTest {
   void testAllParametersExpansion(@TempDir Path tempDir) throws IOException {
     // Test $@ expansion
     Path scriptPath = tempDir.resolve("test.jfrs");
-    Files.writeString(scriptPath, """
+    Files.writeString(
+        scriptPath,
+        """
         # Test all parameters
         test $@
         """);
@@ -184,7 +186,8 @@ class ScriptRunnerTest {
   void testContinueOnError(@TempDir Path tempDir) throws IOException {
     Path scriptPath = tempDir.resolve("test.jfrs");
     Files.writeString(
-        scriptPath, """
+        scriptPath,
+        """
         command1
         command2
         command3
@@ -460,7 +463,9 @@ class ScriptRunnerTest {
   @Test
   void testMixedRequiredAndOptional(@TempDir Path tempDir) throws IOException {
     Path scriptPath = tempDir.resolve("test.jfrs");
-    Files.writeString(scriptPath, """
+    Files.writeString(
+        scriptPath,
+        """
         test $1 ${2:-default2} ${3}
         """);
 
