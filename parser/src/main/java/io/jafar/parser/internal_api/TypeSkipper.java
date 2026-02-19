@@ -3,8 +3,7 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntList;
+import io.jafar.parser.internal_api.collections.IntGrowableArray;
 import java.io.IOException;
 import java.util.List;
 
@@ -47,7 +46,7 @@ public final class TypeSkipper {
    * @return a new TypeSkipper instance
    */
   public static TypeSkipper createSkipper(MetadataClass clz) {
-    IntList instructions = new IntArrayList(20);
+    IntGrowableArray instructions = new IntGrowableArray(20);
 
     // Special case: java.lang.String has 0 fields but needs to skip string data
     // When used in constant pools, the string data is stored directly
@@ -112,7 +111,7 @@ public final class TypeSkipper {
    * @param fld the metadata field to generate instructions for
    * @param instructions the instruction list to fill
    */
-  private static void fillSkipper(MetadataField fld, IntList instructions) {
+  private static void fillSkipper(MetadataField fld, IntGrowableArray instructions) {
     int startingSize = instructions.size();
     int arraySizeIdx = -1;
     MetadataClass fldClz = fld.getType();

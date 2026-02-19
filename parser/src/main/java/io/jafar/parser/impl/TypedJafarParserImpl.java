@@ -20,10 +20,8 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CustomByteBuffer;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
@@ -94,7 +92,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   private final Map<Class<?>, Set<JFRHandler.Impl<?>>> handlerMap;
 
   /** Map of chunk indices to type ID to class mappings. */
-  private final Int2ObjectMap<Long2ObjectMap<Class<?>>> chunkTypeClassMap;
+  private final IntObjectArrayMap<LongObjectHashMap<Class<?>>> chunkTypeClassMap;
 
   /** Global map of event type names to handler classes. */
   private final Map<String, Class<?>> globalHandlerMap;
@@ -118,7 +116,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.parser = new StreamingChunkParser(parsingContext.typedContextFactory());
     this.recording = recording;
     this.handlerMap = new HashMap<>();
-    this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>();
+    this.chunkTypeClassMap = new IntObjectArrayMap<>();
     this.globalHandlerMap = new HashMap<>();
     this.factoryMap = new HashMap<>();
     this.parserListener = null;
@@ -131,7 +129,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     this.parser = other.parser;
     this.recording = other.recording;
     this.handlerMap = new HashMap<>(other.handlerMap);
-    this.chunkTypeClassMap = new Int2ObjectOpenHashMap<>(other.chunkTypeClassMap);
+    this.chunkTypeClassMap = new IntObjectArrayMap<>(other.chunkTypeClassMap);
     this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
     this.factoryMap = new HashMap<>(other.factoryMap);
     this.factoriesBound = false;
@@ -209,7 +207,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               synchronized (this) {
                 lCtx.setClassTypeMap(
                     chunkTypeClassMap.computeIfAbsent(
-                        chunkIndex, k -> new Long2ObjectOpenHashMap<>()));
+                        chunkIndex, k -> new LongObjectHashMap<>()));
                 lCtx.addTargetTypeMap(globalHandlerMap);
               }
               context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
@@ -234,7 +232,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               throw new RuntimeException("Invalid context");
             }
             TypedParserContext lContext = (TypedParserContext) context;
-            Long2ObjectMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
+            LongObjectHashMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
 
             // Bind build-time factories once per recording
             if (!factoryMap.isEmpty() && !factoriesBound) {
@@ -297,7 +295,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               throw new RuntimeException("Invalid context");
             }
             TypedParserContext typedContext = (TypedParserContext) context;
-            Long2ObjectMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
+            LongObjectHashMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
             Class<?> typeClz = typeClassMap.get(typeId);
             if (typeClz != null) {
               if (handlerMap.containsKey(typeClz)) {
