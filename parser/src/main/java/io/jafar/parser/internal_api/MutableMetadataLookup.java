@@ -1,8 +1,8 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.MetadataLookup;
-import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.collections.LongObjectHashMap;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;

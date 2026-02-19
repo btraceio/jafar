@@ -3,9 +3,9 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
-import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.collections.LongLongHashMap;
 import io.jafar.parser.internal_api.collections.LongObjectHashMap;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 
 /**
  * Mutable implementation of ConstantPool that allows adding offsets and lazy-loading entries.

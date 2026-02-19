@@ -1,9 +1,9 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
+import io.jafar.parser.internal_api.collections.IntGrowableArray;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import io.jafar.parser.internal_api.collections.IntGrowableArray;
 import java.io.IOException;
 import java.util.List;
 

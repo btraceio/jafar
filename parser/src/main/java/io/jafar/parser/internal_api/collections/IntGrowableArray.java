@@ -9,29 +9,29 @@ import java.util.Arrays;
  * overflow.
  */
 public final class IntGrowableArray {
-    private int[] data;
-    private int size;
+  private int[] data;
+  private int size;
 
-    public IntGrowableArray(int initialCapacity) {
-        this.data = new int[initialCapacity];
-    }
+  public IntGrowableArray(int initialCapacity) {
+    this.data = new int[initialCapacity];
+  }
 
-    public void add(int value) {
-        if (size == data.length) {
-            data = Arrays.copyOf(data, Math.max(1, data.length << 1));
-        }
-        data[size++] = value;
+  public void add(int value) {
+    if (size == data.length) {
+      data = Arrays.copyOf(data, Math.max(1, data.length << 1));
     }
+    data[size++] = value;
+  }
 
-    public void set(int index, int value) {
-        data[index] = value;
-    }
+  public void set(int index, int value) {
+    data[index] = value;
+  }
 
-    public int size() {
-        return size;
-    }
+  public int size() {
+    return size;
+  }
 
-    public int[] toIntArray() {
-        return Arrays.copyOf(data, size);
-    }
+  public int[] toIntArray() {
+    return Arrays.copyOf(data, size);
+  }
 }

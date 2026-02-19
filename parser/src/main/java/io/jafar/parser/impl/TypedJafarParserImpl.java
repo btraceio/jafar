@@ -16,12 +16,12 @@ import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
+import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
+import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CustomByteBuffer;
-import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
-import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
@@ -206,8 +206,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               TypedParserContext lCtx = (TypedParserContext) context;
               synchronized (this) {
                 lCtx.setClassTypeMap(
-                    chunkTypeClassMap.computeIfAbsent(
-                        chunkIndex, k -> new LongObjectHashMap<>()));
+                    chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new LongObjectHashMap<>()));
                 lCtx.addTargetTypeMap(globalHandlerMap);
               }
               context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));

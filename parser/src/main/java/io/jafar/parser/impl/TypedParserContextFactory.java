@@ -7,8 +7,8 @@ import io.jafar.parser.internal_api.GlobalHandlerCache;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.ParserContextFactory;
-import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
 import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
+import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
 import java.util.Set;
 
 /**

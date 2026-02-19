@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,8 @@ import org.junit.jupiter.api.io.TempDir;
 class PluginRegistryTest {
 
   @TempDir Path tempDir;
+
+  private static final String EMPTY_REGISTRY = "{\"plugins\": {}}";
 
   private PluginStorageManager storageManager;
   private PluginRegistry registry;
@@ -31,12 +34,11 @@ class PluginRegistryTest {
     storageManager = mock(PluginStorageManager.class);
 
     // Mock storage manager to return empty remote registry (prevents GitHub fetch)
-    String emptyRegistry = "{\"plugins\": {}}";
-    when(storageManager.loadRegistryCache()).thenReturn(emptyRegistry);
+    when(storageManager.loadRegistryCache()).thenReturn(EMPTY_REGISTRY);
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
-    // Pass custom Maven repository path to avoid system property manipulation
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    // Use 3-arg constructor with empty bundled JSON to bypass classpath resource loading
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
   }
 
   @AfterEach
@@ -52,7 +54,7 @@ class PluginRegistryTest {
     Files.createDirectories(versionDir);
 
     // Create new registry to pick up the artifact
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Verify plugin is discovered
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -71,7 +73,7 @@ class PluginRegistryTest {
     Files.createDirectories(artifactDir.resolve("0.8.0"));
 
     // Create new registry to discover artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
     assertTrue(result.isPresent());
@@ -92,7 +94,7 @@ class PluginRegistryTest {
     Files.createDirectories(mockMavenRepo.resolve("jafar-parser/0.9.0"));
 
     // Create new registry to scan artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Should only find jfr-shell-* artifacts
     assertEquals(Optional.empty(), registry.get("some-other-artifact"));
@@ -107,7 +109,7 @@ class PluginRegistryTest {
     Files.createDirectories(mockMavenRepo.resolve("jfr-shell-custom-backend/1.0.0"));
 
     // Create new registry to discover artifacts
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Verify plugin IDs are extracted correctly (strip "jfr-shell-" prefix)
     assertTrue(registry.get("jdk").isPresent());
@@ -127,7 +129,8 @@ class PluginRegistryTest {
     // Use non-existent path
     Path nonExistentPath = tempDir.resolve("nonexistent");
 
-    PluginRegistry emptyRegistry = new PluginRegistry(storageManager, nonExistentPath);
+    PluginRegistry emptyRegistry =
+        new PluginRegistry(storageManager, nonExistentPath, EMPTY_REGISTRY);
 
     Optional<PluginRegistry.PluginDefinition> result = emptyRegistry.get("jdk");
     assertFalse(result.isPresent());
@@ -159,8 +162,8 @@ class PluginRegistryTest {
     when(storageManager.loadRegistryCache()).thenReturn(validJson);
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
-    // Create new registry to load cached JSON
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    // Create new registry to load cached JSON (empty bundled to avoid classpath interference)
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Verify remote plugins are parsed correctly
     Optional<PluginRegistry.PluginDefinition> jdk = registry.get("jdk");
@@ -200,8 +203,8 @@ class PluginRegistryTest {
     when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
-    // Create new registry
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    // Create new registry (empty bundled to avoid classpath interference)
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Remote should take priority
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -216,7 +219,7 @@ class PluginRegistryTest {
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
     // Should not crash, just skip remote plugins
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Should still work with local Maven discovery
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
@@ -226,7 +229,8 @@ class PluginRegistryTest {
   @Test
   void handlesEmptyRemoteRegistry() throws IOException {
     // Mock empty but valid JSON
-    String emptyJson = """
+    String emptyJson =
+        """
         {
           "plugins": {}
         }
@@ -235,10 +239,258 @@ class PluginRegistryTest {
     when(storageManager.loadRegistryCache()).thenReturn(emptyJson);
     when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
 
-    registry = new PluginRegistry(storageManager, mockMavenRepoRoot);
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
 
     // Should work but find no plugins
     Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
     assertFalse(result.isPresent());
+  }
+
+  // --- Bundled plugin and compatibility tests ---
+
+  @Test
+  void compatibleRemoteOverridesBundled() throws IOException {
+    String bundledJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.11.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+    // Remote has same minor but newer patch - should be accepted
+    String remoteJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.11.4",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, bundledJson);
+
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals("0.11.4", result.get().version(), "Compatible remote should override bundled");
+  }
+
+  @Test
+  void incompatibleRemoteMinorFallsToBundled() throws IOException {
+    String bundledJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.11.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+    // Remote has different minor (0.12 vs 0.11) - should fall back to bundled
+    String remoteJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.12.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, bundledJson);
+
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals(
+        "0.11.0", result.get().version(), "Incompatible remote should fall back to bundled");
+  }
+
+  @Test
+  void incompatibleRemoteMajorFallsToBundled() throws IOException {
+    String bundledJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.11.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+    // Remote has major bump (1.x vs 0.x) - should fall back to bundled
+    String remoteJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "1.0.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, bundledJson);
+
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals(
+        "0.11.0", result.get().version(), "Major version bump should fall back to bundled");
+  }
+
+  @Test
+  void networkFailureWithNoCacheFallsToBundled() throws IOException {
+    String bundledJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "0.11.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+
+    // No remote cache, no network (use unreachable URL to simulate network failure)
+    when(storageManager.loadRegistryCache()).thenReturn(null);
+    when(storageManager.getRegistryCacheTime()).thenReturn(null);
+
+    registry =
+        new PluginRegistry(
+            storageManager, mockMavenRepoRoot, bundledJson, "http://192.0.2.1:1/fail");
+
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals("0.11.0", result.get().version(), "Should fall back to bundled on total failure");
+  }
+
+  @Test
+  void noBundledAcceptsAnyRemote() throws IOException {
+    // Remote with any version should be accepted when no bundled plugins
+    String remoteJson =
+        """
+        {
+          "plugins": {
+            "jdk": {
+              "groupId": "io.btrace",
+              "artifactId": "jfr-shell-jdk",
+              "latestVersion": "5.0.0",
+              "repository": "maven-central"
+            }
+          }
+        }
+        """;
+
+    when(storageManager.loadRegistryCache()).thenReturn(remoteJson);
+    when(storageManager.getRegistryCacheTime()).thenReturn(java.time.Instant.now());
+
+    // Empty bundled JSON - backward compat mode
+    registry = new PluginRegistry(storageManager, mockMavenRepoRoot, EMPTY_REGISTRY);
+
+    Optional<PluginRegistry.PluginDefinition> result = registry.get("jdk");
+    assertTrue(result.isPresent());
+    assertEquals("5.0.0", result.get().version(), "No bundled should accept any remote");
+  }
+
+  @Test
+  void isRemoteCompatibleWithEmptyBundled() {
+    Map<String, PluginRegistry.PluginDefinition> remote =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "9.9.9", "central"));
+    Map<String, PluginRegistry.PluginDefinition> bundled = Map.of();
+
+    assertTrue(PluginRegistry.isRemoteCompatible(remote, bundled));
+  }
+
+  @Test
+  void isRemoteCompatibleMatchingMinorPreV1() {
+    Map<String, PluginRegistry.PluginDefinition> remote =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "0.11.4", "central"));
+    Map<String, PluginRegistry.PluginDefinition> bundled =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "0.11.0", "central"));
+
+    assertTrue(PluginRegistry.isRemoteCompatible(remote, bundled));
+  }
+
+  @Test
+  void isRemoteIncompatibleDifferentMinorPreV1() {
+    Map<String, PluginRegistry.PluginDefinition> remote =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "0.12.0", "central"));
+    Map<String, PluginRegistry.PluginDefinition> bundled =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "0.11.0", "central"));
+
+    assertFalse(PluginRegistry.isRemoteCompatible(remote, bundled));
+  }
+
+  @Test
+  void isRemoteCompatibleMatchingMajorPostV1() {
+    Map<String, PluginRegistry.PluginDefinition> remote =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "1.3.0", "central"));
+    Map<String, PluginRegistry.PluginDefinition> bundled =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "1.0.0", "central"));
+
+    assertTrue(PluginRegistry.isRemoteCompatible(remote, bundled));
+  }
+
+  @Test
+  void isRemoteIncompatibleDifferentMajorPostV1() {
+    Map<String, PluginRegistry.PluginDefinition> remote =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "2.0.0", "central"));
+    Map<String, PluginRegistry.PluginDefinition> bundled =
+        Map.of(
+            "jdk",
+            new PluginRegistry.PluginDefinition("io.btrace", "jfr-shell-jdk", "1.0.0", "central"));
+
+    assertFalse(PluginRegistry.isRemoteCompatible(remote, bundled));
   }
 }

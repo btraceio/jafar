@@ -657,9 +657,10 @@ public final class JafarMcpServer {
           case "functions" -> getFunctionsHelp();
           case "examples" -> getExamplesHelp();
           case "event_types" -> getEventTypesHelp();
-          default -> "Unknown topic: "
-              + topic
-              + ". Available: overview, filters, pipeline, functions, examples, event_types";
+          default ->
+              "Unknown topic: "
+                  + topic
+                  + ". Available: overview, filters, pipeline, functions, examples, event_types";
         };
 
     return new CallToolResult(List.of(new TextContent(content)), false);
