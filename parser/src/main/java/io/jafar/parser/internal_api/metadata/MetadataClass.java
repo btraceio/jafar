@@ -313,6 +313,12 @@ public final class MetadataClass extends AbstractMetadataElement {
   /**
    * Skips over the data for this class in the recording stream.
    *
+   * <p>If a {@link Deserializer} is bound to this class, its {@code skip} implementation is used
+   * (which may delegate to {@link TypeSkipper} or to a generated skip handler). Otherwise falls
+   * back to {@link #skipDirect}. Prefer {@link #skipDirect} when pure stream advancement is the
+   * only goal and no deserializer needs to be initialised, as it avoids any static reachability
+   * path to ASM-based code generation.
+   *
    * @param stream the recording stream to skip over
    * @throws IOException if an I/O error occurs during skipping
    */
@@ -320,10 +326,7 @@ public final class MetadataClass extends AbstractMetadataElement {
     Deserializer<?> d = getDeserializer(); // lazily initialize deserializer
     if (d == null) {
       // no deserializer; use type skipper
-      TypeSkipper skipper =
-          TYPE_SKIPPER_UPDATER.updateAndGet(
-              this, ts -> ts == null ? TypeSkipper.createSkipper(this) : ts);
-      skipper.skip(stream);
+      skipDirect(stream);
     } else {
       try {
         d.skip(stream);
@@ -331,6 +334,22 @@ public final class MetadataClass extends AbstractMetadataElement {
         throw new IOException(e);
       }
     }
+  }
+
+  /**
+   * Skips over the data for this class using the pseudo-instruction interpreter ({@link
+   * TypeSkipper}) directly, without consulting any generated deserializer. This avoids any
+   * reachability path to ASM-based code generation and is safe for use in environments where
+   * dynamic class loading is not available (e.g. GraalVM native-image).
+   *
+   * @param stream the recording stream to skip over
+   * @throws IOException if an I/O error occurs during skipping
+   */
+  public void skipDirect(RecordingStream stream) throws IOException {
+    TypeSkipper skipper =
+        TYPE_SKIPPER_UPDATER.updateAndGet(
+            this, ts -> ts == null ? TypeSkipper.createSkipper(this) : ts);
+    skipper.skip(stream);
   }
 
   /**

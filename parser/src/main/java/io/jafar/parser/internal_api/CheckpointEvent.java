@@ -93,7 +93,7 @@ public final class CheckpointEvent extends AbstractEvent {
           if (!skip && !constantPool.containsKey(id)) {
             constantPool.addOffset(id, stream.position());
           }
-          clz.skip(stream);
+          clz.skipDirect(stream);
         }
       } catch (IOException e) {
         throw e;
