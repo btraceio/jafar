@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  * @see UntypedEventDeserializer
  */
 @Internal
-public final class UntypedCodeGenerator implements Opcodes {
+public final class UntypedCodeGenerator {
 
   private static final boolean LOGS_ENABLED = false;
   private static final Logger log = LoggerFactory.getLogger(UntypedCodeGenerator.class);
@@ -84,8 +84,8 @@ public final class UntypedCodeGenerator implements Opcodes {
 
       // Generate class header
       cw.visit(
-          V11, // Java 11
-          ACC_PUBLIC | ACC_FINAL,
+          Opcodes.V11, // Java 11
+          Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
           className.replace('.', '/'),
           null,
           Type.getInternalName(Object.class),
@@ -202,21 +202,21 @@ public final class UntypedCodeGenerator implements Opcodes {
       ClassWriter cw, String className, MetadataClass type) {
 
     // Generate constructor (no-op)
-    MethodVisitor ctor = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+    MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
     ctor.visitCode();
     // Stack: []
-    ctor.visitVarInsn(ALOAD, 0);
+    ctor.visitVarInsn(Opcodes.ALOAD, 0);
     // Stack: [this]
-    ctor.visitMethodInsn(INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
+    ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
     // Stack: []
-    ctor.visitInsn(RETURN);
+    ctor.visitInsn(Opcodes.RETURN);
     ctor.visitMaxs(0, 0);
     ctor.visitEnd();
 
     // Generate deserialize() method
     MethodVisitor mv =
         cw.visitMethod(
-            ACC_PUBLIC,
+            Opcodes.ACC_PUBLIC,
             "deserialize",
             Type.getMethodDescriptor(
                 Type.getType(Map.class),
@@ -231,20 +231,20 @@ public final class UntypedCodeGenerator implements Opcodes {
     // Create HashMap with exact size
     // Stack: []
     int fieldCount = type.getFields().size();
-    mv.visitTypeInsn(NEW, Type.getInternalName(HashMap.class));
+    mv.visitTypeInsn(Opcodes.NEW, Type.getInternalName(HashMap.class));
     // Stack: [HashMap]
-    mv.visitInsn(DUP);
+    mv.visitInsn(Opcodes.DUP);
     // Stack: [HashMap, HashMap]
     pushInt(mv, fieldCount);
     // Stack: [HashMap, HashMap, int]
     mv.visitMethodInsn(
-        INVOKESPECIAL,
+        Opcodes.INVOKESPECIAL,
         Type.getInternalName(HashMap.class),
         "<init>",
         Type.getMethodDescriptor(Type.VOID_TYPE, Type.INT_TYPE),
         false);
     // Stack: [HashMap]
-    mv.visitVarInsn(ASTORE, 3); // Store map in local var 3 (0=this, 1=stream, 2=context)
+    mv.visitVarInsn(Opcodes.ASTORE, 3); // Store map in local var 3 (0=this, 1=stream, 2=context)
     // Stack: []
 
     // Track which nested types we need helper methods for
@@ -253,28 +253,28 @@ public final class UntypedCodeGenerator implements Opcodes {
     // For each field: read and put in map
     for (MetadataField field : type.getFields()) {
       // Stack: []
-      mv.visitVarInsn(ALOAD, 3); // Load map
+      mv.visitVarInsn(Opcodes.ALOAD, 3); // Load map
       // Stack: [Map]
       mv.visitLdcInsn(field.getName()); // Load field name
       // Stack: [Map, String]
       generateFieldRead(mv, field, 1, 2, className, nestedTypes); // stream at 1, context at 2
       // Stack: [Map, String, Object] (after generateFieldRead returns)
       mv.visitMethodInsn(
-          INVOKEINTERFACE,
+          Opcodes.INVOKEINTERFACE,
           Type.getInternalName(Map.class),
           "put",
           Type.getMethodDescriptor(
               Type.getType(Object.class), Type.getType(Object.class), Type.getType(Object.class)),
           true);
       // Stack: [Object] (old value or null)
-      mv.visitInsn(POP); // Discard old value
+      mv.visitInsn(Opcodes.POP); // Discard old value
       // Stack: []
     }
 
     // Stack: []
-    mv.visitVarInsn(ALOAD, 3); // Load map
+    mv.visitVarInsn(Opcodes.ALOAD, 3); // Load map
     // Stack: [Map]
-    mv.visitInsn(ARETURN);
+    mv.visitInsn(Opcodes.ARETURN);
     // Stack: [] (method returns)
 
     mv.visitMaxs(0, 0);
@@ -297,7 +297,7 @@ public final class UntypedCodeGenerator implements Opcodes {
 
     // Add ThreadLocal<ArrayPool> static field
     cw.visitField(
-            ACC_PRIVATE | ACC_STATIC | ACC_FINAL,
+            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
             "ARRAY_POOL_TL",
             Type.getDescriptor(ThreadLocal.class),
             "Ljava/lang/ThreadLocal<Lio/jafar/parser/impl/LazyMapValueBuilder$ArrayPool;>;",
@@ -305,7 +305,7 @@ public final class UntypedCodeGenerator implements Opcodes {
         .visitEnd();
 
     // Static initializer for ThreadLocal
-    MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+    MethodVisitor clinit = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
     clinit.visitCode();
     // Stack: []
     // Create lambda supplier: () -> new ArrayPool()
@@ -328,7 +328,7 @@ public final class UntypedCodeGenerator implements Opcodes {
         Type.getMethodType("()Lio/jafar/parser/impl/LazyMapValueBuilder$ArrayPool;"));
     // Stack: [Supplier]
     clinit.visitMethodInsn(
-        INVOKESTATIC,
+        Opcodes.INVOKESTATIC,
         Type.getInternalName(ThreadLocal.class),
         "withInitial",
         Type.getMethodDescriptor(
@@ -336,28 +336,28 @@ public final class UntypedCodeGenerator implements Opcodes {
         false);
     // Stack: [ThreadLocal]
     clinit.visitFieldInsn(
-        PUTSTATIC,
+        Opcodes.PUTSTATIC,
         className.replace('.', '/'),
         "ARRAY_POOL_TL",
         Type.getDescriptor(ThreadLocal.class));
     // Stack: []
-    clinit.visitInsn(RETURN);
+    clinit.visitInsn(Opcodes.RETURN);
     clinit.visitMaxs(0, 0);
     clinit.visitEnd();
 
     // Generate constructor
-    MethodVisitor ctor = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+    MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
     ctor.visitCode();
-    ctor.visitVarInsn(ALOAD, 0);
-    ctor.visitMethodInsn(INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
-    ctor.visitInsn(RETURN);
+    ctor.visitVarInsn(Opcodes.ALOAD, 0);
+    ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
+    ctor.visitInsn(Opcodes.RETURN);
     ctor.visitMaxs(0, 0);
     ctor.visitEnd();
 
     // Generate deserialize() method
     MethodVisitor mv =
         cw.visitMethod(
-            ACC_PUBLIC,
+            Opcodes.ACC_PUBLIC,
             "deserialize",
             Type.getMethodDescriptor(
                 Type.getType(Map.class),
@@ -372,29 +372,29 @@ public final class UntypedCodeGenerator implements Opcodes {
     // ArrayPool pool = ARRAY_POOL_TL.get();
     // Stack: []
     mv.visitFieldInsn(
-        GETSTATIC,
+        Opcodes.GETSTATIC,
         className.replace('.', '/'),
         "ARRAY_POOL_TL",
         Type.getDescriptor(ThreadLocal.class));
     // Stack: [ThreadLocal]
     mv.visitMethodInsn(
-        INVOKEVIRTUAL,
+        Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(ThreadLocal.class),
         "get",
         Type.getMethodDescriptor(Type.getType(Object.class)),
         false);
     // Stack: [Object]
-    mv.visitTypeInsn(CHECKCAST, Type.getInternalName(LazyMapValueBuilder.ArrayPool.class));
+    mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LazyMapValueBuilder.ArrayPool.class));
     // Stack: [ArrayPool]
-    mv.visitVarInsn(ASTORE, 3); // pool at var 3
+    mv.visitVarInsn(Opcodes.ASTORE, 3); // pool at var 3
     // Stack: []
 
     // pool.reset();
     // Stack: []
-    mv.visitVarInsn(ALOAD, 3);
+    mv.visitVarInsn(Opcodes.ALOAD, 3);
     // Stack: [ArrayPool]
     mv.visitMethodInsn(
-        INVOKEVIRTUAL,
+        Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(LazyMapValueBuilder.ArrayPool.class),
         "reset",
         Type.getMethodDescriptor(Type.VOID_TYPE),
@@ -407,14 +407,14 @@ public final class UntypedCodeGenerator implements Opcodes {
     // For each field: read and add to pool
     for (MetadataField field : type.getFields()) {
       // Stack: []
-      mv.visitVarInsn(ALOAD, 3); // Load pool
+      mv.visitVarInsn(Opcodes.ALOAD, 3); // Load pool
       // Stack: [ArrayPool]
       mv.visitLdcInsn(field.getName()); // Load field name
       // Stack: [ArrayPool, String]
       generateFieldRead(mv, field, 1, 2, className, nestedTypes); // Load value
       // Stack: [ArrayPool, String, Object] (after generateFieldRead returns)
       mv.visitMethodInsn(
-          INVOKEVIRTUAL,
+          Opcodes.INVOKEVIRTUAL,
           Type.getInternalName(LazyMapValueBuilder.ArrayPool.class),
           "add",
           Type.getMethodDescriptor(
@@ -425,26 +425,26 @@ public final class UntypedCodeGenerator implements Opcodes {
 
     // return new LazyEventMap(pool, pool.size);
     // Stack: []
-    mv.visitTypeInsn(NEW, Type.getInternalName(LazyEventMap.class));
+    mv.visitTypeInsn(Opcodes.NEW, Type.getInternalName(LazyEventMap.class));
     // Stack: [LazyEventMap]
-    mv.visitInsn(DUP);
+    mv.visitInsn(Opcodes.DUP);
     // Stack: [LazyEventMap, LazyEventMap]
-    mv.visitVarInsn(ALOAD, 3); // pool
+    mv.visitVarInsn(Opcodes.ALOAD, 3); // pool
     // Stack: [LazyEventMap, LazyEventMap, ArrayPool]
-    mv.visitVarInsn(ALOAD, 3);
+    mv.visitVarInsn(Opcodes.ALOAD, 3);
     // Stack: [LazyEventMap, LazyEventMap, ArrayPool, ArrayPool]
     mv.visitFieldInsn(
-        GETFIELD, Type.getInternalName(LazyMapValueBuilder.ArrayPool.class), "size", "I");
+        Opcodes.GETFIELD, Type.getInternalName(LazyMapValueBuilder.ArrayPool.class), "size", "I");
     // Stack: [LazyEventMap, LazyEventMap, ArrayPool, int]
     mv.visitMethodInsn(
-        INVOKESPECIAL,
+        Opcodes.INVOKESPECIAL,
         Type.getInternalName(LazyEventMap.class),
         "<init>",
         Type.getMethodDescriptor(
             Type.VOID_TYPE, Type.getType(LazyMapValueBuilder.ArrayPool.class), Type.INT_TYPE),
         false);
     // Stack: [LazyEventMap]
-    mv.visitInsn(ARETURN);
+    mv.visitInsn(Opcodes.ARETURN);
     // Stack: [] (method returns)
 
     mv.visitMaxs(0, 0);
@@ -491,17 +491,17 @@ public final class UntypedCodeGenerator implements Opcodes {
     // Handle constant pool references - store as Long
     if (field.hasConstantPool()) {
       // Stack: [...]
-      mv.visitVarInsn(ALOAD, streamVar); // Load stream
+      mv.visitVarInsn(Opcodes.ALOAD, streamVar); // Load stream
       // Stack: [..., RecordingStream]
       mv.visitMethodInsn(
-          INVOKEVIRTUAL,
+          Opcodes.INVOKEVIRTUAL,
           Type.getInternalName(RecordingStream.class),
           "readVarint",
           Type.getMethodDescriptor(Type.LONG_TYPE),
           false);
       // Stack: [..., long]
       mv.visitMethodInsn(
-          INVOKESTATIC,
+          Opcodes.INVOKESTATIC,
           Type.getInternalName(Long.class),
           "valueOf",
           Type.getMethodDescriptor(Type.getType(Long.class), Type.LONG_TYPE),
@@ -520,14 +520,14 @@ public final class UntypedCodeGenerator implements Opcodes {
 
     // Handle primitives and strings
     // Stack: [...]
-    mv.visitVarInsn(ALOAD, streamVar); // Load stream
+    mv.visitVarInsn(Opcodes.ALOAD, streamVar); // Load stream
     // Stack: [..., RecordingStream]
 
     String readMethod = getReadMethod(fieldType);
     Type returnType = getReadReturnType(fieldType);
 
     mv.visitMethodInsn(
-        INVOKEVIRTUAL,
+        Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(RecordingStream.class),
         readMethod,
         Type.getMethodDescriptor(returnType),
@@ -540,7 +540,7 @@ public final class UntypedCodeGenerator implements Opcodes {
       Class<?> wrapperClass = getWrapperClass(fieldType);
       Type primitiveType = returnType;
       mv.visitMethodInsn(
-          INVOKESTATIC,
+          Opcodes.INVOKESTATIC,
           Type.getInternalName(wrapperClass),
           "valueOf",
           Type.getMethodDescriptor(Type.getType(wrapperClass), primitiveType),
@@ -560,12 +560,12 @@ public final class UntypedCodeGenerator implements Opcodes {
 
     // Call the helper: helperName(stream, context)
     // Stack: [...]
-    mv.visitVarInsn(ALOAD, streamVar); // stream
+    mv.visitVarInsn(Opcodes.ALOAD, streamVar); // stream
     // Stack: [..., RecordingStream]
-    mv.visitVarInsn(ALOAD, contextVar); // context
+    mv.visitVarInsn(Opcodes.ALOAD, contextVar); // context
     // Stack: [..., RecordingStream, ParserContext]
     mv.visitMethodInsn(
-        INVOKESTATIC,
+        Opcodes.INVOKESTATIC,
         className.replace('.', '/'),
         helperName,
         Type.getMethodDescriptor(
@@ -583,7 +583,7 @@ public final class UntypedCodeGenerator implements Opcodes {
     String helperName = "deserialize_" + sanitizeName(nestedType.getName());
     MethodVisitor mv =
         cw.visitMethod(
-            ACC_PRIVATE | ACC_STATIC,
+            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
             helperName,
             Type.getMethodDescriptor(
                 Type.getType(Map.class),
@@ -598,20 +598,20 @@ public final class UntypedCodeGenerator implements Opcodes {
     // Always use small HashMap for nested objects (typically <5 fields)
     // Stack: []
     int fieldCount = nestedType.getFields().size();
-    mv.visitTypeInsn(NEW, Type.getInternalName(HashMap.class));
+    mv.visitTypeInsn(Opcodes.NEW, Type.getInternalName(HashMap.class));
     // Stack: [HashMap]
-    mv.visitInsn(DUP);
+    mv.visitInsn(Opcodes.DUP);
     // Stack: [HashMap, HashMap]
     pushInt(mv, fieldCount);
     // Stack: [HashMap, HashMap, int]
     mv.visitMethodInsn(
-        INVOKESPECIAL,
+        Opcodes.INVOKESPECIAL,
         Type.getInternalName(HashMap.class),
         "<init>",
         Type.getMethodDescriptor(Type.VOID_TYPE, Type.INT_TYPE),
         false);
     // Stack: [HashMap]
-    mv.visitVarInsn(ASTORE, 2); // var 2 (0=stream, 1=context)
+    mv.visitVarInsn(Opcodes.ASTORE, 2); // var 2 (0=stream, 1=context)
     // Stack: []
 
     // Track nested types within nested types (recursive)
@@ -620,28 +620,28 @@ public final class UntypedCodeGenerator implements Opcodes {
     // Read all nested fields
     for (MetadataField field : nestedType.getFields()) {
       // Stack: []
-      mv.visitVarInsn(ALOAD, 2);
+      mv.visitVarInsn(Opcodes.ALOAD, 2);
       // Stack: [Map]
       mv.visitLdcInsn(field.getName());
       // Stack: [Map, String]
       generateFieldRead(mv, field, 0, 1, className, innerNestedTypes); // stream at 0, context at 1
       // Stack: [Map, String, Object]
       mv.visitMethodInsn(
-          INVOKEINTERFACE,
+          Opcodes.INVOKEINTERFACE,
           Type.getInternalName(Map.class),
           "put",
           Type.getMethodDescriptor(
               Type.getType(Object.class), Type.getType(Object.class), Type.getType(Object.class)),
           true);
       // Stack: [Object] (old value or null)
-      mv.visitInsn(POP);
+      mv.visitInsn(Opcodes.POP);
       // Stack: []
     }
 
     // Stack: []
-    mv.visitVarInsn(ALOAD, 2);
+    mv.visitVarInsn(Opcodes.ALOAD, 2);
     // Stack: [Map]
-    mv.visitInsn(ARETURN);
+    mv.visitInsn(Opcodes.ARETURN);
     // Stack: [] (method returns)
 
     mv.visitMaxs(0, 0);
@@ -668,37 +668,37 @@ public final class UntypedCodeGenerator implements Opcodes {
 
     // int len = (int) stream.readVarint();
     // Stack: [...]
-    mv.visitVarInsn(ALOAD, streamVar);
+    mv.visitVarInsn(Opcodes.ALOAD, streamVar);
     // Stack: [..., RecordingStream]
     mv.visitMethodInsn(
-        INVOKEVIRTUAL,
+        Opcodes.INVOKEVIRTUAL,
         Type.getInternalName(RecordingStream.class),
         "readVarint",
         Type.getMethodDescriptor(Type.LONG_TYPE),
         false);
     // Stack: [..., long]
-    mv.visitInsn(L2I);
+    mv.visitInsn(Opcodes.L2I);
     // Stack: [..., int]
     int lenVar = streamVar + contextVar + 10; // Allocate safe var index
-    mv.visitVarInsn(ISTORE, lenVar); // len
+    mv.visitVarInsn(Opcodes.ISTORE, lenVar); // len
     // Stack: [...]
 
     // Object[] array = new Object[len];
     // Stack: [...]
-    mv.visitVarInsn(ILOAD, lenVar);
+    mv.visitVarInsn(Opcodes.ILOAD, lenVar);
     // Stack: [..., int]
-    mv.visitTypeInsn(ANEWARRAY, Type.getInternalName(Object.class));
+    mv.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Object.class));
     // Stack: [..., Object[]]
     int arrayVar = lenVar + 1;
-    mv.visitVarInsn(ASTORE, arrayVar); // array
+    mv.visitVarInsn(Opcodes.ASTORE, arrayVar); // array
     // Stack: [...]
 
     // for (int i = 0; i < len; i++)
     // Stack: [...]
-    mv.visitInsn(ICONST_0);
+    mv.visitInsn(Opcodes.ICONST_0);
     // Stack: [..., int]
     int iVar = arrayVar + 1;
-    mv.visitVarInsn(ISTORE, iVar); // i
+    mv.visitVarInsn(Opcodes.ISTORE, iVar); // i
     // Stack: [...]
 
     Label loopStart = new Label();
@@ -707,48 +707,48 @@ public final class UntypedCodeGenerator implements Opcodes {
     mv.visitLabel(loopStart);
     // Loop iteration starts
     // Stack: [...]
-    mv.visitVarInsn(ILOAD, iVar); // i
+    mv.visitVarInsn(Opcodes.ILOAD, iVar); // i
     // Stack: [..., int]
-    mv.visitVarInsn(ILOAD, lenVar); // len
+    mv.visitVarInsn(Opcodes.ILOAD, lenVar); // len
     // Stack: [..., int, int]
-    mv.visitJumpInsn(IF_ICMPGE, loopEnd); // if i >= len goto loopEnd
+    mv.visitJumpInsn(Opcodes.IF_ICMPGE, loopEnd); // if i >= len goto loopEnd
     // Stack: [...] (comparison consumed both ints)
 
     // array[i] = readElement(stream);
     // Stack: [...]
-    mv.visitVarInsn(ALOAD, arrayVar); // Load array
+    mv.visitVarInsn(Opcodes.ALOAD, arrayVar); // Load array
     // Stack: [..., Object[]]
-    mv.visitVarInsn(ILOAD, iVar); // Load index
+    mv.visitVarInsn(Opcodes.ILOAD, iVar); // Load index
     // Stack: [..., Object[], int]
 
     // Read array element using the field's type (arrays are already reduced to element type)
     generateFieldRead(mv, field, streamVar, contextVar, className, nestedTypes);
     // Stack: [..., Object[], int, Object] (after generateFieldRead returns)
-    mv.visitInsn(AASTORE); // array[i] = value
-    // Stack: [...] (AASTORE consumes array, index, and value)
+    mv.visitInsn(Opcodes.AASTORE); // array[i] = value
+    // Stack: [...] (Opcodes.AASTORE consumes array, index, and value)
 
     // i++
     // Stack: [...]
     mv.visitIincInsn(iVar, 1); // i++ (doesn't affect stack)
     // Stack: [...]
-    mv.visitJumpInsn(GOTO, loopStart);
+    mv.visitJumpInsn(Opcodes.GOTO, loopStart);
     // Stack: [...]
 
     mv.visitLabel(loopEnd);
     // Loop ended
     // Stack: [...]
-    mv.visitVarInsn(ALOAD, arrayVar); // Load array as result
+    mv.visitVarInsn(Opcodes.ALOAD, arrayVar); // Load array as result
     // Stack: [..., Object[]]
   }
 
-  /** Pushes an integer constant onto the stack (handles BIPUSH, SIPUSH, LDC). */
+  /** Pushes an integer constant onto the stack (handles Opcodes.BIPUSH, Opcodes.SIPUSH, LDC). */
   private static void pushInt(MethodVisitor mv, int value) {
     if (value >= -1 && value <= 5) {
-      mv.visitInsn(ICONST_0 + value); // ICONST_0 through ICONST_5
+      mv.visitInsn(Opcodes.ICONST_0 + value); // Opcodes.ICONST_0 through ICONST_5
     } else if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
-      mv.visitIntInsn(BIPUSH, value);
+      mv.visitIntInsn(Opcodes.BIPUSH, value);
     } else if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
-      mv.visitIntInsn(SIPUSH, value);
+      mv.visitIntInsn(Opcodes.SIPUSH, value);
     } else {
       mv.visitLdcInsn(value);
     }
@@ -839,13 +839,13 @@ public final class UntypedCodeGenerator implements Opcodes {
   private static void addLog(MethodVisitor mv, String msg) {
     if (LOGS_ENABLED) {
       mv.visitFieldInsn(
-          GETSTATIC,
+          Opcodes.GETSTATIC,
           Type.getInternalName(System.class),
           "out",
           Type.getDescriptor(PrintStream.class));
       mv.visitLdcInsn(msg);
       mv.visitMethodInsn(
-          INVOKEVIRTUAL,
+          Opcodes.INVOKEVIRTUAL,
           Type.getInternalName(PrintStream.class),
           "println",
           Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(String.class)),
