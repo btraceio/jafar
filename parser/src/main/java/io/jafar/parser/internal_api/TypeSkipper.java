@@ -29,12 +29,12 @@ public final class TypeSkipper {
       if (dimension > 0) {
         int count = (int) stream.readVarint();
         for (int i = 0; i < count; i++) {
-          fieldType.skip(stream); // Use cached skipper from MetadataClass
+          fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
         }
       } else if (field.hasConstantPool()) {
         stream.readVarint(); // skip CP reference
       } else {
-        fieldType.skip(stream); // Use cached skipper from MetadataClass
+        fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
       }
     }
   }

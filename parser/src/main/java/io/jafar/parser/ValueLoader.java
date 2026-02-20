@@ -23,8 +23,8 @@ public final class ValueLoader {
    *
    * <p>This method efficiently skips over JFR data values based on their type descriptor. For
    * arrays, it reads the length and skips each element. For constant pool values, it skips the
-   * constant pool references. For regular values, it delegates to the type descriptor's skip
-   * method.
+   * constant pool references. For regular values, it delegates to the type descriptor's {@link
+   * MetadataClass#skipDirect} method.
    *
    * @param stream the recording stream to skip over
    * @param typeDescriptor the metadata class describing the value type
@@ -45,7 +45,7 @@ public final class ValueLoader {
       }
     } else {
       for (int i = 0; i < len; i++) {
-        typeDescriptor.skip(stream);
+        typeDescriptor.skipDirect(stream);
       }
     }
   }
