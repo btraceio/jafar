@@ -132,8 +132,9 @@ if [[ "$DRY_RUN" == "1" ]]; then
     echo "[DRY RUN] sed s/${ESCAPED_OLD}/${ESCAPED_NEW}/g <tracked files>"
 else
     # Replace version in all tracked files that contain it
-    git ls-files -z | xargs -0 grep -lFZ "$CURRENT_VERSION" 2>/dev/null \
-        | xargs -0 sed_i "s/${ESCAPED_OLD}/${ESCAPED_NEW}/g" 2>/dev/null || true
+    while IFS= read -r -d '' file; do
+        sed_i "s/${ESCAPED_OLD}/${ESCAPED_NEW}/g" "$file"
+    done < <(git ls-files -z | xargs -0 grep -lFZ "$CURRENT_VERSION" 2>/dev/null)
 
     # Update jfr-shell-plugins.json catalog version (only upgrade, never downgrade)
     if [[ -f jfr-shell-plugins.json ]]; then
@@ -183,8 +184,9 @@ if [[ "$RELEASE_TYPE" == "patch" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
     else
-        git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null \
-            | xargs -0 sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" 2>/dev/null || true
+        while IFS= read -r -d '' file; do
+            sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
+        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null)
     fi
     run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
     run git push --no-verify origin "$RELEASE_BRANCH"
@@ -194,8 +196,9 @@ else
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
     else
-        git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null \
-            | xargs -0 sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" 2>/dev/null || true
+        while IFS= read -r -d '' file; do
+            sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
+        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null)
     fi
     run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
     run git push --no-verify origin "$DEFAULT_BRANCH"
