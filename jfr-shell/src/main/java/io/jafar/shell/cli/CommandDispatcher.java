@@ -1267,20 +1267,54 @@ public class CommandDispatcher {
       io.println("  All metadata:  " + (nonPrimitiveCnt + primitivesCnt));
       return;
     }
-    io.println(
-        "Available Types ("
-            + total
-            + ") ["
-            + scopeLabel
-            + "; events="
-            + eventsCnt
-            + ", non-events="
-            + nonEventsCnt
-            + "]:");
-    for (String t : types) {
-      Long typeId = cur.get().session.getMetadataTypeIds().get(t);
-      String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
-      io.println("  " + idStr + " - " + t);
+    String typesFormat = cur.get().outputFormat;
+    if ("tui".equalsIgnoreCase(typesFormat)) {
+      // Load full metadata for detail pane drill-down
+      java.util.Map<String, java.util.Map<String, Object>> metaByName =
+          java.util.Collections.emptyMap();
+      try {
+        java.util.List<java.util.Map<String, Object>> allMeta =
+            MetadataProvider.loadAllClasses(cur.get().session.getRecordingPath());
+        if (allMeta != null) {
+          metaByName = new java.util.HashMap<>();
+          for (java.util.Map<String, Object> m : allMeta) {
+            Object n = m.get("name");
+            if (n != null) metaByName.put(n.toString(), m);
+          }
+        }
+      } catch (Exception ignore) {
+        // Fall back to no metadata detail
+      }
+
+      java.util.List<java.util.Map<String, Object>> rows = new java.util.ArrayList<>();
+      java.util.List<java.util.Map<String, Object>> metaClasses = new java.util.ArrayList<>();
+      for (String t : types) {
+        Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+        java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("id", typeId != null ? typeId : "?");
+        row.put("name", t);
+        row.put("event", events.contains(t) ? "yes" : "");
+        rows.add(row);
+        metaClasses.add(metaByName.get(t)); // may be null
+      }
+      TuiTableRenderer.setLastMetadataClasses(metaClasses);
+      TuiTableRenderer.render(rows, io);
+    } else {
+      io.println(
+          "Available Types ("
+              + total
+              + ") ["
+              + scopeLabel
+              + "; events="
+              + eventsCnt
+              + ", non-events="
+              + nonEventsCnt
+              + "]:");
+      for (String t : types) {
+        Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+        String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
+        io.println("  " + idStr + " - " + t);
+      }
     }
   }
 
@@ -1386,7 +1420,12 @@ public class CommandDispatcher {
           rows.add(row);
         }
       }
-      TableRenderer.render(rows, io);
+      String fieldsFormat = cur.get().outputFormat;
+      if ("tui".equalsIgnoreCase(fieldsFormat)) {
+        TuiTableRenderer.render(rows, io);
+      } else {
+        TableRenderer.render(rows, io);
+      }
       return;
     }
     if (annotations) {
@@ -1406,7 +1445,12 @@ public class CommandDispatcher {
     copy.remove("classAnnotationsFull");
     copy.remove("settingsByName");
     copy.remove("fieldCount");
-    TableRenderer.render(java.util.List.of(copy), io);
+    String defaultFormat = cur.get().outputFormat;
+    if ("tui".equalsIgnoreCase(defaultFormat)) {
+      TuiTableRenderer.render(java.util.List.of(copy), io);
+    } else {
+      TableRenderer.render(java.util.List.of(copy), io);
+    }
   }
 
   /** chunks [--summary|--list] [--range N-M] Default: list all chunks */
@@ -1519,7 +1563,12 @@ public class CommandDispatcher {
     }
 
     // For now, just show header. Future: add event counts, CP refs
-    TableRenderer.render(List.of(chunk), io);
+    String chunkFormat = cur.get().outputFormat;
+    if ("tui".equalsIgnoreCase(chunkFormat)) {
+      TuiTableRenderer.render(List.of(chunk), io);
+    } else {
+      TableRenderer.render(List.of(chunk), io);
+    }
   }
 
   /** cp [--summary] [<kind>] [--range N-M] cp <kind> [--range N-M] */

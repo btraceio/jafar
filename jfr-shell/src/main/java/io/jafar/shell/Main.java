@@ -52,6 +52,11 @@ public final class Main implements Callable<Integer> {
   private String pluginDir;
 
   @CommandLine.Option(
+      names = {"--tui"},
+      description = "Launch full-screen TUI mode instead of readline REPL")
+  private boolean tui;
+
+  @CommandLine.Option(
       names = {"--install-plugin"},
       description = "Install a backend plugin from a local JAR file and exit")
   private String installPlugin;
@@ -99,16 +104,26 @@ public final class Main implements Callable<Integer> {
       return 1;
     }
 
-    // Default: run interactive mode
-    try (Shell shell = new Shell()) {
-      if (jfrFile != null) {
-        Path p = Paths.get(jfrFile);
-        if (!Files.exists(p)) {
-          System.err.println("Error: JFR file not found: " + jfrFile);
-          return 1;
-        }
-        shell.openIfPresent(p);
+    Path jfrPath = null;
+    if (jfrFile != null) {
+      jfrPath = Paths.get(jfrFile);
+      if (!Files.exists(jfrPath)) {
+        System.err.println("Error: JFR file not found: " + jfrFile);
+        return 1;
       }
+    }
+
+    if (tui) {
+      try (TuiShell tuiShell = new TuiShell()) {
+        tuiShell.openIfPresent(jfrPath);
+        tuiShell.run();
+        return 0;
+      }
+    }
+
+    // Default: run interactive readline mode
+    try (Shell shell = new Shell()) {
+      shell.openIfPresent(jfrPath);
       shell.run();
       return 0;
     }

@@ -1,0 +1,2285 @@
+package io.jafar.shell;
+
+import dev.tamboui.layout.Constraint;
+import dev.tamboui.layout.Layout;
+import dev.tamboui.layout.Rect;
+import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
+import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
+import dev.tamboui.widgets.block.Block;
+import dev.tamboui.widgets.block.BorderType;
+import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.block.Title;
+import dev.tamboui.widgets.input.TextInput;
+import dev.tamboui.widgets.input.TextInputState;
+import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.scrollbar.Scrollbar;
+import dev.tamboui.widgets.scrollbar.ScrollbarState;
+import dev.tamboui.widgets.tabs.Tabs;
+import dev.tamboui.widgets.tabs.TabsState;
+import io.jafar.parser.api.ArrayType;
+import io.jafar.parser.api.ComplexType;
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.SessionManager;
+import java.io.IOException;
+import java.lang.reflect.Array;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+import org.jline.reader.Candidate;
+import org.jline.reader.ParsedLine;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.TerminalBuilder;
+
+/**
+ * Full-screen TUI shell using TamboUI for rendering. Launched via {@code --tui} flag as an
+ * alternative to the readline-based {@link Shell}.
+ *
+ * <p>Layout: status bar (1 line) | scrollable results area | command input (3 lines).
+ */
+public final class TuiShell implements AutoCloseable {
+  private static final int READ_EXPIRED = -2;
+  private static final int EOF = -1;
+  private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[0-9;]*[A-Za-z]");
+  private static final Path HISTORY_PATH =
+      Path.of(System.getProperty("user.home"), ".jfr-shell", "history");
+  private static final int MAX_HISTORY = 5000;
+
+  private enum Platform {
+    MACOS,
+    LINUX,
+    WINDOWS
+  }
+
+  private static Platform detectPlatform() {
+    String os = System.getProperty("os.name", "").toLowerCase();
+    if (os.contains("mac") || os.contains("darwin")) return Platform.MACOS;
+    if (os.contains("win")) return Platform.WINDOWS;
+    return Platform.LINUX;
+  }
+
+  private static final Platform PLATFORM = detectPlatform();
+
+  private final Terminal jlineTerminal;
+  private final JLineShellBackend backend;
+  private final dev.tamboui.terminal.Terminal<JLineShellBackend> tuiTerminal;
+  private final SessionManager sessions;
+  private final CommandDispatcher dispatcher;
+
+  private static final class ResultTab {
+    String name;
+    final List<String> lines = new ArrayList<>();
+    int scrollOffset;
+    int hScrollOffset;
+    int maxLineWidth;
+    boolean pinned;
+    String searchQuery = "";
+    List<Integer> filteredIndices; // null = no filter
+    int filteredMaxLineWidth;
+    List<Map<String, Object>> tableData; // null when output is not tabular
+    List<String> tableHeaders; // column names when tableData is set
+    int selectedRow = -1; // -1 = no selection
+    int dataStartLine = -1; // line index in lines where data rows begin
+    List<Map<String, Object>>
+        metadataClassCache; // metadata per row for drill-down (parallel to tableData)
+    int sortColumn = -1; // -1 = no sort, 0..N = column index
+    boolean sortAscending = true;
+    long marqueeTick0; // renderTick when name was set (marquee epoch)
+
+    ResultTab(String name) {
+      this.name = name;
+    }
+  }
+
+  private final List<ResultTab> tabs = new ArrayList<>();
+  private int activeTabIndex;
+
+  private final List<String> commandHistory = new ArrayList<>();
+  private final TextInputState inputState = new TextInputState();
+  private final TextInputState searchInputState = new TextInputState();
+
+  private enum Focus {
+    INPUT,
+    RESULTS,
+    DETAIL,
+    SEARCH
+  }
+
+  private int historyIndex = -1;
+  private boolean running = true;
+  private int resultsAreaHeight = 10; // updated each render cycle
+  private Focus focus = Focus.INPUT;
+  private String lastCommand = "";
+  private int activeDetailTabIndex = 0;
+  private List<String> detailTabNames = List.of();
+  private List<Object> detailTabValues = List.of();
+  private final List<Integer> detailTabScrollOffsets = new ArrayList<>();
+  private int detailCursorLine = -1; // selected line in detail pane (-1 = no cursor)
+  private List<String> detailLineTypeRefs; // type name for each detail line (null = not navigable)
+
+  // Marquee animation for long tab titles
+  private long renderTick;
+  private long detailMarqueeTick0;
+  private static final int MAX_TAB_TITLE_WIDTH = 25;
+  private static final int PAUSE_START_TICKS = 50;
+  private static final int PAUSE_END_TICKS = 20;
+  private static final int SCROLL_SPEED = 2;
+
+  // Completion state
+  private ShellCompleter completer;
+  private List<Candidate> completionCandidates;
+  private int completionIndex = -1;
+  private int completionWordStart;
+  private String completionOriginalWord;
+  private String completionCurrentValue;
+
+  public TuiShell() throws IOException {
+    // Disable pager — TUI mode uses scrollable view buffer instead.
+    System.setProperty("jfr.shell.pager", "off");
+
+    this.jlineTerminal = TerminalBuilder.builder().system(true).build();
+    this.backend = new JLineShellBackend(jlineTerminal);
+    this.tuiTerminal = new dev.tamboui.terminal.Terminal<>(backend);
+
+    ParsingContext ctx = ParsingContext.create();
+    this.sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    this.dispatcher =
+        new CommandDispatcher(
+            sessions,
+            new CommandDispatcher.IO() {
+              @Override
+              public void println(String s) {
+                addOutputLine(s);
+              }
+
+              @Override
+              public void printf(String fmt, Object... args) {
+                addOutputLine(String.format(fmt, args));
+              }
+
+              @Override
+              public void error(String s) {
+                addOutputLine("ERROR: " + s);
+              }
+            },
+            current -> {
+              // Force TUI output format for all sessions opened in TUI mode.
+              if (current != null) {
+                current.outputFormat = "tui";
+              }
+            });
+    this.completer = new ShellCompleter(sessions, dispatcher);
+    loadHistory();
+    tabs.add(new ResultTab("current"));
+    activeTabIndex = 0;
+  }
+
+  /** Pre-open a JFR recording if the path exists. */
+  public void openIfPresent(Path jfrPath) {
+    if (jfrPath == null || !Files.exists(jfrPath)) return;
+    try {
+      dispatcher.dispatch("open " + jfrPath);
+    } catch (Exception ignore) {
+    }
+  }
+
+  /** Enter full-screen mode and run the draw/event loop until exit. */
+  public void run() throws IOException {
+    backend.enterAlternateScreen();
+    backend.enableRawMode();
+    backend.hideCursor();
+
+    try {
+      while (running) {
+        tuiTerminal.draw(this::render);
+        backend.showCursor();
+
+        int key = backend.read(100);
+        if (key == READ_EXPIRED) continue;
+        if (key == EOF) {
+          running = false;
+          continue;
+        }
+        handleKey(key);
+      }
+    } finally {
+      backend.showCursor();
+      backend.disableRawMode();
+      backend.leaveAlternateScreen();
+    }
+  }
+
+  // ---- output capture ----
+
+  private void addOutputLine(String s) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    String stripped = stripAnsi(s);
+    // A single println may contain embedded newlines; split to keep line count accurate.
+    for (String line : stripped.split("\n", -1)) {
+      String indented = "  " + line;
+      tab.lines.add(indented);
+      tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+    }
+  }
+
+  private static String stripAnsi(String s) {
+    return ANSI_ESCAPE.matcher(s).replaceAll("");
+  }
+
+  // ---- search / filter ----
+
+  private void applySearchFilter(ResultTab tab, String query) {
+    tab.searchQuery = query;
+    if (query.isEmpty()) {
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.scrollOffset = 0;
+      return;
+    }
+    String lower = query.toLowerCase();
+    List<Integer> indices = new ArrayList<>();
+    int maxWidth = 0;
+    for (int i = 0; i < tab.lines.size(); i++) {
+      String line = tab.lines.get(i);
+      if (line.toLowerCase().contains(lower)) {
+        indices.add(i);
+        maxWidth = Math.max(maxWidth, line.length());
+      }
+    }
+    tab.filteredIndices = indices;
+    tab.filteredMaxLineWidth = maxWidth;
+    tab.scrollOffset = 0;
+  }
+
+  private static int effectiveLineCount(ResultTab tab) {
+    return tab.filteredIndices != null ? tab.filteredIndices.size() : tab.lines.size();
+  }
+
+  private static String effectiveLine(ResultTab tab, int i) {
+    if (tab.filteredIndices != null) {
+      return tab.lines.get(tab.filteredIndices.get(i));
+    }
+    return tab.lines.get(i);
+  }
+
+  private static int effectiveMaxLineWidth(ResultTab tab) {
+    return tab.filteredIndices != null ? tab.filteredMaxLineWidth : tab.maxLineWidth;
+  }
+
+  // ---- rendering ----
+
+  private boolean showTabBar() {
+    return tabs.size() >= 2;
+  }
+
+  private void render(Frame frame) {
+    renderTick++;
+    List<Constraint> constraints = new ArrayList<>();
+    constraints.add(Constraint.length(1)); // status bar
+    constraints.add(Constraint.fill()); // results
+    if (focus == Focus.SEARCH) constraints.add(Constraint.length(1)); // search bar
+    constraints.add(Constraint.length(3)); // input
+    constraints.add(Constraint.length(1)); // hints
+
+    List<Rect> areas =
+        Layout.vertical().constraints(constraints.toArray(new Constraint[0])).split(frame.area());
+
+    int idx = 0;
+    renderStatusBar(frame, areas.get(idx++));
+
+    Rect resultsRect = areas.get(idx++);
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    if (!detailTabNames.isEmpty()
+        && activeTab.tableData != null
+        && !activeTab.tableData.isEmpty()) {
+      List<Rect> splitAreas =
+          Layout.vertical()
+              .constraints(Constraint.percentage(60), Constraint.percentage(40))
+              .split(resultsRect);
+      renderResults(frame, splitAreas.get(0));
+      renderDetailSection(frame, splitAreas.get(1));
+    } else {
+      renderResults(frame, resultsRect);
+    }
+
+    if (focus == Focus.SEARCH) renderSearchBar(frame, areas.get(idx++));
+    renderInput(frame, areas.get(idx++));
+    renderHints(frame, areas.get(idx));
+  }
+
+  private static String marqueeTitle(String fullTitle, long tick) {
+    int len = fullTitle.length();
+    if (len <= MAX_TAB_TITLE_WIDTH) return fullTitle;
+    int scrollDistance = len - MAX_TAB_TITLE_WIDTH;
+    int scrollTicks = scrollDistance * SCROLL_SPEED;
+    int cycleLength = PAUSE_START_TICKS + scrollTicks + PAUSE_END_TICKS;
+    int tickInCycle = (int) (tick % cycleLength);
+
+    int offset;
+    if (tickInCycle < PAUSE_START_TICKS) {
+      offset = 0;
+    } else if (tickInCycle < PAUSE_START_TICKS + scrollTicks) {
+      offset = (tickInCycle - PAUSE_START_TICKS) / SCROLL_SPEED;
+    } else {
+      offset = scrollDistance;
+    }
+
+    // Reserve 1 char for ellipsis indicators
+    boolean showLeadingEllipsis = offset > 0;
+    boolean showTrailingEllipsis = offset < scrollDistance;
+
+    if (showLeadingEllipsis && showTrailingEllipsis) {
+      return "\u2026"
+          + fullTitle.substring(offset + 1, offset + MAX_TAB_TITLE_WIDTH - 1)
+          + "\u2026";
+    } else if (showLeadingEllipsis) {
+      return "\u2026" + fullTitle.substring(offset + 1, offset + MAX_TAB_TITLE_WIDTH);
+    } else if (showTrailingEllipsis) {
+      return fullTitle.substring(offset, offset + MAX_TAB_TITLE_WIDTH - 1) + "\u2026";
+    } else {
+      return fullTitle.substring(offset, offset + MAX_TAB_TITLE_WIDTH);
+    }
+  }
+
+  private void renderResultTabBar(Frame frame, Rect area) {
+    String[] titles = new String[tabs.size()];
+    for (int i = 0; i < tabs.size(); i++) {
+      ResultTab tab = tabs.get(i);
+      String raw = tab.pinned ? tab.name : "\u25B7 " + tab.name;
+      titles[i] = marqueeTitle(raw, renderTick - tab.marqueeTick0);
+    }
+    Tabs tabsWidget =
+        Tabs.builder()
+            .titles(titles)
+            .highlightStyle(Style.create().bold().fg(Color.CYAN))
+            .divider(" | ")
+            .style(Style.create().bg(Color.DARK_GRAY).fg(Color.WHITE))
+            .build();
+    TabsState tabsState = new TabsState(activeTabIndex);
+    frame.renderStatefulWidget(tabsWidget, area, tabsState);
+  }
+
+  private void renderStatusBar(Frame frame, Rect area) {
+    String sessionInfo =
+        sessions
+            .current()
+            .map(
+                ref -> {
+                  String name =
+                      ref.alias != null
+                          ? ref.alias
+                          : ref.session.getRecordingPath().getFileName().toString();
+                  return " | session: " + name;
+                })
+            .orElse(" | no session");
+
+    String backendName = "";
+    try {
+      backendName = " | [" + BackendRegistry.getInstance().getCurrent().getId() + "]";
+    } catch (Exception ignore) {
+    }
+
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    int lineCount = effectiveLineCount(activeTab);
+    String scrollInfo = "";
+    if (lineCount > resultsAreaHeight) {
+      scrollInfo = " | line " + (activeTab.scrollOffset + 1) + "/" + lineCount;
+    }
+    if (activeTab.hScrollOffset > 0) {
+      scrollInfo += " | col " + (activeTab.hScrollOffset + 1);
+    }
+
+    String status = " JFR Shell TUI" + sessionInfo + backendName + scrollInfo;
+    // Pad to fill the entire status bar width
+    if (status.length() < area.width()) {
+      status = status + " ".repeat(area.width() - status.length());
+    }
+
+    Paragraph statusBar =
+        Paragraph.builder()
+            .text(Text.raw(status))
+            .style(Style.create().bg(Color.BLUE).fg(Color.WHITE).bold())
+            .build();
+    frame.renderWidget(statusBar, area);
+  }
+
+  private void renderResults(Frame frame, Rect area) {
+    ResultTab activeTab = tabs.get(activeTabIndex);
+
+    String title = "Results";
+    if (activeTab.filteredIndices != null) {
+      title +=
+          " ("
+              + activeTab.filteredIndices.size()
+              + "/"
+              + activeTab.lines.size()
+              + " match \""
+              + activeTab.searchQuery
+              + "\")";
+    }
+    Title blockTitle = mnemonicTitle(title, 0);
+
+    Block.Builder blockBuilder =
+        Block.builder().title(blockTitle).borders(Borders.ALL).borderType(BorderType.ROUNDED);
+    if (focus == Focus.RESULTS) {
+      blockBuilder.borderColor(Color.CYAN);
+    }
+    Block block = blockBuilder.build();
+
+    Rect inner = block.inner(area);
+    frame.renderWidget(block, area);
+
+    // Render result sub-tabs inside the block when multiple tabs exist
+    if (showTabBar()) {
+      List<Rect> tabSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(inner);
+      renderResultTabBar(frame, tabSplit.get(0));
+      inner = tabSplit.get(1);
+    }
+
+    int lineCount = effectiveLineCount(activeTab);
+    int maxWidth = effectiveMaxLineWidth(activeTab);
+
+    if (lineCount == 0) {
+      resultsAreaHeight = inner.height();
+      if (activeTab.lines.isEmpty()) {
+        Paragraph empty =
+            Paragraph.from("Type a command and press Enter. Use 'help' for available commands.");
+        frame.renderWidget(empty, inner);
+      } else {
+        Paragraph noMatch = Paragraph.from("No matching lines.");
+        frame.renderWidget(noMatch, inner);
+      }
+      return;
+    }
+
+    // Determine which scrollbars are needed.
+    boolean needsVScroll = lineCount > inner.height();
+    boolean needsHScroll = maxWidth > inner.width();
+
+    // Carve out scrollbar areas from the inner rect.
+    Rect contentArea = inner;
+    Rect vScrollbarArea = null;
+    Rect hScrollbarArea = null;
+
+    if (needsVScroll && needsHScroll) {
+      List<Rect> hSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      List<Rect> vSplit =
+          Layout.vertical()
+              .constraints(Constraint.fill(), Constraint.length(1))
+              .split(hSplit.get(0));
+      contentArea = vSplit.get(0);
+      hScrollbarArea = vSplit.get(1);
+      vScrollbarArea = hSplit.get(1);
+    } else if (needsVScroll) {
+      List<Rect> hSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = hSplit.get(0);
+      vScrollbarArea = hSplit.get(1);
+    } else if (needsHScroll) {
+      List<Rect> vSplit =
+          Layout.vertical().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = vSplit.get(0);
+      hScrollbarArea = vSplit.get(1);
+    }
+
+    int visibleWidth = contentArea.width();
+
+    // Clamp horizontal scroll offset.
+    int maxHScroll = Math.max(0, maxWidth - visibleWidth);
+    activeTab.hScrollOffset = Math.min(activeTab.hScrollOffset, maxHScroll);
+
+    // Sticky header: when table data is present, split off 1 line for column header
+    boolean hasTable = activeTab.tableData != null && activeTab.dataStartLine >= 1;
+    int headerLine = hasTable ? activeTab.dataStartLine - 1 : -1;
+    Rect headerArea = null;
+    if (hasTable && headerLine >= 0 && headerLine < lineCount) {
+      List<Rect> headerSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(contentArea);
+      headerArea = headerSplit.get(0);
+      contentArea = headerSplit.get(1);
+    }
+
+    int visibleHeight = contentArea.height();
+    resultsAreaHeight = visibleHeight;
+
+    // Render sticky header if present
+    if (headerArea != null) {
+      Style headerStyle = Style.create().bold().fg(Color.CYAN);
+      String headerText = effectiveLine(activeTab, headerLine);
+      // Inject sort indicator into the header
+      if (activeTab.sortColumn >= 0 && activeTab.tableHeaders != null) {
+        headerText = injectSortIndicator(headerText, activeTab);
+      }
+      String visibleHeader = applyHScroll(headerText, activeTab.hScrollOffset, visibleWidth);
+      Paragraph headerPara =
+          Paragraph.builder()
+              .text(new Text(List.of(Line.from(Span.styled(visibleHeader, headerStyle))), null))
+              .build();
+      frame.renderWidget(headerPara, headerArea);
+    }
+
+    // Determine line range and scroll offset for the scrollable area
+    int scrollLineCount;
+    int scrollBase;
+    int highlightLine;
+    if (hasTable) {
+      // Show only data rows + footer in scrollable area
+      scrollBase = activeTab.dataStartLine;
+      scrollLineCount = lineCount - scrollBase;
+      highlightLine =
+          activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1; // relative to scrollBase
+    } else {
+      scrollBase = 0;
+      scrollLineCount = lineCount;
+      highlightLine = -1;
+    }
+
+    int maxVScroll = Math.max(0, scrollLineCount - visibleHeight);
+    activeTab.scrollOffset = Math.min(activeTab.scrollOffset, maxVScroll);
+
+    int start = activeTab.scrollOffset;
+    int end = Math.min(start + visibleHeight, scrollLineCount);
+
+    Style highlightStyle = Style.create().reversed();
+    List<Line> styledLines = new ArrayList<>(end - start);
+    for (int i = start; i < end; i++) {
+      String line = effectiveLine(activeTab, scrollBase + i);
+      String visible = applyHScroll(line, activeTab.hScrollOffset, visibleWidth);
+      if (i == highlightLine) {
+        // Pad to fill the visible width so highlight spans the entire row
+        if (visible.length() < visibleWidth) {
+          visible = visible + " ".repeat(visibleWidth - visible.length());
+        }
+        styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
+      } else {
+        styledLines.add(Line.from(visible));
+      }
+    }
+    Paragraph results = Paragraph.builder().text(new Text(styledLines, null)).build();
+    frame.renderWidget(results, contentArea);
+
+    // Vertical scrollbar
+    if (vScrollbarArea != null) {
+      ScrollbarState vState =
+          new ScrollbarState(scrollLineCount)
+              .viewportContentLength(visibleHeight)
+              .position(activeTab.scrollOffset);
+      frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
+    }
+
+    // Horizontal scrollbar
+    if (hScrollbarArea != null) {
+      ScrollbarState hState =
+          new ScrollbarState(maxWidth)
+              .viewportContentLength(visibleWidth)
+              .position(activeTab.hScrollOffset);
+      frame.renderStatefulWidget(Scrollbar.horizontal(), hScrollbarArea, hState);
+    }
+  }
+
+  private void renderDetailSection(Frame frame, Rect area) {
+    if (detailTabNames.isEmpty()) return;
+
+    // Render the detail content block (which includes the D̲etails title)
+    renderDetailContent(frame, area);
+  }
+
+  private void renderDetailTabBar(Frame frame, Rect area) {
+    String[] titles = new String[detailTabNames.size()];
+    for (int i = 0; i < detailTabNames.size(); i++) {
+      titles[i] = marqueeTitle(detailTabNames.get(i), renderTick - detailMarqueeTick0);
+    }
+    Tabs detailTabs =
+        Tabs.builder()
+            .titles(titles)
+            .highlightStyle(Style.create().bold().fg(Color.YELLOW))
+            .divider(" | ")
+            .style(
+                Style.create()
+                    .bg(focus == Focus.DETAIL ? Color.DARK_GRAY : Color.BLACK)
+                    .fg(Color.WHITE))
+            .build();
+    TabsState detailTabsState = new TabsState(activeDetailTabIndex);
+    frame.renderStatefulWidget(detailTabs, area, detailTabsState);
+  }
+
+  private void renderDetailContent(Frame frame, Rect area) {
+    if (activeDetailTabIndex >= detailTabValues.size()) return;
+
+    Block.Builder blockBuilder =
+        Block.builder()
+            .title(mnemonicTitle("Details", 0))
+            .borders(Borders.ALL)
+            .borderType(BorderType.ROUNDED);
+    if (focus == Focus.DETAIL) {
+      blockBuilder.borderColor(Color.CYAN);
+    }
+    Block block = blockBuilder.build();
+    Rect inner = block.inner(area);
+    frame.renderWidget(block, area);
+
+    // Render detail sub-tabs inside the block when multiple tabs exist
+    if (detailTabNames.size() > 1) {
+      List<Rect> tabSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(inner);
+      renderDetailTabBar(frame, tabSplit.get(0));
+      inner = tabSplit.get(1);
+    }
+
+    Object tabValue = detailTabValues.get(activeDetailTabIndex);
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    boolean metadataMode = activeTab.metadataClassCache != null && tabValue instanceof Map<?, ?>;
+
+    String[] allLines;
+    if (metadataMode) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> meta = (Map<String, Object>) tabValue;
+      allLines = buildMetadataDetailLines(meta, activeTab);
+    } else {
+      allLines = buildDetailLines(tabValue);
+    }
+
+    // Apply search filter if active
+    String[] detailLines;
+    if (activeTab.searchQuery != null && !activeTab.searchQuery.isEmpty()) {
+      String lower = activeTab.searchQuery.toLowerCase();
+      List<String> filtered = new ArrayList<>();
+      for (String line : allLines) {
+        if (line.toLowerCase().contains(lower)) {
+          filtered.add(line);
+        }
+      }
+      detailLines = filtered.toArray(new String[0]);
+    } else {
+      detailLines = allLines;
+    }
+    int totalLines = detailLines.length;
+
+    // Determine if vertical scrollbar is needed
+    boolean needsVScroll = totalLines > inner.height();
+    Rect contentArea = inner;
+    Rect vScrollbarArea = null;
+    if (needsVScroll) {
+      List<Rect> hSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = hSplit.get(0);
+      vScrollbarArea = hSplit.get(1);
+    }
+
+    int visibleHeight = contentArea.height();
+    int scrollOffset = getDetailScrollOffset();
+    int maxScroll = Math.max(0, totalLines - visibleHeight);
+    scrollOffset = Math.min(scrollOffset, maxScroll);
+    setDetailScrollOffset(scrollOffset);
+
+    int start = scrollOffset;
+    int end = Math.min(start + visibleHeight, totalLines);
+
+    boolean showCursor = metadataMode && focus == Focus.DETAIL && detailCursorLine >= 0;
+    Style cursorStyle = Style.create().reversed();
+    Style navigableStyle = Style.create().fg(Color.CYAN).bold();
+
+    List<Line> styledLines = new ArrayList<>(end - start);
+    for (int i = start; i < end; i++) {
+      String line = detailLines[i];
+      if (line.length() > contentArea.width()) {
+        line = line.substring(0, contentArea.width());
+      }
+      if (showCursor && i == detailCursorLine) {
+        // Pad to full width for highlight
+        if (line.length() < contentArea.width()) {
+          line = line + " ".repeat(contentArea.width() - line.length());
+        }
+        styledLines.add(Line.from(Span.styled(line, cursorStyle)));
+      } else if (metadataMode
+          && detailLineTypeRefs != null
+          && i < detailLineTypeRefs.size()
+          && detailLineTypeRefs.get(i) != null) {
+        styledLines.add(Line.from(Span.styled(line, navigableStyle)));
+      } else {
+        styledLines.add(Line.from(line));
+      }
+    }
+
+    Paragraph detail = Paragraph.builder().text(new Text(styledLines, null)).build();
+    frame.renderWidget(detail, contentArea);
+
+    if (vScrollbarArea != null) {
+      ScrollbarState vState =
+          new ScrollbarState(totalLines)
+              .viewportContentLength(visibleHeight)
+              .position(scrollOffset);
+      frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
+    }
+  }
+
+  private String[] buildDetailLines(Object value) {
+    // Stack trace rendering — flat list with tree connectors
+    if (value instanceof Map<?, ?> m && m.containsKey("frames")) {
+      return buildStackTraceLines(m);
+    }
+
+    // Default: tree-structured key-value dump
+    List<String> lines = new ArrayList<>();
+    Object resolved = resolveForDisplay(value);
+    if (resolved instanceof Map<?, ?> m) {
+      formatTree(lines, m, "");
+    } else if (resolved != null && resolved.getClass().isArray()) {
+      formatArrayTree(lines, resolved, "");
+    } else if (resolved instanceof Collection<?> coll) {
+      formatCollectionTree(lines, coll, "");
+    } else {
+      lines.add(String.valueOf(value));
+    }
+    return lines.toArray(new String[0]);
+  }
+
+  private String[] buildStackTraceLines(Map<?, ?> stackMap) {
+    Object framesObj = stackMap.get("frames");
+    if (framesObj instanceof ArrayType at) framesObj = at.getArray();
+    int frameCount = TuiTableRenderer.arrayLength(framesObj);
+    int count = Math.max(0, frameCount);
+    List<String> lines = new ArrayList<>(count + 1);
+    lines.add("(" + count + " frames)");
+    for (int i = 0; i < count; i++) {
+      Object frameObj;
+      if (framesObj != null && framesObj.getClass().isArray()) {
+        frameObj = Array.get(framesObj, i);
+      } else if (framesObj instanceof List<?> list) {
+        frameObj = list.get(i);
+      } else {
+        break;
+      }
+      frameObj = TuiTableRenderer.resolveComplex(frameObj);
+      String sig = TuiTableRenderer.extractFrameString(frameObj);
+      if (sig == null) sig = "<unknown>";
+      String typeStr = "";
+      if (frameObj instanceof Map<?, ?> fm) {
+        Object ftype = TuiTableRenderer.unwrap(fm.get("type"));
+        if (ftype != null) typeStr = " [" + ftype + "]";
+      }
+      String connector = (i == count - 1) ? "\u2514\u2500 " : "\u251C\u2500 ";
+      lines.add(connector + sig + typeStr);
+    }
+    // Also render the truncated flag if present
+    Object truncated = stackMap.get("truncated");
+    if (truncated != null && Boolean.TRUE.equals(truncated)) {
+      lines.add("   ... (truncated)");
+    }
+    return lines.toArray(new String[0]);
+  }
+
+  /** Unwrap ArrayType / ComplexType for display. */
+  private static Object resolveForDisplay(Object val) {
+    if (val instanceof ComplexType ct) return ct.getValue();
+    if (val instanceof ArrayType at) return at.getArray();
+    return val;
+  }
+
+  /** Render a Map as a tree with box-drawing connectors. */
+  private static void formatTree(List<String> lines, Map<?, ?> map, String indent) {
+    var entries = new ArrayList<>(map.entrySet());
+    for (int i = 0; i < entries.size(); i++) {
+      Map.Entry<?, ?> entry = entries.get(i);
+      boolean last = (i == entries.size() - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      String key = String.valueOf(entry.getKey());
+      Object val = resolveForDisplay(entry.getValue());
+      // Unwrap single-entry map wrappers
+      while (val instanceof Map<?, ?> inner && inner.size() == 1) {
+        val = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (val instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + key);
+        formatTree(lines, nested, childIndent);
+      } else if (val != null && val.getClass().isArray()) {
+        int len = Array.getLength(val);
+        lines.add(indent + connector + key + " (" + len + " items)");
+        formatArrayTree(lines, val, childIndent);
+      } else if (val instanceof Collection<?> coll) {
+        lines.add(indent + connector + key + " (" + coll.size() + " items)");
+        formatCollectionTree(lines, coll, childIndent);
+      } else {
+        lines.add(indent + connector + key + ": " + (val != null ? val : "(null)"));
+      }
+    }
+  }
+
+  private static void formatArrayTree(List<String> lines, Object arr, String indent) {
+    int len = Array.getLength(arr);
+    for (int i = 0; i < len; i++) {
+      boolean last = (i == len - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      Object item = resolveForDisplay(Array.get(arr, i));
+      while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+        item = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + "[" + i + "]");
+        formatTree(lines, nested, childIndent);
+      } else {
+        lines.add(indent + connector + "[" + i + "]: " + item);
+      }
+    }
+  }
+
+  private static void formatCollectionTree(List<String> lines, Collection<?> coll, String indent) {
+    int idx = 0;
+    int size = coll.size();
+    for (Object raw : coll) {
+      boolean last = (idx == size - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      Object item = resolveForDisplay(raw);
+      while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+        item = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + "[" + idx + "]");
+        formatTree(lines, nested, childIndent);
+      } else {
+        lines.add(indent + connector + "[" + idx + "]: " + item);
+      }
+      idx++;
+    }
+  }
+
+  private int getDetailScrollOffset() {
+    if (activeDetailTabIndex < detailTabScrollOffsets.size()) {
+      return detailTabScrollOffsets.get(activeDetailTabIndex);
+    }
+    return 0;
+  }
+
+  private void setDetailScrollOffset(int offset) {
+    while (detailTabScrollOffsets.size() <= activeDetailTabIndex) {
+      detailTabScrollOffsets.add(0);
+    }
+    detailTabScrollOffsets.set(activeDetailTabIndex, offset);
+  }
+
+  private void buildDetailTabs(ResultTab tab) {
+    if (tab.tableData == null || tab.selectedRow < 0 || tab.selectedRow >= tab.tableData.size()) {
+      detailTabNames = List.of();
+      detailTabValues = List.of();
+      activeDetailTabIndex = 0;
+      detailTabScrollOffsets.clear();
+      detailCursorLine = -1;
+      detailLineTypeRefs = null;
+      return;
+    }
+
+    // Metadata browser mode: show fields/settings instead of complex-value tabs
+    if (tab.metadataClassCache != null) {
+      Map<String, Object> meta =
+          tab.selectedRow < tab.metadataClassCache.size()
+              ? tab.metadataClassCache.get(tab.selectedRow)
+              : null;
+      if (meta != null) {
+        Object nameObj = meta.get("name");
+        String typeName = nameObj != null ? nameObj.toString() : "type";
+        detailTabNames = List.of(typeName);
+        detailMarqueeTick0 = renderTick;
+        detailTabValues = List.of(meta);
+        activeDetailTabIndex = 0;
+        detailTabScrollOffsets.clear();
+        detailTabScrollOffsets.add(0);
+        buildMetadataDetailRefs(meta, tab);
+        return;
+      }
+      // No metadata for this row — fall through to empty detail
+      detailTabNames = List.of();
+      detailTabValues = List.of();
+      activeDetailTabIndex = 0;
+      detailTabScrollOffsets.clear();
+      detailCursorLine = -1;
+      detailLineTypeRefs = null;
+      return;
+    }
+
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+
+    Map<String, Object> row = tab.tableData.get(tab.selectedRow);
+    List<String> names = new ArrayList<>();
+    List<Object> values = new ArrayList<>();
+    List<String> headers =
+        tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(row.keySet());
+    for (String header : headers) {
+      Object val = row.get(header);
+      if (isComplexValue(val)) {
+        names.add(header);
+        values.add(val);
+      }
+    }
+    detailTabNames = names;
+    detailMarqueeTick0 = renderTick;
+    detailTabValues = values;
+    activeDetailTabIndex = Math.min(activeDetailTabIndex, Math.max(0, names.size() - 1));
+    detailTabScrollOffsets.clear();
+    for (int i = 0; i < names.size(); i++) {
+      detailTabScrollOffsets.add(0);
+    }
+  }
+
+  /**
+   * Build detail line type references for metadata mode. Populates {@link #detailLineTypeRefs} with
+   * the type name for each detail line (null if not navigable). Resets {@link #detailCursorLine}.
+   */
+  @SuppressWarnings("unchecked")
+  private void buildMetadataDetailRefs(Map<String, Object> meta, ResultTab tab) {
+    // Collect navigable type names (types that exist in the master table)
+    Set<String> navigableTypes = new HashSet<>();
+    if (tab.tableData != null) {
+      for (Map<String, Object> row : tab.tableData) {
+        Object n = row.get("name");
+        if (n != null) navigableTypes.add(n.toString());
+      }
+    }
+
+    List<String> refs = new ArrayList<>();
+
+    // Fields section
+    Object fieldsByName = meta.get("fieldsByName");
+    if (fieldsByName instanceof Map<?, ?> fbm && !fbm.isEmpty()) {
+      refs.add(null); // "Fields (N):" header line
+      int idx = 0;
+      int size = fbm.size();
+      for (Map.Entry<?, ?> entry : fbm.entrySet()) {
+        idx++;
+        String typeName = null;
+        if (entry.getValue() instanceof Map<?, ?> fm) {
+          Object typeObj = fm.get("type");
+          if (typeObj != null) {
+            typeName = typeObj.toString();
+          }
+        }
+        // Only mark as navigable if the type exists in the master table
+        refs.add(typeName != null && navigableTypes.contains(typeName) ? typeName : null);
+      }
+    }
+
+    // Settings section
+    Object settingsByName = meta.get("settingsByName");
+    if (settingsByName instanceof Map<?, ?> sbm && !sbm.isEmpty()) {
+      refs.add(null); // "Settings (N):" header line
+      for (int i = 0; i < sbm.size(); i++) {
+        refs.add(null); // settings are not navigable
+      }
+    }
+
+    // Annotations section
+    Object classAnnotations = meta.get("classAnnotations");
+    if (classAnnotations instanceof List<?> ca && !ca.isEmpty()) {
+      refs.add(null); // "Annotations (N):" header line
+      for (int i = 0; i < ca.size(); i++) {
+        refs.add(null);
+      }
+    }
+
+    detailLineTypeRefs = refs;
+    detailCursorLine = refs.isEmpty() ? -1 : 0;
+  }
+
+  /**
+   * Build detail display lines for a metadata map. Structure matches the indices in {@link
+   * #detailLineTypeRefs}.
+   */
+  @SuppressWarnings("unchecked")
+  private String[] buildMetadataDetailLines(Map<String, Object> meta, ResultTab tab) {
+    Set<String> navigableTypes = new HashSet<>();
+    if (tab.tableData != null) {
+      for (Map<String, Object> row : tab.tableData) {
+        Object n = row.get("name");
+        if (n != null) navigableTypes.add(n.toString());
+      }
+    }
+
+    List<String> lines = new ArrayList<>();
+
+    // Fields section
+    Object fieldsByName = meta.get("fieldsByName");
+    if (fieldsByName instanceof Map<?, ?> fbm && !fbm.isEmpty()) {
+      lines.add("Fields (" + fbm.size() + "):");
+      int idx = 0;
+      int size = fbm.size();
+      for (Map.Entry<?, ?> entry : fbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String fName = entry.getKey().toString();
+        String fType = "";
+        String annStr = "";
+        if (entry.getValue() instanceof Map<?, ?> fm) {
+          Object typeObj = fm.get("type");
+          if (typeObj != null) fType = typeObj.toString();
+          Object annObj = fm.get("annotations");
+          if (annObj instanceof List<?> annList && !annList.isEmpty()) {
+            annStr = " " + annList;
+          }
+        }
+        String nav = navigableTypes.contains(fType) ? " \u2192" : "";
+        lines.add(connector + fName + ": " + fType + annStr + nav);
+      }
+    }
+
+    // Settings section
+    Object settingsByName = meta.get("settingsByName");
+    if (settingsByName instanceof Map<?, ?> sbm && !sbm.isEmpty()) {
+      lines.add("Settings (" + sbm.size() + "):");
+      int idx = 0;
+      int size = sbm.size();
+      for (Map.Entry<?, ?> entry : sbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String sName = entry.getKey().toString();
+        String sType = "";
+        String sDefault = "";
+        if (entry.getValue() instanceof Map<?, ?> sm) {
+          Object typeObj = sm.get("type");
+          if (typeObj != null) sType = typeObj.toString();
+          Object defObj = sm.get("defaultValue");
+          if (defObj != null) sDefault = " = " + defObj;
+        }
+        lines.add(connector + sName + ": " + sType + sDefault);
+      }
+    }
+
+    // Annotations section
+    Object classAnnotations = meta.get("classAnnotations");
+    if (classAnnotations instanceof List<?> ca && !ca.isEmpty()) {
+      lines.add("Annotations (" + ca.size() + "):");
+      int idx = 0;
+      int size = ca.size();
+      for (Object ann : ca) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        lines.add(connector + ann);
+      }
+    }
+
+    return lines.toArray(new String[0]);
+  }
+
+  private static boolean isComplexValue(Object val) {
+    if (val == null) return false;
+    if (val instanceof Map<?, ?> m) {
+      if (m.size() <= 1) return false; // single-entry wrapper, stays in table only
+      return true;
+    }
+    if (val instanceof ArrayType) return true;
+    if (val instanceof Collection<?>) return true;
+    if (val.getClass().isArray()) return true;
+    return false;
+  }
+
+  private void renderInput(Frame frame, Rect area) {
+    Block.Builder inputBlockBuilder =
+        Block.builder()
+            .title(mnemonicTitle("Command >", 0))
+            .borders(Borders.ALL)
+            .borderType(BorderType.ROUNDED);
+    if (focus == Focus.INPUT) {
+      inputBlockBuilder.borderColor(Color.CYAN);
+    }
+    TextInput textInput = TextInput.builder().block(inputBlockBuilder.build()).build();
+    textInput.renderWithCursor(area, frame.buffer(), inputState, frame);
+  }
+
+  private void renderSearchBar(Frame frame, Rect area) {
+    String text = "/ " + searchInputState.text();
+    if (text.length() < area.width()) {
+      text = text + " ".repeat(area.width() - text.length());
+    }
+    Paragraph bar =
+        Paragraph.builder()
+            .text(Text.raw(text))
+            .style(Style.create().bg(Color.DARK_GRAY).fg(Color.YELLOW))
+            .build();
+    frame.renderWidget(bar, area);
+  }
+
+  private void renderHints(Frame frame, Rect area) {
+    String altMod = (PLATFORM == Platform.MACOS) ? "Opt" : "Alt";
+    String hints;
+    if (focus == Focus.SEARCH) {
+      hints = " Type to filter  Enter:confirm  Esc:cancel";
+    } else if (focus == Focus.DETAIL) {
+      boolean hasCursor = detailLineTypeRefs != null && detailCursorLine >= 0;
+      String drillHint = "";
+      if (hasCursor
+          && detailCursorLine < detailLineTypeRefs.size()
+          && detailLineTypeRefs.get(detailCursorLine) != null) {
+        drillHint = "Enter:drill-down  ";
+      }
+      String cursorHint = hasCursor ? "\u2191\u2193:select  " : "\u2191\u2193:scroll  ";
+      hints =
+          " "
+              + cursorHint
+              + "\u2190\u2192:tabs  "
+              + drillHint
+              + altMod
+              + "+r:results  "
+              + altMod
+              + "+c:cmd  Esc:back";
+    } else if (focus == Focus.RESULTS) {
+      ResultTab activeTab = tabs.get(activeTabIndex);
+      String rowHint =
+          (activeTab.tableData != null && activeTab.selectedRow >= 0)
+              ? "\u2191\u2193:row  "
+              : "\u2191\u2193\u2190\u2192:scroll  ";
+      String sortHint = "";
+      if (activeTab.tableData != null && activeTab.tableHeaders != null) {
+        sortHint = activeTab.sortColumn >= 0 ? "<>:sort col  R:reverse  " : "<>:sort col  ";
+      }
+      String filterHint =
+          activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
+      String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
+      hints =
+          " "
+              + rowHint
+              + sortHint
+              + filterHint
+              + "Ctrl+P:pin  "
+              + detailJump
+              + altMod
+              + "+c:cmd  Esc:input";
+    } else {
+      String completionHint =
+          (completionCandidates != null && !completionCandidates.isEmpty())
+              ? "Tab:next(" + (completionIndex + 1) + "/" + completionCandidates.size() + ")  "
+              : "Tab:complete  ";
+      hints =
+          " Enter:run  "
+              + "\u2191\u2193:history  "
+              + completionHint
+              + altMod
+              + "+r:results  "
+              + "Ctrl+C:exit";
+    }
+    if (hints.length() < area.width()) {
+      hints = hints + " ".repeat(area.width() - hints.length());
+    }
+    Paragraph bar =
+        Paragraph.builder()
+            .text(Text.raw(hints))
+            .style(Style.create().bg(Color.DARK_GRAY).fg(Color.WHITE))
+            .build();
+    frame.renderWidget(bar, area);
+  }
+
+  // ---- key handling ----
+
+  private void handleKey(int key) throws IOException {
+    // Clear completion state on any non-Tab key
+    if (key != 9 && completionCandidates != null) {
+      clearCompletionState();
+    }
+    // Global keys (work in any focus)
+    switch (key) {
+      case 3: // Ctrl+C
+        if (focus == Focus.SEARCH) {
+          // Cancel search
+          ResultTab tab = tabs.get(activeTabIndex);
+          tab.searchQuery = "";
+          tab.filteredIndices = null;
+          tab.filteredMaxLineWidth = 0;
+          tab.scrollOffset = 0;
+          focus = Focus.RESULTS;
+        } else if (focus == Focus.DETAIL) {
+          focus = Focus.RESULTS;
+        } else if (focus == Focus.RESULTS) {
+          focus = Focus.INPUT;
+        } else if (inputState.text().isEmpty()) {
+          running = false;
+        } else {
+          inputState.clear();
+        }
+        return;
+      case 4: // Ctrl+D
+        running = false;
+        return;
+      case 16: // Ctrl+P — toggle pin on active tab
+        togglePin();
+        return;
+      case 9: // Tab — completion in INPUT; no-op in other focuses (use Opt+Tab to switch)
+        if (focus == Focus.INPUT) {
+          tryComplete();
+        }
+        return;
+      case 27: // ESC sequence or plain Escape
+        handleEscapeSequence();
+        return;
+      case 31: // Ctrl+/ — enter search mode
+        enterSearchMode();
+        return;
+      default:
+        break;
+    }
+
+    // Opt/Alt+1-9: switch detail tab (global — works from any focus)
+    int detailIdx = macOptDigit(key);
+    if (detailIdx >= 0 && detailIdx < detailTabNames.size()) {
+      activeDetailTabIndex = detailIdx;
+      return;
+    }
+
+    // macOS Opt+R/D/C: quick focus switch
+    if (key == MAC_OPT_R) {
+      focus = Focus.RESULTS;
+      return;
+    }
+    if (key == MAC_OPT_D && !detailTabNames.isEmpty()) {
+      focus = Focus.DETAIL;
+      return;
+    }
+    if (key == MAC_OPT_C) {
+      focus = Focus.INPUT;
+      return;
+    }
+
+    // Focus-specific keys
+    if (focus == Focus.SEARCH) {
+      handleSearchKey(key);
+    } else if (focus == Focus.DETAIL) {
+      handleDetailKey(key);
+    } else if (focus == Focus.RESULTS) {
+      handleResultsKey(key);
+    } else {
+      handleInputKey(key);
+    }
+  }
+
+  private void handleResultsKey(int key) {
+    switch (key) {
+      case 13: // Enter — switch back to input
+      case 10:
+        focus = Focus.INPUT;
+        break;
+      case '/': // Enter search mode (vim convention)
+        enterSearchMode();
+        break;
+      case '<': // Sort column left
+      case '>': // Sort column right
+        {
+          ResultTab rt = tabs.get(activeTabIndex);
+          if (rt.tableData != null && rt.tableHeaders != null && !rt.tableHeaders.isEmpty()) {
+            int colCount = rt.tableHeaders.size();
+            if (rt.sortColumn < 0) {
+              rt.sortColumn = 0;
+            } else {
+              rt.sortColumn =
+                  key == '<'
+                      ? (rt.sortColumn - 1 + colCount) % colCount
+                      : (rt.sortColumn + 1) % colCount;
+            }
+            rt.sortAscending = true;
+            applySortAndRerender(rt);
+          }
+        }
+        break;
+      case 'R': // Reverse sort order (like top)
+        {
+          ResultTab rt = tabs.get(activeTabIndex);
+          if (rt.sortColumn >= 0 && rt.tableData != null) {
+            rt.sortAscending = !rt.sortAscending;
+            applySortAndRerender(rt);
+          }
+        }
+        break;
+      default:
+        if (key >= 32 && key < 127) {
+          // Printable char — switch to input and insert it
+          focus = Focus.INPUT;
+          inputState.insert((char) key);
+          historyIndex = -1;
+        }
+        break;
+    }
+  }
+
+  private void handleDetailKey(int key) {
+    switch (key) {
+      case 13: // Enter — drill-down in metadata mode, or switch to input
+      case 10:
+        if (detailLineTypeRefs != null
+            && detailCursorLine >= 0
+            && detailCursorLine < detailLineTypeRefs.size()) {
+          String targetType = detailLineTypeRefs.get(detailCursorLine);
+          if (targetType != null) {
+            navigateToType(targetType);
+            break;
+          }
+        }
+        focus = Focus.INPUT;
+        break;
+      default:
+        break;
+    }
+  }
+
+  private void handleInputKey(int key) {
+    switch (key) {
+      case 13: // Enter
+      case 10:
+        submitCommand();
+        break;
+      case 127: // Backspace
+      case 8:
+        inputState.deleteBackward();
+        break;
+      default:
+        if (key >= 32 && key < 127) {
+          inputState.insert((char) key);
+          historyIndex = -1;
+        }
+        break;
+    }
+  }
+
+  private void enterSearchMode() {
+    focus = Focus.SEARCH;
+    ResultTab tab = tabs.get(activeTabIndex);
+    searchInputState.setText(tab.searchQuery);
+  }
+
+  private void handleSearchKey(int key) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    switch (key) {
+      case 13: // Enter — confirm filter
+      case 10:
+        tab.searchQuery = searchInputState.text();
+        focus = Focus.RESULTS;
+        break;
+      case 127: // Backspace
+      case 8:
+        if (searchInputState.text().isEmpty()) {
+          // Backspace on empty search — cancel
+          tab.searchQuery = "";
+          tab.filteredIndices = null;
+          tab.filteredMaxLineWidth = 0;
+          tab.scrollOffset = 0;
+          focus = Focus.RESULTS;
+        } else {
+          searchInputState.deleteBackward();
+          applySearchFilter(tab, searchInputState.text());
+        }
+        break;
+      default:
+        if (key >= 32 && key < 127) {
+          searchInputState.insert((char) key);
+          applySearchFilter(tab, searchInputState.text());
+        }
+        break;
+    }
+  }
+
+  // macOS Opt+digit Unicode code points (US keyboard layout).
+  // Maps to 0-based detail tab index, or -1 if not a match.
+  private static final int[] MAC_OPT_DIGITS = {
+    0x00A1, // Opt+1 → ¡
+    0x2122, // Opt+2 → ™
+    0x00A3, // Opt+3 → £
+    0x00A2, // Opt+4 → ¢
+    0x221E, // Opt+5 → ∞
+    0x00A7, // Opt+6 → §
+    0x00B6, // Opt+7 → ¶
+    0x2022, // Opt+8 → •
+    0x00AA, // Opt+9 → ª
+  };
+
+  private static int macOptDigit(int codePoint) {
+    for (int i = 0; i < MAC_OPT_DIGITS.length; i++) {
+      if (codePoint == MAC_OPT_DIGITS[i]) return i;
+    }
+    return -1;
+  }
+
+  /** Build a title Line with one character underlined as a mnemonic hint. */
+  private static Title mnemonicTitle(String text, int mnemonicIndex) {
+    Style underlineStyle = Style.create().underlined().bold();
+    if (mnemonicIndex <= 0) {
+      return Title.from(
+          Line.from(
+              Span.styled(text.substring(0, 1), underlineStyle), Span.raw(text.substring(1))));
+    } else if (mnemonicIndex >= text.length() - 1) {
+      return Title.from(
+          Line.from(
+              Span.raw(text.substring(0, mnemonicIndex)),
+              Span.styled(text.substring(mnemonicIndex), underlineStyle)));
+    } else {
+      return Title.from(
+          Line.from(
+              Span.raw(text.substring(0, mnemonicIndex)),
+              Span.styled(text.substring(mnemonicIndex, mnemonicIndex + 1), underlineStyle),
+              Span.raw(text.substring(mnemonicIndex + 1))));
+    }
+  }
+
+  // macOS Opt+R/D/C Unicode code points (US keyboard layout) for quick focus switch.
+  private static final int MAC_OPT_R = 0x00AE; // Opt+r → ®
+  private static final int MAC_OPT_D = 0x2202; // Opt+d → ∂
+  private static final int MAC_OPT_C = 0x00E7; // Opt+c → ç
+
+  // Modifier codes in CSI sequences: ESC [ 1 ; <mod> <dir>
+  private static final int MOD_NONE = 0;
+  private static final int MOD_SHIFT = '2';
+  private static final int MOD_ALT = '3';
+  private static final int MOD_CTRL = '5';
+
+  private void handleEscapeSequence() throws IOException {
+    int next = backend.read(50);
+    if (next == READ_EXPIRED || next == EOF) {
+      // Plain Escape
+      if (focus == Focus.SEARCH) {
+        // Cancel search — clear filter
+        ResultTab tab = tabs.get(activeTabIndex);
+        tab.searchQuery = "";
+        tab.filteredIndices = null;
+        tab.filteredMaxLineWidth = 0;
+        tab.scrollOffset = 0;
+        focus = Focus.RESULTS;
+      } else if (focus == Focus.DETAIL) {
+        focus = Focus.RESULTS;
+      } else if (focus == Focus.RESULTS) {
+        focus = Focus.INPUT;
+      } else {
+        inputState.clear();
+      }
+      return;
+    }
+    // ESC 1-9 — Opt+1-9 on macOS — switch detail tab (works from any focus)
+    if (next >= '1' && next <= '9') {
+      int tabIdx = next - '1'; // 0-based
+      if (tabIdx < detailTabNames.size()) {
+        activeDetailTabIndex = tabIdx;
+      }
+      return;
+    }
+    // ESC b / ESC f — sent by macOS terminals for Option+Left/Right (default settings)
+    if (next == 'b' && tabs.size() > 1) {
+      activeTabIndex = (activeTabIndex - 1 + tabs.size()) % tabs.size();
+      return;
+    }
+    if (next == 'f' && tabs.size() > 1) {
+      activeTabIndex = (activeTabIndex + 1) % tabs.size();
+      return;
+    }
+    // ESC r/d/c — Alt+R/D/C on Linux — quick focus switch
+    if (next == 'r') {
+      focus = Focus.RESULTS;
+      return;
+    }
+    if (next == 'd' && !detailTabNames.isEmpty()) {
+      focus = Focus.DETAIL;
+      return;
+    }
+    if (next == 'c') {
+      focus = Focus.INPUT;
+      return;
+    }
+    if (next != '[') return;
+
+    int code = backend.read(50);
+    if (code == READ_EXPIRED || code == EOF) return;
+
+    // ESC [ Z — Shift+Tab (backtab) — cycle focus
+    if (code == 'Z') {
+      if (focus == Focus.INPUT) {
+        focus = Focus.RESULTS;
+      } else if (focus == Focus.RESULTS) {
+        if (!detailTabNames.isEmpty()) {
+          focus = Focus.DETAIL;
+        } else {
+          focus = Focus.INPUT;
+        }
+      } else {
+        focus = Focus.INPUT;
+      }
+      return;
+    }
+
+    // Simple sequences: ESC [ <letter>  (no modifier)
+    if (code >= 'A' && code <= 'Z') {
+      dispatchArrow(code, MOD_NONE);
+      return;
+    }
+
+    // Parameterized: ESC [ <digit> ...
+    if (code >= '0' && code <= '9') {
+      int second = backend.read(50);
+      if (second == READ_EXPIRED || second == EOF) return;
+
+      if (second == '~') {
+        // ESC [ N ~  (PgUp/PgDn — always scroll results regardless of focus)
+        if (code == '5') scrollResults(-resultsAreaHeight);
+        else if (code == '6') scrollResults(resultsAreaHeight);
+      } else if (second == ';') {
+        // ESC [ 1 ; <mod> <dir>
+        int mod = backend.read(50);
+        if (mod == READ_EXPIRED || mod == EOF) return;
+        int dir = backend.read(50);
+        if (dir == READ_EXPIRED || dir == EOF) return;
+        dispatchArrow(dir, mod);
+      }
+    }
+  }
+
+  private void dispatchArrow(int direction, int modifier) {
+    // Ctrl+arrows: Up/Down → focus switch, Left/Right → tab switch
+    if (modifier == MOD_CTRL || modifier == MOD_ALT) {
+      if (direction == 'A') {
+        focus = Focus.RESULTS;
+      } else if (direction == 'B') {
+        focus = Focus.INPUT;
+      } else if (direction == 'D' && tabs.size() > 1) {
+        activeTabIndex = (activeTabIndex - 1 + tabs.size()) % tabs.size();
+      } else if (direction == 'C' && tabs.size() > 1) {
+        activeTabIndex = (activeTabIndex + 1) % tabs.size();
+      }
+      return;
+    }
+
+    if (focus == Focus.DETAIL) {
+      // Detail pane: cursor movement in metadata mode, scroll otherwise
+      boolean hasCursor = detailLineTypeRefs != null && detailCursorLine >= 0;
+      switch (direction) {
+        case 'A':
+          if (hasCursor) {
+            moveDetailCursor(-1);
+          } else {
+            setDetailScrollOffset(Math.max(0, getDetailScrollOffset() - 1));
+          }
+          break;
+        case 'B':
+          if (hasCursor) {
+            moveDetailCursor(1);
+          } else {
+            setDetailScrollOffset(getDetailScrollOffset() + 1);
+          }
+          break;
+        case 'C': // Right — next detail tab
+          if (!detailTabNames.isEmpty()) {
+            activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
+          }
+          break;
+        case 'D': // Left — prev detail tab
+          if (!detailTabNames.isEmpty()) {
+            activeDetailTabIndex =
+                (activeDetailTabIndex - 1 + detailTabNames.size()) % detailTabNames.size();
+          }
+          break;
+        default:
+          break;
+      }
+    } else if (focus == Focus.RESULTS) {
+      ResultTab rt = tabs.get(activeTabIndex);
+      boolean hasTable = rt.tableData != null && rt.selectedRow >= 0;
+      // Results pane: arrows scroll, Shift+arrows scroll faster
+      boolean fast = (modifier == MOD_SHIFT);
+      int hStep = fast ? 20 : 4;
+      switch (direction) {
+        case 'A':
+          if (hasTable && !fast) {
+            moveSelectedRow(rt, -1);
+          } else {
+            scrollResults(fast ? -resultsAreaHeight : -1);
+          }
+          break;
+        case 'B':
+          if (hasTable && !fast) {
+            moveSelectedRow(rt, 1);
+          } else {
+            scrollResults(fast ? resultsAreaHeight : 1);
+          }
+          break;
+        case 'C':
+          scrollHorizontal(hStep);
+          break;
+        case 'D':
+          scrollHorizontal(-hStep);
+          break;
+        case 'H':
+          tabs.get(activeTabIndex).scrollOffset = 0;
+          break;
+        case 'F':
+          tabs.get(activeTabIndex).scrollOffset = Integer.MAX_VALUE;
+          break;
+        default:
+          break;
+      }
+    } else {
+      // Input pane: unmodified → cursor/history; Shift → scroll results
+      if (modifier == MOD_SHIFT) {
+        switch (direction) {
+          case 'A':
+            scrollResults(-1);
+            break;
+          case 'B':
+            scrollResults(1);
+            break;
+          case 'C':
+            scrollHorizontal(10);
+            break;
+          case 'D':
+            scrollHorizontal(-10);
+            break;
+          default:
+            break;
+        }
+      } else {
+        switch (direction) {
+          case 'A':
+            navigateHistory(-1);
+            break;
+          case 'B':
+            navigateHistory(1);
+            break;
+          case 'C':
+            inputState.moveCursorRight();
+            break;
+          case 'D':
+            inputState.moveCursorLeft();
+            break;
+          case 'H':
+            inputState.moveCursorToStart();
+            break;
+          case 'F':
+            inputState.moveCursorToEnd();
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  // ---- tab management ----
+
+  private void togglePin() {
+    ResultTab tab = tabs.get(activeTabIndex);
+    if (tab.pinned) {
+      tab.pinned = false;
+    } else {
+      // Pin the current tab and create a new "current" tab
+      if (!lastCommand.isEmpty()) {
+        tab.name = lastCommand;
+        tab.marqueeTick0 = renderTick;
+      }
+      tab.pinned = true;
+      // Ensure there's always an unpinned "current" tab at the end
+      if (findCurrentTab() < 0) {
+        tabs.add(new ResultTab("current"));
+      }
+      // Focus stays on the just-pinned tab
+    }
+  }
+
+  /** Find the index of the unpinned "current" tab, or -1 if none exists. */
+  private int findCurrentTab() {
+    for (int i = tabs.size() - 1; i >= 0; i--) {
+      if (!tabs.get(i).pinned) return i;
+    }
+    return -1;
+  }
+
+  // ---- command execution ----
+
+  private void submitCommand() {
+    String command = inputState.text().trim();
+    inputState.clear();
+    historyIndex = -1;
+
+    if (command.isEmpty()) return;
+
+    if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
+      running = false;
+      return;
+    }
+
+    if ("clear".equalsIgnoreCase(command)) {
+      ResultTab tab = tabs.get(activeTabIndex);
+      tab.lines.clear();
+      tab.scrollOffset = 0;
+      tab.hScrollOffset = 0;
+      tab.maxLineWidth = 0;
+      tab.searchQuery = "";
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.metadataClassCache = null;
+      tab.sortColumn = -1;
+      tab.sortAscending = true;
+      detailCursorLine = -1;
+      detailLineTypeRefs = null;
+      buildDetailTabs(tab);
+      return;
+    }
+
+    // pin [name] — pin the active tab
+    if (command.equalsIgnoreCase("pin") || command.toLowerCase().startsWith("pin ")) {
+      ResultTab tab = tabs.get(activeTabIndex);
+      if (!tab.pinned) {
+        String name = command.length() > 4 ? command.substring(4).trim() : "";
+        if (name.isEmpty()) {
+          name = lastCommand.isEmpty() ? "Tab " + (activeTabIndex + 1) : lastCommand;
+        }
+        tab.name = name;
+        tab.marqueeTick0 = renderTick;
+        tab.pinned = true;
+        if (findCurrentTab() < 0) {
+          tabs.add(new ResultTab("current"));
+        }
+      }
+      return;
+    }
+
+    // close [name] — close a pinned tab
+    if (command.equalsIgnoreCase("close") || command.toLowerCase().startsWith("close ")) {
+      String name = command.length() > 6 ? command.substring(6).trim() : "";
+      int targetIndex = -1;
+      if (name.isEmpty()) {
+        // Close active tab only if pinned
+        if (tabs.get(activeTabIndex).pinned) {
+          targetIndex = activeTabIndex;
+        }
+      } else {
+        for (int i = 0; i < tabs.size(); i++) {
+          if (name.equalsIgnoreCase(tabs.get(i).name)) {
+            targetIndex = i;
+            break;
+          }
+        }
+      }
+      if (targetIndex >= 0 && tabs.size() > 1) {
+        tabs.remove(targetIndex);
+        if (activeTabIndex >= tabs.size()) {
+          activeTabIndex = tabs.size() - 1;
+        } else if (activeTabIndex > targetIndex) {
+          activeTabIndex--;
+        }
+        // Ensure there's always an unpinned "current" tab
+        if (findCurrentTab() < 0) {
+          tabs.add(new ResultTab("current"));
+        }
+      }
+      return;
+    }
+
+    // tabs — list open tabs
+    if ("tabs".equalsIgnoreCase(command)) {
+      ResultTab tab = tabs.get(activeTabIndex);
+      for (int i = 0; i < tabs.size(); i++) {
+        ResultTab t = tabs.get(i);
+        String marker = (i == activeTabIndex) ? " * " : "   ";
+        String pinLabel = t.pinned ? " [pinned]" : "";
+        tab.lines.add(marker + t.name + pinLabel + " (" + t.lines.size() + " lines)");
+      }
+      return;
+    }
+
+    commandHistory.add(command);
+    lastCommand = command;
+
+    // Always run command in the unpinned "current" tab
+    int currentIdx = findCurrentTab();
+    if (currentIdx < 0) {
+      tabs.add(new ResultTab("current"));
+      currentIdx = tabs.size() - 1;
+    }
+    activeTabIndex = currentIdx;
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    activeTab.lines.clear();
+    activeTab.scrollOffset = 0;
+    activeTab.hScrollOffset = 0;
+    activeTab.maxLineWidth = 0;
+    activeTab.searchQuery = "";
+    activeTab.filteredIndices = null;
+    activeTab.filteredMaxLineWidth = 0;
+    activeTab.tableData = null;
+    activeTab.tableHeaders = null;
+    activeTab.selectedRow = -1;
+    activeTab.metadataClassCache = null;
+    activeTab.sortColumn = -1;
+    activeTab.sortAscending = true;
+
+    // Echo the command in the results buffer
+    activeTab.lines.add("> " + command);
+
+    int linesBeforeDispatch = activeTab.lines.size();
+    TuiTableRenderer.clearLastData();
+    // Redirect stderr to prevent raw output from corrupting the TUI
+    java.io.PrintStream origErr = System.err;
+    java.io.ByteArrayOutputStream errBuf = new java.io.ByteArrayOutputStream();
+    System.setErr(new java.io.PrintStream(errBuf));
+    try {
+      boolean handled = dispatcher.dispatch(command);
+      if (!handled) {
+        activeTab.lines.add("  Unknown command. Type 'help' for available commands.");
+      }
+    } catch (Exception e) {
+      activeTab.lines.add("  Error: " + e.getMessage());
+    } finally {
+      System.setErr(origErr);
+      String errOutput = errBuf.toString().trim();
+      if (!errOutput.isEmpty()) {
+        for (String errLine : errOutput.split("\n")) {
+          addOutputLine("  " + errLine);
+        }
+      }
+    }
+
+    activeTab.tableData = TuiTableRenderer.getLastTableData();
+    activeTab.tableHeaders = TuiTableRenderer.getLastTableHeaders();
+    activeTab.metadataClassCache = TuiTableRenderer.getLastMetadataClasses();
+    TuiTableRenderer.clearLastData();
+    activeTab.sortColumn = -1;
+    activeTab.sortAscending = true;
+    if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
+      activeTab.selectedRow = 0;
+      // Table output: top border + header = 2 lines before data rows
+      activeTab.dataStartLine = linesBeforeDispatch + 2;
+      buildDetailTabs(activeTab);
+    } else {
+      activeTab.selectedRow = -1;
+      activeTab.dataStartLine = -1;
+      buildDetailTabs(activeTab);
+    }
+
+    // Auto-scroll: when table data is present, show the selected row (row 0);
+    // otherwise scroll to show the latest output
+    if (activeTab.dataStartLine >= 0) {
+      activeTab.scrollOffset = 0;
+    } else {
+      activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - resultsAreaHeight);
+    }
+  }
+
+  // ---- history ----
+
+  private void loadHistory() {
+    if (!Files.exists(HISTORY_PATH)) return;
+    try {
+      List<String> lines = Files.readAllLines(HISTORY_PATH);
+      // Keep only the tail if file is larger than MAX_HISTORY
+      int start = Math.max(0, lines.size() - MAX_HISTORY);
+      for (int i = start; i < lines.size(); i++) {
+        String line = lines.get(i).trim();
+        if (line.isEmpty()) continue;
+        // Strip JLine timestamp prefix (digits followed by colon)
+        int colon = line.indexOf(':');
+        if (colon > 0 && line.substring(0, colon).chars().allMatch(Character::isDigit)) {
+          line = line.substring(colon + 1);
+        }
+        if (!line.isEmpty()) {
+          commandHistory.add(line);
+        }
+      }
+    } catch (IOException ignore) {
+    }
+  }
+
+  private void saveHistory() {
+    try {
+      Files.createDirectories(HISTORY_PATH.getParent());
+      // Trim to MAX_HISTORY before saving
+      List<String> toSave = commandHistory;
+      if (toSave.size() > MAX_HISTORY) {
+        toSave = toSave.subList(toSave.size() - MAX_HISTORY, toSave.size());
+      }
+      // Write in JLine format (timestamp:command) for compatibility
+      long ts = System.currentTimeMillis();
+      List<String> formatted = new ArrayList<>(toSave.size());
+      for (String cmd : toSave) {
+        formatted.add(ts++ + ":" + cmd);
+      }
+      Files.write(HISTORY_PATH, formatted);
+    } catch (IOException ignore) {
+    }
+  }
+
+  private void navigateHistory(int direction) {
+    if (commandHistory.isEmpty()) return;
+
+    if (direction < 0) {
+      // Up — older command
+      if (historyIndex < 0) {
+        historyIndex = commandHistory.size() - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+    } else {
+      // Down — newer command
+      if (historyIndex >= 0) {
+        historyIndex++;
+        if (historyIndex >= commandHistory.size()) {
+          historyIndex = -1;
+          inputState.clear();
+          return;
+        }
+      }
+    }
+
+    if (historyIndex >= 0 && historyIndex < commandHistory.size()) {
+      inputState.setText(commandHistory.get(historyIndex));
+    }
+  }
+
+  // ---- sorting ----
+
+  private void applySortAndRerender(ResultTab tab) {
+    if (tab.tableData == null || tab.tableHeaders == null || tab.sortColumn < 0) return;
+    String sortKey = tab.tableHeaders.get(tab.sortColumn);
+    boolean asc = tab.sortAscending;
+
+    // Sort tableData (and parallel metadataClassCache if present)
+    int size = tab.tableData.size();
+    Integer[] indices = new Integer[size];
+    for (int i = 0; i < size; i++) indices[i] = i;
+
+    Comparator<Integer> cmp =
+        (a, b) -> {
+          String va = TuiTableRenderer.toCell(tab.tableData.get(a).get(sortKey));
+          String vb = TuiTableRenderer.toCell(tab.tableData.get(b).get(sortKey));
+          int result = compareNatural(va, vb);
+          return asc ? result : -result;
+        };
+    java.util.Arrays.sort(indices, cmp);
+
+    List<Map<String, Object>> sortedData = new ArrayList<>(size);
+    List<Map<String, Object>> sortedMeta =
+        tab.metadataClassCache != null ? new ArrayList<>(size) : null;
+    for (int idx : indices) {
+      sortedData.add(tab.tableData.get(idx));
+      if (sortedMeta != null && idx < tab.metadataClassCache.size()) {
+        sortedMeta.add(tab.metadataClassCache.get(idx));
+      }
+    }
+    tab.tableData = sortedData;
+    if (sortedMeta != null) tab.metadataClassCache = sortedMeta;
+
+    // Re-render the table lines
+    tab.lines.clear();
+    tab.maxLineWidth = 0;
+    tab.lines.add("> " + lastCommand);
+    TuiTableRenderer.clearLastData();
+    TuiTableRenderer.render(
+        sortedData,
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            String stripped = stripAnsi(s);
+            for (String line : stripped.split("\n", -1)) {
+              String indented = "  " + line;
+              tab.lines.add(indented);
+              tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+            }
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            println(String.format(fmt, args));
+          }
+
+          @Override
+          public void error(String s) {
+            println("ERROR: " + s);
+          }
+        });
+    TuiTableRenderer.clearLastData();
+
+    // Recalculate dataStartLine (command echo + top border + header = 3 lines)
+    tab.dataStartLine = 3;
+    tab.selectedRow = Math.min(tab.selectedRow, Math.max(0, tab.tableData.size() - 1));
+    tab.scrollOffset = 0;
+    tab.filteredIndices = null;
+    tab.searchQuery = "";
+    buildDetailTabs(tab);
+  }
+
+  /**
+   * Inject a sort indicator (▲/▼) before the sorted column name in the header line. Finds the
+   * column text by matching the header name and prepends the indicator.
+   */
+  private static String injectSortIndicator(String headerText, ResultTab tab) {
+    String colName = tab.tableHeaders.get(tab.sortColumn);
+    String indicator = tab.sortAscending ? "\u25B2" : "\u25BC";
+    // Find the column name in the header text and prepend indicator
+    int pos = headerText.indexOf(colName);
+    if (pos >= 0) {
+      return headerText.substring(0, pos) + indicator + headerText.substring(pos);
+    }
+    return headerText;
+  }
+
+  /** Compare two strings with numeric-aware ordering. */
+  private static int compareNatural(String a, String b) {
+    // Try numeric comparison first
+    try {
+      double da = Double.parseDouble(a);
+      double db = Double.parseDouble(b);
+      return Double.compare(da, db);
+    } catch (NumberFormatException ignore) {
+    }
+    return a.compareToIgnoreCase(b);
+  }
+
+  // ---- scrolling ----
+
+  private void scrollResults(int delta) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    tab.scrollOffset = Math.max(0, tab.scrollOffset + delta);
+    // Upper bound is enforced in renderResults()
+  }
+
+  private static String applyHScroll(String line, int hOffset, int visibleWidth) {
+    if (hOffset < line.length()) {
+      int end = Math.min(hOffset + visibleWidth, line.length());
+      return line.substring(hOffset, end);
+    }
+    return "";
+  }
+
+  private void scrollHorizontal(int delta) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    tab.hScrollOffset = Math.max(0, tab.hScrollOffset + delta);
+    // Upper bound is enforced in renderResults()
+  }
+
+  private void moveSelectedRow(ResultTab tab, int delta) {
+    int newRow = Math.max(0, Math.min(tab.tableData.size() - 1, tab.selectedRow + delta));
+    if (newRow == tab.selectedRow) return;
+    tab.selectedRow = newRow;
+    buildDetailTabs(tab);
+
+    // Auto-scroll results to keep selected row visible (scroll offset is relative to dataStartLine)
+    if (newRow < tab.scrollOffset) {
+      tab.scrollOffset = newRow;
+    } else if (newRow >= tab.scrollOffset + resultsAreaHeight) {
+      tab.scrollOffset = newRow - resultsAreaHeight + 1;
+    }
+  }
+
+  private void moveDetailCursor(int delta) {
+    if (detailLineTypeRefs == null || detailLineTypeRefs.isEmpty()) return;
+    int maxLine = detailLineTypeRefs.size() - 1;
+    detailCursorLine = Math.max(0, Math.min(maxLine, detailCursorLine + delta));
+    // Auto-scroll detail pane to keep cursor visible
+    int scrollOffset = getDetailScrollOffset();
+    if (detailCursorLine < scrollOffset) {
+      setDetailScrollOffset(detailCursorLine);
+    } else if (detailCursorLine >= scrollOffset + resultsAreaHeight) {
+      setDetailScrollOffset(detailCursorLine - resultsAreaHeight + 1);
+    }
+  }
+
+  private void navigateToType(String typeName) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    if (tab.tableData == null) return;
+    for (int i = 0; i < tab.tableData.size(); i++) {
+      Object name = tab.tableData.get(i).get("name");
+      if (name != null && typeName.equals(name.toString())) {
+        tab.selectedRow = i;
+        // Scroll to show the selected row
+        if (i < tab.scrollOffset) {
+          tab.scrollOffset = i;
+        } else if (i >= tab.scrollOffset + resultsAreaHeight) {
+          tab.scrollOffset = i - resultsAreaHeight + 1;
+        }
+        buildDetailTabs(tab);
+        return;
+      }
+    }
+  }
+
+  // ---- completion ----
+
+  /**
+   * Attempt tab-completion on the current input. Returns true if completion was performed (or
+   * cycling happened), false if no candidates were found.
+   */
+  private boolean tryComplete() {
+    // Already cycling — advance to next candidate
+    if (completionCandidates != null && !completionCandidates.isEmpty()) {
+      completionIndex = (completionIndex + 1) % completionCandidates.size();
+      applyCompletion(completionCandidates.get(completionIndex).value());
+      return true;
+    }
+
+    String text = inputState.text();
+    int cursor = inputState.cursorPosition();
+    if (text.isBlank()) return false;
+
+    TuiParsedLine parsed = new TuiParsedLine(text, cursor);
+    List<Candidate> candidates = new ArrayList<>();
+    try {
+      completer.complete(null, parsed, candidates);
+    } catch (Exception e) {
+      return false;
+    }
+
+    if (candidates.isEmpty()) return false;
+
+    // Compute word start: walk back from cursor to find start of current word
+    completionWordStart = cursor;
+    while (completionWordStart > 0
+        && !Character.isWhitespace(text.charAt(completionWordStart - 1))) {
+      completionWordStart--;
+    }
+    completionOriginalWord = text.substring(completionWordStart, cursor);
+    completionCurrentValue = completionOriginalWord;
+
+    if (candidates.size() == 1) {
+      applyCompletion(candidates.get(0).value());
+      clearCompletionState();
+      return true;
+    }
+
+    // Multiple candidates — find common prefix
+    String prefix = commonPrefix(candidates);
+    if (prefix.length() > completionOriginalWord.length()) {
+      applyCompletion(prefix);
+      clearCompletionState();
+      return true;
+    }
+
+    // No further common prefix — start cycling
+    completionCandidates = candidates;
+    completionIndex = 0;
+    applyCompletion(candidates.get(0).value());
+    return true;
+  }
+
+  private void applyCompletion(String value) {
+    String text = inputState.text();
+    int currentEnd = completionWordStart + completionCurrentValue.length();
+    String before = text.substring(0, completionWordStart);
+    String after = currentEnd <= text.length() ? text.substring(currentEnd) : "";
+    String newText = before + value + after;
+    inputState.clear();
+    inputState.insert(newText);
+    // Position cursor right after the inserted value
+    int target = completionWordStart + value.length();
+    inputState.moveCursorToEnd();
+    int overshoot = inputState.cursorPosition() - target;
+    for (int i = 0; i < overshoot; i++) {
+      inputState.moveCursorLeft();
+    }
+    completionCurrentValue = value;
+  }
+
+  private void clearCompletionState() {
+    completionCandidates = null;
+    completionIndex = -1;
+    completionCurrentValue = null;
+    completionOriginalWord = null;
+  }
+
+  private static String commonPrefix(List<Candidate> candidates) {
+    String first = candidates.get(0).value();
+    int len = first.length();
+    for (int i = 1; i < candidates.size(); i++) {
+      String other = candidates.get(i).value();
+      len = Math.min(len, other.length());
+      for (int j = 0; j < len; j++) {
+        if (first.charAt(j) != other.charAt(j)) {
+          len = j;
+          break;
+        }
+      }
+    }
+    return first.substring(0, len);
+  }
+
+  /** ParsedLine adapter for TamboUI's TextInputState. */
+  private static final class TuiParsedLine implements ParsedLine {
+    private final String line;
+    private final int cursor;
+    private final List<String> words;
+    private final int wordIndex;
+
+    TuiParsedLine(String text, int cursorPos) {
+      this.line = text;
+      this.cursor = cursorPos;
+      // Build word list from text up to cursor
+      String upToCursor = text.substring(0, cursorPos);
+      List<String> w = new ArrayList<>();
+      if (upToCursor.stripLeading().isEmpty()) {
+        w.add("");
+      } else {
+        String[] parts = upToCursor.stripLeading().split("\\s+", -1);
+        Collections.addAll(w, parts);
+      }
+      if (w.isEmpty()) w.add("");
+      this.words = Collections.unmodifiableList(w);
+      this.wordIndex = words.size() - 1;
+    }
+
+    @Override
+    public String word() {
+      return words.get(wordIndex);
+    }
+
+    @Override
+    public int wordCursor() {
+      return word().length();
+    }
+
+    @Override
+    public int wordIndex() {
+      return wordIndex;
+    }
+
+    @Override
+    public List<String> words() {
+      return words;
+    }
+
+    @Override
+    public String line() {
+      return line;
+    }
+
+    @Override
+    public int cursor() {
+      return cursor;
+    }
+  }
+
+  @Override
+  public void close() throws Exception {
+    saveHistory();
+    try {
+      dispatcher.getGlobalStore().clear();
+    } catch (Exception ignore) {
+    }
+    try {
+      sessions.closeAll();
+    } catch (Exception ignore) {
+    }
+    jlineTerminal.close();
+  }
+}

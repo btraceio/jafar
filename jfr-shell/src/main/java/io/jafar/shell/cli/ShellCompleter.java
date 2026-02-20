@@ -237,9 +237,7 @@ public final class ShellCompleter implements Completer {
   }
 
   private void completeOpen(LineReader reader, ParsedLine line, List<Candidate> candidates) {
-    if (reader != null) {
-      fileCompleter.complete(reader, line, candidates);
-    }
+    completeFiles(reader, line, candidates);
     suggestOptions(line, candidates, new String[] {"--alias"});
   }
 
@@ -341,9 +339,7 @@ public final class ShellCompleter implements Completer {
         }
       }
       // Also allow file path completion
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
-      }
+      completeFiles(reader, line, candidates);
     } else if (wordIndex == 2 && "run".equalsIgnoreCase(words.get(1))) {
       // After "script run " - list scripts from ~/.jfr-shell/scripts
       listScriptsFromDirectory(line.word(), candidates);
@@ -351,9 +347,7 @@ public final class ShellCompleter implements Completer {
         && !"list".equalsIgnoreCase(words.get(1))
         && !"run".equalsIgnoreCase(words.get(1))) {
       // After "script <path> " - file completion for args
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
-      }
+      completeFiles(reader, line, candidates);
     }
   }
 
@@ -677,9 +671,66 @@ public final class ShellCompleter implements Completer {
       }
     } else if (wordIndex == 2 && words.size() >= 2 && "start".equalsIgnoreCase(words.get(1))) {
       // After "record start " - provide filesystem completion for the path parameter
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
+      completeFiles(reader, line, candidates);
+    }
+  }
+
+  /** File path completion — delegates to JLine when available, otherwise uses basic listing. */
+  private void completeFiles(LineReader reader, ParsedLine line, List<Candidate> candidates) {
+    if (reader != null) {
+      fileCompleter.complete(reader, line, candidates);
+      return;
+    }
+    // Fallback for TUI mode (no LineReader)
+    String partial = line.word();
+    // Expand ~ to home directory
+    String home = System.getProperty("user.home");
+    String expanded = partial;
+    if (expanded.startsWith("~/") || expanded.equals("~")) {
+      expanded = home + expanded.substring(1);
+    }
+    Path base;
+    String namePrefix;
+    if (expanded.isEmpty()) {
+      base = Path.of(".").toAbsolutePath().normalize();
+      namePrefix = "";
+    } else {
+      Path p = Path.of(expanded);
+      if (expanded.endsWith("/") || expanded.endsWith(java.io.File.separator)) {
+        base = p;
+        namePrefix = "";
+      } else {
+        base = p.getParent();
+        if (base == null) base = Path.of(".").toAbsolutePath().normalize();
+        namePrefix = p.getFileName() != null ? p.getFileName().toString() : "";
       }
+    }
+    if (!Files.isDirectory(base)) return;
+    Path dir = base;
+    try (var stream = Files.list(dir)) {
+      String prefix = namePrefix;
+      // Preserve the user's original prefix style for candidate values
+      String dirPrefix;
+      if (partial.isEmpty()) {
+        dirPrefix = "";
+      } else if (partial.endsWith("/") || partial.endsWith(java.io.File.separator)) {
+        dirPrefix = partial;
+      } else {
+        int lastSep =
+            Math.max(partial.lastIndexOf('/'), partial.lastIndexOf(java.io.File.separatorChar));
+        dirPrefix = lastSep >= 0 ? partial.substring(0, lastSep + 1) : "";
+      }
+      stream.forEach(
+          entry -> {
+            String name = entry.getFileName().toString();
+            if (!name.startsWith(prefix)) return;
+            String value = dirPrefix.isEmpty() ? name : dirPrefix + name;
+            if (Files.isDirectory(entry)) {
+              value += "/";
+            }
+            candidates.add(new Candidate(value));
+          });
+    } catch (IOException | java.io.UncheckedIOException ignore) {
     }
   }
 }
