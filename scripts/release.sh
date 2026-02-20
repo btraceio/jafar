@@ -86,7 +86,15 @@ IFS='.' read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "${CURRENT_VERSION%-SNAPSHOT}"
 case "$RELEASE_TYPE" in
     major) RELEASE_VERSION="$((CUR_MAJOR + 1)).0.0" ;;
     minor) RELEASE_VERSION="${CUR_MAJOR}.$((CUR_MINOR + 1)).0" ;;
-    patch) RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.$((CUR_PATCH + 1))" ;;
+    patch)
+        if [[ "$CURRENT_VERSION" == *-SNAPSHOT ]]; then
+            # Normal flow: release the current SNAPSHOT version as-is
+            RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.${CUR_PATCH}"
+        else
+            # Fresh release branch (no SNAPSHOT yet): bump Z
+            RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.$((CUR_PATCH + 1))"
+        fi
+        ;;
 esac
 echo "Release version: $RELEASE_VERSION"
 
@@ -132,9 +140,9 @@ if [[ "$DRY_RUN" == "1" ]]; then
     echo "[DRY RUN] sed s/${ESCAPED_OLD}/${ESCAPED_NEW}/g <tracked files>"
 else
     # Replace version in all tracked files that contain it
-    while IFS= read -r -d '' file; do
+    while IFS= read -r file; do
         sed_i "s/${ESCAPED_OLD}/${ESCAPED_NEW}/g" "$file"
-    done < <(git ls-files -z | xargs -0 grep -lFZ "$CURRENT_VERSION" 2>/dev/null)
+    done < <(git ls-files | grep -lF "$CURRENT_VERSION" 2>/dev/null)
 
     # Update jfr-shell-plugins.json catalog version (only upgrade, never downgrade)
     if [[ -f jfr-shell-plugins.json ]]; then
@@ -184,9 +192,9 @@ if [[ "$RELEASE_TYPE" == "patch" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
     else
-        while IFS= read -r -d '' file; do
+        while IFS= read -r file; do
             sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
-        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null)
+        done < <(git ls-files -- '*.gradle' | grep -lF "$RELEASE_VERSION" 2>/dev/null)
     fi
     run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
     run git push --no-verify origin "$RELEASE_BRANCH"
@@ -196,9 +204,9 @@ else
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
     else
-        while IFS= read -r -d '' file; do
+        while IFS= read -r file; do
             sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
-        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lFZ "$RELEASE_VERSION" 2>/dev/null)
+        done < <(git ls-files -- '*.gradle' | grep -lF "$RELEASE_VERSION" 2>/dev/null)
     fi
     run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
     run git push --no-verify origin "$DEFAULT_BRANCH"
