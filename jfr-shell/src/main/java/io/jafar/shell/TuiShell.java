@@ -28,6 +28,7 @@ import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.providers.ConstantPoolProvider;
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.nio.file.Files;
@@ -37,6 +38,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -184,6 +186,30 @@ public final class TuiShell implements AutoCloseable {
   private boolean completionPopupVisible;
   private String completionOriginalInput;
   private Rect inputAreaRect;
+
+  // CP Browser mode
+  private boolean cpBrowserMode;
+  private List<Map<String, Object>> cpTypes;
+  private int cpTypeSelectedIndex;
+  private int cpTypeScrollOffset;
+  private int cpTypesAreaHeight;
+
+  private String cpLoadedTypeName;
+  private List<Map<String, Object>> cpEntries;
+  private List<String> cpEntryHeaders;
+  private List<String> cpEntryLines;
+  private int cpEntrySelectedRow = -1;
+  private int cpEntryScrollOffset;
+  private int cpEntryHScrollOffset;
+  private int cpEntriesAreaHeight;
+  private int cpEntryDataStartLine;
+
+  private enum CpFocus {
+    TYPES,
+    ENTRIES
+  }
+
+  private CpFocus cpFocus = CpFocus.TYPES;
 
   public TuiShell() throws IOException {
     // Disable pager — TUI mode uses scrollable view buffer instead.
@@ -342,18 +368,22 @@ public final class TuiShell implements AutoCloseable {
     renderStatusBar(frame, areas.get(idx++));
 
     Rect resultsRect = areas.get(idx++);
-    ResultTab activeTab = tabs.get(activeTabIndex);
-    if (!detailTabNames.isEmpty()
-        && activeTab.tableData != null
-        && !activeTab.tableData.isEmpty()) {
-      List<Rect> splitAreas =
-          Layout.vertical()
-              .constraints(Constraint.percentage(60), Constraint.percentage(40))
-              .split(resultsRect);
-      renderResults(frame, splitAreas.get(0));
-      renderDetailSection(frame, splitAreas.get(1));
+    if (cpBrowserMode) {
+      renderCpBrowser(frame, resultsRect);
     } else {
-      renderResults(frame, resultsRect);
+      ResultTab activeTab = tabs.get(activeTabIndex);
+      if (!detailTabNames.isEmpty()
+          && activeTab.tableData != null
+          && !activeTab.tableData.isEmpty()) {
+        List<Rect> splitAreas =
+            Layout.vertical()
+                .constraints(Constraint.percentage(60), Constraint.percentage(40))
+                .split(resultsRect);
+        renderResults(frame, splitAreas.get(0));
+        renderDetailSection(frame, splitAreas.get(1));
+      } else {
+        renderResults(frame, resultsRect);
+      }
     }
 
     if (focus == Focus.SEARCH) renderSearchBar(frame, areas.get(idx++));
@@ -663,6 +693,223 @@ public final class TuiShell implements AutoCloseable {
           new ScrollbarState(maxWidth)
               .viewportContentLength(visibleWidth)
               .position(activeTab.hScrollOffset);
+      frame.renderStatefulWidget(Scrollbar.horizontal(), hScrollbarArea, hState);
+    }
+  }
+
+  private void renderCpBrowser(Frame frame, Rect area) {
+    // Horizontal split: 40% types, 60% right
+    List<Rect> hSplit =
+        Layout.horizontal()
+            .constraints(Constraint.percentage(40), Constraint.percentage(60))
+            .split(area);
+    Rect typesArea = hSplit.get(0);
+    Rect rightArea = hSplit.get(1);
+
+    // If detail available, split right vertically 60/40
+    if (!detailTabNames.isEmpty()) {
+      List<Rect> vSplit =
+          Layout.vertical()
+              .constraints(Constraint.percentage(60), Constraint.percentage(40))
+              .split(rightArea);
+      renderCpEntries(frame, vSplit.get(0));
+      renderDetailSection(frame, vSplit.get(1));
+    } else {
+      renderCpEntries(frame, rightArea);
+    }
+    renderCpTypes(frame, typesArea);
+  }
+
+  private void renderCpTypes(Frame frame, Rect area) {
+    Block.Builder blockBuilder =
+        Block.builder()
+            .title(Title.from("CP Types"))
+            .borders(Borders.ALL)
+            .borderType(BorderType.ROUNDED);
+    if (focus == Focus.RESULTS && cpFocus == CpFocus.TYPES) {
+      blockBuilder.borderColor(Color.CYAN);
+    }
+    Block block = blockBuilder.build();
+    Rect inner = block.inner(area);
+    frame.renderWidget(block, area);
+
+    if (cpTypes == null || cpTypes.isEmpty()) return;
+
+    // Scrollbar
+    boolean needsVScroll = cpTypes.size() > inner.height();
+    Rect contentArea = inner;
+    Rect vScrollbarArea = null;
+    if (needsVScroll) {
+      List<Rect> scrollSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = scrollSplit.get(0);
+      vScrollbarArea = scrollSplit.get(1);
+    }
+
+    int visibleHeight = contentArea.height();
+    cpTypesAreaHeight = Math.max(1, visibleHeight);
+
+    // Clamp scroll
+    int maxScroll = Math.max(0, cpTypes.size() - visibleHeight);
+    cpTypeScrollOffset = Math.min(cpTypeScrollOffset, maxScroll);
+
+    int start = cpTypeScrollOffset;
+    int end = Math.min(start + visibleHeight, cpTypes.size());
+
+    Style highlightStyle = Style.create().reversed();
+    List<Line> lines = new ArrayList<>(end - start);
+    for (int i = start; i < end; i++) {
+      Map<String, Object> typeRow = cpTypes.get(i);
+      String name = String.valueOf(typeRow.getOrDefault("name", ""));
+      String count = String.valueOf(typeRow.getOrDefault("totalSize", ""));
+      String display = " " + name + " (" + count + ")";
+      if (display.length() > contentArea.width()) {
+        display = display.substring(0, contentArea.width());
+      }
+      if (i == cpTypeSelectedIndex) {
+        if (display.length() < contentArea.width()) {
+          display = display + " ".repeat(contentArea.width() - display.length());
+        }
+        lines.add(Line.from(Span.styled(display, highlightStyle)));
+      } else {
+        lines.add(Line.from(display));
+      }
+    }
+    Paragraph para = Paragraph.builder().text(new Text(lines, null)).build();
+    frame.renderWidget(para, contentArea);
+
+    if (vScrollbarArea != null) {
+      ScrollbarState vState =
+          new ScrollbarState(cpTypes.size())
+              .viewportContentLength(visibleHeight)
+              .position(cpTypeScrollOffset);
+      frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
+    }
+  }
+
+  private void renderCpEntries(Frame frame, Rect area) {
+    String title = cpLoadedTypeName != null ? cpLoadedTypeName : "Entries";
+    Block.Builder blockBuilder =
+        Block.builder()
+            .title(Title.from(title))
+            .borders(Borders.ALL)
+            .borderType(BorderType.ROUNDED);
+    if (focus == Focus.RESULTS && cpFocus == CpFocus.ENTRIES) {
+      blockBuilder.borderColor(Color.CYAN);
+    }
+    Block block = blockBuilder.build();
+    Rect inner = block.inner(area);
+    frame.renderWidget(block, area);
+
+    if (cpEntryLines == null || cpEntryLines.isEmpty()) {
+      Paragraph empty = Paragraph.from("Select a CP type and press Enter or Right.");
+      frame.renderWidget(empty, inner);
+      cpEntriesAreaHeight = inner.height();
+      return;
+    }
+
+    // Compute max line width for horizontal scrolling
+    int maxWidth = 0;
+    for (String line : cpEntryLines) {
+      maxWidth = Math.max(maxWidth, line.length());
+    }
+
+    boolean needsVScroll = (cpEntryLines.size() - cpEntryDataStartLine) > inner.height();
+    boolean needsHScroll = maxWidth > inner.width();
+
+    Rect contentArea = inner;
+    Rect vScrollbarArea = null;
+    Rect hScrollbarArea = null;
+
+    if (needsVScroll && needsHScroll) {
+      List<Rect> hSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      List<Rect> vSplit =
+          Layout.vertical()
+              .constraints(Constraint.fill(), Constraint.length(1))
+              .split(hSplit.get(0));
+      contentArea = vSplit.get(0);
+      hScrollbarArea = vSplit.get(1);
+      vScrollbarArea = hSplit.get(1);
+    } else if (needsVScroll) {
+      List<Rect> hSplit =
+          Layout.horizontal().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = hSplit.get(0);
+      vScrollbarArea = hSplit.get(1);
+    } else if (needsHScroll) {
+      List<Rect> vSplit =
+          Layout.vertical().constraints(Constraint.fill(), Constraint.length(1)).split(inner);
+      contentArea = vSplit.get(0);
+      hScrollbarArea = vSplit.get(1);
+    }
+
+    int visibleWidth = contentArea.width();
+
+    // Clamp horizontal scroll
+    int maxHScroll = Math.max(0, maxWidth - visibleWidth);
+    cpEntryHScrollOffset = Math.min(cpEntryHScrollOffset, maxHScroll);
+
+    // Sticky header
+    Rect headerArea = null;
+    if (cpEntryDataStartLine >= 1 && cpEntryDataStartLine <= cpEntryLines.size()) {
+      List<Rect> headerSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(contentArea);
+      headerArea = headerSplit.get(0);
+      contentArea = headerSplit.get(1);
+    }
+
+    int visibleHeight = contentArea.height();
+    cpEntriesAreaHeight = Math.max(1, visibleHeight);
+
+    // Render sticky header
+    if (headerArea != null) {
+      Style headerStyle = Style.create().bold().fg(Color.CYAN);
+      String headerText = cpEntryLines.get(cpEntryDataStartLine - 1);
+      String visible = applyHScroll(headerText, cpEntryHScrollOffset, visibleWidth);
+      Paragraph headerPara =
+          Paragraph.builder()
+              .text(new Text(List.of(Line.from(Span.styled(visible, headerStyle))), null))
+              .build();
+      frame.renderWidget(headerPara, headerArea);
+    }
+
+    // Data rows
+    int dataLineCount = cpEntryLines.size() - cpEntryDataStartLine;
+    int maxVScroll = Math.max(0, dataLineCount - visibleHeight);
+    cpEntryScrollOffset = Math.min(cpEntryScrollOffset, maxVScroll);
+
+    int start = cpEntryScrollOffset;
+    int end = Math.min(start + visibleHeight, dataLineCount);
+
+    Style highlightStyle = Style.create().reversed();
+    List<Line> styledLines = new ArrayList<>(end - start);
+    for (int i = start; i < end; i++) {
+      String line = cpEntryLines.get(cpEntryDataStartLine + i);
+      String visible = applyHScroll(line, cpEntryHScrollOffset, visibleWidth);
+      if (i == cpEntrySelectedRow) {
+        if (visible.length() < visibleWidth) {
+          visible = visible + " ".repeat(visibleWidth - visible.length());
+        }
+        styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
+      } else {
+        styledLines.add(Line.from(visible));
+      }
+    }
+    Paragraph results = Paragraph.builder().text(new Text(styledLines, null)).build();
+    frame.renderWidget(results, contentArea);
+
+    if (vScrollbarArea != null) {
+      ScrollbarState vState =
+          new ScrollbarState(dataLineCount)
+              .viewportContentLength(visibleHeight)
+              .position(cpEntryScrollOffset);
+      frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
+    }
+    if (hScrollbarArea != null) {
+      ScrollbarState hState =
+          new ScrollbarState(maxWidth)
+              .viewportContentLength(visibleWidth)
+              .position(cpEntryHScrollOffset);
       frame.renderStatefulWidget(Scrollbar.horizontal(), hScrollbarArea, hState);
     }
   }
@@ -1255,6 +1502,12 @@ public final class TuiShell implements AutoCloseable {
               + "+r:results  "
               + altMod
               + "+c:cmd  Esc:back";
+    } else if (focus == Focus.RESULTS && cpBrowserMode) {
+      if (cpFocus == CpFocus.TYPES) {
+        hints = " \u2191\u2193:select  Enter/\u2192:view entries  Esc:close";
+      } else {
+        hints = " \u2191\u2193:select  \u2190:types  Enter:detail  \u2192:hscroll  Esc:types";
+      }
     } else if (focus == Focus.RESULTS) {
       ResultTab activeTab = tabs.get(activeTabIndex);
       String rowHint =
@@ -1416,6 +1669,10 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void handleResultsKey(int key) {
+    if (cpBrowserMode) {
+      handleCpBrowserKey(key);
+      return;
+    }
     switch (key) {
       case 13: // Enter — switch to detail if available, otherwise input
       case 10:
@@ -1451,6 +1708,99 @@ public final class TuiShell implements AutoCloseable {
           historyIndex = -1;
         }
         break;
+    }
+  }
+
+  private void handleCpBrowserKey(int key) {
+    switch (key) {
+      case 13: // Enter
+      case 10:
+        if (cpFocus == CpFocus.TYPES) {
+          // Load entries for the selected type
+          if (cpTypes != null && cpTypeSelectedIndex < cpTypes.size()) {
+            String name = String.valueOf(cpTypes.get(cpTypeSelectedIndex).getOrDefault("name", ""));
+            loadCpEntries(name);
+            cpFocus = CpFocus.ENTRIES;
+          }
+        } else if (cpFocus == CpFocus.ENTRIES) {
+          if (!detailTabNames.isEmpty()) {
+            focus = Focus.DETAIL;
+          }
+        }
+        break;
+      case '/':
+        enterSearchMode();
+        break;
+      default:
+        if (key >= 32 && key < 127) {
+          focus = Focus.INPUT;
+          inputState.insert((char) key);
+          historyIndex = -1;
+        }
+        break;
+    }
+  }
+
+  private void dispatchCpBrowserArrow(int direction, int modifier) {
+    if (cpFocus == CpFocus.TYPES) {
+      switch (direction) {
+        case 'A': // Up
+          if (cpTypeSelectedIndex > 0) {
+            cpTypeSelectedIndex--;
+            if (cpTypeSelectedIndex < cpTypeScrollOffset) {
+              cpTypeScrollOffset = cpTypeSelectedIndex;
+            }
+          }
+          break;
+        case 'B': // Down
+          if (cpTypes != null && cpTypeSelectedIndex < cpTypes.size() - 1) {
+            cpTypeSelectedIndex++;
+            if (cpTypeSelectedIndex >= cpTypeScrollOffset + cpTypesAreaHeight) {
+              cpTypeScrollOffset = cpTypeSelectedIndex - cpTypesAreaHeight + 1;
+            }
+          }
+          break;
+        case 'C': // Right — load entries and move to ENTRIES
+          if (cpTypes != null && cpTypeSelectedIndex < cpTypes.size()) {
+            String name = String.valueOf(cpTypes.get(cpTypeSelectedIndex).getOrDefault("name", ""));
+            loadCpEntries(name);
+            cpFocus = CpFocus.ENTRIES;
+          }
+          break;
+        default:
+          break;
+      }
+    } else {
+      // ENTRIES focus
+      int hStep = (modifier == MOD_SHIFT) ? 20 : 4;
+      switch (direction) {
+        case 'A': // Up
+          if (cpEntries != null && cpEntrySelectedRow > 0) {
+            cpEntrySelectedRow--;
+            if (cpEntrySelectedRow < cpEntryScrollOffset) {
+              cpEntryScrollOffset = cpEntrySelectedRow;
+            }
+            buildCpEntryDetail();
+          }
+          break;
+        case 'B': // Down
+          if (cpEntries != null && cpEntrySelectedRow < cpEntries.size() - 1) {
+            cpEntrySelectedRow++;
+            if (cpEntrySelectedRow >= cpEntryScrollOffset + cpEntriesAreaHeight) {
+              cpEntryScrollOffset = cpEntrySelectedRow - cpEntriesAreaHeight + 1;
+            }
+            buildCpEntryDetail();
+          }
+          break;
+        case 'D': // Left — back to TYPES
+          cpFocus = CpFocus.TYPES;
+          break;
+        case 'C': // Right — horizontal scroll
+          cpEntryHScrollOffset = Math.max(0, cpEntryHScrollOffset + hStep);
+          break;
+        default:
+          break;
+      }
     }
   }
 
@@ -1689,6 +2039,13 @@ public final class TuiShell implements AutoCloseable {
         cancelSearch();
       } else if (focus == Focus.DETAIL) {
         focus = Focus.RESULTS;
+      } else if (focus == Focus.RESULTS && cpBrowserMode) {
+        if (cpFocus == CpFocus.ENTRIES) {
+          cpFocus = CpFocus.TYPES;
+        } else {
+          exitCpBrowserMode();
+          focus = Focus.INPUT;
+        }
       } else if (focus == Focus.RESULTS) {
         focus = Focus.INPUT;
       } else {
@@ -1846,6 +2203,10 @@ public final class TuiShell implements AutoCloseable {
           break;
       }
     } else if (focus == Focus.RESULTS) {
+      if (cpBrowserMode) {
+        dispatchCpBrowserArrow(direction, modifier);
+        return;
+      }
       ResultTab rt = tabs.get(activeTabIndex);
       boolean hasTable = rt.tableData != null && rt.selectedRow >= 0;
       // Results pane: arrows scroll/select rows
@@ -1943,6 +2304,182 @@ public final class TuiShell implements AutoCloseable {
     return -1;
   }
 
+  // ---- CP browser mode ----
+
+  private static boolean isCpSummaryCommand(String command) {
+    String[] parts = command.trim().split("\\s+");
+    if (parts.length == 0) return false;
+    // Accept both "cp ..." and "show cp ..."
+    int cpIndex;
+    if ("cp".equalsIgnoreCase(parts[0])) {
+      cpIndex = 0;
+    } else if ("show".equalsIgnoreCase(parts[0])
+        && parts.length >= 2
+        && "cp".equalsIgnoreCase(parts[1])) {
+      cpIndex = 1;
+    } else {
+      return false;
+    }
+    // bare "cp" / "show cp" or with --summary (no type argument)
+    for (int i = cpIndex + 1; i < parts.length; i++) {
+      String p = parts[i];
+      if ("--summary".equals(p) || "--format".equals(p) || "--range".equals(p)) {
+        // skip known flags (--format/--range consume next arg)
+        if (("--format".equals(p) || "--range".equals(p)) && i + 1 < parts.length) i++;
+        continue;
+      }
+      // Non-flag argument = type name, not a summary command
+      return false;
+    }
+    return true;
+  }
+
+  private void enterCpBrowserMode(ResultTab tab) {
+    cpBrowserMode = true;
+    cpTypes = tab.tableData;
+    cpTypeSelectedIndex = 0;
+    cpTypeScrollOffset = 0;
+    cpLoadedTypeName = null;
+    cpEntries = null;
+    cpEntryHeaders = null;
+    cpEntryLines = null;
+    cpEntrySelectedRow = -1;
+    cpEntryScrollOffset = 0;
+    cpEntryHScrollOffset = 0;
+    cpFocus = CpFocus.TYPES;
+    // Clear detail state
+    detailTabNames = List.of();
+    detailTabValues = List.of();
+    activeDetailTabIndex = 0;
+    detailTabScrollOffsets.clear();
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+    focus = Focus.RESULTS;
+  }
+
+  private void exitCpBrowserMode() {
+    cpBrowserMode = false;
+    cpTypes = null;
+    cpTypeSelectedIndex = 0;
+    cpTypeScrollOffset = 0;
+    cpLoadedTypeName = null;
+    cpEntries = null;
+    cpEntryHeaders = null;
+    cpEntryLines = null;
+    cpEntrySelectedRow = -1;
+    cpEntryScrollOffset = 0;
+    cpEntryHScrollOffset = 0;
+    cpFocus = CpFocus.TYPES;
+    detailTabNames = List.of();
+    detailTabValues = List.of();
+    activeDetailTabIndex = 0;
+    detailTabScrollOffsets.clear();
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+  }
+
+  private void loadCpEntries(String typeName) {
+    Path recording = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+    if (recording == null) return;
+    try {
+      cpEntries = ConstantPoolProvider.loadEntries(recording, typeName);
+    } catch (Exception e) {
+      cpEntries = List.of();
+      cpEntryHeaders = List.of();
+      cpEntryLines = List.of("Error: " + e.getMessage());
+      cpEntrySelectedRow = -1;
+      cpLoadedTypeName = typeName;
+      return;
+    }
+    cpLoadedTypeName = typeName;
+    if (cpEntries.isEmpty()) {
+      cpEntryHeaders = List.of();
+      cpEntryLines = List.of("(no entries)");
+      cpEntrySelectedRow = -1;
+      return;
+    }
+
+    // Compute headers from entry key sets
+    Set<String> cols = new LinkedHashSet<>();
+    int sample = Math.min(cpEntries.size(), 200);
+    for (int i = 0; i < sample; i++) {
+      cols.addAll(cpEntries.get(i).keySet());
+    }
+    cpEntryHeaders = new ArrayList<>(cols);
+
+    // Compute column widths
+    int colCount = cpEntryHeaders.size();
+    int[] widths = new int[colCount];
+    for (int c = 0; c < colCount; c++) {
+      widths[c] = cpEntryHeaders.get(c).length();
+    }
+    for (Map<String, Object> entry : cpEntries) {
+      for (int c = 0; c < colCount; c++) {
+        String cell = TuiTableRenderer.toCell(entry.get(cpEntryHeaders.get(c)));
+        widths[c] = Math.max(widths[c], Math.min(40, cell.length()));
+      }
+    }
+
+    // Format lines: header + data rows
+    cpEntryLines = new ArrayList<>(cpEntries.size() + 1);
+    StringBuilder sb = new StringBuilder();
+    for (int c = 0; c < colCount; c++) {
+      if (c > 0) sb.append("  ");
+      sb.append(String.format("%-" + widths[c] + "s", cpEntryHeaders.get(c)));
+    }
+    cpEntryLines.add(sb.toString());
+    cpEntryDataStartLine = 1;
+
+    for (Map<String, Object> entry : cpEntries) {
+      sb.setLength(0);
+      for (int c = 0; c < colCount; c++) {
+        if (c > 0) sb.append("  ");
+        String cell = TuiTableRenderer.toCell(entry.get(cpEntryHeaders.get(c)));
+        if (cell.length() > 40) cell = cell.substring(0, 37) + "...";
+        sb.append(String.format("%-" + widths[c] + "s", cell));
+      }
+      cpEntryLines.add(sb.toString());
+    }
+
+    cpEntrySelectedRow = 0;
+    cpEntryScrollOffset = 0;
+    cpEntryHScrollOffset = 0;
+    buildCpEntryDetail();
+  }
+
+  private void buildCpEntryDetail() {
+    if (cpEntries == null || cpEntrySelectedRow < 0 || cpEntrySelectedRow >= cpEntries.size()) {
+      detailTabNames = List.of();
+      detailTabValues = List.of();
+      activeDetailTabIndex = 0;
+      detailTabScrollOffsets.clear();
+      detailCursorLine = -1;
+      detailLineTypeRefs = null;
+      return;
+    }
+
+    Map<String, Object> row = cpEntries.get(cpEntrySelectedRow);
+    List<String> names = new ArrayList<>();
+    List<Object> values = new ArrayList<>();
+    for (String header : cpEntryHeaders) {
+      Object val = row.get(header);
+      if (isComplexValue(val)) {
+        names.add(header);
+        values.add(val);
+      }
+    }
+    detailTabNames = names;
+    detailMarqueeTick0 = renderTick;
+    detailTabValues = values;
+    activeDetailTabIndex = Math.min(activeDetailTabIndex, Math.max(0, names.size() - 1));
+    detailTabScrollOffsets.clear();
+    for (int i = 0; i < names.size(); i++) {
+      detailTabScrollOffsets.add(0);
+    }
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+  }
+
   // ---- command execution ----
 
   private void submitCommand() {
@@ -1951,6 +2488,11 @@ public final class TuiShell implements AutoCloseable {
     historyIndex = -1;
 
     if (command.isEmpty()) return;
+
+    // Exit CP browser mode on any new command
+    if (cpBrowserMode) {
+      exitCpBrowserMode();
+    }
 
     if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
       running = false;
@@ -2061,6 +2603,23 @@ public final class TuiShell implements AutoCloseable {
     activeTab.sortColumn = -1;
     activeTab.sortAscending = true;
 
+    // CP browser mode: intercept bare "cp" / "show cp" before dispatch
+    if (isCpSummaryCommand(command) && ConstantPoolProvider.isSupported()) {
+      Path cpRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (cpRec != null) {
+        try {
+          List<Map<String, Object>> cpSummary = ConstantPoolProvider.loadSummary(cpRec);
+          if (cpSummary != null && !cpSummary.isEmpty()) {
+            activeTab.tableData = cpSummary;
+            enterCpBrowserMode(activeTab);
+            return;
+          }
+        } catch (Exception ignore) {
+          // Fall through to normal dispatch
+        }
+      }
+    }
+
     // Echo the command in the results buffer
     activeTab.lines.add("> " + command);
 
@@ -2091,6 +2650,7 @@ public final class TuiShell implements AutoCloseable {
     activeTab.tableHeaders = TuiTableRenderer.getLastTableHeaders();
     activeTab.metadataClassCache = TuiTableRenderer.getLastMetadataClasses();
     TuiTableRenderer.clearLastData();
+
     activeTab.sortColumn = -1;
     activeTab.sortAscending = true;
     if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
