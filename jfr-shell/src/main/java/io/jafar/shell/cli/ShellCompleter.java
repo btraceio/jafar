@@ -282,8 +282,11 @@ public final class ShellCompleter implements Completer {
       // Suggest session names and numbers
       int idx = 1;
       for (var entry : sessions.list()) {
-        candidates.add(new Candidate(entry.alias != null ? entry.alias : String.valueOf(idx)));
-        candidates.add(new Candidate(String.valueOf(idx)));
+        String idxStr = String.valueOf(idx);
+        if (entry.alias != null) {
+          candidates.add(new Candidate(entry.alias));
+        }
+        candidates.add(new Candidate(idxStr));
         idx++;
       }
     }
@@ -294,8 +297,11 @@ public final class ShellCompleter implements Completer {
     if (sessions.getCurrent().isPresent()) {
       int idx = 1;
       for (var entry : sessions.list()) {
-        candidates.add(new Candidate(entry.alias != null ? entry.alias : String.valueOf(idx)));
-        candidates.add(new Candidate(String.valueOf(idx)));
+        String idxStr = String.valueOf(idx);
+        if (entry.alias != null) {
+          candidates.add(new Candidate(entry.alias));
+        }
+        candidates.add(new Candidate(idxStr));
         idx++;
       }
     }
