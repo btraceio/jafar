@@ -117,7 +117,8 @@ public final class TuiShell implements AutoCloseable {
     INPUT,
     RESULTS,
     DETAIL,
-    SEARCH
+    SEARCH,
+    HISTORY_SEARCH
   }
 
   private int historyIndex = -1;
@@ -139,6 +140,11 @@ public final class TuiShell implements AutoCloseable {
   private static final int PAUSE_START_TICKS = 50;
   private static final int PAUSE_END_TICKS = 20;
   private static final int SCROLL_SPEED = 2;
+
+  // History search state
+  private String historySearchQuery = "";
+  private int historySearchIndex = -1;
+  private String historySearchSavedInput = "";
 
   // Completion state
   private ShellCompleter completer;
@@ -293,6 +299,7 @@ public final class TuiShell implements AutoCloseable {
     constraints.add(Constraint.length(1)); // status bar
     constraints.add(Constraint.fill()); // results
     if (focus == Focus.SEARCH) constraints.add(Constraint.length(1)); // search bar
+    if (focus == Focus.HISTORY_SEARCH) constraints.add(Constraint.length(1)); // history search bar
     constraints.add(Constraint.length(3)); // input
     constraints.add(Constraint.length(1)); // hints
 
@@ -318,6 +325,7 @@ public final class TuiShell implements AutoCloseable {
     }
 
     if (focus == Focus.SEARCH) renderSearchBar(frame, areas.get(idx++));
+    if (focus == Focus.HISTORY_SEARCH) renderHistorySearchBar(frame, areas.get(idx++));
     renderInput(frame, areas.get(idx++));
     renderHints(frame, areas.get(idx));
   }
@@ -1120,10 +1128,26 @@ public final class TuiShell implements AutoCloseable {
     frame.renderWidget(bar, area);
   }
 
+  private void renderHistorySearchBar(Frame frame, Rect area) {
+    String matched = inputState.text();
+    String text = "(reverse-i-search) " + historySearchQuery + ": " + matched;
+    if (text.length() < area.width()) {
+      text = text + " ".repeat(area.width() - text.length());
+    }
+    Paragraph bar =
+        Paragraph.builder()
+            .text(Text.raw(text))
+            .style(Style.create().bg(Color.DARK_GRAY).fg(Color.YELLOW))
+            .build();
+    frame.renderWidget(bar, area);
+  }
+
   private void renderHints(Frame frame, Rect area) {
     String altMod = (PLATFORM == Platform.MACOS) ? "Opt" : "Alt";
     String hints;
-    if (focus == Focus.SEARCH) {
+    if (focus == Focus.HISTORY_SEARCH) {
+      hints = " Type to search  Ctrl+R:older  Enter:accept  Esc:cancel";
+    } else if (focus == Focus.SEARCH) {
       hints = " Type to filter  Enter:confirm  Esc:cancel";
     } else if (focus == Focus.DETAIL) {
       boolean hasCursor = detailLineTypeRefs != null && detailCursorLine >= 0;
@@ -1199,7 +1223,11 @@ public final class TuiShell implements AutoCloseable {
     // Global keys (work in any focus)
     switch (key) {
       case 3: // Ctrl+C
-        if (focus == Focus.SEARCH) {
+        if (focus == Focus.HISTORY_SEARCH) {
+          // Cancel history search — restore saved input
+          inputState.setText(historySearchSavedInput);
+          focus = Focus.INPUT;
+        } else if (focus == Focus.SEARCH) {
           // Cancel search
           ResultTab tab = tabs.get(activeTabIndex);
           tab.searchQuery = "";
@@ -1231,6 +1259,21 @@ public final class TuiShell implements AutoCloseable {
       case 27: // ESC sequence or plain Escape
         handleEscapeSequence();
         return;
+      case 18: // Ctrl+R — history search
+        if (focus == Focus.INPUT) {
+          historySearchSavedInput = inputState.text();
+          historySearchQuery = "";
+          historySearchIndex = commandHistory.size();
+          focus = Focus.HISTORY_SEARCH;
+        } else if (focus == Focus.HISTORY_SEARCH) {
+          // Advance to next older match
+          int match = findHistoryMatch(historySearchQuery, historySearchIndex - 1);
+          if (match >= 0) {
+            historySearchIndex = match;
+            inputState.setText(commandHistory.get(match));
+          }
+        }
+        return;
       case 31: // Ctrl+/ — enter search mode
         enterSearchMode();
         return;
@@ -1260,7 +1303,9 @@ public final class TuiShell implements AutoCloseable {
     }
 
     // Focus-specific keys
-    if (focus == Focus.SEARCH) {
+    if (focus == Focus.HISTORY_SEARCH) {
+      handleHistorySearchKey(key);
+    } else if (focus == Focus.SEARCH) {
       handleSearchKey(key);
     } else if (focus == Focus.DETAIL) {
       handleDetailKey(key);
@@ -1395,6 +1440,59 @@ public final class TuiShell implements AutoCloseable {
     }
   }
 
+  private void handleHistorySearchKey(int key) {
+    switch (key) {
+      case 13: // Enter — accept match
+      case 10:
+        focus = Focus.INPUT;
+        break;
+      case 127: // Backspace
+      case 8:
+        if (historySearchQuery.isEmpty()) {
+          // Backspace on empty query — cancel
+          inputState.setText(historySearchSavedInput);
+          focus = Focus.INPUT;
+        } else {
+          historySearchQuery = historySearchQuery.substring(0, historySearchQuery.length() - 1);
+          // Re-search from end with shortened query
+          int match = findHistoryMatch(historySearchQuery, commandHistory.size() - 1);
+          if (match >= 0) {
+            historySearchIndex = match;
+            inputState.setText(commandHistory.get(match));
+          } else {
+            historySearchIndex = -1;
+            inputState.setText(historySearchSavedInput);
+          }
+        }
+        break;
+      default:
+        if (key >= 32 && key < 127) {
+          historySearchQuery += (char) key;
+          int match = findHistoryMatch(historySearchQuery, historySearchIndex - 1);
+          if (match < 0) {
+            // Try from the end if current position yielded no match
+            match = findHistoryMatch(historySearchQuery, commandHistory.size() - 1);
+          }
+          if (match >= 0) {
+            historySearchIndex = match;
+            inputState.setText(commandHistory.get(match));
+          }
+        }
+        break;
+    }
+  }
+
+  private int findHistoryMatch(String query, int fromIndex) {
+    if (query.isEmpty() || commandHistory.isEmpty()) return -1;
+    String lower = query.toLowerCase();
+    for (int i = Math.min(fromIndex, commandHistory.size() - 1); i >= 0; i--) {
+      if (commandHistory.get(i).toLowerCase().contains(lower)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   // macOS Opt+digit Unicode code points (US keyboard layout).
   // Maps to 0-based detail tab index, or -1 if not a match.
   private static final int[] MAC_OPT_DIGITS = {
@@ -1452,7 +1550,11 @@ public final class TuiShell implements AutoCloseable {
     int next = backend.read(50);
     if (next == READ_EXPIRED || next == EOF) {
       // Plain Escape
-      if (focus == Focus.SEARCH) {
+      if (focus == Focus.HISTORY_SEARCH) {
+        // Cancel history search — restore saved input
+        inputState.setText(historySearchSavedInput);
+        focus = Focus.INPUT;
+      } else if (focus == Focus.SEARCH) {
         // Cancel search — clear filter
         ResultTab tab = tabs.get(activeTabIndex);
         tab.searchQuery = "";
