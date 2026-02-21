@@ -6,9 +6,6 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
-import dev.tamboui.widgets.block.Block;
-import dev.tamboui.widgets.block.BorderType;
-import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
@@ -103,8 +100,8 @@ public final class TuiTableRenderer {
     int[] maxWidths = computeMaxWidths(headers, rows);
     Constraint[] widths = computeWidths(maxWidths);
 
-    // Buffer width: sum of column widths + column spacing + borders
-    int totalWidth = 2; // left + right border
+    // Buffer width: sum of column widths + column spacing
+    int totalWidth = 0;
     for (int w : maxWidths) {
       totalWidth += w + 2 + 1; // +2 padding +1 column spacing
     }
@@ -117,7 +114,6 @@ public final class TuiTableRenderer {
             .widths(widths)
             .columnSpacing(1)
             .highlightSymbol("")
-            .block(Block.builder().borders(Borders.ALL).borderType(BorderType.ROUNDED).build())
             .build();
 
     renderAndPrint(table, rows.size(), pager, bufferWidth);
@@ -143,7 +139,6 @@ public final class TuiTableRenderer {
             .widths(Constraint.fill())
             .columnSpacing(1)
             .highlightSymbol("")
-            .block(Block.builder().borders(Borders.ALL).borderType(BorderType.ROUNDED).build())
             .build();
 
     renderAndPrint(table, values.size(), pager);
@@ -154,8 +149,8 @@ public final class TuiTableRenderer {
   }
 
   private static void renderAndPrint(Table table, int dataRowCount, PagedPrinter pager, int width) {
-    // Height: header + data rows + top/bottom borders + margin
-    int height = dataRowCount + 5;
+    // Height: header + data rows + margin
+    int height = dataRowCount + 3;
     Buffer buffer = Buffer.empty(Rect.of(width, height));
     Frame frame = Frame.forTesting(buffer);
     frame.renderStatefulWidget(table, buffer.area(), new TableState());

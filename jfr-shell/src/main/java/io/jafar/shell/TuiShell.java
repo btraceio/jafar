@@ -59,6 +59,8 @@ public final class TuiShell implements AutoCloseable {
   private static final Path HISTORY_PATH =
       Path.of(System.getProperty("user.home"), ".jfr-shell", "history");
   private static final int MAX_HISTORY = 5000;
+  private static final int COMPLETION_MAX_WIDTH = 50;
+  private static final int COMPLETION_MAX_HEIGHT = 12;
 
   private enum Platform {
     MACOS,
@@ -153,11 +155,15 @@ public final class TuiShell implements AutoCloseable {
 
   // Completion state
   private ShellCompleter completer;
-  private List<Candidate> completionCandidates;
-  private int completionIndex = -1;
   private int completionWordStart;
   private String completionOriginalWord;
-  private String completionCurrentValue;
+  private List<Candidate> completionAllCandidates;
+  private List<Candidate> completionFiltered;
+  private int completionSelectedIndex;
+  private int completionScrollOffset;
+  private boolean completionPopupVisible;
+  private String completionOriginalInput;
+  private Rect inputAreaRect;
 
   public TuiShell() throws IOException {
     // Disable pager — TUI mode uses scrollable view buffer instead.
@@ -196,7 +202,7 @@ public final class TuiShell implements AutoCloseable {
             });
     this.completer = new ShellCompleter(sessions, dispatcher);
     loadHistory();
-    tabs.add(new ResultTab("current"));
+    tabs.add(new ResultTab("jfr>"));
     activeTabIndex = 0;
   }
 
@@ -331,8 +337,15 @@ public final class TuiShell implements AutoCloseable {
 
     if (focus == Focus.SEARCH) renderSearchBar(frame, areas.get(idx++));
     if (focus == Focus.HISTORY_SEARCH) renderHistorySearchBar(frame, areas.get(idx++));
-    renderInput(frame, areas.get(idx++));
+    Rect inputRect = areas.get(idx++);
+    inputAreaRect = inputRect;
+    renderInput(frame, inputRect);
     renderHints(frame, areas.get(idx));
+
+    // Render completion popup overlay (after all other rendering so it appears on top)
+    if (completionPopupVisible && completionFiltered != null && !completionFiltered.isEmpty()) {
+      renderCompletionPopup(frame);
+    }
   }
 
   private static String marqueeTitle(String fullTitle, long tick) {
@@ -451,6 +464,13 @@ public final class TuiShell implements AutoCloseable {
         Block.builder().title(blockTitle).borders(Borders.ALL).borderType(BorderType.ROUNDED);
     if (focus == Focus.RESULTS) {
       blockBuilder.borderColor(Color.CYAN);
+    }
+    if (activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
+      blockBuilder.titleBottom(
+          Title.from(
+              Span.styled(
+                  " filter: " + activeTab.searchQuery + " ",
+                  Style.create().fg(Color.YELLOW).italic())));
     }
     Block block = blockBuilder.build();
 
@@ -654,6 +674,7 @@ public final class TuiShell implements AutoCloseable {
   private void renderDetailContent(Frame frame, Rect area) {
     if (activeDetailTabIndex >= detailTabValues.size()) return;
 
+    ResultTab activeTab = tabs.get(activeTabIndex);
     Block.Builder blockBuilder =
         Block.builder()
             .title(mnemonicTitle("Details", 0))
@@ -661,6 +682,13 @@ public final class TuiShell implements AutoCloseable {
             .borderType(BorderType.ROUNDED);
     if (focus == Focus.DETAIL) {
       blockBuilder.borderColor(Color.CYAN);
+    }
+    if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
+      blockBuilder.titleBottom(
+          Title.from(
+              Span.styled(
+                  " filter: " + activeTab.detailSearchQuery + " ",
+                  Style.create().fg(Color.YELLOW).italic())));
     }
     Block block = blockBuilder.build();
     Rect inner = block.inner(area);
@@ -675,7 +703,6 @@ public final class TuiShell implements AutoCloseable {
     }
 
     Object tabValue = detailTabValues.get(activeDetailTabIndex);
-    ResultTab activeTab = tabs.get(activeTabIndex);
     boolean metadataMode = activeTab.metadataClassCache != null && tabValue instanceof Map<?, ?>;
 
     String[] allLines;
@@ -1222,19 +1249,19 @@ public final class TuiShell implements AutoCloseable {
               + altMod
               + "+c:cmd  Esc:input";
     } else {
-      String completionHint =
-          (completionCandidates != null && !completionCandidates.isEmpty())
-              ? "Tab:next(" + (completionIndex + 1) + "/" + completionCandidates.size() + ")  "
-              : "Tab:complete  ";
-      hints =
-          " Enter:run  "
-              + "S-\u2191\u2193:history  "
-              + "Ctrl+R:search history  "
-              + completionHint
-              + "S-Tab:focus  "
-              + altMod
-              + "+r:results  "
-              + "Ctrl+C:exit";
+      if (completionPopupVisible) {
+        hints = " \u2191\u2193:select  Enter/Tab:accept  Esc:cancel  Type to filter";
+      } else {
+        hints =
+            " Enter:run  "
+                + "S-\u2191\u2193:history  "
+                + "Ctrl+R:search history  "
+                + "Tab:complete  "
+                + "S-Tab:focus  "
+                + altMod
+                + "+r:results  "
+                + "Ctrl+C:exit";
+      }
     }
     if (hints.length() < area.width()) {
       hints = hints + " ".repeat(area.width() - hints.length());
@@ -1250,9 +1277,10 @@ public final class TuiShell implements AutoCloseable {
   // ---- key handling ----
 
   private void handleKey(int key) throws IOException {
-    // Clear completion state on any non-Tab key
-    if (key != 9 && completionCandidates != null) {
-      clearCompletionState();
+    // Intercept keys when completion popup is visible
+    if (completionPopupVisible) {
+      handleCompletionPopupKey(key);
+      return;
     }
     // Global keys (work in any focus)
     switch (key) {
@@ -1279,10 +1307,11 @@ public final class TuiShell implements AutoCloseable {
       case 16: // Ctrl+P — toggle pin on active tab
         togglePin();
         return;
-      case 9: // Tab — completion in INPUT; no-op in other focuses (use Opt+Tab to switch)
-        if (focus == Focus.INPUT) {
-          tryComplete();
+      case 9: // Tab — trigger command completion (switch to INPUT if needed)
+        if (focus != Focus.INPUT) {
+          focus = Focus.INPUT;
         }
+        openCompletionPopup();
         return;
       case 27: // ESC sequence or plain Escape
         handleEscapeSequence();
@@ -1829,12 +1858,6 @@ public final class TuiShell implements AutoCloseable {
         }
       } else {
         switch (direction) {
-          case 'A':
-            navigateHistory(-1);
-            break;
-          case 'B':
-            navigateHistory(1);
-            break;
           case 'C':
             inputState.moveCursorRight();
             break;
@@ -1859,24 +1882,24 @@ public final class TuiShell implements AutoCloseable {
   private void togglePin() {
     ResultTab tab = tabs.get(activeTabIndex);
     if (tab.pinned) {
+      // Unpin — remove any other unpinned tab first (only one unpinned tab allowed)
+      int existingUnpinned = findUnpinnedTab();
+      if (existingUnpinned >= 0) {
+        tabs.remove(existingUnpinned);
+        if (activeTabIndex > existingUnpinned) {
+          activeTabIndex--;
+        } else if (activeTabIndex >= tabs.size()) {
+          activeTabIndex = tabs.size() - 1;
+        }
+      }
       tab.pinned = false;
     } else {
-      // Pin the current tab and create a new "current" tab
-      if (!lastCommand.isEmpty()) {
-        tab.name = lastCommand;
-        tab.marqueeTick0 = renderTick;
-      }
       tab.pinned = true;
-      // Ensure there's always an unpinned "current" tab at the end
-      if (findCurrentTab() < 0) {
-        tabs.add(new ResultTab("current"));
-      }
-      // Focus stays on the just-pinned tab
     }
   }
 
-  /** Find the index of the unpinned "current" tab, or -1 if none exists. */
-  private int findCurrentTab() {
+  /** Find the index of the unpinned tab, or -1 if none exists. */
+  private int findUnpinnedTab() {
     for (int i = tabs.size() - 1; i >= 0; i--) {
       if (!tabs.get(i).pinned) return i;
     }
@@ -1924,15 +1947,11 @@ public final class TuiShell implements AutoCloseable {
       ResultTab tab = tabs.get(activeTabIndex);
       if (!tab.pinned) {
         String name = command.length() > 4 ? command.substring(4).trim() : "";
-        if (name.isEmpty()) {
-          name = lastCommand.isEmpty() ? "Tab " + (activeTabIndex + 1) : lastCommand;
+        if (!name.isEmpty()) {
+          tab.name = name;
+          tab.marqueeTick0 = renderTick;
         }
-        tab.name = name;
-        tab.marqueeTick0 = renderTick;
         tab.pinned = true;
-        if (findCurrentTab() < 0) {
-          tabs.add(new ResultTab("current"));
-        }
       }
       return;
     }
@@ -1961,10 +1980,6 @@ public final class TuiShell implements AutoCloseable {
         } else if (activeTabIndex > targetIndex) {
           activeTabIndex--;
         }
-        // Ensure there's always an unpinned "current" tab
-        if (findCurrentTab() < 0) {
-          tabs.add(new ResultTab("current"));
-        }
       }
       return;
     }
@@ -1984,14 +1999,16 @@ public final class TuiShell implements AutoCloseable {
     commandHistory.add(command);
     lastCommand = command;
 
-    // Always run command in the unpinned "current" tab
-    int currentIdx = findCurrentTab();
+    // Run command in the unpinned tab, creating one if all are pinned
+    int currentIdx = findUnpinnedTab();
     if (currentIdx < 0) {
-      tabs.add(new ResultTab("current"));
+      tabs.add(new ResultTab(command));
       currentIdx = tabs.size() - 1;
     }
     activeTabIndex = currentIdx;
     ResultTab activeTab = tabs.get(activeTabIndex);
+    activeTab.name = command;
+    activeTab.marqueeTick0 = renderTick;
     activeTab.lines.clear();
     activeTab.scrollOffset = 0;
     activeTab.hScrollOffset = 0;
@@ -2041,8 +2058,8 @@ public final class TuiShell implements AutoCloseable {
     activeTab.sortAscending = true;
     if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
       activeTab.selectedRow = 0;
-      // Table output: top border + header = 2 lines before data rows
-      activeTab.dataStartLine = linesBeforeDispatch + 2;
+      // Table output: header = 1 line before data rows
+      activeTab.dataStartLine = linesBeforeDispatch + 1;
       buildDetailTabs(activeTab);
     } else {
       activeTab.selectedRow = -1;
@@ -2202,8 +2219,8 @@ public final class TuiShell implements AutoCloseable {
         });
     TuiTableRenderer.clearLastData();
 
-    // Recalculate dataStartLine (command echo + top border + header = 3 lines)
-    tab.dataStartLine = 3;
+    // Recalculate dataStartLine (command echo + header = 2 lines)
+    tab.dataStartLine = 2;
     tab.selectedRow = Math.min(tab.selectedRow, Math.max(0, tab.tableData.size() - 1));
     tab.scrollOffset = 0;
     tab.filteredIndices = null;
@@ -2348,33 +2365,39 @@ public final class TuiShell implements AutoCloseable {
     }
   }
 
-  // ---- completion ----
+  // ---- completion popup ----
 
   /**
-   * Attempt tab-completion on the current input. Returns true if completion was performed (or
-   * cycling happened), false if no candidates were found.
+   * Gather candidates and open the completion popup, or apply directly for single/prefix matches.
    */
-  private boolean tryComplete() {
-    // Already cycling — advance to next candidate
-    if (completionCandidates != null && !completionCandidates.isEmpty()) {
-      completionIndex = (completionIndex + 1) % completionCandidates.size();
-      applyCompletion(completionCandidates.get(completionIndex).value());
-      return true;
+  private void openCompletionPopup() {
+    if (completionPopupVisible) {
+      acceptCompletion();
+      return;
     }
 
     String text = inputState.text();
     int cursor = inputState.cursorPosition();
-    if (text.isBlank()) return false;
 
     TuiParsedLine parsed = new TuiParsedLine(text, cursor);
     List<Candidate> candidates = new ArrayList<>();
     try {
       completer.complete(null, parsed, candidates);
     } catch (Exception e) {
-      return false;
+      return;
     }
 
-    if (candidates.isEmpty()) return false;
+    if (candidates.isEmpty()) return;
+
+    // On empty input, filter to standalone commands only (exclude pipeline operators
+    // like select()/groupBy() and scripting-only keywords)
+    if (text.isBlank()) {
+      candidates.removeIf(
+          c -> c.value().contains("(") || c.value().contains("/") || isScriptingKeyword(c.value()));
+      if (candidates.isEmpty()) return;
+    }
+
+    candidates.sort(Comparator.comparing(Candidate::value, String.CASE_INSENSITIVE_ORDER));
 
     // Compute word start: walk back from cursor to find start of current word
     completionWordStart = cursor;
@@ -2383,34 +2406,194 @@ public final class TuiShell implements AutoCloseable {
       completionWordStart--;
     }
     completionOriginalWord = text.substring(completionWordStart, cursor);
-    completionCurrentValue = completionOriginalWord;
 
     if (candidates.size() == 1) {
       applyCompletion(candidates.get(0).value());
-      clearCompletionState();
-      return true;
+      return;
     }
 
     // Multiple candidates — find common prefix
     String prefix = commonPrefix(candidates);
     if (prefix.length() > completionOriginalWord.length()) {
       applyCompletion(prefix);
-      clearCompletionState();
-      return true;
+      return;
     }
 
-    // No further common prefix — start cycling
-    completionCandidates = candidates;
-    completionIndex = 0;
-    applyCompletion(candidates.get(0).value());
-    return true;
+    // Open popup with all candidates
+    completionAllCandidates = candidates;
+    completionFiltered = new ArrayList<>(candidates);
+    completionSelectedIndex = 0;
+    completionScrollOffset = 0;
+    completionPopupVisible = true;
+    completionOriginalInput = text;
+  }
+
+  private void closeCompletionPopup(boolean restore) {
+    completionPopupVisible = false;
+    if (restore && completionOriginalInput != null) {
+      inputState.setText(completionOriginalInput);
+    }
+    completionAllCandidates = null;
+    completionFiltered = null;
+    completionOriginalInput = null;
+    completionOriginalWord = null;
+  }
+
+  private void acceptCompletion() {
+    if (completionFiltered != null
+        && completionSelectedIndex >= 0
+        && completionSelectedIndex < completionFiltered.size()) {
+      applyCompletion(completionFiltered.get(completionSelectedIndex).value());
+    }
+    closeCompletionPopup(false);
+  }
+
+  private void refilterCompletions() {
+    String text = inputState.text();
+    int cursor = inputState.cursorPosition();
+    int wordEnd = Math.min(cursor, text.length());
+    if (completionWordStart > wordEnd) {
+      closeCompletionPopup(false);
+      return;
+    }
+    String currentWord = text.substring(completionWordStart, wordEnd);
+    if (currentWord.isEmpty()) {
+      closeCompletionPopup(false);
+      return;
+    }
+    String lower = currentWord.toLowerCase();
+    List<Candidate> filtered = new ArrayList<>();
+    for (Candidate c : completionAllCandidates) {
+      if (c.value().toLowerCase().startsWith(lower)) {
+        filtered.add(c);
+      }
+    }
+    if (filtered.isEmpty()) {
+      closeCompletionPopup(false);
+      return;
+    }
+    completionFiltered = filtered;
+    completionSelectedIndex = Math.min(completionSelectedIndex, filtered.size() - 1);
+    int maxVisible = COMPLETION_MAX_HEIGHT;
+    completionScrollOffset =
+        Math.min(completionScrollOffset, Math.max(0, filtered.size() - maxVisible));
+  }
+
+  private void handleCompletionPopupKey(int key) throws IOException {
+    switch (key) {
+      case 9: // Tab — accept
+      case 13: // Enter
+      case 10:
+        acceptCompletion();
+        return;
+      case 27: // Esc or escape sequence
+        handleCompletionEscape();
+        return;
+      case 127: // Backspace
+      case 8:
+        inputState.deleteBackward();
+        refilterCompletions();
+        return;
+      default:
+        if (key >= 32 && key < 127) {
+          inputState.insert((char) key);
+          historyIndex = -1;
+          refilterCompletions();
+        } else {
+          closeCompletionPopup(false);
+        }
+        return;
+    }
+  }
+
+  private void handleCompletionEscape() throws IOException {
+    int next = backend.read(50);
+    if (next == READ_EXPIRED || next == EOF) {
+      // Plain Escape — cancel, restore original input
+      closeCompletionPopup(true);
+      return;
+    }
+    if (next == '[') {
+      int code = backend.read(50);
+      if (code == READ_EXPIRED || code == EOF) return;
+      if (code == 'A') { // Up
+        if (completionSelectedIndex > 0) {
+          completionSelectedIndex--;
+          if (completionSelectedIndex < completionScrollOffset) {
+            completionScrollOffset = completionSelectedIndex;
+          }
+        }
+        return;
+      }
+      if (code == 'B') { // Down
+        if (completionSelectedIndex < completionFiltered.size() - 1) {
+          completionSelectedIndex++;
+          int maxVisible = COMPLETION_MAX_HEIGHT;
+          if (completionSelectedIndex >= completionScrollOffset + maxVisible) {
+            completionScrollOffset = completionSelectedIndex - maxVisible + 1;
+          }
+        }
+        return;
+      }
+      // Any other escape sequence — close popup
+      closeCompletionPopup(false);
+      return;
+    }
+    // ESC + other char — close popup
+    closeCompletionPopup(false);
+  }
+
+  private void renderCompletionPopup(Frame frame) {
+    if (inputAreaRect == null) return;
+
+    int maxCandidateWidth = 0;
+    for (Candidate c : completionFiltered) {
+      maxCandidateWidth = Math.max(maxCandidateWidth, c.value().length());
+    }
+
+    int popupHeight = Math.min(completionFiltered.size(), COMPLETION_MAX_HEIGHT);
+    int popupWidth = Math.min(maxCandidateWidth + 2, COMPLETION_MAX_WIDTH);
+    popupWidth = Math.min(popupWidth, frame.area().width());
+
+    // Position: anchor near the word being completed, above the input area
+    int x = inputAreaRect.x() + completionWordStart + 2;
+    int y = inputAreaRect.y() - popupHeight;
+    if (x + popupWidth > frame.area().width()) {
+      x = Math.max(0, frame.area().width() - popupWidth);
+    }
+    if (y < 0) y = 0;
+
+    Rect popupRect = new Rect(x, y, popupWidth, popupHeight);
+
+    Style normalStyle = Style.create().bg(Color.DARK_GRAY).fg(Color.WHITE);
+    Style highlightStyle = Style.create().bg(Color.CYAN).fg(Color.BLACK).bold();
+
+    int visibleCount = popupRect.height();
+    int start = completionScrollOffset;
+    int end = Math.min(start + visibleCount, completionFiltered.size());
+
+    List<Line> lines = new ArrayList<>(end - start);
+    for (int i = start; i < end; i++) {
+      String value = " " + completionFiltered.get(i).value();
+      if (value.length() > popupRect.width()) {
+        value = value.substring(0, popupRect.width());
+      }
+      if (value.length() < popupRect.width()) {
+        value = value + " ".repeat(popupRect.width() - value.length());
+      }
+      Style style = (i == completionSelectedIndex) ? highlightStyle : normalStyle;
+      lines.add(Line.from(Span.styled(value, style)));
+    }
+
+    Paragraph popup = Paragraph.builder().text(new Text(lines, null)).build();
+    frame.renderWidget(popup, popupRect);
   }
 
   private void applyCompletion(String value) {
     String text = inputState.text();
-    int currentEnd = completionWordStart + completionCurrentValue.length();
+    int cursor = inputState.cursorPosition();
     String before = text.substring(0, completionWordStart);
-    String after = currentEnd <= text.length() ? text.substring(currentEnd) : "";
+    String after = cursor <= text.length() ? text.substring(cursor) : "";
     String newText = before + value + after;
     inputState.clear();
     inputState.insert(newText);
@@ -2421,14 +2604,6 @@ public final class TuiShell implements AutoCloseable {
     for (int i = 0; i < overshoot; i++) {
       inputState.moveCursorLeft();
     }
-    completionCurrentValue = value;
-  }
-
-  private void clearCompletionState() {
-    completionCandidates = null;
-    completionIndex = -1;
-    completionCurrentValue = null;
-    completionOriginalWord = null;
   }
 
   private static String commonPrefix(List<Candidate> candidates) {
@@ -2445,6 +2620,12 @@ public final class TuiShell implements AutoCloseable {
       }
     }
     return first.substring(0, len);
+  }
+
+  private static final Set<String> SCRIPTING_KEYWORDS = Set.of("if", "elif", "else", "endif");
+
+  private static boolean isScriptingKeyword(String value) {
+    return SCRIPTING_KEYWORDS.contains(value);
   }
 
   /** ParsedLine adapter for TamboUI's TextInputState. */
