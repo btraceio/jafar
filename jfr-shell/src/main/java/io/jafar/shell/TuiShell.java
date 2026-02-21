@@ -339,7 +339,11 @@ public final class TuiShell implements AutoCloseable {
   // ---- rendering ----
 
   private boolean showTabBar() {
-    return tabs.size() >= 2;
+    if (tabs.size() >= 2) return true;
+    for (int i = 0; i < tabs.size(); i++) {
+      if (tabs.get(i).pinned) return true;
+    }
+    return false;
   }
 
   private void render(Frame frame) {
@@ -360,22 +364,18 @@ public final class TuiShell implements AutoCloseable {
     renderStatusBar(frame, areas.get(idx++));
 
     Rect resultsRect = areas.get(idx++);
-    if (cpBrowserMode) {
-      renderCpBrowser(frame, resultsRect);
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    if (!detailTabNames.isEmpty()
+        && activeTab.tableData != null
+        && !activeTab.tableData.isEmpty()) {
+      List<Rect> splitAreas =
+          Layout.vertical()
+              .constraints(Constraint.percentage(60), Constraint.percentage(40))
+              .split(resultsRect);
+      renderResults(frame, splitAreas.get(0));
+      renderDetailSection(frame, splitAreas.get(1));
     } else {
-      ResultTab activeTab = tabs.get(activeTabIndex);
-      if (!detailTabNames.isEmpty()
-          && activeTab.tableData != null
-          && !activeTab.tableData.isEmpty()) {
-        List<Rect> splitAreas =
-            Layout.vertical()
-                .constraints(Constraint.percentage(60), Constraint.percentage(40))
-                .split(resultsRect);
-        renderResults(frame, splitAreas.get(0));
-        renderDetailSection(frame, splitAreas.get(1));
-      } else {
-        renderResults(frame, resultsRect);
-      }
+      renderResults(frame, resultsRect);
     }
 
     if (focus == Focus.SEARCH) renderSearchBar(frame, areas.get(idx++));
@@ -430,8 +430,8 @@ public final class TuiShell implements AutoCloseable {
     String[] titles = new String[tabs.size()];
     for (int i = 0; i < tabs.size(); i++) {
       ResultTab tab = tabs.get(i);
-      String raw = tab.pinned ? tab.name : "\u25B7 " + tab.name;
-      titles[i] = marqueeTitle(raw, renderTick - tab.marqueeTick0);
+      String prefix = tab.pinned ? "\uD83D\uDCCC " : "\u25B7 ";
+      titles[i] = prefix + marqueeTitle(tab.name, renderTick - tab.marqueeTick0);
     }
     Tabs tabsWidget =
         Tabs.builder()
@@ -527,6 +527,24 @@ public final class TuiShell implements AutoCloseable {
           Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(inner);
       renderResultTabBar(frame, tabSplit.get(0));
       inner = tabSplit.get(1);
+    }
+
+    // CP browser: split inner area for types sidebar + entries sub-block
+    if (cpBrowserMode) {
+      List<Rect> hSplit =
+          Layout.horizontal()
+              .constraints(Constraint.percentage(30), Constraint.percentage(70))
+              .split(inner);
+      renderCpTypes(frame, hSplit.get(0));
+
+      Block cpEntriesBlock =
+          Block.builder()
+              .title(Title.from("CP type: " + getSelectedCpTypeName()))
+              .borders(Borders.ALL)
+              .borderType(BorderType.ROUNDED)
+              .build();
+      inner = cpEntriesBlock.inner(hSplit.get(1));
+      frame.renderWidget(cpEntriesBlock, hSplit.get(1));
     }
 
     int lineCount = effectiveLineCount(activeTab);
@@ -687,32 +705,6 @@ public final class TuiShell implements AutoCloseable {
               .position(activeTab.hScrollOffset);
       frame.renderStatefulWidget(Scrollbar.horizontal(), hScrollbarArea, hState);
     }
-  }
-
-  private void renderCpBrowser(Frame frame, Rect area) {
-    Rect topArea;
-    ResultTab activeTab = tabs.get(activeTabIndex);
-    // If detail available, split vertically first so detail is full-width
-    if (!detailTabNames.isEmpty()
-        && activeTab.tableData != null
-        && !activeTab.tableData.isEmpty()) {
-      List<Rect> vSplit =
-          Layout.vertical()
-              .constraints(Constraint.percentage(60), Constraint.percentage(40))
-              .split(area);
-      topArea = vSplit.get(0);
-      renderDetailSection(frame, vSplit.get(1));
-    } else {
-      topArea = area;
-    }
-
-    // Horizontal split: 30% types sidebar, 70% results
-    List<Rect> hSplit =
-        Layout.horizontal()
-            .constraints(Constraint.percentage(30), Constraint.percentage(70))
-            .split(topArea);
-    renderCpTypes(frame, hSplit.get(0));
-    renderResults(frame, hSplit.get(1));
   }
 
   private void renderCpTypes(Frame frame, Rect area) {
@@ -1394,7 +1386,8 @@ public final class TuiShell implements AutoCloseable {
         String filterHint =
             activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
         String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
-        String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:tabs  ";
+        String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
+        String resultTabHint = tabs.size() > 1 ? "{}:tabs  " : "";
         hints =
             " "
                 + rowHint
@@ -1402,6 +1395,7 @@ public final class TuiShell implements AutoCloseable {
                 + sortHint
                 + filterHint
                 + tabSwitchHint
+                + resultTabHint
                 + "Ctrl+P:pin  "
                 + detailJump
                 + "Esc:types";
@@ -1420,13 +1414,15 @@ public final class TuiShell implements AutoCloseable {
       String filterHint =
           activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
       String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
-      String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:tabs  ";
+      String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
+      String resultTabHint = tabs.size() > 1 ? "{}:tabs  " : "";
       hints =
           " "
               + rowHint
               + sortHint
               + filterHint
               + tabSwitchHint
+              + resultTabHint
               + "Ctrl+P:pin  "
               + detailJump
               + "S-\u2191\u2193:history  "
@@ -1610,6 +1606,16 @@ public final class TuiShell implements AutoCloseable {
       case ']':
         if (!detailTabNames.isEmpty()) {
           activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
+        }
+        break;
+      case '{':
+        if (tabs.size() > 1) {
+          switchTab((activeTabIndex - 1 + tabs.size()) % tabs.size());
+        }
+        break;
+      case '}':
+        if (tabs.size() > 1) {
+          switchTab((activeTabIndex + 1) % tabs.size());
         }
         break;
       default:
@@ -2151,6 +2157,8 @@ public final class TuiShell implements AutoCloseable {
         }
       }
       tab.pinned = false;
+      tab.name = "jfr>";
+      tab.marqueeTick0 = renderTick;
     } else {
       tab.pinned = true;
     }
