@@ -1763,8 +1763,13 @@ public final class TuiShell implements AutoCloseable {
       if (second == READ_EXPIRED || second == EOF) return;
 
       if (second == '~') {
+        if (code == '3') {
+          // ESC [ 3 ~ — Delete (Fn+Backspace on macOS)
+          if (focus == Focus.SEARCH) searchInputState.deleteForward();
+          else inputState.deleteForward();
+        }
         // ESC [ N ~  (PgUp/PgDn — always scroll results regardless of focus)
-        if (code == '5') scrollResults(-resultsAreaHeight);
+        else if (code == '5') scrollResults(-resultsAreaHeight);
         else if (code == '6') scrollResults(resultsAreaHeight);
       } else if (second == ';') {
         // ESC [ 1 ; <mod> <dir>
@@ -2548,6 +2553,15 @@ public final class TuiShell implements AutoCloseable {
     if (next == '[') {
       int code = backend.read(50);
       if (code == READ_EXPIRED || code == EOF) return;
+      if (code == '3') {
+        // ESC [ 3 ~ — Delete (Fn+Backspace on macOS)
+        int tilde = backend.read(50);
+        if (tilde == '~') {
+          inputState.deleteForward();
+          refilterCompletions();
+        }
+        return;
+      }
       if (code == 'A') { // Up
         if (completionSelectedIndex > 0) {
           completionSelectedIndex--;
