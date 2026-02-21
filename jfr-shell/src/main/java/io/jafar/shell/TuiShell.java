@@ -61,6 +61,26 @@ public final class TuiShell implements AutoCloseable {
   private static final int MAX_HISTORY = 5000;
   private static final int COMPLETION_MAX_WIDTH = 50;
   private static final int COMPLETION_MAX_HEIGHT = 12;
+  private static final int TIP_ROTATE_TICKS = 300; // ~30s at 100ms per tick
+  private static final String[] TIPS = loadTips();
+
+  private static String[] loadTips() {
+    try (var in = TuiShell.class.getResourceAsStream("/tips.txt")) {
+      if (in == null) return new String[] {"Type 'help' for available commands"};
+      String[] tips =
+          new java.io.BufferedReader(
+                  new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))
+              .lines()
+              .map(String::trim)
+              .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+              .map(l -> "Tip: " + l)
+              .toArray(String[]::new);
+      Collections.shuffle(java.util.Arrays.asList(tips));
+      return tips;
+    } catch (IOException e) {
+      return new String[] {"Type 'help' for available commands"};
+    }
+  }
 
   private enum Platform {
     MACOS,
@@ -312,6 +332,7 @@ public final class TuiShell implements AutoCloseable {
     if (focus == Focus.SEARCH) constraints.add(Constraint.length(1)); // search bar
     if (focus == Focus.HISTORY_SEARCH) constraints.add(Constraint.length(1)); // history search bar
     constraints.add(Constraint.length(3)); // input
+    constraints.add(Constraint.length(1)); // tips
     constraints.add(Constraint.length(1)); // hints
 
     List<Rect> areas =
@@ -340,6 +361,7 @@ public final class TuiShell implements AutoCloseable {
     Rect inputRect = areas.get(idx++);
     inputAreaRect = inputRect;
     renderInput(frame, inputRect);
+    renderTipLine(frame, areas.get(idx++));
     renderHints(frame, areas.get(idx));
 
     // Render completion popup overlay (after all other rendering so it appears on top)
@@ -1190,6 +1212,16 @@ public final class TuiShell implements AutoCloseable {
         Paragraph.builder()
             .text(Text.raw(text))
             .style(Style.create().bg(Color.DARK_GRAY).fg(Color.YELLOW))
+            .build();
+    frame.renderWidget(bar, area);
+  }
+
+  private void renderTipLine(Frame frame, Rect area) {
+    int tipIndex = (int) ((renderTick / TIP_ROTATE_TICKS) % TIPS.length);
+    String tip = TIPS[tipIndex];
+    Paragraph bar =
+        Paragraph.builder()
+            .text(Text.from(Line.from(Span.styled(tip, Style.create().fg(Color.DARK_GRAY)))))
             .build();
     frame.renderWidget(bar, area);
   }
