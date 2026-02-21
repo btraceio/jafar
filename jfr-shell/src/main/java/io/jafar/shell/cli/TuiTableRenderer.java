@@ -26,7 +26,7 @@ import java.util.Set;
  */
 public final class TuiTableRenderer {
   private static final int DEFAULT_WIDTH = 120;
-  private static final int MAX_CELL_WIDTH = 40;
+  public static final int MAX_CELL_WIDTH = 40;
   private static final Style HEADER_STYLE = Style.EMPTY.bold().fg(Color.CYAN);
 
   private static final ThreadLocal<List<Map<String, Object>>> LAST_TABLE_DATA = new ThreadLocal<>();
@@ -163,7 +163,7 @@ public final class TuiTableRenderer {
     }
   }
 
-  private static int[] computeMaxWidths(List<String> headers, List<Map<String, Object>> rows) {
+  public static int[] computeMaxWidths(List<String> headers, List<Map<String, Object>> rows) {
     int colCount = headers.size();
     int[] maxWidths = new int[colCount];
     for (int c = 0; c < colCount; c++) {
@@ -211,10 +211,16 @@ public final class TuiTableRenderer {
       if (threadName != null) return unwrap(threadName).toString();
       return "<" + m.size() + " fields>";
     }
+    if (v instanceof ArrayType at) {
+      int len = arrayLength(at);
+      if (looksLikeFrames(at.getArray())) return "<" + len + " frames>";
+      return "<" + len + " items>";
+    }
     if (v instanceof Collection<?> coll) {
       return "<" + coll.size() + " items>";
     }
     if (v.getClass().isArray()) {
+      if (looksLikeFrames(v)) return "<" + Array.getLength(v) + " frames>";
       return "<" + Array.getLength(v) + " items>";
     }
     return String.valueOf(v);
@@ -273,6 +279,19 @@ public final class TuiTableRenderer {
   public static Object resolveComplex(Object v) {
     if (v instanceof ComplexType ct) return ct.getValue();
     return v;
+  }
+
+  /** Check if the first element of an array looks like a stack frame (has a "method" key). */
+  private static boolean looksLikeFrames(Object arr) {
+    Object first = null;
+    if (arr != null && arr.getClass().isArray() && Array.getLength(arr) > 0) {
+      first = Array.get(arr, 0);
+    } else if (arr instanceof List<?> list && !list.isEmpty()) {
+      first = list.get(0);
+    }
+    if (first == null) return false;
+    first = resolveComplex(first);
+    return first instanceof Map<?, ?> m && m.containsKey("method");
   }
 
   public static int arrayLength(Object v) {
