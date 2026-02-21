@@ -698,26 +698,26 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void renderCpBrowser(Frame frame, Rect area) {
-    // Horizontal split: 40% types, 60% right
-    List<Rect> hSplit =
-        Layout.horizontal()
-            .constraints(Constraint.percentage(40), Constraint.percentage(60))
-            .split(area);
-    Rect typesArea = hSplit.get(0);
-    Rect rightArea = hSplit.get(1);
-
-    // If detail available, split right vertically 60/40
+    Rect topArea;
+    // If detail available, split vertically first so detail is full-width
     if (!detailTabNames.isEmpty()) {
       List<Rect> vSplit =
           Layout.vertical()
               .constraints(Constraint.percentage(60), Constraint.percentage(40))
-              .split(rightArea);
-      renderCpEntries(frame, vSplit.get(0));
+              .split(area);
+      topArea = vSplit.get(0);
       renderDetailSection(frame, vSplit.get(1));
     } else {
-      renderCpEntries(frame, rightArea);
+      topArea = area;
     }
-    renderCpTypes(frame, typesArea);
+
+    // Horizontal split: 40% types, 60% entries
+    List<Rect> hSplit =
+        Layout.horizontal()
+            .constraints(Constraint.percentage(40), Constraint.percentage(60))
+            .split(topArea);
+    renderCpTypes(frame, hSplit.get(0));
+    renderCpEntries(frame, hSplit.get(1));
   }
 
   private void renderCpTypes(Frame frame, Rect area) {
@@ -1412,6 +1412,7 @@ public final class TuiShell implements AutoCloseable {
 
   private static boolean isComplexValue(Object val) {
     if (val == null) return false;
+    if (val instanceof ComplexType ct) return isComplexValue(ct.getValue());
     if (val instanceof Map<?, ?> m) {
       if (m.size() <= 1) return false; // single-entry wrapper, stays in table only
       return true;
@@ -1493,7 +1494,7 @@ public final class TuiShell implements AutoCloseable {
       hints =
           " "
               + cursorHint
-              + "\u2190\u2192:tabs  "
+              + "[]:tabs  "
               + drillHint
               + "/:search  "
               + "S-\u2191\u2193:history  "
@@ -1522,11 +1523,13 @@ public final class TuiShell implements AutoCloseable {
       String filterHint =
           activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
       String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
+      String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:tabs  ";
       hints =
           " "
               + rowHint
               + sortHint
               + filterHint
+              + tabSwitchHint
               + "Ctrl+P:pin  "
               + detailJump
               + "S-\u2191\u2193:history  "
@@ -1700,6 +1703,17 @@ public final class TuiShell implements AutoCloseable {
           }
         }
         break;
+      case '[':
+        if (!detailTabNames.isEmpty()) {
+          activeDetailTabIndex =
+              (activeDetailTabIndex - 1 + detailTabNames.size()) % detailTabNames.size();
+        }
+        break;
+      case ']':
+        if (!detailTabNames.isEmpty()) {
+          activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
+        }
+        break;
       default:
         if (key >= 32 && key < 127) {
           // Printable char — switch to input and insert it
@@ -1792,8 +1806,8 @@ public final class TuiShell implements AutoCloseable {
             buildCpEntryDetail();
           }
           break;
-        case 'D': // Left — back to TYPES
-          cpFocus = CpFocus.TYPES;
+        case 'D': // Left — horizontal scroll left
+          cpEntryHScrollOffset = Math.max(0, cpEntryHScrollOffset - hStep);
           break;
         case 'C': // Right — horizontal scroll
           cpEntryHScrollOffset = Math.max(0, cpEntryHScrollOffset + hStep);
@@ -1822,6 +1836,17 @@ public final class TuiShell implements AutoCloseable {
         }
         focus = Focus.INPUT;
         break;
+      case '[':
+        if (!detailTabNames.isEmpty()) {
+          activeDetailTabIndex =
+              (activeDetailTabIndex - 1 + detailTabNames.size()) % detailTabNames.size();
+        }
+        break;
+      case ']':
+        if (!detailTabNames.isEmpty()) {
+          activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
+        }
+        break;
       default:
         if (key >= 32 && key < 127) {
           focus = Focus.INPUT;
@@ -1841,6 +1866,28 @@ public final class TuiShell implements AutoCloseable {
       case 127: // Backspace
       case 8:
         inputState.deleteBackward();
+        break;
+      case '<':
+      case '>':
+        if (!cpBrowserMode) {
+          ResultTab rt = tabs.get(activeTabIndex);
+          if (rt.tableData != null && rt.tableHeaders != null && !rt.tableHeaders.isEmpty()) {
+            int colCount = rt.tableHeaders.size();
+            if (rt.sortColumn < 0) {
+              rt.sortColumn = 0;
+            } else {
+              rt.sortColumn =
+                  key == '<'
+                      ? (rt.sortColumn - 1 + colCount) % colCount
+                      : (rt.sortColumn + 1) % colCount;
+            }
+            rt.sortAscending = true;
+            applySortAndRerender(rt);
+            break;
+          }
+        }
+        inputState.insert((char) key);
+        historyIndex = -1;
         break;
       default:
         if (key >= 32 && key < 127) {
@@ -2188,16 +2235,8 @@ public final class TuiShell implements AutoCloseable {
             setDetailScrollOffset(getDetailScrollOffset() + 1);
           }
           break;
-        case 'C': // Right — next detail tab
-          if (!detailTabNames.isEmpty()) {
-            activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
-          }
-          break;
-        case 'D': // Left — prev detail tab
-          if (!detailTabNames.isEmpty()) {
-            activeDetailTabIndex =
-                (activeDetailTabIndex - 1 + detailTabNames.size()) % detailTabNames.size();
-          }
+        case 'C': // Right — no-op (use [ ] for tab switching)
+        case 'D': // Left — no-op (use [ ] for tab switching)
           break;
         default:
           break;
@@ -2406,6 +2445,11 @@ public final class TuiShell implements AutoCloseable {
       cols.addAll(cpEntries.get(i).keySet());
     }
     cpEntryHeaders = new ArrayList<>(cols);
+    int idIdx = cpEntryHeaders.indexOf("id");
+    if (idIdx > 0) {
+      cpEntryHeaders.remove(idIdx);
+      cpEntryHeaders.add(0, "id");
+    }
 
     // Compute column widths
     int colCount = cpEntryHeaders.size();

@@ -194,6 +194,7 @@ public final class TuiTableRenderer {
 
   public static String toCell(Object v) {
     if (v == null) return "";
+    if (v instanceof ComplexType ct) return toCell(ct.getValue());
     if (v instanceof Map<?, ?> m) {
       if (m.size() == 1) {
         return toCell(m.values().iterator().next());
