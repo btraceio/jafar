@@ -47,7 +47,7 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 ### Session Management
 - `open <path> [--alias NAME]`: Open a recording file.
 - `sessions`: List all sessions; marks the current one.
-- `use <id|alias>`: Switch current session.
+- `use <id|alias>` (or `session`): Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
 - `info [<id|alias>]`: Show session information.
 

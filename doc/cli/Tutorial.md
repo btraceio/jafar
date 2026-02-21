@@ -94,7 +94,7 @@ Opened session #1 (prod): recording.jfr
 jfr> sessions
   #1* (prod): recording.jfr [45 event types, 3 chunks]
 
-# Switch sessions
+# Switch sessions (you can also use 'session' instead of 'use')
 jfr> use 2
 Switched to session #2
 

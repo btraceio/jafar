@@ -15,6 +15,7 @@ public final class CommandCompleter implements ContextCompleter {
     "open",
     "sessions",
     "use",
+    "session",
     "close",
     "info",
     "show",

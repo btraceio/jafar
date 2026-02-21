@@ -152,6 +152,7 @@ public class CommandDispatcher {
           cmdSessions();
           return true;
         case "use":
+        case "session":
           cmdUse(args);
           return true;
         case "close":

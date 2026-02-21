@@ -209,7 +209,7 @@ public final class ShellCompleter implements Completer {
       case "help" -> completeHelp(candidates);
       case "open" -> completeOpen(reader, line, candidates);
       case "metadata" -> completeMetadata(line, candidates, words, wordIndex);
-      case "use" -> completeUse(candidates);
+      case "use", "session" -> completeUse(candidates);
       case "close" -> completeClose(candidates);
       case "cp" -> completeCp(line, candidates);
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);

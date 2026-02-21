@@ -892,7 +892,7 @@ In the interactive shell, use these commands:
 
 - `open <path> [--alias NAME]` - Open a recording
 - `sessions` - List all sessions
-- `use <id|alias>` - Switch session
+- `use <id|alias>` (or `session`) - Switch session
 - `close [<id|alias>|--all]` - Close session(s)
 - `info [<id|alias>]` - Show session info
 - `show <expr> [options]` - Execute JfrPath query
