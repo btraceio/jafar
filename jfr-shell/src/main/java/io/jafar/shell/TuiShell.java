@@ -89,6 +89,7 @@ public final class TuiShell implements AutoCloseable {
     int maxLineWidth;
     boolean pinned;
     String searchQuery = "";
+    String detailSearchQuery = "";
     List<Integer> filteredIndices; // null = no filter
     int filteredMaxLineWidth;
     List<Map<String, Object>> tableData; // null when output is not tabular
@@ -124,6 +125,7 @@ public final class TuiShell implements AutoCloseable {
   private int historyIndex = -1;
   private boolean running = true;
   private int resultsAreaHeight = 10; // updated each render cycle
+  private int detailAreaHeight = 10; // updated each render cycle
   private Focus focus = Focus.INPUT;
   private String lastCommand = "";
   private int activeDetailTabIndex = 0;
@@ -140,6 +142,9 @@ public final class TuiShell implements AutoCloseable {
   private static final int PAUSE_START_TICKS = 50;
   private static final int PAUSE_END_TICKS = 20;
   private static final int SCROLL_SPEED = 2;
+
+  // Search origin tracking
+  private Focus searchOriginFocus = Focus.RESULTS;
 
   // History search state
   private String historySearchQuery = "";
@@ -513,8 +518,11 @@ public final class TuiShell implements AutoCloseable {
     int maxHScroll = Math.max(0, maxWidth - visibleWidth);
     activeTab.hScrollOffset = Math.min(activeTab.hScrollOffset, maxHScroll);
 
-    // Sticky header: when table data is present, split off 1 line for column header
-    boolean hasTable = activeTab.tableData != null && activeTab.dataStartLine >= 1;
+    // Sticky header: when table data is present and no filter is active, split off 1 line
+    boolean hasTable =
+        activeTab.tableData != null
+            && activeTab.dataStartLine >= 1
+            && activeTab.filteredIndices == null;
     int headerLine = hasTable ? activeTab.dataStartLine - 1 : -1;
     Rect headerArea = null;
     if (hasTable && headerLine >= 0 && headerLine < lineCount) {
@@ -525,6 +533,10 @@ public final class TuiShell implements AutoCloseable {
     }
 
     int visibleHeight = contentArea.height();
+    if (visibleHeight <= 0) {
+      resultsAreaHeight = 1;
+      return;
+    }
     resultsAreaHeight = visibleHeight;
 
     // Render sticky header if present
@@ -547,10 +559,15 @@ public final class TuiShell implements AutoCloseable {
     int scrollLineCount;
     int scrollBase;
     int highlightLine;
+    // Line index of the selected row (for highlight in filtered mode)
+    int selectedLineIdx =
+        activeTab.tableData != null && activeTab.selectedRow >= 0 && activeTab.dataStartLine >= 0
+            ? activeTab.dataStartLine + activeTab.selectedRow
+            : -1;
     if (hasTable) {
       // Show only data rows + footer in scrollable area
       scrollBase = activeTab.dataStartLine;
-      scrollLineCount = lineCount - scrollBase;
+      scrollLineCount = Math.max(0, lineCount - scrollBase);
       highlightLine =
           activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1; // relative to scrollBase
     } else {
@@ -570,7 +587,13 @@ public final class TuiShell implements AutoCloseable {
     for (int i = start; i < end; i++) {
       String line = effectiveLine(activeTab, scrollBase + i);
       String visible = applyHScroll(line, activeTab.hScrollOffset, visibleWidth);
-      if (i == highlightLine) {
+      // Highlight: either the table row (unfiltered) or the matching filtered line
+      boolean isHighlighted = (i == highlightLine);
+      if (!isHighlighted && activeTab.filteredIndices != null && selectedLineIdx >= 0) {
+        int actualLineIdx = activeTab.filteredIndices.get(i);
+        isHighlighted = (actualLineIdx == selectedLineIdx);
+      }
+      if (isHighlighted) {
         // Pad to fill the visible width so highlight spans the entire row
         if (visible.length() < visibleWidth) {
           visible = visible + " ".repeat(visibleWidth - visible.length());
@@ -664,10 +687,10 @@ public final class TuiShell implements AutoCloseable {
       allLines = buildDetailLines(tabValue);
     }
 
-    // Apply search filter if active
+    // Apply detail-specific search filter if active
     String[] detailLines;
-    if (activeTab.searchQuery != null && !activeTab.searchQuery.isEmpty()) {
-      String lower = activeTab.searchQuery.toLowerCase();
+    if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
+      String lower = activeTab.detailSearchQuery.toLowerCase();
       List<String> filtered = new ArrayList<>();
       for (String line : allLines) {
         if (line.toLowerCase().contains(lower)) {
@@ -692,6 +715,7 @@ public final class TuiShell implements AutoCloseable {
     }
 
     int visibleHeight = contentArea.height();
+    detailAreaHeight = Math.max(1, visibleHeight);
     int scrollOffset = getDetailScrollOffset();
     int maxScroll = Math.max(0, totalLines - visibleHeight);
     scrollOffset = Math.min(scrollOffset, maxScroll);
@@ -1116,7 +1140,8 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void renderSearchBar(Frame frame, Rect area) {
-    String text = "/ " + searchInputState.text();
+    String prefix = searchOriginFocus == Focus.DETAIL ? "/detail " : "/ ";
+    String text = prefix + searchInputState.text();
     if (text.length() < area.width()) {
       text = text + " ".repeat(area.width() - text.length());
     }
@@ -1148,7 +1173,8 @@ public final class TuiShell implements AutoCloseable {
     if (focus == Focus.HISTORY_SEARCH) {
       hints = " Type to search  Ctrl+R:older  Enter:accept  Esc:cancel";
     } else if (focus == Focus.SEARCH) {
-      hints = " Type to filter  Enter:confirm  Esc:cancel";
+      String target = searchOriginFocus == Focus.DETAIL ? "detail" : "results";
+      hints = " Type to filter (" + target + ")  Ctrl+L:both  Enter:confirm  Esc:cancel";
     } else if (focus == Focus.DETAIL) {
       boolean hasCursor = detailLineTypeRefs != null && detailCursorLine >= 0;
       String drillHint = "";
@@ -1163,6 +1189,9 @@ public final class TuiShell implements AutoCloseable {
               + cursorHint
               + "\u2190\u2192:tabs  "
               + drillHint
+              + "/:search  "
+              + "S-\u2191\u2193:history  "
+              + "S-Tab:focus  "
               + altMod
               + "+r:results  "
               + altMod
@@ -1175,7 +1204,8 @@ public final class TuiShell implements AutoCloseable {
               : "\u2191\u2193\u2190\u2192:scroll  ";
       String sortHint = "";
       if (activeTab.tableData != null && activeTab.tableHeaders != null) {
-        sortHint = activeTab.sortColumn >= 0 ? "<>:sort col  R:reverse  " : "<>:sort col  ";
+        sortHint =
+            activeTab.sortColumn >= 0 ? "<>:sort col  " + altMod + "+r:reverse  " : "<>:sort col  ";
       }
       String filterHint =
           activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
@@ -1187,6 +1217,8 @@ public final class TuiShell implements AutoCloseable {
               + filterHint
               + "Ctrl+P:pin  "
               + detailJump
+              + "S-\u2191\u2193:history  "
+              + "S-Tab:focus  "
               + altMod
               + "+c:cmd  Esc:input";
     } else {
@@ -1196,8 +1228,10 @@ public final class TuiShell implements AutoCloseable {
               : "Tab:complete  ";
       hints =
           " Enter:run  "
-              + "\u2191\u2193:history  "
+              + "S-\u2191\u2193:history  "
+              + "Ctrl+R:search history  "
               + completionHint
+              + "S-Tab:focus  "
               + altMod
               + "+r:results  "
               + "Ctrl+C:exit";
@@ -1228,13 +1262,7 @@ public final class TuiShell implements AutoCloseable {
           inputState.setText(historySearchSavedInput);
           focus = Focus.INPUT;
         } else if (focus == Focus.SEARCH) {
-          // Cancel search
-          ResultTab tab = tabs.get(activeTabIndex);
-          tab.searchQuery = "";
-          tab.filteredIndices = null;
-          tab.filteredMaxLineWidth = 0;
-          tab.scrollOffset = 0;
-          focus = Focus.RESULTS;
+          cancelSearch();
         } else if (focus == Focus.DETAIL) {
           focus = Focus.RESULTS;
         } else if (focus == Focus.RESULTS) {
@@ -1259,23 +1287,29 @@ public final class TuiShell implements AutoCloseable {
       case 27: // ESC sequence or plain Escape
         handleEscapeSequence();
         return;
-      case 18: // Ctrl+R — history search
-        if (focus == Focus.INPUT) {
-          historySearchSavedInput = inputState.text();
-          historySearchQuery = "";
-          historySearchIndex = commandHistory.size();
-          focus = Focus.HISTORY_SEARCH;
-        } else if (focus == Focus.HISTORY_SEARCH) {
+      case 18: // Ctrl+R — history search from any focus
+        if (focus == Focus.HISTORY_SEARCH) {
           // Advance to next older match
           int match = findHistoryMatch(historySearchQuery, historySearchIndex - 1);
           if (match >= 0) {
             historySearchIndex = match;
             inputState.setText(commandHistory.get(match));
           }
+        } else {
+          if (focus != Focus.INPUT) {
+            focus = Focus.INPUT;
+          }
+          historySearchSavedInput = inputState.text();
+          historySearchQuery = "";
+          historySearchIndex = commandHistory.size();
+          focus = Focus.HISTORY_SEARCH;
         }
         return;
+      case 6: // Ctrl+F — enter search mode
       case 31: // Ctrl+/ — enter search mode
-        enterSearchMode();
+        if (focus != Focus.SEARCH) {
+          enterSearchMode();
+        }
         return;
       default:
         break;
@@ -1288,9 +1322,13 @@ public final class TuiShell implements AutoCloseable {
       return;
     }
 
-    // macOS Opt+R/D/C: quick focus switch
+    // macOS Opt+R/D/C: quick focus switch (Opt+R reverses sort when in RESULTS)
     if (key == MAC_OPT_R) {
-      focus = Focus.RESULTS;
+      if (focus == Focus.RESULTS) {
+        reverseSortIfActive();
+      } else {
+        focus = Focus.RESULTS;
+      }
       return;
     }
     if (key == MAC_OPT_D && !detailTabNames.isEmpty()) {
@@ -1318,9 +1356,9 @@ public final class TuiShell implements AutoCloseable {
 
   private void handleResultsKey(int key) {
     switch (key) {
-      case 13: // Enter — switch back to input
+      case 13: // Enter — switch to detail if available, otherwise input
       case 10:
-        focus = Focus.INPUT;
+        focus = detailTabNames.isEmpty() ? Focus.INPUT : Focus.DETAIL;
         break;
       case '/': // Enter search mode (vim convention)
         enterSearchMode();
@@ -1344,15 +1382,6 @@ public final class TuiShell implements AutoCloseable {
           }
         }
         break;
-      case 'R': // Reverse sort order (like top)
-        {
-          ResultTab rt = tabs.get(activeTabIndex);
-          if (rt.sortColumn >= 0 && rt.tableData != null) {
-            rt.sortAscending = !rt.sortAscending;
-            applySortAndRerender(rt);
-          }
-        }
-        break;
       default:
         if (key >= 32 && key < 127) {
           // Printable char — switch to input and insert it
@@ -1366,6 +1395,9 @@ public final class TuiShell implements AutoCloseable {
 
   private void handleDetailKey(int key) {
     switch (key) {
+      case '/': // Enter search mode for detail
+        enterSearchMode();
+        break;
       case 13: // Enter — drill-down in metadata mode, or switch to input
       case 10:
         if (detailLineTypeRefs != null
@@ -1380,6 +1412,11 @@ public final class TuiShell implements AutoCloseable {
         focus = Focus.INPUT;
         break;
       default:
+        if (key >= 32 && key < 127) {
+          focus = Focus.INPUT;
+          inputState.insert((char) key);
+          historyIndex = -1;
+        }
         break;
     }
   }
@@ -1404,40 +1441,73 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void enterSearchMode() {
+    searchOriginFocus = (focus == Focus.DETAIL) ? Focus.DETAIL : Focus.RESULTS;
     focus = Focus.SEARCH;
     ResultTab tab = tabs.get(activeTabIndex);
-    searchInputState.setText(tab.searchQuery);
+    if (searchOriginFocus == Focus.DETAIL) {
+      searchInputState.setText(tab.detailSearchQuery);
+    } else {
+      searchInputState.setText(tab.searchQuery);
+    }
   }
 
   private void handleSearchKey(int key) {
     ResultTab tab = tabs.get(activeTabIndex);
     switch (key) {
+      case 12: // Ctrl+L — apply search to both views
+        {
+          String query = searchInputState.text();
+          applySearchFilter(tab, query);
+          tab.detailSearchQuery = query;
+          focus = searchOriginFocus;
+        }
+        break;
       case 13: // Enter — confirm filter
       case 10:
-        tab.searchQuery = searchInputState.text();
-        focus = Focus.RESULTS;
+        if (searchOriginFocus == Focus.DETAIL) {
+          tab.detailSearchQuery = searchInputState.text();
+        } else {
+          applySearchFilter(tab, searchInputState.text());
+        }
+        focus = searchOriginFocus;
         break;
       case 127: // Backspace
       case 8:
         if (searchInputState.text().isEmpty()) {
-          // Backspace on empty search — cancel
-          tab.searchQuery = "";
-          tab.filteredIndices = null;
-          tab.filteredMaxLineWidth = 0;
-          tab.scrollOffset = 0;
-          focus = Focus.RESULTS;
+          cancelSearch();
         } else {
           searchInputState.deleteBackward();
-          applySearchFilter(tab, searchInputState.text());
+          applyLiveSearchFilter(tab, searchInputState.text());
         }
         break;
       default:
         if (key >= 32 && key < 127) {
           searchInputState.insert((char) key);
-          applySearchFilter(tab, searchInputState.text());
+          applyLiveSearchFilter(tab, searchInputState.text());
         }
         break;
     }
+  }
+
+  private void applyLiveSearchFilter(ResultTab tab, String query) {
+    if (searchOriginFocus == Focus.DETAIL) {
+      tab.detailSearchQuery = query;
+    } else {
+      applySearchFilter(tab, query);
+    }
+  }
+
+  private void cancelSearch() {
+    ResultTab tab = tabs.get(activeTabIndex);
+    if (searchOriginFocus == Focus.DETAIL) {
+      tab.detailSearchQuery = "";
+    } else {
+      tab.searchQuery = "";
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.scrollOffset = 0;
+    }
+    focus = searchOriginFocus;
   }
 
   private void handleHistorySearchKey(int key) {
@@ -1555,13 +1625,7 @@ public final class TuiShell implements AutoCloseable {
         inputState.setText(historySearchSavedInput);
         focus = Focus.INPUT;
       } else if (focus == Focus.SEARCH) {
-        // Cancel search — clear filter
-        ResultTab tab = tabs.get(activeTabIndex);
-        tab.searchQuery = "";
-        tab.filteredIndices = null;
-        tab.filteredMaxLineWidth = 0;
-        tab.scrollOffset = 0;
-        focus = Focus.RESULTS;
+        cancelSearch();
       } else if (focus == Focus.DETAIL) {
         focus = Focus.RESULTS;
       } else if (focus == Focus.RESULTS) {
@@ -1588,9 +1652,13 @@ public final class TuiShell implements AutoCloseable {
       activeTabIndex = (activeTabIndex + 1) % tabs.size();
       return;
     }
-    // ESC r/d/c — Alt+R/D/C on Linux — quick focus switch
+    // ESC r/d/c — Alt+R/D/C on Linux — quick focus switch (Alt+R reverses sort in RESULTS)
     if (next == 'r') {
-      focus = Focus.RESULTS;
+      if (focus == Focus.RESULTS) {
+        reverseSortIfActive();
+      } else {
+        focus = Focus.RESULTS;
+      }
       return;
     }
     if (next == 'd' && !detailTabNames.isEmpty()) {
@@ -1649,15 +1717,31 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void dispatchArrow(int direction, int modifier) {
-    // Ctrl+arrows: Up/Down → focus switch, Left/Right → tab switch
-    if (modifier == MOD_CTRL || modifier == MOD_ALT) {
-      if (direction == 'A') {
-        focus = Focus.RESULTS;
-      } else if (direction == 'B') {
-        focus = Focus.INPUT;
-      } else if (direction == 'D' && tabs.size() > 1) {
+    // Shift+Up/Down: navigate command history from any focus
+    if (modifier == MOD_SHIFT && (direction == 'A' || direction == 'B')) {
+      focus = Focus.INPUT;
+      navigateHistory(direction == 'A' ? -1 : 1);
+      return;
+    }
+
+    // Ctrl+Up/Down: fast scroll results (page at a time)
+    if (modifier == MOD_CTRL && (direction == 'A' || direction == 'B')) {
+      if (focus == Focus.DETAIL) {
+        int delta = direction == 'A' ? -detailAreaHeight : detailAreaHeight;
+        setDetailScrollOffset(Math.max(0, getDetailScrollOffset() + delta));
+      } else {
+        scrollResults(direction == 'A' ? -resultsAreaHeight : resultsAreaHeight);
+      }
+      return;
+    }
+
+    // Ctrl/Alt+Left/Right: tab switch
+    if ((modifier == MOD_CTRL || modifier == MOD_ALT)
+        && (direction == 'C' || direction == 'D')
+        && tabs.size() > 1) {
+      if (direction == 'D') {
         activeTabIndex = (activeTabIndex - 1 + tabs.size()) % tabs.size();
-      } else if (direction == 'C' && tabs.size() > 1) {
+      } else {
         activeTabIndex = (activeTabIndex + 1) % tabs.size();
       }
       return;
@@ -1698,22 +1782,21 @@ public final class TuiShell implements AutoCloseable {
     } else if (focus == Focus.RESULTS) {
       ResultTab rt = tabs.get(activeTabIndex);
       boolean hasTable = rt.tableData != null && rt.selectedRow >= 0;
-      // Results pane: arrows scroll, Shift+arrows scroll faster
-      boolean fast = (modifier == MOD_SHIFT);
-      int hStep = fast ? 20 : 4;
+      // Results pane: arrows scroll/select rows
+      int hStep = (modifier == MOD_SHIFT) ? 20 : 4;
       switch (direction) {
         case 'A':
-          if (hasTable && !fast) {
+          if (hasTable) {
             moveSelectedRow(rt, -1);
           } else {
-            scrollResults(fast ? -resultsAreaHeight : -1);
+            scrollResults(-1);
           }
           break;
         case 'B':
-          if (hasTable && !fast) {
+          if (hasTable) {
             moveSelectedRow(rt, 1);
           } else {
-            scrollResults(fast ? resultsAreaHeight : 1);
+            scrollResults(1);
           }
           break;
         case 'C':
@@ -1732,15 +1815,9 @@ public final class TuiShell implements AutoCloseable {
           break;
       }
     } else {
-      // Input pane: unmodified → cursor/history; Shift → scroll results
+      // Input pane: unmodified → cursor/history; Shift+Left/Right → scroll results
       if (modifier == MOD_SHIFT) {
         switch (direction) {
-          case 'A':
-            scrollResults(-1);
-            break;
-          case 'B':
-            scrollResults(1);
-            break;
           case 'C':
             scrollHorizontal(10);
             break;
@@ -1827,6 +1904,7 @@ public final class TuiShell implements AutoCloseable {
       tab.hScrollOffset = 0;
       tab.maxLineWidth = 0;
       tab.searchQuery = "";
+      tab.detailSearchQuery = "";
       tab.filteredIndices = null;
       tab.filteredMaxLineWidth = 0;
       tab.tableData = null;
@@ -1919,6 +1997,7 @@ public final class TuiShell implements AutoCloseable {
     activeTab.hScrollOffset = 0;
     activeTab.maxLineWidth = 0;
     activeTab.searchQuery = "";
+    activeTab.detailSearchQuery = "";
     activeTab.filteredIndices = null;
     activeTab.filteredMaxLineWidth = 0;
     activeTab.tableData = null;
@@ -1978,6 +2057,8 @@ public final class TuiShell implements AutoCloseable {
     } else {
       activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - resultsAreaHeight);
     }
+
+    focus = Focus.RESULTS;
   }
 
   // ---- history ----
@@ -2052,6 +2133,14 @@ public final class TuiShell implements AutoCloseable {
 
   // ---- sorting ----
 
+  private void reverseSortIfActive() {
+    ResultTab rt = tabs.get(activeTabIndex);
+    if (rt.sortColumn >= 0 && rt.tableData != null) {
+      rt.sortAscending = !rt.sortAscending;
+      applySortAndRerender(rt);
+    }
+  }
+
   private void applySortAndRerender(ResultTab tab) {
     if (tab.tableData == null || tab.tableHeaders == null || tab.sortColumn < 0) return;
     String sortKey = tab.tableHeaders.get(tab.sortColumn);
@@ -2119,6 +2208,7 @@ public final class TuiShell implements AutoCloseable {
     tab.scrollOffset = 0;
     tab.filteredIndices = null;
     tab.searchQuery = "";
+    tab.detailSearchQuery = "";
     buildDetailTabs(tab);
   }
 
@@ -2172,17 +2262,51 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void moveSelectedRow(ResultTab tab, int delta) {
-    int newRow = Math.max(0, Math.min(tab.tableData.size() - 1, tab.selectedRow + delta));
+    int newRow;
+    if (tab.filteredIndices != null && tab.dataStartLine >= 0) {
+      // Only navigate to rows visible in the filter
+      newRow = findFilteredRow(tab, tab.selectedRow, delta);
+    } else {
+      newRow = Math.max(0, Math.min(tab.tableData.size() - 1, tab.selectedRow + delta));
+    }
     if (newRow == tab.selectedRow) return;
     tab.selectedRow = newRow;
     buildDetailTabs(tab);
 
-    // Auto-scroll results to keep selected row visible (scroll offset is relative to dataStartLine)
-    if (newRow < tab.scrollOffset) {
-      tab.scrollOffset = newRow;
-    } else if (newRow >= tab.scrollOffset + resultsAreaHeight) {
-      tab.scrollOffset = newRow - resultsAreaHeight + 1;
+    // Auto-scroll results to keep selected row visible
+    if (tab.filteredIndices != null) {
+      // In filtered mode, find the position of this row's line in filteredIndices
+      int lineIdx = tab.dataStartLine + newRow;
+      int filteredPos = tab.filteredIndices.indexOf(lineIdx);
+      if (filteredPos >= 0) {
+        if (filteredPos < tab.scrollOffset) {
+          tab.scrollOffset = filteredPos;
+        } else if (filteredPos >= tab.scrollOffset + resultsAreaHeight) {
+          tab.scrollOffset = filteredPos - resultsAreaHeight + 1;
+        }
+      }
+    } else {
+      if (newRow < tab.scrollOffset) {
+        tab.scrollOffset = newRow;
+      } else if (newRow >= tab.scrollOffset + resultsAreaHeight) {
+        tab.scrollOffset = newRow - resultsAreaHeight + 1;
+      }
     }
+  }
+
+  /** Find the next/previous table row whose line is in the filtered indices. */
+  private static int findFilteredRow(ResultTab tab, int currentRow, int delta) {
+    int direction = delta > 0 ? 1 : -1;
+    int candidate = currentRow + direction;
+    int maxRow = tab.tableData.size() - 1;
+    while (candidate >= 0 && candidate <= maxRow) {
+      int lineIdx = tab.dataStartLine + candidate;
+      if (tab.filteredIndices.contains(lineIdx)) {
+        return candidate;
+      }
+      candidate += direction;
+    }
+    return currentRow; // no filtered row found in that direction
   }
 
   private void moveDetailCursor(int delta) {
@@ -2193,14 +2317,21 @@ public final class TuiShell implements AutoCloseable {
     int scrollOffset = getDetailScrollOffset();
     if (detailCursorLine < scrollOffset) {
       setDetailScrollOffset(detailCursorLine);
-    } else if (detailCursorLine >= scrollOffset + resultsAreaHeight) {
-      setDetailScrollOffset(detailCursorLine - resultsAreaHeight + 1);
+    } else if (detailCursorLine >= scrollOffset + detailAreaHeight) {
+      setDetailScrollOffset(detailCursorLine - detailAreaHeight + 1);
     }
   }
 
   private void navigateToType(String typeName) {
     ResultTab tab = tabs.get(activeTabIndex);
     if (tab.tableData == null) return;
+    // Clear both filters so the target row is visible
+    if (tab.filteredIndices != null) {
+      tab.searchQuery = "";
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+    }
+    tab.detailSearchQuery = "";
     for (int i = 0; i < tab.tableData.size(); i++) {
       Object name = tab.tableData.get(i).get("name");
       if (name != null && typeName.equals(name.toString())) {
