@@ -59,7 +59,7 @@ jobs:
         run: |
           java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8 :parser-codegen:compileJava :parser-codegen:test8
           else
             ./gradlew --stacktrace --no-daemon build
           fi

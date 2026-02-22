@@ -4,7 +4,7 @@ plugins {
 
 evaluationDependsOn ':parser-core'
 
-def libraryName="jafar-parser"
+def libraryName="jafar-parser-codegen"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
 repositories {

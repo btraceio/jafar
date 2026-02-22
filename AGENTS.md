@@ -64,7 +64,7 @@ Key architectural components:
 ./gradlew test --info
 
 # Run a specific test class
-./gradlew :parser-core:test --tests "io.jafar.parser.TypedJafarParserTest"
+./gradlew :parser-codegen:test --tests "io.jafar.parser.TypedJafarParserTest"
 
 # Run demo application
 java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
