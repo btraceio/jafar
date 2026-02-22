@@ -27,6 +27,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -102,6 +104,16 @@ public final class ShellCompleter implements Completer {
 
     // Handle empty line or first word - use framework
     if (wordIndex == 0) {
+      String word = line.word().toLowerCase(Locale.ROOT);
+      // Handle events/... or constants/... typed directly as command
+      if (word.startsWith("events/")) {
+        completeEventsAlias(line, candidates);
+        return;
+      }
+      if (word.startsWith("constants/")) {
+        completeConstantsAlias(line, candidates);
+        return;
+      }
       completeWithFramework(line, candidates);
       if (DEBUG) {
         System.err.println("[COMPLETION DEBUG] Generated " + candidates.size() + " candidates");
@@ -110,6 +122,18 @@ public final class ShellCompleter implements Completer {
     }
 
     String cmd = words.get(0).toLowerCase(Locale.ROOT);
+
+    // For events alias - route through framework like 'show'
+    if ("events".equals(cmd) || cmd.startsWith("events/")) {
+      completeEventsAlias(line, candidates);
+      return;
+    }
+
+    // For constants alias with path - route through framework
+    if (cmd.startsWith("constants/")) {
+      completeConstantsAlias(line, candidates);
+      return;
+    }
 
     // For show command, use the new framework
     if ("show".equals(cmd)) {
@@ -211,7 +235,7 @@ public final class ShellCompleter implements Completer {
       case "metadata" -> completeMetadata(line, candidates, words, wordIndex);
       case "use", "session" -> completeUse(candidates);
       case "close" -> completeClose(candidates);
-      case "cp" -> completeCp(line, candidates);
+      case "cp", "constants" -> completeCp(line, candidates);
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);
       case "unset", "invalidate" -> completeVariableName(line, candidates);
       case "vars" -> completeVarsCommand(line, candidates, words, wordIndex);
@@ -230,6 +254,8 @@ public final class ShellCompleter implements Completer {
 
   private void completeHelp(List<Candidate> candidates) {
     candidates.add(new Candidate("show"));
+    candidates.add(new Candidate("events"));
+    candidates.add(new Candidate("constants"));
     candidates.add(new Candidate("metadata"));
     candidates.add(new Candidate("chunks"));
     candidates.add(new Candidate("chunk"));
@@ -679,6 +705,82 @@ public final class ShellCompleter implements Completer {
       // After "record start " - provide filesystem completion for the path parameter
       completeFiles(reader, line, candidates);
     }
+  }
+
+  /** Complete events alias by converting to synthetic 'show events ...' line. */
+  private void completeEventsAlias(ParsedLine line, List<Candidate> candidates) {
+    String syntheticLine = "show " + line.line();
+    int syntheticCursor = line.cursor() + 5;
+    ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
+    completeWithFramework(synthetic, candidates);
+  }
+
+  /** Complete constants alias by converting to synthetic 'show cp ...' line. */
+  private void completeConstantsAlias(ParsedLine line, List<Candidate> candidates) {
+    String original = line.line();
+    int idx = original.toLowerCase(Locale.ROOT).indexOf("constants");
+    if (idx < 0) return;
+    String mapped =
+        original.substring(0, idx) + "cp" + original.substring(idx + "constants".length());
+    String syntheticLine = "show " + mapped;
+    int syntheticCursor =
+        line.cursor() <= idx ? line.cursor() + 5 : line.cursor() + 5 - 7; // -7 for constants→cp
+    ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
+
+    List<Candidate> rawCandidates = new ArrayList<>();
+    completeWithFramework(synthetic, rawCandidates);
+
+    // Post-process: replace cp/ with constants/ in candidate values
+    for (Candidate c : rawCandidates) {
+      String value = c.value();
+      if (value.startsWith("cp/")) {
+        value = "constants/" + value.substring(3);
+      }
+      candidates.add(
+          new Candidate(value, c.displ(), c.group(), c.descr(), c.suffix(), c.key(), c.complete()));
+    }
+  }
+
+  /** Create a synthetic ParsedLine for alias completion. */
+  private static ParsedLine createAliasLine(String fullLine, int cursor) {
+    return new ParsedLine() {
+      @Override
+      public String line() {
+        return fullLine;
+      }
+
+      @Override
+      public int cursor() {
+        return cursor;
+      }
+
+      @Override
+      public String word() {
+        int start = cursor;
+        while (start > 0 && !Character.isWhitespace(fullLine.charAt(start - 1))) {
+          start--;
+        }
+        return fullLine.substring(start, cursor);
+      }
+
+      @Override
+      public int wordCursor() {
+        return word().length();
+      }
+
+      @Override
+      public int wordIndex() {
+        return (int)
+            fullLine.substring(0, cursor).chars().filter(Character::isWhitespace).count();
+      }
+
+      @Override
+      public List<String> words() {
+        List<String> w = new ArrayList<>(Arrays.asList(fullLine.split("\\s+")));
+        if (fullLine.endsWith(" ")) w.add("");
+        return w;
+      }
+    };
   }
 
   /** File path completion — delegates to JLine when available, otherwise uses basic listing. */

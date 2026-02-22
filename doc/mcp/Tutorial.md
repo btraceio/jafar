@@ -253,7 +253,7 @@ events/<eventType>[filters] | pipeline_operator
 - events/<type> - Access event data (e.g., events/jdk.ExecutionSample)
 - metadata/<type> - Access type metadata
 - chunks - Access chunk information
-- cp/<type> - Access constant pool entries
+- constants/<type> (or cp/<type>) - Access constant pool entries
 
 ## Quick Examples
 events/jdk.ExecutionSample | count()

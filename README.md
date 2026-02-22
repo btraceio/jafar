@@ -469,11 +469,11 @@ jbang app install jfr-shell@btraceio
 # Open and analyze a recording
 jfr-shell recording.jfr
 
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
-jfr> show events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> events/jdk.FileRead | top(10, by=bytes)
 
 # Event decoration: correlate samples with lock waits
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 ```
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.

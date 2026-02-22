@@ -611,7 +611,7 @@ public final class TuiShell implements AutoCloseable {
       renderCpTypes(frame, hSplit.get(0));
 
       String entriesTitle =
-          eventBrowserMode ? getSelectedCpTypeName() : "CP type: " + getSelectedCpTypeName();
+          eventBrowserMode ? getSelectedCpTypeName() : getSelectedCpTypeName();
       Block.Builder cpEntriesBuilder =
           Block.builder()
               .title(Title.from(entriesTitle))
@@ -795,7 +795,7 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void renderCpTypes(Frame frame, Rect area) {
-    String sidebarTitle = eventBrowserMode ? "Event Types" : "CP Types";
+    String sidebarTitle = eventBrowserMode ? "Event Types" : "Constant Types";
     Block.Builder blockBuilder =
         Block.builder()
             .title(Title.from(sidebarTitle))
@@ -1445,10 +1445,12 @@ public final class TuiShell implements AutoCloseable {
         drillHint = "Enter:drill-down  ";
       }
       String cursorHint = hasCursor ? "\u2191\u2193:select  " : "\u2191\u2193:scroll  ";
+      String resultTabHint = tabs.size() > 1 ? "{}:pins  " : "";
       hints =
           " "
               + cursorHint
               + "[]:tabs  "
+              + resultTabHint
               + drillHint
               + "/:search  "
               + "S-\u2191\u2193:history  "
@@ -1459,7 +1461,8 @@ public final class TuiShell implements AutoCloseable {
               + "+c:cmd  Esc:back";
     } else if (focus == Focus.RESULTS && cpBrowserMode) {
       if (cpTypesFocused) {
-        hints = " \u2191\u2193:select  Enter/\u2192:view entries  Esc:close";
+        String pinsHint = tabs.size() > 1 ? "  {}:pins" : "";
+        hints = " \u2191\u2193:select  Enter/\u2192:view entries  Esc:close" + pinsHint;
       } else {
         ResultTab activeTab = tabs.get(activeTabIndex);
         String rowHint =
@@ -1477,7 +1480,8 @@ public final class TuiShell implements AutoCloseable {
             activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
         String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
         String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
-        String resultTabHint = tabs.size() > 1 ? "{}:tabs  " : "";
+        String resultTabHint = tabs.size() > 1 ? "{}:pins  " : "";
+        String pinHint = activeTab.pinned ? "Ctrl+P:unpin  " : "Ctrl+P:pin  ";
         hints =
             " "
                 + rowHint
@@ -1486,7 +1490,7 @@ public final class TuiShell implements AutoCloseable {
                 + filterHint
                 + tabSwitchHint
                 + resultTabHint
-                + "Ctrl+P:pin  "
+                + pinHint
                 + detailJump
                 + "Esc:types";
       }
@@ -1505,7 +1509,8 @@ public final class TuiShell implements AutoCloseable {
           activeTab.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
       String detailJump = detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
       String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
-      String resultTabHint = tabs.size() > 1 ? "{}:tabs  " : "";
+      String resultTabHint = tabs.size() > 1 ? "{}:pins  " : "";
+      String pinHint = activeTab.pinned ? "Ctrl+P:unpin  " : "Ctrl+P:pin  ";
       hints =
           " "
               + rowHint
@@ -1513,7 +1518,7 @@ public final class TuiShell implements AutoCloseable {
               + filterHint
               + tabSwitchHint
               + resultTabHint
-              + "Ctrl+P:pin  "
+              + pinHint
               + detailJump
               + "S-\u2191\u2193:history  "
               + "S-Tab:focus  "
@@ -1669,6 +1674,18 @@ public final class TuiShell implements AutoCloseable {
       return;
     }
 
+    // {}: switch result tabs — works from any non-typing focus
+    if (focus != Focus.INPUT && focus != Focus.SEARCH && focus != Focus.HISTORY_SEARCH) {
+      if (key == '{' && tabs.size() > 1) {
+        switchTab((activeTabIndex - 1 + tabs.size()) % tabs.size());
+        return;
+      }
+      if (key == '}' && tabs.size() > 1) {
+        switchTab((activeTabIndex + 1) % tabs.size());
+        return;
+      }
+    }
+
     // Focus-specific keys
     if (focus == Focus.HISTORY_SEARCH) {
       handleHistorySearchKey(key);
@@ -1726,16 +1743,6 @@ public final class TuiShell implements AutoCloseable {
       case ']':
         if (!detailTabNames.isEmpty()) {
           activeDetailTabIndex = (activeDetailTabIndex + 1) % detailTabNames.size();
-        }
-        break;
-      case '{':
-        if (tabs.size() > 1) {
-          switchTab((activeTabIndex - 1 + tabs.size()) % tabs.size());
-        }
-        break;
-      case '}':
-        if (tabs.size() > 1) {
-          switchTab((activeTabIndex + 1) % tabs.size());
         }
         break;
       default:
@@ -2356,9 +2363,9 @@ public final class TuiShell implements AutoCloseable {
   private static boolean isCpSummaryCommand(String command) {
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return false;
-    // Accept both "cp ..." and "show cp ..."
+    // Accept "cp ...", "constants ...", and "show cp ..."
     int cpIndex;
-    if ("cp".equalsIgnoreCase(parts[0])) {
+    if ("cp".equalsIgnoreCase(parts[0]) || "constants".equalsIgnoreCase(parts[0])) {
       cpIndex = 0;
     } else if ("show".equalsIgnoreCase(parts[0])
         && parts.length >= 2

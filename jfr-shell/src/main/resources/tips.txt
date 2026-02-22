@@ -19,7 +19,7 @@ Type any character while in results view to jump to input and start typing
 
 # ── Queries & JfrPath ──
 Use --limit N to cap output rows and speed up exploration
-Use 'show events/<type> | count()' to quickly count events of a type
+Use 'events/<type> | count()' to quickly count events of a type
 sketch() gives you min/max/avg/stddev + p50/p90/p99 in one call
 stats() computes min, max, avg, stddev, and count for a numeric field
 quantiles(0.5, 0.9, 0.99) computes percentile values for numeric fields
@@ -68,7 +68,7 @@ metadata --events-only shows only event types; --non-events-only for the rest
 Use 'chunks' to list all chunks in the recording
 chunks --summary shows aggregate stats: count, total/avg/min/max size
 chunk <index> show displays detailed info about a specific chunk
-Use 'cp' to browse constant pool entries; 'cp <type>' for a specific type
+Use 'constants' to browse constant pool entries; 'constants <type>' for a specific type
 Use --tree --depth N to explore nested metadata structures
 Use 'info' to see recording path, event count, uptime, and backend info
 Use 'backend list' to see all available JFR parsing backends
@@ -112,4 +112,4 @@ Use --continue-on-error when running scripts to skip failing commands
 # ── Query syntax ──
 Field paths use / or . as separators: thread/name and thread.name are equivalent
 Query multiple event types at once: events/(jdk.FileRead|jdk.FileWrite)
-Pipeline stages are chained with |: show events/Type | select(f) | top(10)
+Pipeline stages are chained with |: events/Type | select(f) | top(10)

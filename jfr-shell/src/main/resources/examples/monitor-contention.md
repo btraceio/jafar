@@ -9,7 +9,7 @@ You want to understand which locks are causing thread contention in your applica
 ## Query
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
 ```
 
 ## Breakdown
@@ -24,28 +24,28 @@ show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=mon
 ### Count samples during lock waits by monitor class
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | groupBy($decorator.monitorClass)
 ```
 
 ### Top monitors by contended sample count
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | groupBy($decorator.monitorClass, agg=count) | top(10, by=count)
 ```
 
 ### Samples with deep stacks during lock waits
 
 ```bash
-show events/jdk.ExecutionSample[len(stackTrace/frames)>20]
+events/jdk.ExecutionSample[len(stackTrace/frames)>20]
   | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
 ```
 
 ### Average wait duration per monitor
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
   | groupBy($decorator.monitorClass, agg=avg, value=$decorator.duration)
 ```
 

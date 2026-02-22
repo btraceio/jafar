@@ -15,7 +15,7 @@ You have custom JFR events like:
 ## Basic Query
 
 ```bash
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=requestId,endpoint,userId)
@@ -33,7 +33,7 @@ show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 ### Group execution samples by endpoint
 
 ```bash
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=endpoint)
@@ -43,7 +43,7 @@ show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 ### Top endpoints by CPU usage (sample count)
 
 ```bash
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=endpoint)
@@ -53,7 +53,7 @@ show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 ### File I/O by endpoint
 
 ```bash
-show events/jdk.FileRead | decorateByKey(RequestStart,
+events/jdk.FileRead | decorateByKey(RequestStart,
                                           key=eventThread/javaThreadId,
                                           decoratorKey=thread/javaThreadId,
                                           fields=endpoint)
@@ -63,7 +63,7 @@ show events/jdk.FileRead | decorateByKey(RequestStart,
 ### Allocations by request
 
 ```bash
-show events/jdk.ObjectAllocationSample | decorateByKey(RequestStart,
+events/jdk.ObjectAllocationSample | decorateByKey(RequestStart,
                                                         key=eventThread/javaThreadId,
                                                         decoratorKey=thread/javaThreadId,
                                                         fields=requestId,endpoint)
@@ -73,7 +73,7 @@ show events/jdk.ObjectAllocationSample | decorateByKey(RequestStart,
 ### Network activity by user
 
 ```bash
-show events/jdk.SocketWrite | decorateByKey(RequestStart,
+events/jdk.SocketWrite | decorateByKey(RequestStart,
                                              key=eventThread/javaThreadId,
                                              decoratorKey=thread/javaThreadId,
                                              fields=userId,endpoint)
@@ -86,7 +86,7 @@ You can sequentially decorate with different event types (note: requires multipl
 
 ### Step 1: Decorate with request context
 ```bash
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=requestId,endpoint)
@@ -95,7 +95,7 @@ show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 ### Step 2: Further analyze by endpoint
 ```bash
 # Use output from step 1 to drill down into specific endpoint
-show events/jdk.ExecutionSample[stackTrace/frames[matches(method/name/string, ".*Database.*")]]
+events/jdk.ExecutionSample[stackTrace/frames[matches(method/name/string, ".*Database.*")]]
   | decorateByKey(RequestStart,
                   key=sampledThread/javaThreadId,
                   decoratorKey=thread/javaThreadId,

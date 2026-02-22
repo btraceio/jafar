@@ -331,7 +331,7 @@ CompExpr  := ValueExpr Op Literal
 
 ```mermaid
 flowchart TB
-    INPUT[/"show events/jdk.FileRead[bytes>1000] | top(10, by=bytes)"/]
+    INPUT[/"events/jdk.FileRead[bytes>1000] | top(10, by=bytes)"/]
 
     subgraph "Parsing Phase"
         TOK[Tokenize]
@@ -458,7 +458,7 @@ sequenceDiagram
     participant ES as EventSource
     participant DM as DecoratedEventMap
 
-    Note over Q: show events/jdk.ExecutionSample<br/>| decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+    Note over Q: events/jdk.ExecutionSample<br/>| decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 
     Q->>E: evaluate(query)
 

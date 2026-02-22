@@ -18,6 +18,8 @@ public final class CommandCompleter implements ContextCompleter {
     "session",
     "close",
     "info",
+    "events", // Alias for 'show events'
+    "constants", // Alias for 'cp'
     "show",
     "metadata",
     "chunks",

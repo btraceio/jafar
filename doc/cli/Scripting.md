@@ -37,10 +37,10 @@ Scripts are line-based text files with a simple syntax:
 open /path/to/recording.jfr
 
 # JfrPath queries
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # Multi-word commands
-show events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytes>=1000] --limit 10
 
 # Close the session
 close
@@ -73,7 +73,7 @@ open ${1:?recording file required}
 set threshold = ${2:?threshold value required}
 
 # All parameters space-separated
-show events/$1 | count()
+events/$1 | count()
 # or using all args
 echo "Processing: $@"
 ```
@@ -129,10 +129,10 @@ set min_bytes = ${2:-1024}
 set top_n = ${3:-20}
 
 # Show large file reads
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
 
 # Thread analysis
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 close
 ```
@@ -231,7 +231,7 @@ Variables are accessed using `${varname}` syntax:
 echo "Threshold is: ${threshold}"
 
 # In JfrPath queries
-show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
 
 # Access query result fields
 set count = events/jdk.FileRead | count()
@@ -367,14 +367,14 @@ echo "Threshold: ${threshold} bytes"
 echo "Events found: ${readCount.count}"
 
 # Show results if any found
-show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
 
 # Thread analysis with caching
 set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 echo ""
 echo "=== Top 5 Threads by Samples ==="
 echo "Thread count: ${threadStats.size}"
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 close
 ```
@@ -498,7 +498,7 @@ if ${fileReads.count} > 0
     echo "Light file I/O activity"
   endif
 
-  show events/jdk.FileRead | top(10, by=bytes)
+  events/jdk.FileRead | top(10, by=bytes)
 else
   echo "No file read events in this recording"
 endif
@@ -517,14 +517,14 @@ set analysis = ${2:-cpu}
 
 if ${analysis} == "cpu"
   echo "=== CPU Analysis ==="
-  show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+  events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 elif ${analysis} == "io" or ${analysis} == "file"
   echo "=== I/O Analysis ==="
-  show events/jdk.FileRead | sum(bytes)
-  show events/jdk.FileWrite | sum(bytes)
+  events/jdk.FileRead | sum(bytes)
+  events/jdk.FileWrite | sum(bytes)
 elif ${analysis} == "gc"
   echo "=== GC Analysis ==="
-  show events/jdk.GarbageCollection | stats(duration)
+  events/jdk.GarbageCollection | stats(duration)
 else
   echo "Unknown analysis type: ${analysis}"
   echo "Supported: cpu, io, file, gc"
@@ -546,7 +546,7 @@ endif
 set results = events/jdk.FileRead[bytes>=${threshold}]
 if !empty(results)
   echo "Found ${results.size} events exceeding threshold"
-  show events/jdk.FileRead[bytes>=${threshold}] --limit 20
+  events/jdk.FileRead[bytes>=${threshold}] --limit 20
 else
   echo "No events exceed the threshold of ${threshold} bytes"
 endif
@@ -649,7 +649,7 @@ jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
 # From stdin
 jfr-shell script - /tmp/app.jfr <<'EOF'
 open $1
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 close
 EOF
 
@@ -673,7 +673,7 @@ When errors occur, you'll see a detailed report:
 
 ```
 Error on line 15: No session open. Use 'open <file>' first.
-  Command: show events/jdk.ExecutionSample
+  Command: events/jdk.ExecutionSample
 
 Script completed with errors:
   Line 15: No session open. Use 'open <file>' first.
@@ -737,10 +737,10 @@ Recorded scripts include timestamp comments for context but are immediately exec
 open /path/to/recording.jfr
 
 # [14:30:20]
-show events/jdk.ExecutionSample --limit 10
+events/jdk.ExecutionSample --limit 10
 
 # [14:31:45]
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Recording stopped: 2025-12-26T14:32:10Z
 ```
@@ -758,14 +758,14 @@ Recorded scripts often contain hardcoded paths. Convert them to parameterized sc
 **Original recorded script:**
 ```bash
 open /Users/john/recordings/prod-app-20251226.jfr
-show events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytes>=1000] --limit 10
 ```
 
 **Parameterized version:**
 ```bash
 # Arguments: $1=recording, $2=threshold, $3=limit
 open $1
-show events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 **Usage:**
@@ -796,7 +796,7 @@ cat > analyze.jfrs <<'EOF'
 # Arguments: $1=recording
 
 open $1
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 close
 EOF
 
@@ -816,7 +816,7 @@ Parameters are passed as positional arguments after the script name:
 
 # This script expects: $1=recording, $2=threshold, $3=limit
 open $1
-show events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 Execute with:
@@ -847,10 +847,10 @@ Comprehensive recording overview including metadata, top threads, I/O, and GC st
 open $1
 info
 metadata --summary
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-show events/jdk.FileRead | sum(bytes)
-show events/jdk.FileWrite | sum(bytes)
-show events/jdk.GarbageCollection | stats(duration)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+events/jdk.FileRead | sum(bytes)
+events/jdk.FileWrite | sum(bytes)
+events/jdk.GarbageCollection | stats(duration)
 close
 ```
 
@@ -872,10 +872,10 @@ Detailed thread analysis including execution samples, allocations, contention, a
 # Arguments: $1=recording, $2=top_n
 
 open $1
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
-show events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
-show events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
+events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
 close
 ```
 
@@ -893,11 +893,11 @@ Comprehensive GC analysis including pause times, heap utilization, and allocatio
 # Arguments: $1=recording
 
 open $1
-show events/jdk.GarbageCollection | stats(duration)
-show events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
-show events/jdk.GCHeapSummary | stats(heapUsed)
-show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
-show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+events/jdk.GarbageCollection | stats(duration)
+events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
+events/jdk.GCHeapSummary | stats(heapUsed)
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 close
 ```
 
@@ -927,12 +927,12 @@ Start scripts with a comment header explaining purpose, usage, and parameters:
 # Good
 # Arguments: $1=recording_path, $2=min_bytes, $3=max_results
 open $1
-show events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytes>=$2] --limit $3
 
 # Less clear (but sometimes acceptable for simple scripts)
 # Arguments: $1=file, $2=threshold, $3=limit
 open $1
-show events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytes>=$2] --limit $3
 ```
 
 ### 3. Group Related Operations
@@ -945,11 +945,11 @@ open $1
 info
 
 # CPU Analysis
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-show events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
 
 # Memory Analysis
-show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
 
 # Cleanup
 close
@@ -1109,12 +1109,12 @@ Compare multiple recordings in a single script:
 # Analyze baseline
 open $1 --alias baseline
 use baseline
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # Analyze current
 open $2 --alias current
 use current
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # Cleanup
 close --all
@@ -1132,11 +1132,11 @@ Use continue-on-error to implement optional analysis:
 ```bash
 # Core analysis (always runs)
 open $1
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # Optional analyses (may not have these events)
-show events/jdk.CustomEvent | count()
-show events/jdk.ExperimentalFeature | count()
+events/jdk.CustomEvent | count()
+events/jdk.ExperimentalFeature | count()
 
 close
 ```
@@ -1197,7 +1197,7 @@ fi
 
 open $1
 
-show events/jdk.GarbageCollection | stats(duration)
+events/jdk.GarbageCollection | stats(duration)
 # Add logic to check if max duration > $2
 # Output: REGRESSION if threshold exceeded
 

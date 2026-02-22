@@ -11,7 +11,7 @@ You want to understand what your application is doing during GC pauses, or corre
 ### Execution samples during GC phases
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name,duration)
+events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name,duration)
 ```
 
 This shows which code is running during different GC phases (concurrent mark, remark, etc.).
@@ -19,14 +19,14 @@ This shows which code is running during different GC phases (concurrent mark, re
 ### Group samples by GC phase
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name)
 ```
 
 ### Allocations during GC
 
 ```bash
-show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
@@ -35,7 +35,7 @@ This shows total allocation size during each GC phase.
 ### File I/O during GC
 
 ```bash
-show events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=bytes)
 ```
 
@@ -44,7 +44,7 @@ Identifies if I/O operations are happening during GC (may indicate blocked threa
 ### Safe point correlation
 
 ```bash
-show events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin, fields=safepointId,operations)
+events/jdk.ExecutionSample | decorateByTime(jdk.SafepointBegin, fields=safepointId,operations)
 ```
 
 Correlate execution samples with safepoint pauses.
@@ -57,25 +57,25 @@ Use different decorator events to understand timing:
 
 ```bash
 # During GC phases
-show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 
 # Immediate post-GC allocations
-show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GarbageCollection, fields=name)
+events/jdk.ObjectAllocationSample | decorateByTime(jdk.GarbageCollection, fields=name)
 ```
 
 ### Thread behavior during GC
 
 ```bash
 # Threads active during concurrent mark
-show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy(sampledThread/javaName, $decorator.name)
 ```
 
 ### Lock contention during GC
 
 ```bash
-show events/jdk.JavaMonitorWait | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.JavaMonitorWait | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=count)
 ```
 

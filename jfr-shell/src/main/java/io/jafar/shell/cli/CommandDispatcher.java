@@ -144,6 +144,25 @@ public class CommandDispatcher {
         return true; // Command "handled" (skipped)
       }
 
+      // Handle 'events' alias (equivalent to 'show events ...')
+      if (cmd.equals("events") || cmd.startsWith("events/")) {
+        List<String> showArgs = new ArrayList<>(args.size() + 1);
+        showArgs.add(parts[0]);
+        showArgs.addAll(args);
+        cmdShow(showArgs, "show " + line.trim());
+        return true;
+      }
+
+      // Handle 'constants' alias with path (equivalent to 'show cp/...')
+      if (cmd.startsWith("constants/")) {
+        String mapped = "cp" + parts[0].substring("constants".length());
+        List<String> showArgs = new ArrayList<>(args.size() + 1);
+        showArgs.add(mapped);
+        showArgs.addAll(args);
+        cmdShow(showArgs, "show " + mapped + (args.isEmpty() ? "" : " " + String.join(" ", args)));
+        return true;
+      }
+
       switch (cmd) {
         case "open":
           cmdOpen(args);
@@ -194,6 +213,7 @@ public class CommandDispatcher {
           cmdChunk(args);
           return true;
         case "cp":
+        case "constants":
           cmdCp(args);
           return true;
         case "set":
@@ -717,6 +737,8 @@ public class CommandDispatcher {
   private void cmdHelp(List<String> args) {
     if (args.isEmpty()) {
       io.println("Available commands:");
+      io.println("  events    - Query events (alias for 'show events')");
+      io.println("  constants - Browse constant pool entries (alias for 'cp')");
       io.println("  show      - Execute JfrPath queries (events, metadata, chunks, cp)");
       io.println("  metadata  - List and inspect metadata types");
       io.println("  chunks    - List chunk information");
@@ -751,6 +773,32 @@ public class CommandDispatcher {
       return;
     }
     String sub = args.get(0).toLowerCase(Locale.ROOT);
+    if ("events".equals(sub)) {
+      io.println("Usage: events/<type>[filter] [--limit N] [--format table|json|csv|tui]");
+      io.println("Alias for 'show events'. Queries events from the current recording.");
+      io.println("");
+      io.println("Examples:");
+      io.println("  events                                    # browse all event types");
+      io.println("  events/jdk.FileRead --limit 10            # list events");
+      io.println("  events/jdk.FileRead[bytes>1024] --limit 5 # filter events");
+      io.println("  events/jdk.FileRead | count()             # aggregate");
+      io.println("");
+      io.println("Type 'help show' for full JfrPath query syntax.");
+      return;
+    }
+    if ("constants".equals(sub)) {
+      io.println(
+          "Usage: constants [<type>] [--summary] [--range N-M] [--format table|json|csv|tui]");
+      io.println("Alias for 'cp'. Browse constant pool entries in the current recording.");
+      io.println("");
+      io.println("Examples:");
+      io.println("  constants                     # browse all CP types");
+      io.println("  constants jdk.types.Symbol     # list entries for a type");
+      io.println("  constants jdk.types.Method --range 0-100");
+      io.println("");
+      io.println("Type 'help cp' for full constant pool syntax.");
+      return;
+    }
     if ("show".equals(sub) || "select".equals(sub)) {
       io.println(
           "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N] [--list-match any|all|none]");
@@ -827,32 +875,32 @@ public class CommandDispatcher {
       io.println("");
       io.println("Examples (grouped by use case):");
       io.println("  Basic event queries:");
-      io.println("    show events/jdk.FileRead[bytes>=1000] --limit 5");
-      io.println("    show events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
+      io.println("    events/jdk.FileRead[bytes>=1000] --limit 5");
+      io.println("    events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
       io.println("  Aggregations:");
-      io.println("    show events/jdk.FileRead | count()");
-      io.println("    show events/jdk.FileRead/bytes | sum()");
-      io.println("    show events/jdk.FileRead/bytes | stats()");
-      io.println("    show events/jdk.ExecutionSample | groupBy(thread/name)");
+      io.println("    events/jdk.FileRead | count()");
+      io.println("    events/jdk.FileRead/bytes | sum()");
+      io.println("    events/jdk.FileRead/bytes | stats()");
+      io.println("    events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println(
-          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count desc");
+          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count desc");
       io.println(
-          "    show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  # alphabetical");
-      io.println("    show events/jdk.FileRead | top(10, by=bytes)");
-      io.println("    show events/jdk.ExecutionSample | timerange()  # min/max startTime");
+          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  # alphabetical");
+      io.println("    events/jdk.FileRead | top(10, by=bytes)");
+      io.println("    events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");
-      io.println("    show events/jdk.FileRead | select(path, bytes / 1024 as kilobytes)");
-      io.println("    show events/jdk.FileRead | select(\"${path} (${bytes} bytes)\" as info)");
+      io.println("    events/jdk.FileRead | select(path, bytes / 1024 as kilobytes)");
+      io.println("    events/jdk.FileRead | select(\"${path} (${bytes} bytes)\" as info)");
       io.println("  Metadata:");
       io.println("    show metadata/java.lang.Thread");
       io.println("    show metadata/jdk.types.StackTrace --tree --depth 2");
       io.println("  Constant pools:");
-      io.println("    show cp/jdk.types.Symbol[string~\"java/.*\"]");
+      io.println("    constants/jdk.types.Symbol[string~\"java/.*\"]");
       io.println("  Advanced (interleaved filters, list matching):");
       io.println(
-          "    show events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace[committedSize>1000000]");
+          "    events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace[committedSize>1000000]");
       io.println(
-          "    show events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, \".*Foo.*\")]]");
+          "    events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, \".*Foo.*\")]]");
       return;
     }
     if ("metadata".equals(sub) || "types".equals(sub)) {
@@ -927,7 +975,7 @@ public class CommandDispatcher {
       io.println("");
       io.println(
           "Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
-      io.println("Use 'show cp/<type>' for more advanced filtering with JfrPath expressions.");
+      io.println("Use 'constants/<type>' for more advanced filtering with JfrPath expressions.");
       return;
     }
     if ("set".equals(sub) || "let".equals(sub)) {
@@ -1035,7 +1083,7 @@ public class CommandDispatcher {
       io.println("  open $1");
       io.println("  set limit = ${2:-100}      # Default to 100 if not provided");
       io.println("  set format = ${3:-table}   # Default to table");
-      io.println("  show events/jdk.FileRead[bytes>=${limit}] --format ${format}");
+      io.println("  events/jdk.FileRead[bytes>=${limit}] --format ${format}");
       io.println("  close");
       io.println("");
       io.println("  # Required parameter with error");

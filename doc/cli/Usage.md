@@ -39,7 +39,7 @@ jfr> show metadata/jdk.types.StackTrace --tree --depth 2
 jfr> show metadata/jdk.types.Method/fields/name --tree
 
 # Events example (values projection)
-jfr> show events/jdk.FileRead/bytes --limit 5
+jfr> events/jdk.FileRead/bytes --limit 5
 ```
 
 ## Available Commands
@@ -57,7 +57,8 @@ jfr> show events/jdk.FileRead/bytes --limit 5
 - `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
 - `chunks [--summary] [--range N-M]`: List chunk information.
 - `chunk <index> show`: Show specific chunk details.
-- `cp [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
+- `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries (alias: `cp`).
+- `events/<type>[filter] [--limit N]`: Query events (alias for `show events`).
 
 ### Variables
 - `set [--global] <name> = <value>`: Set a variable (scalar, map, or lazy query).
@@ -186,7 +187,7 @@ is aliased for convenience.
 ## JfrPath Essentials
 
 - Roots: `events`, `metadata`, `chunks`, `cp`
-- Show values: `show events/<Type>/<path>` or `show metadata/<Type>/<path>`
+- Show values: `events/<Type>/<path>` or `show metadata/<Type>/<path>`
 - Filters:
   - Simple: `[field op value]` with `= != > >= < <= ~` (regex)
   - Boolean expressions with functions and logic: `[expr]`
@@ -197,12 +198,12 @@ is aliased for convenience.
     - List-scoped: keep `any:/all:/none:` prefixes for list fields (e.g., `any:frames[ matches(method/name/string, ".*Foo.*") ]`)
   - Lists/arrays: prefix with `any:`, `all:`, or `none:` to control how a filter applies across list elements.
     - Examples:
-      - `show events/jdk.ExecutionSample[contains(sampledThread/osName, "GC")]`
-      - `show events/jdk.ExecutionSample[stackTrace/truncated=true]`
-      - `show events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Main.*")]]`
+      - `events/jdk.ExecutionSample[contains(sampledThread/osName, "GC")]`
+      - `events/jdk.ExecutionSample[stackTrace/truncated=true]`
+      - `events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Main.*")]]`
 - Examples:
-  - `show events/jdk.FileRead[bytes>=1000] --limit 5`
-  - `show events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
+  - `events/jdk.FileRead[bytes>=1000] --limit 5`
+  - `events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
   - `show metadata/java.lang.Thread` (class overview)
   - `show metadata/jdk.types.Method/name` (single value)
 
@@ -233,34 +234,34 @@ Expressions can include arithmetic operators, string concatenation, string templ
 **Field Projection Examples:**
 ```bash
 # Simple field selection
-show events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytes)
 
 # Convert bytes to kilobytes
-show events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+events/jdk.FileRead | select(bytes / 1024 as kilobytes)
 
 # Build descriptive string (concatenation)
-show events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
 
 # Build descriptive string (template - cleaner)
-show events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
 
 # String template with arithmetic
-show events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
 
 # Mixed fields and expressions
-show events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
 
 # String functions
-show events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
+events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
 
 # Conditional expressions
-show events/jdk.FileRead | select(if(bytes > 1000, 'large', 'small') as size)
+events/jdk.FileRead | select(if(bytes > 1000, 'large', 'small') as size)
 
 # Complex expressions with coalesce
-show events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
+events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
 
 # Field aliasing
-show events/jdk.ExecutionSample | select(sampledThread/javaName as thread)
+events/jdk.ExecutionSample | select(sampledThread/javaName as thread)
 ```
 
 **Expression Evaluation:**
@@ -295,27 +296,27 @@ Append pipeline functions with `|` to compute aggregates over results.
 For complete operator reference and grammar details, see [JFRPath.md](JFRPath.md).
 
 **Aggregation Examples:**
-- `show events/jdk.FileRead | count()`
-- `show events/jdk.FileRead/bytes | sum()`
-- `show events/jdk.FileRead/bytes | stats()`
-- `show events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
-- `show events/jdk.FileRead/bytes | sketch()`
-- `show events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
-- `show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
-- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
-- `show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
-- `show events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
+- `events/jdk.FileRead | count()`
+- `events/jdk.FileRead/bytes | sum()`
+- `events/jdk.FileRead/bytes | stats()`
+- `events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
+- `events/jdk.FileRead/bytes | sketch()`
+- `events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
+- `events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
+- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
+- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
+- `events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
 - `show metadata/jdk.types.Method/name | count()`
-- `show cp/jdk.types.Symbol | count()`
+- `constants/jdk.types.Symbol | count()`
 
 **Other Examples:**
-- `show cp/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
-- `show cp/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
-- `show cp[name~"jdk\\.types\\..*"]` (filter CP summary rows)
-- `show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace` (filter before projection)
-- `show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize` (filter relative to projection path)
-- `show cp/jdk.types.Symbol/string | len()` (string length per CP entry)
-- `show events/jdk.ExecutionSample/stackTrace/frames | len()` (list length per event)
+- `constants/jdk.types.Symbol[string~"find.*"]` (filter CP entries by field)
+- `constants/jdk.types.Symbol[string="java/lang/String"]/id` (filter then project id)
+- `constants[name~"jdk\\.types\\..*"]` (filter CP summary rows)
+- `events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace` (filter before projection)
+- `events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]/reservedSize` (filter relative to projection path)
+- `constants/jdk.types.Symbol/string | len()` (string length per CP entry)
+- `events/jdk.ExecutionSample/stackTrace/frames | len()` (list length per event)
 
 ## Tab Completion
 
