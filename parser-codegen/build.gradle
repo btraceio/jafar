@@ -1,5 +1,6 @@
 plugins {
     id 'java-library'
+    id 'com.vanniktech.maven.publish'
 }
 
 evaluationDependsOn ':parser-core'
@@ -156,3 +157,7 @@ tasks.register('jmh', JavaExec) {
 group = 'io.btrace'
 version = component_version
 description = 'JFR parser typed deserialization (ASM-based code generation)'
+
+mavenPublishing {
+    coordinates('io.btrace', 'jafar-parser-codegen', version.toString())
+}

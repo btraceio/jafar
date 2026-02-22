@@ -22,6 +22,7 @@ includeBuild('jafar-gradle-plugin') {
     dependencySubstitution {
         substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
         substitute(module("io.btrace:jafar-parser-core")).using(project(":parser-core"))
+        substitute(module("io.btrace:jafar-parser-codegen")).using(project(":parser-codegen"))
     }
 }
 
