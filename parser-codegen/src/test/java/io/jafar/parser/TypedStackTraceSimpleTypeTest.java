@@ -76,7 +76,7 @@ public class TypedStackTraceSimpleTypeTest {
   @Test
   public void testSimpleTypeUnwrapping() throws Exception {
     // Use a standard JDK recording with ExecutionSample events
-    Path jfrFile = Paths.get("parser/src/test/resources/test-jfr.jfr");
+    Path jfrFile = Paths.get("parser-core/src/test/resources/test-jfr.jfr");
     if (!jfrFile.toFile().exists()) {
       // Try relative path from module root
       jfrFile = Paths.get("src/test/resources/test-jfr.jfr");

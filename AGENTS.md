@@ -199,7 +199,7 @@ GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationTo
 
 ### Testing Strategy
 - Frameworks: JUnit Jupiter 5, Mockito. Place tests under `src/test/java` mirroring package paths.
-- Name tests `*Test.java`; parameterized tests encouraged for edge cases; see existing fuzz/stability tests in `parser`.
+- Name tests `*Test.java`; parameterized tests encouraged for edge cases; see existing fuzz/stability tests in `parser-core` and `parser-codegen`.
 - JFR test files stored in `src/test/resources/`
 - Tests use JUnit 5 with large heap allocation (8GB max, 1GB min)
 - Mock recordings created using JMC FlightRecorder writer

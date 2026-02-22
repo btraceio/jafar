@@ -56,12 +56,12 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Project Structure
 
-- **`parser/`**: Core JFR parser library (Java)
+- **`parser/`**: Aggregate module re-exporting parser-core and parser-codegen
+- **`parser-core/`**: Core JFR parser library (Java)
+- **`parser-codegen/`**: ASM-based code generation for typed deserialization
 - **`tools/`**: Utilities built on the parser (e.g., Scrubber)
 - **`demo/`**: Sample CLI application
 - **`jafar-gradle-plugin/`**: Gradle plugin for generating typed interfaces
-- **`benchmarks/`**: JMH performance benchmarks
-- **`examples/`**: Example projects using JAFAR
 
 ### Common Development Commands
 
