@@ -32,6 +32,7 @@ import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -40,6 +41,8 @@ import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -183,6 +186,7 @@ public final class TuiShell implements AutoCloseable {
   private List<Object> detailTabValues = List.of();
   private final List<Integer> detailTabScrollOffsets = new ArrayList<>();
   private int detailCursorLine = -1; // selected line in detail pane (-1 = no cursor)
+  private int detailHScrollOffset; // horizontal scroll offset for detail pane
   private List<String> detailLineTypeRefs; // type name for each detail line (null = not navigable)
 
   // Marquee animation for long tab titles
@@ -195,6 +199,16 @@ public final class TuiShell implements AutoCloseable {
 
   // Search origin tracking
   private Focus searchOriginFocus = Focus.RESULTS;
+  private boolean searchOriginCpTypes; // true when search targets the browser types sidebar
+
+  // Browser types sidebar filter
+  private String cpTypesSearchQuery = "";
+  private List<Integer> cpTypesFilteredIndices; // null = no filter
+
+  // Temporary hint message (auto-dismiss after HINT_MESSAGE_TICKS)
+  private String hintMessage;
+  private long hintMessageTick;
+  private static final int HINT_MESSAGE_TICKS = 50; // ~5s at 100ms per tick
 
   // History search state
   private String historySearchQuery = "";
@@ -224,6 +238,11 @@ public final class TuiShell implements AutoCloseable {
   private boolean sessionPickerVisible;
   private List<SessionManager.SessionRef> sessionPickerEntries;
   private int sessionPickerSelectedIndex;
+
+  // Export popup state
+  private boolean exportPopupVisible;
+  private boolean exportPathPristine; // true until user edits; first char replaces all
+  private final TextInputState exportPathState = new TextInputState();
 
   // Browser mode (shared by CP browser and event browser)
   private boolean cpBrowserMode;
@@ -473,6 +492,9 @@ public final class TuiShell implements AutoCloseable {
     if (sessionPickerVisible && sessionPickerEntries != null && !sessionPickerEntries.isEmpty()) {
       renderSessionPicker(frame);
     }
+    if (exportPopupVisible) {
+      renderExportPopup(frame);
+    }
   }
 
   private static String marqueeTitle(String fullTitle, long tick) {
@@ -571,15 +593,57 @@ public final class TuiShell implements AutoCloseable {
     ResultTab activeTab = tabs.get(activeTabIndex);
 
     String title = "Results";
-    if (activeTab.filteredIndices != null) {
-      title +=
-          " ("
-              + activeTab.filteredIndices.size()
-              + "/"
-              + activeTab.lines.size()
-              + " match \""
-              + activeTab.searchQuery
-              + "\")";
+    if (activeTab.tableData != null) {
+      if (activeTab.filteredIndices != null) {
+        int filteredPos = 0;
+        if (activeTab.dataStartLine >= 0) {
+          int selLineIdx = activeTab.dataStartLine + activeTab.selectedRow;
+          int idx = activeTab.filteredIndices.indexOf(selLineIdx);
+          filteredPos = idx >= 0 ? idx + 1 : 0;
+        }
+        title +=
+            " ("
+                + filteredPos
+                + "/"
+                + activeTab.filteredIndices.size()
+                + " of "
+                + activeTab.tableData.size()
+                + " match \""
+                + activeTab.searchQuery
+                + "\")";
+      } else {
+        title += " (" + (activeTab.selectedRow + 1) + "/" + activeTab.tableData.size() + ")";
+      }
+    } else if (!activeTab.lines.isEmpty()) {
+      int lineCount0 = effectiveLineCount(activeTab);
+      if (lineCount0 > 0) {
+        int scrollOff = activeTab.scrollOffset;
+        int endLine = Math.min(scrollOff + resultsAreaHeight, lineCount0);
+        if (activeTab.filteredIndices != null) {
+          title +=
+              " ("
+                  + activeTab.filteredIndices.size()
+                  + "/"
+                  + activeTab.lines.size()
+                  + " match \""
+                  + activeTab.searchQuery
+                  + "\")";
+        } else {
+          title += " (line " + (scrollOff + 1) + "-" + endLine + "/" + lineCount0 + ")";
+        }
+      }
+    }
+    // Show live search query in title when searching results (non-browser mode only)
+    if (!cpBrowserMode
+        && focus == Focus.SEARCH
+        && searchOriginFocus == Focus.RESULTS
+        && !searchOriginCpTypes) {
+      String q = searchInputState.text();
+      if (!q.isEmpty()) {
+        title += " /" + q;
+      }
+    } else if (!cpBrowserMode && !activeTab.searchQuery.isEmpty() && focus != Focus.SEARCH) {
+      title += " /" + activeTab.searchQuery;
     }
     Title blockTitle = mnemonicTitle(title, 0);
 
@@ -588,7 +652,13 @@ public final class TuiShell implements AutoCloseable {
     if (focus == Focus.RESULTS && !cpBrowserMode) {
       blockBuilder.borderColor(Color.CYAN);
     }
-    if (activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
+    if (!cpBrowserMode
+        && focus == Focus.SEARCH
+        && searchOriginFocus == Focus.RESULTS
+        && !searchOriginCpTypes) {
+      blockBuilder.borderColor(Color.YELLOW);
+    }
+    if (!cpBrowserMode && activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
       blockBuilder.titleBottom(
           Title.from(
               Span.styled(
@@ -617,6 +687,15 @@ public final class TuiShell implements AutoCloseable {
       renderCpTypes(frame, hSplit.get(0));
 
       String entriesTitle = getSelectedCpTypeName();
+      boolean entriesSearchActive =
+          focus == Focus.SEARCH && searchOriginFocus == Focus.RESULTS && !searchOriginCpTypes;
+      // Show live filter in entries title
+      if (entriesSearchActive) {
+        String q = searchInputState.text();
+        if (!q.isEmpty()) entriesTitle += " /" + q;
+      } else if (!activeTab.searchQuery.isEmpty()) {
+        entriesTitle += " /" + activeTab.searchQuery;
+      }
       Block.Builder cpEntriesBuilder =
           Block.builder()
               .title(Title.from(entriesTitle))
@@ -624,6 +703,9 @@ public final class TuiShell implements AutoCloseable {
               .borderType(BorderType.ROUNDED);
       if (focus == Focus.RESULTS && !cpTypesFocused) {
         cpEntriesBuilder.borderColor(Color.CYAN);
+      }
+      if (entriesSearchActive) {
+        cpEntriesBuilder.borderColor(Color.YELLOW);
       }
       Block cpEntriesBlock = cpEntriesBuilder.build();
       inner = cpEntriesBlock.inner(hSplit.get(1));
@@ -773,6 +855,8 @@ public final class TuiShell implements AutoCloseable {
           visible = visible + " ".repeat(visibleWidth - visible.length());
         }
         styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
+      } else if (!activeTab.searchQuery.isEmpty()) {
+        styledLines.add(buildHighlightedLine(visible, activeTab.searchQuery, null));
       } else {
         styledLines.add(Line.from(visible));
       }
@@ -801,6 +885,13 @@ public final class TuiShell implements AutoCloseable {
 
   private void renderCpTypes(Frame frame, Rect area) {
     String sidebarTitle = eventBrowserMode ? "Event Types" : "Constant Types";
+    // Show live or sticky filter in sidebar title
+    if (focus == Focus.SEARCH && searchOriginCpTypes) {
+      String q = searchInputState.text();
+      if (!q.isEmpty()) sidebarTitle += " /" + q;
+    } else if (!cpTypesSearchQuery.isEmpty()) {
+      sidebarTitle += " /" + cpTypesSearchQuery;
+    }
     Block.Builder blockBuilder =
         Block.builder()
             .title(Title.from(sidebarTitle))
@@ -809,14 +900,21 @@ public final class TuiShell implements AutoCloseable {
     if (focus == Focus.RESULTS && cpTypesFocused) {
       blockBuilder.borderColor(Color.CYAN);
     }
+    if (focus == Focus.SEARCH && searchOriginCpTypes) {
+      blockBuilder.borderColor(Color.YELLOW);
+    }
     Block block = blockBuilder.build();
     Rect inner = block.inner(area);
     frame.renderWidget(block, area);
 
     if (cpTypes == null || cpTypes.isEmpty()) return;
 
+    // Determine visible type indices (filtered or all)
+    int totalVisible =
+        cpTypesFilteredIndices != null ? cpTypesFilteredIndices.size() : cpTypes.size();
+
     // Scrollbar
-    boolean needsVScroll = cpTypes.size() > inner.height();
+    boolean needsVScroll = totalVisible > inner.height();
     Rect contentArea = inner;
     Rect vScrollbarArea = null;
     if (needsVScroll) {
@@ -830,15 +928,16 @@ public final class TuiShell implements AutoCloseable {
     cpTypesAreaHeight = Math.max(1, visibleHeight);
 
     // Clamp scroll
-    int maxScroll = Math.max(0, cpTypes.size() - visibleHeight);
+    int maxScroll = Math.max(0, totalVisible - visibleHeight);
     cpTypeScrollOffset = Math.min(cpTypeScrollOffset, maxScroll);
 
     int start = cpTypeScrollOffset;
-    int end = Math.min(start + visibleHeight, cpTypes.size());
+    int end = Math.min(start + visibleHeight, totalVisible);
 
     Style highlightStyle = Style.create().reversed();
     List<Line> lines = new ArrayList<>(end - start);
-    for (int i = start; i < end; i++) {
+    for (int vi = start; vi < end; vi++) {
+      int i = cpTypesFilteredIndices != null ? cpTypesFilteredIndices.get(vi) : vi;
       Map<String, Object> typeRow = cpTypes.get(i);
       String name = String.valueOf(typeRow.getOrDefault("name", ""));
       String countKey = eventBrowserMode ? "count" : "totalSize";
@@ -852,6 +951,8 @@ public final class TuiShell implements AutoCloseable {
           display = display + " ".repeat(contentArea.width() - display.length());
         }
         lines.add(Line.from(Span.styled(display, highlightStyle)));
+      } else if (!cpTypesSearchQuery.isEmpty()) {
+        lines.add(buildHighlightedLine(display, cpTypesSearchQuery, null));
       } else {
         lines.add(Line.from(display));
       }
@@ -861,7 +962,7 @@ public final class TuiShell implements AutoCloseable {
 
     if (vScrollbarArea != null) {
       ScrollbarState vState =
-          new ScrollbarState(cpTypes.size())
+          new ScrollbarState(totalVisible)
               .viewportContentLength(visibleHeight)
               .position(cpTypeScrollOffset);
       frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
@@ -898,13 +999,27 @@ public final class TuiShell implements AutoCloseable {
     if (activeDetailTabIndex >= detailTabValues.size()) return;
 
     ResultTab activeTab = tabs.get(activeTabIndex);
+    String detailTitle = "Details";
+    if (focus == Focus.SEARCH && searchOriginFocus == Focus.DETAIL) {
+      String q = searchInputState.text();
+      if (!q.isEmpty()) {
+        detailTitle += " /" + q;
+      }
+    } else if (activeTab.detailSearchQuery != null
+        && !activeTab.detailSearchQuery.isEmpty()
+        && focus != Focus.SEARCH) {
+      detailTitle += " /" + activeTab.detailSearchQuery;
+    }
     Block.Builder blockBuilder =
         Block.builder()
-            .title(mnemonicTitle("Details", 0))
+            .title(mnemonicTitle(detailTitle, 0))
             .borders(Borders.ALL)
             .borderType(BorderType.ROUNDED);
     if (focus == Focus.DETAIL) {
       blockBuilder.borderColor(Color.CYAN);
+    }
+    if (focus == Focus.SEARCH && searchOriginFocus == Focus.DETAIL) {
+      blockBuilder.borderColor(Color.YELLOW);
     }
     if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
       blockBuilder.titleBottom(
@@ -979,15 +1094,13 @@ public final class TuiShell implements AutoCloseable {
     Style navigableStyle = Style.create().fg(Color.CYAN).bold();
 
     List<Line> styledLines = new ArrayList<>(end - start);
+    int detailWidth = contentArea.width();
     for (int i = start; i < end; i++) {
-      String line = detailLines[i];
-      if (line.length() > contentArea.width()) {
-        line = line.substring(0, contentArea.width());
-      }
+      String line = applyHScroll(detailLines[i], detailHScrollOffset, detailWidth);
       if (showCursor && i == detailCursorLine) {
         // Pad to full width for highlight
-        if (line.length() < contentArea.width()) {
-          line = line + " ".repeat(contentArea.width() - line.length());
+        if (line.length() < detailWidth) {
+          line = line + " ".repeat(detailWidth - line.length());
         }
         styledLines.add(Line.from(Span.styled(line, cursorStyle)));
       } else if (metadataMode
@@ -995,6 +1108,8 @@ public final class TuiShell implements AutoCloseable {
           && i < detailLineTypeRefs.size()
           && detailLineTypeRefs.get(i) != null) {
         styledLines.add(Line.from(Span.styled(line, navigableStyle)));
+      } else if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
+        styledLines.add(buildHighlightedLine(line, activeTab.detailSearchQuery, null));
       } else {
         styledLines.add(Line.from(line));
       }
@@ -1164,6 +1279,7 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void buildDetailTabs(ResultTab tab) {
+    detailHScrollOffset = 0;
     if (tab.tableData == null || tab.selectedRow < 0 || tab.selectedRow >= tab.tableData.size()) {
       detailTabNames = List.of();
       detailTabValues = List.of();
@@ -1423,6 +1539,11 @@ public final class TuiShell implements AutoCloseable {
     frame.renderWidget(bar, area);
   }
 
+  private void showHintMessage(String message) {
+    hintMessage = message;
+    hintMessageTick = renderTick;
+  }
+
   private void renderTipLine(Frame frame, Rect area) {
     int tipIndex = (int) ((renderTick / TIP_ROTATE_TICKS) % TIPS.length);
     String tip = TIPS[tipIndex];
@@ -1434,6 +1555,25 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void renderHints(Frame frame, Rect area) {
+    // Show temporary hint message if active (auto-dismiss after timeout)
+    if (hintMessage != null) {
+      if (renderTick - hintMessageTick > HINT_MESSAGE_TICKS) {
+        hintMessage = null;
+      } else {
+        String msg = " " + hintMessage;
+        if (msg.length() < area.width()) {
+          msg = msg + " ".repeat(area.width() - msg.length());
+        }
+        Paragraph bar =
+            Paragraph.builder()
+                .text(Text.raw(msg))
+                .style(Style.create().bg(Color.DARK_GRAY).fg(Color.GREEN))
+                .build();
+        frame.renderWidget(bar, area);
+        return;
+      }
+    }
+
     String altMod = (PLATFORM == Platform.MACOS) ? "Opt" : "Alt";
     String hints;
     if (focus == Focus.HISTORY_SEARCH) {
@@ -1454,6 +1594,7 @@ public final class TuiShell implements AutoCloseable {
       hints =
           " "
               + cursorHint
+              + "\u2190\u2192:scroll  "
               + "[]:tabs  "
               + resultTabHint
               + drillHint
@@ -1487,6 +1628,7 @@ public final class TuiShell implements AutoCloseable {
         String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
         String resultTabHint = tabs.size() > 1 ? "{}:pins  " : "";
         String pinHint = activeTab.pinned ? "Ctrl+P:unpin  " : "Ctrl+P:pin  ";
+        String exportHint = activeTab.tableData != null ? "Ctrl+E:export  " : "";
         hints =
             " "
                 + rowHint
@@ -1496,6 +1638,7 @@ public final class TuiShell implements AutoCloseable {
                 + tabSwitchHint
                 + resultTabHint
                 + pinHint
+                + exportHint
                 + detailJump
                 + "Esc:types";
       }
@@ -1516,6 +1659,7 @@ public final class TuiShell implements AutoCloseable {
       String tabSwitchHint = detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
       String resultTabHint = tabs.size() > 1 ? "{}:pins  " : "";
       String pinHint = activeTab.pinned ? "Ctrl+P:unpin  " : "Ctrl+P:pin  ";
+      String exportHint = activeTab.tableData != null ? "Ctrl+E:export  " : "";
       hints =
           " "
               + rowHint
@@ -1524,6 +1668,7 @@ public final class TuiShell implements AutoCloseable {
               + tabSwitchHint
               + resultTabHint
               + pinHint
+              + exportHint
               + detailJump
               + "S-\u2191\u2193:history  "
               + "S-Tab:focus  "
@@ -1574,6 +1719,10 @@ public final class TuiShell implements AutoCloseable {
       handleCellPickerKey(key);
       return;
     }
+    if (exportPopupVisible) {
+      handleExportPopupKey(key);
+      return;
+    }
     // Global keys (work in any focus)
     switch (key) {
       case 3: // Ctrl+C
@@ -1595,6 +1744,13 @@ public final class TuiShell implements AutoCloseable {
         return;
       case 4: // Ctrl+D
         running = false;
+        return;
+      case 5: // Ctrl+E — export active tab data to CSV (only from RESULTS/DETAIL)
+        if (focus == Focus.RESULTS || focus == Focus.DETAIL) {
+          exportActiveTab();
+        } else if (focus == Focus.INPUT) {
+          inputState.moveCursorToEnd();
+        }
         return;
       case 16: // Ctrl+P — toggle pin on active tab
         togglePin();
@@ -1640,9 +1796,9 @@ public final class TuiShell implements AutoCloseable {
           focus = Focus.HISTORY_SEARCH;
         }
         return;
-      case 6: // Ctrl+F — enter search mode
-      case 31: // Ctrl+/ — enter search mode
-        if (focus != Focus.SEARCH) {
+      case 6: // Ctrl+F — enter search mode (only from RESULTS/DETAIL)
+      case 31: // Ctrl+/ — enter search mode (only from RESULTS/DETAIL)
+        if (focus == Focus.RESULTS || focus == Focus.DETAIL) {
           enterSearchMode();
         }
         return;
@@ -1714,6 +1870,9 @@ public final class TuiShell implements AutoCloseable {
           String name = getSelectedCpTypeName();
           if (!name.isEmpty()) loadBrowserEntries(name, false);
         } else {
+          if (!detailTabNames.isEmpty()) {
+            detailHScrollOffset = 0;
+          }
           focus = detailTabNames.isEmpty() ? Focus.INPUT : Focus.DETAIL;
         }
         break;
@@ -1860,10 +2019,13 @@ public final class TuiShell implements AutoCloseable {
 
   private void enterSearchMode() {
     searchOriginFocus = (focus == Focus.DETAIL) ? Focus.DETAIL : Focus.RESULTS;
+    searchOriginCpTypes = (cpBrowserMode && cpTypesFocused && focus == Focus.RESULTS);
     focus = Focus.SEARCH;
     ResultTab tab = tabs.get(activeTabIndex);
     if (searchOriginFocus == Focus.DETAIL) {
       searchInputState.setText(tab.detailSearchQuery);
+    } else if (searchOriginCpTypes) {
+      searchInputState.setText(cpTypesSearchQuery);
     } else {
       searchInputState.setText(tab.searchQuery);
     }
@@ -1877,6 +2039,9 @@ public final class TuiShell implements AutoCloseable {
           String query = searchInputState.text();
           applySearchFilter(tab, query);
           tab.detailSearchQuery = query;
+          if (cpBrowserMode) {
+            applyCpTypesFilter(query);
+          }
           focus = searchOriginFocus;
         }
         break;
@@ -1884,6 +2049,8 @@ public final class TuiShell implements AutoCloseable {
       case 10:
         if (searchOriginFocus == Focus.DETAIL) {
           tab.detailSearchQuery = searchInputState.text();
+        } else if (searchOriginCpTypes) {
+          applyCpTypesFilter(searchInputState.text());
         } else {
           applySearchFilter(tab, searchInputState.text());
         }
@@ -1910,6 +2077,8 @@ public final class TuiShell implements AutoCloseable {
   private void applyLiveSearchFilter(ResultTab tab, String query) {
     if (searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = query;
+    } else if (searchOriginCpTypes) {
+      applyCpTypesFilter(query);
     } else {
       applySearchFilter(tab, query);
     }
@@ -1919,6 +2088,9 @@ public final class TuiShell implements AutoCloseable {
     ResultTab tab = tabs.get(activeTabIndex);
     if (searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = "";
+    } else if (searchOriginCpTypes) {
+      cpTypesSearchQuery = "";
+      cpTypesFilteredIndices = null;
     } else {
       tab.searchQuery = "";
       tab.filteredIndices = null;
@@ -1926,6 +2098,24 @@ public final class TuiShell implements AutoCloseable {
       tab.scrollOffset = 0;
     }
     focus = searchOriginFocus;
+  }
+
+  private void applyCpTypesFilter(String query) {
+    cpTypesSearchQuery = query;
+    if (query.isEmpty() || cpTypes == null) {
+      cpTypesFilteredIndices = null;
+      return;
+    }
+    String lower = query.toLowerCase();
+    List<Integer> indices = new ArrayList<>();
+    for (int i = 0; i < cpTypes.size(); i++) {
+      String name = String.valueOf(cpTypes.get(i).getOrDefault("name", ""));
+      if (name.toLowerCase().contains(lower)) {
+        indices.add(i);
+      }
+    }
+    cpTypesFilteredIndices = indices;
+    cpTypeScrollOffset = 0;
   }
 
   private void handleHistorySearchKey(int key) {
@@ -2066,20 +2256,48 @@ public final class TuiShell implements AutoCloseable {
       } else if (focus == Focus.SEARCH) {
         cancelSearch();
       } else if (focus == Focus.DETAIL) {
-        focus = Focus.RESULTS;
+        ResultTab dtab = tabs.get(activeTabIndex);
+        if (dtab.detailSearchQuery != null && !dtab.detailSearchQuery.isEmpty()) {
+          dtab.detailSearchQuery = "";
+        } else {
+          focus = Focus.RESULTS;
+        }
       } else if (focus == Focus.RESULTS && cpBrowserMode) {
         if (!cpTypesFocused) {
-          cpTypesFocused = true;
-        } else {
-          if (eventBrowserMode) {
-            exitEventBrowserMode();
+          // Clear entries filter first if active
+          ResultTab escTab = tabs.get(activeTabIndex);
+          if (escTab.filteredIndices != null) {
+            escTab.searchQuery = "";
+            escTab.filteredIndices = null;
+            escTab.filteredMaxLineWidth = 0;
+            escTab.scrollOffset = 0;
           } else {
-            exitCpBrowserMode();
+            cpTypesFocused = true;
           }
-          focus = Focus.INPUT;
+        } else {
+          // Clear types filter first if active
+          if (cpTypesFilteredIndices != null) {
+            cpTypesSearchQuery = "";
+            cpTypesFilteredIndices = null;
+          } else {
+            if (eventBrowserMode) {
+              exitEventBrowserMode();
+            } else {
+              exitCpBrowserMode();
+            }
+            focus = Focus.INPUT;
+          }
         }
       } else if (focus == Focus.RESULTS) {
-        focus = Focus.INPUT;
+        ResultTab escTab = tabs.get(activeTabIndex);
+        if (escTab.filteredIndices != null) {
+          escTab.searchQuery = "";
+          escTab.filteredIndices = null;
+          escTab.filteredMaxLineWidth = 0;
+          escTab.scrollOffset = 0;
+        } else {
+          focus = Focus.INPUT;
+        }
       } else {
         inputState.clear();
       }
@@ -2224,8 +2442,17 @@ public final class TuiShell implements AutoCloseable {
             setDetailScrollOffset(getDetailScrollOffset() + 1);
           }
           break;
-        case 'C': // Right — no-op (use [ ] for tab switching)
-        case 'D': // Left — no-op (use [ ] for tab switching)
+        case 'C': // Right — horizontal scroll detail
+          {
+            int hStep = (modifier == MOD_SHIFT) ? 20 : 4;
+            detailHScrollOffset += hStep;
+          }
+          break;
+        case 'D': // Left — horizontal scroll detail
+          {
+            int hStep = (modifier == MOD_SHIFT) ? 20 : 4;
+            detailHScrollOffset = Math.max(0, detailHScrollOffset - hStep);
+          }
           break;
         default:
           break;
@@ -2431,6 +2658,8 @@ public final class TuiShell implements AutoCloseable {
     cpTypeScrollOffset = 0;
     cpTypesFocused = false;
     browserNavPending = null;
+    cpTypesSearchQuery = "";
+    cpTypesFilteredIndices = null;
     // Keep cpTypes cached so pinned browser tabs can restore
   }
 
@@ -2500,6 +2729,8 @@ public final class TuiShell implements AutoCloseable {
     cpTypeScrollOffset = 0;
     cpTypesFocused = false;
     browserNavPending = null;
+    cpTypesSearchQuery = "";
+    cpTypesFilteredIndices = null;
   }
 
   private void loadEventEntries(String typeName, boolean keepTypesFocused) {
@@ -2614,33 +2845,79 @@ public final class TuiShell implements AutoCloseable {
     return "";
   }
 
+  /**
+   * Find the previous raw cpTypes index that is visible (passes the filter). Returns -1 if none.
+   */
+  private int findPrevCpType(int currentIndex) {
+    if (cpTypesFilteredIndices == null) {
+      return currentIndex > 0 ? currentIndex - 1 : -1;
+    }
+    // Walk the filtered list to find the entry just before currentIndex
+    int prev = -1;
+    for (int idx : cpTypesFilteredIndices) {
+      if (idx >= currentIndex) break;
+      prev = idx;
+    }
+    return prev;
+  }
+
+  /** Find the next raw cpTypes index that is visible (passes the filter). Returns -1 if none. */
+  private int findNextCpType(int currentIndex) {
+    if (cpTypesFilteredIndices == null) {
+      return (cpTypes != null && currentIndex < cpTypes.size() - 1) ? currentIndex + 1 : -1;
+    }
+    for (int idx : cpTypesFilteredIndices) {
+      if (idx > currentIndex) return idx;
+    }
+    return -1;
+  }
+
+  /**
+   * Convert a raw cpTypes index to its position in the visible (filtered) list. Returns -1 if not
+   * visible.
+   */
+  private int cpTypesVisibleIndex(int rawIndex) {
+    if (cpTypesFilteredIndices == null) return rawIndex;
+    int pos = cpTypesFilteredIndices.indexOf(rawIndex);
+    return pos; // -1 if not found
+  }
+
   private void dispatchCpTypesArrow(int direction) {
     switch (direction) {
       case 'A': // Up
-        if (cpTypeSelectedIndex > 0) {
-          cpTypeSelectedIndex--;
-          if (cpTypeSelectedIndex < cpTypeScrollOffset) {
-            cpTypeScrollOffset = cpTypeSelectedIndex;
-          }
-          String upName = getSelectedCpTypeName();
-          if (!upName.isEmpty()) {
-            browserNavPending = upName;
-            browserNavKeepFocus = true;
-            browserNavTime = System.nanoTime();
+        {
+          int prev = findPrevCpType(cpTypeSelectedIndex);
+          if (prev >= 0) {
+            cpTypeSelectedIndex = prev;
+            // Scroll offset is in filtered-list space
+            int visIdx = cpTypesVisibleIndex(prev);
+            if (visIdx >= 0 && visIdx < cpTypeScrollOffset) {
+              cpTypeScrollOffset = visIdx;
+            }
+            String upName = getSelectedCpTypeName();
+            if (!upName.isEmpty()) {
+              browserNavPending = upName;
+              browserNavKeepFocus = true;
+              browserNavTime = System.nanoTime();
+            }
           }
         }
         break;
       case 'B': // Down
-        if (cpTypes != null && cpTypeSelectedIndex < cpTypes.size() - 1) {
-          cpTypeSelectedIndex++;
-          if (cpTypeSelectedIndex >= cpTypeScrollOffset + cpTypesAreaHeight) {
-            cpTypeScrollOffset = cpTypeSelectedIndex - cpTypesAreaHeight + 1;
-          }
-          String downName = getSelectedCpTypeName();
-          if (!downName.isEmpty()) {
-            browserNavPending = downName;
-            browserNavKeepFocus = true;
-            browserNavTime = System.nanoTime();
+        {
+          int next = findNextCpType(cpTypeSelectedIndex);
+          if (next >= 0) {
+            cpTypeSelectedIndex = next;
+            int visIdx = cpTypesVisibleIndex(next);
+            if (visIdx >= 0 && visIdx >= cpTypeScrollOffset + cpTypesAreaHeight) {
+              cpTypeScrollOffset = visIdx - cpTypesAreaHeight + 1;
+            }
+            String downName = getSelectedCpTypeName();
+            if (!downName.isEmpty()) {
+              browserNavPending = downName;
+              browserNavKeepFocus = true;
+              browserNavTime = System.nanoTime();
+            }
           }
         }
         break;
@@ -2822,6 +3099,8 @@ public final class TuiShell implements AutoCloseable {
       cpBrowserMode = false;
       eventBrowserMode = false;
       cpTypesFocused = false;
+      cpTypesSearchQuery = "";
+      cpTypesFilteredIndices = null;
     }
 
     if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
@@ -3341,6 +3620,41 @@ public final class TuiShell implements AutoCloseable {
     return "";
   }
 
+  private static final Style HIGHLIGHT_STYLE = Style.create().bg(Color.YELLOW).fg(Color.BLACK);
+
+  /**
+   * Build a Line with highlighted match substrings. Case-insensitive matching on the plain text
+   * (ANSI codes already stripped by addOutputLine).
+   */
+  private static Line buildHighlightedLine(String text, String query, Style baseStyle) {
+    if (query == null || query.isEmpty()) {
+      return baseStyle != null ? Line.from(Span.styled(text, baseStyle)) : Line.from(text);
+    }
+    String lowerText = text.toLowerCase();
+    String lowerQuery = query.toLowerCase();
+    int qLen = lowerQuery.length();
+    List<Span> spans = new ArrayList<>();
+    int pos = 0;
+    while (pos < text.length()) {
+      int match = lowerText.indexOf(lowerQuery, pos);
+      if (match < 0) {
+        String tail = text.substring(pos);
+        spans.add(baseStyle != null ? Span.styled(tail, baseStyle) : Span.raw(tail));
+        break;
+      }
+      if (match > pos) {
+        String before = text.substring(pos, match);
+        spans.add(baseStyle != null ? Span.styled(before, baseStyle) : Span.raw(before));
+      }
+      spans.add(Span.styled(text.substring(match, match + qLen), HIGHLIGHT_STYLE));
+      pos = match + qLen;
+    }
+    if (spans.isEmpty()) {
+      return baseStyle != null ? Line.from(Span.styled(text, baseStyle)) : Line.from(text);
+    }
+    return Line.from(spans.toArray(new Span[0]));
+  }
+
   private void scrollHorizontal(int delta) {
     ResultTab tab = tabs.get(activeTabIndex);
     tab.hScrollOffset = Math.max(0, tab.hScrollOffset + delta);
@@ -3816,6 +4130,103 @@ public final class TuiShell implements AutoCloseable {
     frame.renderWidget(popup, popupRect);
   }
 
+  // ---- export popup ----
+
+  private void handleExportPopupKey(int key) throws IOException {
+    switch (key) {
+      case 13: // Enter — confirm export
+      case 10:
+        String path = exportPathState.text().trim();
+        exportPopupVisible = false;
+        if (!path.isEmpty()) {
+          performExport(path);
+        }
+        return;
+      case 27: // Esc — cancel
+        {
+          int next = backend.read(50);
+          if (next == READ_EXPIRED || next == EOF) {
+            exportPopupVisible = false;
+            return;
+          }
+          if (next == '[') {
+            int code = backend.read(50);
+            exportPathPristine = false;
+            if (code == 'C') { // Right
+              exportPathState.moveCursorRight();
+              return;
+            }
+            if (code == 'D') { // Left
+              exportPathState.moveCursorLeft();
+              return;
+            }
+            if (code == 'H') { // Home
+              exportPathState.moveCursorToStart();
+              return;
+            }
+            if (code == 'F') { // End
+              exportPathState.moveCursorToEnd();
+              return;
+            }
+            if (code == '3') {
+              int tilde = backend.read(50);
+              if (tilde == '~') {
+                exportPathState.deleteForward();
+              }
+              return;
+            }
+          }
+          exportPopupVisible = false;
+          return;
+        }
+      case 127: // Backspace
+      case 8:
+        exportPathPristine = false;
+        exportPathState.deleteBackward();
+        return;
+      case 1: // Ctrl+A — move to start
+        exportPathPristine = false;
+        exportPathState.moveCursorToStart();
+        return;
+      case 5: // Ctrl+E — move to end (re-used within popup)
+        exportPathPristine = false;
+        exportPathState.moveCursorToEnd();
+        return;
+      case 21: // Ctrl+U — clear entire line
+        exportPathPristine = false;
+        exportPathState.clear();
+        return;
+      default:
+        if (key >= 32 && key < 127) {
+          if (exportPathPristine) {
+            exportPathState.clear();
+            exportPathPristine = false;
+          }
+          exportPathState.insert((char) key);
+        }
+        return;
+    }
+  }
+
+  private void renderExportPopup(Frame frame) {
+    int popupWidth = Math.min(frame.area().width() - 4, 70);
+    int popupHeight = 3;
+    int x = Math.max(0, (frame.area().width() - popupWidth) / 2);
+    int y = Math.max(1, (frame.area().height() - popupHeight) / 2);
+
+    Rect popupRect = new Rect(x, y, popupWidth, popupHeight);
+
+    Block popupBlock =
+        Block.builder()
+            .title(Title.from("Export CSV"))
+            .borders(Borders.ALL)
+            .borderType(BorderType.ROUNDED)
+            .borderColor(Color.YELLOW)
+            .build();
+    TextInput exportInput = TextInput.builder().block(popupBlock).build();
+    exportInput.renderWithCursor(popupRect, frame.buffer(), exportPathState, frame);
+  }
+
   // ---- cell picker popup ----
 
   private boolean openCellPicker() {
@@ -4092,6 +4503,112 @@ public final class TuiShell implements AutoCloseable {
     public int cursor() {
       return cursor;
     }
+  }
+
+  // ---- CSV export ----
+
+  private static final DateTimeFormatter EXPORT_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+  private void exportActiveTab() {
+    ResultTab tab = tabs.get(activeTabIndex);
+    if (tab.tableData == null || tab.tableData.isEmpty()) {
+      showHintMessage("Nothing to export");
+      return;
+    }
+    Path exportDir = Path.of(System.getProperty("user.home"), ".jfr-shell", "exports");
+    String fileName = "export-" + LocalDateTime.now().format(EXPORT_TS) + ".csv";
+    Path defaultPath = exportDir.resolve(fileName);
+    exportPathState.clear();
+    exportPathState.insert(defaultPath.toString());
+    exportPathPristine = true;
+    exportPopupVisible = true;
+  }
+
+  private void performExport(String pathStr) {
+    ResultTab tab = tabs.get(activeTabIndex);
+    if (tab.tableData == null || tab.tableData.isEmpty()) {
+      showHintMessage("Nothing to export");
+      return;
+    }
+
+    // Use full dataset (cpAllEntries) when available, otherwise fall back to tableData
+    List<Map<String, Object>> exportData =
+        (tab.cpAllEntries != null && !tab.cpAllEntries.isEmpty())
+            ? tab.cpAllEntries
+            : tab.tableData;
+    List<String> headers =
+        tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(exportData.get(0).keySet());
+    // Expand leading ~ to user home directory
+    if (pathStr.startsWith("~/") || pathStr.equals("~")) {
+      pathStr = System.getProperty("user.home") + pathStr.substring(1);
+    }
+    Path exportPath = Path.of(pathStr);
+
+    try {
+      Path parent = exportPath.getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
+    } catch (IOException e) {
+      showHintMessage("Export failed: " + e.getMessage());
+      return;
+    }
+
+    try (BufferedWriter w = Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8)) {
+      w.write(csvLine(headers));
+      w.newLine();
+      for (Map<String, Object> row : exportData) {
+        List<String> cells = new ArrayList<>(headers.size());
+        for (String h : headers) {
+          cells.add(csvCell(row.get(h)));
+        }
+        w.write(csvLine(cells));
+        w.newLine();
+      }
+    } catch (IOException e) {
+      showHintMessage("Export failed: " + e.getMessage());
+      return;
+    }
+
+    showHintMessage("Exported " + exportData.size() + " rows to " + exportPath);
+  }
+
+  private static String csvLine(List<String> values) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < values.size(); i++) {
+      if (i > 0) sb.append(',');
+      sb.append(escapeCsv(values.get(i)));
+    }
+    return sb.toString();
+  }
+
+  private static String csvCell(Object value) {
+    if (value == null) return "";
+    if (value instanceof Collection<?> coll) {
+      StringBuilder sb = new StringBuilder();
+      int idx = 0;
+      for (Object item : coll) {
+        if (idx++ > 0) sb.append(" | ");
+        sb.append(item);
+      }
+      return sb.toString();
+    }
+    if (value instanceof ArrayType at) {
+      Object arr = at.getArray();
+      if (arr != null && arr.getClass().isArray()) return Arrays.deepToString(new Object[] {arr});
+      return String.valueOf(arr);
+    }
+    if (value instanceof ComplexType ct) return String.valueOf(ct.getValue());
+    if (value.getClass().isArray()) return Arrays.deepToString(new Object[] {value});
+    return String.valueOf(value);
+  }
+
+  private static String escapeCsv(String s) {
+    if (s == null) return "";
+    if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
+      return '"' + s.replace("\"", "\"\"") + '"';
+    }
+    return s;
   }
 
   @Override
