@@ -48,7 +48,8 @@ public class UntypedParserBenchmark {
 
   @Setup(Level.Trial)
   public void setup() {
-    testFile = Paths.get("parser/src/test/resources/test-jfr.jfr").toAbsolutePath().normalize();
+    testFile =
+        Paths.get("parser-core/src/test/resources/test-jfr.jfr").toAbsolutePath().normalize();
     if (!testFile.toFile().exists()) {
       throw new IllegalStateException("Test file not found: " + testFile);
     }

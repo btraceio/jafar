@@ -67,7 +67,7 @@ public abstract class BackendTck {
   protected Path getTestRecording() {
     // Default: use the test-ap.jfr from parser module (relative to project root)
     return Paths.get(System.getProperty("user.dir"))
-        .resolve("../parser/src/test/resources/test-ap.jfr")
+        .resolve("../parser-core/src/test/resources/test-ap.jfr")
         .normalize();
   }
 
