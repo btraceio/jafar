@@ -1,8 +1,9 @@
 # Jafar Parser Architecture
 
-This document outlines the architecture of the `parser` subproject: key entry points, core
+This document outlines the architecture of the `parser-core` subproject: key entry points, core
 streaming pipeline, typed and untyped parsing paths, and the supporting metadata/constant pool
-infrastructure.
+infrastructure. ASM-based code generation (CodeGenerator, ClassDefiners) lives in the
+`parser-codegen` module.
 
 ## TL;DR
 - Entry: `io.jafar.parser.api.JafarParser` with typed/untyped factories.
@@ -15,7 +16,7 @@ infrastructure.
 ## Architecture Diagram
 
 ```text
-Jafar Parser Architecture (parser subproject)
+Jafar Parser Architecture (parser-core subproject)
 
 +--------------------------------------------------------------------------------------------+
 |                                        Client Code                                         |
@@ -140,9 +141,9 @@ Untyped Path (maps with lazy constant-pool refs)
   `ParsingContext`, `ParserContext`, `JFRHandler`, `Control`, `Values`, annotations).
 - `impl`: Concrete parsers, contexts, event mapping utilities (`TypedJafarParserImpl`,
   `UntypedJafarParserImpl`, `TypedParserContext`, `EventStream`, `MapValueBuilder`, `ControlImpl`).
-- `internal_api`: Streaming engine, metadata model, constant pools, deserialization/codegen,
+- `internal_api`: Streaming engine, metadata model, constant pools, deserialization,
   runtime class definition (`StreamingChunkParser`, `RecordingStream`, `Metadata*`, `Deserializer`,
-  `CodeGenerator`, `ClassDefiners`, `MutableConstantPools`).
+  `MutableConstantPools`). ASM codegen (`CodeGenerator`, `ClassDefiners`) is in `parser-codegen`.
 - `utils`: Low-level buffers and helpers (`CustomByteBuffer`, `SplicedMappedByteBuffer`, `BytePacking`).
 
 ## Flow Notes
@@ -157,10 +158,10 @@ Untyped Path (maps with lazy constant-pool refs)
   `ArrayHolder`/nested maps, constant pool refs remain lazy until accessed.
 
 ### Typed path internals (legend)
-- `MetadataClass.bindDeserializer()` consults `DeserializerCache` and invokes `CodeGenerator` to
-  produce a `Deserializer.Generated` when not cached.
-- `CodeGenerator` emits bytecode for field skipping and deserialization and uses `ClassDefiners`
-  to define the class at runtime.
+- `MetadataClass.bindDeserializer()` consults `DeserializerCache` and invokes the `DeserializerFactory`
+  SPI to produce a `Deserializer.Generated` when not cached.
+- The default SPI implementation (`CodeGeneratorDeserializerFactory` in `parser-codegen`) emits
+  bytecode via `CodeGenerator` and uses `ClassDefiners` to define the class at runtime.
   - Strategy selection: `hidden` (JDK 15+), `lookup` (JDK 9–14), `unsafe` (JDK 8), `loader` (fallback).
 - `MetadataClass.read(stream)` uses the bound `Deserializer` to materialize typed objects during
   event processing in `TypedJafarParserImpl.onEvent(...)`.

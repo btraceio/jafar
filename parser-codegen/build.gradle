@@ -22,8 +22,17 @@ java {
     }
 }
 
-// JMH benchmark source set
 sourceSets {
+    test8 {
+        java {
+            srcDirs = ["src/test8/java"]
+        }
+        resources {
+            srcDirs = [project(':parser-core').file('src/test/resources')]
+        }
+        compileClasspath += sourceSets.main.output + configurations.testCompileClasspath
+        runtimeClasspath += output + sourceSets.main.runtimeClasspath + configurations.testRuntimeClasspath
+    }
     jmh {
         java {
             srcDirs = ["src/main/jmh/java"]
@@ -37,6 +46,12 @@ sourceSets {
 }
 
 configurations {
+    test8Implementation {
+        extendsFrom configurations.testImplementation
+    }
+    test8RuntimeOnly {
+        extendsFrom configurations.testRuntimeOnly
+    }
     jmhImplementation {
         extendsFrom configurations.testImplementation
     }
@@ -60,6 +75,34 @@ tasks.named('test') {
         html.required.set(true)
         junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test"))
         html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test"))
+    }
+}
+
+// Java 8 codegen smoke tests (compile to 8, run on JDK 8)
+def j8LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+
+tasks.register('compileTest8JavaCompat', JavaCompile) {
+    source = sourceSets.test8.java
+    classpath = sourceSets.test8.compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/test8"))
+    options.release.set(8)
+    javaCompiler.set(j21CompilerProvider)
+}
+
+tasks.register('test8', Test) {
+    description = 'Runs codegen smoke tests on JDK 8.'
+    group = 'verification'
+    testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
+    classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    shouldRunAfter tasks.named('test')
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileTest8JavaCompat')
+    useJUnitPlatform()
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test8"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/test8"))
     }
 }
 
