@@ -73,7 +73,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ./gradlew test
 
 # Run specific test class
-./gradlew :parser:test --tests TypedJafarParserTest
+./gradlew :parser-core:test --tests TypedJafarParserTest
 
 # Create fat JARs
 ./gradlew shadowJar
@@ -229,13 +229,13 @@ void testParseValidRecording() throws Exception {
 ./gradlew test
 
 # Specific module
-./gradlew :parser:test
+./gradlew :parser-core:test
 
 # Specific test class
-./gradlew :parser:test --tests TypedJafarParserTest
+./gradlew :parser-core:test --tests TypedJafarParserTest
 
 # Specific test method
-./gradlew :parser:test --tests TypedJafarParserTest.testDualConstantPoolAccess
+./gradlew :parser-core:test --tests TypedJafarParserTest.testDualConstantPoolAccess
 
 # With debug output
 ./gradlew test --info

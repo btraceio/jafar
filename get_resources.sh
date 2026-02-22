@@ -5,7 +5,7 @@ HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 
 # Ensure target directories exist
 mkdir -p "$HERE/demo/src/test/resources"
-mkdir -p "$HERE/parser/src/test/resources"
+mkdir -p "$HERE/parser-core/src/test/resources"
 
 download() {
   local url="$1" dest="$2"
@@ -43,7 +43,7 @@ if [ ! -f "$DD_JFR_FILE" ]; then
   download "$DD_JFR_URL" "$DD_JFR_FILE"
 fi
 
-PARSER_RES_DIR="$HERE/parser/src/test/resources"
+PARSER_RES_DIR="$HERE/parser-core/src/test/resources"
 mkdir -p "$PARSER_RES_DIR"
 
 # Copy into parser test resources to keep parser tests self-contained

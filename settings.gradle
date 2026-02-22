@@ -21,11 +21,14 @@ pluginManagement {
 includeBuild('jafar-gradle-plugin') {
     dependencySubstitution {
         substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+        substitute(module("io.btrace:jafar-parser-core")).using(project(":parser-core"))
     }
 }
 
 rootProject.name = 'jafar'
 include ':parser'
+include ':parser-core'
+include ':parser-codegen'
 include ':jafar-processor'
 include ':tools'
 include ':jfr-shell'

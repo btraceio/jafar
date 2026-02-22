@@ -681,7 +681,7 @@ See [doc/JFRPath.md](../doc/cli/JFRPath.md) for complete reference.
 ./gradlew :jfr-shell:shadowJar
 
 # Run with test recording
-java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser/src/test/resources/test-jfr.jfr
+java -jar jfr-shell/build/libs/jfr-shell-*.jar -f parser-core/src/test/resources/test-jfr.jfr
 ```
 
 ## Documentation
