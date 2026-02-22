@@ -42,6 +42,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import org.jline.reader.Candidate;
 import org.jline.reader.ParsedLine;
@@ -65,6 +68,10 @@ public final class TuiShell implements AutoCloseable {
   private static final int COMPLETION_MAX_HEIGHT = 12;
   private static final int TIP_ROTATE_TICKS = 300; // ~30s at 100ms per tick
   private static final String[] TIPS = loadTips();
+  private static final String[] SPINNER = {
+    "\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807",
+    "\u280F"
+  };
 
   private static String[] loadTips() {
     try (var in = TuiShell.class.getResourceAsStream("/tips.txt")) {
@@ -203,6 +210,24 @@ public final class TuiShell implements AutoCloseable {
 
   private boolean cpTypesFocused;
 
+  // Async command execution state
+  private final ExecutorService commandExecutor =
+      Executors.newSingleThreadExecutor(
+          r -> {
+            Thread t = new Thread(r, "tui-command");
+            t.setDaemon(true);
+            return t;
+          });
+  private volatile boolean commandRunning;
+  private long commandStartTick;
+  private Future<?> commandFuture;
+  private List<String> asyncOutputBuffer;
+  private int asyncMaxLineWidth;
+  private int asyncLinesBeforeDispatch;
+  private volatile List<Map<String, Object>> asyncTableData;
+  private volatile List<String> asyncTableHeaders;
+  private volatile List<Map<String, Object>> asyncMetadataClasses;
+
   public TuiShell() throws IOException {
     // Disable pager — TUI mode uses scrollable view buffer instead.
     System.setProperty("jfr.shell.pager", "off");
@@ -261,6 +286,11 @@ public final class TuiShell implements AutoCloseable {
 
     try {
       while (running) {
+        // Check if async command has finished
+        if (commandFuture != null && commandFuture.isDone()) {
+          finishAsyncCommand();
+        }
+
         tuiTerminal.draw(this::render);
         backend.showCursor();
 
@@ -270,6 +300,8 @@ public final class TuiShell implements AutoCloseable {
           running = false;
           continue;
         }
+        // Ignore keystrokes while a command is running
+        if (commandRunning) continue;
         handleKey(key);
       }
     } finally {
@@ -282,13 +314,19 @@ public final class TuiShell implements AutoCloseable {
   // ---- output capture ----
 
   private void addOutputLine(String s) {
-    ResultTab tab = tabs.get(activeTabIndex);
     String stripped = stripAnsi(s);
     // A single println may contain embedded newlines; split to keep line count accurate.
     for (String line : stripped.split("\n", -1)) {
       String indented = "  " + line;
-      tab.lines.add(indented);
-      tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+      // During async execution, write to the buffer instead of the active tab
+      if (asyncOutputBuffer != null) {
+        asyncOutputBuffer.add(indented);
+        asyncMaxLineWidth = Math.max(asyncMaxLineWidth, indented.length());
+      } else {
+        ResultTab tab = tabs.get(activeTabIndex);
+        tab.lines.add(indented);
+        tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+      }
     }
   }
 
@@ -506,7 +544,7 @@ public final class TuiShell implements AutoCloseable {
 
     Block.Builder blockBuilder =
         Block.builder().title(blockTitle).borders(Borders.ALL).borderType(BorderType.ROUNDED);
-    if (focus == Focus.RESULTS && !(cpBrowserMode && cpTypesFocused)) {
+    if (focus == Focus.RESULTS && !cpBrowserMode) {
       blockBuilder.borderColor(Color.CYAN);
     }
     if (activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
@@ -537,14 +575,26 @@ public final class TuiShell implements AutoCloseable {
               .split(inner);
       renderCpTypes(frame, hSplit.get(0));
 
-      Block cpEntriesBlock =
+      Block.Builder cpEntriesBuilder =
           Block.builder()
               .title(Title.from("CP type: " + getSelectedCpTypeName()))
               .borders(Borders.ALL)
-              .borderType(BorderType.ROUNDED)
-              .build();
+              .borderType(BorderType.ROUNDED);
+      if (focus == Focus.RESULTS && !cpTypesFocused) {
+        cpEntriesBuilder.borderColor(Color.CYAN);
+      }
+      Block cpEntriesBlock = cpEntriesBuilder.build();
       inner = cpEntriesBlock.inner(hSplit.get(1));
       frame.renderWidget(cpEntriesBlock, hSplit.get(1));
+    }
+
+    // Show spinner while a command is running (after a short delay to avoid flicker)
+    if (commandRunning && renderTick - commandStartTick > 1) {
+      int spinIdx = (int) (renderTick % SPINNER.length);
+      Paragraph spinner = Paragraph.from("  " + SPINNER[spinIdx] + " Running...");
+      frame.renderWidget(spinner, inner);
+      resultsAreaHeight = inner.height();
+      return;
     }
 
     int lineCount = effectiveLineCount(activeTab);
@@ -2593,40 +2643,69 @@ public final class TuiShell implements AutoCloseable {
     // Echo the command in the results buffer
     activeTab.lines.add("> " + command);
 
-    int linesBeforeDispatch = activeTab.lines.size();
-    TuiTableRenderer.clearLastData();
-    // Redirect stderr to prevent raw output from corrupting the TUI
-    java.io.PrintStream origErr = System.err;
-    java.io.ByteArrayOutputStream errBuf = new java.io.ByteArrayOutputStream();
-    System.setErr(new java.io.PrintStream(errBuf));
-    try {
-      boolean handled = dispatcher.dispatch(command);
-      if (!handled) {
-        activeTab.lines.add("  Unknown command. Type 'help' for available commands.");
-      }
-    } catch (Exception e) {
-      activeTab.lines.add("  Error: " + e.getMessage());
-    } finally {
-      System.setErr(origErr);
-      String errOutput = errBuf.toString().trim();
-      if (!errOutput.isEmpty()) {
-        for (String errLine : errOutput.split("\n")) {
-          addOutputLine("  " + errLine);
-        }
-      }
-    }
+    asyncLinesBeforeDispatch = activeTab.lines.size();
+    asyncOutputBuffer = new ArrayList<>();
+    asyncMaxLineWidth = 0;
+    commandRunning = true;
+    commandStartTick = renderTick;
+    focus = Focus.RESULTS;
 
-    activeTab.tableData = TuiTableRenderer.getLastTableData();
-    activeTab.tableHeaders = TuiTableRenderer.getLastTableHeaders();
-    activeTab.metadataClassCache = TuiTableRenderer.getLastMetadataClasses();
-    TuiTableRenderer.clearLastData();
+    commandFuture =
+        commandExecutor.submit(
+            () -> {
+              TuiTableRenderer.clearLastData();
+              // Redirect stderr to prevent raw output from corrupting the TUI
+              java.io.PrintStream origErr = System.err;
+              java.io.ByteArrayOutputStream errBuf = new java.io.ByteArrayOutputStream();
+              System.setErr(new java.io.PrintStream(errBuf));
+              try {
+                boolean handled = dispatcher.dispatch(command);
+                if (!handled) {
+                  asyncOutputBuffer.add("  Unknown command. Type 'help' for available commands.");
+                }
+              } catch (Exception e) {
+                asyncOutputBuffer.add("  Error: " + e.getMessage());
+              } finally {
+                System.setErr(origErr);
+                String errOutput = errBuf.toString().trim();
+                if (!errOutput.isEmpty()) {
+                  for (String errLine : errOutput.split("\n")) {
+                    addOutputLine("  " + errLine);
+                  }
+                }
+                // Capture ThreadLocal table data before leaving the executor thread
+                asyncTableData = TuiTableRenderer.getLastTableData();
+                asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
+                asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
+                TuiTableRenderer.clearLastData();
+                commandRunning = false;
+              }
+            });
+  }
+
+  private void finishAsyncCommand() {
+    ResultTab activeTab = tabs.get(activeTabIndex);
+    // Copy buffered output lines into the tab
+    for (String line : asyncOutputBuffer) {
+      activeTab.lines.add(line);
+    }
+    activeTab.maxLineWidth = Math.max(activeTab.maxLineWidth, asyncMaxLineWidth);
+    asyncOutputBuffer = null;
+    asyncMaxLineWidth = 0;
+    commandFuture = null;
+
+    activeTab.tableData = asyncTableData;
+    activeTab.tableHeaders = asyncTableHeaders;
+    activeTab.metadataClassCache = asyncMetadataClasses;
+    asyncTableData = null;
+    asyncTableHeaders = null;
+    asyncMetadataClasses = null;
 
     activeTab.sortColumn = -1;
     activeTab.sortAscending = true;
     if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
       activeTab.selectedRow = 0;
-      // Table output: header = 1 line before data rows
-      activeTab.dataStartLine = linesBeforeDispatch + 1;
+      activeTab.dataStartLine = asyncLinesBeforeDispatch + 1;
       buildDetailTabs(activeTab);
     } else {
       activeTab.selectedRow = -1;
@@ -2634,15 +2713,13 @@ public final class TuiShell implements AutoCloseable {
       buildDetailTabs(activeTab);
     }
 
-    // Auto-scroll: when table data is present, show the selected row (row 0);
+    // Auto-scroll: when table data is present, show selected row (row 0);
     // otherwise scroll to show the latest output
     if (activeTab.dataStartLine >= 0) {
       activeTab.scrollOffset = 0;
     } else {
       activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - resultsAreaHeight);
     }
-
-    focus = Focus.RESULTS;
   }
 
   // ---- history ----
@@ -3310,6 +3387,7 @@ public final class TuiShell implements AutoCloseable {
       sessions.closeAll();
     } catch (Exception ignore) {
     }
+    commandExecutor.shutdownNow();
     jlineTerminal.close();
   }
 }
