@@ -28,6 +28,8 @@ import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.jfrpath.JfrPathEvaluator;
+import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import java.io.IOException;
 import java.lang.reflect.Array;
@@ -37,7 +39,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -132,9 +136,11 @@ public final class TuiShell implements AutoCloseable {
     int sortColumn = -1; // -1 = no sort, 0..N = column index
     boolean sortAscending = true;
     long marqueeTick0; // renderTick when name was set (marquee epoch)
-    int cpTypeIndex = -1; // sidebar selection index for CP tabs (-1 = not a CP tab)
+    int cpTypeIndex = -1; // sidebar selection index for browser tabs (-1 = not a browser tab)
+    List<Map<String, Object>> browserTypes; // sidebar type list for this browser tab
+    boolean isEventBrowserTab; // true if this tab was opened in event browser mode
 
-    // Paginated CP rendering — render only a page of rows at a time
+    // Paginated rendering — render only a page of rows at a time
     List<Map<String, Object>> cpAllEntries; // full entries from provider (null for non-CP)
     List<String> cpColumnHeaders; // column names for manual row formatting
     int[] cpColumnWidths; // column widths for manual row formatting
@@ -188,6 +194,7 @@ public final class TuiShell implements AutoCloseable {
   private String historySearchQuery = "";
   private int historySearchIndex = -1;
   private String historySearchSavedInput = "";
+  private boolean historySearchFailing; // true when query has no match
 
   // Completion state
   private ShellCompleter completer;
@@ -207,14 +214,24 @@ public final class TuiShell implements AutoCloseable {
   private int cellPickerSelectedIndex;
   private int cellPickerScrollOffset;
 
-  // CP Browser mode
+  // Session picker state
+  private boolean sessionPickerVisible;
+  private List<SessionManager.SessionRef> sessionPickerEntries;
+  private int sessionPickerSelectedIndex;
+
+  // Browser mode (shared by CP browser and event browser)
   private boolean cpBrowserMode;
+  private boolean eventBrowserMode; // true when browsing events (vs CP)
   private List<Map<String, Object>> cpTypes;
   private int cpTypeSelectedIndex;
   private int cpTypeScrollOffset;
   private int cpTypesAreaHeight;
 
   private boolean cpTypesFocused;
+  private long browserNavTime; // nanoTime of last Up/Down in sidebar
+  private String browserNavPending; // type name awaiting load (null = none)
+  private boolean browserNavKeepFocus; // keepTypesFocused for pending load
+  private static final long BROWSER_NAV_DEBOUNCE_NS = 100_000_000L; // 100ms
 
   // Async command execution state
   private final ExecutorService commandExecutor =
@@ -233,6 +250,7 @@ public final class TuiShell implements AutoCloseable {
   private volatile List<Map<String, Object>> asyncTableData;
   private volatile List<String> asyncTableHeaders;
   private volatile List<Map<String, Object>> asyncMetadataClasses;
+  private volatile boolean eventBrowserPending; // async event summary → enter event browser
 
   public TuiShell() throws IOException {
     // Disable pager — TUI mode uses scrollable view buffer instead.
@@ -295,6 +313,15 @@ public final class TuiShell implements AutoCloseable {
         // Check if async command has finished
         if (commandFuture != null && commandFuture.isDone()) {
           finishAsyncCommand();
+        }
+
+        // Flush debounced browser navigation if idle long enough
+        if (browserNavPending != null
+            && System.nanoTime() - browserNavTime >= BROWSER_NAV_DEBOUNCE_NS) {
+          String pending = browserNavPending;
+          boolean keep = browserNavKeepFocus;
+          browserNavPending = null;
+          loadBrowserEntries(pending, keep);
         }
 
         tuiTerminal.draw(this::render);
@@ -437,6 +464,9 @@ public final class TuiShell implements AutoCloseable {
     if (cellPickerVisible && cellPickerEntries != null && !cellPickerEntries.isEmpty()) {
       renderCellPicker(frame);
     }
+    if (sessionPickerVisible && sessionPickerEntries != null && !sessionPickerEntries.isEmpty()) {
+      renderSessionPicker(frame);
+    }
   }
 
   private static String marqueeTitle(String fullTitle, long tick) {
@@ -511,17 +541,13 @@ public final class TuiShell implements AutoCloseable {
     } catch (Exception ignore) {
     }
 
-    ResultTab activeTab = tabs.get(activeTabIndex);
-    int lineCount = effectiveLineCount(activeTab);
-    String scrollInfo = "";
-    if (lineCount > resultsAreaHeight) {
-      scrollInfo = " | line " + (activeTab.scrollOffset + 1) + "/" + lineCount;
-    }
-    if (activeTab.hScrollOffset > 0) {
-      scrollInfo += " | col " + (activeTab.hScrollOffset + 1);
+    String altMod = (PLATFORM == Platform.MACOS) ? "Opt" : "Alt";
+    String sessionHint = "";
+    if (sessions.list().size() > 1) {
+      sessionHint = " | " + altMod + "+s:switch";
     }
 
-    String status = " JFR Shell TUI" + sessionInfo + backendName + scrollInfo;
+    String status = " JFR Shell TUI" + sessionInfo + backendName + sessionHint;
     // Pad to fill the entire status bar width
     if (status.length() < area.width()) {
       status = status + " ".repeat(area.width() - status.length());
@@ -576,7 +602,7 @@ public final class TuiShell implements AutoCloseable {
       inner = tabSplit.get(1);
     }
 
-    // CP browser: split inner area for types sidebar + entries sub-block
+    // Browser mode: split inner area for types sidebar + entries sub-block
     if (cpBrowserMode) {
       List<Rect> hSplit =
           Layout.horizontal()
@@ -584,9 +610,11 @@ public final class TuiShell implements AutoCloseable {
               .split(inner);
       renderCpTypes(frame, hSplit.get(0));
 
+      String entriesTitle =
+          eventBrowserMode ? getSelectedCpTypeName() : "CP type: " + getSelectedCpTypeName();
       Block.Builder cpEntriesBuilder =
           Block.builder()
-              .title(Title.from("CP type: " + getSelectedCpTypeName()))
+              .title(Title.from(entriesTitle))
               .borders(Borders.ALL)
               .borderType(BorderType.ROUNDED);
       if (focus == Focus.RESULTS && !cpTypesFocused) {
@@ -767,9 +795,10 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void renderCpTypes(Frame frame, Rect area) {
+    String sidebarTitle = eventBrowserMode ? "Event Types" : "CP Types";
     Block.Builder blockBuilder =
         Block.builder()
-            .title(Title.from("CP Types"))
+            .title(Title.from(sidebarTitle))
             .borders(Borders.ALL)
             .borderType(BorderType.ROUNDED);
     if (focus == Focus.RESULTS && cpTypesFocused) {
@@ -807,7 +836,8 @@ public final class TuiShell implements AutoCloseable {
     for (int i = start; i < end; i++) {
       Map<String, Object> typeRow = cpTypes.get(i);
       String name = String.valueOf(typeRow.getOrDefault("name", ""));
-      String count = String.valueOf(typeRow.getOrDefault("totalSize", ""));
+      String countKey = eventBrowserMode ? "count" : "totalSize";
+      String count = String.valueOf(typeRow.getOrDefault(countKey, ""));
       String display = " " + name + " (" + count + ")";
       if (display.length() > contentArea.width()) {
         display = display.substring(0, contentArea.width());
@@ -1375,15 +1405,16 @@ public final class TuiShell implements AutoCloseable {
 
   private void renderHistorySearchBar(Frame frame, Rect area) {
     String matched = inputState.text();
-    String text = "(reverse-i-search) " + historySearchQuery + ": " + matched;
+    String prefix = historySearchFailing ? "(failing reverse-i-search) " : "(reverse-i-search) ";
+    String text = prefix + historySearchQuery + ": " + matched;
     if (text.length() < area.width()) {
       text = text + " ".repeat(area.width() - text.length());
     }
-    Paragraph bar =
-        Paragraph.builder()
-            .text(Text.raw(text))
-            .style(Style.create().bg(Color.DARK_GRAY).fg(Color.YELLOW))
-            .build();
+    Style style =
+        historySearchFailing
+            ? Style.create().bg(Color.DARK_GRAY).fg(Color.RED)
+            : Style.create().bg(Color.DARK_GRAY).fg(Color.YELLOW);
+    Paragraph bar = Paragraph.builder().text(Text.raw(text)).style(style).build();
     frame.renderWidget(bar, area);
   }
 
@@ -1521,6 +1552,10 @@ public final class TuiShell implements AutoCloseable {
 
   private void handleKey(int key) throws IOException {
     // Intercept keys when completion popup is visible
+    if (sessionPickerVisible) {
+      handleSessionPickerKey(key);
+      return;
+    }
     if (completionPopupVisible) {
       handleCompletionPopupKey(key);
       return;
@@ -1565,11 +1600,24 @@ public final class TuiShell implements AutoCloseable {
         return;
       case 18: // Ctrl+R — history search from any focus
         if (focus == Focus.HISTORY_SEARCH) {
-          // Advance to next older match
-          int match = findHistoryMatch(historySearchQuery, historySearchIndex - 1);
-          if (match >= 0) {
-            historySearchIndex = match;
-            inputState.setText(commandHistory.get(match));
+          // Advance to next distinct older match (skip duplicates)
+          if (!historySearchQuery.isEmpty()) {
+            String current =
+                historySearchIndex >= 0 && historySearchIndex < commandHistory.size()
+                    ? commandHistory.get(historySearchIndex)
+                    : "";
+            int match =
+                findDistinctHistoryMatch(historySearchQuery, historySearchIndex - 1, current);
+            if (match < 0) {
+              // Wrap around from the end
+              match =
+                  findDistinctHistoryMatch(historySearchQuery, commandHistory.size() - 1, current);
+            }
+            if (match >= 0) {
+              historySearchIndex = match;
+              historySearchFailing = false;
+              inputState.setText(commandHistory.get(match));
+            }
           }
         } else {
           if (focus != Focus.INPUT) {
@@ -1578,6 +1626,7 @@ public final class TuiShell implements AutoCloseable {
           historySearchSavedInput = inputState.text();
           historySearchQuery = "";
           historySearchIndex = commandHistory.size();
+          historySearchFailing = false;
           focus = Focus.HISTORY_SEARCH;
         }
         return;
@@ -1615,6 +1664,10 @@ public final class TuiShell implements AutoCloseable {
       focus = Focus.INPUT;
       return;
     }
+    if (key == MAC_OPT_S) {
+      openSessionPicker();
+      return;
+    }
 
     // Focus-specific keys
     if (focus == Focus.HISTORY_SEARCH) {
@@ -1635,8 +1688,9 @@ public final class TuiShell implements AutoCloseable {
       case 13: // Enter
       case 10:
         if (cpBrowserMode && cpTypesFocused) {
+          browserNavPending = null; // cancel debounce
           String name = getSelectedCpTypeName();
-          if (!name.isEmpty()) loadCpEntries(name, false);
+          if (!name.isEmpty()) loadBrowserEntries(name, false);
         } else {
           focus = detailTabNames.isEmpty() ? Focus.INPUT : Focus.DETAIL;
         }
@@ -1880,24 +1934,32 @@ public final class TuiShell implements AutoCloseable {
           int match = findHistoryMatch(historySearchQuery, commandHistory.size() - 1);
           if (match >= 0) {
             historySearchIndex = match;
+            historySearchFailing = false;
             inputState.setText(commandHistory.get(match));
+          } else if (historySearchQuery.isEmpty()) {
+            historySearchIndex = commandHistory.size();
+            historySearchFailing = false;
+            inputState.setText(historySearchSavedInput);
           } else {
             historySearchIndex = -1;
-            inputState.setText(historySearchSavedInput);
+            historySearchFailing = true;
           }
         }
         break;
       default:
         if (key >= 32 && key < 127) {
           historySearchQuery += (char) key;
-          int match = findHistoryMatch(historySearchQuery, historySearchIndex - 1);
+          int match = findHistoryMatch(historySearchQuery, historySearchIndex);
           if (match < 0) {
             // Try from the end if current position yielded no match
             match = findHistoryMatch(historySearchQuery, commandHistory.size() - 1);
           }
           if (match >= 0) {
             historySearchIndex = match;
+            historySearchFailing = false;
             inputState.setText(commandHistory.get(match));
+          } else {
+            historySearchFailing = true;
           }
         }
         break;
@@ -1909,6 +1971,18 @@ public final class TuiShell implements AutoCloseable {
     String lower = query.toLowerCase();
     for (int i = Math.min(fromIndex, commandHistory.size() - 1); i >= 0; i--) {
       if (commandHistory.get(i).toLowerCase().contains(lower)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private int findDistinctHistoryMatch(String query, int fromIndex, String skipValue) {
+    if (query.isEmpty() || commandHistory.isEmpty()) return -1;
+    String lower = query.toLowerCase();
+    for (int i = Math.min(fromIndex, commandHistory.size() - 1); i >= 0; i--) {
+      String entry = commandHistory.get(i);
+      if (entry.toLowerCase().contains(lower) && !entry.equals(skipValue)) {
         return i;
       }
     }
@@ -1961,6 +2035,7 @@ public final class TuiShell implements AutoCloseable {
   private static final int MAC_OPT_R = 0x00AE; // Opt+r → ®
   private static final int MAC_OPT_D = 0x2202; // Opt+d → ∂
   private static final int MAC_OPT_C = 0x00E7; // Opt+c → ç
+  private static final int MAC_OPT_S = 0x00DF; // Opt+s → ß
 
   // Modifier codes in CSI sequences: ESC [ 1 ; <mod> <dir>
   private static final int MOD_NONE = 0;
@@ -1984,7 +2059,11 @@ public final class TuiShell implements AutoCloseable {
         if (!cpTypesFocused) {
           cpTypesFocused = true;
         } else {
-          exitCpBrowserMode();
+          if (eventBrowserMode) {
+            exitEventBrowserMode();
+          } else {
+            exitCpBrowserMode();
+          }
           focus = Focus.INPUT;
         }
       } else if (focus == Focus.RESULTS) {
@@ -2026,6 +2105,10 @@ public final class TuiShell implements AutoCloseable {
     }
     if (next == 'c') {
       focus = Focus.INPUT;
+      return;
+    }
+    if (next == 's') {
+      openSessionPicker();
       return;
     }
     if (next != '[') return;
@@ -2238,20 +2321,23 @@ public final class TuiShell implements AutoCloseable {
   private void switchTab(int newIndex) {
     if (newIndex == activeTabIndex) return;
     int oldIndex = activeTabIndex;
-    // Save CP state for old tab
+    // Save browser state for old tab
     if (cpBrowserMode) {
       tabs.get(oldIndex).cpTypeIndex = cpTypeSelectedIndex;
     }
     activeTabIndex = newIndex;
-    // Restore CP state for new tab
+    // Restore browser state for new tab
     ResultTab newTab = tabs.get(newIndex);
-    if (newTab.cpTypeIndex >= 0 && cpTypes != null) {
+    if (newTab.cpTypeIndex >= 0 && newTab.browserTypes != null) {
       cpBrowserMode = true;
+      eventBrowserMode = newTab.isEventBrowserTab;
+      cpTypes = newTab.browserTypes;
       cpTypeSelectedIndex = newTab.cpTypeIndex;
       cpTypesFocused = false;
     } else {
       if (newTab.cpTypeIndex >= 0) newTab.cpTypeIndex = -1;
       cpBrowserMode = false;
+      eventBrowserMode = false;
       cpTypesFocused = false;
     }
     buildDetailTabs(newTab);
@@ -2297,11 +2383,14 @@ public final class TuiShell implements AutoCloseable {
 
   private void enterCpBrowserMode(ResultTab tab) {
     cpBrowserMode = true;
+    eventBrowserMode = false;
     cpTypes = tab.tableData;
     cpTypeSelectedIndex = 0;
     cpTypeScrollOffset = 0;
     cpTypesFocused = true;
     tab.cpTypeIndex = 0;
+    tab.browserTypes = cpTypes;
+    tab.isEventBrowserTab = false;
     // Clear tab for entries (will be populated on first type selection)
     tab.tableData = null;
     tab.tableHeaders = null;
@@ -2325,10 +2414,185 @@ public final class TuiShell implements AutoCloseable {
 
   private void exitCpBrowserMode() {
     cpBrowserMode = false;
+    eventBrowserMode = false;
     cpTypeSelectedIndex = 0;
     cpTypeScrollOffset = 0;
     cpTypesFocused = false;
-    // Keep cpTypes cached so pinned CP tabs can restore
+    browserNavPending = null;
+    // Keep cpTypes cached so pinned browser tabs can restore
+  }
+
+  // ---- Event browser mode ----
+
+  private static boolean isEventsSummaryCommand(String command) {
+    String[] parts = command.trim().split("\\s+");
+    if (parts.length == 0) return false;
+    int evtIndex;
+    if ("events".equalsIgnoreCase(parts[0])) {
+      evtIndex = 0;
+    } else if ("show".equalsIgnoreCase(parts[0])
+        && parts.length >= 2
+        && "events".equalsIgnoreCase(parts[1])) {
+      evtIndex = 1;
+    } else {
+      return false;
+    }
+    // bare "events" / "show events" or with flags but no type argument
+    for (int i = evtIndex + 1; i < parts.length; i++) {
+      String p = parts[i];
+      if ("--format".equals(p) || "--limit".equals(p) || "--range".equals(p)) {
+        if (i + 1 < parts.length) i++; // skip flag value
+        continue;
+      }
+      // Non-flag argument = type name, not a summary command
+      return false;
+    }
+    return true;
+  }
+
+  private void enterEventBrowserMode(ResultTab tab) {
+    cpBrowserMode = true;
+    eventBrowserMode = true;
+    cpTypes = tab.tableData;
+    cpTypeSelectedIndex = 0;
+    cpTypeScrollOffset = 0;
+    cpTypesFocused = true;
+    tab.cpTypeIndex = 0;
+    tab.browserTypes = cpTypes;
+    tab.isEventBrowserTab = true;
+    // Clear tab for entries (will be populated on first type selection)
+    tab.tableData = null;
+    tab.tableHeaders = null;
+    tab.selectedRow = -1;
+    tab.dataStartLine = -1;
+    tab.lines.clear();
+    tab.maxLineWidth = 0;
+    // Clear detail state
+    detailTabNames = List.of();
+    detailTabValues = List.of();
+    activeDetailTabIndex = 0;
+    detailTabScrollOffsets.clear();
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+    focus = Focus.RESULTS;
+
+    // Auto-load events for the first type
+    String firstName = getSelectedCpTypeName();
+    if (!firstName.isEmpty()) loadEventEntries(firstName, true);
+  }
+
+  private void exitEventBrowserMode() {
+    cpBrowserMode = false;
+    eventBrowserMode = false;
+    cpTypeSelectedIndex = 0;
+    cpTypeScrollOffset = 0;
+    cpTypesFocused = false;
+    browserNavPending = null;
+  }
+
+  private void loadEventEntries(String typeName, boolean keepTypesFocused) {
+    JFRSession session = sessions.current().map(ref -> ref.session).orElse(null);
+    if (session == null) return;
+
+    List<Map<String, Object>> entries;
+    try {
+      var query = JfrPathParser.parse("events/" + typeName);
+      entries = new JfrPathEvaluator().evaluateWithLimit(session, query, 500);
+    } catch (Exception e) {
+      ResultTab tab = tabs.get(activeTabIndex);
+      tab.lines.clear();
+      tab.lines.add("  Error: " + e.getMessage());
+      tab.maxLineWidth = tab.lines.get(0).length();
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.dataStartLine = -1;
+      tab.cpAllEntries = null;
+      tab.cpColumnHeaders = null;
+      tab.cpColumnWidths = null;
+      tab.cpRenderedCount = 0;
+      if (!keepTypesFocused) cpTypesFocused = false;
+      return;
+    }
+
+    ResultTab tab = tabs.get(activeTabIndex);
+    tab.name = typeName;
+    tab.marqueeTick0 = renderTick;
+    tab.cpTypeIndex = cpTypeSelectedIndex;
+    tab.lines.clear();
+    tab.scrollOffset = 0;
+    tab.hScrollOffset = 0;
+    tab.maxLineWidth = 0;
+    tab.searchQuery = "";
+    tab.detailSearchQuery = "";
+    tab.filteredIndices = null;
+    tab.filteredMaxLineWidth = 0;
+    tab.sortColumn = -1;
+    tab.sortAscending = true;
+    tab.metadataClassCache = null;
+
+    if (entries.isEmpty()) {
+      tab.lines.add("  (no entries)");
+      tab.maxLineWidth = tab.lines.get(0).length();
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.dataStartLine = -1;
+      tab.cpAllEntries = null;
+      tab.cpColumnHeaders = null;
+      tab.cpColumnWidths = null;
+      tab.cpRenderedCount = 0;
+      detailTabNames = List.of();
+      detailTabValues = List.of();
+      activeDetailTabIndex = 0;
+      detailTabScrollOffsets.clear();
+      detailCursorLine = -1;
+      detailLineTypeRefs = null;
+      if (!keepTypesFocused) cpTypesFocused = false;
+      return;
+    }
+
+    // Compute columns as union of keys from sampled rows
+    Set<String> cols = new LinkedHashSet<>();
+    int sample = Math.min(entries.size(), 200);
+    for (int i = 0; i < sample; i++) cols.addAll(entries.get(i).keySet());
+    if (cols.size() <= 2 && entries.size() > sample) {
+      int sample2 = Math.min(entries.size(), 1000);
+      for (int i = 0; i < sample2; i++) cols.addAll(entries.get(i).keySet());
+    }
+    List<String> headers = new ArrayList<>(cols);
+
+    int[] widths = TuiTableRenderer.computeMaxWidths(headers, entries);
+
+    // Store pagination state on the tab
+    tab.cpAllEntries = entries;
+    tab.cpColumnHeaders = headers;
+    tab.cpColumnWidths = widths;
+
+    // Render header line
+    StringBuilder sb = new StringBuilder("  ");
+    for (int c = 0; c < headers.size(); c++) {
+      if (c > 0) sb.append("  ");
+      sb.append(String.format("%-" + widths[c] + "s", headers.get(c)));
+    }
+    String headerLine = sb.toString();
+    tab.lines.add(headerLine);
+    tab.maxLineWidth = Math.max(tab.maxLineWidth, headerLine.length());
+
+    // Render first page
+    int pageSize = Math.min(entries.size(), Math.max(resultsAreaHeight + 5, 20));
+    renderCpPage(tab, 0, pageSize);
+
+    tab.tableData = new ArrayList<>(entries.subList(0, pageSize));
+    tab.tableHeaders = headers;
+    tab.cpRenderedCount = pageSize;
+    tab.selectedRow = 0;
+    tab.dataStartLine = 1;
+
+    buildDetailTabs(tab);
+
+    tab.scrollOffset = 0;
+    if (!keepTypesFocused) cpTypesFocused = false;
   }
 
   private String getSelectedCpTypeName() {
@@ -2347,7 +2611,11 @@ public final class TuiShell implements AutoCloseable {
             cpTypeScrollOffset = cpTypeSelectedIndex;
           }
           String upName = getSelectedCpTypeName();
-          if (!upName.isEmpty()) loadCpEntries(upName, true);
+          if (!upName.isEmpty()) {
+            browserNavPending = upName;
+            browserNavKeepFocus = true;
+            browserNavTime = System.nanoTime();
+          }
         }
         break;
       case 'B': // Down
@@ -2357,17 +2625,30 @@ public final class TuiShell implements AutoCloseable {
             cpTypeScrollOffset = cpTypeSelectedIndex - cpTypesAreaHeight + 1;
           }
           String downName = getSelectedCpTypeName();
-          if (!downName.isEmpty()) loadCpEntries(downName, true);
+          if (!downName.isEmpty()) {
+            browserNavPending = downName;
+            browserNavKeepFocus = true;
+            browserNavTime = System.nanoTime();
+          }
         }
         break;
       case 'C': // Right — load entries and move focus to entries
         {
+          browserNavPending = null; // cancel any pending debounce
           String name = getSelectedCpTypeName();
-          if (!name.isEmpty()) loadCpEntries(name, false);
+          if (!name.isEmpty()) loadBrowserEntries(name, false);
         }
         break;
       default:
         break;
+    }
+  }
+
+  private void loadBrowserEntries(String typeName, boolean keepTypesFocused) {
+    if (eventBrowserMode) {
+      loadEventEntries(typeName, keepTypesFocused);
+    } else {
+      loadCpEntries(typeName, keepTypesFocused);
     }
   }
 
@@ -2524,9 +2805,10 @@ public final class TuiShell implements AutoCloseable {
 
     if (command.isEmpty()) return;
 
-    // Exit CP browser mode on any new command (keep cpTypes for pinned CP tabs)
+    // Exit browser mode on any new command (keep cpTypes for pinned browser tabs)
     if (cpBrowserMode) {
       cpBrowserMode = false;
+      eventBrowserMode = false;
       cpTypesFocused = false;
     }
 
@@ -2664,6 +2946,50 @@ public final class TuiShell implements AutoCloseable {
       }
     }
 
+    // Event browser mode: intercept bare "events" / "show events" — async scan
+    if (isEventsSummaryCommand(command)) {
+      Path evtRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (evtRec != null) {
+        eventBrowserPending = true;
+        asyncLinesBeforeDispatch = 0;
+        asyncOutputBuffer = new ArrayList<>();
+        asyncMaxLineWidth = 0;
+        commandRunning = true;
+        commandStartTick = renderTick;
+        focus = Focus.RESULTS;
+
+        commandFuture =
+            commandExecutor.submit(
+                () -> {
+                  try {
+                    Map<String, long[]> counts = new HashMap<>();
+                    try (var p = ParsingContext.create().newUntypedParser(evtRec)) {
+                      p.handle(
+                          (type, value, ctl) ->
+                              counts.computeIfAbsent(type.getName(), k -> new long[1])[0]++);
+                      p.run();
+                    }
+                    List<Map<String, Object>> summary = new ArrayList<>();
+                    counts.forEach(
+                        (name, c) -> {
+                          Map<String, Object> row = new LinkedHashMap<>();
+                          row.put("name", name);
+                          row.put("count", c[0]);
+                          summary.add(row);
+                        });
+                    summary.sort(Comparator.comparing(r -> String.valueOf(r.get("name"))));
+                    asyncTableData = summary;
+                  } catch (Exception e) {
+                    asyncOutputBuffer.add("  Error: " + e.getMessage());
+                    eventBrowserPending = false;
+                  } finally {
+                    commandRunning = false;
+                  }
+                });
+        return;
+      }
+    }
+
     // Echo the command in the results buffer
     activeTab.lines.add("> " + command);
 
@@ -2708,6 +3034,29 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void finishAsyncCommand() {
+    // Event browser pending: async summary scan completed → enter browser mode
+    if (eventBrowserPending) {
+      eventBrowserPending = false;
+      ResultTab activeTab = tabs.get(activeTabIndex);
+      List<Map<String, Object>> summary = asyncTableData;
+      asyncTableData = null;
+      asyncTableHeaders = null;
+      asyncMetadataClasses = null;
+      asyncOutputBuffer = null;
+      asyncMaxLineWidth = 0;
+      commandFuture = null;
+
+      if (summary != null && !summary.isEmpty()) {
+        activeTab.tableData = summary;
+        enterEventBrowserMode(activeTab);
+      } else {
+        activeTab.lines.clear();
+        activeTab.lines.add("  No events found.");
+        activeTab.maxLineWidth = activeTab.lines.get(0).length();
+      }
+      return;
+    }
+
     ResultTab activeTab = tabs.get(activeTabIndex);
     // Copy buffered output lines into the tab
     for (String line : asyncOutputBuffer) {
@@ -3345,6 +3694,114 @@ public final class TuiShell implements AutoCloseable {
 
   private static boolean isScriptingKeyword(String value) {
     return SCRIPTING_KEYWORDS.contains(value);
+  }
+
+  // ---- session picker popup ----
+
+  private void openSessionPicker() {
+    List<SessionManager.SessionRef> all = sessions.list();
+    if (all.size() < 2) return;
+    sessionPickerEntries = all;
+    // Pre-select the current session
+    int currentId = sessions.current().map(r -> r.id).orElse(-1);
+    sessionPickerSelectedIndex = 0;
+    for (int i = 0; i < all.size(); i++) {
+      if (all.get(i).id == currentId) {
+        sessionPickerSelectedIndex = i;
+        break;
+      }
+    }
+    sessionPickerVisible = true;
+  }
+
+  private void closeSessionPicker() {
+    sessionPickerVisible = false;
+    sessionPickerEntries = null;
+  }
+
+  private void handleSessionPickerKey(int key) throws IOException {
+    switch (key) {
+      case 13: // Enter
+      case 10:
+        if (sessionPickerEntries != null
+            && sessionPickerSelectedIndex >= 0
+            && sessionPickerSelectedIndex < sessionPickerEntries.size()) {
+          SessionManager.SessionRef ref = sessionPickerEntries.get(sessionPickerSelectedIndex);
+          sessions.use(String.valueOf(ref.id));
+          // Ensure TUI output format for the switched session
+          sessions.current().ifPresent(cur -> cur.outputFormat = "tui");
+        }
+        closeSessionPicker();
+        return;
+      case 27: // Esc or escape sequence
+        {
+          int next = backend.read(50);
+          if (next == READ_EXPIRED || next == EOF) {
+            closeSessionPicker();
+            return;
+          }
+          if (next == '[') {
+            int code = backend.read(50);
+            if (code == 'A' && sessionPickerSelectedIndex > 0) { // Up
+              sessionPickerSelectedIndex--;
+              return;
+            }
+            if (code == 'B'
+                && sessionPickerEntries != null
+                && sessionPickerSelectedIndex < sessionPickerEntries.size() - 1) { // Down
+              sessionPickerSelectedIndex++;
+              return;
+            }
+          }
+          closeSessionPicker();
+          return;
+        }
+      default:
+        closeSessionPicker();
+        return;
+    }
+  }
+
+  private void renderSessionPicker(Frame frame) {
+    if (sessionPickerEntries == null || sessionPickerEntries.isEmpty()) return;
+
+    int currentId = sessions.current().map(r -> r.id).orElse(-1);
+    int maxWidth = 0;
+    List<String> labels = new ArrayList<>(sessionPickerEntries.size());
+    for (SessionManager.SessionRef ref : sessionPickerEntries) {
+      String marker = ref.id == currentId ? "* " : "  ";
+      String name =
+          ref.alias != null ? ref.alias : ref.session.getRecordingPath().getFileName().toString();
+      String label = marker + "#" + ref.id + " " + name;
+      labels.add(label);
+      maxWidth = Math.max(maxWidth, label.length());
+    }
+    int popupWidth = Math.min(maxWidth + 2, COMPLETION_MAX_WIDTH);
+    popupWidth = Math.min(popupWidth, frame.area().width());
+    int popupHeight = Math.min(sessionPickerEntries.size(), COMPLETION_MAX_HEIGHT);
+
+    // Center the popup horizontally, place near the top
+    int x = Math.max(0, (frame.area().width() - popupWidth) / 2);
+    int y = Math.max(1, (frame.area().height() - popupHeight) / 2);
+
+    Rect popupRect = new Rect(x, y, popupWidth, popupHeight);
+    Style normal = Style.create().bg(Color.DARK_GRAY).fg(Color.WHITE);
+    Style highlight = Style.create().bg(Color.CYAN).fg(Color.BLACK).bold();
+
+    List<Line> lines = new ArrayList<>(popupHeight);
+    for (int i = 0; i < popupHeight && i < labels.size(); i++) {
+      String label = " " + labels.get(i);
+      if (label.length() < popupWidth) {
+        label = label + " ".repeat(popupWidth - label.length());
+      } else if (label.length() > popupWidth) {
+        label = label.substring(0, popupWidth);
+      }
+      lines.add(
+          Line.from(Span.styled(label, i == sessionPickerSelectedIndex ? highlight : normal)));
+    }
+
+    Paragraph popup = Paragraph.builder().text(new Text(lines, null)).build();
+    frame.renderWidget(popup, popupRect);
   }
 
   // ---- cell picker popup ----
