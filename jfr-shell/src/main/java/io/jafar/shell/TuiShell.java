@@ -3366,6 +3366,7 @@ public final class TuiShell implements AutoCloseable {
         Map<String, Object> typeRow = cpTypes.get(cpTypeSelectedIndex);
         cellPickerEntries.add(new String[] {"\u2500 type \u2500", ""});
         for (String key : typeRow.keySet()) {
+          if (isComplexValue(typeRow.get(key))) continue;
           cellPickerEntries.add(new String[] {key, TuiTableRenderer.toCell(typeRow.get(key))});
         }
       }
@@ -3375,6 +3376,7 @@ public final class TuiShell implements AutoCloseable {
             tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(entryRow.keySet());
         cellPickerEntries.add(new String[] {"\u2500 entry \u2500", ""});
         for (String header : headers) {
+          if (isComplexValue(entryRow.get(header))) continue;
           cellPickerEntries.add(
               new String[] {header, TuiTableRenderer.toCell(entryRow.get(header))});
         }
@@ -3387,11 +3389,21 @@ public final class TuiShell implements AutoCloseable {
           tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(sourceRow.keySet());
       if (headers.isEmpty()) return false;
       for (String header : headers) {
+        if (isComplexValue(sourceRow.get(header))) continue;
         cellPickerEntries.add(
             new String[] {header, TuiTableRenderer.toCell(sourceRow.get(header))});
       }
     }
 
+    // Remove trailing separators with no entries after them
+    while (!cellPickerEntries.isEmpty()) {
+      String[] last = cellPickerEntries.get(cellPickerEntries.size() - 1);
+      if (last[1].isEmpty() && last[0].startsWith("\u2500")) {
+        cellPickerEntries.remove(cellPickerEntries.size() - 1);
+      } else {
+        break;
+      }
+    }
     if (cellPickerEntries.isEmpty()) return false;
     cellPickerSelectedIndex = 0;
     // Skip separator if it's the first entry
@@ -3419,6 +3431,7 @@ public final class TuiShell implements AutoCloseable {
             && !isCellPickerSeparator(cellPickerSelectedIndex)) {
           String value = cellPickerEntries.get(cellPickerSelectedIndex)[1];
           inputState.insert(value);
+          copyToClipboard(value);
         }
         closeCellPicker();
         return;
@@ -3467,6 +3480,23 @@ public final class TuiShell implements AutoCloseable {
   private void closeCellPicker() {
     cellPickerVisible = false;
     cellPickerEntries = null;
+  }
+
+  private static void copyToClipboard(String text) {
+    try {
+      String[] cmd =
+          switch (PLATFORM) {
+            case MACOS -> new String[] {"pbcopy"};
+            case WINDOWS -> new String[] {"clip"};
+            case LINUX -> new String[] {"xclip", "-selection", "clipboard"};
+          };
+      Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+      p.getOutputStream().write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      p.getOutputStream().close();
+      p.waitFor();
+    } catch (Exception ignore) {
+      // Clipboard unavailable — silently ignore
+    }
   }
 
   private void renderCellPicker(Frame frame) {
