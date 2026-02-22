@@ -82,7 +82,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ./gradlew :demo:run --args="jafar /path/to/file.jfr"
 
 # Run benchmarks
-./gradlew :benchmarks:jmh
+./gradlew :parser-codegen:jmh
 
 # Format code (automatic via git hook, or manual)
 ./gradlew spotlessApply
