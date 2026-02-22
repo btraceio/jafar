@@ -28,7 +28,6 @@ import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.SessionManager;
-import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import java.io.IOException;
 import java.lang.reflect.Array;
@@ -204,7 +203,7 @@ public final class TuiShell implements AutoCloseable {
 
   // Cell picker state
   private boolean cellPickerVisible;
-  private List<String[]> cellPickerEntries; // [0]=column name, [1]=value preview
+  private List<String[]> cellPickerEntries; // [0]=column name, [1]=full value
   private int cellPickerSelectedIndex;
   private int cellPickerScrollOffset;
 
@@ -1781,18 +1780,6 @@ public final class TuiShell implements AutoCloseable {
         inputState.insert((char) key);
         historyIndex = -1;
         break;
-      case '[':
-      case ']':
-        if (!detailTabNames.isEmpty()) {
-          activeDetailTabIndex =
-              key == '['
-                  ? (activeDetailTabIndex - 1 + detailTabNames.size()) % detailTabNames.size()
-                  : (activeDetailTabIndex + 1) % detailTabNames.size();
-          break;
-        }
-        inputState.insert((char) key);
-        historyIndex = -1;
-        break;
       default:
         if (key == '@' && openCellPicker()) {
           break;
@@ -2330,7 +2317,7 @@ public final class TuiShell implements AutoCloseable {
     detailCursorLine = -1;
     detailLineTypeRefs = null;
     focus = Focus.RESULTS;
-    updateSelectedVariable();
+
     // Auto-load entries for the first type
     String firstName = getSelectedCpTypeName();
     if (!firstName.isEmpty()) loadCpEntries(firstName, true);
@@ -2405,7 +2392,7 @@ public final class TuiShell implements AutoCloseable {
       tab.cpColumnWidths = null;
       tab.cpRenderedCount = 0;
       if (!keepTypesFocused) cpTypesFocused = false;
-      updateSelectedVariable();
+
       return;
     }
 
@@ -2443,7 +2430,7 @@ public final class TuiShell implements AutoCloseable {
       detailCursorLine = -1;
       detailLineTypeRefs = null;
       if (!keepTypesFocused) cpTypesFocused = false;
-      updateSelectedVariable();
+
       return;
     }
 
@@ -2494,7 +2481,6 @@ public final class TuiShell implements AutoCloseable {
 
     tab.scrollOffset = 0;
     if (!keepTypesFocused) cpTypesFocused = false;
-    updateSelectedVariable();
   }
 
   private void renderCpPage(ResultTab tab, int from, int to) {
@@ -2660,7 +2646,6 @@ public final class TuiShell implements AutoCloseable {
     activeTab.cpColumnHeaders = null;
     activeTab.cpColumnWidths = null;
     activeTab.cpRenderedCount = 0;
-    updateSelectedVariable();
 
     // CP browser mode: intercept bare "cp" / "show cp" before dispatch
     if (isCpSummaryCommand(command) && ConstantPoolProvider.isSupported()) {
@@ -2751,7 +2736,6 @@ public final class TuiShell implements AutoCloseable {
       activeTab.dataStartLine = -1;
       buildDetailTabs(activeTab);
     }
-    updateSelectedVariable();
 
     // Auto-scroll: when table data is present, show selected row (row 0);
     // otherwise scroll to show the latest output
@@ -2879,7 +2863,7 @@ public final class TuiShell implements AutoCloseable {
       tab.searchQuery = "";
       tab.detailSearchQuery = "";
       buildDetailTabs(tab);
-      updateSelectedVariable();
+
       return;
     }
 
@@ -2950,7 +2934,6 @@ public final class TuiShell implements AutoCloseable {
     tab.searchQuery = "";
     tab.detailSearchQuery = "";
     buildDetailTabs(tab);
-    updateSelectedVariable();
   }
 
   /**
@@ -3015,7 +2998,6 @@ public final class TuiShell implements AutoCloseable {
     if (newRow == tab.selectedRow) return;
     tab.selectedRow = newRow;
     buildDetailTabs(tab);
-    updateSelectedVariable();
 
     // Auto-scroll results to keep selected row visible
     if (tab.filteredIndices != null) {
@@ -3035,27 +3017,6 @@ public final class TuiShell implements AutoCloseable {
       } else if (newRow >= tab.scrollOffset + resultsAreaHeight) {
         tab.scrollOffset = newRow - resultsAreaHeight + 1;
       }
-    }
-  }
-
-  private void updateSelectedVariable() {
-    VariableStore store =
-        sessions.current().map(r -> r.variables).orElseGet(dispatcher::getGlobalStore);
-    ResultTab tab = tabs.get(activeTabIndex);
-    Map<String, Object> sourceRow = null;
-    if (cpBrowserMode && cpTypesFocused) {
-      if (cpTypes != null && cpTypeSelectedIndex >= 0 && cpTypeSelectedIndex < cpTypes.size()) {
-        sourceRow = cpTypes.get(cpTypeSelectedIndex);
-      }
-    } else if (tab.tableData != null
-        && tab.selectedRow >= 0
-        && tab.selectedRow < tab.tableData.size()) {
-      sourceRow = tab.tableData.get(tab.selectedRow);
-    }
-    if (sourceRow == null) {
-      store.remove("selected");
-    } else {
-      store.set("selected", new VariableStore.MapValue(sourceRow));
     }
   }
 
@@ -3108,7 +3069,7 @@ public final class TuiShell implements AutoCloseable {
           tab.scrollOffset = i - resultsAreaHeight + 1;
         }
         buildDetailTabs(tab);
-        updateSelectedVariable();
+
         return;
       }
     }
@@ -3405,9 +3366,7 @@ public final class TuiShell implements AutoCloseable {
         Map<String, Object> typeRow = cpTypes.get(cpTypeSelectedIndex);
         cellPickerEntries.add(new String[] {"\u2500 type \u2500", ""});
         for (String key : typeRow.keySet()) {
-          String preview = TuiTableRenderer.toCell(typeRow.get(key));
-          if (preview.length() > 30) preview = preview.substring(0, 27) + "...";
-          cellPickerEntries.add(new String[] {key, preview});
+          cellPickerEntries.add(new String[] {key, TuiTableRenderer.toCell(typeRow.get(key))});
         }
       }
       if (hasEntries) {
@@ -3416,9 +3375,8 @@ public final class TuiShell implements AutoCloseable {
             tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(entryRow.keySet());
         cellPickerEntries.add(new String[] {"\u2500 entry \u2500", ""});
         for (String header : headers) {
-          String preview = TuiTableRenderer.toCell(entryRow.get(header));
-          if (preview.length() > 30) preview = preview.substring(0, 27) + "...";
-          cellPickerEntries.add(new String[] {header, preview});
+          cellPickerEntries.add(
+              new String[] {header, TuiTableRenderer.toCell(entryRow.get(header))});
         }
       }
     } else if (tab.tableData != null
@@ -3429,9 +3387,8 @@ public final class TuiShell implements AutoCloseable {
           tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(sourceRow.keySet());
       if (headers.isEmpty()) return false;
       for (String header : headers) {
-        String preview = TuiTableRenderer.toCell(sourceRow.get(header));
-        if (preview.length() > 30) preview = preview.substring(0, 27) + "...";
-        cellPickerEntries.add(new String[] {header, preview});
+        cellPickerEntries.add(
+            new String[] {header, TuiTableRenderer.toCell(sourceRow.get(header))});
       }
     }
 
@@ -3460,13 +3417,8 @@ public final class TuiShell implements AutoCloseable {
             && cellPickerSelectedIndex >= 0
             && cellPickerSelectedIndex < cellPickerEntries.size()
             && !isCellPickerSeparator(cellPickerSelectedIndex)) {
-          String colName = cellPickerEntries.get(cellPickerSelectedIndex)[0];
-          // In CP browser mode, update selected variable to match the picked section
-          if (cpBrowserMode) {
-            updateSelectedForPickedSection(cellPickerSelectedIndex);
-          }
-          String insertion = "${selected." + colName + "}";
-          inputState.insert(insertion);
+          String value = cellPickerEntries.get(cellPickerSelectedIndex)[1];
+          inputState.insert(value);
         }
         closeCellPicker();
         return;
@@ -3509,33 +3461,6 @@ public final class TuiShell implements AutoCloseable {
       cellPickerScrollOffset = cellPickerSelectedIndex;
     } else if (cellPickerSelectedIndex >= cellPickerScrollOffset + COMPLETION_MAX_HEIGHT) {
       cellPickerScrollOffset = cellPickerSelectedIndex - COMPLETION_MAX_HEIGHT + 1;
-    }
-  }
-
-  private void updateSelectedForPickedSection(int pickedIndex) {
-    // Walk backwards from pickedIndex to find the nearest separator to determine section
-    String section = null;
-    for (int i = pickedIndex - 1; i >= 0; i--) {
-      if (isCellPickerSeparator(i)) {
-        section = cellPickerEntries.get(i)[0];
-        break;
-      }
-    }
-    VariableStore store =
-        sessions.current().map(r -> r.variables).orElseGet(dispatcher::getGlobalStore);
-    ResultTab tab = tabs.get(activeTabIndex);
-    Map<String, Object> sourceRow = null;
-    if (section != null && section.contains("type")) {
-      if (cpTypes != null && cpTypeSelectedIndex >= 0 && cpTypeSelectedIndex < cpTypes.size()) {
-        sourceRow = cpTypes.get(cpTypeSelectedIndex);
-      }
-    } else if (section != null && section.contains("entry")) {
-      if (tab.tableData != null && tab.selectedRow >= 0 && tab.selectedRow < tab.tableData.size()) {
-        sourceRow = tab.tableData.get(tab.selectedRow);
-      }
-    }
-    if (sourceRow != null) {
-      store.set("selected", new VariableStore.MapValue(sourceRow));
     }
   }
 
