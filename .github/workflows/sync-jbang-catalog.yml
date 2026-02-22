@@ -24,12 +24,16 @@ jobs:
               repo: context.repo.repo,
             });
 
-            if (releases.data.length === 0) {
-              console.log("No releases found");
+            // Only consider non-draft, non-prerelease releases with semver tags (vX.Y.Z)
+            const semverTag = /^v\d+\.\d+\.\d+$/;
+            const valid = releases.data.filter(r => !r.draft && !r.prerelease && semverTag.test(r.tag_name));
+
+            if (valid.length === 0) {
+              console.log("No valid semver releases found");
               return { version: null };
             }
 
-            const latestRelease = releases.data[0];
+            const latestRelease = valid[0];
             const version = latestRelease.tag_name.replace(/^v/, '');
             const createdAt = latestRelease.created_at;
 

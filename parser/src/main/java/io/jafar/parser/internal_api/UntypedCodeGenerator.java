@@ -207,7 +207,8 @@ public final class UntypedCodeGenerator {
     // Stack: []
     ctor.visitVarInsn(Opcodes.ALOAD, 0);
     // Stack: [this]
-    ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
+    ctor.visitMethodInsn(
+        Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
     // Stack: []
     ctor.visitInsn(Opcodes.RETURN);
     ctor.visitMaxs(0, 0);
@@ -349,7 +350,8 @@ public final class UntypedCodeGenerator {
     MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
     ctor.visitCode();
     ctor.visitVarInsn(Opcodes.ALOAD, 0);
-    ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
+    ctor.visitMethodInsn(
+        Opcodes.INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
     ctor.visitInsn(Opcodes.RETURN);
     ctor.visitMaxs(0, 0);
     ctor.visitEnd();
