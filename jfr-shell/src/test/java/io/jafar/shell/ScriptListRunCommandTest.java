@@ -30,7 +30,7 @@ class ScriptListRunCommandTest {
   private Path testScriptsDir;
 
   private static Path testJfr() {
-    return Paths.get("..", "parser", "src", "test", "resources", "test-ap.jfr")
+    return Paths.get("..", "parser-core", "src", "test", "resources", "test-ap.jfr")
         .normalize()
         .toAbsolutePath();
   }
