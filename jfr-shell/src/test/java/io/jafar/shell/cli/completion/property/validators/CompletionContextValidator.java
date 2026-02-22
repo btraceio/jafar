@@ -331,7 +331,9 @@ public class CompletionContextValidator {
       // Check for special root types
       if ("chunks".equals(rootType)) {
         return ExpectedCompletion.builder(CompletionContextType.CHUNK_ID).build();
-      } else if ("metadata".equals(rootType) || "cp".equals(rootType)) {
+      } else if ("metadata".equals(rootType)
+          || "constants".equals(rootType)
+          || "cp".equals(rootType)) {
         return ExpectedCompletion.builder(CompletionContextType.EVENT_TYPE)
             .eventType(eventType)
             .build();

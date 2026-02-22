@@ -165,7 +165,7 @@ class JfrPathMultiEventTest {
   @Test
   void parsesMultiEventForCP() {
     var q = JfrPathParser.parse("cp/(Thread|Class)");
-    assertEquals(JfrPath.Root.CP, q.root);
+    assertEquals(JfrPath.Root.CONSTANTS, q.root);
     assertEquals(2, q.eventTypes.size());
     assertTrue(q.isMultiType);
   }

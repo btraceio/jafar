@@ -635,7 +635,7 @@ See [doc/JFRPath.md](../doc/cli/JFRPath.md) for complete reference.
 - `metadata [options]` - List/inspect metadata types
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show chunk details
-- `constants [<type>] [options]` - Browse constant pools (alias: `cp`)
+- `constants [<type>] [options]` - Browse constant pools
 
 ### Variables
 - `set [--global] <name> = <value>` - Set variable (scalar, map, or lazy query)

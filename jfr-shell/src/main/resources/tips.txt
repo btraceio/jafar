@@ -68,7 +68,7 @@ metadata --events-only shows only event types; --non-events-only for the rest
 Use 'chunks' to list all chunks in the recording
 chunks --summary shows aggregate stats: count, total/avg/min/max size
 chunk <index> show displays detailed info about a specific chunk
-Use 'constants' (or 'cp') to browse constant pool entries; 'constants <type>' for a specific type
+Use 'constants' to browse constant pool entries; 'constants <type>' for a specific type
 Use --tree --depth N to explore nested metadata structures
 Use 'info' to see recording path, event count, uptime, and backend info
 Use 'backend list' to see all available JFR parsing backends

@@ -37,7 +37,7 @@ Access chunk-level information from the recording.
 - **Example**: `chunks`
 - **Specific chunk**: `chunks/0` (by index)
 
-### `constants` (or `cp`)
+### `constants`
 Access constant pool entries.
 - **Summary**: `constants` returns all CP types with counts
 - **Entries**: `constants/<type>` returns entries for specific type

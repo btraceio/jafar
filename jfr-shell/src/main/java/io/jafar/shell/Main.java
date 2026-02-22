@@ -424,7 +424,10 @@ public final class Main implements Callable<Integer> {
     }
   }
 
-  @CommandLine.Command(name = "cp", description = "List constant pool entries")
+  @CommandLine.Command(
+      name = "constants",
+      aliases = {"cp"},
+      description = "List constant pool entries")
   static class CpCommand extends NonInteractiveCommand {
     @CommandLine.Option(
         names = {"--type", "-t"},
@@ -443,7 +446,7 @@ public final class Main implements Callable<Integer> {
 
     @Override
     public Integer call() {
-      StringBuilder cmd = new StringBuilder("cp");
+      StringBuilder cmd = new StringBuilder("constants");
 
       if (type != null) {
         cmd.append(" ").append(type);

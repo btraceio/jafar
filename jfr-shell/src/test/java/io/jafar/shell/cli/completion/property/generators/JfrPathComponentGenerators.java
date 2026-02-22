@@ -22,10 +22,10 @@ public class JfrPathComponentGenerators {
   /**
    * Generates valid JfrPath root types.
    *
-   * @return arbitrary generating "events", "metadata", "cp", or "chunks"
+   * @return arbitrary generating "events", "metadata", "constants", "cp", or "chunks"
    */
   public static Arbitrary<String> roots() {
-    return Arbitraries.of("events", "metadata", "cp", "chunks");
+    return Arbitraries.of("events", "metadata", "constants", "cp", "chunks");
   }
 
   // ==================== Event Type Generators ====================

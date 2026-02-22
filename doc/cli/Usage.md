@@ -57,7 +57,7 @@ jfr> events/jdk.FileRead/bytes --limit 5
 - `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
 - `chunks [--summary] [--range N-M]`: List chunk information.
 - `chunk <index> show`: Show specific chunk details.
-- `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries (alias: `cp`).
+- `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
 - `events/<type>[filter] [--limit N]`: Query events (shorthand for `show events`, both forms work).
 
 ### Variables
@@ -122,7 +122,7 @@ jfr-shell chunks <jfr-file> [options]
   --summary                 Show summary only
   --format, -f <format>     Output format: table (default), json
 
-# Constants command - List constant pool entries (alias: cp)
+# Constants command - List constant pool entries
 jfr-shell constants <jfr-file> [options]
   --type, -t <name>         Constant pool type name
   --summary                 Show summary only
@@ -176,7 +176,7 @@ is aliased for convenience.
 ## Features
 
 - Interactive CLI with sessions (open/list/use/close/info)
-- JfrPath queries over `events`, `metadata`, `chunks`, and `constants` (or `cp`)
+- JfrPath queries over `events`, `metadata`, `chunks`, and `constants`
 - Table or JSON output (`--format json`)
 - Metadata browsing: class/fields/annotations/settings
 - Recursive metadata trees (`--tree`, `--depth N`), including field-focused trees
@@ -186,7 +186,7 @@ is aliased for convenience.
 
 ## JfrPath Essentials
 
-- Roots: `events`, `metadata`, `chunks`, `constants` (or `cp`)
+- Roots: `events`, `metadata`, `chunks`, `constants`
 - Show values: `events/<Type>/<path>` or `metadata/<Type>/<path>`
 - Filters:
   - Simple: `[field op value]` with `= != > >= < <= ~` (regex)
@@ -325,7 +325,7 @@ JFR Shell provides intelligent context-aware tab completion throughout the query
 **Query Roots:**
 - `events/` — Event type completion
 - `metadata/` — Metadata type completion
-- `constants/` (or `cp/`) — Constant pool type completion
+- `constants/` — Constant pool type completion
 - `chunks/` — Chunk ID completion (e.g., `chunks/1`, `chunks/2`)
 
 **Path Navigation:**

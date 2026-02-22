@@ -33,6 +33,7 @@ public final class OptionCompleter implements ContextCompleter {
               },
           "open", new String[] {"--alias"},
           "close", new String[] {"--all"},
+          "constants", new String[] {"--limit", "--format", "--tree", "--depth"},
           "cp", new String[] {"--limit", "--format", "--tree", "--depth"});
 
   // Values for specific options

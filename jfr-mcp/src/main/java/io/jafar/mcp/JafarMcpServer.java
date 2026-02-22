@@ -681,7 +681,7 @@ public final class JafarMcpServer {
         - `events/<type>` - Access event data (e.g., events/jdk.ExecutionSample)
         - `metadata/<type>` - Access type metadata
         - `chunks` - Access chunk information
-        - `constants/<type>` (or `cp/<type>`) - Access constant pool entries
+        - `constants/<type>` - Access constant pool entries
 
         ## Field Navigation
         - Simple: `events/jdk.FileRead/path`

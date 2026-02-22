@@ -1742,8 +1742,10 @@ public final class TuiShell implements AutoCloseable {
           inputState.clear();
         }
         return;
-      case 4: // Ctrl+D
-        running = false;
+      case 4: // Ctrl+D — exit only when input is empty (standard readline behavior)
+        if (focus == Focus.INPUT && inputState.text().isEmpty()) {
+          running = false;
+        }
         return;
       case 5: // Ctrl+E — export active tab data to CSV (only from RESULTS/DETAIL)
         if (focus == Focus.RESULTS || focus == Focus.DETAIL) {
@@ -1982,28 +1984,6 @@ public final class TuiShell implements AutoCloseable {
       case 127: // Backspace
       case 8:
         inputState.deleteBackward();
-        break;
-      case '<':
-      case '>':
-        {
-          ResultTab rt = tabs.get(activeTabIndex);
-          if (rt.tableData != null && rt.tableHeaders != null && !rt.tableHeaders.isEmpty()) {
-            int colCount = rt.tableHeaders.size();
-            if (rt.sortColumn < 0) {
-              rt.sortColumn = 0;
-            } else {
-              rt.sortColumn =
-                  key == '<'
-                      ? (rt.sortColumn - 1 + colCount) % colCount
-                      : (rt.sortColumn + 1) % colCount;
-            }
-            rt.sortAscending = true;
-            applySortAndRerender(rt);
-            break;
-          }
-        }
-        inputState.insert((char) key);
-        historyIndex = -1;
         break;
       default:
         if (key == '@' && openCellPicker()) {
@@ -2601,7 +2581,7 @@ public final class TuiShell implements AutoCloseable {
       cpIndex = 0;
     } else if ("show".equalsIgnoreCase(parts[0])
         && parts.length >= 2
-        && "cp".equalsIgnoreCase(parts[1])) {
+        && ("cp".equalsIgnoreCase(parts[1]) || "constants".equalsIgnoreCase(parts[1]))) {
       cpIndex = 1;
     } else {
       return false;
@@ -3148,9 +3128,9 @@ public final class TuiShell implements AutoCloseable {
       return;
     }
 
-    // close [name] — close a pinned tab
-    if (command.equalsIgnoreCase("close") || command.toLowerCase().startsWith("close ")) {
-      String name = command.length() > 6 ? command.substring(6).trim() : "";
+    // closetab [name] — close a pinned tab (uses 'closetab' to avoid shadowing session 'close')
+    if (command.equalsIgnoreCase("closetab") || command.toLowerCase().startsWith("closetab ")) {
+      String name = command.length() > 9 ? command.substring(9).trim() : "";
       int targetIndex = -1;
       if (name.isEmpty()) {
         // Close active tab only if pinned

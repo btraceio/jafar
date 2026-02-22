@@ -718,30 +718,12 @@ public final class ShellCompleter implements Completer {
     completeWithFramework(synthetic, candidates);
   }
 
-  /** Complete constants alias by converting to synthetic 'show cp ...' line. */
+  /** Complete constants alias by converting to synthetic 'show constants ...' line. */
   private void completeConstantsAlias(ParsedLine line, List<Candidate> candidates) {
-    String original = line.line();
-    int idx = original.toLowerCase(Locale.ROOT).indexOf("constants");
-    if (idx < 0) return;
-    String mapped =
-        original.substring(0, idx) + "cp" + original.substring(idx + "constants".length());
-    String syntheticLine = "show " + mapped;
-    int syntheticCursor =
-        line.cursor() <= idx ? line.cursor() + 5 : line.cursor() + 5 - 7; // -7 for constants→cp
+    String syntheticLine = "show " + line.line();
+    int syntheticCursor = line.cursor() + 5;
     ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
-
-    List<Candidate> rawCandidates = new ArrayList<>();
-    completeWithFramework(synthetic, rawCandidates);
-
-    // Post-process: replace cp/ with constants/ in candidate values
-    for (Candidate c : rawCandidates) {
-      String value = c.value();
-      if (value.startsWith("cp/")) {
-        value = "constants/" + value.substring(3);
-      }
-      candidates.add(
-          new Candidate(value, c.displ(), c.group(), c.descr(), c.suffix(), c.key(), c.complete()));
-    }
+    completeWithFramework(synthetic, candidates);
   }
 
   /** Create a synthetic ParsedLine for alias completion. */

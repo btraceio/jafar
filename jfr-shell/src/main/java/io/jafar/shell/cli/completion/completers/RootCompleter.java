@@ -8,11 +8,12 @@ import java.util.List;
 import org.jline.reader.Candidate;
 
 /**
- * Completer for root path types after 'show ' command. Suggests: events/, metadata/, cp/, chunks
+ * Completer for root path types after 'show ' command. Suggests: events/, metadata/, constants/,
+ * chunks/
  */
 public final class RootCompleter implements ContextCompleter {
 
-  private static final String[] ROOTS = {"events/", "metadata/", "cp/", "chunks/"};
+  private static final String[] ROOTS = {"events/", "metadata/", "constants/", "chunks/"};
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

@@ -144,11 +144,11 @@ jbang jfr-shell@btraceio show recording.jfr \
 jbang jfr-shell@btraceio chunks recording.jfr --summary
 
 # Browse constant pool symbols
-jbang jfr-shell@btraceio show recording.jfr "cp/jdk.types.Symbol"
+jbang jfr-shell@btraceio show recording.jfr "constants/jdk.types.Symbol"
 
 # Filter constant pool entries
 jbang jfr-shell@btraceio show recording.jfr \
-  "cp/jdk.types.Symbol[string~'java/lang/.*']"
+  "constants/jdk.types.Symbol[string~'java/lang/.*']"
 ```
 
 ## Version Management
