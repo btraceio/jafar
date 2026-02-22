@@ -6,7 +6,7 @@ JfrPath is a path-based query language for navigating and querying Java Flight R
 
 ```
 <query>     ::= <root> "/" <segments> [<filters>] [<projection>] [<pipeline>]
-<root>      ::= "events" | "metadata" | "chunks" | "cp"
+<root>      ::= "events" | "metadata" | "chunks" | "constants"
 <segments>  ::= <segment> ("/" <segment>)*
 <segment>   ::= <identifier> | <index> | <slice>
 <filters>   ::= "[" <predicate> "]" ("[" <predicate> "]")*
@@ -51,7 +51,7 @@ After the root, segments navigate through the structure:
 ```
 events/jdk.FileRead/path
 metadata/jdk.types.Method/name
-cp/jdk.types.Symbol/string
+constants/jdk.types.Symbol/string
 ```
 
 ### Nested Fields
@@ -219,7 +219,7 @@ Count the number of rows/events.
 ```
 events/jdk.FileRead | count()
 metadata/jdk.types.Method/name | count()
-cp/jdk.types.Symbol | count()
+constants/jdk.types.Symbol | count()
 ```
 
 ### Sum
@@ -655,7 +655,7 @@ Transform individual values (can also be used in filters where applicable):
 
 **Examples**:
 ```
-cp/jdk.types.Symbol/string | len()
+constants/jdk.types.Symbol/string | len()
 events/jdk.ExecutionSample/thread/name | uppercase()
 events/jdk.FileRead/path | replace("/tmp/", "/data/")
 events/jdk.FileRead/bytes | abs()
@@ -900,7 +900,8 @@ In the interactive shell, use these commands:
 - `metadata class <name> [options]` - Inspect class
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show specific chunk
-- `cp [<type>] [options]` - List CP entries
+- `constants [<type>] [options]` - List constant pool entries (alias: `cp`)
+- `events/<type>[filter] [options]` - Query events (shorthand for `show events`)
 - `help [<command>]` - Show help
 - `exit` / `quit` - Exit
 
@@ -920,9 +921,9 @@ jfr-shell metadata recording.jfr --search FileRead
 # Chunks command
 jfr-shell chunks recording.jfr --summary
 
-# CP command
-jfr-shell cp recording.jfr --type jdk.types.Symbol
-jfr-shell cp recording.jfr --summary
+# Constants command (alias: cp)
+jfr-shell constants recording.jfr --type jdk.types.Symbol
+jfr-shell constants recording.jfr --summary
 ```
 
 All non-interactive commands:

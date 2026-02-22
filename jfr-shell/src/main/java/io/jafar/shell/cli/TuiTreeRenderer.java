@@ -20,14 +20,14 @@ import java.util.Set;
 
 /**
  * Tree renderer using TamboUI TreeWidget for styled inline output. Renders metadata class
- * hierarchies as interactive-looking tree structures with Unicode guide lines.
+ * hierarchies as tree structures with Unicode guide lines.
  */
 public final class TuiTreeRenderer {
   private static final int DEFAULT_WIDTH = 120;
 
   private TuiTreeRenderer() {}
 
-  /** Non-recursive rendering of a single metadata class map. */
+  /** Renders a single metadata class map without recursing into field types. */
   public static void renderMetadata(Map<String, Object> meta, CommandDispatcher.IO io) {
     PagedPrinter pager = PagedPrinter.forIO(io);
     TreeNode<Object> root = buildMetadataNode(meta);

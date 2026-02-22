@@ -226,7 +226,7 @@ public final class TuiTableRenderer {
     return String.valueOf(v);
   }
 
-  /** Navigate nested single-entry map wrappers and ComplexType constant pool references. */
+  /** Unwrap ComplexType wrappers and single-entry Map wrappers to reach the underlying value. */
   public static Object unwrap(Object v) {
     if (v instanceof ComplexType ct) v = ct.getValue();
     while (v instanceof Map<?, ?> m && m.size() == 1) {

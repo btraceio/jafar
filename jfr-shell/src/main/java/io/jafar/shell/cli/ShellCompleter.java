@@ -707,7 +707,10 @@ public final class ShellCompleter implements Completer {
     }
   }
 
-  /** Complete events alias by converting to synthetic 'show events ...' line. */
+  /**
+   * Complete events alias by prepending 'show ' to the full input line, creating a synthetic
+   * ParsedLine that the existing completion framework understands (it expects 'show events/...').
+   */
   private void completeEventsAlias(ParsedLine line, List<Candidate> candidates) {
     String syntheticLine = "show " + line.line();
     int syntheticCursor = line.cursor() + 5;
@@ -770,8 +773,7 @@ public final class ShellCompleter implements Completer {
 
       @Override
       public int wordIndex() {
-        return (int)
-            fullLine.substring(0, cursor).chars().filter(Character::isWhitespace).count();
+        return (int) fullLine.substring(0, cursor).chars().filter(Character::isWhitespace).count();
       }
 
       @Override

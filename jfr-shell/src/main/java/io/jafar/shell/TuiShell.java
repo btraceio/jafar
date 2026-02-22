@@ -31,11 +31,17 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ConstantPoolProvider;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.lang.reflect.Array;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -49,6 +55,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.jline.reader.Candidate;
 import org.jline.reader.ParsedLine;
@@ -59,7 +66,7 @@ import org.jline.terminal.TerminalBuilder;
  * Full-screen TUI shell using TamboUI for rendering. Launched via {@code --tui} flag as an
  * alternative to the readline-based {@link Shell}.
  *
- * <p>Layout: status bar (1 line) | scrollable results area | command input (3 lines).
+ * <p>Layout: status bar | results (with optional detail split) | command input | tips | hints.
  */
 public final class TuiShell implements AutoCloseable {
   private static final int READ_EXPIRED = -2;
@@ -81,14 +88,13 @@ public final class TuiShell implements AutoCloseable {
     try (var in = TuiShell.class.getResourceAsStream("/tips.txt")) {
       if (in == null) return new String[] {"Type 'help' for available commands"};
       String[] tips =
-          new java.io.BufferedReader(
-                  new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))
+          new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
               .lines()
               .map(String::trim)
               .filter(l -> !l.isEmpty() && !l.startsWith("#"))
               .map(l -> "Tip: " + l)
               .toArray(String[]::new);
-      Collections.shuffle(java.util.Arrays.asList(tips));
+      Collections.shuffle(Arrays.asList(tips));
       return tips;
     } catch (IOException e) {
       return new String[] {"Type 'help' for available commands"};
@@ -610,8 +616,7 @@ public final class TuiShell implements AutoCloseable {
               .split(inner);
       renderCpTypes(frame, hSplit.get(0));
 
-      String entriesTitle =
-          eventBrowserMode ? getSelectedCpTypeName() : getSelectedCpTypeName();
+      String entriesTitle = getSelectedCpTypeName();
       Block.Builder cpEntriesBuilder =
           Block.builder()
               .title(Title.from(entriesTitle))
@@ -3012,9 +3017,9 @@ public final class TuiShell implements AutoCloseable {
             () -> {
               TuiTableRenderer.clearLastData();
               // Redirect stderr to prevent raw output from corrupting the TUI
-              java.io.PrintStream origErr = System.err;
-              java.io.ByteArrayOutputStream errBuf = new java.io.ByteArrayOutputStream();
-              System.setErr(new java.io.PrintStream(errBuf));
+              PrintStream origErr = System.err;
+              ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+              System.setErr(new PrintStream(errBuf));
               try {
                 boolean handled = dispatcher.dispatch(command);
                 if (!handled) {
@@ -3238,7 +3243,7 @@ public final class TuiShell implements AutoCloseable {
           int result = compareNatural(va, vb);
           return asc ? result : -result;
         };
-    java.util.Arrays.sort(indices, cmp);
+    Arrays.sort(indices, cmp);
 
     List<Map<String, Object>> sortedData = new ArrayList<>(size);
     List<Map<String, Object>> sortedMeta =
@@ -3955,9 +3960,9 @@ public final class TuiShell implements AutoCloseable {
             case LINUX -> new String[] {"xclip", "-selection", "clipboard"};
           };
       Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-      p.getOutputStream().write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
       p.getOutputStream().close();
-      p.waitFor();
+      p.waitFor(2, TimeUnit.SECONDS);
     } catch (Exception ignore) {
       // Clipboard unavailable — silently ignore
     }

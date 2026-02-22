@@ -1051,7 +1051,7 @@ JFR Shell provides comprehensive tab completion throughout the query language. P
 **Command and Root Completion:**
 ```bash
 jfr> sh<TAB>                    # Commands: show, sessions
-jfr> show <TAB>                 # Roots: events/, metadata/, cp/, chunks/
+jfr> show <TAB>                 # Roots: events/, metadata/, constants/, chunks/
 jfr> show chunks/<TAB>          # Chunk IDs: chunks/1, chunks/2, chunks/3
 ```
 

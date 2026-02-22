@@ -311,7 +311,7 @@ See [Backend Plugin Guide](Backends.md#offlineairgapped-installation) for detail
 
 ```
 Query     := Root ['/' EventType] [Filters] [Pipeline]
-Root      := 'events' | 'metadata' | 'chunks' | 'cp'
+Root      := 'events' | 'metadata' | 'chunks' | 'constants'
 EventType := Identifier | '(' Identifier ('|' Identifier)* ')'
 Filters   := '[' Predicate ']' ('[' Predicate ']')*
 Pipeline  := '|' Operator ('|' Operator)*
