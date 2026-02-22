@@ -1,6 +1,5 @@
 plugins {
     id 'java-library'
-    id 'com.vanniktech.maven.publish'
     id 'me.champeau.gradle.japicmp' version '0.4.3'
 }
 
@@ -100,7 +99,3 @@ test {
 group = 'io.btrace'
 version = component_version
 description = 'Core query engine and backend SPI for jfr-shell'
-
-mavenPublishing {
-    coordinates('io.btrace', 'jafar-shell-core', version.toString())
-}
