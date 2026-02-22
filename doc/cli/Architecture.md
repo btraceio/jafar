@@ -4,12 +4,13 @@ This document describes the internal architecture of JFR Shell, an interactive C
 
 ## System Overview
 
-JFR Shell is organized into four modules with distinct responsibilities:
+JFR Shell is organized into five modules with distinct responsibilities:
 
 ```mermaid
 graph TB
     subgraph "JFR Shell System"
-        CLI[jfr-shell<br/>Core CLI & Query Engine]
+        CORE[jfr-shell-core<br/>Query Engine & Backend SPI]
+        CLI[jfr-shell<br/>Interactive CLI & TUI]
         JAFAR[jfr-shell-jafar<br/>Jafar Backend Plugin]
         JDK[jfr-shell-jdk<br/>JDK API Backend Plugin]
         TCK[jfr-shell-tck<br/>Backend Test Kit]
@@ -21,8 +22,9 @@ graph TB
         JFR[(JFR Files)]
     end
 
-    CLI -->|SPI| JAFAR
-    CLI -->|SPI| JDK
+    CLI --> CORE
+    CORE -->|SPI| JAFAR
+    CORE -->|SPI| JDK
     TCK -->|validates| JAFAR
     TCK -->|validates| JDK
     JAFAR --> PARSER
@@ -33,7 +35,8 @@ graph TB
 
 | Module | Purpose |
 |--------|---------|
-| `jfr-shell` | Core shell, command system, JfrPath query engine, plugin framework |
+| `jfr-shell-core` | JfrPath query engine, backend SPI, plugin framework, session management |
+| `jfr-shell` | Interactive CLI/TUI shell, command system, renderers (depends on `jfr-shell-core`) |
 | `jfr-shell-jafar` | Backend using Jafar parser (full capabilities, priority 100) |
 | `jfr-shell-jdk` | Backend using JDK API (limited capabilities, priority 50) |
 | `jfr-shell-tck` | Technology Compatibility Kit for validating backends |
@@ -585,11 +588,13 @@ flowchart TB
 ## Package Structure
 
 ```
-jfr-shell/src/main/java/io/jafar/shell/
-├── Main.java                    # CLI entry point
-├── Shell.java                   # Interactive REPL
-├── cli/
-│   └── CommandDispatcher.java   # Command routing
+jfr-shell-core/src/main/java/io/jafar/shell/
+├── JFRSession.java              # Single recording session
+├── TypeDiscovery.java           # Metadata utilities
+├── jfrpath/
+│   ├── JfrPath.java             # Query AST
+│   ├── JfrPathParser.java       # Query parsing
+│   └── JfrPathEvaluator.java    # Query execution
 ├── backend/
 │   ├── JfrBackend.java          # Backend SPI
 │   ├── EventSource.java         # Event streaming
@@ -599,23 +604,24 @@ jfr-shell/src/main/java/io/jafar/shell/
 │   ├── BackendContext.java      # Resource sharing
 │   ├── BackendCapability.java   # Capability enum
 │   └── BackendRegistry.java     # Discovery & selection
-├── plugin/
-│   ├── PluginManager.java       # Plugin management
-│   ├── PluginRegistry.java      # Plugin discovery
-│   ├── PluginInstaller.java     # Installation
-│   └── MavenResolver.java       # Maven resolution
-├── jfrpath/
-│   ├── JfrPath.java             # Query AST
-│   ├── JfrPathParser.java       # Query parsing
-│   └── JfrPathEvaluator.java    # Query execution
 ├── providers/
 │   ├── MetadataProvider.java    # Metadata access
 │   ├── ChunkProvider.java       # Chunk access
 │   └── ConstantPoolProvider.java # CP access
-├── core/
-│   ├── SessionManager.java      # Multi-session coordinator
-│   └── VariableStore.java       # Variable storage
-└── JFRSession.java              # Single recording session
+└── plugin/
+    ├── PluginManager.java       # Plugin management
+    ├── PluginRegistry.java      # Plugin discovery
+    ├── PluginInstaller.java     # Installation
+    └── MavenResolver.java       # Maven resolution
+
+jfr-shell/src/main/java/io/jafar/shell/
+├── Main.java                    # CLI entry point
+├── Shell.java                   # Interactive REPL
+├── cli/
+│   └── CommandDispatcher.java   # Command routing
+└── core/
+    ├── SessionManager.java      # Multi-session coordinator
+    └── VariableStore.java       # Variable storage
 ```
 
 ---

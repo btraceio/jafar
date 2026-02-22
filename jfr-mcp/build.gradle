@@ -25,7 +25,7 @@ dependencies {
     implementation 'io.modelcontextprotocol.sdk:mcp'
 
     // Jafar dependencies
-    implementation project(':jfr-shell')
+    implementation project(':jfr-shell-core')
     implementation project(':parser-core')
 
     // Backend plugins (discovered via ServiceLoader)

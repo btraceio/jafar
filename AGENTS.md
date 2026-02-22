@@ -257,7 +257,11 @@ includeBuild('..') {
 - After changing settings.gradle, run `./gradlew --stop` and `rm -rf demo/.gradle/` to clear caches
 
 ### JFR Shell (Interactive Analysis Tool)
-The jfr-shell module provides a powerful interactive environment for JFR analysis:
+The jfr-shell system is split into two modules:
+- **jfr-shell-core/**: Query engine, backend SPI, plugin framework, and session management (no TUI/CLI dependencies)
+- **jfr-shell/**: Interactive CLI/TUI shell, command system, and renderers (depends on `jfr-shell-core`)
+
+Together they provide a powerful interactive environment for JFR analysis:
 - **Session-based**: Open JFR files and maintain analysis state
 - **JfrPath Query Language**: Concise path-based queries with filtering, aggregation, and transformations
 - **Event Decoration**: Join/correlate events by time overlap or correlation keys

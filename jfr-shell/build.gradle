@@ -1,9 +1,8 @@
 plugins {
-    id 'java'
+    id 'java-library'
     id 'com.gradleup.shadow' version '9.0.0'
     id 'maven-publish'
     id 'com.vanniktech.maven.publish'
-    id 'me.champeau.gradle.japicmp' version '0.4.3'
 }
 
 def libraryName = "jfr-shell"
@@ -29,14 +28,8 @@ java {
     }
 }
 
-// Create baseline configuration for japicmp
-configurations {
-    japicmpBaseline
-}
-
 dependencies {
-    implementation project(':parser')
-    implementation project(':tools')
+    api project(':jfr-shell-core')
 
     // Backend plugins available for testing (discovered via ServiceLoader)
     testRuntimeOnly project(':jfr-shell-jafar')
@@ -57,17 +50,6 @@ dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
 
-    // JSON processing for plugin metadata
-    implementation 'com.google.code.gson:gson:2.10.1'
-
-    // Maven Resolver for plugin downloads
-    implementation 'org.apache.maven:maven-resolver-provider:3.9.9'
-    implementation 'org.apache.maven.resolver:maven-resolver-api:1.9.18'
-    implementation 'org.apache.maven.resolver:maven-resolver-impl:1.9.18'
-    implementation 'org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18'
-    implementation 'org.apache.maven.resolver:maven-resolver-transport-http:1.9.18'
-    implementation 'org.apache.httpcomponents:httpclient:4.5.14'
-
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
@@ -76,46 +58,6 @@ dependencies {
     // jqwik for property-based testing
     testImplementation 'net.jqwik:jqwik:1.8.2'
     testRuntimeOnly 'net.jqwik:jqwik-engine:1.8.2'
-
-    // Baseline for API compatibility checking
-    japicmpBaseline "io.btrace:jafar-shell:0.9.0@jar"
-}
-
-// API compatibility checking for backend plugin API
-task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask) {
-    group = 'Verification'
-    description = 'Check binary compatibility of backend plugin API'
-
-    // Only check if not a SNAPSHOT and not first release with plugin API
-    onlyIf { !version.toString().contains('SNAPSHOT') && version != '0.10.0' }
-
-    oldClasspath.from(configurations.japicmpBaseline)
-    newClasspath.from(sourceSets.main.output)
-    newArchives.from(jar)
-
-    // Package to check (backend plugin API)
-    packageIncludes = ['io.jafar.shell.backend.*']
-
-    // Fail build on breaking changes (unless major version bump)
-    failOnModification = true
-    failOnSourceIncompatibility = true
-
-    // Allow additions (new methods with defaults, new capabilities)
-    compatibilityChangeExcludes = ['METHOD_NEW_DEFAULT']
-
-    onlyBinaryIncompatibleModified = false
-    onlyModified = true
-
-    // HTML report
-    htmlOutputFile = file("$buildDir/reports/japicmp.html")
-
-    // Text report for CI
-    txtOutputFile = file("$buildDir/reports/japicmp.txt")
-}
-
-// Run japicmp as part of check
-tasks.named('check') {
-    dependsOn japicmp
 }
 
 test {
