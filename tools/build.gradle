@@ -4,6 +4,8 @@ plugins {
     id "io.github.goooler.shadow" version "8.1.8"
 }
 
+evaluationDependsOn ':parser-core'
+
 def libraryName = "jafar-tools"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
@@ -21,11 +23,35 @@ java {
     }
 }
 
+sourceSets {
+    test {
+        resources {
+            srcDirs += project(':parser-core').sourceSets.test.resources.srcDirs
+        }
+    }
+}
+
+// Compile and run tests with Java 21 (main sources target Java 8)
+def j21CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j21CompilerProvider)
+}
+
+def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+
 dependencies {
-    implementation project(':parser')
+    implementation project(':parser-core')
+    testImplementation project(':parser-core').sourceSets.test.output
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
 
 test {
+    javaLauncher.set(j21LauncherProvider)
     useJUnitPlatform()
 }
 

@@ -26,7 +26,9 @@ Jafar is an experimental, fast JFR (Java Flight Recording) parser with a small, 
 
 The project is organized as a multi-module Gradle build with the following structure:
 
-- **parser/**: Core parsing engine with typed and untyped APIs
+- **parser/**: Aggregate module re-exporting parser-core and parser-codegen
+- **parser-core/**: Core parsing engine with typed and untyped APIs
+- **parser-codegen/**: ASM-based code generation for typed deserialization
 - **demo/**: Demonstration application comparing different JFR parsers
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces
@@ -62,7 +64,7 @@ Key architectural components:
 ./gradlew test --info
 
 # Run a specific test class
-./gradlew :parser:test --tests "io.jafar.parser.TypedJafarParserTest"
+./gradlew :parser-codegen:test --tests "io.jafar.parser.TypedJafarParserTest"
 
 # Run demo application
 java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recording.jfr
@@ -85,8 +87,8 @@ java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recor
 
 ### Module-specific Commands
 ```bash
-# Build only the parser module
-./gradlew :parser:build
+# Build only the parser core module
+./gradlew :parser-core:build
 
 # Build only the demo
 ./gradlew :demo:build
@@ -197,7 +199,7 @@ GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationTo
 
 ### Testing Strategy
 - Frameworks: JUnit Jupiter 5, Mockito. Place tests under `src/test/java` mirroring package paths.
-- Name tests `*Test.java`; parameterized tests encouraged for edge cases; see existing fuzz/stability tests in `parser`.
+- Name tests `*Test.java`; parameterized tests encouraged for edge cases; see existing fuzz/stability tests in `parser-core` and `parser-codegen`.
 - JFR test files stored in `src/test/resources/`
 - Tests use JUnit 5 with large heap allocation (8GB max, 1GB min)
 - Mock recordings created using JMC FlightRecorder writer
@@ -228,6 +230,7 @@ pluginManagement {
 includeBuild('jafar-gradle-plugin') {
     dependencySubstitution {
         substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+        substitute(module("io.btrace:jafar-parser-core")).using(project(":parser-core"))
     }
 }
 ```
@@ -243,13 +246,14 @@ pluginManagement {
 includeBuild('..') {
     dependencySubstitution {
         substitute(module("io.btrace:jafar-parser")).using(project(":parser"))
+        substitute(module("io.btrace:jafar-parser-core")).using(project(":parser-core"))
     }
 }
 ```
 
 **Important notes:**
 - When modifying parser code, the changes are immediately available to the plugin (no `publishToMavenLocal` needed)
-- If you encounter `StackOverflowError` in `TypeGenerator`, ensure both `/parser/src/main/java/io/jafar/utils/TypeGenerator.java` and `/parser/src/java21/java/io/jafar/utils/TypeGenerator.java` are updated
+- If you encounter `StackOverflowError` in `TypeGenerator`, ensure both `/parser-core/src/main/java/io/jafar/utils/TypeGenerator.java` and `/parser-core/src/java21/java/io/jafar/utils/TypeGenerator.java` are updated
 - After changing settings.gradle, run `./gradlew --stop` and `rm -rf demo/.gradle/` to clear caches
 
 ### JFR Shell (Interactive Analysis Tool)

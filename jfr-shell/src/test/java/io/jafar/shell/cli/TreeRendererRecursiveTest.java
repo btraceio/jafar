@@ -11,7 +11,9 @@ class TreeRendererRecursiveTest {
 
   private static Path resource(String name) {
     Path p =
-        Paths.get("..", "parser", "src", "test", "resources", name).normalize().toAbsolutePath();
+        Paths.get("..", "parser-core", "src", "test", "resources", name)
+            .normalize()
+            .toAbsolutePath();
     if (!Files.exists(p)) {
       throw new AssertionError("Missing test resource: " + p);
     }

@@ -56,12 +56,12 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Project Structure
 
-- **`parser/`**: Core JFR parser library (Java)
+- **`parser/`**: Aggregate module re-exporting parser-core and parser-codegen
+- **`parser-core/`**: Core JFR parser library (Java)
+- **`parser-codegen/`**: ASM-based code generation for typed deserialization
 - **`tools/`**: Utilities built on the parser (e.g., Scrubber)
 - **`demo/`**: Sample CLI application
 - **`jafar-gradle-plugin/`**: Gradle plugin for generating typed interfaces
-- **`benchmarks/`**: JMH performance benchmarks
-- **`examples/`**: Example projects using JAFAR
 
 ### Common Development Commands
 
@@ -73,7 +73,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ./gradlew test
 
 # Run specific test class
-./gradlew :parser:test --tests TypedJafarParserTest
+./gradlew :parser-codegen:test --tests TypedJafarParserTest
 
 # Create fat JARs
 ./gradlew shadowJar
@@ -82,7 +82,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ./gradlew :demo:run --args="jafar /path/to/file.jfr"
 
 # Run benchmarks
-./gradlew :benchmarks:jmh
+./gradlew :parser-codegen:jmh
 
 # Format code (automatic via git hook, or manual)
 ./gradlew spotlessApply
@@ -229,13 +229,13 @@ void testParseValidRecording() throws Exception {
 ./gradlew test
 
 # Specific module
-./gradlew :parser:test
+./gradlew :parser-core:test
 
 # Specific test class
-./gradlew :parser:test --tests TypedJafarParserTest
+./gradlew :parser-codegen:test --tests TypedJafarParserTest
 
 # Specific test method
-./gradlew :parser:test --tests TypedJafarParserTest.testDualConstantPoolAccess
+./gradlew :parser-codegen:test --tests TypedJafarParserTest.testDualConstantPoolAccess
 
 # With debug output
 ./gradlew test --info

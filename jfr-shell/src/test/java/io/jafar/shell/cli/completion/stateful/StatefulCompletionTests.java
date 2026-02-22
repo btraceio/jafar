@@ -47,9 +47,9 @@ public class StatefulCompletionTests {
   @BeforeContainer
   static void setupTestEnvironment() throws Exception {
     // Find the test JFR file
-    testJfrPath = Paths.get("..", "parser", "src", "test", "resources", "test-ap.jfr");
+    testJfrPath = Paths.get("..", "parser-core", "src", "test", "resources", "test-ap.jfr");
     if (!testJfrPath.toFile().exists()) {
-      testJfrPath = Paths.get("parser", "src", "test", "resources", "test-ap.jfr");
+      testJfrPath = Paths.get("parser-core", "src", "test", "resources", "test-ap.jfr");
     }
 
     // Create shared ParsingContext

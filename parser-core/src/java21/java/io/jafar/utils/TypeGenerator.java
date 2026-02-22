@@ -1,0 +1,361 @@
+package io.jafar.utils;
+
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.impl.TypedParserContextFactory;
+import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.StreamingChunkParser;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.parser.internal_api.metadata.MetadataField;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Predicate;
+import jdk.jfr.EventType;
+import jdk.jfr.FlightRecorder;
+import jdk.jfr.ValueDescriptor;
+
+public final class TypeGenerator {
+  private final Path jfr;
+  private final Path output;
+  private final String pkg;
+  private final boolean overwrite;
+  private final Predicate<String> eventTypeFilter;
+
+  public TypeGenerator(
+      Path jfr,
+      Path output,
+      String targetPackage,
+      boolean overwrite,
+      Predicate<String> eventTypeFilter)
+      throws IOException {
+    if (!Files.isDirectory(output) || !Files.exists(output)) {
+      throw new IllegalArgumentException("Output directory does not exist: " + output);
+    }
+    this.jfr = jfr;
+    this.pkg = targetPackage;
+    this.output = output.resolve(targetPackage.replace('.', '/'));
+    this.overwrite = overwrite;
+    this.eventTypeFilter = eventTypeFilter;
+    Files.createDirectories(this.output);
+  }
+
+  public void generate() throws Exception {
+    if (jfr == null) {
+      generateFromRuntime();
+    } else {
+      generateFromFile();
+    }
+  }
+
+  private void generateFromRuntime() throws Exception {
+    Set<String> generated = new HashSet<>();
+    FlightRecorder.getFlightRecorder()
+        .getEventTypes()
+        .forEach(
+            et -> {
+              if (eventTypeFilter == null || eventTypeFilter.test(et.getName())) {
+                try {
+                  String className = getClassNameFromFullName(et.getName());
+                  Path target = output.resolve(className + ".java");
+                  String typeContent = generateTypeFromEvent(et, generated);
+                  if (!Files.exists(target)) {
+                    Files.writeString(target, typeContent, StandardOpenOption.CREATE_NEW);
+                  } else if (overwrite) {
+                    Files.writeString(
+                        target,
+                        typeContent,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING);
+                  }
+                } catch (IOException e) {
+                  throw new RuntimeException(
+                      "Failed to generate type interface for " + et.getName(), e);
+                }
+              }
+            });
+  }
+
+  private String generateTypeFromEvent(EventType et, Set<String> generatedTypes) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("package ").append(pkg).append(";\n");
+    sb.append("\n");
+    sb.append("import io.jafar.parser.api.*;\n");
+    sb.append("@JfrType(\"").append(et.getName()).append("\")\n\n");
+    String className = getClassNameFromFullName(et.getName());
+    sb.append("public interface ").append(className).append(" {\n");
+    et.getFields()
+        .forEach(
+            field -> {
+              try {
+                writeTypeFromField(field, generatedTypes);
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+              String fldName = sanitizeFieldName(field.getName());
+              sb.append('\t');
+              if (!fldName.equals(field.getName())) {
+                sb.append("@JfrField(\"").append(field.getName()).append("\") ");
+              }
+              String fieldTypeName = field.getTypeName();
+              if (isPrimitiveName(fieldTypeName)) {
+                sb.append(fieldTypeName);
+              } else {
+                sb.append(getClassNameFromFullName(fieldTypeName));
+              }
+              if (field.isArray()) {
+                sb.append("[]");
+              }
+              sb.append(" ");
+              sb.append(fldName).append("();\n");
+            });
+    sb.append("}\n");
+    return sb.toString();
+  }
+
+  private void writeTypeFromField(ValueDescriptor f, Set<String> generatedTypes) throws Exception {
+    String data = getTypeFromField(f, generatedTypes);
+
+    if (data != null) {
+      String typeName = f.getTypeName();
+      String targetName = isPrimitiveName(typeName) ? typeName : getClassNameFromFullName(typeName);
+      Path target = output.resolve(targetName + ".java");
+      if (!Files.exists(target)) {
+        Files.writeString(target, data, StandardOpenOption.CREATE_NEW);
+      } else if (overwrite) {
+        Files.writeString(
+            target, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+      }
+    }
+  }
+
+  private String getTypeFromField(ValueDescriptor field, Set<String> generatedTypes) {
+    String typeName = field.getTypeName();
+    if (isPrimitiveName(typeName)) {
+      return null;
+    }
+
+    if (generatedTypes.add(typeName)) {
+      StringBuilder sb = new StringBuilder();
+      sb.append("package ").append(pkg).append(";\n");
+      sb.append("\n");
+      sb.append("import io.jafar.parser.api.*;\n");
+      sb.append("@JfrType(\"").append(typeName).append("\")\n\n");
+      String className = getClassNameFromFullName(typeName);
+      sb.append("public interface ").append(className).append(" {\n");
+      field
+          .getFields()
+          .forEach(
+              subfield -> {
+                try {
+                  writeTypeFromField(subfield, generatedTypes);
+                } catch (Exception e) {
+                  throw new RuntimeException(e);
+                }
+                String fldName = sanitizeFieldName(subfield.getName());
+                sb.append('\t');
+                if (!fldName.equals(subfield.getName())) {
+                  sb.append("@JfrField(\"").append(subfield.getName()).append("\") ");
+                }
+                String subfieldTypeName = subfield.getTypeName();
+                if (isPrimitiveName(subfieldTypeName)) {
+                  sb.append(subfieldTypeName);
+                } else {
+                  sb.append(getClassNameFromFullName(subfieldTypeName));
+                }
+                if (subfield.isArray()) {
+                  sb.append("[]");
+                }
+                sb.append(" ");
+                sb.append(fldName).append("();\n");
+              });
+      sb.append("}\n");
+
+      return sb.toString();
+    }
+    return null;
+  }
+
+  private void generateFromFile() throws Exception {
+    Set<String> processed = new HashSet<>();
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(new TypedParserContextFactory(null))) {
+      parser.parse(
+          jfr,
+          new ChunkParserListener() {
+            @Override
+            public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+              metadata.getClasses().stream()
+                  .filter(
+                      clz -> {
+                        boolean isEv = isEvent(clz);
+                        boolean passesFilter =
+                            eventTypeFilter == null || eventTypeFilter.test(clz.getName());
+                        return isEv && passesFilter;
+                      })
+                  .forEach(clz -> writeClass(clz, processed));
+              // stop processing
+              return false;
+            }
+          });
+    }
+  }
+
+  private void writeClass(MetadataClass metadataClass, Set<String> processed) {
+    if (metadataClass.isPrimitive()) {
+      return;
+    }
+    if (isAnnotation(metadataClass) || isSettingControl(metadataClass)) {
+      return;
+    }
+    if (!processed.add(metadataClass.getName())) {
+      return;
+    }
+    try {
+      Path classFile = output.resolve(getClassName(metadataClass) + ".java");
+      String classContent = generateClass(metadataClass, processed);
+      if (!Files.exists(classFile)) {
+        Files.writeString(classFile, classContent, StandardOpenOption.CREATE_NEW);
+      } else if (overwrite) {
+        Files.writeString(
+            classFile,
+            classContent,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  private String generateClass(MetadataClass clazz, Set<String> processed) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("package ").append(pkg).append(";\n");
+    sb.append("\n");
+    sb.append("import io.jafar.parser.api.*;\n");
+    sb.append("@JfrType(\"").append(clazz.getName()).append("\")\n\n");
+    sb.append("public interface ").append(getClassName(clazz));
+    sb.append(" {\n");
+    for (MetadataField field : clazz.getFields()) {
+      String fldName = sanitizeFieldName(field.getName());
+      sb.append('\t');
+      if (!fldName.equals(field.getName())) {
+        sb.append("@JfrField(\"").append(field.getName()).append("\") ");
+      }
+      MetadataClass fldType = field.getType();
+      while (fldType.isSimpleType()) {
+        fldType = fldType.getFields().getFirst().getType();
+      }
+      // Recursively generate nested types
+      if (!fldType.isPrimitive() && !processed.contains(fldType.getName())) {
+        writeClass(fldType, processed);
+      }
+      sb.append(getClassName(fldType));
+      sb.append("[]".repeat(Math.max(0, field.getDimension())));
+      sb.append(" ");
+      sb.append(fldName).append("();\n");
+    }
+    sb.append("}\n");
+    return sb.toString();
+  }
+
+  private String getClassName(MetadataClass clazz) {
+    if (clazz.isPrimitive()) {
+      return clazz.getSimpleName();
+    }
+
+    // Include namespace to avoid collisions (e.g., jdk.ExecutionSample -> JdkExecutionSample)
+    String fullName = clazz.getName();
+    String className = fullName.replace('.', '_');
+    // Convert to CamelCase: jdk_ExecutionSample -> JdkExecutionSample
+    StringBuilder result = new StringBuilder("JFR");
+    boolean capitalizeNext = true;
+    for (char c : className.toCharArray()) {
+      if (c == '_') {
+        capitalizeNext = true;
+      } else {
+        result.append(capitalizeNext ? Character.toUpperCase(c) : c);
+        capitalizeNext = false;
+      }
+    }
+    return result.toString();
+  }
+
+  private String sanitizeFieldName(String fieldName) {
+    String sanitized = fieldName;
+    // Replace dots with underscores (e.g., "_dd.trace.operation" -> "_dd_trace_operation")
+    sanitized = sanitized.replace('.', '_');
+    // Handle Java keywords
+    switch (sanitized) {
+      case "class":
+        return "clz";
+      case "package":
+        return "pkg";
+      default:
+        return sanitized;
+    }
+  }
+
+  private static boolean isEvent(MetadataClass clazz) {
+    String superType = clazz.getSuperType();
+    if (superType == null) {
+      return false;
+    }
+    if ("jdk.jfr.Event".equals(superType)) {
+      return true;
+    }
+    return false;
+  }
+
+  private static boolean isAnnotation(MetadataClass clazz) {
+    String superType = clazz.getSuperType();
+    if (superType == null) {
+      return false;
+    }
+    if ("java.lang.annotation.Annotation".equals(superType)) {
+      return true;
+    }
+    return false;
+  }
+
+  private static boolean isSettingControl(MetadataClass clazz) {
+    String superType = clazz.getSuperType();
+    if (superType == null) {
+      return false;
+    }
+    return "jdk.jfr.SettingControl".equals(superType);
+  }
+
+  private static String getSimpleName(String name) {
+    int idx = name.lastIndexOf('.');
+    return idx == -1 ? name : name.substring(idx + 1);
+  }
+
+  /**
+   * Converts a fully qualified type name to a class name including namespace. For example:
+   * "jdk.ExecutionSample" -> "JFRJdkExecutionSample"
+   */
+  private static String getClassNameFromFullName(String fullName) {
+    // Replace dots with underscores
+    String className = fullName.replace('.', '_');
+    // Convert to CamelCase: jdk_ExecutionSample -> JdkExecutionSample
+    StringBuilder result = new StringBuilder("JFR");
+    boolean capitalizeNext = true;
+    for (char c : className.toCharArray()) {
+      if (c == '_') {
+        capitalizeNext = true;
+      } else {
+        result.append(capitalizeNext ? Character.toUpperCase(c) : c);
+        capitalizeNext = false;
+      }
+    }
+    return result.toString();
+  }
+
+  private static boolean isPrimitiveName(String name) {
+    return name.lastIndexOf('.') == -1 || "java.lang.String".equals(name);
+  }
+}

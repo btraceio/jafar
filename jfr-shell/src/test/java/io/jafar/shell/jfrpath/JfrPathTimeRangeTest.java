@@ -15,7 +15,7 @@ class JfrPathTimeRangeTest {
   @Test
   void timerangeReturnsExpectedFields() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
-    Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
+    Path jfr = Path.of("..", "parser-core", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
     when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
 
@@ -60,7 +60,7 @@ class JfrPathTimeRangeTest {
   @Test
   void timerangeWithCustomPath() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
-    Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
+    Path jfr = Path.of("..", "parser-core", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
     when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
 
@@ -100,7 +100,7 @@ class JfrPathTimeRangeTest {
   @Test
   void timerangeEmptyResult() throws Exception {
     JFRSession session = Mockito.mock(JFRSession.class);
-    Path jfr = Path.of("..", "parser", "src", "test", "resources", "test-jfr.jfr");
+    Path jfr = Path.of("..", "parser-core", "src", "test", "resources", "test-jfr.jfr");
     when(session.getRecordingPath()).thenReturn(jfr);
     when(session.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.NonExistentEvent"));
 

@@ -50,9 +50,9 @@ public class MutationBasedCompletionTests {
   @BeforeContainer
   static void setupTestEnvironment() throws Exception {
     // Use the test JFR file from parser module
-    Path testJfr = Paths.get("..", "parser", "src", "test", "resources", "test-ap.jfr");
+    Path testJfr = Paths.get("..", "parser-core", "src", "test", "resources", "test-ap.jfr");
     if (!testJfr.toFile().exists()) {
-      testJfr = Paths.get("parser", "src", "test", "resources", "test-ap.jfr");
+      testJfr = Paths.get("parser-core", "src", "test", "resources", "test-ap.jfr");
     }
 
     // Create SessionManager with ParsingContext

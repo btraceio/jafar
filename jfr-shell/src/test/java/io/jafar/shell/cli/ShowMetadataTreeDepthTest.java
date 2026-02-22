@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Test;
 
 class ShowMetadataTreeDepthTest {
   private static Path resource(String name) {
-    return Paths.get("..", "parser", "src", "test", "resources", name).normalize().toAbsolutePath();
+    return Paths.get("..", "parser-core", "src", "test", "resources", name)
+        .normalize()
+        .toAbsolutePath();
   }
 
   @Test

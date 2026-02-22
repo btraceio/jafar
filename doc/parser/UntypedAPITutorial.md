@@ -769,4 +769,4 @@ public class IOAnalyzer {
 ## Related Documentation
 
 - [README.md](../README.md) - Project overview and quick start
-- [Values API](../parser/src/main/java/io/jafar/parser/api/Values.java) - Field access utilities
+- [Values API](../parser-core/src/main/java/io/jafar/parser/api/Values.java) - Field access utilities

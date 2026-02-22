@@ -17,7 +17,9 @@ class MetadataProviderTest {
 
   private static Path resource(String name) {
     Path p =
-        Paths.get("..", "parser", "src", "test", "resources", name).normalize().toAbsolutePath();
+        Paths.get("..", "parser-core", "src", "test", "resources", name)
+            .normalize()
+            .toAbsolutePath();
     assertTrue(Files.exists(p), "Missing test resource: " + p);
     return p;
   }
