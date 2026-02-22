@@ -89,6 +89,7 @@ Use --global with 'set' to store variables that persist across sessions
 echo ${var.field} substitutes variable values into output text
 Use ${var.size} to get the row count of a lazy query result
 Use ${var[0].field} to access a specific row in a lazy query result
+Press @ to pick a cell from the selected row and insert ${selected.column} reference
 Use merge(${map1}, ${map2}) to combine map variables
 Use 'vars' to list all variables; 'vars --info name' for detail on one
 
