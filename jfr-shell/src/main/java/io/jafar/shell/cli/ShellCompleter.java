@@ -115,6 +115,10 @@ public final class ShellCompleter implements Completer {
         completeConstantsAlias(line, candidates);
         return;
       }
+      if (word.startsWith("metadata/")) {
+        completeMetadataAlias(line, candidates);
+        return;
+      }
       completeWithFramework(line, candidates);
       if (DEBUG) {
         System.err.println("[COMPLETION DEBUG] Generated " + candidates.size() + " candidates");
@@ -133,6 +137,12 @@ public final class ShellCompleter implements Completer {
     // For constants alias with path - route through framework
     if (cmd.startsWith("constants/")) {
       completeConstantsAlias(line, candidates);
+      return;
+    }
+
+    // For metadata alias with path - route through framework
+    if (cmd.startsWith("metadata/")) {
+      completeMetadataAlias(line, candidates);
       return;
     }
 
@@ -721,6 +731,14 @@ public final class ShellCompleter implements Completer {
 
   /** Complete constants alias by converting to synthetic 'show constants ...' line. */
   private void completeConstantsAlias(ParsedLine line, List<Candidate> candidates) {
+    String syntheticLine = "show " + line.line();
+    int syntheticCursor = line.cursor() + 5;
+    ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
+    completeWithFramework(synthetic, candidates);
+  }
+
+  /** Complete metadata alias by converting to synthetic 'show metadata ...' line. */
+  private void completeMetadataAlias(ParsedLine line, List<Candidate> candidates) {
     String syntheticLine = "show " + line.line();
     int syntheticCursor = line.cursor() + 5;
     ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);

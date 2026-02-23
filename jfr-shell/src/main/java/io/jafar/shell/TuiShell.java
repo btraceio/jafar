@@ -31,6 +31,7 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ConstantPoolProvider;
+import io.jafar.shell.providers.MetadataProvider;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
@@ -145,9 +146,10 @@ public final class TuiShell implements AutoCloseable {
     int sortColumn = -1; // -1 = no sort, 0..N = column index
     boolean sortAscending = true;
     long marqueeTick0; // renderTick when name was set (marquee epoch)
-    int cpTypeIndex = -1; // sidebar selection index for browser tabs (-1 = not a browser tab)
+    int sidebarIndex = -1; // sidebar selection index for browser tabs (-1 = not a browser tab)
     List<Map<String, Object>> browserTypes; // sidebar type list for this browser tab
     boolean isEventBrowserTab; // true if this tab was opened in event browser mode
+    boolean isMetadataBrowserTab; // true if this tab was opened in metadata browser mode
 
     // Paginated rendering — render only a page of rows at a time
     List<Map<String, Object>> cpAllEntries; // full entries from provider (null for non-CP)
@@ -199,11 +201,11 @@ public final class TuiShell implements AutoCloseable {
 
   // Search origin tracking
   private Focus searchOriginFocus = Focus.RESULTS;
-  private boolean searchOriginCpTypes; // true when search targets the browser types sidebar
+  private boolean searchOriginSidebar; // true when search targets the browser types sidebar
 
   // Browser types sidebar filter
-  private String cpTypesSearchQuery = "";
-  private List<Integer> cpTypesFilteredIndices; // null = no filter
+  private String sidebarSearchQuery = "";
+  private List<Integer> sidebarFilteredIndices; // null = no filter
 
   // Temporary hint message (auto-dismiss after HINT_MESSAGE_TICKS)
   private String hintMessage;
@@ -244,19 +246,24 @@ public final class TuiShell implements AutoCloseable {
   private boolean exportPathPristine; // true until user edits; first char replaces all
   private final TextInputState exportPathState = new TextInputState();
 
-  // Browser mode (shared by CP browser and event browser)
-  private boolean cpBrowserMode;
-  private boolean eventBrowserMode; // true when browsing events (vs CP)
-  private List<Map<String, Object>> cpTypes;
-  private int cpTypeSelectedIndex;
-  private int cpTypeScrollOffset;
-  private int cpTypesAreaHeight;
+  // Browser mode (shared by CP, event, and metadata browsers)
+  private boolean browserMode;
+  private boolean eventBrowserMode; // true when browsing events
+  private boolean metadataBrowserMode; // true when browsing metadata types
+  private List<Map<String, Object>> sidebarTypes;
+  private int sidebarSelectedIndex;
+  private int sidebarScrollOffset;
+  private int sidebarAreaHeight;
 
-  private boolean cpTypesFocused;
+  private boolean sidebarFocused;
   private long browserNavTime; // nanoTime of last Up/Down in sidebar
   private String browserNavPending; // type name awaiting load (null = none)
   private boolean browserNavKeepFocus; // keepTypesFocused for pending load
   private static final long BROWSER_NAV_DEBOUNCE_NS = 100_000_000L; // 100ms
+
+  // Metadata browser state
+  private List<String> metadataBrowserLineRefs; // type name per results line (null = not navigable)
+  private Map<String, Map<String, Object>> metadataByName; // cached metadata for all types
 
   // Async command execution state
   private final ExecutorService commandExecutor =
@@ -634,31 +641,31 @@ public final class TuiShell implements AutoCloseable {
       }
     }
     // Show live search query in title when searching results (non-browser mode only)
-    if (!cpBrowserMode
+    if (!browserMode
         && focus == Focus.SEARCH
         && searchOriginFocus == Focus.RESULTS
-        && !searchOriginCpTypes) {
+        && !searchOriginSidebar) {
       String q = searchInputState.text();
       if (!q.isEmpty()) {
         title += " /" + q;
       }
-    } else if (!cpBrowserMode && !activeTab.searchQuery.isEmpty() && focus != Focus.SEARCH) {
+    } else if (!browserMode && !activeTab.searchQuery.isEmpty() && focus != Focus.SEARCH) {
       title += " /" + activeTab.searchQuery;
     }
     Title blockTitle = mnemonicTitle(title, 0);
 
     Block.Builder blockBuilder =
         Block.builder().title(blockTitle).borders(Borders.ALL).borderType(BorderType.ROUNDED);
-    if (focus == Focus.RESULTS && !cpBrowserMode) {
+    if (focus == Focus.RESULTS && !browserMode) {
       blockBuilder.borderColor(Color.CYAN);
     }
-    if (!cpBrowserMode
+    if (!browserMode
         && focus == Focus.SEARCH
         && searchOriginFocus == Focus.RESULTS
-        && !searchOriginCpTypes) {
+        && !searchOriginSidebar) {
       blockBuilder.borderColor(Color.YELLOW);
     }
-    if (!cpBrowserMode && activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
+    if (!browserMode && activeTab.filteredIndices != null && !activeTab.searchQuery.isEmpty()) {
       blockBuilder.titleBottom(
           Title.from(
               Span.styled(
@@ -679,16 +686,16 @@ public final class TuiShell implements AutoCloseable {
     }
 
     // Browser mode: split inner area for types sidebar + entries sub-block
-    if (cpBrowserMode) {
+    if (browserMode) {
       List<Rect> hSplit =
           Layout.horizontal()
               .constraints(Constraint.percentage(30), Constraint.percentage(70))
               .split(inner);
-      renderCpTypes(frame, hSplit.get(0));
+      renderSidebar(frame, hSplit.get(0));
 
-      String entriesTitle = getSelectedCpTypeName();
+      String entriesTitle = getSelectedSidebarName();
       boolean entriesSearchActive =
-          focus == Focus.SEARCH && searchOriginFocus == Focus.RESULTS && !searchOriginCpTypes;
+          focus == Focus.SEARCH && searchOriginFocus == Focus.RESULTS && !searchOriginSidebar;
       // Show live filter in entries title
       if (entriesSearchActive) {
         String q = searchInputState.text();
@@ -701,7 +708,7 @@ public final class TuiShell implements AutoCloseable {
               .title(Title.from(entriesTitle))
               .borders(Borders.ALL)
               .borderType(BorderType.ROUNDED);
-      if (focus == Focus.RESULTS && !cpTypesFocused) {
+      if (focus == Focus.RESULTS && !sidebarFocused) {
         cpEntriesBuilder.borderColor(Color.CYAN);
       }
       if (entriesSearchActive) {
@@ -826,6 +833,10 @@ public final class TuiShell implements AutoCloseable {
       scrollLineCount = Math.max(0, lineCount - scrollBase);
       highlightLine =
           activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1; // relative to scrollBase
+    } else if (metadataBrowserMode && !sidebarFocused) {
+      scrollBase = 0;
+      scrollLineCount = lineCount;
+      highlightLine = activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1;
     } else {
       scrollBase = 0;
       scrollLineCount = lineCount;
@@ -839,6 +850,7 @@ public final class TuiShell implements AutoCloseable {
     int end = Math.min(start + visibleHeight, scrollLineCount);
 
     Style highlightStyle = Style.create().reversed();
+    Style navigableStyle = Style.create().fg(Color.CYAN).bold();
     List<Line> styledLines = new ArrayList<>(end - start);
     for (int i = start; i < end; i++) {
       String line = effectiveLine(activeTab, scrollBase + i);
@@ -855,6 +867,11 @@ public final class TuiShell implements AutoCloseable {
           visible = visible + " ".repeat(visibleWidth - visible.length());
         }
         styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
+      } else if (metadataBrowserMode
+          && metadataBrowserLineRefs != null
+          && i < metadataBrowserLineRefs.size()
+          && metadataBrowserLineRefs.get(i) != null) {
+        styledLines.add(Line.from(Span.styled(visible, navigableStyle)));
       } else if (!activeTab.searchQuery.isEmpty()) {
         styledLines.add(buildHighlightedLine(visible, activeTab.searchQuery, null));
       } else {
@@ -883,35 +900,38 @@ public final class TuiShell implements AutoCloseable {
     }
   }
 
-  private void renderCpTypes(Frame frame, Rect area) {
-    String sidebarTitle = eventBrowserMode ? "Event Types" : "Constant Types";
+  private void renderSidebar(Frame frame, Rect area) {
+    String sidebarTitle =
+        metadataBrowserMode
+            ? "Metadata Types"
+            : eventBrowserMode ? "Event Types" : "Constant Types";
     // Show live or sticky filter in sidebar title
-    if (focus == Focus.SEARCH && searchOriginCpTypes) {
+    if (focus == Focus.SEARCH && searchOriginSidebar) {
       String q = searchInputState.text();
       if (!q.isEmpty()) sidebarTitle += " /" + q;
-    } else if (!cpTypesSearchQuery.isEmpty()) {
-      sidebarTitle += " /" + cpTypesSearchQuery;
+    } else if (!sidebarSearchQuery.isEmpty()) {
+      sidebarTitle += " /" + sidebarSearchQuery;
     }
     Block.Builder blockBuilder =
         Block.builder()
             .title(Title.from(sidebarTitle))
             .borders(Borders.ALL)
             .borderType(BorderType.ROUNDED);
-    if (focus == Focus.RESULTS && cpTypesFocused) {
+    if (focus == Focus.RESULTS && sidebarFocused) {
       blockBuilder.borderColor(Color.CYAN);
     }
-    if (focus == Focus.SEARCH && searchOriginCpTypes) {
+    if (focus == Focus.SEARCH && searchOriginSidebar) {
       blockBuilder.borderColor(Color.YELLOW);
     }
     Block block = blockBuilder.build();
     Rect inner = block.inner(area);
     frame.renderWidget(block, area);
 
-    if (cpTypes == null || cpTypes.isEmpty()) return;
+    if (sidebarTypes == null || sidebarTypes.isEmpty()) return;
 
     // Determine visible type indices (filtered or all)
     int totalVisible =
-        cpTypesFilteredIndices != null ? cpTypesFilteredIndices.size() : cpTypes.size();
+        sidebarFilteredIndices != null ? sidebarFilteredIndices.size() : sidebarTypes.size();
 
     // Scrollbar
     boolean needsVScroll = totalVisible > inner.height();
@@ -925,34 +945,40 @@ public final class TuiShell implements AutoCloseable {
     }
 
     int visibleHeight = contentArea.height();
-    cpTypesAreaHeight = Math.max(1, visibleHeight);
+    sidebarAreaHeight = Math.max(1, visibleHeight);
 
     // Clamp scroll
     int maxScroll = Math.max(0, totalVisible - visibleHeight);
-    cpTypeScrollOffset = Math.min(cpTypeScrollOffset, maxScroll);
+    sidebarScrollOffset = Math.min(sidebarScrollOffset, maxScroll);
 
-    int start = cpTypeScrollOffset;
+    int start = sidebarScrollOffset;
     int end = Math.min(start + visibleHeight, totalVisible);
 
     Style highlightStyle = Style.create().reversed();
     List<Line> lines = new ArrayList<>(end - start);
     for (int vi = start; vi < end; vi++) {
-      int i = cpTypesFilteredIndices != null ? cpTypesFilteredIndices.get(vi) : vi;
-      Map<String, Object> typeRow = cpTypes.get(i);
+      int i = sidebarFilteredIndices != null ? sidebarFilteredIndices.get(vi) : vi;
+      Map<String, Object> typeRow = sidebarTypes.get(i);
       String name = String.valueOf(typeRow.getOrDefault("name", ""));
-      String countKey = eventBrowserMode ? "count" : "totalSize";
-      String count = String.valueOf(typeRow.getOrDefault(countKey, ""));
-      String display = " " + name + " (" + count + ")";
+      String display;
+      if (metadataBrowserMode) {
+        String event = String.valueOf(typeRow.getOrDefault("event", ""));
+        display = " " + name + (event.isEmpty() ? "" : " *");
+      } else {
+        String countKey = eventBrowserMode ? "count" : "totalSize";
+        String count = String.valueOf(typeRow.getOrDefault(countKey, ""));
+        display = " " + name + " (" + count + ")";
+      }
       if (display.length() > contentArea.width()) {
         display = display.substring(0, contentArea.width());
       }
-      if (i == cpTypeSelectedIndex) {
+      if (i == sidebarSelectedIndex) {
         if (display.length() < contentArea.width()) {
           display = display + " ".repeat(contentArea.width() - display.length());
         }
         lines.add(Line.from(Span.styled(display, highlightStyle)));
-      } else if (!cpTypesSearchQuery.isEmpty()) {
-        lines.add(buildHighlightedLine(display, cpTypesSearchQuery, null));
+      } else if (!sidebarSearchQuery.isEmpty()) {
+        lines.add(buildHighlightedLine(display, sidebarSearchQuery, null));
       } else {
         lines.add(Line.from(display));
       }
@@ -964,7 +990,7 @@ public final class TuiShell implements AutoCloseable {
       ScrollbarState vState =
           new ScrollbarState(totalVisible)
               .viewportContentLength(visibleHeight)
-              .position(cpTypeScrollOffset);
+              .position(sidebarScrollOffset);
       frame.renderStatefulWidget(Scrollbar.vertical(), vScrollbarArea, vState);
     }
   }
@@ -1605,10 +1631,21 @@ public final class TuiShell implements AutoCloseable {
               + "+r:results  "
               + altMod
               + "+c:cmd  Esc:back";
-    } else if (focus == Focus.RESULTS && cpBrowserMode) {
-      if (cpTypesFocused) {
+    } else if (focus == Focus.RESULTS && browserMode) {
+      if (sidebarFocused) {
         String pinsHint = tabs.size() > 1 ? "  {}:pins" : "";
-        hints = " \u2191\u2193:select  Enter/\u2192:view entries  Esc:close" + pinsHint;
+        String viewLabel = metadataBrowserMode ? "view detail" : "view entries";
+        hints = " \u2191\u2193:select  Enter/\u2192:" + viewLabel + "  Esc:close" + pinsHint;
+      } else if (metadataBrowserMode) {
+        ResultTab activeTab = tabs.get(activeTabIndex);
+        String navHint = "";
+        if (metadataBrowserLineRefs != null
+            && activeTab.selectedRow >= 0
+            && activeTab.selectedRow < metadataBrowserLineRefs.size()
+            && metadataBrowserLineRefs.get(activeTab.selectedRow) != null) {
+          navHint = "Enter:drill-down  ";
+        }
+        hints = " \u2191\u2193:cursor  " + navHint + "\u2190:sidebar  /:search  Esc:back";
       } else {
         ResultTab activeTab = tabs.get(activeTabIndex);
         String rowHint =
@@ -1867,10 +1904,18 @@ public final class TuiShell implements AutoCloseable {
     switch (key) {
       case 13: // Enter
       case 10:
-        if (cpBrowserMode && cpTypesFocused) {
+        if (browserMode && sidebarFocused) {
           browserNavPending = null; // cancel debounce
-          String name = getSelectedCpTypeName();
+          String name = getSelectedSidebarName();
           if (!name.isEmpty()) loadBrowserEntries(name, false);
+        } else if (metadataBrowserMode
+            && metadataBrowserLineRefs != null
+            && tabs.get(activeTabIndex).selectedRow >= 0
+            && tabs.get(activeTabIndex).selectedRow < metadataBrowserLineRefs.size()) {
+          String targetType = metadataBrowserLineRefs.get(tabs.get(activeTabIndex).selectedRow);
+          if (targetType != null) {
+            navigateToSidebarType(targetType);
+          }
         } else {
           if (!detailTabNames.isEmpty()) {
             detailHScrollOffset = 0;
@@ -1999,13 +2044,13 @@ public final class TuiShell implements AutoCloseable {
 
   private void enterSearchMode() {
     searchOriginFocus = (focus == Focus.DETAIL) ? Focus.DETAIL : Focus.RESULTS;
-    searchOriginCpTypes = (cpBrowserMode && cpTypesFocused && focus == Focus.RESULTS);
+    searchOriginSidebar = (browserMode && sidebarFocused && focus == Focus.RESULTS);
     focus = Focus.SEARCH;
     ResultTab tab = tabs.get(activeTabIndex);
     if (searchOriginFocus == Focus.DETAIL) {
       searchInputState.setText(tab.detailSearchQuery);
-    } else if (searchOriginCpTypes) {
-      searchInputState.setText(cpTypesSearchQuery);
+    } else if (searchOriginSidebar) {
+      searchInputState.setText(sidebarSearchQuery);
     } else {
       searchInputState.setText(tab.searchQuery);
     }
@@ -2019,8 +2064,8 @@ public final class TuiShell implements AutoCloseable {
           String query = searchInputState.text();
           applySearchFilter(tab, query);
           tab.detailSearchQuery = query;
-          if (cpBrowserMode) {
-            applyCpTypesFilter(query);
+          if (browserMode) {
+            applySidebarFilter(query);
           }
           focus = searchOriginFocus;
         }
@@ -2029,8 +2074,8 @@ public final class TuiShell implements AutoCloseable {
       case 10:
         if (searchOriginFocus == Focus.DETAIL) {
           tab.detailSearchQuery = searchInputState.text();
-        } else if (searchOriginCpTypes) {
-          applyCpTypesFilter(searchInputState.text());
+        } else if (searchOriginSidebar) {
+          applySidebarFilter(searchInputState.text());
         } else {
           applySearchFilter(tab, searchInputState.text());
         }
@@ -2057,8 +2102,8 @@ public final class TuiShell implements AutoCloseable {
   private void applyLiveSearchFilter(ResultTab tab, String query) {
     if (searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = query;
-    } else if (searchOriginCpTypes) {
-      applyCpTypesFilter(query);
+    } else if (searchOriginSidebar) {
+      applySidebarFilter(query);
     } else {
       applySearchFilter(tab, query);
     }
@@ -2068,9 +2113,9 @@ public final class TuiShell implements AutoCloseable {
     ResultTab tab = tabs.get(activeTabIndex);
     if (searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = "";
-    } else if (searchOriginCpTypes) {
-      cpTypesSearchQuery = "";
-      cpTypesFilteredIndices = null;
+    } else if (searchOriginSidebar) {
+      sidebarSearchQuery = "";
+      sidebarFilteredIndices = null;
     } else {
       tab.searchQuery = "";
       tab.filteredIndices = null;
@@ -2080,22 +2125,22 @@ public final class TuiShell implements AutoCloseable {
     focus = searchOriginFocus;
   }
 
-  private void applyCpTypesFilter(String query) {
-    cpTypesSearchQuery = query;
-    if (query.isEmpty() || cpTypes == null) {
-      cpTypesFilteredIndices = null;
+  private void applySidebarFilter(String query) {
+    sidebarSearchQuery = query;
+    if (query.isEmpty() || sidebarTypes == null) {
+      sidebarFilteredIndices = null;
       return;
     }
     String lower = query.toLowerCase();
     List<Integer> indices = new ArrayList<>();
-    for (int i = 0; i < cpTypes.size(); i++) {
-      String name = String.valueOf(cpTypes.get(i).getOrDefault("name", ""));
+    for (int i = 0; i < sidebarTypes.size(); i++) {
+      String name = String.valueOf(sidebarTypes.get(i).getOrDefault("name", ""));
       if (name.toLowerCase().contains(lower)) {
         indices.add(i);
       }
     }
-    cpTypesFilteredIndices = indices;
-    cpTypeScrollOffset = 0;
+    sidebarFilteredIndices = indices;
+    sidebarScrollOffset = 0;
   }
 
   private void handleHistorySearchKey(int key) {
@@ -2242,8 +2287,8 @@ public final class TuiShell implements AutoCloseable {
         } else {
           focus = Focus.RESULTS;
         }
-      } else if (focus == Focus.RESULTS && cpBrowserMode) {
-        if (!cpTypesFocused) {
+      } else if (focus == Focus.RESULTS && browserMode) {
+        if (!sidebarFocused) {
           // Clear entries filter first if active
           ResultTab escTab = tabs.get(activeTabIndex);
           if (escTab.filteredIndices != null) {
@@ -2252,15 +2297,17 @@ public final class TuiShell implements AutoCloseable {
             escTab.filteredMaxLineWidth = 0;
             escTab.scrollOffset = 0;
           } else {
-            cpTypesFocused = true;
+            sidebarFocused = true;
           }
         } else {
           // Clear types filter first if active
-          if (cpTypesFilteredIndices != null) {
-            cpTypesSearchQuery = "";
-            cpTypesFilteredIndices = null;
+          if (sidebarFilteredIndices != null) {
+            sidebarSearchQuery = "";
+            sidebarFilteredIndices = null;
           } else {
-            if (eventBrowserMode) {
+            if (metadataBrowserMode) {
+              exitMetadataBrowserMode();
+            } else if (eventBrowserMode) {
               exitEventBrowserMode();
             } else {
               exitCpBrowserMode();
@@ -2438,8 +2485,8 @@ public final class TuiShell implements AutoCloseable {
           break;
       }
     } else if (focus == Focus.RESULTS) {
-      if (cpBrowserMode && cpTypesFocused) {
-        dispatchCpTypesArrow(direction);
+      if (browserMode && sidebarFocused) {
+        dispatchSidebarArrow(direction);
         return;
       }
       ResultTab rt = tabs.get(activeTabIndex);
@@ -2450,6 +2497,8 @@ public final class TuiShell implements AutoCloseable {
         case 'A':
           if (hasTable) {
             moveSelectedRow(rt, -1);
+          } else if (metadataBrowserMode && rt.selectedRow >= 0) {
+            moveMetadataCursor(rt, -1);
           } else {
             scrollResults(-1);
           }
@@ -2457,6 +2506,8 @@ public final class TuiShell implements AutoCloseable {
         case 'B':
           if (hasTable) {
             moveSelectedRow(rt, 1);
+          } else if (metadataBrowserMode && rt.selectedRow >= 0) {
+            moveMetadataCursor(rt, 1);
           } else {
             scrollResults(1);
           }
@@ -2465,8 +2516,8 @@ public final class TuiShell implements AutoCloseable {
           scrollHorizontal(hStep);
           break;
         case 'D':
-          if (cpBrowserMode && !cpTypesFocused && rt.hScrollOffset == 0) {
-            cpTypesFocused = true;
+          if (browserMode && !sidebarFocused && rt.hScrollOffset == 0) {
+            sidebarFocused = true;
           } else {
             scrollHorizontal(-hStep);
           }
@@ -2541,23 +2592,25 @@ public final class TuiShell implements AutoCloseable {
     if (newIndex == activeTabIndex) return;
     int oldIndex = activeTabIndex;
     // Save browser state for old tab
-    if (cpBrowserMode) {
-      tabs.get(oldIndex).cpTypeIndex = cpTypeSelectedIndex;
+    if (browserMode) {
+      tabs.get(oldIndex).sidebarIndex = sidebarSelectedIndex;
     }
     activeTabIndex = newIndex;
     // Restore browser state for new tab
     ResultTab newTab = tabs.get(newIndex);
-    if (newTab.cpTypeIndex >= 0 && newTab.browserTypes != null) {
-      cpBrowserMode = true;
+    if (newTab.sidebarIndex >= 0 && newTab.browserTypes != null) {
+      browserMode = true;
       eventBrowserMode = newTab.isEventBrowserTab;
-      cpTypes = newTab.browserTypes;
-      cpTypeSelectedIndex = newTab.cpTypeIndex;
-      cpTypesFocused = false;
+      metadataBrowserMode = newTab.isMetadataBrowserTab;
+      sidebarTypes = newTab.browserTypes;
+      sidebarSelectedIndex = newTab.sidebarIndex;
+      sidebarFocused = false;
     } else {
-      if (newTab.cpTypeIndex >= 0) newTab.cpTypeIndex = -1;
-      cpBrowserMode = false;
+      if (newTab.sidebarIndex >= 0) newTab.sidebarIndex = -1;
+      browserMode = false;
       eventBrowserMode = false;
-      cpTypesFocused = false;
+      metadataBrowserMode = false;
+      sidebarFocused = false;
     }
     buildDetailTabs(newTab);
   }
@@ -2570,7 +2623,7 @@ public final class TuiShell implements AutoCloseable {
     return -1;
   }
 
-  // ---- CP browser mode ----
+  // ---- Browser mode (CP / Event / Metadata) ----
 
   private static boolean isCpSummaryCommand(String command) {
     String[] parts = command.trim().split("\\s+");
@@ -2601,14 +2654,14 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void enterCpBrowserMode(ResultTab tab) {
-    cpBrowserMode = true;
+    browserMode = true;
     eventBrowserMode = false;
-    cpTypes = tab.tableData;
-    cpTypeSelectedIndex = 0;
-    cpTypeScrollOffset = 0;
-    cpTypesFocused = true;
-    tab.cpTypeIndex = 0;
-    tab.browserTypes = cpTypes;
+    sidebarTypes = tab.tableData;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = true;
+    tab.sidebarIndex = 0;
+    tab.browserTypes = sidebarTypes;
     tab.isEventBrowserTab = false;
     // Clear tab for entries (will be populated on first type selection)
     tab.tableData = null;
@@ -2627,20 +2680,21 @@ public final class TuiShell implements AutoCloseable {
     focus = Focus.RESULTS;
 
     // Auto-load entries for the first type
-    String firstName = getSelectedCpTypeName();
+    String firstName = getSelectedSidebarName();
     if (!firstName.isEmpty()) loadCpEntries(firstName, true);
   }
 
   private void exitCpBrowserMode() {
-    cpBrowserMode = false;
+    browserMode = false;
     eventBrowserMode = false;
-    cpTypeSelectedIndex = 0;
-    cpTypeScrollOffset = 0;
-    cpTypesFocused = false;
+    metadataBrowserMode = false;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = false;
     browserNavPending = null;
-    cpTypesSearchQuery = "";
-    cpTypesFilteredIndices = null;
-    // Keep cpTypes cached so pinned browser tabs can restore
+    sidebarSearchQuery = "";
+    sidebarFilteredIndices = null;
+    // Keep sidebarTypes cached so pinned browser tabs can restore
   }
 
   // ---- Event browser mode ----
@@ -2671,15 +2725,229 @@ public final class TuiShell implements AutoCloseable {
     return true;
   }
 
+  // ---- Metadata browser mode ----
+
+  private static boolean isMetadataSummaryCommand(String command) {
+    String[] parts = command.trim().split("\\s+");
+    if (parts.length == 0) return false;
+    int metaIndex;
+    if ("metadata".equalsIgnoreCase(parts[0]) || "types".equalsIgnoreCase(parts[0])) {
+      metaIndex = 0;
+    } else if ("show".equalsIgnoreCase(parts[0])
+        && parts.length >= 2
+        && ("metadata".equalsIgnoreCase(parts[1]) || "types".equalsIgnoreCase(parts[1]))) {
+      metaIndex = 1;
+    } else {
+      return false;
+    }
+    // Skip "metadata class ..." — that has a non-flag argument
+    for (int i = metaIndex + 1; i < parts.length; i++) {
+      String p = parts[i];
+      if (p.startsWith("--")) {
+        // known flags that consume a value
+        if ("--search".equals(p) || "--format".equals(p)) {
+          if (i + 1 < parts.length) i++;
+        }
+        continue;
+      }
+      // "class" or a type name — not a bare summary
+      return false;
+    }
+    return true;
+  }
+
+  private void enterMetadataBrowserMode(
+      ResultTab tab, List<Map<String, Object>> typeRows, Map<String, Map<String, Object>> allMeta) {
+    browserMode = true;
+    eventBrowserMode = false;
+    metadataBrowserMode = true;
+    sidebarTypes = typeRows;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = true;
+    tab.sidebarIndex = 0;
+    tab.browserTypes = typeRows;
+    tab.isEventBrowserTab = false;
+    tab.isMetadataBrowserTab = true;
+    // Store cached metadata
+    metadataByName = allMeta;
+    metadataBrowserLineRefs = null;
+    // Clear tab for detail (will be populated on first type selection)
+    tab.tableData = null;
+    tab.tableHeaders = null;
+    tab.selectedRow = -1;
+    tab.dataStartLine = -1;
+    tab.lines.clear();
+    tab.maxLineWidth = 0;
+    // Clear detail state
+    detailTabNames = List.of();
+    detailTabValues = List.of();
+    activeDetailTabIndex = 0;
+    detailTabScrollOffsets.clear();
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+    focus = Focus.RESULTS;
+
+    // Auto-load detail for the first type
+    String firstName = getSelectedSidebarName();
+    if (!firstName.isEmpty()) loadMetadataDetail(firstName, true);
+  }
+
+  private void exitMetadataBrowserMode() {
+    browserMode = false;
+    eventBrowserMode = false;
+    metadataBrowserMode = false;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = false;
+    browserNavPending = null;
+    sidebarSearchQuery = "";
+    sidebarFilteredIndices = null;
+    metadataBrowserLineRefs = null;
+    metadataByName = null;
+  }
+
+  private void loadMetadataDetail(String typeName, boolean keepSidebarFocused) {
+    if (metadataByName == null) return;
+    Map<String, Object> meta = metadataByName.get(typeName);
+
+    ResultTab tab = tabs.get(activeTabIndex);
+    tab.name = typeName;
+    tab.marqueeTick0 = renderTick;
+    tab.sidebarIndex = sidebarSelectedIndex;
+    tab.lines.clear();
+    tab.scrollOffset = 0;
+    tab.hScrollOffset = 0;
+    tab.maxLineWidth = 0;
+    tab.searchQuery = "";
+    tab.filteredIndices = null;
+    tab.filteredMaxLineWidth = 0;
+    // No table semantics for metadata detail
+    tab.tableData = null;
+    tab.tableHeaders = null;
+    tab.selectedRow = 0;
+    tab.dataStartLine = -1;
+    // Clear detail pane
+    detailTabNames = List.of();
+    detailTabValues = List.of();
+    activeDetailTabIndex = 0;
+    detailTabScrollOffsets.clear();
+    detailCursorLine = -1;
+    detailLineTypeRefs = null;
+
+    if (meta == null) {
+      tab.lines.add("  (no metadata for " + typeName + ")");
+      tab.maxLineWidth = tab.lines.get(0).length();
+      metadataBrowserLineRefs = null;
+      tab.selectedRow = -1;
+      if (!keepSidebarFocused) sidebarFocused = false;
+      return;
+    }
+
+    // Build navigable type set from sidebar
+    Set<String> navigableTypes = new HashSet<>();
+    if (sidebarTypes != null) {
+      for (Map<String, Object> row : sidebarTypes) {
+        Object n = row.get("name");
+        if (n != null) navigableTypes.add(n.toString());
+      }
+    }
+
+    // Build detail lines and parallel type refs
+    List<String> lines = new ArrayList<>();
+    List<String> refs = new ArrayList<>();
+    buildMetadataBrowserLines(meta, navigableTypes, lines, refs);
+
+    tab.lines.addAll(lines);
+    tab.maxLineWidth = 0;
+    for (String l : lines) {
+      if (l.length() > tab.maxLineWidth) tab.maxLineWidth = l.length();
+    }
+    metadataBrowserLineRefs = refs;
+    tab.selectedRow = refs.isEmpty() ? -1 : 0;
+    if (!keepSidebarFocused) sidebarFocused = false;
+  }
+
+  @SuppressWarnings("unchecked")
+  private void buildMetadataBrowserLines(
+      Map<String, Object> meta, Set<String> navigableTypes, List<String> lines, List<String> refs) {
+    // Fields section
+    Object fieldsByName = meta.get("fieldsByName");
+    if (fieldsByName instanceof Map<?, ?> fbm && !fbm.isEmpty()) {
+      lines.add("Fields (" + fbm.size() + "):");
+      refs.add(null);
+      int idx = 0;
+      int size = fbm.size();
+      for (Map.Entry<?, ?> entry : fbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String fName = entry.getKey().toString();
+        String fType = "";
+        if (entry.getValue() instanceof Map<?, ?> fm) {
+          Object typeObj = fm.get("type");
+          if (typeObj != null) fType = typeObj.toString();
+          Object annObj = fm.get("annotations");
+          String annStr = "";
+          if (annObj instanceof List<?> annList && !annList.isEmpty()) {
+            annStr = " " + annList;
+          }
+          String nav = navigableTypes.contains(fType) ? " \u2192" : "";
+          lines.add(connector + fName + ": " + fType + annStr + nav);
+          refs.add(navigableTypes.contains(fType) ? fType : null);
+        } else {
+          lines.add(connector + fName);
+          refs.add(null);
+        }
+      }
+    }
+
+    // Settings section
+    Object settingsByName = meta.get("settingsByName");
+    if (settingsByName instanceof Map<?, ?> sbm && !sbm.isEmpty()) {
+      lines.add("Settings (" + sbm.size() + "):");
+      refs.add(null);
+      int idx = 0;
+      int size = sbm.size();
+      for (Map.Entry<?, ?> entry : sbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String sName = entry.getKey().toString();
+        String sType = "";
+        String sDefault = "";
+        if (entry.getValue() instanceof Map<?, ?> sm) {
+          Object typeObj = sm.get("type");
+          if (typeObj != null) sType = typeObj.toString();
+          Object defObj = sm.get("defaultValue");
+          if (defObj != null) sDefault = " = " + defObj;
+        }
+        lines.add(connector + sName + ": " + sType + sDefault);
+        refs.add(null);
+      }
+    }
+
+    // Annotations section
+    Object classAnnotations = meta.get("classAnnotations");
+    if (classAnnotations instanceof List<?> ca && !ca.isEmpty()) {
+      lines.add("Annotations (" + ca.size() + "):");
+      refs.add(null);
+      for (Object ann : ca) {
+        lines.add("  " + ann);
+        refs.add(null);
+      }
+    }
+  }
+
   private void enterEventBrowserMode(ResultTab tab) {
-    cpBrowserMode = true;
+    browserMode = true;
     eventBrowserMode = true;
-    cpTypes = tab.tableData;
-    cpTypeSelectedIndex = 0;
-    cpTypeScrollOffset = 0;
-    cpTypesFocused = true;
-    tab.cpTypeIndex = 0;
-    tab.browserTypes = cpTypes;
+    sidebarTypes = tab.tableData;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = true;
+    tab.sidebarIndex = 0;
+    tab.browserTypes = sidebarTypes;
     tab.isEventBrowserTab = true;
     // Clear tab for entries (will be populated on first type selection)
     tab.tableData = null;
@@ -2698,19 +2966,20 @@ public final class TuiShell implements AutoCloseable {
     focus = Focus.RESULTS;
 
     // Auto-load events for the first type
-    String firstName = getSelectedCpTypeName();
+    String firstName = getSelectedSidebarName();
     if (!firstName.isEmpty()) loadEventEntries(firstName, true);
   }
 
   private void exitEventBrowserMode() {
-    cpBrowserMode = false;
+    browserMode = false;
     eventBrowserMode = false;
-    cpTypeSelectedIndex = 0;
-    cpTypeScrollOffset = 0;
-    cpTypesFocused = false;
+    metadataBrowserMode = false;
+    sidebarSelectedIndex = 0;
+    sidebarScrollOffset = 0;
+    sidebarFocused = false;
     browserNavPending = null;
-    cpTypesSearchQuery = "";
-    cpTypesFilteredIndices = null;
+    sidebarSearchQuery = "";
+    sidebarFilteredIndices = null;
   }
 
   private void loadEventEntries(String typeName, boolean keepTypesFocused) {
@@ -2734,14 +3003,14 @@ public final class TuiShell implements AutoCloseable {
       tab.cpColumnHeaders = null;
       tab.cpColumnWidths = null;
       tab.cpRenderedCount = 0;
-      if (!keepTypesFocused) cpTypesFocused = false;
+      if (!keepTypesFocused) sidebarFocused = false;
       return;
     }
 
     ResultTab tab = tabs.get(activeTabIndex);
     tab.name = typeName;
     tab.marqueeTick0 = renderTick;
-    tab.cpTypeIndex = cpTypeSelectedIndex;
+    tab.sidebarIndex = sidebarSelectedIndex;
     tab.lines.clear();
     tab.scrollOffset = 0;
     tab.hScrollOffset = 0;
@@ -2771,7 +3040,7 @@ public final class TuiShell implements AutoCloseable {
       detailTabScrollOffsets.clear();
       detailCursorLine = -1;
       detailLineTypeRefs = null;
-      if (!keepTypesFocused) cpTypesFocused = false;
+      if (!keepTypesFocused) sidebarFocused = false;
       return;
     }
 
@@ -2815,66 +3084,68 @@ public final class TuiShell implements AutoCloseable {
     buildDetailTabs(tab);
 
     tab.scrollOffset = 0;
-    if (!keepTypesFocused) cpTypesFocused = false;
+    if (!keepTypesFocused) sidebarFocused = false;
   }
 
-  private String getSelectedCpTypeName() {
-    if (cpTypes != null && cpTypeSelectedIndex < cpTypes.size()) {
-      return String.valueOf(cpTypes.get(cpTypeSelectedIndex).getOrDefault("name", ""));
+  private String getSelectedSidebarName() {
+    if (sidebarTypes != null && sidebarSelectedIndex < sidebarTypes.size()) {
+      return String.valueOf(sidebarTypes.get(sidebarSelectedIndex).getOrDefault("name", ""));
     }
     return "";
   }
 
   /**
-   * Find the previous raw cpTypes index that is visible (passes the filter). Returns -1 if none.
+   * Find the previous raw sidebar index that is visible (passes the filter). Returns -1 if none.
    */
-  private int findPrevCpType(int currentIndex) {
-    if (cpTypesFilteredIndices == null) {
+  private int findPrevSidebarItem(int currentIndex) {
+    if (sidebarFilteredIndices == null) {
       return currentIndex > 0 ? currentIndex - 1 : -1;
     }
     // Walk the filtered list to find the entry just before currentIndex
     int prev = -1;
-    for (int idx : cpTypesFilteredIndices) {
+    for (int idx : sidebarFilteredIndices) {
       if (idx >= currentIndex) break;
       prev = idx;
     }
     return prev;
   }
 
-  /** Find the next raw cpTypes index that is visible (passes the filter). Returns -1 if none. */
-  private int findNextCpType(int currentIndex) {
-    if (cpTypesFilteredIndices == null) {
-      return (cpTypes != null && currentIndex < cpTypes.size() - 1) ? currentIndex + 1 : -1;
+  /** Find the next raw sidebar index that is visible (passes the filter). Returns -1 if none. */
+  private int findNextSidebarItem(int currentIndex) {
+    if (sidebarFilteredIndices == null) {
+      return (sidebarTypes != null && currentIndex < sidebarTypes.size() - 1)
+          ? currentIndex + 1
+          : -1;
     }
-    for (int idx : cpTypesFilteredIndices) {
+    for (int idx : sidebarFilteredIndices) {
       if (idx > currentIndex) return idx;
     }
     return -1;
   }
 
   /**
-   * Convert a raw cpTypes index to its position in the visible (filtered) list. Returns -1 if not
+   * Convert a raw sidebar index to its position in the visible (filtered) list. Returns -1 if not
    * visible.
    */
-  private int cpTypesVisibleIndex(int rawIndex) {
-    if (cpTypesFilteredIndices == null) return rawIndex;
-    int pos = cpTypesFilteredIndices.indexOf(rawIndex);
+  private int sidebarVisibleIndex(int rawIndex) {
+    if (sidebarFilteredIndices == null) return rawIndex;
+    int pos = sidebarFilteredIndices.indexOf(rawIndex);
     return pos; // -1 if not found
   }
 
-  private void dispatchCpTypesArrow(int direction) {
+  private void dispatchSidebarArrow(int direction) {
     switch (direction) {
       case 'A': // Up
         {
-          int prev = findPrevCpType(cpTypeSelectedIndex);
+          int prev = findPrevSidebarItem(sidebarSelectedIndex);
           if (prev >= 0) {
-            cpTypeSelectedIndex = prev;
+            sidebarSelectedIndex = prev;
             // Scroll offset is in filtered-list space
-            int visIdx = cpTypesVisibleIndex(prev);
-            if (visIdx >= 0 && visIdx < cpTypeScrollOffset) {
-              cpTypeScrollOffset = visIdx;
+            int visIdx = sidebarVisibleIndex(prev);
+            if (visIdx >= 0 && visIdx < sidebarScrollOffset) {
+              sidebarScrollOffset = visIdx;
             }
-            String upName = getSelectedCpTypeName();
+            String upName = getSelectedSidebarName();
             if (!upName.isEmpty()) {
               browserNavPending = upName;
               browserNavKeepFocus = true;
@@ -2885,14 +3156,14 @@ public final class TuiShell implements AutoCloseable {
         break;
       case 'B': // Down
         {
-          int next = findNextCpType(cpTypeSelectedIndex);
+          int next = findNextSidebarItem(sidebarSelectedIndex);
           if (next >= 0) {
-            cpTypeSelectedIndex = next;
-            int visIdx = cpTypesVisibleIndex(next);
-            if (visIdx >= 0 && visIdx >= cpTypeScrollOffset + cpTypesAreaHeight) {
-              cpTypeScrollOffset = visIdx - cpTypesAreaHeight + 1;
+            sidebarSelectedIndex = next;
+            int visIdx = sidebarVisibleIndex(next);
+            if (visIdx >= 0 && visIdx >= sidebarScrollOffset + sidebarAreaHeight) {
+              sidebarScrollOffset = visIdx - sidebarAreaHeight + 1;
             }
-            String downName = getSelectedCpTypeName();
+            String downName = getSelectedSidebarName();
             if (!downName.isEmpty()) {
               browserNavPending = downName;
               browserNavKeepFocus = true;
@@ -2904,7 +3175,7 @@ public final class TuiShell implements AutoCloseable {
       case 'C': // Right — load entries and move focus to entries
         {
           browserNavPending = null; // cancel any pending debounce
-          String name = getSelectedCpTypeName();
+          String name = getSelectedSidebarName();
           if (!name.isEmpty()) loadBrowserEntries(name, false);
         }
         break;
@@ -2914,7 +3185,9 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void loadBrowserEntries(String typeName, boolean keepTypesFocused) {
-    if (eventBrowserMode) {
+    if (metadataBrowserMode) {
+      loadMetadataDetail(typeName, keepTypesFocused);
+    } else if (eventBrowserMode) {
       loadEventEntries(typeName, keepTypesFocused);
     } else {
       loadCpEntries(typeName, keepTypesFocused);
@@ -2941,7 +3214,7 @@ public final class TuiShell implements AutoCloseable {
       tab.cpColumnHeaders = null;
       tab.cpColumnWidths = null;
       tab.cpRenderedCount = 0;
-      if (!keepTypesFocused) cpTypesFocused = false;
+      if (!keepTypesFocused) sidebarFocused = false;
 
       return;
     }
@@ -2949,7 +3222,7 @@ public final class TuiShell implements AutoCloseable {
     ResultTab tab = tabs.get(activeTabIndex);
     tab.name = "cp: " + typeName;
     tab.marqueeTick0 = renderTick;
-    tab.cpTypeIndex = cpTypeSelectedIndex;
+    tab.sidebarIndex = sidebarSelectedIndex;
     tab.lines.clear();
     tab.scrollOffset = 0;
     tab.hScrollOffset = 0;
@@ -2979,7 +3252,7 @@ public final class TuiShell implements AutoCloseable {
       detailTabScrollOffsets.clear();
       detailCursorLine = -1;
       detailLineTypeRefs = null;
-      if (!keepTypesFocused) cpTypesFocused = false;
+      if (!keepTypesFocused) sidebarFocused = false;
 
       return;
     }
@@ -3030,7 +3303,7 @@ public final class TuiShell implements AutoCloseable {
     buildDetailTabs(tab);
 
     tab.scrollOffset = 0;
-    if (!keepTypesFocused) cpTypesFocused = false;
+    if (!keepTypesFocused) sidebarFocused = false;
   }
 
   private void renderCpPage(ResultTab tab, int from, int to) {
@@ -3074,13 +3347,16 @@ public final class TuiShell implements AutoCloseable {
 
     if (command.isEmpty()) return;
 
-    // Exit browser mode on any new command (keep cpTypes for pinned browser tabs)
-    if (cpBrowserMode) {
-      cpBrowserMode = false;
+    // Exit browser mode on any new command (keep sidebar data for pinned browser tabs)
+    if (browserMode) {
+      browserMode = false;
       eventBrowserMode = false;
-      cpTypesFocused = false;
-      cpTypesSearchQuery = "";
-      cpTypesFilteredIndices = null;
+      metadataBrowserMode = false;
+      sidebarFocused = false;
+      sidebarSearchQuery = "";
+      sidebarFilteredIndices = null;
+      metadataBrowserLineRefs = null;
+      metadataByName = null;
     }
 
     if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
@@ -3200,7 +3476,53 @@ public final class TuiShell implements AutoCloseable {
     activeTab.cpColumnWidths = null;
     activeTab.cpRenderedCount = 0;
 
-    // CP browser mode: intercept bare "cp" / "show cp" before dispatch
+    // Metadata browser mode: intercept bare "metadata" / "show metadata" / "types"
+    if (isMetadataSummaryCommand(command) && MetadataProvider.isSupported()) {
+      Path metaRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (metaRec != null) {
+        try {
+          // Load type list from current session
+          JFRSession sess = sessions.current().map(ref -> ref.session).orElse(null);
+          if (sess != null) {
+            Set<String> allTypeNames = sess.getNonPrimitiveMetadataTypes();
+            Set<String> eventNames = sess.getAvailableTypes();
+            List<String> sortedTypes = new ArrayList<>(allTypeNames);
+            Collections.sort(sortedTypes);
+
+            // Build sidebar rows (id, name, event)
+            Map<String, Long> typeIds = sess.getMetadataTypeIds();
+            List<Map<String, Object>> typeRows = new ArrayList<>();
+            for (String t : sortedTypes) {
+              Long typeId = typeIds.get(t);
+              Map<String, Object> row = new LinkedHashMap<>();
+              row.put("id", typeId != null ? typeId : "?");
+              row.put("name", t);
+              row.put("event", eventNames.contains(t) ? "yes" : "");
+              typeRows.add(row);
+            }
+
+            // Load all class metadata
+            Map<String, Map<String, Object>> allMeta = new HashMap<>();
+            List<Map<String, Object>> allMetaList = MetadataProvider.loadAllClasses(metaRec);
+            if (allMetaList != null) {
+              for (Map<String, Object> m : allMetaList) {
+                Object n = m.get("name");
+                if (n != null) allMeta.put(n.toString(), m);
+              }
+            }
+
+            if (!typeRows.isEmpty()) {
+              enterMetadataBrowserMode(activeTab, typeRows, allMeta);
+              return;
+            }
+          }
+        } catch (Exception ignore) {
+          // Fall through to normal dispatch
+        }
+      }
+    }
+
+    // Browser mode: intercept bare "cp" / "show cp" before dispatch
     if (isCpSummaryCommand(command) && ConstantPoolProvider.isSupported()) {
       Path cpRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
       if (cpRec != null) {
@@ -3730,6 +4052,42 @@ public final class TuiShell implements AutoCloseable {
     }
   }
 
+  private void navigateToSidebarType(String typeName) {
+    if (sidebarTypes == null) return;
+    // Clear sidebar filter so the target is visible
+    if (sidebarFilteredIndices != null) {
+      sidebarSearchQuery = "";
+      sidebarFilteredIndices = null;
+    }
+    for (int i = 0; i < sidebarTypes.size(); i++) {
+      Object name = sidebarTypes.get(i).get("name");
+      if (name != null && typeName.equals(name.toString())) {
+        sidebarSelectedIndex = i;
+        // Scroll sidebar to show the selected item
+        int visIdx = sidebarVisibleIndex(i);
+        if (visIdx >= 0 && visIdx < sidebarScrollOffset) {
+          sidebarScrollOffset = visIdx;
+        } else if (visIdx >= 0 && visIdx >= sidebarScrollOffset + sidebarAreaHeight) {
+          sidebarScrollOffset = visIdx - sidebarAreaHeight + 1;
+        }
+        loadBrowserEntries(typeName, true);
+        return;
+      }
+    }
+  }
+
+  private void moveMetadataCursor(ResultTab tab, int delta) {
+    if (metadataBrowserLineRefs == null || metadataBrowserLineRefs.isEmpty()) return;
+    int maxRow = tab.lines.size() - 1;
+    tab.selectedRow = Math.max(0, Math.min(maxRow, tab.selectedRow + delta));
+    // Auto-scroll to keep cursor visible
+    if (tab.selectedRow < tab.scrollOffset) {
+      tab.scrollOffset = tab.selectedRow;
+    } else if (tab.selectedRow >= tab.scrollOffset + resultsAreaHeight) {
+      tab.scrollOffset = tab.selectedRow - resultsAreaHeight + 1;
+    }
+  }
+
   // ---- completion popup ----
 
   /**
@@ -4214,16 +4572,18 @@ public final class TuiShell implements AutoCloseable {
     ResultTab tab = tabs.get(activeTabIndex);
     cellPickerEntries = new ArrayList<>();
 
-    if (cpBrowserMode) {
-      // CP browser: show columns from both type summary and entries panes
+    if (browserMode) {
+      // Browser mode: show columns from both type summary and entries panes
       boolean hasTypes =
-          cpTypes != null && cpTypeSelectedIndex >= 0 && cpTypeSelectedIndex < cpTypes.size();
+          sidebarTypes != null
+              && sidebarSelectedIndex >= 0
+              && sidebarSelectedIndex < sidebarTypes.size();
       boolean hasEntries =
           tab.tableData != null && tab.selectedRow >= 0 && tab.selectedRow < tab.tableData.size();
       if (!hasTypes && !hasEntries) return false;
 
       if (hasTypes) {
-        Map<String, Object> typeRow = cpTypes.get(cpTypeSelectedIndex);
+        Map<String, Object> typeRow = sidebarTypes.get(sidebarSelectedIndex);
         cellPickerEntries.add(new String[] {"\u2500 type \u2500", ""});
         for (String key : typeRow.keySet()) {
           if (isComplexValue(typeRow.get(key))) continue;
