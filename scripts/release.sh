@@ -84,8 +84,8 @@ echo "Current version: $CURRENT_VERSION"
 IFS='.' read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "${CURRENT_VERSION%-SNAPSHOT}"
 
 case "$RELEASE_TYPE" in
-    major) RELEASE_VERSION="$((CUR_MAJOR + 1)).0.0" ;;
-    minor) RELEASE_VERSION="${CUR_MAJOR}.$((CUR_MINOR + 1)).0" ;;
+    major) RELEASE_VERSION="${CUR_MAJOR}.0.0" ;;
+    minor) RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.0" ;;
     patch)
         if [[ "$CURRENT_VERSION" == *-SNAPSHOT ]]; then
             # Normal flow: release the current SNAPSHOT version as-is
