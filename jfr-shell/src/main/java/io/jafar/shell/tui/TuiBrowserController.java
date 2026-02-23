@@ -110,7 +110,7 @@ public final class TuiBrowserController {
   // ---- enter/exit browser modes ----
 
   void enterCpBrowserMode(ResultTab tab) {
-    tab.name = "Constants";
+    tab.name = "constants";
     tab.marqueeTick0 = ctx.renderTick;
     ctx.browserMode = true;
     ctx.eventBrowserMode = false;
@@ -147,6 +147,8 @@ public final class TuiBrowserController {
   }
 
   void enterEventBrowserMode(ResultTab tab) {
+    tab.name = "events";
+    tab.marqueeTick0 = ctx.renderTick;
     ctx.browserMode = true;
     ctx.eventBrowserMode = true;
     ctx.sidebarTypes = tab.tableData;
@@ -183,6 +185,8 @@ public final class TuiBrowserController {
 
   void enterMetadataBrowserMode(
       ResultTab tab, List<Map<String, Object>> typeRows, Map<String, Map<String, Object>> allMeta) {
+    tab.name = "metadata";
+    tab.marqueeTick0 = ctx.renderTick;
     ctx.browserMode = true;
     ctx.eventBrowserMode = false;
     ctx.metadataBrowserMode = true;
