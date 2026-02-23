@@ -114,18 +114,16 @@ jobs:
         run: |
           ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
-      - name: Publish gradle plugin to Maven Central and GitHub Packages
+      - name: Publish gradle plugin to Maven Central
         run: |
           cd jafar-gradle-plugin
-          ./gradlew publishAllPublicationsToMavenCentralRepository publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace
+          ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALUSERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALPASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
 
   # Publish backend plugins only (for manual emergency releases)
   publish-backends-only:
@@ -353,7 +351,6 @@ jobs:
             This release has been published to:
             - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jfr-mcp:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
             - ✅ Maven Central - Backend Plugins: \`io.btrace:jfr-shell-jdk:${version}\`, \`io.btrace:jfr-shell-jafar:${version}\`
-            - ✅ GitHub Packages: \`io.btrace:jafar-gradle-plugin:${version}\` (available immediately while waiting for Maven Central approval)
             - ✅ JBang Catalog: Updated to ${version}
 
             ### Usage
@@ -416,7 +413,6 @@ jobs:
 
             ### Links
             - 📦 [Maven Central](https://central.sonatype.com/artifact/io.btrace/jafar-parser/${version})
-            - 📦 [GitHub Packages](https://github.com/btraceio/jafar/packages)
             - 📚 [Documentation](https://github.com/btraceio/jafar#readme)
             - 🔖 [Changelog](https://github.com/btraceio/jafar/blob/${tag}/CHANGELOG.md)`;
 

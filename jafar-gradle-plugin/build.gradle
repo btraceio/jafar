@@ -72,23 +72,6 @@ tasks.register('javadocJar', Jar) {
 
 description = 'Gradle plugin for generating JFR type interfaces from recordings'
 
-// Publish to both Maven Central and GitHub Packages (releases only for GitHub Packages)
-publishing {
-    repositories {
-        // Only publish to GitHub Packages for releases (not snapshots)
-        if (!version.toString().endsWith("-SNAPSHOT")) {
-            maven {
-                name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/btraceio/jafar")
-                credentials {
-                    username = System.getenv("GITHUB_ACTOR")
-                    password = System.getenv("GITHUB_TOKEN")
-                }
-            }
-        }
-    }
-}
-
 // Configure vanniktech plugin for Maven Central publishing
 mavenPublishing {
     // v0.35.0+ automatically uses Central Portal (SonatypeHost enum removed)
