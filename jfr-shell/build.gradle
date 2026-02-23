@@ -261,6 +261,17 @@ afterEvaluate {
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier
                 }
+                // Remove shaded dependencies from POM (they are relocated into the shadow JAR)
+                pom.withXml {
+                    def deps = asNode().get('dependencies')
+                    if (deps) {
+                        deps.each { depsNode ->
+                            depsNode.children().removeAll { dep ->
+                                dep.groupId.text() == 'dev.tamboui'
+                            }
+                        }
+                    }
+                }
             }
         }
     }
