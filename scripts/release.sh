@@ -201,12 +201,14 @@ if [[ "$RELEASE_TYPE" == "patch" ]]; then
 else
     echo "--- Post-release: bumping $DEFAULT_BRANCH to $NEXT_VERSION ---"
     run git checkout "$DEFAULT_BRANCH"
+    # On main the files still have the old SNAPSHOT version, not the release version
+    ESCAPED_CUR=$(printf '%s' "$CURRENT_VERSION" | sed 's/[.]/\\./g')
     if [[ "$DRY_RUN" == "1" ]]; then
-        echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
+        echo "[DRY RUN] sed s/${ESCAPED_CUR}/${NEXT_VERSION}/g <*.gradle files>"
     else
         while IFS= read -r file; do
-            sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
-        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lF "$RELEASE_VERSION" 2>/dev/null)
+            sed_i "s/${ESCAPED_CUR}/${NEXT_VERSION}/g" "$file"
+        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lF "$CURRENT_VERSION" 2>/dev/null)
     fi
     run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
     run git push --no-verify origin "$DEFAULT_BRANCH"
