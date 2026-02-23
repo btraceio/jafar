@@ -298,7 +298,9 @@ public final class TuiContext {
   }
 
   String getSelectedSidebarName() {
-    if (sidebarTypes != null && sidebarSelectedIndex >= 0 && sidebarSelectedIndex < sidebarTypes.size()) {
+    if (sidebarTypes != null
+        && sidebarSelectedIndex >= 0
+        && sidebarSelectedIndex < sidebarTypes.size()) {
       return String.valueOf(sidebarTypes.get(sidebarSelectedIndex).getOrDefault("name", ""));
     }
     return "";

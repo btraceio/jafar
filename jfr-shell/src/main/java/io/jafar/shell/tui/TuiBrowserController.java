@@ -110,6 +110,8 @@ public final class TuiBrowserController {
   // ---- enter/exit browser modes ----
 
   void enterCpBrowserMode(ResultTab tab) {
+    tab.name = "Constants";
+    tab.marqueeTick0 = ctx.renderTick;
     ctx.browserMode = true;
     ctx.eventBrowserMode = false;
     ctx.sidebarTypes = tab.tableData;
@@ -267,8 +269,6 @@ public final class TuiBrowserController {
     }
 
     ResultTab tab = ctx.activeTab();
-    tab.name = "cp: " + typeName;
-    tab.marqueeTick0 = ctx.renderTick;
     tab.sidebarIndex = ctx.sidebarSelectedIndex;
     tab.lines.clear();
     tab.scrollOffset = 0;
@@ -368,8 +368,6 @@ public final class TuiBrowserController {
     }
 
     ResultTab tab = ctx.activeTab();
-    tab.name = typeName;
-    tab.marqueeTick0 = ctx.renderTick;
     tab.sidebarIndex = ctx.sidebarSelectedIndex;
     tab.lines.clear();
     tab.scrollOffset = 0;
@@ -443,8 +441,6 @@ public final class TuiBrowserController {
     Map<String, Object> meta = ctx.metadataByName.get(typeName);
 
     ResultTab tab = ctx.activeTab();
-    tab.name = typeName;
-    tab.marqueeTick0 = ctx.renderTick;
     tab.sidebarIndex = ctx.sidebarSelectedIndex;
     tab.lines.clear();
     tab.scrollOffset = 0;
