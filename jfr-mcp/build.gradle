@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'jacoco'
     id 'com.gradleup.shadow' version '9.0.0'
+    id 'maven-publish'
     id 'com.vanniktech.maven.publish'
 }
 
@@ -143,6 +144,17 @@ afterEvaluate {
                 // Add shadow JAR as main artifact
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier
+                }
+                // Remove internal modules from POM (they are embedded in the shadow JAR)
+                pom.withXml {
+                    def deps = asNode().get('dependencies')
+                    if (deps) {
+                        deps.each { depsNode ->
+                            depsNode.children().removeAll { dep ->
+                                dep.groupId.text() == 'io.btrace'
+                            }
+                        }
+                    }
                 }
             }
         }

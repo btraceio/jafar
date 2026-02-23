@@ -91,6 +91,8 @@ shadowJar {
     relocate 'org.apache.http', 'io.jafar.shaded.http'
     relocate 'com.google.gson', 'io.jafar.shaded.gson'
     relocate 'dev.tamboui', 'io.jafar.shaded.tamboui'
+    relocate 'picocli', 'io.jafar.shaded.picocli'
+    relocate 'org.jline', 'io.jafar.shaded.jline'
 
     // Ensure main class is set
     manifest {
@@ -261,13 +263,25 @@ afterEvaluate {
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier
                 }
-                // Remove shaded dependencies from POM (they are relocated into the shadow JAR)
+                // Remove all internal and shaded dependencies from POM
+                // The shadow JAR is self-contained; only picocli, jline, and slf4j are kept
+                // as they are not relocated and consumers may need version visibility.
                 pom.withXml {
                     def deps = asNode().get('dependencies')
                     if (deps) {
+                        def removable = [
+                            'io.btrace',        // internal project modules (jfr-shell-core, parser, tools)
+                            'dev.tamboui',       // relocated into shadow JAR
+                            'com.google.code.gson', // relocated into shadow JAR
+                            'org.apache.maven',  // relocated into shadow JAR
+                            'org.apache.maven.resolver', // relocated into shadow JAR
+                            'org.apache.httpcomponents', // relocated into shadow JAR
+                            'info.picocli',      // relocated into shadow JAR
+                            'org.jline',         // relocated into shadow JAR
+                        ] as Set
                         deps.each { depsNode ->
                             depsNode.children().removeAll { dep ->
-                                dep.groupId.text() == 'dev.tamboui'
+                                removable.contains(dep.groupId.text())
                             }
                         }
                     }
