@@ -83,12 +83,17 @@ public final class StreamingChunkParser implements AutoCloseable {
       ChunkHeader chunkHeader,
       RecordingStream chunkStream,
       ChunkParserListener listener,
-      long remainder) {
+      long headerSize) {
     return executor.submit(
         () -> {
           int chunkCounter = chunkHeader.order;
           ParserContext chunkContext = chunkStream.getContext();
           try {
+            // Skip empty chunks with no payload beyond the header
+            // (e.g. SubstrateVM may emit zero-payload chunks)
+            if (chunkHeader.size <= headerSize) {
+              return true;
+            }
             if (!listener.onChunkStart(chunkContext, chunkCounter, chunkHeader)) {
               log.debug(
                   "'onChunkStart' returned false. Skipping metadata and events for chunk {}",
@@ -108,7 +113,7 @@ public final class StreamingChunkParser implements AutoCloseable {
               listener.onChunkEnd(chunkContext, chunkCounter, true);
               return false;
             }
-            chunkStream.position(remainder);
+            chunkStream.position(headerSize);
             while (chunkStream.position() < chunkHeader.size) {
               long eventStartPos = chunkStream.position();
               chunkStream.mark(); // max 2 varints ahead
@@ -153,7 +158,7 @@ public final class StreamingChunkParser implements AutoCloseable {
       int chunkCounter = 1;
       while (stream.available() > 0) {
         ChunkHeader header = new ChunkHeader(stream, chunkCounter);
-        long remainder = (stream.position() - header.offset);
+        long headerSize = (stream.position() - header.offset);
 
         RecordingStream chunkStream =
             stream.slice(
@@ -162,7 +167,7 @@ public final class StreamingChunkParser implements AutoCloseable {
                 contextFactory.newContext(stream.getContext(), chunkCounter));
         stream.position(header.offset + header.size);
 
-        results.add(submitParsingTask(header, chunkStream, listener, remainder));
+        results.add(submitParsingTask(header, chunkStream, listener, headerSize));
         chunkCounter++;
       }
       results.forEach(
