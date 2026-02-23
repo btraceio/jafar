@@ -26,7 +26,7 @@ dependencies {
 
     // Jafar dependencies
     implementation project(':jfr-shell-core')
-    implementation project(':parser-core')
+    implementation project(':parser')
 
     // Backend plugins (discovered via ServiceLoader)
     runtimeOnly project(':jfr-shell-jafar')
