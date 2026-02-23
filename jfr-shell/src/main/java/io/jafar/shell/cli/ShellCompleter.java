@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -755,7 +756,7 @@ public final class ShellCompleter implements Completer {
 
       @Override
       public int wordIndex() {
-        return (int) fullLine.substring(0, cursor).chars().filter(Character::isWhitespace).count();
+        return words().size() - 1;
       }
 
       @Override
@@ -812,16 +813,28 @@ public final class ShellCompleter implements Completer {
             Math.max(partial.lastIndexOf('/'), partial.lastIndexOf(java.io.File.separatorChar));
         dirPrefix = lastSep >= 0 ? partial.substring(0, lastSep + 1) : "";
       }
-      stream.forEach(
-          entry -> {
-            String name = entry.getFileName().toString();
-            if (!name.startsWith(prefix)) return;
-            String value = dirPrefix.isEmpty() ? name : dirPrefix + name;
-            if (Files.isDirectory(entry)) {
-              value += "/";
-            }
-            candidates.add(new Candidate(value));
-          });
+      // Sort: directories first, then files, lexicographically within each group
+      List<Path> entries =
+          stream
+              .filter(e -> e.getFileName().toString().startsWith(prefix))
+              .sorted(
+                  (a, b) -> {
+                    boolean aDir = Files.isDirectory(a);
+                    boolean bDir = Files.isDirectory(b);
+                    if (aDir != bDir) return aDir ? -1 : 1;
+                    return a.getFileName()
+                        .toString()
+                        .compareToIgnoreCase(b.getFileName().toString());
+                  })
+              .collect(Collectors.toList());
+      for (Path entry : entries) {
+        String name = entry.getFileName().toString();
+        String value = dirPrefix.isEmpty() ? name : dirPrefix + name;
+        if (Files.isDirectory(entry)) {
+          value += "/";
+        }
+        candidates.add(new Candidate(value));
+      }
     } catch (IOException | java.io.UncheckedIOException ignore) {
     }
   }
