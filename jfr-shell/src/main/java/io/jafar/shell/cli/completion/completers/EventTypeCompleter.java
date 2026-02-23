@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Set;
 import org.jline.reader.Candidate;
 
-/** Completer for event type names after events/, metadata/, or cp/. */
+/** Completer for event type names after events/, metadata/, or constants/. */
 public final class EventTypeCompleter implements ContextCompleter {
 
   @Override
@@ -41,7 +41,7 @@ public final class EventTypeCompleter implements ContextCompleter {
     return switch (rootType) {
       case "events" -> metadata.getEventTypes();
       case "metadata" -> metadata.getAllMetadataTypes();
-      case "cp" -> metadata.getConstantPoolTypes();
+      case "constants", "cp" -> metadata.getConstantPoolTypes();
       default -> metadata.getEventTypes();
     };
   }

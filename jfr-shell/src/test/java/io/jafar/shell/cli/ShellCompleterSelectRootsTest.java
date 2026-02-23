@@ -32,7 +32,7 @@ class ShellCompleterSelectRootsTest {
     completer.complete(null, pl, cands);
     assertTrue(cands.stream().anyMatch(c -> c.value().equals("events/")));
     assertTrue(cands.stream().anyMatch(c -> c.value().equals("metadata/")));
-    assertTrue(cands.stream().anyMatch(c -> c.value().equals("cp/")));
+    assertTrue(cands.stream().anyMatch(c -> c.value().equals("constants/")));
     assertTrue(cands.stream().anyMatch(c -> c.value().equals("chunks/")));
   }
 }

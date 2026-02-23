@@ -6,7 +6,7 @@ JfrPath is a path-based query language for navigating and querying Java Flight R
 
 ```
 <query>     ::= <root> "/" <segments> [<filters>] [<projection>] [<pipeline>]
-<root>      ::= "events" | "metadata" | "chunks" | "cp"
+<root>      ::= "events" | "metadata" | "chunks" | "constants"
 <segments>  ::= <segment> ("/" <segment>)*
 <segment>   ::= <identifier> | <index> | <slice>
 <filters>   ::= "[" <predicate> "]" ("[" <predicate> "]")*
@@ -37,11 +37,11 @@ Access chunk-level information from the recording.
 - **Example**: `chunks`
 - **Specific chunk**: `chunks/0` (by index)
 
-### `cp` or `cp/<type>`
+### `constants`
 Access constant pool entries.
-- **Summary**: `cp` returns all CP types with counts
-- **Entries**: `cp/<type>` returns entries for specific type
-- **Example**: `cp/jdk.types.Symbol`
+- **Summary**: `constants` returns all CP types with counts
+- **Entries**: `constants/<type>` returns entries for specific type
+- **Example**: `constants/jdk.types.Symbol`
 
 ## Path Segments
 
@@ -51,7 +51,7 @@ After the root, segments navigate through the structure:
 ```
 events/jdk.FileRead/path
 metadata/jdk.types.Method/name
-cp/jdk.types.Symbol/string
+constants/jdk.types.Symbol/string
 ```
 
 ### Nested Fields
@@ -219,7 +219,7 @@ Count the number of rows/events.
 ```
 events/jdk.FileRead | count()
 metadata/jdk.types.Method/name | count()
-cp/jdk.types.Symbol | count()
+constants/jdk.types.Symbol | count()
 ```
 
 ### Sum
@@ -655,7 +655,7 @@ Transform individual values (can also be used in filters where applicable):
 
 **Examples**:
 ```
-cp/jdk.types.Symbol/string | len()
+constants/jdk.types.Symbol/string | len()
 events/jdk.ExecutionSample/thread/name | uppercase()
 events/jdk.FileRead/path | replace("/tmp/", "/data/")
 events/jdk.FileRead/bytes | abs()
@@ -751,32 +751,32 @@ chunks --summary
 
 CP summary (all types with counts):
 ```
-cp
+constants
 ```
 
 Entries for specific type:
 ```
-cp/jdk.types.Symbol
-cp/jdk.types.Method
-cp/jdk.types.Package
+constants/jdk.types.Symbol
+constants/jdk.types.Method
+constants/jdk.types.Package
 ```
 
 Filter CP entries:
 ```
-cp/jdk.types.Symbol[string~"java/.*"]
-cp/jdk.types.Method[name="toString"]
+constants/jdk.types.Symbol[string~"java/.*"]
+constants/jdk.types.Method[name="toString"]
 ```
 
 Project CP entry field:
 ```
-cp/jdk.types.Symbol/string
-cp/jdk.types.Method/name
+constants/jdk.types.Symbol/string
+constants/jdk.types.Method/name
 ```
 
 Aggregate:
 ```
-cp/jdk.types.Symbol | count()
-cp/jdk.types.Symbol/string | len()
+constants/jdk.types.Symbol | count()
+constants/jdk.types.Symbol/string | len()
 ```
 
 ## Operator Limitations
@@ -798,34 +798,34 @@ cp/jdk.types.Symbol/string | len()
 ### Events Examples
 ```bash
 # Count execution samples
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # Top 10 files by bytes read
-show events/jdk.FileRead | top(10, by=bytes)
+events/jdk.FileRead | top(10, by=bytes)
 
 # Execution samples by thread
-show events/jdk.ExecutionSample | groupBy(thread/name)
+events/jdk.ExecutionSample | groupBy(thread/name)
 
 # File reads to /tmp, sum bytes
-show events/jdk.FileRead[path~"/tmp/.*"] | sum(bytes)
+events/jdk.FileRead[path~"/tmp/.*"] | sum(bytes)
 
 # Execution samples with deep stacks
-show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 5
+events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 5
 
 # GC events after GC
-show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
+events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
 
 # Monitor contention analysis: samples during lock waits
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
 
 # Request tracing: correlate samples with request context
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=requestId,endpoint)
 
 # GC impact: allocations during GC phases
-show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
@@ -868,22 +868,22 @@ show chunks/0
 ### Constant Pool Examples
 ```bash
 # CP summary
-show cp
+constants
 
 # All Symbol entries
-show cp/jdk.types.Symbol
+constants/jdk.types.Symbol
 
 # Symbols matching pattern
-show cp/jdk.types.Symbol[string~"java/.*"]
+constants/jdk.types.Symbol[string~"java/.*"]
 
 # Count symbols
-show cp/jdk.types.Symbol | count()
+constants/jdk.types.Symbol | count()
 
 # Symbol string lengths
-show cp/jdk.types.Symbol/string | len()
+constants/jdk.types.Symbol/string | len()
 
 # Methods named "toString"
-show cp/jdk.types.Method[name="toString"]
+constants/jdk.types.Method[name="toString"]
 ```
 
 ## Interactive Commands
@@ -892,7 +892,7 @@ In the interactive shell, use these commands:
 
 - `open <path> [--alias NAME]` - Open a recording
 - `sessions` - List all sessions
-- `use <id|alias>` - Switch session
+- `use <id|alias>` (or `session`) - Switch session
 - `close [<id|alias>|--all]` - Close session(s)
 - `info [<id|alias>]` - Show session info
 - `show <expr> [options]` - Execute JfrPath query
@@ -900,7 +900,8 @@ In the interactive shell, use these commands:
 - `metadata class <name> [options]` - Inspect class
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show specific chunk
-- `cp [<type>] [options]` - List CP entries
+- `constants [<type>] [options]` - List constant pool entries (alias: `cp`)
+- `events/<type>[filter] [options]` - Query events (shorthand for `show events`)
 - `help [<command>]` - Show help
 - `exit` / `quit` - Exit
 
@@ -920,9 +921,9 @@ jfr-shell metadata recording.jfr --search FileRead
 # Chunks command
 jfr-shell chunks recording.jfr --summary
 
-# CP command
-jfr-shell cp recording.jfr --type jdk.types.Symbol
-jfr-shell cp recording.jfr --summary
+# Constants command (alias: cp)
+jfr-shell constants recording.jfr --type jdk.types.Symbol
+jfr-shell constants recording.jfr --summary
 ```
 
 All non-interactive commands:

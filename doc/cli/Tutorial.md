@@ -94,7 +94,7 @@ Opened session #1 (prod): recording.jfr
 jfr> sessions
   #1* (prod): recording.jfr [45 event types, 3 chunks]
 
-# Switch sessions
+# Switch sessions (you can also use 'session' instead of 'use')
 jfr> use 2
 Switched to session #2
 
@@ -128,10 +128,10 @@ jfr> help jfrpath
 
 ```bash
 # Table format (default)
-jfr> show events/jdk.FileRead --limit 5
+jfr> events/jdk.FileRead --limit 5
 
 # JSON format
-jfr> show events/jdk.FileRead --limit 5 --format json
+jfr> events/jdk.FileRead --limit 5 --format json
 
 # Tree format (for nested data)
 jfr> show metadata/jdk.types.StackTrace --tree --depth 2
@@ -162,7 +162,7 @@ metadata/java.lang.Thread
 chunks
 
 # Constant pools
-cp/jdk.types.Symbol
+constants/jdk.types.Symbol
 ```
 
 ### Path Navigation
@@ -171,13 +171,13 @@ Navigate nested structures with `/`:
 
 ```bash
 # Simple field
-show events/jdk.FileRead/path
+events/jdk.FileRead/path
 
 # Nested field
-show events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/thread/name
 
 # Deep nesting
-show events/jdk.ExecutionSample/stackTrace/frames/0/method/name
+events/jdk.ExecutionSample/stackTrace/frames/0/method/name
 ```
 
 ### Filters
@@ -186,19 +186,19 @@ Use `[...]` to filter results:
 
 ```bash
 # Numeric comparison
-show events/jdk.FileRead[bytes>1000000]
+events/jdk.FileRead[bytes>1000000]
 
 # String equality
-show events/jdk.ExecutionSample[state="RUNNABLE"]
+events/jdk.ExecutionSample[state="RUNNABLE"]
 
 # Regex match
-show events/jdk.FileRead[path~"/tmp/.*"]
+events/jdk.FileRead[path~"/tmp/.*"]
 
 # Nested field
-show events/jdk.ExecutionSample[thread/name~"main"]
+events/jdk.ExecutionSample[thread/name~"main"]
 
 # Multiple conditions
-show events/jdk.FileRead[bytes>1000 and path~".*\\.log"]
+events/jdk.FileRead[bytes>1000 and path~".*\\.log"]
 ```
 
 ### Operators
@@ -215,13 +215,13 @@ Extract specific fields:
 
 ```bash
 # Single field
-show events/jdk.FileRead/path
+events/jdk.FileRead/path
 
 # Nested field
-show events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/thread/name
 
 # Array element
-show events/jdk.ExecutionSample/stackTrace/frames/0
+events/jdk.ExecutionSample/stackTrace/frames/0
 ```
 
 ## Event Analysis
@@ -230,11 +230,11 @@ show events/jdk.ExecutionSample/stackTrace/frames/0
 
 ```bash
 # Count all events of a type
-jfr> show events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | count()
 Result: 45234
 
 # Count with filter
-jfr> show events/jdk.FileRead[bytes>1048576] | count()
+jfr> events/jdk.FileRead[bytes>1048576] | count()
 Result: 127
 ```
 
@@ -242,13 +242,13 @@ Result: 127
 
 ```bash
 # List first 10 events
-jfr> show events/jdk.FileRead --limit 10
+jfr> events/jdk.FileRead --limit 10
 
 # List with specific fields
-jfr> show events/jdk.FileRead/path --limit 10
+jfr> events/jdk.FileRead/path --limit 10
 
 # Filter and list
-jfr> show events/jdk.FileRead[bytes>=1000000] --limit 5
+jfr> events/jdk.FileRead[bytes>=1000000] --limit 5
 | startTime           | duration | path              | bytes    |
 +---------------------+----------+-------------------+----------+
 | 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt     | 5242880  |
@@ -259,13 +259,13 @@ jfr> show events/jdk.FileRead[bytes>=1000000] --limit 5
 
 ```bash
 # Find file reads from /tmp
-jfr> show events/jdk.FileRead[path~"/tmp/.*"] --limit 10
+jfr> events/jdk.FileRead[path~"/tmp/.*"] --limit 10
 
 # Find high-latency operations
-jfr> show events/jdk.SocketRead[duration>10000000] --limit 10
+jfr> events/jdk.SocketRead[duration>10000000] --limit 10
 
 # Find specific thread activity
-jfr> show events/jdk.ExecutionSample[thread/name="ForkJoinPool-1"] --limit 10
+jfr> events/jdk.ExecutionSample[thread/name="ForkJoinPool-1"] --limit 10
 ```
 
 ## Metadata Exploration
@@ -326,7 +326,7 @@ jfr> show metadata/java.lang.Thread/fields
 
 ```bash
 # Group by field
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 | key                | count |
 +--------------------+-------+
 | main               | 15234 |
@@ -334,7 +334,7 @@ jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
 | GC Thread#0        | 4521  |
 
 # Group with aggregation
-jfr> show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
+jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
 | path              | sum       |
 +-------------------+-----------+
 | /var/log/app.log  | 524288000 |
@@ -345,47 +345,47 @@ jfr> show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
 
 ```bash
 # Top 10 files by bytes read
-jfr> show events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.FileRead | top(10, by=bytes)
 | path                    | bytes     |
 +-------------------------+-----------+
 | /data/large-file.bin    | 104857600 |
 | /logs/app.log           | 52428800  |
 
 # Top threads by samples
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
 ```
 
 ### Statistics
 
 ```bash
 # Basic stats
-jfr> show events/jdk.FileRead/bytes | stats()
+jfr> events/jdk.FileRead/bytes | stats()
 | min  | max      | avg      | stddev   | count |
 +------+----------+----------+----------+-------+
 | 0    | 10485760 | 52428.5  | 123456.7 | 5432  |
 
 # Stats on filtered data
-jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | stats()
+jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytes | stats()
 
 # Quantiles
-jfr> show events/jdk.FileRead/bytes | quantiles(0.5, 0.9, 0.99)
+jfr> events/jdk.FileRead/bytes | quantiles(0.5, 0.9, 0.99)
 | p50   | p90     | p99      |
 +-------+---------+----------+
 | 4096  | 102400  | 1048576  |
 
 # Sketch (combined stats + quantiles)
-jfr> show events/jdk.FileRead/bytes | sketch()
+jfr> events/jdk.FileRead/bytes | sketch()
 ```
 
 ### Summing
 
 ```bash
 # Sum bytes read
-jfr> show events/jdk.FileRead/bytes | sum()
+jfr> events/jdk.FileRead/bytes | sum()
 Result: 524288000
 
 # Sum with filter
-jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
+jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
 ```
 
 ## Advanced Queries
@@ -394,34 +394,34 @@ jfr> show events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
 
 ```bash
 # Boolean logic
-jfr> show events/jdk.FileRead[bytes>1000 and path~".*\\.log"] --limit 10
+jfr> events/jdk.FileRead[bytes>1000 and path~".*\\.log"] --limit 10
 
 # Function-based filters
-jfr> show events/jdk.FileRead[len(path)>50] --limit 10
+jfr> events/jdk.FileRead[len(path)>50] --limit 10
 
 # Exists check
-jfr> show events/jdk.ExecutionSample[exists(stackTrace)] --limit 10
+jfr> events/jdk.ExecutionSample[exists(stackTrace)] --limit 10
 
 # String functions
-jfr> show events/jdk.FileRead[startsWith(path, "/tmp/")] --limit 10
-jfr> show events/jdk.FileRead[contains(path, "temp")] --limit 10
-jfr> show events/jdk.FileRead[matches(path, ".*\\.log")] --limit 10
+jfr> events/jdk.FileRead[startsWith(path, "/tmp/")] --limit 10
+jfr> events/jdk.FileRead[contains(path, "temp")] --limit 10
+jfr> events/jdk.FileRead[matches(path, ".*\\.log")] --limit 10
 
 # Range check
-jfr> show events/jdk.FileRead[between(bytes, 1000, 10000)] --limit 10
+jfr> events/jdk.FileRead[between(bytes, 1000, 10000)] --limit 10
 ```
 
 ### List Matching
 
 ```bash
 # Any frame matches
-jfr> show events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name, ".*Foo.*")]]
+jfr> events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name, ".*Foo.*")]]
 
 # All items match
-jfr> show events/jdk.GCHeapSummary[all:heapSpace/committedSize>1000000]
+jfr> events/jdk.GCHeapSummary[all:heapSpace/committedSize>1000000]
 
 # None match
-jfr> show events/jdk.ExecutionSample[none:stackTrace/frames[lineNumber<0]]
+jfr> events/jdk.ExecutionSample[none:stackTrace/frames[lineNumber<0]]
 ```
 
 ### Interleaved Filters
@@ -430,26 +430,26 @@ Apply filters at different path levels:
 
 ```bash
 # Filter before projection
-jfr> show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
+jfr> events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
 
 # Filter after projection
-jfr> show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]
+jfr> events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]
 
 # Both
-jfr> show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace[reservedSize>2000000]
+jfr> events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace[reservedSize>2000000]
 ```
 
 ### Chained Aggregations
 
 ```bash
 # Group then top
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
 
 # Group by multiple levels
-jfr> show events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
 
 # Filter, group, top
-jfr> show events/jdk.FileRead[bytes>1000] | groupBy(path) | top(10, by=count)
+jfr> events/jdk.FileRead[bytes>1000] | groupBy(path) | top(10, by=count)
 ```
 
 ## Event Decoration and Joining
@@ -522,7 +522,7 @@ For events without duration, duration is treated as 0 (point in time).
 Find execution samples that occur during monitor waits:
 
 ```bash
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
 ```
 
 **Interpretation**:
@@ -538,7 +538,7 @@ By default, decoration requires matching thread IDs:
 Custom thread paths can be specified:
 
 ```bash
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,
                                                        fields=monitorClass,
                                                        threadPath=sampledThread/javaThreadId,
                                                        decoratorThreadPath=eventThread/javaThreadId)
@@ -588,7 +588,7 @@ key=stackTrace/frames/0/method/name
 Correlate execution samples with request context using thread IDs:
 
 ```bash
-jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+jfr> events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                       key=sampledThread/javaThreadId,
                                                       decoratorKey=thread/javaThreadId,
                                                       fields=requestId,endpoint)
@@ -611,7 +611,7 @@ jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 
 ```bash
 # Project both primary and decorator fields
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | top(10, by=$decorator.monitorClass)
 ```
 
@@ -619,11 +619,11 @@ jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, field
 
 ```bash
 # Group by decorator field
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name)
 
 # Sum with decorator field
-jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
@@ -633,7 +633,7 @@ If no decorator matches a primary event, `$decorator.*` fields are `null`:
 
 ```bash
 # Count events with and without decorators
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | groupBy(exists($decorator.monitorClass))
 ```
 
@@ -645,7 +645,7 @@ jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, field
 
 ```bash
 # Step 1: Count samples by monitor class
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
   | groupBy($decorator.monitorClass, agg=count)
   | top(10, by=count)
 ```
@@ -658,7 +658,7 @@ jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, field
 
 ```bash
 # Assuming custom RequestStart event with 'endpoint' field
-jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+jfr> events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                       key=sampledThread/javaThreadId,
                                                       decoratorKey=thread/javaThreadId,
                                                       fields=endpoint)
@@ -673,7 +673,7 @@ jfr> show events/jdk.ExecutionSample | decorateByKey(RequestStart,
 **Goal**: Measure allocation pressure during different GC phases.
 
 ```bash
-jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 ```
 
@@ -684,7 +684,7 @@ jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields
 **Goal**: Identify if file I/O happens during lock waits (anti-pattern).
 
 ```bash
-jfr> show events/jdk.FileRead | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
+jfr> events/jdk.FileRead | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
 ```
 
 **Interpretation**: File reads with non-null `$decorator.monitorClass` occur during lock waits.
@@ -693,18 +693,18 @@ jfr> show events/jdk.FileRead | decorateByTime(jdk.JavaMonitorWait, fields=monit
 
 ```bash
 # During GC phases
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name,duration)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name,duration)
 
 # Group samples by GC phase
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name)
 
 # Allocations during GC
-jfr> show events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
 
 # File I/O during GC
-jfr> show events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=bytes)
 ```
 
@@ -712,11 +712,11 @@ jfr> show events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
 
 ```bash
 # Threads active during concurrent mark
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy(sampledThread/javaName, $decorator.name)
 
 # Lock contention during GC
-jfr> show events/jdk.JavaMonitorWait | decorateByTime(jdk.GCPhase, fields=name)
+jfr> events/jdk.JavaMonitorWait | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=count)
 ```
 
@@ -758,7 +758,7 @@ Decoration requires collecting all decorator events in memory:
 
 ```bash
 # Filter decorators before decorating
-jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait[duration>1000000],
+jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait[duration>1000000],
                                                        fields=monitorClass)
 ```
 
@@ -783,11 +783,11 @@ For cross-thread correlation, use custom correlation IDs instead of thread IDs.
 **Debug**:
 ```bash
 # Check decorator event count
-jfr> show events/DecoratorType | count()
+jfr> events/DecoratorType | count()
 
 # Check thread IDs
-jfr> show events/PrimaryType/threadPath
-jfr> show events/DecoratorType/decoratorThreadPath
+jfr> events/PrimaryType/threadPath
+jfr> events/DecoratorType/decoratorThreadPath
 ```
 
 #### Performance is slow
@@ -846,13 +846,13 @@ jfr> sessions
 jfr> use prod
 Switched to session #1 (prod)
 
-jfr> show events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | count()
 Result: 15234
 
 jfr> use test
 Switched to session #2 (test)
 
-jfr> show events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | count()
 Result: 8923
 
 # Close specific session
@@ -945,101 +945,101 @@ $ jfr-shell chunks recording.jfr --summary
 
 ```bash
 # Find top allocating classes
-jfr> show events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(20, by=sum)
+jfr> events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, value=weight) | top(20, by=sum)
 
 # Allocation hot spots
-jfr> show events/jdk.ObjectAllocationSample/stackTrace/frames/0/method/type/name | groupBy() | top(10, by=count)
+jfr> events/jdk.ObjectAllocationSample/stackTrace/frames/0/method/type/name | groupBy() | top(10, by=count)
 
 # Allocation rate by thread
-jfr> show events/jdk.ObjectAllocationSample | groupBy(thread/name, agg=sum, value=weight) | top(10, by=sum)
+jfr> events/jdk.ObjectAllocationSample | groupBy(thread/name, agg=sum, value=weight) | top(10, by=sum)
 ```
 
 ### Example 2: Analyze Thread Contention
 
 ```bash
 # Find blocked threads
-jfr> show events/jdk.ThreadPark[parkedClass!=null] | groupBy(parkedClass/name) | top(10, by=count)
+jfr> events/jdk.ThreadPark[parkedClass!=null] | groupBy(parkedClass/name) | top(10, by=count)
 
 # Lock contention by monitor
-jfr> show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
+jfr> events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
 
 # Thread parking duration
-jfr> show events/jdk.ThreadPark/duration | stats()
+jfr> events/jdk.ThreadPark/duration | stats()
 ```
 
 ### Example 3: I/O Performance Analysis
 
 ```bash
 # Total bytes read
-jfr> show events/jdk.FileRead/bytes | sum()
+jfr> events/jdk.FileRead/bytes | sum()
 
 # Slow file operations
-jfr> show events/jdk.FileRead[duration>10000000] | top(20, by=duration)
+jfr> events/jdk.FileRead[duration>10000000] | top(20, by=duration)
 
 # I/O by file
-jfr> show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(20, by=sum)
+jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(20, by=sum)
 
 # Socket I/O statistics
-jfr> show events/jdk.SocketRead/duration | stats()
-jfr> show events/jdk.SocketRead | groupBy(address) | top(10, by=count)
+jfr> events/jdk.SocketRead/duration | stats()
+jfr> events/jdk.SocketRead | groupBy(address) | top(10, by=count)
 ```
 
 ### Example 4: CPU Profiling
 
 ```bash
 # Top hot methods
-jfr> show events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy() | top(20, by=count)
+jfr> events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy() | top(20, by=count)
 
 # Thread activity
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
 
 # Thread state distribution
-jfr> show events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
 
 # Stack depth analysis
-jfr> show events/jdk.ExecutionSample[len(stackTrace/frames)>50] | count()
+jfr> events/jdk.ExecutionSample[len(stackTrace/frames)>50] | count()
 ```
 
 ### Example 5: GC Analysis
 
 ```bash
 # GC events after collection
-jfr> show events/jdk.GCHeapSummary[when="After GC"]/heapUsed | stats()
+jfr> events/jdk.GCHeapSummary[when="After GC"]/heapUsed | stats()
 
 # Heap growth trend
-jfr> show events/jdk.GCHeapSummary[when="After GC"]/heapUsed --limit 100
+jfr> events/jdk.GCHeapSummary[when="After GC"]/heapUsed --limit 100
 
 # GC pause times
-jfr> show events/jdk.GarbageCollection/sumOfPauses | stats()
+jfr> events/jdk.GarbageCollection/sumOfPauses | stats()
 
 # Most common GC causes
-jfr> show events/jdk.GarbageCollection | groupBy(cause) | top(10, by=count)
+jfr> events/jdk.GarbageCollection | groupBy(cause) | top(10, by=count)
 ```
 
 ### Example 6: Exception Analysis
 
 ```bash
 # Top exception types
-jfr> show events/jdk.ExceptionStatistics | groupBy(throwables/name) | top(10, by=count)
+jfr> events/jdk.ExceptionStatistics | groupBy(throwables/name) | top(10, by=count)
 
 # Exception hot spots
-jfr> show events/jdk.ExceptionStatistics/stackTrace/frames/0/method/type/name | groupBy() | top(10, by=count)
+jfr> events/jdk.ExceptionStatistics/stackTrace/frames/0/method/type/name | groupBy() | top(10, by=count)
 
 # High-frequency exceptions (possible control flow)
-jfr> show events/jdk.ExceptionStatistics | groupBy(throwables/name) | top(10, by=count)
+jfr> events/jdk.ExceptionStatistics | groupBy(throwables/name) | top(10, by=count)
 ```
 
 ### Example 7: Database Query Analysis
 
 ```bash
 # Find slow database operations (via socket reads)
-jfr> show events/jdk.SocketRead[address~".*postgres.*" and duration>100000000] --limit 20
+jfr> events/jdk.SocketRead[address~".*postgres.*" and duration>100000000] --limit 20
 
 # Database I/O statistics
-jfr> show events/jdk.SocketRead[address~".*postgres.*"]/duration | stats()
+jfr> events/jdk.SocketRead[address~".*postgres.*"]/duration | stats()
 
 # Most active database connections
-jfr> show events/jdk.SocketRead[address~".*postgres.*"] | groupBy(address) | top(10, by=count)
+jfr> events/jdk.SocketRead[address~".*postgres.*"] | groupBy(address) | top(10, by=count)
 ```
 
 ## Tips and Tricks
@@ -1051,19 +1051,19 @@ JFR Shell provides comprehensive tab completion throughout the query language. P
 **Command and Root Completion:**
 ```bash
 jfr> sh<TAB>                    # Commands: show, sessions
-jfr> show <TAB>                 # Roots: events/, metadata/, cp/, chunks/
+jfr> show <TAB>                 # Roots: events/, metadata/, constants/, chunks/
 jfr> show chunks/<TAB>          # Chunk IDs: chunks/1, chunks/2, chunks/3
 ```
 
 **Event Type and Field Path Completion:**
 ```bash
-jfr> show events/jdk.Exe<TAB>
+jfr> events/jdk.Exe<TAB>
 jdk.ExecutionSample  jdk.ExecuteVMOperation
 
-jfr> show events/jdk.ExecutionSample/<TAB>
+jfr> events/jdk.ExecutionSample/<TAB>
 startTime  duration  stackTrace  sampledThread  state
 
-jfr> show events/jdk.ExecutionSample/sampledThread/<TAB>
+jfr> events/jdk.ExecutionSample/sampledThread/<TAB>
 javaThreadId  osThreadId  javaName  osName  group
 ```
 
@@ -1075,30 +1075,30 @@ fields  settings  annotations
 
 **Filter Completion (inside [...]):**
 ```bash
-jfr> show events/jdk.FileRead[<TAB>
+jfr> events/jdk.FileRead[<TAB>
 # Field names: path, bytes, duration, startTime
 # Filter functions: contains(, exists(, startsWith(, endsWith(
 
-jfr> show events/jdk.FileRead[bytes<TAB>
+jfr> events/jdk.FileRead[bytes<TAB>
 # Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
 
-jfr> show events/jdk.FileRead[bytes > 1000 <TAB>
+jfr> events/jdk.FileRead[bytes > 1000 <TAB>
 # Logical operators: &&, ||
 ```
 
 **Pipeline Operator Completion:**
 ```bash
-jfr> show events/jdk.ExecutionSample | <TAB>
+jfr> events/jdk.ExecutionSample | <TAB>
 count()  sum(  groupBy(  top(  stats(  quantiles(  sketch(  select(
 decorateByTime(  decorateByKey(  len(  uppercase(  lowercase(
 
-jfr> show events/jdk.ExecutionSample | groupBy(<TAB>
+jfr> events/jdk.ExecutionSample | groupBy(<TAB>
 # Field names for function parameters
 ```
 
 **Option Completion:**
 ```bash
-jfr> show events/jdk.FileRead --<TAB>
+jfr> events/jdk.FileRead --<TAB>
 --limit  --format  --tree  --depth  --list-match
 ```
 
@@ -1115,10 +1115,10 @@ Always use `--limit` when exploring:
 
 ```bash
 # Good - limits output
-jfr> show events/jdk.ExecutionSample --limit 10
+jfr> events/jdk.ExecutionSample --limit 10
 
 # Bad - may output millions of events
-jfr> show events/jdk.ExecutionSample
+jfr> events/jdk.ExecutionSample
 ```
 
 ### Saving Results
@@ -1140,16 +1140,16 @@ Start with broad queries, then narrow:
 jfr> metadata --events-only
 
 # 2. Count specific events
-jfr> show events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | count()
 
 # 3. Sample events
-jfr> show events/jdk.ExecutionSample --limit 5
+jfr> events/jdk.ExecutionSample --limit 5
 
 # 4. Analyze patterns
-jfr> show events/jdk.ExecutionSample | groupBy(state)
+jfr> events/jdk.ExecutionSample | groupBy(state)
 
 # 5. Deep dive
-jfr> show events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | top(10, by=count)
 ```
 
 ## Next Steps

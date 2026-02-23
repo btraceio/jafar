@@ -1,5 +1,6 @@
 package io.jafar.shell.cli;
 
+import java.lang.reflect.Array;
 import java.util.*;
 
 /** Simple table renderer for List<Map<String,Object>>. */
@@ -115,15 +116,29 @@ public final class TableRenderer {
   private static String toCell(Object v) {
     if (v == null) return "";
     if (v instanceof Map<?, ?> m) {
-      // Unwrap simple type wrappers (single-entry maps like {string=value})
       if (m.size() == 1) {
-        Object unwrapped = m.values().iterator().next();
-        return toCell(unwrapped); // Recursively format the unwrapped value
+        return toCell(m.values().iterator().next());
       }
-      return m.toString();
+      if (m.containsKey("frames")) {
+        int count = arrayLength(m.get("frames"));
+        return count >= 0 ? "<" + count + " frames>" : "<stackTrace>";
+      }
+      return "<" + m.size() + " fields>";
     }
-    if (v.getClass().isArray()) return java.util.Arrays.deepToString((Object[]) v);
+    if (v instanceof Collection<?> coll) {
+      return "<" + coll.size() + " items>";
+    }
+    if (v.getClass().isArray()) {
+      return "<" + Array.getLength(v) + " items>";
+    }
     return String.valueOf(v);
+  }
+
+  private static int arrayLength(Object v) {
+    if (v == null) return -1;
+    if (v.getClass().isArray()) return Array.getLength(v);
+    if (v instanceof Collection<?> c) return c.size();
+    return -1;
   }
 
   private static String pad(String s, int w) {

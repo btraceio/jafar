@@ -259,7 +259,7 @@ class NonInteractiveModeTest {
 
   @Test
   void cpCommandListsConstantPools() {
-    int exitCode = execute("cp", testJfr().toString());
+    int exitCode = execute("constants", testJfr().toString());
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -269,7 +269,7 @@ class NonInteractiveModeTest {
 
   @Test
   void cpCommandWithType() {
-    int exitCode = execute("cp", testJfr().toString(), "--type", "jdk.types.Method");
+    int exitCode = execute("constants", testJfr().toString(), "--type", "jdk.types.Method");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -279,7 +279,7 @@ class NonInteractiveModeTest {
 
   @Test
   void cpCommandWithJsonFormat() {
-    int exitCode = execute("cp", testJfr().toString(), "--format", "json");
+    int exitCode = execute("constants", testJfr().toString(), "--format", "json");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();

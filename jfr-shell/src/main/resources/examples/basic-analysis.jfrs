@@ -29,18 +29,18 @@ metadata --summary
 
 echo
 echo "=== Top 10 Threads by Execution Samples ==="
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 
 echo
 echo "=== File I/O Summary ==="
 echo "Bytes Read:"
-show events/jdk.FileRead | sum(bytes)
+events/jdk.FileRead | sum(bytes)
 echo "Bytes Written:"
-show events/jdk.FileWrite | sum(bytes)
+events/jdk.FileWrite | sum(bytes)
 
 echo
 echo "=== GC Statistics ==="
-show events/jdk.GarbageCollection | stats(duration)
+events/jdk.GarbageCollection | stats(duration)
 
 # Close the session
 close

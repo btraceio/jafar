@@ -11,7 +11,7 @@ public final class JfrPath {
     EVENTS,
     METADATA,
     CHUNKS,
-    CP
+    CONSTANTS
   }
 
   public enum Op {

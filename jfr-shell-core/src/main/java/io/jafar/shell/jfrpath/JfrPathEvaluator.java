@@ -152,7 +152,7 @@ public final class JfrPathEvaluator {
         return ChunkProvider.loadChunks(
             session.getRecordingPath(), row -> matchesAll(row, query.predicates));
       }
-    } else if (query.root == Root.CP) {
+    } else if (query.root == Root.CONSTANTS) {
       if (!ConstantPoolProvider.isSupported()) {
         JfrBackend backend = BackendRegistry.getInstance().getCurrent();
         throw new UnsupportedOperationException(
@@ -349,7 +349,7 @@ public final class JfrPathEvaluator {
         extractWithIndexing(row, query.segments, out);
       }
       return out;
-    } else if (query.root == Root.CP) {
+    } else if (query.root == Root.CONSTANTS) {
       if (!ConstantPoolProvider.isSupported()) {
         JfrBackend backend = BackendRegistry.getInstance().getCurrent();
         throw new UnsupportedOperationException(
@@ -1142,7 +1142,7 @@ public final class JfrPathEvaluator {
             evaluate(session, new Query(query.root, query.segments, query.predicates));
         count = rows.size();
       }
-    } else if (query.root == Root.CHUNKS || query.root == Root.CP) {
+    } else if (query.root == Root.CHUNKS || query.root == Root.CONSTANTS) {
       List<Map<String, Object>> rows =
           evaluate(session, new Query(query.root, query.segments, query.predicates));
       count = rows.size();

@@ -230,7 +230,7 @@ public class PropertyBasedCompletionTests {
 
     assertTrue(containsCandidate(candidates, "events"), "Should suggest 'events'");
     assertTrue(containsCandidate(candidates, "metadata"), "Should suggest 'metadata'");
-    assertTrue(containsCandidate(candidates, "cp"), "Should suggest 'cp'");
+    assertTrue(containsCandidate(candidates, "constants"), "Should suggest 'constants'");
     assertTrue(containsCandidate(candidates, "chunks"), "Should suggest 'chunks'");
   }
 

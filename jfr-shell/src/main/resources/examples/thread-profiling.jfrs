@@ -25,23 +25,23 @@ open ${1:?recording file path required}
 set top_n = ${2:-10}
 
 echo "=== Top Threads by Execution Sample Count ==="
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 echo
 echo "=== Thread Allocation Statistics ==="
-show events/jdk.ThreadAllocationStatistics | groupBy(eventThread/javaName) | top(${top_n}, by=sum(allocated))
+events/jdk.ThreadAllocationStatistics | groupBy(eventThread/javaName) | top(${top_n}, by=sum(allocated))
 
 echo
 echo "=== Monitor Contention by Class ==="
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
+events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=count)
 
 echo
 echo "=== Thread Sleep Events ==="
-show events/jdk.ThreadSleep | groupBy(eventThread/javaName) | top(${top_n}, by=sum(time))
+events/jdk.ThreadSleep | groupBy(eventThread/javaName) | top(${top_n}, by=sum(time))
 
 echo
 echo "=== Thread Park Events (Blocking Operations) ==="
-show events/jdk.ThreadPark | groupBy(parkedClass/name) | top(${top_n}, by=count)
+events/jdk.ThreadPark | groupBy(parkedClass/name) | top(${top_n}, by=count)
 
 # Close the session
 close

@@ -27,9 +27,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -102,6 +105,16 @@ public final class ShellCompleter implements Completer {
 
     // Handle empty line or first word - use framework
     if (wordIndex == 0) {
+      String word = line.word().toLowerCase(Locale.ROOT);
+      // Handle events/... or constants/... typed directly as command
+      if (word.startsWith("events/")) {
+        completeEventsAlias(line, candidates);
+        return;
+      }
+      if (word.startsWith("constants/")) {
+        completeConstantsAlias(line, candidates);
+        return;
+      }
       completeWithFramework(line, candidates);
       if (DEBUG) {
         System.err.println("[COMPLETION DEBUG] Generated " + candidates.size() + " candidates");
@@ -110,6 +123,18 @@ public final class ShellCompleter implements Completer {
     }
 
     String cmd = words.get(0).toLowerCase(Locale.ROOT);
+
+    // For events alias - route through framework like 'show'
+    if ("events".equals(cmd) || cmd.startsWith("events/")) {
+      completeEventsAlias(line, candidates);
+      return;
+    }
+
+    // For constants alias with path - route through framework
+    if (cmd.startsWith("constants/")) {
+      completeConstantsAlias(line, candidates);
+      return;
+    }
 
     // For show command, use the new framework
     if ("show".equals(cmd)) {
@@ -209,9 +234,9 @@ public final class ShellCompleter implements Completer {
       case "help" -> completeHelp(candidates);
       case "open" -> completeOpen(reader, line, candidates);
       case "metadata" -> completeMetadata(line, candidates, words, wordIndex);
-      case "use" -> completeUse(candidates);
+      case "use", "session" -> completeUse(candidates);
       case "close" -> completeClose(candidates);
-      case "cp" -> completeCp(line, candidates);
+      case "cp", "constants" -> completeCp(line, candidates);
       case "script" -> completeScript(reader, line, candidates, words, wordIndex);
       case "unset", "invalidate" -> completeVariableName(line, candidates);
       case "vars" -> completeVarsCommand(line, candidates, words, wordIndex);
@@ -230,6 +255,8 @@ public final class ShellCompleter implements Completer {
 
   private void completeHelp(List<Candidate> candidates) {
     candidates.add(new Candidate("show"));
+    candidates.add(new Candidate("events"));
+    candidates.add(new Candidate("constants"));
     candidates.add(new Candidate("metadata"));
     candidates.add(new Candidate("chunks"));
     candidates.add(new Candidate("chunk"));
@@ -237,9 +264,7 @@ public final class ShellCompleter implements Completer {
   }
 
   private void completeOpen(LineReader reader, ParsedLine line, List<Candidate> candidates) {
-    if (reader != null) {
-      fileCompleter.complete(reader, line, candidates);
-    }
+    completeFiles(reader, line, candidates);
     suggestOptions(line, candidates, new String[] {"--alias"});
   }
 
@@ -284,8 +309,11 @@ public final class ShellCompleter implements Completer {
       // Suggest session names and numbers
       int idx = 1;
       for (var entry : sessions.list()) {
-        candidates.add(new Candidate(entry.alias != null ? entry.alias : String.valueOf(idx)));
-        candidates.add(new Candidate(String.valueOf(idx)));
+        String idxStr = String.valueOf(idx);
+        if (entry.alias != null) {
+          candidates.add(new Candidate(entry.alias));
+        }
+        candidates.add(new Candidate(idxStr));
         idx++;
       }
     }
@@ -296,8 +324,11 @@ public final class ShellCompleter implements Completer {
     if (sessions.getCurrent().isPresent()) {
       int idx = 1;
       for (var entry : sessions.list()) {
-        candidates.add(new Candidate(entry.alias != null ? entry.alias : String.valueOf(idx)));
-        candidates.add(new Candidate(String.valueOf(idx)));
+        String idxStr = String.valueOf(idx);
+        if (entry.alias != null) {
+          candidates.add(new Candidate(entry.alias));
+        }
+        candidates.add(new Candidate(idxStr));
         idx++;
       }
     }
@@ -341,9 +372,7 @@ public final class ShellCompleter implements Completer {
         }
       }
       // Also allow file path completion
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
-      }
+      completeFiles(reader, line, candidates);
     } else if (wordIndex == 2 && "run".equalsIgnoreCase(words.get(1))) {
       // After "script run " - list scripts from ~/.jfr-shell/scripts
       listScriptsFromDirectory(line.word(), candidates);
@@ -351,9 +380,7 @@ public final class ShellCompleter implements Completer {
         && !"list".equalsIgnoreCase(words.get(1))
         && !"run".equalsIgnoreCase(words.get(1))) {
       // After "script <path> " - file completion for args
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
-      }
+      completeFiles(reader, line, candidates);
     }
   }
 
@@ -677,9 +704,138 @@ public final class ShellCompleter implements Completer {
       }
     } else if (wordIndex == 2 && words.size() >= 2 && "start".equalsIgnoreCase(words.get(1))) {
       // After "record start " - provide filesystem completion for the path parameter
-      if (reader != null) {
-        fileCompleter.complete(reader, line, candidates);
+      completeFiles(reader, line, candidates);
+    }
+  }
+
+  /**
+   * Complete events alias by prepending 'show ' to the full input line, creating a synthetic
+   * ParsedLine that the existing completion framework understands (it expects 'show events/...').
+   */
+  private void completeEventsAlias(ParsedLine line, List<Candidate> candidates) {
+    String syntheticLine = "show " + line.line();
+    int syntheticCursor = line.cursor() + 5;
+    ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
+    completeWithFramework(synthetic, candidates);
+  }
+
+  /** Complete constants alias by converting to synthetic 'show constants ...' line. */
+  private void completeConstantsAlias(ParsedLine line, List<Candidate> candidates) {
+    String syntheticLine = "show " + line.line();
+    int syntheticCursor = line.cursor() + 5;
+    ParsedLine synthetic = createAliasLine(syntheticLine, syntheticCursor);
+    completeWithFramework(synthetic, candidates);
+  }
+
+  /** Create a synthetic ParsedLine for alias completion. */
+  private static ParsedLine createAliasLine(String fullLine, int cursor) {
+    return new ParsedLine() {
+      @Override
+      public String line() {
+        return fullLine;
       }
+
+      @Override
+      public int cursor() {
+        return cursor;
+      }
+
+      @Override
+      public String word() {
+        int start = cursor;
+        while (start > 0 && !Character.isWhitespace(fullLine.charAt(start - 1))) {
+          start--;
+        }
+        return fullLine.substring(start, cursor);
+      }
+
+      @Override
+      public int wordCursor() {
+        return word().length();
+      }
+
+      @Override
+      public int wordIndex() {
+        return words().size() - 1;
+      }
+
+      @Override
+      public List<String> words() {
+        List<String> w = new ArrayList<>(Arrays.asList(fullLine.split("\\s+")));
+        if (fullLine.endsWith(" ")) w.add("");
+        return w;
+      }
+    };
+  }
+
+  /** File path completion — delegates to JLine when available, otherwise uses basic listing. */
+  private void completeFiles(LineReader reader, ParsedLine line, List<Candidate> candidates) {
+    if (reader != null) {
+      fileCompleter.complete(reader, line, candidates);
+      return;
+    }
+    // Fallback for TUI mode (no LineReader)
+    String partial = line.word();
+    // Expand ~ to home directory
+    String home = System.getProperty("user.home");
+    String expanded = partial;
+    if (expanded.startsWith("~/") || expanded.equals("~")) {
+      expanded = home + expanded.substring(1);
+    }
+    Path base;
+    String namePrefix;
+    if (expanded.isEmpty()) {
+      base = Path.of(".").toAbsolutePath().normalize();
+      namePrefix = "";
+    } else {
+      Path p = Path.of(expanded);
+      if (expanded.endsWith("/") || expanded.endsWith(java.io.File.separator)) {
+        base = p;
+        namePrefix = "";
+      } else {
+        base = p.getParent();
+        if (base == null) base = Path.of(".").toAbsolutePath().normalize();
+        namePrefix = p.getFileName() != null ? p.getFileName().toString() : "";
+      }
+    }
+    if (!Files.isDirectory(base)) return;
+    Path dir = base;
+    try (var stream = Files.list(dir)) {
+      String prefix = namePrefix;
+      // Preserve the user's original prefix style for candidate values
+      String dirPrefix;
+      if (partial.isEmpty()) {
+        dirPrefix = "";
+      } else if (partial.endsWith("/") || partial.endsWith(java.io.File.separator)) {
+        dirPrefix = partial;
+      } else {
+        int lastSep =
+            Math.max(partial.lastIndexOf('/'), partial.lastIndexOf(java.io.File.separatorChar));
+        dirPrefix = lastSep >= 0 ? partial.substring(0, lastSep + 1) : "";
+      }
+      // Sort: directories first, then files, lexicographically within each group
+      List<Path> entries =
+          stream
+              .filter(e -> e.getFileName().toString().startsWith(prefix))
+              .sorted(
+                  (a, b) -> {
+                    boolean aDir = Files.isDirectory(a);
+                    boolean bDir = Files.isDirectory(b);
+                    if (aDir != bDir) return aDir ? -1 : 1;
+                    return a.getFileName()
+                        .toString()
+                        .compareToIgnoreCase(b.getFileName().toString());
+                  })
+              .collect(Collectors.toList());
+      for (Path entry : entries) {
+        String name = entry.getFileName().toString();
+        String value = dirPrefix.isEmpty() ? name : dirPrefix + name;
+        if (Files.isDirectory(entry)) {
+          value += "/";
+        }
+        candidates.add(new Candidate(value));
+      }
+    } catch (IOException | java.io.UncheckedIOException ignore) {
     }
   }
 }

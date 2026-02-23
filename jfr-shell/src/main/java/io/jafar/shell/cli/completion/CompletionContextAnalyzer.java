@@ -90,8 +90,8 @@ public final class CompletionContextAnalyzer {
       return analyzeMetadataContext(line);
     }
 
-    // For 'cp' command
-    if ("cp".equals(command)) {
+    // For 'cp' or 'constants' command
+    if ("cp".equals(command) || "constants".equals(command)) {
       return analyzeCpContext(line);
     }
 
@@ -138,12 +138,14 @@ public final class CompletionContextAnalyzer {
     if (expressionToken != null
         || currentWord.startsWith("events/")
         || currentWord.startsWith("metadata/")
+        || currentWord.startsWith("constants/")
         || currentWord.startsWith("cp/")
         || currentWord.startsWith("chunks")) {
 
       String pathWord =
           currentWord.startsWith("events/")
                   || currentWord.startsWith("metadata/")
+                  || currentWord.startsWith("constants/")
                   || currentWord.startsWith("cp/")
                   || currentWord.startsWith("chunks")
               ? currentWord
@@ -634,6 +636,8 @@ public final class CompletionContextAnalyzer {
       rootType = "events";
     } else if (pathWord.startsWith("metadata/")) {
       rootType = "metadata";
+    } else if (pathWord.startsWith("constants/")) {
+      rootType = "constants";
     } else if (pathWord.startsWith("cp/")) {
       rootType = "cp";
     } else if (pathWord.startsWith("chunks/")) {
@@ -839,6 +843,7 @@ public final class CompletionContextAnalyzer {
     for (String word : words) {
       if (word.startsWith("events/")
           || word.startsWith("metadata/")
+          || word.startsWith("constants/")
           || word.startsWith("cp/")
           || word.startsWith("chunks")) {
         return word;
@@ -855,7 +860,7 @@ public final class CompletionContextAnalyzer {
     String before = line.substring(0, beforePos);
 
     // Try events/, cp/, metadata/ patterns
-    String[] rootPrefixes = {"events/", "cp/", "metadata/"};
+    String[] rootPrefixes = {"events/", "constants/", "cp/", "metadata/"};
     for (String prefix : rootPrefixes) {
       int idx = before.lastIndexOf(prefix);
       if (idx >= 0) {
@@ -1185,7 +1190,10 @@ public final class CompletionContextAnalyzer {
         if (t.type() == TokenType.IDENTIFIER) {
           String value = t.value();
           // Check if this is a root type
-          if (value.equals("events") || value.equals("metadata") || value.equals("cp")) {
+          if (value.equals("events")
+              || value.equals("metadata")
+              || value.equals("constants")
+              || value.equals("cp")) {
             rootType = value;
             break; // Found root, stop parsing
           }
@@ -1599,6 +1607,7 @@ public final class CompletionContextAnalyzer {
           if (rootType == null
               && (token.value().equals("events")
                   || token.value().equals("metadata")
+                  || token.value().equals("constants")
                   || token.value().equals("cp")
                   || token.value().equals("chunks"))) {
             rootType = token.value();

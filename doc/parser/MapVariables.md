@@ -135,15 +135,15 @@ Map values can be used in JfrPath queries:
 ```bash
 # Configuration-driven filtering
 jfr> set config = {"threshold": 1000, "limit": 10}
-jfr> show events/jdk.FileRead[bytes>=${config.threshold}] --limit ${config.limit}
+jfr> events/jdk.FileRead[bytes>=${config.threshold}] --limit ${config.limit}
 
 # Pattern matching
 jfr> set patterns = {"error": ".*Error.*", "warn": ".*Warning.*"}
-jfr> show events/jdk.FileRead[path~"${patterns.error}"]
+jfr> events/jdk.FileRead[path~"${patterns.error}"]
 
 # Complex conditions
 jfr> set limits = {"min": 1000, "max": 10000}
-jfr> show events/jdk.FileRead[bytes>=${limits.min} and bytes<=${limits.max}]
+jfr> events/jdk.FileRead[bytes>=${limits.min} and bytes<=${limits.max}]
 ```
 
 ## Map Operations
@@ -202,10 +202,10 @@ jfr> set analysis = {
 ...>   "gc": {"heap_threshold": 1000000000}
 ...> }
 
-jfr> show events/jdk.FileRead[bytes>=${analysis.file_io.min_bytes}]
+jfr> events/jdk.FileRead[bytes>=${analysis.file_io.min_bytes}]
 ...>   | top(${analysis.file_io.top_n}, by=bytes)
 
-jfr> show events/jdk.ExecutionSample
+jfr> events/jdk.ExecutionSample
 ...>   | groupBy(sampledThread/javaName)
 ...>   | top(10, by=count)[count>${analysis.threads.sample_threshold}]
 ```
@@ -260,8 +260,8 @@ jfr> set paths = {
 ...>   "home": "/home/.*"
 ...> }
 
-jfr> show events/jdk.FileRead[path~"${paths.logs}"]
-jfr> show events/jdk.FileWrite[path~"${paths.temp}"]
+jfr> events/jdk.FileRead[path~"${paths.logs}"]
+jfr> events/jdk.FileWrite[path~"${paths.temp}"]
 ```
 
 ### Multi-Environment Analysis

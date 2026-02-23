@@ -295,7 +295,7 @@ class JsonOutputFormatTest {
 
   @Test
   void jsonOutputForCp() {
-    int exitCode = execute("cp", testJfr().toString(), "--format", "json");
+    int exitCode = execute("constants", testJfr().toString(), "--format", "json");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
@@ -307,7 +307,8 @@ class JsonOutputFormatTest {
   @Test
   void jsonOutputForCpWithType() {
     int exitCode =
-        execute("cp", testJfr().toString(), "--type", "jdk.types.Method", "--format", "json");
+        execute(
+            "constants", testJfr().toString(), "--type", "jdk.types.Method", "--format", "json");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();

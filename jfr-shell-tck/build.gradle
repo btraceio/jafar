@@ -19,8 +19,8 @@ java {
 }
 
 dependencies {
-    // Depends on jfr-shell for the backend SPI
-    api project(':jfr-shell')
+    // Depends on jfr-shell-core for the backend SPI
+    api project(':jfr-shell-core')
 
     // JUnit for test execution
     api 'org.junit.jupiter:junit-jupiter-api:5.10.2'

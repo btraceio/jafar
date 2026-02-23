@@ -71,10 +71,10 @@ Session 1: /tmp/recording.jfr
   Events: 12,453
   Types: 47
 
-jfr> show events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | count()
 Total: 8,234
 
-jfr> show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 ┌───────────────────────┬───────┐
 │ Thread                │ Count │
 ├───────────────────────┼───────┤
@@ -127,10 +127,10 @@ open /tmp/recording.jfr
 info
 
 # [14:30:45]
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # [14:31:05]
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # Recording stopped: 2025-12-26T14:32:00Z
 ```
@@ -175,13 +175,13 @@ Recorded scripts have hardcoded values. Let's make them reusable!
 open /tmp/prod-recording-20251226.jfr
 
 # [14:30:45]
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # [14:31:05]
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # [14:31:20]
-show events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytes>=1000] --limit 10
 
 # Recording stopped: 2025-12-26T14:32:00Z
 ```
@@ -207,13 +207,13 @@ Edit the file to use variables:
 open $1
 
 # Count execution samples
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # Top threads by sample count
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 # Large file reads
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit 10
+events/jdk.FileRead[bytes>=${min_bytes}] --limit 10
 ```
 
 ### Make It Executable
@@ -249,8 +249,8 @@ Record, review, edit, and re-record to build the perfect script.
 ```bash
 jfr> record start /tmp/explore.jfrs
 jfr> open /tmp/app.jfr
-jfr> show events/jdk.ExecutionSample | count()
-jfr> show events/jdk.GarbageCollection | count()
+jfr> events/jdk.ExecutionSample | count()
+jfr> events/jdk.GarbageCollection | count()
 jfr> record stop
 ```
 
@@ -260,10 +260,10 @@ jfr> record stop
 jfr> record start /tmp/explore.jfrs  # Overwrites previous
 jfr> open /tmp/app.jfr
 jfr> info
-jfr> show events/jdk.ExecutionSample | count()
-jfr> show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-jfr> show events/jdk.GarbageCollection | stats(duration)
-jfr> show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+jfr> events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+jfr> events/jdk.GarbageCollection | stats(duration)
+jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
 jfr> close
 jfr> record stop
 ```
@@ -278,24 +278,24 @@ Create recordings for different analysis types:
 # CPU profiling
 jfr> record start ~/jfr-scripts/cpu-profiling.jfrs
 jfr> open /tmp/sample.jfr
-jfr> show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-jfr> show events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
 jfr> record stop
 
 # Memory profiling
 jfr> record start ~/jfr-scripts/memory-profiling.jfrs
 jfr> open /tmp/sample.jfr
-jfr> show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
-jfr> show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
-jfr> show events/jdk.GarbageCollection | stats(duration)
+jfr> events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+jfr> events/jdk.GarbageCollection | stats(duration)
 jfr> record stop
 
 # I/O profiling
 jfr> record start ~/jfr-scripts/io-profiling.jfrs
 jfr> open /tmp/sample.jfr
-jfr> show events/jdk.FileRead | sum(bytes)
-jfr> show events/jdk.FileWrite | sum(bytes)
-jfr> show events/jdk.FileRead[bytes>=10000] --limit 20
+jfr> events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.FileWrite | sum(bytes)
+jfr> events/jdk.FileRead[bytes>=10000] --limit 20
 jfr> record stop
 ```
 
@@ -317,9 +317,9 @@ Share exact reproduction steps with teammates.
 jfr> record start /tmp/issue-123-diagnosis.jfrs
 jfr> open /tmp/prod-snapshot.jfr
 jfr> info
-jfr> show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
-jfr> show events/jdk.ThreadPark | groupBy(parkedClass/name) | top(10, by=count)
-jfr> show events/jdk.JavaMonitorWait | stats(duration)
+jfr> events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
+jfr> events/jdk.ThreadPark | groupBy(parkedClass/name) | top(10, by=count)
+jfr> events/jdk.JavaMonitorWait | stats(duration)
 jfr> record stop
 ```
 
@@ -353,11 +353,11 @@ jfr> open /tmp/example-recording.jfr
 jfr> # First, check overall recording info
 jfr> info
 jfr> # Look for monitor wait events
-jfr> show events/jdk.JavaMonitorEnter | count()
+jfr> events/jdk.JavaMonitorEnter | count()
 jfr> # Find which monitors have most contention
-jfr> show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
+jfr> events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(10, by=count)
 jfr> # Check wait times
-jfr> show events/jdk.JavaMonitorWait | stats(duration)
+jfr> events/jdk.JavaMonitorWait | stats(duration)
 jfr> record stop
 ```
 
@@ -511,15 +511,15 @@ jfr> open /tmp/prod-snapshot-14-30.jfr
 jfr> info
 
 # Look for thread issues
-jfr> show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(20, by=count)
-jfr> show events/jdk.ThreadPark | count()
+jfr> events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(20, by=count)
+jfr> events/jdk.ThreadPark | count()
 
 # Check GC pressure
-jfr> show events/jdk.GarbageCollection | stats(duration)
-jfr> show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+jfr> events/jdk.GarbageCollection | stats(duration)
+jfr> events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 
 # Examine CPU usage
-jfr> show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(15, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(15, by=count)
 
 jfr> record stop
 Recording stopped: /tmp/prod-outage-20251226-analysis.jfrs
@@ -544,10 +544,10 @@ done
 jfr> record start ~/baselines/app-v1.0-baseline.jfrs
 jfr> open /tmp/v1.0-reference.jfr
 jfr> info
-jfr> show events/jdk.ExecutionSample | count()
-jfr> show events/jdk.GarbageCollection | stats(duration)
-jfr> show events/jdk.FileRead | sum(bytes)
-jfr> show events/jdk.FileWrite | sum(bytes)
+jfr> events/jdk.ExecutionSample | count()
+jfr> events/jdk.GarbageCollection | stats(duration)
+jfr> events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.FileWrite | sum(bytes)
 jfr> record stop
 ```
 

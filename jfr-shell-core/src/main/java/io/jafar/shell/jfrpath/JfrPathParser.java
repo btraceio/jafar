@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Minimal JfrPath parser v0. Supports: root segment (events|metadata|chunks|cp), path segments,
- * filters in brackets like: events/jdk.ExecutionSample[thread/name~"main"][duration>10]
+ * Minimal JfrPath parser v0. Supports: root segment (events|metadata|chunks|constants), path
+ * segments, filters in brackets like: events/jdk.ExecutionSample[thread/name~"main"][duration>10]
  */
 public final class JfrPathParser {
   private final String input;
@@ -30,7 +30,7 @@ public final class JfrPathParser {
           case "events" -> Root.EVENTS;
           case "metadata" -> Root.METADATA;
           case "chunks" -> Root.CHUNKS;
-          case "cp" -> Root.CP;
+          case "constants", "cp" -> Root.CONSTANTS;
           default -> throw error("Unknown root: " + rootTok);
         };
     if (peek() == '/') pos++;
@@ -39,7 +39,7 @@ public final class JfrPathParser {
     List<String> eventTypes = new ArrayList<>();
     boolean isMultiType = false;
 
-    if (root == Root.EVENTS || root == Root.METADATA || root == Root.CP) {
+    if (root == Root.EVENTS || root == Root.METADATA || root == Root.CONSTANTS) {
       if (peek() == '(') {
         eventTypes = parseMultiEventType();
         isMultiType = eventTypes.size() > 1;

@@ -30,9 +30,9 @@ Create a file named `simple-analysis.jfrs`:
 
 open /path/to/your/recording.jfr
 
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 close
 ```
@@ -69,9 +69,9 @@ Create `analysis-with-vars.jfrs`:
 
 open $1
 
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 close
 ```
@@ -138,7 +138,7 @@ Make your script directly executable!
 # Arguments: recording
 
 open $1
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 close
 ```
 
@@ -180,13 +180,13 @@ Create `risky-analysis.jfrs`:
 open $1
 
 # Common event (usually present)
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # Custom event (might not exist)
-show events/com.example.CustomEvent | count()
+events/com.example.CustomEvent | count()
 
 # Another common event
-show events/jdk.GarbageCollection | count()
+events/jdk.GarbageCollection | count()
 
 close
 ```
@@ -201,7 +201,7 @@ If `com.example.CustomEvent` doesn't exist, the script stops and you'll see:
 
 ```
 Error on line 8: Unknown event type: com.example.CustomEvent
-  Command: show events/com.example.CustomEvent | count()
+  Command: events/com.example.CustomEvent | count()
 
 Script execution failed. 2/5 commands executed successfully.
 ```
@@ -254,26 +254,26 @@ open $1
 info
 
 # === CPU Analysis ===
-show events/jdk.ExecutionSample | count()
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
+events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 # === Memory Analysis ===
-show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
-show events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
 
 # === I/O Analysis ===
-show events/jdk.FileRead | sum(bytes)
-show events/jdk.FileWrite | sum(bytes)
-show events/jdk.SocketRead | sum(bytes)
-show events/jdk.SocketWrite | sum(bytes)
+events/jdk.FileRead | sum(bytes)
+events/jdk.FileWrite | sum(bytes)
+events/jdk.SocketRead | sum(bytes)
+events/jdk.SocketWrite | sum(bytes)
 
 # === GC Analysis ===
-show events/jdk.GarbageCollection | stats(duration)
-show events/jdk.GarbageCollection | groupBy(name) | top($2, by=count)
+events/jdk.GarbageCollection | stats(duration)
+events/jdk.GarbageCollection | groupBy(name) | top($2, by=count)
 
 # === Threading Analysis ===
-show events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
-show events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
+events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
+events/jdk.ThreadPark | groupBy(parkedClass/name) | top($2, by=count)
 
 # Close
 close
@@ -329,13 +329,13 @@ Let's create a script to detect performance regressions.
 open $1
 
 # Check GC pause times
-show events/jdk.GarbageCollection | stats(duration)
+events/jdk.GarbageCollection | stats(duration)
 
 # Check allocation rate
-show events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
+events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 
 # Check lock contention
-show events/jdk.JavaMonitorEnter | count()
+events/jdk.JavaMonitorEnter | count()
 
 close
 
@@ -391,9 +391,9 @@ Create a script that:
 
 open $1
 
-show events/jdk.FileRead[bytes>=$2] --limit 20
-show events/jdk.FileRead | sum(bytes)
-show events/jdk.FileWrite | sum(bytes)
+events/jdk.FileRead[bytes>=$2] --limit 20
+events/jdk.FileRead | sum(bytes)
+events/jdk.FileWrite | sum(bytes)
 
 close
 ```
@@ -420,11 +420,11 @@ Create a script that:
 
 open $1 --alias baseline
 use baseline
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 open $2 --alias current
 use current
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 close --all
 ```
@@ -452,13 +452,13 @@ Create a script with continue-on-error that:
 open $1
 
 # Standard events (usually present)
-show events/jdk.ExecutionSample | count()
-show events/jdk.GarbageCollection | stats(duration)
+events/jdk.ExecutionSample | count()
+events/jdk.GarbageCollection | stats(duration)
 
 # Optional events (may not exist)
-show events/jdk.ObjectAllocationSample | count()
-show events/jdk.NativeMemoryUsage | stats(committed)
-show events/com.example.CustomEvent | count()
+events/jdk.ObjectAllocationSample | count()
+events/jdk.NativeMemoryUsage | stats(committed)
+events/com.example.CustomEvent | count()
 
 close
 ```
@@ -487,7 +487,7 @@ Create a script that uses computed expressions to transform and format output:
 open $1
 
 # File reads with computed fields
-show events/jdk.FileRead | select(
+events/jdk.FileRead | select(
   path,
   bytes / 1024 as kilobytes,
   if(bytes > 1048576, 'large', if(bytes > 1024, 'medium', 'small')) as size_category,
@@ -495,13 +495,13 @@ show events/jdk.FileRead | select(
 ) --limit 20
 
 # Summarize with expressions
-show events/jdk.FileRead | select(
+events/jdk.FileRead | select(
   bytes / 1024 as kb,
   duration
 ) | stats(kb)
 
 # Group with computed keys
-show events/jdk.FileRead | select(
+events/jdk.FileRead | select(
   if(bytes > 1048576, '>1MB', if(bytes > 10240, '>10KB', '<10KB')) as category,
   path
 ) | groupBy(category)

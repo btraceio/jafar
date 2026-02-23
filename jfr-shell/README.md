@@ -71,13 +71,13 @@ java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 jfr> open recording.jfr
 Opened session #1: recording.jfr
 
-jfr> show events/jdk.FileRead[bytes>=1000] --limit 5
+jfr> events/jdk.FileRead[bytes>=1000] --limit 5
 | startTime           | duration | path              | bytes  |
 +---------------------+----------+-------------------+--------+
 | 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt     | 524288 |
 ...
 
-jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 | key              | count |
 +------------------+-------+
 | main             | 15234 |
@@ -85,7 +85,7 @@ jfr> show events/jdk.ExecutionSample | groupBy(thread/name)
 | GC Thread#0      | 4521  |
 ...
 
-jfr> show events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.FileRead | top(10, by=bytes)
 | path                    | bytes    |
 +-------------------------+----------+
 | /data/large-file.bin    | 10485760 |
@@ -99,58 +99,58 @@ jfr> show events/jdk.FileRead | top(10, by=bytes)
 
 ```bash
 # How many execution samples?
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 
 # How many file reads over 1MB?
-show events/jdk.FileRead[bytes>1048576] | count()
+events/jdk.FileRead[bytes>1048576] | count()
 ```
 
 ### Analyze Thread Activity
 
 ```bash
 # Group execution samples by thread
-show events/jdk.ExecutionSample | groupBy(thread/name)
+events/jdk.ExecutionSample | groupBy(thread/name)
 
 # Group by thread, sorted by count descending (default)
-show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)
 
 # Group by thread, sorted alphabetically by thread name
-show events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)
+events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)
 
 # Find threads with deep call stacks
-show events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 10
+events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 10
 
 # Top threads by sample count
-show events/jdk.ExecutionSample | groupBy(thread/name, agg=count) | top(10, by=count)
+events/jdk.ExecutionSample | groupBy(thread/name, agg=count) | top(10, by=count)
 ```
 
 ### File I/O Analysis
 
 ```bash
 # Sum total bytes read
-show events/jdk.FileRead/bytes | sum()
+events/jdk.FileRead/bytes | sum()
 
 # Statistics on read sizes
-show events/jdk.FileRead/bytes | stats()
+events/jdk.FileRead/bytes | stats()
 
 # Top 10 files by bytes read
-show events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)
 
 # Files read from /tmp
-show events/jdk.FileRead[path~"/tmp/.*"] --limit 20
+events/jdk.FileRead[path~"/tmp/.*"] --limit 20
 ```
 
 ### GC Analysis
 
 ```bash
 # GC events after collection
-show events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
+events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace
 
 # Large committed heap sizes
-show events/jdk.GCHeapSummary/heapSpace[committedSize>1000000000]
+events/jdk.GCHeapSummary/heapSpace[committedSize>1000000000]
 
 # GC pause statistics
-show events/jdk.GarbageCollection/sumOfPauses | stats()
+events/jdk.GarbageCollection/sumOfPauses | stats()
 ```
 
 ### Metadata Exploration
@@ -173,10 +173,10 @@ metadata --search jdk.* --events-only
 chunks --summary
 
 # Browse constant pool symbols
-cp jdk.types.Symbol
+constants jdk.types.Symbol
 
 # Find specific symbols
-show cp/jdk.types.Symbol[string~"java/lang/.*"]
+constants/jdk.types.Symbol[string~"java/lang/.*"]
 ```
 
 ## Non-Interactive Mode
@@ -211,7 +211,7 @@ Store and reuse values in your analysis sessions with `${var}` substitution.
 ```bash
 jfr> set threshold = 1000
 jfr> set limit = 10
-jfr> show events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+jfr> events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
 
 # Copy variables
 jfr> set backup = threshold       # Copy value from threshold
@@ -235,7 +235,7 @@ jfr> echo "Connecting to ${db.host}:${db.port} as ${db.credentials.user}"
 Connecting to localhost:5432 as admin
 
 # Use in queries
-jfr> show events/jdk.FileRead[bytes>=${config.threshold}]
+jfr> events/jdk.FileRead[bytes>=${config.threshold}]
 
 # Get map size
 jfr> echo "Config has ${config.size} entries"
@@ -427,8 +427,8 @@ open ${1:?recording file required}
 set min_bytes = ${2:-1000}     # Default to 1000 if not provided
 set top_n = ${3:-10}           # Default to 10 if not provided
 
-show events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
-show events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
+events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 close
 ```
 
@@ -457,8 +457,8 @@ jfr> record start analysis.jfrs
 Recording started: analysis.jfrs
 
 jfr> open /tmp/app.jfr
-jfr> show events/jdk.ExecutionSample | count()
-jfr> show events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.ExecutionSample | count()
+jfr> events/jdk.FileRead | sum(bytes)
 
 jfr> record stop
 Recording stopped: analysis.jfrs
@@ -477,7 +477,7 @@ Make scripts directly executable:
 # Arguments: recording
 
 open $1
-show events/jdk.ExecutionSample | count()
+events/jdk.ExecutionSample | count()
 close
 ```
 
@@ -512,7 +512,7 @@ JfrPath is a concise path-based query language for JFR data:
 - `events/<type>` - Event data (e.g., `events/jdk.FileRead`)
 - `metadata/<type>` - Type metadata (e.g., `metadata/java.lang.Thread`)
 - `chunks` - Chunk information
-- `cp/<type>` - Constant pool entries (e.g., `cp/jdk.types.Symbol`)
+- `constants/<type>` - Constant pool entries (e.g., `constants/jdk.types.Symbol`)
 
 ### Filters
 
@@ -568,25 +568,25 @@ List matching:
 **Examples:**
 ```bash
 # Simple field selection
-show events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytes)
 
 # Computed expressions
-show events/jdk.FileRead | select(bytes / 1024 as kilobytes)
-show events/jdk.FileRead | select(path + ' (' + bytes + ')' as description)
+events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+events/jdk.FileRead | select(path + ' (' + bytes + ')' as description)
 
 # String templates (cleaner syntax)
-show events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
-show events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
 
 # Mixed fields and expressions
-show events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
 
 # Built-in functions
-show events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
-show events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
+events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
+events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
 
 # Functions in templates
-show events/jdk.FileRead | select("File: ${upper(path)}" as info)
+events/jdk.FileRead | select("File: ${upper(path)}" as info)
 ```
 
 ### Transforms
@@ -606,16 +606,16 @@ Decorator fields accessed with `$decorator.fieldName` prefix.
 **Examples:**
 ```bash
 # Monitor contention: execution samples during lock waits
-show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 
 # Request tracing: correlate samples with request context
-show events/jdk.ExecutionSample | decorateByKey(RequestStart,
+events/jdk.ExecutionSample | decorateByKey(RequestStart,
                                                   key=sampledThread/javaThreadId,
                                                   decoratorKey=thread/javaThreadId,
                                                   fields=requestId,endpoint)
 
 # Group by decorator field
-show events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
+events/jdk.ExecutionSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name)
 ```
 
@@ -635,7 +635,7 @@ See [doc/JFRPath.md](../doc/cli/JFRPath.md) for complete reference.
 - `metadata [options]` - List/inspect metadata types
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show chunk details
-- `cp [<type>] [options]` - Browse constant pools
+- `constants [<type>] [options]` - Browse constant pools
 
 ### Variables
 - `set [--global] <name> = <value>` - Set variable (scalar, map, or lazy query)

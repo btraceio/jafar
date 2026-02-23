@@ -33,13 +33,14 @@ public final class OptionCompleter implements ContextCompleter {
               },
           "open", new String[] {"--alias"},
           "close", new String[] {"--all"},
+          "constants", new String[] {"--limit", "--format", "--tree", "--depth"},
           "cp", new String[] {"--limit", "--format", "--tree", "--depth"});
 
   // Values for specific options
   private static final Map<String, String[]> OPTION_VALUES =
       Map.of(
           "--list-match", new String[] {"any", "all", "none"},
-          "--format", new String[] {"table", "json", "csv"});
+          "--format", new String[] {"table", "json", "csv", "tui"});
 
   // Subcommands for specific commands
   private static final Map<String, String[]> COMMAND_SUBCOMMANDS =
@@ -47,7 +48,7 @@ public final class OptionCompleter implements ContextCompleter {
 
   // Values for subcommands
   private static final Map<String, String[]> SUBCOMMAND_VALUES =
-      Map.of("output", new String[] {"table", "json", "csv"});
+      Map.of("output", new String[] {"table", "json", "csv", "tui"});
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

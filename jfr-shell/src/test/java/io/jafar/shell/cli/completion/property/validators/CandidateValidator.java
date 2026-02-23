@@ -81,9 +81,9 @@ public class CandidateValidator {
 
   // ==================== Context-Specific Validators ====================
 
-  /** Validates root candidates (events, metadata, cp, chunks). */
+  /** Validates root candidates (events, metadata, constants, chunks). */
   private void validateRootCandidates(List<Candidate> candidates, ValidationResult result) {
-    Set<String> validRoots = Set.of("events", "metadata", "cp", "chunks");
+    Set<String> validRoots = Set.of("events", "metadata", "constants", "cp", "chunks");
 
     for (Candidate c : candidates) {
       String root = extractRoot(c.value());
@@ -109,7 +109,7 @@ public class CandidateValidator {
       validTypes = metadata.getEventTypes();
     } else if ("metadata".equals(rootType)) {
       validTypes = metadata.getAllMetadataTypes();
-    } else if ("cp".equals(rootType)) {
+    } else if ("constants".equals(rootType) || "cp".equals(rootType)) {
       validTypes = metadata.getConstantPoolTypes();
     } else {
       result.addWarning("Unknown root type for event type validation: " + rootType);
