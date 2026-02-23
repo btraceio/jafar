@@ -9,6 +9,9 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Comparator;
+import java.util.Set;
+import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -137,5 +140,52 @@ class ScrubberTest {
     }
 
     assertThat(Files.readAllBytes(dst)).isEmpty();
+  }
+
+  @Test
+  void scrubFileSkipsOneByteRange(@TempDir Path tempDir) throws Exception {
+    // Simulate a null/empty JFR string field (1 byte: type=0 or type=1)
+    byte[] data = {0x10, 0x20, 0x00, 0x30, 0x40};
+    Path src = tempDir.resolve("input.bin");
+    Path dst = tempDir.resolve("output.bin");
+    Files.write(src, data);
+
+    Set<Scrubber.SkipInfo> skipRanges = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
+    // 1-byte range at position 2 — should be passed through unchanged
+    skipRanges.add(new Scrubber.SkipInfo(2, 3));
+
+    Scrubber.scrubFile(src, dst, skipRanges);
+
+    // Output should be identical to input — the 1-byte range is copied as-is
+    assertThat(Files.readAllBytes(dst)).isEqualTo(data);
+  }
+
+  @Test
+  void scrubFileHandlesNormalRangeAfterSkippedOneByteRange(@TempDir Path tempDir) throws Exception {
+    // Mix of a 1-byte range (skipped) and a normal range (scrubbed)
+    // Positions: [0..4] prefix, [5] 1-byte null string, [6..9] 4-byte string field
+    byte[] data = {0x10, 0x20, 0x30, 0x40, 0x50, 0x00, 0x04, 'a', 'b', 'c', 0x60, 0x70};
+    Path src = tempDir.resolve("input.bin");
+    Path dst = tempDir.resolve("output.bin");
+    Files.write(src, data);
+
+    Set<Scrubber.SkipInfo> skipRanges = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
+    skipRanges.add(new Scrubber.SkipInfo(5, 6)); // 1-byte null string — skipped
+    skipRanges.add(new Scrubber.SkipInfo(6, 10)); // 4-byte field — scrubbed
+
+    Scrubber.scrubFile(src, dst, skipRanges);
+
+    byte[] result = Files.readAllBytes(dst);
+    assertThat(result).hasSize(data.length);
+    // Bytes before ranges are copied as-is
+    assertThat(result[0]).isEqualTo((byte) 0x10);
+    assertThat(result[4]).isEqualTo((byte) 0x50);
+    // 1-byte range at position 5 is copied as-is
+    assertThat(result[5]).isEqualTo((byte) 0x00);
+    // 4-byte range at positions 6..9 is replaced with type(4) + varint(2) + "xx"
+    assertThat(result[6]).isEqualTo((byte) 4); // string type
+    // Trailing bytes are copied as-is
+    assertThat(result[10]).isEqualTo((byte) 0x60);
+    assertThat(result[11]).isEqualTo((byte) 0x70);
   }
 }

@@ -135,8 +135,7 @@ public final class Scrubber {
     scrubFile(input, output, globalSkipInfo);
   }
 
-  private static void scrubFile(Path input, Path output, Set<SkipInfo> skipRanges)
-      throws Exception {
+  static void scrubFile(Path input, Path output, Set<SkipInfo> skipRanges) throws Exception {
     final int BUF_SIZE = 64 * 1024;
     ByteBuffer copyBuf = ByteBuffer.allocateDirect(BUF_SIZE);
     try (FileChannel in = FileChannel.open(input, StandardOpenOption.READ);
@@ -164,6 +163,14 @@ public final class Scrubber {
         // We need to compute the length of the string such that:
         // 1 + varintSize(payloadLen) + payloadLen == to - from
         long s = to - from - 1;
+        if (s <= 0) {
+          // Range too small for replacement (null/empty string encoding) — copy as-is
+          if (to > from) {
+            copyRegion(in, out, from, to - from, copyBuf);
+          }
+          pos = to;
+          continue;
+        }
         int payloadLen = computeFittingPayloadLength((int) s);
         if (payloadLen > BUF_SIZE) {
           throw new RuntimeException(
@@ -354,7 +361,8 @@ public final class Scrubber {
               skipInfo[0] = null; // do not scrub if guard condition is not met
             }
           }
-          if (skipInfo[0] != null) {
+          // Skip null/empty strings (1 byte encoding) — no sensitive data to scrub
+          if (skipInfo[0] != null && (skipInfo[0].endPos - skipInfo[0].startPos) > 1) {
             info.skipInfo.add(skipInfo[0]);
           }
         } catch (IOException ex) {
