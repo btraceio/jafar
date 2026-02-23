@@ -1,5 +1,7 @@
 plugins {
     id 'java-library'
+    id 'com.gradleup.shadow' version '9.0.0'
+    id 'maven-publish'
     id 'com.vanniktech.maven.publish'
 }
 
@@ -23,6 +25,27 @@ java {
 dependencies {
     api project(':parser-core')
     api project(':parser-codegen')
+    // Re-declare external deps from internal modules so they appear in the published POM
+    // (internal modules are shaded into the shadow JAR and removed from the POM)
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+    implementation 'org.slf4j:slf4j-simple:2.0.5'
+    implementation 'org.ow2.asm:asm:9.7.1'
+}
+
+// Shadow JAR: embed internal parser-core and parser-codegen modules
+shadowJar {
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('all')
+    // Only include internal project modules, not external dependencies
+    dependencies {
+        include(project(':parser-core'))
+        include(project(':parser-codegen'))
+    }
+    // parser-core is a Multi-Release JAR
+    manifest {
+        attributes('Multi-Release': 'true')
+    }
 }
 
 tasks.register('sourcesJar', Jar) {
@@ -43,4 +66,37 @@ description = 'JFR parser aggregate module re-exporting parser-core and parser-c
 
 mavenPublishing {
     coordinates('io.btrace', 'jafar-parser', version.toString())
+}
+
+// Override publication to use shadow JAR and exclude internal modules from POM
+afterEvaluate {
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                // Remove the regular jar artifact added by vanniktech plugin
+                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Add shadow JAR as main artifact
+                artifact(shadowJar) {
+                    classifier = ''  // Publish without classifier
+                }
+                // Remove internal modules from POM (they are embedded in the shadow JAR)
+                pom.withXml {
+                    def deps = asNode().get('dependencies')
+                    if (deps) {
+                        deps.each { depsNode ->
+                            depsNode.children().removeAll { dep ->
+                                def artifactId = dep.artifactId.text()
+                                artifactId == 'jafar-parser-core' || artifactId == 'jafar-parser-codegen'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Disable Gradle module metadata (shadow JAR replaces the regular artifact)
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
 }

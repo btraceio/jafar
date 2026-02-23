@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id 'com.vanniktech.maven.publish'
+    id 'maven-publish'
     id "io.github.goooler.shadow" version "8.1.8"
 }
 
@@ -41,6 +42,10 @@ def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLan
 
 dependencies {
     implementation project(':parser-core')
+    // Re-declare external deps from parser-core so they appear in the published POM
+    // (parser-core is shaded into the shadow JAR and removed from the POM)
+    runtimeOnly 'org.slf4j:slf4j-api:2.0.5'
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.5'
     testImplementation project(':parser-core').sourceSets.test.output
     testImplementation 'org.assertj:assertj-core:3.24.2'
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
@@ -74,9 +79,56 @@ group = 'io.btrace'
 version = component_version
 description = 'JFR (Java Flight Recorder) manipulation tools'
 
+// Shadow JAR: embed internal parser-core module
+shadowJar {
+    archiveBaseName = libraryName
+    archiveVersion = component_version
+    archiveClassifier.set('all')
+    // Only include internal project module, not external dependencies
+    dependencies {
+        include(project(':parser-core'))
+    }
+    // parser-core is a Multi-Release JAR
+    manifest {
+        attributes('Multi-Release': 'true')
+    }
+}
+
 // Override artifact name for Maven publishing
 mavenPublishing {
     coordinates('io.btrace', 'jafar-tools', version.toString())
+}
+
+// Override publication to use shadow JAR and exclude internal modules from POM
+afterEvaluate {
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                // Remove the regular jar artifact added by vanniktech plugin
+                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Add shadow JAR as main artifact
+                artifact(shadowJar) {
+                    classifier = ''  // Publish without classifier
+                }
+                // Remove internal modules from POM (they are embedded in the shadow JAR)
+                pom.withXml {
+                    def deps = asNode().get('dependencies')
+                    if (deps) {
+                        deps.each { depsNode ->
+                            depsNode.children().removeAll { dep ->
+                                dep.artifactId.text() == 'jafar-parser-core'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Disable Gradle module metadata (shadow JAR replaces the regular artifact)
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
 }
 
 // Apply code generation plugin only when its tasks are explicitly requested.
