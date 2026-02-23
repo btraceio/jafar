@@ -1,0 +1,402 @@
+package io.jafar.shell.tui;
+
+import io.jafar.parser.api.ArrayType;
+import io.jafar.parser.api.ComplexType;
+import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.tui.TuiContext.ResultTab;
+import java.lang.reflect.Array;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Builds detail-pane content for the TUI. Handles tree-structured key-value display, stack trace
+ * rendering, and metadata detail construction.
+ */
+public final class TuiDetailBuilder {
+  private final TuiContext ctx;
+
+  TuiDetailBuilder(TuiContext ctx) {
+    this.ctx = ctx;
+  }
+
+  void buildDetailTabs(ResultTab tab) {
+    ctx.detailHScrollOffset = 0;
+    if (tab.tableData == null || tab.selectedRow < 0 || tab.selectedRow >= tab.tableData.size()) {
+      ctx.detailTabNames = List.of();
+      ctx.detailTabValues = List.of();
+      ctx.activeDetailTabIndex = 0;
+      ctx.detailTabScrollOffsets.clear();
+      ctx.detailCursorLine = -1;
+      ctx.detailLineTypeRefs = null;
+      return;
+    }
+
+    // Metadata browser mode: show fields/settings instead of complex-value tabs
+    if (tab.metadataClassCache != null) {
+      Map<String, Object> meta =
+          tab.selectedRow < tab.metadataClassCache.size()
+              ? tab.metadataClassCache.get(tab.selectedRow)
+              : null;
+      if (meta != null) {
+        Object nameObj = meta.get("name");
+        String typeName = nameObj != null ? nameObj.toString() : "type";
+        ctx.detailTabNames = List.of(typeName);
+        ctx.detailMarqueeTick0 = ctx.renderTick;
+        ctx.detailTabValues = List.of(meta);
+        ctx.activeDetailTabIndex = 0;
+        ctx.detailTabScrollOffsets.clear();
+        ctx.detailTabScrollOffsets.add(0);
+        buildMetadataDetailRefs(meta, tab);
+        return;
+      }
+      // No metadata for this row — fall through to empty detail
+      ctx.detailTabNames = List.of();
+      ctx.detailTabValues = List.of();
+      ctx.activeDetailTabIndex = 0;
+      ctx.detailTabScrollOffsets.clear();
+      ctx.detailCursorLine = -1;
+      ctx.detailLineTypeRefs = null;
+      return;
+    }
+
+    ctx.detailCursorLine = -1;
+    ctx.detailLineTypeRefs = null;
+
+    Map<String, Object> row = tab.tableData.get(tab.selectedRow);
+    List<String> names = new ArrayList<>();
+    List<Object> values = new ArrayList<>();
+    List<String> headers =
+        tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(row.keySet());
+    for (String header : headers) {
+      Object val = row.get(header);
+      if (isComplexValue(val)) {
+        names.add(header);
+        values.add(val);
+      }
+    }
+    ctx.detailTabNames = names;
+    ctx.detailMarqueeTick0 = ctx.renderTick;
+    ctx.detailTabValues = values;
+    ctx.activeDetailTabIndex = Math.min(ctx.activeDetailTabIndex, Math.max(0, names.size() - 1));
+    ctx.detailTabScrollOffsets.clear();
+    for (int i = 0; i < names.size(); i++) {
+      ctx.detailTabScrollOffsets.add(0);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  void buildMetadataDetailRefs(Map<String, Object> meta, ResultTab tab) {
+    Set<String> navigableTypes = new HashSet<>();
+    if (tab.tableData != null) {
+      for (Map<String, Object> row : tab.tableData) {
+        Object n = row.get("name");
+        if (n != null) navigableTypes.add(n.toString());
+      }
+    }
+
+    List<String> refs = new ArrayList<>();
+
+    // Fields section
+    Object fieldsByName = meta.get("fieldsByName");
+    if (fieldsByName instanceof Map<?, ?> fbm && !fbm.isEmpty()) {
+      refs.add(null); // header line
+      for (Map.Entry<?, ?> entry : fbm.entrySet()) {
+        String typeName = null;
+        if (entry.getValue() instanceof Map<?, ?> fm) {
+          Object typeObj = fm.get("type");
+          if (typeObj != null) {
+            typeName = typeObj.toString();
+          }
+        }
+        refs.add(typeName != null && navigableTypes.contains(typeName) ? typeName : null);
+      }
+    }
+
+    // Settings section
+    Object settingsByName = meta.get("settingsByName");
+    if (settingsByName instanceof Map<?, ?> sbm && !sbm.isEmpty()) {
+      refs.add(null); // header line
+      for (int i = 0; i < sbm.size(); i++) {
+        refs.add(null);
+      }
+    }
+
+    // Annotations section
+    Object classAnnotations = meta.get("classAnnotations");
+    if (classAnnotations instanceof List<?> ca && !ca.isEmpty()) {
+      refs.add(null); // header line
+      for (int i = 0; i < ca.size(); i++) {
+        refs.add(null);
+      }
+    }
+
+    ctx.detailLineTypeRefs = refs;
+    ctx.detailCursorLine = refs.isEmpty() ? -1 : 0;
+  }
+
+  @SuppressWarnings("unchecked")
+  String[] buildMetadataDetailLines(Map<String, Object> meta, ResultTab tab) {
+    Set<String> navigableTypes = new HashSet<>();
+    if (tab.tableData != null) {
+      for (Map<String, Object> row : tab.tableData) {
+        Object n = row.get("name");
+        if (n != null) navigableTypes.add(n.toString());
+      }
+    }
+
+    List<String> lines = new ArrayList<>();
+
+    // Fields section
+    Object fieldsByName = meta.get("fieldsByName");
+    if (fieldsByName instanceof Map<?, ?> fbm && !fbm.isEmpty()) {
+      lines.add("Fields (" + fbm.size() + "):");
+      int idx = 0;
+      int size = fbm.size();
+      for (Map.Entry<?, ?> entry : fbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String fName = entry.getKey().toString();
+        String fType = "";
+        String annStr = "";
+        if (entry.getValue() instanceof Map<?, ?> fm) {
+          Object typeObj = fm.get("type");
+          if (typeObj != null) fType = typeObj.toString();
+          Object annObj = fm.get("annotations");
+          if (annObj instanceof List<?> annList && !annList.isEmpty()) {
+            annStr = " " + annList;
+          }
+        }
+        String nav = navigableTypes.contains(fType) ? " \u2192" : "";
+        lines.add(connector + fName + ": " + fType + annStr + nav);
+      }
+    }
+
+    // Settings section
+    Object settingsByName = meta.get("settingsByName");
+    if (settingsByName instanceof Map<?, ?> sbm && !sbm.isEmpty()) {
+      lines.add("Settings (" + sbm.size() + "):");
+      int idx = 0;
+      int size = sbm.size();
+      for (Map.Entry<?, ?> entry : sbm.entrySet()) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        String sName = entry.getKey().toString();
+        String sType = "";
+        String sDefault = "";
+        if (entry.getValue() instanceof Map<?, ?> sm) {
+          Object typeObj = sm.get("type");
+          if (typeObj != null) sType = typeObj.toString();
+          Object defObj = sm.get("defaultValue");
+          if (defObj != null) sDefault = " = " + defObj;
+        }
+        lines.add(connector + sName + ": " + sType + sDefault);
+      }
+    }
+
+    // Annotations section
+    Object classAnnotations = meta.get("classAnnotations");
+    if (classAnnotations instanceof List<?> ca && !ca.isEmpty()) {
+      lines.add("Annotations (" + ca.size() + "):");
+      int idx = 0;
+      int size = ca.size();
+      for (Object ann : ca) {
+        idx++;
+        boolean last = (idx == size);
+        String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+        lines.add(connector + ann);
+      }
+    }
+
+    return lines.toArray(new String[0]);
+  }
+
+  String[] buildDetailLines(Object value, String tabName) {
+    // Stack trace rendering
+    if (value instanceof Map<?, ?> m && m.containsKey("frames")) {
+      return buildStackTraceLines(m);
+    }
+    if ("frames".equals(tabName)) {
+      return buildStackTraceLines(Map.of("frames", value));
+    }
+
+    // Default: tree-structured key-value dump
+    List<String> lines = new ArrayList<>();
+    Object resolved = resolveForDisplay(value);
+    if (resolved instanceof Map<?, ?> m) {
+      formatTree(lines, m, "");
+    } else if (resolved != null && resolved.getClass().isArray()) {
+      formatArrayTree(lines, resolved, "");
+    } else if (resolved instanceof Collection<?> coll) {
+      formatCollectionTree(lines, coll, "");
+    } else {
+      lines.add(String.valueOf(value));
+    }
+    return lines.toArray(new String[0]);
+  }
+
+  private String[] buildStackTraceLines(Map<?, ?> stackMap) {
+    Object framesObj = stackMap.get("frames");
+    if (framesObj instanceof ArrayType at) framesObj = at.getArray();
+    int frameCount = TuiTableRenderer.arrayLength(framesObj);
+    int count = Math.max(0, frameCount);
+    List<String> lines = new ArrayList<>(count + 1);
+    lines.add("(" + count + " frames)");
+    for (int i = 0; i < count; i++) {
+      Object frameObj;
+      if (framesObj != null && framesObj.getClass().isArray()) {
+        frameObj = Array.get(framesObj, i);
+      } else if (framesObj instanceof List<?> list) {
+        frameObj = list.get(i);
+      } else {
+        break;
+      }
+      frameObj = TuiTableRenderer.resolveComplex(frameObj);
+      String sig = TuiTableRenderer.extractFrameString(frameObj);
+      if (sig == null) sig = "<unknown>";
+      String typeStr = "";
+      if (frameObj instanceof Map<?, ?> fm) {
+        Object ftype = TuiTableRenderer.unwrap(fm.get("type"));
+        if (ftype != null) typeStr = " [" + ftype + "]";
+      }
+      String connector = (i == count - 1) ? "\u2514\u2500 " : "\u251C\u2500 ";
+      lines.add(connector + sig + typeStr);
+    }
+    Object truncated = stackMap.get("truncated");
+    if (truncated != null && Boolean.TRUE.equals(truncated)) {
+      lines.add("   ... (truncated)");
+    }
+    return lines.toArray(new String[0]);
+  }
+
+  int getDetailScrollOffset() {
+    if (ctx.activeDetailTabIndex < ctx.detailTabScrollOffsets.size()) {
+      return ctx.detailTabScrollOffsets.get(ctx.activeDetailTabIndex);
+    }
+    return 0;
+  }
+
+  void setDetailScrollOffset(int offset) {
+    while (ctx.detailTabScrollOffsets.size() <= ctx.activeDetailTabIndex) {
+      ctx.detailTabScrollOffsets.add(0);
+    }
+    ctx.detailTabScrollOffsets.set(ctx.activeDetailTabIndex, offset);
+  }
+
+  void moveDetailCursor(int delta) {
+    if (ctx.detailLineTypeRefs == null || ctx.detailLineTypeRefs.isEmpty()) return;
+    int maxLine = ctx.detailLineTypeRefs.size() - 1;
+    ctx.detailCursorLine = Math.max(0, Math.min(maxLine, ctx.detailCursorLine + delta));
+    int scrollOffset = getDetailScrollOffset();
+    if (ctx.detailCursorLine < scrollOffset) {
+      setDetailScrollOffset(ctx.detailCursorLine);
+    } else if (ctx.detailCursorLine >= scrollOffset + ctx.detailAreaHeight) {
+      setDetailScrollOffset(ctx.detailCursorLine - ctx.detailAreaHeight + 1);
+    }
+  }
+
+  void moveMetadataCursor(ResultTab tab, int delta) {
+    if (ctx.metadataBrowserLineRefs == null || ctx.metadataBrowserLineRefs.isEmpty()) return;
+    int maxRow = tab.lines.size() - 1;
+    tab.selectedRow = Math.max(0, Math.min(maxRow, tab.selectedRow + delta));
+    if (tab.selectedRow < tab.scrollOffset) {
+      tab.scrollOffset = tab.selectedRow;
+    } else if (tab.selectedRow >= tab.scrollOffset + ctx.resultsAreaHeight) {
+      tab.scrollOffset = tab.selectedRow - ctx.resultsAreaHeight + 1;
+    }
+  }
+
+  // ---- static tree formatters ----
+
+  static Object resolveForDisplay(Object val) {
+    if (val instanceof ComplexType ct) return ct.getValue();
+    if (val instanceof ArrayType at) return at.getArray();
+    return val;
+  }
+
+  static boolean isComplexValue(Object val) {
+    if (val == null) return false;
+    if (val instanceof ComplexType ct) return isComplexValue(ct.getValue());
+    if (val instanceof Map<?, ?> m) {
+      if (m.size() <= 1) return false;
+      return true;
+    }
+    if (val instanceof ArrayType) return true;
+    if (val instanceof Collection<?>) return true;
+    if (val.getClass().isArray()) return true;
+    return false;
+  }
+
+  static void formatTree(List<String> lines, Map<?, ?> map, String indent) {
+    var entries = new ArrayList<>(map.entrySet());
+    for (int i = 0; i < entries.size(); i++) {
+      Map.Entry<?, ?> entry = entries.get(i);
+      boolean last = (i == entries.size() - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      String key = String.valueOf(entry.getKey());
+      Object val = resolveForDisplay(entry.getValue());
+      while (val instanceof Map<?, ?> inner && inner.size() == 1) {
+        val = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (val instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + key);
+        formatTree(lines, nested, childIndent);
+      } else if (val != null && val.getClass().isArray()) {
+        int len = Array.getLength(val);
+        lines.add(indent + connector + key + " (" + len + " items)");
+        formatArrayTree(lines, val, childIndent);
+      } else if (val instanceof Collection<?> coll) {
+        lines.add(indent + connector + key + " (" + coll.size() + " items)");
+        formatCollectionTree(lines, coll, childIndent);
+      } else {
+        lines.add(indent + connector + key + ": " + (val != null ? val : "(null)"));
+      }
+    }
+  }
+
+  static void formatArrayTree(List<String> lines, Object arr, String indent) {
+    int len = Array.getLength(arr);
+    for (int i = 0; i < len; i++) {
+      boolean last = (i == len - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      Object item = resolveForDisplay(Array.get(arr, i));
+      while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+        item = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + "[" + i + "]");
+        formatTree(lines, nested, childIndent);
+      } else {
+        lines.add(indent + connector + "[" + i + "]: " + item);
+      }
+    }
+  }
+
+  static void formatCollectionTree(List<String> lines, Collection<?> coll, String indent) {
+    int idx = 0;
+    int size = coll.size();
+    for (Object raw : coll) {
+      boolean last = (idx == size - 1);
+      String connector = last ? "\u2514\u2500 " : "\u251C\u2500 ";
+      String childIndent = indent + (last ? "   " : "\u2502  ");
+      Object item = resolveForDisplay(raw);
+      while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+        item = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+        lines.add(indent + connector + "[" + idx + "]");
+        formatTree(lines, nested, childIndent);
+      } else {
+        lines.add(indent + connector + "[" + idx + "]: " + item);
+      }
+      idx++;
+    }
+  }
+}
