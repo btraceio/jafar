@@ -1,0 +1,1217 @@
+package io.jafar.shell.tui;
+
+import io.jafar.parser.api.ArrayType;
+import io.jafar.parser.api.ComplexType;
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.providers.ConstantPoolProvider;
+import io.jafar.shell.providers.MetadataProvider;
+import io.jafar.shell.tui.TuiContext.Focus;
+import io.jafar.shell.tui.TuiContext.ResultTab;
+import io.jafar.shell.tui.TuiContext.TuiParsedLine;
+import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import org.jline.reader.Candidate;
+
+/**
+ * Handles command dispatch, async execution, sorting, tab management, history, scrolling,
+ * filtering, completion, cell picker, session picker, and CSV export.
+ */
+public final class TuiCommandExecutor {
+  private static final DateTimeFormatter EXPORT_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+  private static final Set<String> SCRIPTING_KEYWORDS = Set.of("if", "elif", "else", "endif");
+
+  private final TuiContext ctx;
+  private final ExecutorService commandExecutor;
+
+  // Set after construction to break circular dependency (dispatcher → IO → executor)
+  private CommandDispatcher dispatcher;
+  private SessionManager sessions;
+  private ShellCompleter completer;
+  private TuiBrowserController browser;
+  private TuiDetailBuilder detailBuilder;
+
+  TuiCommandExecutor(TuiContext ctx, ExecutorService commandExecutor) {
+    this.ctx = ctx;
+    this.commandExecutor = commandExecutor;
+  }
+
+  void setDispatcher(CommandDispatcher dispatcher) {
+    this.dispatcher = dispatcher;
+  }
+
+  void setSessions(SessionManager sessions) {
+    this.sessions = sessions;
+  }
+
+  void setCompleter(ShellCompleter completer) {
+    this.completer = completer;
+  }
+
+  void setBrowser(TuiBrowserController browser) {
+    this.browser = browser;
+  }
+
+  void setDetailBuilder(TuiDetailBuilder detailBuilder) {
+    this.detailBuilder = detailBuilder;
+  }
+
+  // ---- output capture ----
+
+  void addOutputLine(String s) {
+    String stripped = TuiContext.stripAnsi(s);
+    for (String line : stripped.split("\n", -1)) {
+      String indented = "  " + line;
+      if (ctx.asyncOutputBuffer != null) {
+        ctx.asyncOutputBuffer.add(indented);
+        ctx.asyncMaxLineWidth = Math.max(ctx.asyncMaxLineWidth, indented.length());
+      } else {
+        ResultTab tab = ctx.activeTab();
+        tab.lines.add(indented);
+        tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+      }
+    }
+  }
+
+  // ---- command execution ----
+
+  void submitCommand() {
+    String command = ctx.inputState.text().trim();
+    ctx.inputState.clear();
+    ctx.historyIndex = -1;
+
+    if (command.isEmpty()) return;
+
+    if (ctx.browserMode) {
+      ctx.browserMode = false;
+      ctx.eventBrowserMode = false;
+      ctx.metadataBrowserMode = false;
+      ctx.sidebarFocused = false;
+      ctx.sidebarSearchQuery = "";
+      ctx.sidebarFilteredIndices = null;
+      ctx.metadataBrowserLineRefs = null;
+      ctx.metadataByName = null;
+    }
+
+    if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
+      ctx.running = false;
+      return;
+    }
+
+    if ("clear".equalsIgnoreCase(command)) {
+      ResultTab tab = ctx.activeTab();
+      tab.lines.clear();
+      tab.scrollOffset = 0;
+      tab.hScrollOffset = 0;
+      tab.maxLineWidth = 0;
+      tab.searchQuery = "";
+      tab.detailSearchQuery = "";
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.metadataClassCache = null;
+      tab.sortColumn = -1;
+      tab.sortAscending = true;
+      tab.cpAllEntries = null;
+      tab.cpColumnHeaders = null;
+      tab.cpColumnWidths = null;
+      tab.cpRenderedCount = 0;
+      ctx.detailCursorLine = -1;
+      ctx.detailLineTypeRefs = null;
+      detailBuilder.buildDetailTabs(tab);
+      return;
+    }
+
+    // pin [name]
+    if (command.equalsIgnoreCase("pin") || command.toLowerCase().startsWith("pin ")) {
+      ResultTab tab = ctx.activeTab();
+      if (!tab.pinned) {
+        String name = command.length() > 4 ? command.substring(4).trim() : "";
+        if (!name.isEmpty()) {
+          tab.name = name;
+          tab.marqueeTick0 = ctx.renderTick;
+        }
+        tab.pinned = true;
+      }
+      return;
+    }
+
+    // closetab [name]
+    if (command.equalsIgnoreCase("closetab") || command.toLowerCase().startsWith("closetab ")) {
+      String name = command.length() > 9 ? command.substring(9).trim() : "";
+      int targetIndex = -1;
+      if (name.isEmpty()) {
+        if (ctx.activeTab().pinned) {
+          targetIndex = ctx.activeTabIndex;
+        }
+      } else {
+        for (int i = 0; i < ctx.tabs.size(); i++) {
+          if (name.equalsIgnoreCase(ctx.tabs.get(i).name)) {
+            targetIndex = i;
+            break;
+          }
+        }
+      }
+      if (targetIndex >= 0 && ctx.tabs.size() > 1) {
+        ctx.tabs.remove(targetIndex);
+        if (ctx.activeTabIndex >= ctx.tabs.size()) {
+          ctx.activeTabIndex = ctx.tabs.size() - 1;
+        } else if (ctx.activeTabIndex > targetIndex) {
+          ctx.activeTabIndex--;
+        }
+      }
+      return;
+    }
+
+    // tabs
+    if ("tabs".equalsIgnoreCase(command)) {
+      ResultTab tab = ctx.activeTab();
+      for (int i = 0; i < ctx.tabs.size(); i++) {
+        ResultTab t = ctx.tabs.get(i);
+        String marker = (i == ctx.activeTabIndex) ? " * " : "   ";
+        String pinLabel = t.pinned ? " [pinned]" : "";
+        tab.lines.add(marker + t.name + pinLabel + " (" + t.lines.size() + " lines)");
+      }
+      return;
+    }
+
+    ctx.commandHistory.add(command);
+    ctx.lastCommand = command;
+
+    int currentIdx = findUnpinnedTab();
+    if (currentIdx < 0) {
+      ctx.tabs.add(new ResultTab(command));
+      currentIdx = ctx.tabs.size() - 1;
+    }
+    ctx.activeTabIndex = currentIdx;
+    ResultTab activeTab = ctx.activeTab();
+    activeTab.name = command;
+    activeTab.marqueeTick0 = ctx.renderTick;
+    activeTab.lines.clear();
+    activeTab.scrollOffset = 0;
+    activeTab.hScrollOffset = 0;
+    activeTab.maxLineWidth = 0;
+    activeTab.searchQuery = "";
+    activeTab.detailSearchQuery = "";
+    activeTab.filteredIndices = null;
+    activeTab.filteredMaxLineWidth = 0;
+    activeTab.tableData = null;
+    activeTab.tableHeaders = null;
+    activeTab.selectedRow = -1;
+    activeTab.metadataClassCache = null;
+    activeTab.sortColumn = -1;
+    activeTab.sortAscending = true;
+    activeTab.cpAllEntries = null;
+    activeTab.cpColumnHeaders = null;
+    activeTab.cpColumnWidths = null;
+    activeTab.cpRenderedCount = 0;
+
+    // Metadata browser mode
+    if (TuiBrowserController.isMetadataSummaryCommand(command) && MetadataProvider.isSupported()) {
+      Path metaRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (metaRec != null) {
+        try {
+          var sess = sessions.current().map(ref -> ref.session).orElse(null);
+          if (sess != null) {
+            var allTypeNames = sess.getNonPrimitiveMetadataTypes();
+            var eventNames = sess.getAvailableTypes();
+            List<String> sortedTypes = new ArrayList<>(allTypeNames);
+            Collections.sort(sortedTypes);
+
+            Map<String, Long> typeIds = sess.getMetadataTypeIds();
+            List<Map<String, Object>> typeRows = new ArrayList<>();
+            for (String t : sortedTypes) {
+              Long typeId = typeIds.get(t);
+              Map<String, Object> row = new LinkedHashMap<>();
+              row.put("id", typeId != null ? typeId : "?");
+              row.put("name", t);
+              row.put("event", eventNames.contains(t) ? "yes" : "");
+              typeRows.add(row);
+            }
+
+            Map<String, Map<String, Object>> allMeta = new HashMap<>();
+            List<Map<String, Object>> allMetaList = MetadataProvider.loadAllClasses(metaRec);
+            if (allMetaList != null) {
+              for (Map<String, Object> m : allMetaList) {
+                Object n = m.get("name");
+                if (n != null) allMeta.put(n.toString(), m);
+              }
+            }
+
+            if (!typeRows.isEmpty()) {
+              browser.enterMetadataBrowserMode(activeTab, typeRows, allMeta);
+              return;
+            }
+          }
+        } catch (Exception ignore) {
+          // Fall through to normal dispatch
+        }
+      }
+    }
+
+    // CP browser mode
+    if (TuiBrowserController.isCpSummaryCommand(command) && ConstantPoolProvider.isSupported()) {
+      Path cpRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (cpRec != null) {
+        try {
+          List<Map<String, Object>> cpSummary = ConstantPoolProvider.loadSummary(cpRec);
+          if (cpSummary != null && !cpSummary.isEmpty()) {
+            activeTab.tableData = cpSummary;
+            browser.enterCpBrowserMode(activeTab);
+            return;
+          }
+        } catch (Exception ignore) {
+        }
+      }
+    }
+
+    // Event browser mode — async scan
+    if (TuiBrowserController.isEventsSummaryCommand(command)) {
+      Path evtRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+      if (evtRec != null) {
+        ctx.eventBrowserPending = true;
+        ctx.asyncLinesBeforeDispatch = 0;
+        ctx.asyncOutputBuffer = new ArrayList<>();
+        ctx.asyncMaxLineWidth = 0;
+        ctx.commandRunning = true;
+        ctx.commandStartTick = ctx.renderTick;
+        ctx.focus = Focus.RESULTS;
+
+        ctx.commandFuture =
+            commandExecutor.submit(
+                () -> {
+                  try {
+                    Map<String, long[]> counts = new HashMap<>();
+                    try (var p = ParsingContext.create().newUntypedParser(evtRec)) {
+                      p.handle(
+                          (type, value, ctl) ->
+                              counts.computeIfAbsent(type.getName(), k -> new long[1])[0]++);
+                      p.run();
+                    }
+                    List<Map<String, Object>> summary = new ArrayList<>();
+                    counts.forEach(
+                        (name, c) -> {
+                          Map<String, Object> row = new LinkedHashMap<>();
+                          row.put("name", name);
+                          row.put("count", c[0]);
+                          summary.add(row);
+                        });
+                    summary.sort(Comparator.comparing(r -> String.valueOf(r.get("name"))));
+                    ctx.asyncTableData = summary;
+                  } catch (Exception e) {
+                    ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
+                    ctx.eventBrowserPending = false;
+                  } finally {
+                    ctx.commandRunning = false;
+                  }
+                });
+        return;
+      }
+    }
+
+    // Echo command
+    activeTab.lines.add("> " + command);
+
+    ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
+    ctx.asyncOutputBuffer = new ArrayList<>();
+    ctx.asyncMaxLineWidth = 0;
+    ctx.commandRunning = true;
+    ctx.commandStartTick = ctx.renderTick;
+    ctx.focus = Focus.RESULTS;
+
+    ctx.commandFuture =
+        commandExecutor.submit(
+            () -> {
+              TuiTableRenderer.clearLastData();
+              PrintStream origErr = System.err;
+              ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+              System.setErr(new PrintStream(errBuf));
+              try {
+                boolean handled = dispatcher.dispatch(command);
+                if (!handled) {
+                  ctx.asyncOutputBuffer.add(
+                      "  Unknown command. Type 'help' for available commands.");
+                }
+              } catch (Exception e) {
+                ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
+              } finally {
+                System.setErr(origErr);
+                String errOutput = errBuf.toString().trim();
+                if (!errOutput.isEmpty()) {
+                  for (String errLine : errOutput.split("\n")) {
+                    addOutputLine("  " + errLine);
+                  }
+                }
+                ctx.asyncTableData = TuiTableRenderer.getLastTableData();
+                ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
+                ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
+                TuiTableRenderer.clearLastData();
+                ctx.commandRunning = false;
+              }
+            });
+  }
+
+  void finishAsyncCommand() {
+    if (ctx.eventBrowserPending) {
+      ctx.eventBrowserPending = false;
+      ResultTab activeTab = ctx.activeTab();
+      List<Map<String, Object>> summary = ctx.asyncTableData;
+      ctx.asyncTableData = null;
+      ctx.asyncTableHeaders = null;
+      ctx.asyncMetadataClasses = null;
+      ctx.asyncOutputBuffer = null;
+      ctx.asyncMaxLineWidth = 0;
+      ctx.commandFuture = null;
+
+      if (summary != null && !summary.isEmpty()) {
+        activeTab.tableData = summary;
+        browser.enterEventBrowserMode(activeTab);
+      } else {
+        activeTab.lines.clear();
+        activeTab.lines.add("  No events found.");
+        activeTab.maxLineWidth = activeTab.lines.get(0).length();
+      }
+      return;
+    }
+
+    ResultTab activeTab = ctx.activeTab();
+    for (String line : ctx.asyncOutputBuffer) {
+      activeTab.lines.add(line);
+    }
+    activeTab.maxLineWidth = Math.max(activeTab.maxLineWidth, ctx.asyncMaxLineWidth);
+    ctx.asyncOutputBuffer = null;
+    ctx.asyncMaxLineWidth = 0;
+    ctx.commandFuture = null;
+
+    activeTab.tableData = ctx.asyncTableData;
+    activeTab.tableHeaders = ctx.asyncTableHeaders;
+    activeTab.metadataClassCache = ctx.asyncMetadataClasses;
+    ctx.asyncTableData = null;
+    ctx.asyncTableHeaders = null;
+    ctx.asyncMetadataClasses = null;
+
+    activeTab.sortColumn = -1;
+    activeTab.sortAscending = true;
+    if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
+      activeTab.selectedRow = 0;
+      activeTab.dataStartLine = ctx.asyncLinesBeforeDispatch + 1;
+      detailBuilder.buildDetailTabs(activeTab);
+    } else {
+      activeTab.selectedRow = -1;
+      activeTab.dataStartLine = -1;
+      detailBuilder.buildDetailTabs(activeTab);
+    }
+
+    if (activeTab.dataStartLine >= 0) {
+      activeTab.scrollOffset = 0;
+    } else {
+      activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - ctx.resultsAreaHeight);
+    }
+  }
+
+  // ---- sorting ----
+
+  void reverseSortIfActive() {
+    ResultTab rt = ctx.activeTab();
+    if (rt.sortColumn >= 0 && rt.tableData != null) {
+      rt.sortAscending = !rt.sortAscending;
+      applySortAndRerender(rt);
+    }
+  }
+
+  void applySortAndRerender(ResultTab tab) {
+    if (tab.tableData == null || tab.tableHeaders == null || tab.sortColumn < 0) return;
+
+    if (tab.cpAllEntries != null) {
+      String sortKey = tab.tableHeaders.get(tab.sortColumn);
+      boolean asc = tab.sortAscending;
+      tab.cpAllEntries.sort(
+          (a, b) -> {
+            int result =
+                compareNatural(
+                    TuiTableRenderer.toCell(a.get(sortKey)),
+                    TuiTableRenderer.toCell(b.get(sortKey)));
+            return asc ? result : -result;
+          });
+      tab.lines.clear();
+      tab.maxLineWidth = 0;
+      StringBuilder sb = new StringBuilder("  ");
+      for (int c = 0; c < tab.cpColumnHeaders.size(); c++) {
+        if (c > 0) sb.append("  ");
+        sb.append(String.format("%-" + tab.cpColumnWidths[c] + "s", tab.cpColumnHeaders.get(c)));
+      }
+      String headerLine = sb.toString();
+      tab.lines.add(headerLine);
+      tab.maxLineWidth = Math.max(tab.maxLineWidth, headerLine.length());
+      int pageSize = Math.min(tab.cpAllEntries.size(), Math.max(ctx.resultsAreaHeight + 5, 20));
+      browser.renderCpPage(tab, 0, pageSize);
+      tab.tableData = new ArrayList<>(tab.cpAllEntries.subList(0, pageSize));
+      tab.cpRenderedCount = pageSize;
+      tab.dataStartLine = 1;
+      tab.selectedRow = Math.min(tab.selectedRow, Math.max(0, pageSize - 1));
+      tab.scrollOffset = 0;
+      tab.filteredIndices = null;
+      tab.searchQuery = "";
+      tab.detailSearchQuery = "";
+      detailBuilder.buildDetailTabs(tab);
+      return;
+    }
+
+    String sortKey = tab.tableHeaders.get(tab.sortColumn);
+    boolean asc = tab.sortAscending;
+
+    int size = tab.tableData.size();
+    Integer[] indices = new Integer[size];
+    for (int i = 0; i < size; i++) indices[i] = i;
+
+    Comparator<Integer> cmp =
+        (a, b) -> {
+          String va = TuiTableRenderer.toCell(tab.tableData.get(a).get(sortKey));
+          String vb = TuiTableRenderer.toCell(tab.tableData.get(b).get(sortKey));
+          int result = compareNatural(va, vb);
+          return asc ? result : -result;
+        };
+    Arrays.sort(indices, cmp);
+
+    List<Map<String, Object>> sortedData = new ArrayList<>(size);
+    List<Map<String, Object>> sortedMeta =
+        tab.metadataClassCache != null ? new ArrayList<>(size) : null;
+    for (int idx : indices) {
+      sortedData.add(tab.tableData.get(idx));
+      if (sortedMeta != null && idx < tab.metadataClassCache.size()) {
+        sortedMeta.add(tab.metadataClassCache.get(idx));
+      }
+    }
+    tab.tableData = sortedData;
+    if (sortedMeta != null) tab.metadataClassCache = sortedMeta;
+
+    tab.lines.clear();
+    tab.maxLineWidth = 0;
+    tab.lines.add("> " + ctx.lastCommand);
+    TuiTableRenderer.clearLastData();
+    TuiTableRenderer.render(
+        sortedData,
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            String stripped = TuiContext.stripAnsi(s);
+            for (String line : stripped.split("\n", -1)) {
+              String indented = "  " + line;
+              tab.lines.add(indented);
+              tab.maxLineWidth = Math.max(tab.maxLineWidth, indented.length());
+            }
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            println(String.format(fmt, args));
+          }
+
+          @Override
+          public void error(String s) {
+            println("ERROR: " + s);
+          }
+        });
+    TuiTableRenderer.clearLastData();
+
+    tab.dataStartLine = 2;
+    tab.selectedRow = Math.min(tab.selectedRow, Math.max(0, tab.tableData.size() - 1));
+    tab.scrollOffset = 0;
+    tab.filteredIndices = null;
+    tab.searchQuery = "";
+    tab.detailSearchQuery = "";
+    detailBuilder.buildDetailTabs(tab);
+  }
+
+  static int compareNatural(String a, String b) {
+    try {
+      double da = Double.parseDouble(a);
+      double db = Double.parseDouble(b);
+      return Double.compare(da, db);
+    } catch (NumberFormatException ignore) {
+    }
+    return a.compareToIgnoreCase(b);
+  }
+
+  // ---- tab management ----
+
+  void switchTab(int newIndex) {
+    if (newIndex == ctx.activeTabIndex) return;
+    int oldIndex = ctx.activeTabIndex;
+    if (ctx.browserMode) {
+      ctx.tabs.get(oldIndex).sidebarIndex = ctx.sidebarSelectedIndex;
+    }
+    ctx.activeTabIndex = newIndex;
+    ResultTab newTab = ctx.tabs.get(newIndex);
+    if (newTab.sidebarIndex >= 0 && newTab.browserTypes != null) {
+      ctx.browserMode = true;
+      ctx.eventBrowserMode = newTab.isEventBrowserTab;
+      ctx.metadataBrowserMode = newTab.isMetadataBrowserTab;
+      ctx.sidebarTypes = newTab.browserTypes;
+      ctx.sidebarSelectedIndex = newTab.sidebarIndex;
+      ctx.sidebarFocused = false;
+    } else {
+      if (newTab.sidebarIndex >= 0) newTab.sidebarIndex = -1;
+      ctx.browserMode = false;
+      ctx.eventBrowserMode = false;
+      ctx.metadataBrowserMode = false;
+      ctx.sidebarFocused = false;
+    }
+    detailBuilder.buildDetailTabs(newTab);
+  }
+
+  void togglePin() {
+    ResultTab tab = ctx.activeTab();
+    if (tab.pinned) {
+      int existingUnpinned = findUnpinnedTab();
+      if (existingUnpinned >= 0) {
+        ctx.tabs.remove(existingUnpinned);
+        if (ctx.activeTabIndex > existingUnpinned) {
+          ctx.activeTabIndex--;
+        } else if (ctx.activeTabIndex >= ctx.tabs.size()) {
+          ctx.activeTabIndex = ctx.tabs.size() - 1;
+        }
+      }
+      tab.pinned = false;
+      tab.name = "jfr>";
+      tab.marqueeTick0 = ctx.renderTick;
+    } else {
+      tab.pinned = true;
+    }
+  }
+
+  int findUnpinnedTab() {
+    for (int i = ctx.tabs.size() - 1; i >= 0; i--) {
+      if (!ctx.tabs.get(i).pinned) return i;
+    }
+    return -1;
+  }
+
+  // ---- history ----
+
+  void loadHistory() {
+    if (!Files.exists(TuiContext.HISTORY_PATH)) return;
+    try {
+      List<String> lines = Files.readAllLines(TuiContext.HISTORY_PATH);
+      int start = Math.max(0, lines.size() - TuiContext.MAX_HISTORY);
+      for (int i = start; i < lines.size(); i++) {
+        String line = lines.get(i).trim();
+        if (line.isEmpty()) continue;
+        int colon = line.indexOf(':');
+        if (colon > 0 && line.substring(0, colon).chars().allMatch(Character::isDigit)) {
+          line = line.substring(colon + 1);
+        }
+        if (!line.isEmpty()) {
+          ctx.commandHistory.add(line);
+        }
+      }
+    } catch (IOException ignore) {
+    }
+  }
+
+  public void saveHistory() {
+    try {
+      Files.createDirectories(TuiContext.HISTORY_PATH.getParent());
+      List<String> toSave = ctx.commandHistory;
+      if (toSave.size() > TuiContext.MAX_HISTORY) {
+        toSave = toSave.subList(toSave.size() - TuiContext.MAX_HISTORY, toSave.size());
+      }
+      long ts = System.currentTimeMillis();
+      List<String> formatted = new ArrayList<>(toSave.size());
+      for (String cmd : toSave) {
+        formatted.add(ts++ + ":" + cmd);
+      }
+      Files.write(TuiContext.HISTORY_PATH, formatted);
+    } catch (IOException ignore) {
+    }
+  }
+
+  void navigateHistory(int direction) {
+    if (ctx.commandHistory.isEmpty()) return;
+
+    if (direction < 0) {
+      if (ctx.historyIndex < 0) {
+        ctx.historyIndex = ctx.commandHistory.size() - 1;
+      } else if (ctx.historyIndex > 0) {
+        ctx.historyIndex--;
+      }
+    } else {
+      if (ctx.historyIndex >= 0) {
+        ctx.historyIndex++;
+        if (ctx.historyIndex >= ctx.commandHistory.size()) {
+          ctx.historyIndex = -1;
+          ctx.inputState.clear();
+          return;
+        }
+      }
+    }
+
+    if (ctx.historyIndex >= 0 && ctx.historyIndex < ctx.commandHistory.size()) {
+      ctx.inputState.setText(ctx.commandHistory.get(ctx.historyIndex));
+    }
+  }
+
+  int findHistoryMatch(String query, int fromIndex) {
+    if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
+    String lower = query.toLowerCase();
+    for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
+      if (ctx.commandHistory.get(i).toLowerCase().contains(lower)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  int findDistinctHistoryMatch(String query, int fromIndex, String skipValue) {
+    if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
+    String lower = query.toLowerCase();
+    for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
+      String entry = ctx.commandHistory.get(i);
+      if (entry.toLowerCase().contains(lower) && !entry.equals(skipValue)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  // ---- scrolling ----
+
+  void scrollResults(int delta) {
+    ResultTab tab = ctx.activeTab();
+    tab.scrollOffset = Math.max(0, tab.scrollOffset + delta);
+    browser.ensureCpEntriesLoaded(tab, tab.scrollOffset + ctx.resultsAreaHeight);
+  }
+
+  void scrollHorizontal(int delta) {
+    ResultTab tab = ctx.activeTab();
+    tab.hScrollOffset = Math.max(0, tab.hScrollOffset + delta);
+  }
+
+  void moveSelectedRow(ResultTab tab, int delta) {
+    int newRow;
+    if (tab.filteredIndices != null && tab.dataStartLine >= 0) {
+      newRow = findFilteredRow(tab, tab.selectedRow, delta);
+    } else {
+      browser.ensureCpEntriesLoaded(tab, tab.selectedRow + delta);
+      newRow = Math.max(0, Math.min(tab.tableData.size() - 1, tab.selectedRow + delta));
+    }
+    if (newRow == tab.selectedRow) return;
+    tab.selectedRow = newRow;
+    detailBuilder.buildDetailTabs(tab);
+
+    if (tab.filteredIndices != null) {
+      int lineIdx = tab.dataStartLine + newRow;
+      int filteredPos = tab.filteredIndices.indexOf(lineIdx);
+      if (filteredPos >= 0) {
+        if (filteredPos < tab.scrollOffset) {
+          tab.scrollOffset = filteredPos;
+        } else if (filteredPos >= tab.scrollOffset + ctx.resultsAreaHeight) {
+          tab.scrollOffset = filteredPos - ctx.resultsAreaHeight + 1;
+        }
+      }
+    } else {
+      if (newRow < tab.scrollOffset) {
+        tab.scrollOffset = newRow;
+      } else if (newRow >= tab.scrollOffset + ctx.resultsAreaHeight) {
+        tab.scrollOffset = newRow - ctx.resultsAreaHeight + 1;
+      }
+    }
+  }
+
+  static int findFilteredRow(ResultTab tab, int currentRow, int delta) {
+    int direction = delta > 0 ? 1 : -1;
+    int candidate = currentRow + direction;
+    int maxRow = tab.tableData.size() - 1;
+    while (candidate >= 0 && candidate <= maxRow) {
+      int lineIdx = tab.dataStartLine + candidate;
+      if (tab.filteredIndices.contains(lineIdx)) {
+        return candidate;
+      }
+      candidate += direction;
+    }
+    return currentRow;
+  }
+
+  // ---- search / filter ----
+
+  void applySearchFilter(ResultTab tab, String query) {
+    tab.searchQuery = query;
+    if (query.isEmpty()) {
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.scrollOffset = 0;
+      return;
+    }
+    String lower = query.toLowerCase();
+    List<Integer> indices = new ArrayList<>();
+    int maxWidth = 0;
+    for (int i = 0; i < tab.lines.size(); i++) {
+      String line = tab.lines.get(i);
+      if (line.toLowerCase().contains(lower)) {
+        indices.add(i);
+        maxWidth = Math.max(maxWidth, line.length());
+      }
+    }
+    tab.filteredIndices = indices;
+    tab.filteredMaxLineWidth = maxWidth;
+    tab.scrollOffset = 0;
+  }
+
+  void applyLiveSearchFilter(ResultTab tab, String query) {
+    if (ctx.searchOriginFocus == Focus.DETAIL) {
+      tab.detailSearchQuery = query;
+    } else if (ctx.searchOriginSidebar) {
+      applySidebarFilter(query);
+    } else {
+      applySearchFilter(tab, query);
+    }
+  }
+
+  void applySidebarFilter(String query) {
+    ctx.sidebarSearchQuery = query;
+    if (query.isEmpty() || ctx.sidebarTypes == null) {
+      ctx.sidebarFilteredIndices = null;
+      return;
+    }
+    String lower = query.toLowerCase();
+    List<Integer> indices = new ArrayList<>();
+    for (int i = 0; i < ctx.sidebarTypes.size(); i++) {
+      String name = String.valueOf(ctx.sidebarTypes.get(i).getOrDefault("name", ""));
+      if (name.toLowerCase().contains(lower)) {
+        indices.add(i);
+      }
+    }
+    ctx.sidebarFilteredIndices = indices;
+    ctx.sidebarScrollOffset = 0;
+  }
+
+  void enterSearchMode() {
+    ctx.searchOriginFocus = (ctx.focus == Focus.DETAIL) ? Focus.DETAIL : Focus.RESULTS;
+    ctx.searchOriginSidebar = (ctx.browserMode && ctx.sidebarFocused && ctx.focus == Focus.RESULTS);
+    ctx.focus = Focus.SEARCH;
+    ResultTab tab = ctx.activeTab();
+    if (ctx.searchOriginFocus == Focus.DETAIL) {
+      ctx.searchInputState.setText(tab.detailSearchQuery);
+    } else if (ctx.searchOriginSidebar) {
+      ctx.searchInputState.setText(ctx.sidebarSearchQuery);
+    } else {
+      ctx.searchInputState.setText(tab.searchQuery);
+    }
+  }
+
+  void cancelSearch() {
+    ResultTab tab = ctx.activeTab();
+    if (ctx.searchOriginFocus == Focus.DETAIL) {
+      tab.detailSearchQuery = "";
+    } else if (ctx.searchOriginSidebar) {
+      ctx.sidebarSearchQuery = "";
+      ctx.sidebarFilteredIndices = null;
+    } else {
+      tab.searchQuery = "";
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.scrollOffset = 0;
+    }
+    ctx.focus = ctx.searchOriginFocus;
+  }
+
+  // ---- completion popup ----
+
+  void openCompletionPopup() {
+    if (ctx.completionPopupVisible) {
+      acceptCompletion();
+      return;
+    }
+
+    String text = ctx.inputState.text();
+    int cursor = ctx.inputState.cursorPosition();
+
+    TuiParsedLine parsed = new TuiParsedLine(text, cursor);
+    List<Candidate> candidates = new ArrayList<>();
+    try {
+      completer.complete(null, parsed, candidates);
+    } catch (Exception e) {
+      return;
+    }
+
+    if (candidates.isEmpty()) return;
+
+    if (text.isBlank()) {
+      candidates.removeIf(
+          c -> c.value().contains("(") || c.value().contains("/") || isScriptingKeyword(c.value()));
+      if (candidates.isEmpty()) return;
+    }
+
+    candidates.sort(Comparator.comparing(Candidate::value, String.CASE_INSENSITIVE_ORDER));
+
+    ctx.completionWordStart = cursor;
+    while (ctx.completionWordStart > 0
+        && !Character.isWhitespace(text.charAt(ctx.completionWordStart - 1))) {
+      ctx.completionWordStart--;
+    }
+    ctx.completionOriginalWord = text.substring(ctx.completionWordStart, cursor);
+
+    if (candidates.size() == 1) {
+      applyCompletion(candidates.get(0).value());
+      return;
+    }
+
+    String prefix = commonPrefix(candidates);
+    if (prefix.length() > ctx.completionOriginalWord.length()) {
+      applyCompletion(prefix);
+      return;
+    }
+
+    ctx.completionAllCandidates = candidates;
+    ctx.completionFiltered = new ArrayList<>(candidates);
+    ctx.completionSelectedIndex = 0;
+    ctx.completionScrollOffset = 0;
+    ctx.completionPopupVisible = true;
+    ctx.completionOriginalInput = text;
+  }
+
+  void closeCompletionPopup(boolean restore) {
+    ctx.completionPopupVisible = false;
+    if (restore && ctx.completionOriginalInput != null) {
+      ctx.inputState.setText(ctx.completionOriginalInput);
+    }
+    ctx.completionAllCandidates = null;
+    ctx.completionFiltered = null;
+    ctx.completionOriginalInput = null;
+    ctx.completionOriginalWord = null;
+  }
+
+  void acceptCompletion() {
+    if (ctx.completionFiltered != null
+        && ctx.completionSelectedIndex >= 0
+        && ctx.completionSelectedIndex < ctx.completionFiltered.size()) {
+      applyCompletion(ctx.completionFiltered.get(ctx.completionSelectedIndex).value());
+    }
+    closeCompletionPopup(false);
+  }
+
+  void refilterCompletions() {
+    String text = ctx.inputState.text();
+    int cursor = ctx.inputState.cursorPosition();
+    int wordEnd = Math.min(cursor, text.length());
+    if (ctx.completionWordStart > wordEnd) {
+      closeCompletionPopup(false);
+      return;
+    }
+    String currentWord = text.substring(ctx.completionWordStart, wordEnd);
+    if (currentWord.isEmpty()) {
+      closeCompletionPopup(false);
+      return;
+    }
+    String lower = currentWord.toLowerCase();
+    List<Candidate> filtered = new ArrayList<>();
+    for (Candidate c : ctx.completionAllCandidates) {
+      if (c.value().toLowerCase().startsWith(lower)) {
+        filtered.add(c);
+      }
+    }
+    if (filtered.isEmpty()) {
+      closeCompletionPopup(false);
+      return;
+    }
+    ctx.completionFiltered = filtered;
+    ctx.completionSelectedIndex = Math.min(ctx.completionSelectedIndex, filtered.size() - 1);
+    int maxVisible = TuiContext.COMPLETION_MAX_HEIGHT;
+    ctx.completionScrollOffset =
+        Math.min(ctx.completionScrollOffset, Math.max(0, filtered.size() - maxVisible));
+  }
+
+  void applyCompletion(String value) {
+    String text = ctx.inputState.text();
+    int cursor = ctx.inputState.cursorPosition();
+    String before = text.substring(0, ctx.completionWordStart);
+    String after = cursor <= text.length() ? text.substring(cursor) : "";
+    String newText = before + value + after;
+    ctx.inputState.clear();
+    ctx.inputState.insert(newText);
+    int target = ctx.completionWordStart + value.length();
+    ctx.inputState.moveCursorToEnd();
+    int overshoot = ctx.inputState.cursorPosition() - target;
+    for (int i = 0; i < overshoot; i++) {
+      ctx.inputState.moveCursorLeft();
+    }
+  }
+
+  static String commonPrefix(List<Candidate> candidates) {
+    String first = candidates.get(0).value();
+    int len = first.length();
+    for (int i = 1; i < candidates.size(); i++) {
+      String other = candidates.get(i).value();
+      len = Math.min(len, other.length());
+      for (int j = 0; j < len; j++) {
+        if (first.charAt(j) != other.charAt(j)) {
+          len = j;
+          break;
+        }
+      }
+    }
+    return first.substring(0, len);
+  }
+
+  static boolean isScriptingKeyword(String value) {
+    return SCRIPTING_KEYWORDS.contains(value);
+  }
+
+  // ---- cell picker ----
+
+  boolean openCellPicker() {
+    if (ctx.completionPopupVisible || ctx.cellPickerVisible) return false;
+    ResultTab tab = ctx.activeTab();
+    ctx.cellPickerEntries = new ArrayList<>();
+
+    if (ctx.browserMode) {
+      boolean hasTypes =
+          ctx.sidebarTypes != null
+              && ctx.sidebarSelectedIndex >= 0
+              && ctx.sidebarSelectedIndex < ctx.sidebarTypes.size();
+      boolean hasEntries =
+          tab.tableData != null && tab.selectedRow >= 0 && tab.selectedRow < tab.tableData.size();
+      if (!hasTypes && !hasEntries) return false;
+
+      if (hasTypes) {
+        Map<String, Object> typeRow = ctx.sidebarTypes.get(ctx.sidebarSelectedIndex);
+        ctx.cellPickerEntries.add(new String[] {"\u2500 type \u2500", ""});
+        for (String key : typeRow.keySet()) {
+          if (TuiDetailBuilder.isComplexValue(typeRow.get(key))) continue;
+          ctx.cellPickerEntries.add(new String[] {key, TuiTableRenderer.toCell(typeRow.get(key))});
+        }
+      }
+      if (hasEntries) {
+        Map<String, Object> entryRow = tab.tableData.get(tab.selectedRow);
+        List<String> headers =
+            tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(entryRow.keySet());
+        ctx.cellPickerEntries.add(new String[] {"\u2500 entry \u2500", ""});
+        for (String header : headers) {
+          if (TuiDetailBuilder.isComplexValue(entryRow.get(header))) continue;
+          ctx.cellPickerEntries.add(
+              new String[] {header, TuiTableRenderer.toCell(entryRow.get(header))});
+        }
+      }
+    } else if (tab.tableData != null
+        && tab.selectedRow >= 0
+        && tab.selectedRow < tab.tableData.size()) {
+      Map<String, Object> sourceRow = tab.tableData.get(tab.selectedRow);
+      List<String> headers =
+          tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(sourceRow.keySet());
+      if (headers.isEmpty()) return false;
+      for (String header : headers) {
+        if (TuiDetailBuilder.isComplexValue(sourceRow.get(header))) continue;
+        ctx.cellPickerEntries.add(
+            new String[] {header, TuiTableRenderer.toCell(sourceRow.get(header))});
+      }
+    }
+
+    // Remove trailing separators
+    while (!ctx.cellPickerEntries.isEmpty()) {
+      String[] last = ctx.cellPickerEntries.get(ctx.cellPickerEntries.size() - 1);
+      if (last[1].isEmpty() && last[0].startsWith("\u2500")) {
+        ctx.cellPickerEntries.remove(ctx.cellPickerEntries.size() - 1);
+      } else {
+        break;
+      }
+    }
+    if (ctx.cellPickerEntries.isEmpty()) return false;
+    ctx.cellPickerSelectedIndex = 0;
+    if (ctx.cellPickerEntries.get(0)[1].isEmpty()
+        && ctx.cellPickerEntries.get(0)[0].startsWith("\u2500")) {
+      ctx.cellPickerSelectedIndex = Math.min(1, ctx.cellPickerEntries.size() - 1);
+    }
+    ctx.cellPickerScrollOffset = 0;
+    ctx.cellPickerVisible = true;
+    return true;
+  }
+
+  boolean isCellPickerSeparator(int index) {
+    return ctx.isCellPickerSeparator(index);
+  }
+
+  void cellPickerMoveTo(int target, int direction) {
+    int size = ctx.cellPickerEntries.size();
+    while (target >= 0 && target < size && isCellPickerSeparator(target)) {
+      target += direction;
+    }
+    if (target < 0 || target >= size) return;
+    ctx.cellPickerSelectedIndex = target;
+    if (ctx.cellPickerSelectedIndex < ctx.cellPickerScrollOffset) {
+      ctx.cellPickerScrollOffset = ctx.cellPickerSelectedIndex;
+    } else if (ctx.cellPickerSelectedIndex
+        >= ctx.cellPickerScrollOffset + TuiContext.COMPLETION_MAX_HEIGHT) {
+      ctx.cellPickerScrollOffset =
+          ctx.cellPickerSelectedIndex - TuiContext.COMPLETION_MAX_HEIGHT + 1;
+    }
+  }
+
+  void closeCellPicker() {
+    ctx.cellPickerVisible = false;
+    ctx.cellPickerEntries = null;
+  }
+
+  static void copyToClipboard(String text) {
+    try {
+      String[] cmd =
+          switch (TuiContext.PLATFORM) {
+            case MACOS -> new String[] {"pbcopy"};
+            case WINDOWS -> new String[] {"clip"};
+            case LINUX -> new String[] {"xclip", "-selection", "clipboard"};
+          };
+      Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+      p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
+      p.getOutputStream().close();
+      p.waitFor(2, TimeUnit.SECONDS);
+    } catch (Exception ignore) {
+    }
+  }
+
+  // ---- session picker ----
+
+  void openSessionPicker() {
+    List<SessionManager.SessionRef> all = sessions.list();
+    if (all.size() < 2) return;
+    ctx.sessionPickerEntries = all;
+    int currentId = sessions.current().map(r -> r.id).orElse(-1);
+    ctx.sessionPickerSelectedIndex = 0;
+    for (int i = 0; i < all.size(); i++) {
+      if (all.get(i).id == currentId) {
+        ctx.sessionPickerSelectedIndex = i;
+        break;
+      }
+    }
+    ctx.sessionPickerVisible = true;
+  }
+
+  void closeSessionPicker() {
+    ctx.sessionPickerVisible = false;
+    ctx.sessionPickerEntries = null;
+  }
+
+  // ---- export ----
+
+  void exportActiveTab() {
+    ResultTab tab = ctx.activeTab();
+    if (tab.tableData == null || tab.tableData.isEmpty()) {
+      ctx.showHintMessage("Nothing to export");
+      return;
+    }
+    Path exportDir = Path.of(System.getProperty("user.home"), ".jfr-shell", "exports");
+    String fileName = "export-" + LocalDateTime.now().format(EXPORT_TS) + ".csv";
+    Path defaultPath = exportDir.resolve(fileName);
+    ctx.exportPathState.clear();
+    ctx.exportPathState.insert(defaultPath.toString());
+    ctx.exportPathPristine = true;
+    ctx.exportPopupVisible = true;
+  }
+
+  void performExport(String pathStr) {
+    ResultTab tab = ctx.activeTab();
+    if (tab.tableData == null || tab.tableData.isEmpty()) {
+      ctx.showHintMessage("Nothing to export");
+      return;
+    }
+
+    List<Map<String, Object>> exportData =
+        (tab.cpAllEntries != null && !tab.cpAllEntries.isEmpty())
+            ? tab.cpAllEntries
+            : tab.tableData;
+    List<String> headers =
+        tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(exportData.get(0).keySet());
+    if (pathStr.startsWith("~/") || pathStr.equals("~")) {
+      pathStr = System.getProperty("user.home") + pathStr.substring(1);
+    }
+    Path exportPath = Path.of(pathStr);
+
+    try {
+      Path parent = exportPath.getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
+    } catch (IOException e) {
+      ctx.showHintMessage("Export failed: " + e.getMessage());
+      return;
+    }
+
+    try (BufferedWriter w = Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8)) {
+      w.write(csvLine(headers));
+      w.newLine();
+      for (Map<String, Object> row : exportData) {
+        List<String> cells = new ArrayList<>(headers.size());
+        for (String h : headers) {
+          cells.add(csvCell(row.get(h)));
+        }
+        w.write(csvLine(cells));
+        w.newLine();
+      }
+    } catch (IOException e) {
+      ctx.showHintMessage("Export failed: " + e.getMessage());
+      return;
+    }
+
+    ctx.showHintMessage("Exported " + exportData.size() + " rows to " + exportPath);
+  }
+
+  static String csvLine(List<String> values) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < values.size(); i++) {
+      if (i > 0) sb.append(',');
+      sb.append(escapeCsv(values.get(i)));
+    }
+    return sb.toString();
+  }
+
+  static String csvCell(Object value) {
+    if (value == null) return "";
+    if (value instanceof Collection<?> coll) {
+      StringBuilder sb = new StringBuilder();
+      int idx = 0;
+      for (Object item : coll) {
+        if (idx++ > 0) sb.append(" | ");
+        sb.append(item);
+      }
+      return sb.toString();
+    }
+    if (value instanceof ArrayType at) {
+      Object arr = at.getArray();
+      if (arr != null && arr.getClass().isArray()) return Arrays.deepToString(new Object[] {arr});
+      return String.valueOf(arr);
+    }
+    if (value instanceof ComplexType ct) return String.valueOf(ct.getValue());
+    if (value.getClass().isArray()) return Arrays.deepToString(new Object[] {value});
+    return String.valueOf(value);
+  }
+
+  static String escapeCsv(String s) {
+    if (s == null) return "";
+    if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
+      return '"' + s.replace("\"", "\"\"") + '"';
+    }
+    return s;
+  }
+}

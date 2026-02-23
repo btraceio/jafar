@@ -159,6 +159,15 @@ public class CommandDispatcher {
         return true;
       }
 
+      // Handle 'metadata/...' as a direct query (equivalent to 'show metadata/...')
+      if (cmd.startsWith("metadata/")) {
+        List<String> showArgs = new ArrayList<>(args.size() + 1);
+        showArgs.add(parts[0]);
+        showArgs.addAll(args);
+        cmdShow(showArgs, "show " + line.trim());
+        return true;
+      }
+
       // Handle 'constants/...' as a direct query (equivalent to 'show constants/...')
       if (cmd.startsWith("constants/")) {
         List<String> showArgs = new ArrayList<>(args.size() + 1);
@@ -1284,6 +1293,8 @@ public class CommandDispatcher {
     } else {
       for (String t : all) if (!events.contains(t)) types.add(t);
     }
+    // Guard against null type names from metadata classes with no name
+    types.removeIf(t -> t == null);
     Collections.sort(types);
     if (search != null) {
       if (regex) {
