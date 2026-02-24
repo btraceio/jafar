@@ -3046,6 +3046,25 @@ public final class JfrPathEvaluator {
     }
   }
 
+  private static void pruneChildren(ProfileNode node, long threshold) {
+    if (node.children.isEmpty()) return;
+    var it = node.children.entrySet().iterator();
+    while (it.hasNext()) {
+      ProfileNode child = it.next().getValue();
+      if (child.total < threshold) {
+        it.remove();
+      } else {
+        pruneChildren(child, threshold);
+      }
+    }
+  }
+
+  private static int countNodes(ProfileNode node) {
+    int count = 1;
+    for (ProfileNode child : node.children.values()) count += countNodes(child);
+    return count;
+  }
+
   @SuppressWarnings("unchecked")
   private List<String> extractFramesForProfile(Map<String, Object> event, String direction) {
     List<String> frames = new ArrayList<>();
@@ -3152,6 +3171,58 @@ public final class JfrPathEvaluator {
     return tn != null ? tn.toString() : "<unknown>";
   }
 
+  @SuppressWarnings("unchecked")
+  private static boolean hasStackTraceFrames(Map<String, Object> event) {
+    Object stackTrace = event.get("stackTrace");
+    if (stackTrace instanceof ComplexType ct) stackTrace = ct.getValue();
+    if (stackTrace == null) return false;
+    Object framesObj = null;
+    if (stackTrace instanceof Map<?, ?> stMap) framesObj = stMap.get("frames");
+    if (framesObj == null) return false;
+    if (framesObj instanceof ArrayType at) framesObj = at.getArray();
+    if (framesObj != null && framesObj.getClass().isArray()) {
+      return java.lang.reflect.Array.getLength(framesObj) > 0;
+    }
+    if (framesObj instanceof List<?> list) return !list.isEmpty();
+    return false;
+  }
+
+  private long[] scanStackProfileStats(JFRSession session, Query query) throws Exception {
+    long[] stats = {0, Long.MAX_VALUE, Long.MIN_VALUE}; // count, min, max
+    if (query.isMultiType) {
+      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!typeSet.contains(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            if (!hasStackTraceFrames(map)) return;
+            Object st = map.get("startTime");
+            long ts = st instanceof Number n ? n.longValue() : 0L;
+            stats[0]++;
+            if (ts < stats[1]) stats[1] = ts;
+            if (ts > stats[2]) stats[2] = ts;
+          });
+    } else {
+      String eventType = query.eventTypes.get(0);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!eventType.equals(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            if (!hasStackTraceFrames(map)) return;
+            Object st = map.get("startTime");
+            long ts = st instanceof Number n ? n.longValue() : 0L;
+            stats[0]++;
+            if (ts < stats[1]) stats[1] = ts;
+            if (ts > stats[2]) stats[2] = ts;
+          });
+    }
+    return stats;
+  }
+
   private List<Map<String, Object>> aggregateStackProfile(
       JFRSession session, Query query, String direction, int buckets, double minPct)
       throws Exception {
@@ -3161,11 +3232,20 @@ public final class JfrPathEvaluator {
 
     validateEventTypes(session, query.eventTypes);
 
-    // Collect matching events with their frames and startTime
-    List<long[]> timestamps = new ArrayList<>();
-    List<List<String>> allFrames = new ArrayList<>();
-    List<String> threadNames = new ArrayList<>();
+    // Pass 1: collect statistics (O(1) memory)
+    long[] stats = scanStackProfileStats(session, query);
+    long totalCount = stats[0];
+    long minTime = stats[1];
+    long maxTime = stats[2];
+    if (totalCount == 0) return List.of();
 
+    long range = maxTime - minTime;
+    long[] pruneState = {(long) Math.floor(totalCount * minPct / 100.0)};
+    ProfileNode root = new ProfileNode("root", buckets);
+    HashMap<String, String> interner = new HashMap<>();
+    long[] eventCount = {0};
+
+    // Pass 2: build tree inline (no intermediate lists)
     if (query.isMultiType) {
       Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
       source.streamEvents(
@@ -3175,11 +3255,27 @@ public final class JfrPathEvaluator {
             Map<String, Object> map = ev.value();
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
-            if (!frames.isEmpty()) {
-              allFrames.add(frames);
-              Object st = map.get("startTime");
-              timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
-              threadNames.add(extractThreadName(map));
+            if (frames.isEmpty()) return;
+            for (int j = 0; j < frames.size(); j++) {
+              frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
+            }
+            Object st = map.get("startTime");
+            long ts = st instanceof Number n ? n.longValue() : 0L;
+            int bucketIdx = range == 0 ? 0 : (int) ((ts - minTime) * (buckets - 1) / range);
+            String threadName = extractThreadName(map);
+            threadName = interner.computeIfAbsent(threadName, k -> k);
+            root.addPath(frames, 0, bucketIdx, threadName);
+            eventCount[0]++;
+            if (eventCount[0] % 100_000 == 0) {
+              if (pruneState[0] > 0) {
+                pruneChildren(root, pruneState[0]);
+              } else {
+                int nodeCount = countNodes(root);
+                if (nodeCount > 500_000) {
+                  pruneState[0] = Math.max(1, eventCount[0] / 1000);
+                  pruneChildren(root, pruneState[0]);
+                }
+              }
             }
           });
     } else {
@@ -3191,63 +3287,93 @@ public final class JfrPathEvaluator {
             Map<String, Object> map = ev.value();
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
-            if (!frames.isEmpty()) {
-              allFrames.add(frames);
-              Object st = map.get("startTime");
-              timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
-              threadNames.add(extractThreadName(map));
+            if (frames.isEmpty()) return;
+            for (int j = 0; j < frames.size(); j++) {
+              frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
+            }
+            Object st = map.get("startTime");
+            long ts = st instanceof Number n ? n.longValue() : 0L;
+            int bucketIdx = range == 0 ? 0 : (int) ((ts - minTime) * (buckets - 1) / range);
+            String threadName = extractThreadName(map);
+            threadName = interner.computeIfAbsent(threadName, k -> k);
+            root.addPath(frames, 0, bucketIdx, threadName);
+            eventCount[0]++;
+            if (eventCount[0] % 100_000 == 0) {
+              if (pruneState[0] > 0) {
+                pruneChildren(root, pruneState[0]);
+              } else {
+                int nodeCount = countNodes(root);
+                if (nodeCount > 500_000) {
+                  pruneState[0] = Math.max(1, eventCount[0] / 1000);
+                  pruneChildren(root, pruneState[0]);
+                }
+              }
             }
           });
     }
 
-    return buildStackProfile(allFrames, timestamps, threadNames, buckets, minPct);
+    // Final prune
+    if (pruneState[0] > 0) {
+      pruneChildren(root, pruneState[0]);
+    }
+
+    return flattenProfileTree(root, root.total, minPct, buckets);
   }
 
   private List<Map<String, Object>> applyStackProfile(
       List<Map<String, Object>> rows, String direction, int buckets, double minPct) {
-    List<long[]> timestamps = new ArrayList<>();
-    List<List<String>> allFrames = new ArrayList<>();
-    List<String> threadNames = new ArrayList<>();
+    // Pass 1: collect statistics (no allocation)
+    long totalCount = 0;
+    long minTime = Long.MAX_VALUE;
+    long maxTime = Long.MIN_VALUE;
+    for (Map<String, Object> row : rows) {
+      if (!hasStackTraceFrames(row)) continue;
+      Object st = row.get("startTime");
+      long ts = st instanceof Number n ? n.longValue() : 0L;
+      totalCount++;
+      if (ts < minTime) minTime = ts;
+      if (ts > maxTime) maxTime = ts;
+    }
+    if (totalCount == 0) return List.of();
 
+    long range = maxTime - minTime;
+    long pruneThreshold = (long) Math.floor(totalCount * minPct / 100.0);
+    ProfileNode root = new ProfileNode("root", buckets);
+    HashMap<String, String> interner = new HashMap<>();
+    long eventCount = 0;
+
+    // Pass 2: build tree inline (no intermediate lists)
     for (Map<String, Object> row : rows) {
       List<String> frames = extractFramesForProfile(row, direction);
-      if (!frames.isEmpty()) {
-        allFrames.add(frames);
-        Object st = row.get("startTime");
-        timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
-        threadNames.add(extractThreadName(row));
+      if (frames.isEmpty()) continue;
+      for (int j = 0; j < frames.size(); j++) {
+        frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
+      }
+      Object st = row.get("startTime");
+      long ts = st instanceof Number n ? n.longValue() : 0L;
+      int bucketIdx = range == 0 ? 0 : (int) ((ts - minTime) * (buckets - 1) / range);
+      String threadName = extractThreadName(row);
+      threadName = interner.computeIfAbsent(threadName, k -> k);
+      root.addPath(frames, 0, bucketIdx, threadName);
+      eventCount++;
+      if (eventCount % 100_000 == 0) {
+        if (pruneThreshold > 0) {
+          pruneChildren(root, pruneThreshold);
+        } else {
+          int nodeCount = countNodes(root);
+          if (nodeCount > 500_000) {
+            pruneThreshold = Math.max(1, eventCount / 1000);
+            pruneChildren(root, pruneThreshold);
+          }
+        }
       }
     }
 
-    return buildStackProfile(allFrames, timestamps, threadNames, buckets, minPct);
-  }
-
-  private List<Map<String, Object>> buildStackProfile(
-      List<List<String>> allFrames,
-      List<long[]> timestamps,
-      List<String> threadNames,
-      int buckets,
-      double minPct) {
-    if (allFrames.isEmpty()) return List.of();
-
-    // Compute min/max for bucket boundaries
-    long minTime = Long.MAX_VALUE;
-    long maxTime = Long.MIN_VALUE;
-    for (long[] ts : timestamps) {
-      if (ts[0] < minTime) minTime = ts[0];
-      if (ts[0] > maxTime) maxTime = ts[0];
-    }
-    long range = maxTime - minTime;
-
-    // Build profile tree
-    ProfileNode root = new ProfileNode("root", buckets);
-    for (int i = 0; i < allFrames.size(); i++) {
-      int bucketIdx =
-          range == 0 ? 0 : (int) ((timestamps.get(i)[0] - minTime) * (buckets - 1) / range);
-      root.addPath(allFrames.get(i), 0, bucketIdx, threadNames.get(i));
+    // Final prune
+    if (pruneThreshold > 0) {
+      pruneChildren(root, pruneThreshold);
     }
 
-    // Flatten to rows
     return flattenProfileTree(root, root.total, minPct, buckets);
   }
 
