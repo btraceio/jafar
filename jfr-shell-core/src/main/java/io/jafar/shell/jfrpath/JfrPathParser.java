@@ -1003,7 +1003,7 @@ public final class JfrPathParser {
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("buckets= expects a number");
         buckets = ((Number) lit).intValue();
-      } else if (startsWithIgnoreCase("minPct=") || startsWithIgnoreCase("minpct=")) {
+      } else if (startsWithIgnoreCase("minPct=")) {
         pos += 7;
         skipWs();
         Object lit = parseLiteral();

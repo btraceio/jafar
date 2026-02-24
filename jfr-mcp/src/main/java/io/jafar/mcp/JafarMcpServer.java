@@ -4346,28 +4346,21 @@ public final class JafarMcpServer {
           profile.put("total", total);
 
           // Convert percentage strings to doubles
-          profile.put("totalPct", parsePercentage(srcProfile.get("totalPct")));
-          profile.put("selfPct", parsePercentage(srcProfile.get("selfPct")));
+          double totalPctVal = parsePercentage(srcProfile.get("totalPct"));
+          double selfPctVal = parsePercentage(srcProfile.get("selfPct"));
+          profile.put("totalPct", totalPctVal);
+          profile.put("selfPct", selfPctVal);
 
           String pattern = (String) srcProfile.get("pattern");
           profile.put("pattern", pattern);
 
-          // Derive category
-          double selfPctOfTotal =
-              total == 0
-                  ? 0
-                  : (self * 100.0)
-                      / (srcProfile.get("total") instanceof Number n ? n.longValue() : 1L);
-          // selfPctOfTotal is relative to the frame's total, but for category we need
-          // relative to root total — use totalPct as proxy for significance
-          double totalPctVal = parsePercentage(srcProfile.get("totalPct"));
-          double selfPctVal = parsePercentage(srcProfile.get("selfPct"));
+          // Derive category using selfPctOfTotal (self as % of root total),
+          // matching the TUI marker logic in JfrPathEvaluator.flattenNode()
+          double selfPctOfTotal = totalPctVal * selfPctVal / 100.0;
           String category;
-          if (selfPctVal < 1.0 && totalPctVal < 1.0) {
-            category = "normal";
-          } else if ("steady".equals(pattern) && selfPctVal >= 1.0) {
+          if (selfPctOfTotal >= 1.0 && "steady".equals(pattern)) {
             category = "steady-hotspot";
-          } else if (selfPctVal >= 1.0) {
+          } else if (selfPctOfTotal >= 1.0) {
             category = "hotspot";
           } else {
             category = "normal";
