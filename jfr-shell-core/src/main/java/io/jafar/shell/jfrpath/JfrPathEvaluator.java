@@ -3309,6 +3309,8 @@ public final class JfrPathEvaluator {
     double selfPct = node.total == 0 ? 0 : (node.self * 100.0) / node.total;
     profile.put("selfPct", String.format("%.1f%%", selfPct));
     profile.put("pattern", pattern);
+    profile.put("timeBuckets", node.timeBuckets.clone());
+    profile.put("threadCounts", new LinkedHashMap<>(node.threadCounts));
     row.put("profile", profile);
     rows.add(row);
 

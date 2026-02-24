@@ -59,6 +59,7 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code jfr_use} - USE Method resource analysis (Utilization, Saturation, Errors)
  *   <li>{@code jfr_tsa} - Thread State Analysis (TSA Method)
  *   <li>{@code jfr_diagnose} - Automated performance diagnosis
+ *   <li>{@code jfr_stackprofile} - Structured stack profiling with time-series and thread breakdown
  * </ul>
  */
 public final class JafarMcpServer {
@@ -246,7 +247,8 @@ public final class JafarMcpServer {
         createJfrHotmethodsTool(),
         createJfrUseTool(),
         createJfrTsaTool(),
-        createJfrDiagnoseTool());
+        createJfrDiagnoseTool(),
+        createJfrStackprofileTool());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -626,8 +628,8 @@ public final class JafarMcpServer {
           "properties": {
             "topic": {
               "type": "string",
-              "description": "Help topic: overview, filters, pipeline, functions, examples, event_types",
-              "enum": ["overview", "filters", "pipeline", "functions", "examples", "event_types"]
+              "description": "Help topic: overview, filters, pipeline, functions, examples, event_types, tools",
+              "enum": ["overview", "filters", "pipeline", "functions", "examples", "event_types", "tools"]
             }
           }
         }
@@ -638,7 +640,7 @@ public final class JafarMcpServer {
             "jfr_help",
             "Returns JfrPath query language documentation. "
                 + "Call without arguments for overview, or specify a topic for detailed help. "
-                + "Topics: overview, filters, pipeline, functions, examples, event_types.",
+                + "Topics: overview, filters, pipeline, functions, examples, event_types, tools.",
             schema),
         (exchange, args) -> handleJfrHelp(args));
   }
@@ -657,10 +659,11 @@ public final class JafarMcpServer {
           case "functions" -> getFunctionsHelp();
           case "examples" -> getExamplesHelp();
           case "event_types" -> getEventTypesHelp();
+          case "tools" -> getToolsHelp();
           default ->
               "Unknown topic: "
                   + topic
-                  + ". Available: overview, filters, pipeline, functions, examples, event_types";
+                  + ". Available: overview, filters, pipeline, functions, examples, event_types, tools";
         };
 
     return new CallToolResult(List.of(new TextContent(content)), false);
@@ -703,6 +706,7 @@ public final class JafarMcpServer {
         - functions: Built-in functions for filters and select
         - examples: Common query patterns
         - event_types: Common JDK event types
+        - tools: When to use each jfr_* tool (flamegraph vs stackprofile vs hotmethods, etc.)
         """;
   }
 
@@ -1055,6 +1059,68 @@ public final class JafarMcpServer {
         - `stackTrace/frames/0/method/name/string` - Top frame method name
         - `duration` - Event duration (nanoseconds)
         - `startTime` - Event start time
+        """;
+  }
+
+  private String getToolsHelp() {
+    return """
+        # Choosing the Right jfr_* Tool
+
+        ## CPU Profiling Tools
+
+        ### jfr_hotmethods
+        Best for: Quick identification of which methods consume the most CPU.
+        Returns: Flat ranked list of leaf methods with sample counts and percentages.
+        Use when: You need a fast answer to "where is CPU time going?" without call-path context.
+
+        ### jfr_flamegraph
+        Best for: Understanding call paths and how code reaches hot methods.
+        Returns: Aggregated stack traces in folded (semicolon-separated) or tree (JSON) format.
+        Use when: You need to see the full call hierarchy — which callers lead to a hotspot,
+        or which entry points fan out into expensive subtrees. Output is designed for
+        visualization tools or structural call-path reasoning.
+
+        ### jfr_stackprofile
+        Best for: Detecting temporal patterns and thread affinity in CPU hotspots.
+        Returns: Structured JSON with per-frame time-bucket arrays, per-thread sample counts,
+        numeric percentages, and a derived category (normal / hotspot / steady-hotspot).
+        Use when: You need to programmatically analyze how a method's CPU usage changes over
+        the recording duration (bursty vs steady), identify N+1 query patterns (steady hotspots),
+        or determine which threads are contributing to a hotspot. The time-bucket arrays let you
+        detect intermittent load spikes that would be invisible in aggregated flamegraph data.
+
+        ### Decision Guide
+        ```
+        Need a quick "top CPU consumers" list?          → jfr_hotmethods
+        Need to understand call paths / callers?        → jfr_flamegraph
+        Need temporal patterns or thread breakdown?     → jfr_stackprofile
+        Need all of the above for deep investigation?   → Start with jfr_stackprofile,
+                                                          then jfr_flamegraph for call paths
+        ```
+
+        ## Other Specialized Tools
+
+        ### jfr_summary
+        Recording overview: duration, event counts, JVM info. Start here for orientation.
+
+        ### jfr_diagnose
+        Automated performance triage. Runs multiple checks and returns findings + recommendations.
+
+        ### jfr_use
+        USE Method analysis (Utilization, Saturation, Errors) for CPU, memory, threads, and I/O.
+
+        ### jfr_tsa
+        Thread State Analysis. Breaks down what threads are doing: running, blocked, waiting, I/O.
+
+        ### jfr_exceptions
+        Exception pattern analysis: types, frequencies, and common throw sites.
+
+        ### jfr_callgraph
+        Call graph between methods. Shows caller→callee relationships with sample weights.
+
+        ### jfr_query
+        General-purpose JfrPath queries for anything not covered by specialized tools.
+        Use jfr_help(topic="pipeline") and jfr_help(topic="filters") for query syntax.
         """;
   }
 
@@ -4138,6 +4204,223 @@ public final class JafarMcpServer {
       LOG.error("Failed to diagnose recording: {}", e.getMessage(), e);
       return errorResult("Failed to diagnose recording: " + e.getMessage());
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // jfr_stackprofile - Structured stack profiling with time-series and threads
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createJfrStackprofileTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string",
+              "description": "Execution sample event type (e.g., jdk.ExecutionSample, datadog.ExecutionSample). Auto-detects if not specified."
+            },
+            "direction": {
+              "type": "string",
+              "description": "Stack direction: top-down (entry points first) or bottom-up (hot methods first)",
+              "enum": ["top-down", "bottom-up"],
+              "default": "top-down"
+            },
+            "buckets": {
+              "type": "integer",
+              "description": "Number of time buckets for temporal distribution (default: 10)"
+            },
+            "minPct": {
+              "type": "number",
+              "description": "Minimum percentage threshold to include a frame (default: 1.0)"
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias (uses current if not specified)"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of frames to return (default: 200)"
+            }
+          }
+        }
+        """;
+
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "jfr_stackprofile",
+            "Returns structured stack profiling data with time-series distribution and per-thread "
+                + "breakdown for each frame. Unlike jfr_flamegraph (which returns aggregated stack paths "
+                + "for visualization), this tool returns machine-readable JSON with: (1) raw time-bucket "
+                + "arrays showing how each method's samples distribute over the recording duration — use "
+                + "this to detect bursty vs steady hotspots and N+1 query patterns; (2) per-thread sample "
+                + "counts revealing thread affinity; (3) numeric percentage fields and a derived category "
+                + "(normal/hotspot/steady-hotspot). Choose jfr_stackprofile when you need to programmatically "
+                + "analyze CPU behavior over time or across threads. Choose jfr_flamegraph when you need "
+                + "aggregated call-path data for visualization or simple hotspot listing.",
+            schema),
+        (exchange, args) -> handleJfrStackprofile(args));
+  }
+
+  @SuppressWarnings("unchecked")
+  private CallToolResult handleJfrStackprofile(Map<String, Object> args) {
+    String eventType = (String) args.get("eventType");
+    String direction = (String) args.getOrDefault("direction", "top-down");
+    int buckets = args.get("buckets") instanceof Number n ? n.intValue() : 10;
+    double minPct = args.get("minPct") instanceof Number n ? n.doubleValue() : 1.0;
+    String sessionId = (String) args.get("sessionId");
+    int limit = args.get("limit") instanceof Number n ? n.intValue() : 200;
+
+    if (!"top-down".equals(direction) && !"bottom-up".equals(direction)) {
+      return errorResult("direction must be 'top-down' or 'bottom-up'");
+    }
+    if (buckets < 1) {
+      return errorResult("buckets must be >= 1");
+    }
+    if (minPct < 0) {
+      return errorResult("minPct must be >= 0");
+    }
+    if (limit < 1) {
+      return errorResult("limit must be >= 1");
+    }
+
+    try {
+      SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
+
+      // Auto-detect execution sample event type if not specified
+      if (eventType == null || eventType.isBlank()) {
+        eventType = detectExecutionEventType(sessionInfo);
+        if (eventType == null) {
+          return errorResult(
+              "No execution sample events found in recording. "
+                  + "Specify eventType explicitly (e.g., jdk.ExecutionSample or datadog.ExecutionSample)");
+        }
+      }
+
+      // Build and execute stackprofile query
+      String query =
+          "events/"
+              + eventType
+              + " | stackprofile(direction="
+              + direction
+              + ", buckets="
+              + buckets
+              + ", minPct="
+              + minPct
+              + ")";
+      JfrPath.Query parsed = queryParser.parse(query);
+      List<Map<String, Object>> rows = evaluator.evaluate(sessionInfo.session(), parsed);
+
+      // Transform TUI rows into structured JSON
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("eventType", eventType);
+      result.put("direction", direction);
+      result.put("bucketCount", buckets);
+      result.put("minPct", minPct);
+
+      List<Map<String, Object>> frames = new ArrayList<>();
+      long totalSamples = 0;
+
+      for (Map<String, Object> row : rows) {
+        if (frames.size() >= limit) break;
+
+        Map<String, Object> frame = new LinkedHashMap<>();
+
+        // Extract method name and depth from indented method string
+        String methodStr = (String) row.get("method");
+        if (methodStr == null) continue;
+        int depth = 0;
+        while (depth < methodStr.length() && methodStr.charAt(depth) == ' ') {
+          depth++;
+        }
+        frame.put("method", methodStr.substring(depth));
+        frame.put("depth", depth);
+
+        // Build structured profile from the profile sub-map
+        Map<String, Object> srcProfile = (Map<String, Object>) row.get("profile");
+        if (srcProfile != null) {
+          Map<String, Object> profile = new LinkedHashMap<>();
+          long self = srcProfile.get("self") instanceof Number n ? n.longValue() : 0L;
+          long total = srcProfile.get("total") instanceof Number n ? n.longValue() : 0L;
+          profile.put("self", self);
+          profile.put("total", total);
+
+          // Convert percentage strings to doubles
+          profile.put("totalPct", parsePercentage(srcProfile.get("totalPct")));
+          profile.put("selfPct", parsePercentage(srcProfile.get("selfPct")));
+
+          String pattern = (String) srcProfile.get("pattern");
+          profile.put("pattern", pattern);
+
+          // Derive category
+          double selfPctOfTotal =
+              total == 0
+                  ? 0
+                  : (self * 100.0)
+                      / (srcProfile.get("total") instanceof Number n ? n.longValue() : 1L);
+          // selfPctOfTotal is relative to the frame's total, but for category we need
+          // relative to root total — use totalPct as proxy for significance
+          double totalPctVal = parsePercentage(srcProfile.get("totalPct"));
+          double selfPctVal = parsePercentage(srcProfile.get("selfPct"));
+          String category;
+          if (selfPctVal < 1.0 && totalPctVal < 1.0) {
+            category = "normal";
+          } else if ("steady".equals(pattern) && selfPctVal >= 1.0) {
+            category = "steady-hotspot";
+          } else if (selfPctVal >= 1.0) {
+            category = "hotspot";
+          } else {
+            category = "normal";
+          }
+          profile.put("category", category);
+
+          // Pass through raw timeBuckets and threadCounts
+          Object timeBucketsObj = srcProfile.get("timeBuckets");
+          if (timeBucketsObj instanceof long[] tb) {
+            profile.put("timeBuckets", tb);
+          }
+          Object threadCountsObj = srcProfile.get("threadCounts");
+          if (threadCountsObj instanceof Map<?, ?> tc) {
+            profile.put("threadCounts", tc);
+          }
+
+          frame.put("profile", profile);
+
+          // Sum total of depth-0 frames for totalSamples
+          if (depth == 0) {
+            totalSamples += total;
+          }
+        }
+
+        frames.add(frame);
+      }
+
+      result.put("totalSamples", totalSamples);
+      result.put("frameCount", frames.size());
+      result.put("frames", frames);
+
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      LOG.warn("Stackprofile error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to analyze stack profile: {}", e.getMessage(), e);
+      return errorResult("Failed to analyze stack profile: " + e.getMessage());
+    }
+  }
+
+  private static double parsePercentage(Object value) {
+    if (value instanceof Number n) return n.doubleValue();
+    if (value instanceof String s) {
+      String stripped = s.endsWith("%") ? s.substring(0, s.length() - 1).trim() : s.trim();
+      try {
+        return Double.parseDouble(stripped);
+      } catch (NumberFormatException e) {
+        return 0.0;
+      }
+    }
+    return 0.0;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

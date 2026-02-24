@@ -192,8 +192,9 @@ class JfrPathStackProfileTest {
     assertNotNull(sparkline);
     // Sparkline is stretched to fill SPARKLINE_WIDTH (30 chars)
     assertEquals(30, sparkline.length());
-    // Profile should not contain timeBuckets
-    assertFalse(profile(rows.get(0)).containsKey("timeBuckets"));
+    // Profile should contain raw timeBuckets array
+    assertTrue(profile(rows.get(0)).containsKey("timeBuckets"));
+    assertInstanceOf(long[].class, profile(rows.get(0)).get("timeBuckets"));
   }
 
   @Test
@@ -299,5 +300,46 @@ class JfrPathStackProfileTest {
     Map<String, String> threads = (Map<String, String>) first.get("threads");
     assertTrue(threads.containsKey("<unknown>"));
     assertTrue(threads.get("<unknown>").startsWith("1 ("));
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  void profileContainsRawTimeBucketsAndThreadCounts() throws Exception {
+    JFRSession session = mockSession();
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              for (int i = 0; i < 3; i++) {
+                consumer.accept(
+                    new JfrPathEvaluator.Event(
+                        "jdk.ExecutionSample",
+                        threadedEvent(100 + i, "main", "A.leaf", "B.entry")));
+              }
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample", threadedEvent(200, "worker-1", "A.leaf", "B.entry")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | stackprofile(direction=top-down, buckets=5, minPct=0)");
+    List<Map<String, Object>> rows = eval.evaluate(session, q);
+
+    assertFalse(rows.isEmpty());
+    Map<String, Object> p = profile(rows.get(0));
+
+    // timeBuckets should be a raw long[]
+    assertTrue(p.containsKey("timeBuckets"));
+    assertInstanceOf(long[].class, p.get("timeBuckets"));
+    long[] buckets = (long[]) p.get("timeBuckets");
+    assertEquals(5, buckets.length);
+
+    // threadCounts should be a raw Map<String, Long>
+    assertTrue(p.containsKey("threadCounts"));
+    Map<String, Long> threadCounts = (Map<String, Long>) p.get("threadCounts");
+    assertFalse(threadCounts.isEmpty());
+    assertEquals(3L, threadCounts.get("main"));
+    assertEquals(1L, threadCounts.get("worker-1"));
   }
 }
