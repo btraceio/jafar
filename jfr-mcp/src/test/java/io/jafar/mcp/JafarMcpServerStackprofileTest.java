@@ -7,18 +7,37 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Tests for jfr_stackprofile MCP tool. */
-class JafarMcpServerStackprofileTest extends BaseJfrTest {
+/**
+ * Tests for jfr_stackprofile MCP tool.
+ *
+ * <p>Uses the smaller test-dd.jfr (~2MB) to avoid OOM when building the full profile tree.
+ */
+class JafarMcpServerStackprofileTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  private static Path jfrFile;
+
   private JafarMcpServer server;
+
+  @BeforeAll
+  static void findJfrFile() {
+    jfrFile = Path.of("../demo/src/test/resources/test-dd.jfr").normalize();
+    if (!jfrFile.toFile().exists()) {
+      jfrFile = Path.of("demo/src/test/resources/test-dd.jfr").normalize();
+    }
+    if (!jfrFile.toFile().exists()) {
+      throw new IllegalStateException("JFR file not found at: " + jfrFile.toAbsolutePath());
+    }
+  }
 
   @BeforeEach
   void setUp() throws Exception {
@@ -150,7 +169,7 @@ class JafarMcpServerStackprofileTest extends BaseJfrTest {
     Method handleJfrOpen = getMethod("handleJfrOpen", Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("path", getComprehensiveJfr());
+    args.put("path", jfrFile.toString());
 
     CallToolResult result = (CallToolResult) handleJfrOpen.invoke(server, args);
     assertFalse(result.isError());
