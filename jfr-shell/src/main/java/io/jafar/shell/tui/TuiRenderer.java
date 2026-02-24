@@ -390,6 +390,11 @@ public final class TuiRenderer {
     }
 
     int maxVScroll = Math.max(0, scrollLineCount - visibleHeight);
+    if (activeTab.pendingCenterScroll && activeTab.selectedRow >= 0) {
+      activeTab.scrollOffset =
+          Math.max(0, Math.min(maxVScroll, activeTab.selectedRow - visibleHeight / 2));
+      activeTab.pendingCenterScroll = false;
+    }
     activeTab.scrollOffset = Math.min(activeTab.scrollOffset, maxVScroll);
 
     int start = activeTab.scrollOffset;
@@ -656,7 +661,8 @@ public final class TuiRenderer {
     int start = scrollOffset;
     int end = Math.min(start + visibleHeight, totalLines);
 
-    boolean showCursor = metadataMode && ctx.focus == Focus.DETAIL && ctx.detailCursorLine >= 0;
+    boolean hasRefs = ctx.detailLineTypeRefs != null && ctx.detailCursorLine >= 0;
+    boolean showCursor = (metadataMode || hasRefs) && ctx.focus == Focus.DETAIL;
     Style cursorStyle = Style.create().reversed();
     Style navigableStyle = Style.create().fg(Color.CYAN).bold();
 
@@ -669,8 +675,7 @@ public final class TuiRenderer {
           line = line + " ".repeat(detailWidth - line.length());
         }
         styledLines.add(Line.from(Span.styled(line, cursorStyle)));
-      } else if (metadataMode
-          && ctx.detailLineTypeRefs != null
+      } else if (ctx.detailLineTypeRefs != null
           && i < ctx.detailLineTypeRefs.size()
           && ctx.detailLineTypeRefs.get(i) != null) {
         styledLines.add(Line.from(Span.styled(line, navigableStyle)));
@@ -778,10 +783,16 @@ public final class TuiRenderer {
     } else if (ctx.focus == Focus.DETAIL) {
       boolean hasCursor = ctx.detailLineTypeRefs != null && ctx.detailCursorLine >= 0;
       String drillHint = "";
+      String threadHint = "";
       if (hasCursor
           && ctx.detailCursorLine < ctx.detailLineTypeRefs.size()
           && ctx.detailLineTypeRefs.get(ctx.detailCursorLine) != null) {
-        drillHint = "Enter:drill-down  ";
+        String ref = ctx.detailLineTypeRefs.get(ctx.detailCursorLine);
+        if (ref.startsWith("thread:")) {
+          threadHint = altMod + "+t:filter thread  ";
+        } else {
+          drillHint = "Enter:drill-down  ";
+        }
       }
       String cursorHint = hasCursor ? "\u2191\u2193:select  " : "\u2191\u2193:scroll  ";
       String resultTabHint = ctx.tabs.size() > 1 ? "{}:pins  " : "";
@@ -792,6 +803,7 @@ public final class TuiRenderer {
               + "[]:tabs  "
               + resultTabHint
               + drillHint
+              + threadHint
               + "/:search  "
               + "S-\u2191\u2193:history  "
               + "S-Tab:focus  "
@@ -855,6 +867,10 @@ public final class TuiRenderer {
         sortHint = at.sortColumn >= 0 ? "<>:sort col  " + altMod + "+r:reverse  " : "<>:sort col  ";
       }
       String filterHint = at.filteredIndices != null ? "/:search  Esc:clear  " : "/:search  ";
+      String threadFilterHint =
+          (at.filteredIndices != null && at.searchQuery.startsWith("\u2261"))
+              ? altMod + "+t:clear thread  "
+              : "";
       String detailJump = ctx.detailTabNames.isEmpty() ? "" : altMod + "+d:detail  ";
       String tabSwitchHint = ctx.detailTabNames.isEmpty() ? "" : "[]:subtabs  ";
       String resultTabHint = ctx.tabs.size() > 1 ? "{}:pins  " : "";
@@ -865,6 +881,7 @@ public final class TuiRenderer {
               + rowHint
               + sortHint
               + filterHint
+              + threadFilterHint
               + tabSwitchHint
               + resultTabHint
               + pinHint

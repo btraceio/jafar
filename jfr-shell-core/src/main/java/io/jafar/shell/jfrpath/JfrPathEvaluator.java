@@ -3022,14 +3022,16 @@ public final class JfrPathEvaluator {
     long self;
     long[] timeBuckets;
     final Map<String, ProfileNode> children = new LinkedHashMap<>();
+    final Map<String, Long> threadCounts = new LinkedHashMap<>();
 
     ProfileNode(String name, int bucketCount) {
       this.name = name;
       this.timeBuckets = new long[bucketCount];
     }
 
-    void addPath(List<String> frames, int frameIdx, int bucketIdx) {
+    void addPath(List<String> frames, int frameIdx, int bucketIdx, String threadName) {
       total++;
+      threadCounts.merge(threadName, 1L, Long::sum);
       if (bucketIdx >= 0 && bucketIdx < timeBuckets.length) {
         timeBuckets[bucketIdx]++;
       }
@@ -3040,7 +3042,7 @@ public final class JfrPathEvaluator {
       String head = frames.get(frameIdx);
       ProfileNode child =
           children.computeIfAbsent(head, n -> new ProfileNode(n, timeBuckets.length));
-      child.addPath(frames, frameIdx + 1, bucketIdx);
+      child.addPath(frames, frameIdx + 1, bucketIdx, threadName);
     }
   }
 
@@ -3142,6 +3144,14 @@ public final class JfrPathEvaluator {
     return qualName;
   }
 
+  private static String extractThreadName(Map<String, Object> event) {
+    Object tn = Values.get(event, "eventThread", "osName");
+    if (tn == null) tn = Values.get(event, "eventThread", "javaName");
+    if (tn == null) tn = Values.get(event, "sampledThread", "osName");
+    if (tn == null) tn = Values.get(event, "sampledThread", "javaName");
+    return tn != null ? tn.toString() : "<unknown>";
+  }
+
   private List<Map<String, Object>> aggregateStackProfile(
       JFRSession session, Query query, String direction, int buckets, double minPct)
       throws Exception {
@@ -3154,6 +3164,7 @@ public final class JfrPathEvaluator {
     // Collect matching events with their frames and startTime
     List<long[]> timestamps = new ArrayList<>();
     List<List<String>> allFrames = new ArrayList<>();
+    List<String> threadNames = new ArrayList<>();
 
     if (query.isMultiType) {
       Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
@@ -3168,6 +3179,7 @@ public final class JfrPathEvaluator {
               allFrames.add(frames);
               Object st = map.get("startTime");
               timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+              threadNames.add(extractThreadName(map));
             }
           });
     } else {
@@ -3183,17 +3195,19 @@ public final class JfrPathEvaluator {
               allFrames.add(frames);
               Object st = map.get("startTime");
               timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+              threadNames.add(extractThreadName(map));
             }
           });
     }
 
-    return buildStackProfile(allFrames, timestamps, buckets, minPct);
+    return buildStackProfile(allFrames, timestamps, threadNames, buckets, minPct);
   }
 
   private List<Map<String, Object>> applyStackProfile(
       List<Map<String, Object>> rows, String direction, int buckets, double minPct) {
     List<long[]> timestamps = new ArrayList<>();
     List<List<String>> allFrames = new ArrayList<>();
+    List<String> threadNames = new ArrayList<>();
 
     for (Map<String, Object> row : rows) {
       List<String> frames = extractFramesForProfile(row, direction);
@@ -3201,14 +3215,19 @@ public final class JfrPathEvaluator {
         allFrames.add(frames);
         Object st = row.get("startTime");
         timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+        threadNames.add(extractThreadName(row));
       }
     }
 
-    return buildStackProfile(allFrames, timestamps, buckets, minPct);
+    return buildStackProfile(allFrames, timestamps, threadNames, buckets, minPct);
   }
 
   private List<Map<String, Object>> buildStackProfile(
-      List<List<String>> allFrames, List<long[]> timestamps, int buckets, double minPct) {
+      List<List<String>> allFrames,
+      List<long[]> timestamps,
+      List<String> threadNames,
+      int buckets,
+      double minPct) {
     if (allFrames.isEmpty()) return List.of();
 
     // Compute min/max for bucket boundaries
@@ -3225,7 +3244,7 @@ public final class JfrPathEvaluator {
     for (int i = 0; i < allFrames.size(); i++) {
       int bucketIdx =
           range == 0 ? 0 : (int) ((timestamps.get(i)[0] - minTime) * (buckets - 1) / range);
-      root.addPath(allFrames.get(i), 0, bucketIdx);
+      root.addPath(allFrames.get(i), 0, bucketIdx, threadNames.get(i));
     }
 
     // Flatten to rows
@@ -3266,8 +3285,24 @@ public final class JfrPathEvaluator {
     row.put("timeBuckets", sparkline(node.timeBuckets, SPARKLINE_WIDTH));
     row.put(" ", marker);
     row.put("method", indent + node.name);
+    if (!node.threadCounts.isEmpty()) {
+      // Sort by count descending, format with percentage and proportional bar
+      long maxCount =
+          node.threadCounts.values().stream().mapToLong(Long::longValue).max().orElse(1L);
+      LinkedHashMap<String, String> threads = new LinkedHashMap<>();
+      node.threadCounts.entrySet().stream()
+          .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+          .forEach(
+              e -> {
+                long cnt = e.getValue();
+                double threadPct = node.total == 0 ? 0 : (cnt * 100.0) / node.total;
+                threads.put(
+                    e.getKey(),
+                    String.format("%d (%4.1f%%) %s", cnt, threadPct, threadBar(cnt, maxCount, 10)));
+              });
+      row.put("threads", threads);
+    }
     Map<String, Object> profile = new LinkedHashMap<>();
-    profile.put("method", node.name);
     profile.put("self", node.self);
     profile.put("total", node.total);
     profile.put("totalPct", String.format("%.1f%%", pct));
@@ -3282,6 +3317,19 @@ public final class JfrPathEvaluator {
     for (ProfileNode child : sorted) {
       flattenNode(child, totalSamples, minPct, rows, bucketCount, depth + 1);
     }
+  }
+
+  private static String threadBar(long count, long maxCount, int width) {
+    if (maxCount == 0) return "";
+    double ratio = (double) count / maxCount;
+    double filled = ratio * width;
+    int fullBlocks = (int) filled;
+    int fractional = (int) ((filled - fullBlocks) * 8);
+    char[] fracs = {'\u258F', '\u258E', '\u258D', '\u258C', '\u258B', '\u258A', '\u2589'};
+    StringBuilder sb = new StringBuilder(width);
+    for (int i = 0; i < fullBlocks && i < width; i++) sb.append('\u2588');
+    if (fullBlocks < width && fractional > 0) sb.append(fracs[fractional - 1]);
+    return sb.toString();
   }
 
   /**

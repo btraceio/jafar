@@ -35,6 +35,7 @@ public final class TuiTableRenderer {
   private static final ThreadLocal<List<String>> LAST_TABLE_HEADERS = new ThreadLocal<>();
   private static final ThreadLocal<List<Map<String, Object>>> LAST_METADATA_CLASSES =
       new ThreadLocal<>();
+  private static final ThreadLocal<Integer> LAST_PREAMBLE_LINES = new ThreadLocal<>();
 
   private TuiTableRenderer() {}
 
@@ -54,10 +55,17 @@ public final class TuiTableRenderer {
     LAST_METADATA_CLASSES.set(classes);
   }
 
+  /** Number of lines printed before the first data row (legend + header + separator). */
+  public static int getLastPreambleLines() {
+    Integer v = LAST_PREAMBLE_LINES.get();
+    return v != null ? v : 1;
+  }
+
   public static void clearLastData() {
     LAST_TABLE_DATA.remove();
     LAST_TABLE_HEADERS.remove();
     LAST_METADATA_CLASSES.remove();
+    LAST_PREAMBLE_LINES.remove();
   }
 
   public static void render(List<Map<String, Object>> rows, CommandDispatcher.IO io) {
@@ -91,12 +99,14 @@ public final class TuiTableRenderer {
     LAST_TABLE_DATA.set(rows);
 
     // Print legend for stackprofile output
+    int preambleLines = 0;
     if (headers.contains("timeBuckets") && headers.contains("method")) {
       pager.println(
           "\u25c6 hotspot (>1% self)  \u25c6\u25c6 steady hotspot (N+1 candidate)"
               + "  \u2502  \u001b[32m\u2581\u2582\u001b[33m\u2583\u2584\u2585"
               + "\u001b[31m\u2586\u2587\u2588\u001b[0m activity"
               + "  \u001b[35m\u2584\u2584\u2584\u001b[0m N+1");
+      preambleLines++;
     }
 
     // Build header row
@@ -144,7 +154,8 @@ public final class TuiTableRenderer {
             .highlightSymbol("")
             .build();
 
-    renderAndPrint(table, rows.size(), pager, bufferWidth);
+    preambleLines += renderAndPrint(table, rows.size(), pager, bufferWidth);
+    LAST_PREAMBLE_LINES.set(preambleLines);
   }
 
   public static void renderValues(List<?> values, CommandDispatcher.IO io) {
@@ -172,23 +183,32 @@ public final class TuiTableRenderer {
     renderAndPrint(table, values.size(), pager);
   }
 
-  private static void renderAndPrint(Table table, int dataRowCount, PagedPrinter pager) {
-    renderAndPrint(table, dataRowCount, pager, terminalWidth());
+  private static int renderAndPrint(Table table, int dataRowCount, PagedPrinter pager) {
+    return renderAndPrint(table, dataRowCount, pager, terminalWidth());
   }
 
-  private static void renderAndPrint(Table table, int dataRowCount, PagedPrinter pager, int width) {
-    // Height: header + data rows + margin
-    int height = dataRowCount + 3;
+  /**
+   * Renders table to buffer and prints non-blank lines. Returns the number of lines printed before
+   * data rows (header + separator).
+   */
+  private static int renderAndPrint(Table table, int dataRowCount, PagedPrinter pager, int width) {
+    // Height: header (1 row) + data rows — exact fit avoids trailing buffer artifacts
+    int height = dataRowCount + 1;
     Buffer buffer = Buffer.empty(Rect.of(width, height));
     Frame frame = Frame.forTesting(buffer);
     frame.renderStatefulWidget(table, buffer.area(), new TableState());
 
     String output = buffer.toAnsiStringTrimmed();
-    for (String line : output.split("\r?\n", -1)) {
+    String[] lines = output.split("\r?\n", -1);
+    int totalPrinted = 0;
+    for (String line : lines) {
       if (!line.isBlank()) {
         pager.println(line);
+        totalPrinted++;
       }
     }
+    // Preamble = total printed lines minus the data rows actually printed
+    return Math.max(0, totalPrinted - dataRowCount);
   }
 
   public static int[] computeMaxWidths(List<String> headers, List<Map<String, Object>> rows) {

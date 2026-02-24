@@ -18,6 +18,11 @@ class JfrPathStackProfileTest {
    * are stored in JFR order: index 0 = top of stack (most recent/leaf).
    */
   private static Map<String, Object> sampleEvent(long startTime, String... methods) {
+    return threadedEvent(startTime, null, methods);
+  }
+
+  private static Map<String, Object> threadedEvent(
+      long startTime, String threadName, String... methods) {
     Object[] frames = new Object[methods.length];
     for (int i = 0; i < methods.length; i++) {
       String[] parts = methods[i].split("\\.");
@@ -30,6 +35,9 @@ class JfrPathStackProfileTest {
     Map<String, Object> event = new LinkedHashMap<>();
     event.put("startTime", startTime);
     event.put("stackTrace", stackTrace);
+    if (threadName != null) {
+      event.put("eventThread", Map.of("osName", threadName));
+    }
     return event;
   }
 
@@ -67,11 +75,10 @@ class JfrPathStackProfileTest {
     assertInstanceOf(String.class, first.get(" "));
     assertTrue(first.containsKey("method"));
     assertInstanceOf(String.class, first.get("method"));
-    // Detail pane profile map
+    // Detail pane: threads tab and profile tab
+    assertTrue(first.containsKey("threads"));
     assertTrue(first.containsKey("profile"));
     Map<String, Object> p = profile(first);
-    assertTrue(p.containsKey("method"));
-    assertInstanceOf(String.class, p.get("method"));
     assertTrue(p.containsKey("self"));
     assertTrue(p.containsKey("total"));
     assertTrue(p.containsKey("totalPct"));
@@ -97,10 +104,8 @@ class JfrPathStackProfileTest {
     assertEquals(2, rows.size());
     // First row: root of tree (B.caller, the entry point) — no self samples, no marker
     assertEquals("B.caller", rows.get(0).get("method"));
-    assertEquals("B.caller", profile(rows.get(0)).get("method"));
     // Second row: child (A.leaf) — has self samples, gets hotspot marker
     assertTrue(rows.get(1).get("method").toString().contains("A.leaf"));
-    assertEquals("A.leaf", profile(rows.get(1)).get("method"));
   }
 
   @Test
@@ -225,5 +230,74 @@ class JfrPathStackProfileTest {
     // A.leaf: total=2, self=2
     assertEquals(2L, profile(rows.get(2)).get("total"));
     assertEquals(2L, profile(rows.get(2)).get("self"));
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  void threadCountsTracked() throws Exception {
+    // 3 events on "main", 2 on "worker-1" — all same stack
+    JFRSession session = mockSession();
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              for (int i = 0; i < 3; i++) {
+                consumer.accept(
+                    new JfrPathEvaluator.Event(
+                        "jdk.ExecutionSample",
+                        threadedEvent(100 + i, "main", "A.leaf", "B.entry")));
+              }
+              for (int i = 0; i < 2; i++) {
+                consumer.accept(
+                    new JfrPathEvaluator.Event(
+                        "jdk.ExecutionSample",
+                        threadedEvent(200 + i, "worker-1", "A.leaf", "B.entry")));
+              }
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | stackprofile(direction=top-down, minPct=0)");
+    List<Map<String, Object>> rows = eval.evaluate(session, q);
+
+    // top-down: B.entry -> A.leaf
+    assertEquals(2, rows.size());
+    Map<String, Object> first = rows.get(0);
+    assertTrue(first.containsKey("threads"), "row should contain threads map");
+    @SuppressWarnings("unchecked")
+    Map<String, String> threads = (Map<String, String>) first.get("threads");
+    assertEquals(2, threads.size());
+    // Sorted descending by count: main first, worker-1 second
+    var keys = new java.util.ArrayList<>(threads.keySet());
+    assertEquals("main", keys.get(0));
+    assertEquals("worker-1", keys.get(1));
+    // Values are formatted: "count (pct%) bar"
+    assertTrue(threads.get("main").startsWith("3 ("), "main should have count 3");
+    assertTrue(threads.get("worker-1").startsWith("2 ("), "worker-1 should have count 2");
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  void unknownThreadWhenNoEventThread() throws Exception {
+    // Events without eventThread field should get "<unknown>" thread name
+    JFRSession session = mockSession();
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) ->
+                consumer.accept(
+                    new JfrPathEvaluator.Event(
+                        "jdk.ExecutionSample", sampleEvent(100, "A.leaf", "B.caller")));
+
+    var eval = new JfrPathEvaluator(src);
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | stackprofile()");
+    List<Map<String, Object>> rows = eval.evaluate(session, q);
+
+    assertFalse(rows.isEmpty());
+    Map<String, Object> first = rows.get(0);
+    assertTrue(first.containsKey("threads"));
+    @SuppressWarnings("unchecked")
+    Map<String, String> threads = (Map<String, String>) first.get("threads");
+    assertTrue(threads.containsKey("<unknown>"));
+    assertTrue(threads.get("<unknown>").startsWith("1 ("));
   }
 }

@@ -178,8 +178,9 @@ public final class FunctionRegistry {
         FunctionSpec.builder("stackprofile")
             .pipeline()
             .description(
-                "Aggregate stack traces into a weighted call tree with time bucketing. "
-                    + "Markers: \u25c6 = hotspot (>1% self), \u25c6\u25c6 = steady hotspot (N+1 candidate)")
+                "Aggregate stack traces into a weighted call tree with time bucketing and per-thread breakdown. "
+                    + "Markers: \u25c6 = hotspot (>1% self), \u25c6\u25c6 = steady hotspot (N+1 candidate). "
+                    + "Detail pane shows thread counts; Alt+t on a thread entry to filter, Alt+t again to clear")
             .template("stackprofile()")
             .enumKeyword(
                 "direction", List.of("top-down", "bottom-up"), "Tree direction (default: top-down)")

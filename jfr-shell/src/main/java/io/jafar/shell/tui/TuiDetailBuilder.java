@@ -72,7 +72,7 @@ public final class TuiDetailBuilder {
     // Iterate all row keys (not just tableHeaders) to find complex values for detail pane
     for (String key : row.keySet()) {
       Object val = row.get(key);
-      if (isComplexValue(val)) {
+      if (isComplexValue(val) || ("threads".equals(key) && val instanceof Map<?, ?>)) {
         names.add(key);
         values.add(val);
       }
@@ -85,6 +85,26 @@ public final class TuiDetailBuilder {
     for (int i = 0; i < names.size(); i++) {
       ctx.detailTabScrollOffsets.add(0);
     }
+
+    // Build thread refs for the threads detail tab
+    if (!values.isEmpty()) {
+      int threadsIdx = names.indexOf("threads");
+      if (threadsIdx >= 0 && values.get(threadsIdx) instanceof Map<?, ?> tm && tm.size() > 1) {
+        buildThreadDetailRefs(tm, threadsIdx);
+      }
+    }
+  }
+
+  void buildThreadDetailRefs(Map<?, ?> threadsMap, int threadsTabIdx) {
+    // The threads map is rendered by formatTree as a flat list of key: value entries.
+    // Each entry is a thread — tag it with "thread:<name>" for the key handler.
+    List<String> refs = new ArrayList<>();
+    for (Map.Entry<?, ?> entry : threadsMap.entrySet()) {
+      refs.add("thread:" + entry.getKey());
+    }
+    ctx.detailLineTypeRefs = refs;
+    ctx.detailCursorLine = refs.isEmpty() ? -1 : 0;
+    ctx.activeDetailTabIndex = threadsTabIdx;
   }
 
   @SuppressWarnings("unchecked")

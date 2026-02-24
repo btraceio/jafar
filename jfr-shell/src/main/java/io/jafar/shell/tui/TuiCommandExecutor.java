@@ -369,6 +369,7 @@ public final class TuiCommandExecutor {
                 ctx.asyncTableData = TuiTableRenderer.getLastTableData();
                 ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
                 ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
+                ctx.asyncPreambleLines = TuiTableRenderer.getLastPreambleLines();
                 TuiTableRenderer.clearLastData();
                 ctx.commandRunning = false;
               }
@@ -417,7 +418,7 @@ public final class TuiCommandExecutor {
     activeTab.sortColumn = -1;
     activeTab.sortAscending = true;
     if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
-      activeTab.dataStartLine = ctx.asyncLinesBeforeDispatch + 1;
+      activeTab.dataStartLine = ctx.asyncLinesBeforeDispatch + ctx.asyncPreambleLines;
       // Jump to first hotspot/N+1 candidate if present
       int hotspotRow = -1;
       for (int i = 0; i < activeTab.tableData.size(); i++) {
@@ -436,9 +437,7 @@ public final class TuiCommandExecutor {
     }
 
     if (activeTab.dataStartLine >= 0) {
-      // Scroll to make the selected row visible
-      activeTab.scrollOffset =
-          Math.max(0, activeTab.selectedRow - Math.max(0, ctx.resultsAreaHeight / 2));
+      activeTab.pendingCenterScroll = true;
     } else {
       activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - ctx.resultsAreaHeight);
     }
@@ -547,9 +546,10 @@ public final class TuiCommandExecutor {
             println("ERROR: " + s);
           }
         });
+    int preamble = TuiTableRenderer.getLastPreambleLines();
     TuiTableRenderer.clearLastData();
 
-    tab.dataStartLine = 2;
+    tab.dataStartLine = 1 + preamble;
     tab.selectedRow = Math.min(tab.selectedRow, Math.max(0, tab.tableData.size() - 1));
     tab.scrollOffset = 0;
     tab.filteredIndices = null;
@@ -790,6 +790,65 @@ public final class TuiCommandExecutor {
     tab.filteredIndices = indices;
     tab.filteredMaxLineWidth = maxWidth;
     tab.scrollOffset = 0;
+  }
+
+  @SuppressWarnings("unchecked")
+  void filterByThread(String threadName) {
+    ResultTab tab = ctx.activeTab();
+    if (tab.tableData == null || tab.dataStartLine < 0) return;
+
+    // Toggle off if already filtering by the same thread
+    String marker = "\u2261" + threadName;
+    if (tab.filteredIndices != null && marker.equals(tab.searchQuery)) {
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.searchQuery = "";
+      scrollToSelectedRow(tab);
+      return;
+    }
+
+    List<Integer> indices = new ArrayList<>();
+    int maxWidth = 0;
+    for (int i = 0; i < tab.tableData.size(); i++) {
+      Map<String, Object> row = tab.tableData.get(i);
+      Object threads = row.get("threads");
+      if (threads instanceof Map<?, ?> tm && tm.containsKey(threadName)) {
+        int lineIdx = tab.dataStartLine + i;
+        if (lineIdx < tab.lines.size()) {
+          indices.add(lineIdx);
+          maxWidth = Math.max(maxWidth, tab.lines.get(lineIdx).length());
+        }
+      }
+    }
+    // Use a marker prefix so toggle detection works
+    tab.searchQuery = "\u2261" + threadName;
+    tab.filteredIndices = indices;
+    tab.filteredMaxLineWidth = maxWidth;
+    int selectedLineIdx = tab.dataStartLine + tab.selectedRow;
+    int filteredPos = indices.indexOf(selectedLineIdx);
+    if (filteredPos >= 0) {
+      tab.scrollOffset = Math.max(0, filteredPos - ctx.resultsAreaHeight / 2);
+    } else {
+      tab.scrollOffset = 0;
+    }
+  }
+
+  void clearThreadFilter() {
+    ResultTab tab = ctx.activeTab();
+    if (tab.filteredIndices != null && tab.searchQuery.startsWith("\u2261")) {
+      tab.filteredIndices = null;
+      tab.filteredMaxLineWidth = 0;
+      tab.searchQuery = "";
+      scrollToSelectedRow(tab);
+    }
+  }
+
+  private void scrollToSelectedRow(ResultTab tab) {
+    if (tab.selectedRow >= 0) {
+      tab.scrollOffset = Math.max(0, tab.selectedRow - ctx.resultsAreaHeight / 2);
+    } else {
+      tab.scrollOffset = 0;
+    }
   }
 
   void applyLiveSearchFilter(ResultTab tab, String query) {
