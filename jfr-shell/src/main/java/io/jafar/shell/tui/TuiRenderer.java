@@ -20,6 +20,7 @@ import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
 import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
@@ -418,7 +419,7 @@ public final class TuiRenderer {
       } else if (!activeTab.searchQuery.isEmpty()) {
         styledLines.add(buildHighlightedLine(visible, activeTab.searchQuery, null));
       } else {
-        styledLines.add(Line.from(visible));
+        styledLines.add(TuiTableRenderer.colorizeLine(visible, line));
       }
     }
     Paragraph results = Paragraph.builder().text(new Text(styledLines, null)).build();

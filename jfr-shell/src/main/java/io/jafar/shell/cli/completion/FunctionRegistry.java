@@ -171,6 +171,22 @@ public final class FunctionRegistry {
             .optionalKeyword("format", STRING, "Date format string")
             .requiresTime()
             .build());
+
+    // stackprofile([direction=top-down|bottom-up], [buckets=N], [minPct=D])
+    // Aggregate stacktrace data into a weighted call tree
+    register(
+        FunctionSpec.builder("stackprofile")
+            .pipeline()
+            .description(
+                "Aggregate stack traces into a weighted call tree with time bucketing. "
+                    + "Markers: \u25c6 = hotspot (>1% self), \u25c6\u25c6 = steady hotspot (N+1 candidate)")
+            .template("stackprofile()")
+            .enumKeyword(
+                "direction", List.of("top-down", "bottom-up"), "Tree direction (default: top-down)")
+            .optionalKeyword("buckets", NUMBER, "Number of time buckets (default: 10)")
+            .optionalKeyword("minPct", NUMBER, "Minimum percentage threshold (default: 1.0)")
+            .requiresAny()
+            .build());
   }
 
   private static void registerTransformOperators() {

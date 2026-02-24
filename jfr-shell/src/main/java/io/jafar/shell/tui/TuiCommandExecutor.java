@@ -417,8 +417,17 @@ public final class TuiCommandExecutor {
     activeTab.sortColumn = -1;
     activeTab.sortAscending = true;
     if (activeTab.tableData != null && !activeTab.tableData.isEmpty()) {
-      activeTab.selectedRow = 0;
       activeTab.dataStartLine = ctx.asyncLinesBeforeDispatch + 1;
+      // Jump to first hotspot/N+1 candidate if present
+      int hotspotRow = -1;
+      for (int i = 0; i < activeTab.tableData.size(); i++) {
+        Object marker = activeTab.tableData.get(i).get(" ");
+        if (marker instanceof String s && !s.isEmpty()) {
+          hotspotRow = i;
+          break;
+        }
+      }
+      activeTab.selectedRow = hotspotRow >= 0 ? hotspotRow : 0;
       detailBuilder.buildDetailTabs(activeTab);
     } else {
       activeTab.selectedRow = -1;
@@ -427,7 +436,9 @@ public final class TuiCommandExecutor {
     }
 
     if (activeTab.dataStartLine >= 0) {
-      activeTab.scrollOffset = 0;
+      // Scroll to make the selected row visible
+      activeTab.scrollOffset =
+          Math.max(0, activeTab.selectedRow - Math.max(0, ctx.resultsAreaHeight / 2));
     } else {
       activeTab.scrollOffset = Math.max(0, activeTab.lines.size() - ctx.resultsAreaHeight);
     }

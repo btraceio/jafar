@@ -69,12 +69,11 @@ public final class TuiDetailBuilder {
     Map<String, Object> row = tab.tableData.get(tab.selectedRow);
     List<String> names = new ArrayList<>();
     List<Object> values = new ArrayList<>();
-    List<String> headers =
-        tab.tableHeaders != null ? tab.tableHeaders : new ArrayList<>(row.keySet());
-    for (String header : headers) {
-      Object val = row.get(header);
+    // Iterate all row keys (not just tableHeaders) to find complex values for detail pane
+    for (String key : row.keySet()) {
+      Object val = row.get(key);
       if (isComplexValue(val)) {
-        names.add(header);
+        names.add(key);
         values.add(val);
       }
     }
@@ -347,6 +346,8 @@ public final class TuiDetailBuilder {
       if (val instanceof Map<?, ?> nested && nested.size() > 1) {
         lines.add(indent + connector + key);
         formatTree(lines, nested, childIndent);
+      } else if (val instanceof long[] la) {
+        lines.add(indent + connector + key + ": " + TuiTableRenderer.sparkline(la));
       } else if (val != null && val.getClass().isArray()) {
         int len = Array.getLength(val);
         lines.add(indent + connector + key + " (" + len + " items)");

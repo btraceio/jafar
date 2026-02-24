@@ -6,6 +6,8 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
 import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
@@ -73,11 +75,29 @@ public final class TuiTableRenderer {
       int sample2 = Math.min(rows.size(), 1000);
       for (int i = 0; i < sample2; i++) cols.addAll(rows.get(i).keySet());
     }
+    // Remove complex-valued columns (Maps with >1 entry) — shown in detail pane only
+    cols.removeIf(
+        col -> {
+          for (int i = 0; i < sample; i++) {
+            Object v = rows.get(i).get(col);
+            if (v instanceof Map<?, ?> m && m.size() > 1) return true;
+          }
+          return false;
+        });
     List<String> headers = new ArrayList<>(cols);
 
     // Store structured data for detail pane consumption
     LAST_TABLE_HEADERS.set(headers);
     LAST_TABLE_DATA.set(rows);
+
+    // Print legend for stackprofile output
+    if (headers.contains("timeBuckets") && headers.contains("method")) {
+      pager.println(
+          "\u25c6 hotspot (>1% self)  \u25c6\u25c6 steady hotspot (N+1 candidate)"
+              + "  \u2502  \u001b[32m\u2581\u2582\u001b[33m\u2583\u2584\u2585"
+              + "\u001b[31m\u2586\u2587\u2588\u001b[0m activity"
+              + "  \u001b[35m\u2584\u2584\u2584\u001b[0m N+1");
+    }
 
     // Build header row
     Cell[] headerCells = new Cell[headers.size()];
@@ -90,15 +110,23 @@ public final class TuiTableRenderer {
     List<Row> dataRows = new ArrayList<>(rows.size());
     for (Map<String, Object> row : rows) {
       Cell[] cells = new Cell[headers.size()];
+      // Detect steady hotspot: marker column contains ◆◆
+      Object markerVal = row.get(" ");
+      boolean steady = markerVal instanceof String s && s.contains("\u25c6\u25c6");
       for (int c = 0; c < headers.size(); c++) {
-        cells[c] = Cell.from(toCell(row.get(headers.get(c))));
+        String cellText = toCell(row.get(headers.get(c)));
+        if (isSparklineColumn(headers.get(c), row.get(headers.get(c)))) {
+          cells[c] = Cell.from(colorSparkline(cellText, steady));
+        } else {
+          cells[c] = Cell.from(cellText);
+        }
       }
       dataRows.add(Row.from(cells));
     }
 
     // Column width constraints based on content length
     int[] maxWidths = computeMaxWidths(headers, rows);
-    Constraint[] widths = computeWidths(maxWidths);
+    Constraint[] widths = computeWidths(headers, maxWidths);
 
     // Buffer width: sum of column widths + column spacing
     int totalWidth = 0;
@@ -165,6 +193,7 @@ public final class TuiTableRenderer {
 
   public static int[] computeMaxWidths(List<String> headers, List<Map<String, Object>> rows) {
     int colCount = headers.size();
+    int lastCol = colCount - 1;
     int[] maxWidths = new int[colCount];
     for (int c = 0; c < colCount; c++) {
       maxWidths[c] = headers.get(c).length();
@@ -174,13 +203,15 @@ public final class TuiTableRenderer {
       Map<String, Object> row = rows.get(i);
       for (int c = 0; c < colCount; c++) {
         String cell = toCell(row.get(headers.get(c)));
-        maxWidths[c] = Math.max(maxWidths[c], Math.min(MAX_CELL_WIDTH, cell.length()));
+        // Don't cap the last column (fill) — it needs full width for horizontal scrolling
+        int cap = (c == lastCol) ? cell.length() : Math.min(MAX_CELL_WIDTH, cell.length());
+        maxWidths[c] = Math.max(maxWidths[c], cap);
       }
     }
     return maxWidths;
   }
 
-  private static Constraint[] computeWidths(int[] maxWidths) {
+  private static Constraint[] computeWidths(List<String> headers, int[] maxWidths) {
     Constraint[] constraints = new Constraint[maxWidths.length];
     int last = maxWidths.length - 1;
     for (int c = 0; c < last; c++) {
@@ -192,8 +223,131 @@ public final class TuiTableRenderer {
     return constraints;
   }
 
+  /** Map long[] values to sparkline characters proportional to max value. */
+  public static String sparkline(long[] values) {
+    if (values == null || values.length == 0) return "";
+    char[] blocks = {'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
+    long max = 0;
+    for (long v : values) {
+      if (v > max) max = v;
+    }
+    if (max == 0) return String.valueOf(blocks[0]).repeat(values.length);
+    StringBuilder sb = new StringBuilder(values.length);
+    for (long v : values) {
+      int idx = (int) (v * (blocks.length - 1) / max);
+      sb.append(blocks[idx]);
+    }
+    return sb.toString();
+  }
+
+  /** Check if a column value looks like a sparkline string (all block-element characters). */
+  private static boolean isSparklineColumn(String header, Object value) {
+    if (!(value instanceof String s) || s.isEmpty()) return false;
+    for (int i = 0; i < s.length(); i++) {
+      char ch = s.charAt(i);
+      if (ch < '\u2581' || ch > '\u2588') return false;
+    }
+    return true;
+  }
+
+  /** Color a sparkline string. Steady hotspots use magenta; others use heat-map colors. */
+  private static Line colorSparkline(String sparkline, boolean steady) {
+    if (sparkline == null || sparkline.isEmpty()) return Line.from(Span.raw(""));
+    Style green = Style.create().fg(Color.GREEN);
+    Style yellow = Style.create().fg(Color.YELLOW);
+    Style red = Style.create().fg(Color.RED);
+    Style magenta = Style.create().fg(Color.MAGENTA);
+    List<Span> spans = new ArrayList<>();
+    Style current = null;
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < sparkline.length(); i++) {
+      char ch = sparkline.charAt(i);
+      Style color = steady ? magenta : sparkColor(ch, green, yellow, red);
+      if (color != current && sb.length() > 0) {
+        spans.add(Span.styled(sb.toString(), current));
+        sb.setLength(0);
+      }
+      current = color;
+      sb.append(ch);
+    }
+    if (sb.length() > 0) {
+      spans.add(Span.styled(sb.toString(), current));
+    }
+    return Line.from(spans.toArray(new Span[0]));
+  }
+
+  private static Style sparkColor(char ch, Style green, Style yellow, Style red) {
+    return switch (ch) {
+      case '\u2581', '\u2582' -> green;
+      case '\u2583', '\u2584', '\u2585' -> yellow;
+      case '\u2586', '\u2587', '\u2588' -> red;
+      default -> green;
+    };
+  }
+
+  private static boolean isSparkChar(char ch) {
+    return ch >= '\u2581' && ch <= '\u2588';
+  }
+
+  /**
+   * Colorize sparkline block characters within a line string. If {@code steadyHotspot} is true,
+   * sparkline chars are colored magenta (N+1 candidate). Otherwise uses heat-map colors: green
+   * (low), yellow (mid), red (high). Non-sparkline segments remain unstyled.
+   */
+  public static Line colorizeLine(String line, boolean steadyHotspot) {
+    if (line == null || line.isEmpty()) return Line.from(line != null ? line : "");
+    Style green = Style.create().fg(Color.GREEN);
+    Style yellow = Style.create().fg(Color.YELLOW);
+    Style red = Style.create().fg(Color.RED);
+    Style magenta = Style.create().fg(Color.MAGENTA);
+    List<Span> spans = new ArrayList<>();
+    StringBuilder plain = new StringBuilder();
+    StringBuilder spark = new StringBuilder();
+    Style currentSparkStyle = null;
+    for (int i = 0; i < line.length(); i++) {
+      char ch = line.charAt(i);
+      if (isSparkChar(ch)) {
+        if (plain.length() > 0) {
+          spans.add(Span.raw(plain.toString()));
+          plain.setLength(0);
+        }
+        Style color = steadyHotspot ? magenta : sparkColor(ch, green, yellow, red);
+        if (color != currentSparkStyle && spark.length() > 0) {
+          spans.add(Span.styled(spark.toString(), currentSparkStyle));
+          spark.setLength(0);
+        }
+        currentSparkStyle = color;
+        spark.append(ch);
+      } else {
+        if (spark.length() > 0) {
+          spans.add(Span.styled(spark.toString(), currentSparkStyle));
+          spark.setLength(0);
+          currentSparkStyle = null;
+        }
+        plain.append(ch);
+      }
+    }
+    if (spark.length() > 0) {
+      spans.add(Span.styled(spark.toString(), currentSparkStyle));
+    }
+    if (plain.length() > 0) {
+      spans.add(Span.raw(plain.toString()));
+    }
+    return spans.isEmpty() ? Line.from("") : Line.from(spans.toArray(new Span[0]));
+  }
+
+  /**
+   * Colorize a visible line, auto-detecting steady hotspot by presence of \u25c6\u25c6 in the full
+   * (unscrolled) line.
+   */
+  public static Line colorizeLine(String visible, String fullLine) {
+    boolean steady = fullLine != null && fullLine.contains("\u25c6\u25c6");
+    return colorizeLine(visible, steady);
+  }
+
   public static String toCell(Object v) {
     if (v == null) return "";
+    if (v instanceof long[] la) return sparkline(la);
     if (v instanceof ComplexType ct) return toCell(ct.getValue());
     if (v instanceof Map<?, ?> m) {
       if (m.size() == 1) {

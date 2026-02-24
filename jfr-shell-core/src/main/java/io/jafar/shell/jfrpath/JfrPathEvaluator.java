@@ -2,6 +2,8 @@ package io.jafar.shell.jfrpath;
 
 import static io.jafar.shell.jfrpath.JfrPath.*;
 
+import io.jafar.parser.api.ArrayType;
+import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
@@ -37,6 +39,8 @@ public final class JfrPathEvaluator {
   }
 
   public record Event(String typeName, Map<String, Object> value) {}
+
+  private static final int SPARKLINE_WIDTH = 30;
 
   private final EventSource source;
   private final JfrPath.MatchMode defaultListMatchMode;
@@ -438,7 +442,7 @@ public final class JfrPathEvaluator {
       // Reached end of path
       if (current != null) {
         // Unwrap ComplexType and ArrayType for final result
-        if (current instanceof io.jafar.parser.api.ComplexType ct) {
+        if (current instanceof ComplexType ct) {
           current = ct.getValue();
         }
         Object unwrapped = unwrapArrayLike(current);
@@ -452,7 +456,7 @@ public final class JfrPathEvaluator {
     }
 
     // Unwrap ComplexType
-    if (current instanceof io.jafar.parser.api.ComplexType ct) {
+    if (current instanceof ComplexType ct) {
       current = ct.getValue();
     }
 
@@ -576,7 +580,7 @@ public final class JfrPathEvaluator {
     if (v == null) return null;
     if (v.getClass().isArray()) return v;
     if (v instanceof java.util.Collection<?> c) return c.toArray();
-    if (v instanceof io.jafar.parser.api.ArrayType at) return at.getArray();
+    if (v instanceof ArrayType at) return at.getArray();
     return null;
   }
 
@@ -621,6 +625,8 @@ public final class JfrPathEvaluator {
           case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
           case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
           case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
+          case JfrPath.StackProfileOp sp ->
+              aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct);
         };
 
     // Apply remaining operators in sequence
@@ -2100,10 +2106,10 @@ public final class JfrPathEvaluator {
   @SuppressWarnings("unchecked")
   private boolean deepMatch(
       Object current, List<String> path, int idx, Op op, Object lit, JfrPath.MatchMode mode) {
-    if (current instanceof io.jafar.parser.api.ComplexType ct) {
+    if (current instanceof ComplexType ct) {
       current = ct.getValue();
     }
-    if (current instanceof io.jafar.parser.api.ArrayType at) {
+    if (current instanceof ArrayType at) {
       current = at.getArray();
     }
     if (idx >= path.size()) {
@@ -2638,6 +2644,8 @@ public final class JfrPathEvaluator {
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
       case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
+      case JfrPath.StackProfileOp sp ->
+          applyStackProfile(rows, sp.direction, sp.buckets, sp.minPct);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }
@@ -3004,5 +3012,330 @@ public final class JfrPathEvaluator {
     }
 
     return List.of(result);
+  }
+
+  // === Stack Profile ===
+
+  private static final class ProfileNode {
+    final String name;
+    long total;
+    long self;
+    long[] timeBuckets;
+    final Map<String, ProfileNode> children = new LinkedHashMap<>();
+
+    ProfileNode(String name, int bucketCount) {
+      this.name = name;
+      this.timeBuckets = new long[bucketCount];
+    }
+
+    void addPath(List<String> frames, int frameIdx, int bucketIdx) {
+      total++;
+      if (bucketIdx >= 0 && bucketIdx < timeBuckets.length) {
+        timeBuckets[bucketIdx]++;
+      }
+      if (frameIdx >= frames.size()) {
+        self++;
+        return;
+      }
+      String head = frames.get(frameIdx);
+      ProfileNode child =
+          children.computeIfAbsent(head, n -> new ProfileNode(n, timeBuckets.length));
+      child.addPath(frames, frameIdx + 1, bucketIdx);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<String> extractFramesForProfile(Map<String, Object> event, String direction) {
+    List<String> frames = new ArrayList<>();
+
+    Object stackTrace = event.get("stackTrace");
+    if (stackTrace instanceof ComplexType ct) stackTrace = ct.getValue();
+    if (stackTrace == null) return frames;
+
+    Object framesObj = null;
+    if (stackTrace instanceof Map<?, ?> stMap) {
+      framesObj = stMap.get("frames");
+    }
+    if (framesObj == null) return frames;
+
+    // Unwrap ArrayType wrapper
+    if (framesObj instanceof ArrayType at) {
+      framesObj = at.getArray();
+    }
+
+    // Handle array of frames
+    Object[] frameArray = null;
+    if (framesObj != null && framesObj.getClass().isArray()) {
+      int len = java.lang.reflect.Array.getLength(framesObj);
+      frameArray = new Object[len];
+      for (int i = 0; i < len; i++) {
+        frameArray[i] = java.lang.reflect.Array.get(framesObj, i);
+      }
+    } else if (framesObj instanceof List<?> list) {
+      frameArray = list.toArray();
+    }
+
+    if (frameArray == null || frameArray.length == 0) return frames;
+
+    for (Object frame : frameArray) {
+      String methodName = extractMethodNameForProfile(frame);
+      if (methodName != null) {
+        frames.add(methodName);
+      }
+    }
+
+    // JFR stores frames[0] = top of stack (most recent call)
+    // bottom-up: keep as-is (hot method first)
+    // top-down: reverse (entry point first)
+    if ("top-down".equals(direction)) {
+      Collections.reverse(frames);
+    }
+    return frames;
+  }
+
+  @SuppressWarnings("unchecked")
+  private String extractMethodNameForProfile(Object frame) {
+    if (frame == null) return null;
+
+    if (frame instanceof ComplexType ct) {
+      frame = ct.getValue();
+    }
+    if (!(frame instanceof Map<?, ?> fm)) return null;
+    Map<String, Object> frameMap = (Map<String, Object>) fm;
+
+    Object method = frameMap.get("method");
+    if (method == null) return null;
+    if (method instanceof ComplexType ct) method = ct.getValue();
+    if (!(method instanceof Map<?, ?> mm)) return null;
+    Map<String, Object> methodMap = (Map<String, Object>) mm;
+
+    String className = "";
+    Object type = methodMap.get("type");
+    if (type instanceof ComplexType ct) type = ct.getValue();
+    if (type instanceof Map<?, ?> typeMap) {
+      Object name = typeMap.get("name");
+      if (name instanceof ComplexType ct) name = ct.getValue();
+      if (name instanceof Map<?, ?> nameMap) {
+        Object str = nameMap.get("string");
+        if (str != null) className = str.toString();
+      } else if (name != null) {
+        className = name.toString();
+      }
+    }
+
+    String methodName = "";
+    Object nameObj = methodMap.get("name");
+    if (nameObj instanceof ComplexType ct) nameObj = ct.getValue();
+    if (nameObj instanceof Map<?, ?> nameMap) {
+      Object str = nameMap.get("string");
+      if (str != null) methodName = str.toString();
+    } else if (nameObj != null) {
+      methodName = nameObj.toString();
+    }
+
+    if (className.isEmpty() && methodName.isEmpty()) return null;
+    String qualName = className.isEmpty() ? methodName : className + "." + methodName;
+    Object line = frameMap.get("lineNumber");
+    if (line != null && !"-1".equals(line.toString())) {
+      qualName += ":" + line;
+    }
+    return qualName;
+  }
+
+  private List<Map<String, Object>> aggregateStackProfile(
+      JFRSession session, Query query, String direction, int buckets, double minPct)
+      throws Exception {
+    if (query.root != Root.EVENTS || query.eventTypes.isEmpty()) {
+      throw new IllegalArgumentException("stackprofile requires an event type");
+    }
+
+    validateEventTypes(session, query.eventTypes);
+
+    // Collect matching events with their frames and startTime
+    List<long[]> timestamps = new ArrayList<>();
+    List<List<String>> allFrames = new ArrayList<>();
+
+    if (query.isMultiType) {
+      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!typeSet.contains(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            List<String> frames = extractFramesForProfile(map, direction);
+            if (!frames.isEmpty()) {
+              allFrames.add(frames);
+              Object st = map.get("startTime");
+              timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+            }
+          });
+    } else {
+      String eventType = query.eventTypes.get(0);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!eventType.equals(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            List<String> frames = extractFramesForProfile(map, direction);
+            if (!frames.isEmpty()) {
+              allFrames.add(frames);
+              Object st = map.get("startTime");
+              timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+            }
+          });
+    }
+
+    return buildStackProfile(allFrames, timestamps, buckets, minPct);
+  }
+
+  private List<Map<String, Object>> applyStackProfile(
+      List<Map<String, Object>> rows, String direction, int buckets, double minPct) {
+    List<long[]> timestamps = new ArrayList<>();
+    List<List<String>> allFrames = new ArrayList<>();
+
+    for (Map<String, Object> row : rows) {
+      List<String> frames = extractFramesForProfile(row, direction);
+      if (!frames.isEmpty()) {
+        allFrames.add(frames);
+        Object st = row.get("startTime");
+        timestamps.add(new long[] {st instanceof Number n ? n.longValue() : 0L});
+      }
+    }
+
+    return buildStackProfile(allFrames, timestamps, buckets, minPct);
+  }
+
+  private List<Map<String, Object>> buildStackProfile(
+      List<List<String>> allFrames, List<long[]> timestamps, int buckets, double minPct) {
+    if (allFrames.isEmpty()) return List.of();
+
+    // Compute min/max for bucket boundaries
+    long minTime = Long.MAX_VALUE;
+    long maxTime = Long.MIN_VALUE;
+    for (long[] ts : timestamps) {
+      if (ts[0] < minTime) minTime = ts[0];
+      if (ts[0] > maxTime) maxTime = ts[0];
+    }
+    long range = maxTime - minTime;
+
+    // Build profile tree
+    ProfileNode root = new ProfileNode("root", buckets);
+    for (int i = 0; i < allFrames.size(); i++) {
+      int bucketIdx =
+          range == 0 ? 0 : (int) ((timestamps.get(i)[0] - minTime) * (buckets - 1) / range);
+      root.addPath(allFrames.get(i), 0, bucketIdx);
+    }
+
+    // Flatten to rows
+    return flattenProfileTree(root, root.total, minPct, buckets);
+  }
+
+  private List<Map<String, Object>> flattenProfileTree(
+      ProfileNode root, long totalSamples, double minPct, int bucketCount) {
+    List<Map<String, Object>> rows = new ArrayList<>();
+    // Flatten children of root (root itself is synthetic)
+    List<ProfileNode> sorted = new ArrayList<>(root.children.values());
+    sorted.sort((a, b) -> Long.compare(b.total, a.total));
+    for (ProfileNode child : sorted) {
+      flattenNode(child, totalSamples, minPct, rows, bucketCount, 0);
+    }
+    return rows;
+  }
+
+  private void flattenNode(
+      ProfileNode node,
+      long totalSamples,
+      double minPct,
+      List<Map<String, Object>> rows,
+      int bucketCount,
+      int depth) {
+    double pct = totalSamples == 0 ? 0 : (node.total * 100.0) / totalSamples;
+    if (pct < minPct) return;
+
+    double selfPctOfTotal = totalSamples == 0 ? 0 : (node.self * 100.0) / totalSamples;
+    String pattern = bucketPattern(node.timeBuckets);
+    String marker = "";
+    if (selfPctOfTotal >= 1.0) {
+      marker = "steady".equals(pattern) ? "\u25c6\u25c6" : "\u25c6";
+    }
+    String indent = depth > 0 ? " ".repeat(depth) : "";
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("timeBuckets", sparkline(node.timeBuckets, SPARKLINE_WIDTH));
+    row.put(" ", marker);
+    row.put("method", indent + node.name);
+    Map<String, Object> profile = new LinkedHashMap<>();
+    profile.put("method", node.name);
+    profile.put("self", node.self);
+    profile.put("total", node.total);
+    profile.put("totalPct", String.format("%.1f%%", pct));
+    double selfPct = node.total == 0 ? 0 : (node.self * 100.0) / node.total;
+    profile.put("selfPct", String.format("%.1f%%", selfPct));
+    profile.put("pattern", pattern);
+    row.put("profile", profile);
+    rows.add(row);
+
+    List<ProfileNode> sorted = new ArrayList<>(node.children.values());
+    sorted.sort((a, b) -> Long.compare(b.total, a.total));
+    for (ProfileNode child : sorted) {
+      flattenNode(child, totalSamples, minPct, rows, bucketCount, depth + 1);
+    }
+  }
+
+  /**
+   * Map long[] values to sparkline characters, stretched to fill targetWidth. Each bucket maps to
+   * one or more characters proportionally.
+   */
+  private static String sparkline(long[] values, int targetWidth) {
+    if (values == null || values.length == 0) return "";
+    char[] blocks = {
+      '\u2581', '\u2582', '\u2583', '\u2584', '\u2585', '\u2586', '\u2587', '\u2588'
+    };
+    int n = values.length;
+    int width = Math.max(n, targetWidth);
+    long max = 0;
+    for (long v : values) {
+      if (v > max) max = v;
+    }
+    StringBuilder sb = new StringBuilder(width);
+    for (int i = 0; i < n; i++) {
+      char ch = max == 0 ? blocks[0] : blocks[(int) (values[i] * (blocks.length - 1) / max)];
+      // Number of chars for this bucket: evenly distribute width across n buckets
+      int colEnd = (int) ((long) (i + 1) * width / n);
+      int colStart = (int) ((long) i * width / n);
+      int repeat = colEnd - colStart;
+      for (int r = 0; r < repeat; r++) sb.append(ch);
+    }
+    return sb.toString();
+  }
+
+  /**
+   * Classify time bucket distribution as "steady" or "bursty". Uses coefficient of variation
+   * (stddev/mean) of non-zero buckets. A steady pattern (low CV) with high self% suggests
+   * repetitive work like N+1 queries.
+   */
+  private static String bucketPattern(long[] buckets) {
+    if (buckets == null || buckets.length == 0) return "unknown";
+    int nonZero = 0;
+    long sum = 0;
+    for (long b : buckets) {
+      if (b > 0) {
+        nonZero++;
+        sum += b;
+      }
+    }
+    if (nonZero <= 1) return "bursty";
+    double mean = (double) sum / buckets.length;
+    double variance = 0;
+    for (long b : buckets) {
+      double diff = b - mean;
+      variance += diff * diff;
+    }
+    variance /= buckets.length;
+    double cv = Math.sqrt(variance) / mean;
+    // CV < 0.5 means values are within ~50% of the mean — fairly uniform
+    return cv < 0.5 ? "steady" : "bursty";
   }
 }

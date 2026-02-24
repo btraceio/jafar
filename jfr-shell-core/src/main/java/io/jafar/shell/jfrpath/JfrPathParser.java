@@ -750,6 +750,8 @@ public final class JfrPathParser {
       return parseToMap();
     } else if ("timerange".equals(name)) {
       return parseTimeRange();
+    } else if ("stackprofile".equals(name)) {
+      return parseStackProfile();
     } else {
       throw error("Unknown pipeline function: " + name);
     }
@@ -978,6 +980,47 @@ public final class JfrPathParser {
     }
 
     return new JfrPath.TimeRangeOp(valuePath, durationPath, format);
+  }
+
+  private JfrPath.StackProfileOp parseStackProfile() {
+    String direction = null;
+    int buckets = 0;
+    double minPct = -1;
+
+    expect('(');
+    skipWs();
+
+    while (peek() != ')' && !eof()) {
+      skipWs();
+      if (startsWithIgnoreCase("direction=")) {
+        pos += 10;
+        skipWs();
+        direction = readIdent();
+        if (direction.isEmpty()) throw error("Expected direction value");
+      } else if (startsWithIgnoreCase("buckets=")) {
+        pos += 8;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("buckets= expects a number");
+        buckets = ((Number) lit).intValue();
+      } else if (startsWithIgnoreCase("minPct=") || startsWithIgnoreCase("minpct=")) {
+        pos += 7;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("minPct= expects a number");
+        minPct = ((Number) lit).doubleValue();
+      } else if (peek() != ')' && peek() != ',') {
+        throw error("stackprofile() expects direction=, buckets=, or minPct= parameters");
+      }
+      skipWs();
+      if (peek() == ',') {
+        pos++;
+        skipWs();
+      }
+    }
+    expect(')');
+
+    return new JfrPath.StackProfileOp(direction, buckets, minPct);
   }
 
   private JfrPath.SelectItem parseSelectItem() {

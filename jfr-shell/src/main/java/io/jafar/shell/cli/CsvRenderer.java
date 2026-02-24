@@ -13,11 +13,16 @@ public final class CsvRenderer {
       return;
     }
 
-    // Compute columns as union of keys
+    // Compute columns as union of keys, excluding complex-valued columns
     Set<String> cols = new LinkedHashSet<>();
     for (Map<String, Object> row : rows) {
       cols.addAll(row.keySet());
     }
+    cols.removeIf(
+        col ->
+            rows.stream()
+                .map(r -> r.get(col))
+                .anyMatch(v -> v instanceof Map<?, ?> m && m.size() > 1));
     List<String> headers = new ArrayList<>(cols);
 
     // Print header row
@@ -56,6 +61,14 @@ public final class CsvRenderer {
 
   private static String toCsvCell(Object v) {
     if (v == null) return "";
+    if (v instanceof long[] la) {
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < la.length; i++) {
+        if (i > 0) sb.append(';');
+        sb.append(la[i]);
+      }
+      return sb.toString();
+    }
     if (v instanceof Map<?, ?>) return v.toString();
     if (v instanceof Collection<?> coll) {
       StringBuilder sb = new StringBuilder();
@@ -67,7 +80,17 @@ public final class CsvRenderer {
       }
       return sb.toString();
     }
-    if (v.getClass().isArray()) return Arrays.deepToString((Object[]) v);
+    if (v.getClass().isArray()) {
+      if (v instanceof Object[] oa) return Arrays.deepToString(oa);
+      // Primitive arrays: int[], double[], etc.
+      int len = java.lang.reflect.Array.getLength(v);
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < len; i++) {
+        if (i > 0) sb.append(';');
+        sb.append(java.lang.reflect.Array.get(v, i));
+      }
+      return sb.toString();
+    }
     return String.valueOf(v);
   }
 
