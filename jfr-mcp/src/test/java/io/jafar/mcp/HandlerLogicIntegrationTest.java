@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -35,16 +36,13 @@ class HandlerLogicIntegrationTest {
 
   @BeforeAll
   static void findRealJfrFile() {
-    // Use the smallest available real JFR file
-    // test-ap.jfr is ~171MB (symlink to demo/src/test/resources/test-ap.jfr)
-    realJfrFile = Path.of("../demo/src/test/resources/test-ap.jfr").normalize();
+    // Use small JFR file (~2MB) to avoid OOM
+    realJfrFile = Path.of("../demo/src/test/resources/test-dd.jfr").normalize();
     if (!realJfrFile.toFile().exists()) {
-      // Try alternative location
-      realJfrFile = Path.of("demo/src/test/resources/test-ap.jfr").normalize();
+      realJfrFile = Path.of("demo/src/test/resources/test-dd.jfr").normalize();
     }
     assertTrue(
-        realJfrFile.toFile().exists(),
-        "Real JFR file not found at: " + realJfrFile.toAbsolutePath());
+        realJfrFile.toFile().exists(), "JFR file not found at: " + realJfrFile.toAbsolutePath());
   }
 
   @BeforeEach
@@ -73,8 +71,14 @@ class HandlerLogicIntegrationTest {
   }
 
   private CallToolResult invokeTool(String toolName, Map<String, Object> args) throws Exception {
-    Method method = getMethod(camelCase("handle_" + toolName), Map.class);
-    return (CallToolResult) method.invoke(server, args);
+    String methodName = camelCase("handle_" + toolName);
+    try {
+      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+    } catch (NoSuchMethodException e) {
+      Method method = getMethod(methodName, Map.class);
+      return (CallToolResult) method.invoke(server, args);
+    }
   }
 
   private String camelCase(String snakeCase) {
@@ -127,7 +131,7 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("direction", "bottom-up");
     args.put("format", "folded");
 
@@ -135,9 +139,8 @@ class HandlerLogicIntegrationTest {
     JsonNode node = parseResult(result);
 
     assertEquals("folded", node.get("format").asText());
-    assertEquals("bottom-up", node.get("direction").asText());
     assertTrue(node.get("data").asText().length() > 0);
-    assertTrue(node.get("processedEvents").asInt() > 0);
+    assertTrue(node.get("totalSamples").asInt() > 0);
 
     // Folded format should contain semicolon-separated stack traces
     String data = node.get("data").asText();
@@ -149,15 +152,15 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("direction", "top-down");
     args.put("format", "folded");
 
     CallToolResult result = invokeTool("jfr_flamegraph", args);
     JsonNode node = parseResult(result);
 
-    assertEquals("top-down", node.get("direction").asText());
-    assertTrue(node.get("processedEvents").asInt() > 0);
+    assertEquals("folded", node.get("format").asText());
+    assertTrue(node.get("totalSamples").asInt() > 0);
   }
 
   @Test
@@ -165,17 +168,17 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "tree");
 
     CallToolResult result = invokeTool("jfr_flamegraph", args);
     JsonNode node = parseResult(result);
 
     assertEquals("tree", node.get("format").asText());
-    assertTrue(node.has("tree"));
-    assertTrue(node.get("tree").isObject());
-    assertTrue(node.get("tree").has("name"));
-    assertTrue(node.get("tree").has("value"));
+    assertTrue(node.has("root"));
+    assertTrue(node.get("root").isObject());
+    assertTrue(node.get("root").has("name"));
+    assertTrue(node.get("root").has("value"));
   }
 
   @Test
@@ -183,7 +186,7 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "tree");
     args.put("maxDepth", 2);
 
@@ -191,8 +194,8 @@ class HandlerLogicIntegrationTest {
     JsonNode node = parseResult(result);
 
     // Verify depth is limited
-    assertTrue(node.has("tree"));
-    int maxDepth = calculateMaxDepth(node.get("tree"));
+    assertTrue(node.has("root"));
+    int maxDepth = calculateMaxDepth(node.get("root"));
     assertTrue(maxDepth <= 3, "Max depth should be limited (root + 2)"); // root + maxDepth
   }
 
@@ -205,7 +208,7 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "dot");
 
     CallToolResult result = invokeTool("jfr_callgraph", args);
@@ -258,14 +261,18 @@ class HandlerLogicIntegrationTest {
     openSession();
 
     CallToolResult result = invokeTool("jfr_exceptions", Map.of());
+    // Recording may not contain exception events — auto-detection returns an error in that case
+    if (result.isError()) {
+      String json = extractTextContent(result);
+      assertTrue(json.contains("No exception events found"));
+      return;
+    }
     JsonNode node = parseResult(result);
 
     assertTrue(node.has("totalExceptions"));
-    // Real JFR file may or may not have exceptions, so just verify structure
     assertTrue(node.has("byType"));
     assertTrue(node.get("byType").isArray());
 
-    // If exceptions exist, verify structure
     if (node.get("byType").size() > 0) {
       JsonNode firstException = node.get("byType").get(0);
       assertTrue(firstException.has("type"));
@@ -291,7 +298,7 @@ class HandlerLogicIntegrationTest {
 
     // Verify all types match filter
     for (JsonNode type : node.get("eventTypes")) {
-      String typeName = type.asText();
+      String typeName = type.get("name").asText();
       assertTrue(
           typeName.toLowerCase().contains("execution"), "Type should match filter: " + typeName);
     }

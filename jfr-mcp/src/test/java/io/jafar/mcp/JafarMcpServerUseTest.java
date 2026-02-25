@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -52,7 +53,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodAnalyzesAllResources() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -60,7 +63,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("resources", List.of("all"));
     args.put("includeInsights", true);
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -85,14 +89,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodAnalyzesSpecificResource() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("resources", List.of("cpu"));
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -107,7 +114,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodSupportsTimeWindowing() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -116,7 +125,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("startTime", 0L);
     args.put("endTime", 1000000000L); // First second
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -130,13 +140,16 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodHandlesMissingSession() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "999"); // Non-existent session
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
@@ -149,7 +162,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodHandlesQueueSaturation() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -157,7 +172,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("resources", List.of("threads"));
     args.put("includeInsights", true);
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -223,14 +239,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodHandlesMissingQueueEvents() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("resources", List.of("threads"));
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     // Should not error even if no QueueTime events
     assertFalse(result.isError(), () -> extractTextContent(result));
@@ -244,7 +263,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void useMethodIncludesQueueInsights() throws Exception {
-    Method handleJfrUse = JafarMcpServer.class.getDeclaredMethod("handleJfrUse", Map.class);
+    Method handleJfrUse =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrUse", McpSyncServerExchange.class, Map.class);
     handleJfrUse.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -252,7 +273,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("resources", List.of("threads"));
     args.put("includeInsights", true);
 
-    CallToolResult result = (CallToolResult) handleJfrUse.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -292,7 +314,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaAnalyzesThreadStates() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -300,7 +324,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("topThreads", 5);
     args.put("correlateBlocking", true);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -316,14 +341,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaSupportsMinSamplesThreshold() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("minSamples", 100); // High threshold
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -336,14 +364,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaCorrelatesWithLocks() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("correlateBlocking", true);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -363,14 +394,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaCorrelatesWithQueues() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("correlateBlocking", true);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -406,7 +440,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaThreadProfilesIncludeQueueInfo() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -414,7 +450,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
     args.put("topThreads", 10);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -456,7 +493,9 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaIncludesQueueInsights() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
@@ -464,7 +503,8 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
     args.put("includeInsights", true);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -524,14 +564,17 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
   @Test
   void tsaHandlesMissingQueueEvents() throws Exception {
-    Method handleJfrTsa = JafarMcpServer.class.getDeclaredMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa =
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrTsa", McpSyncServerExchange.class, Map.class);
     handleJfrTsa.setAccessible(true);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "1");
     args.put("correlateBlocking", true);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     // Should not error even if no QueueTime events
     assertFalse(result.isError(), () -> extractTextContent(result));

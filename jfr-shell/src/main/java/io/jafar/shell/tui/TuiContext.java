@@ -106,6 +106,8 @@ public final class TuiContext {
     int[] cpColumnWidths; // column widths for manual row formatting
     int cpRenderedCount; // entries rendered into lines/tableData so far
 
+    boolean pendingCenterScroll; // center selectedRow on next render
+
     ResultTab(String name) {
       this.name = name;
     }
@@ -265,6 +267,7 @@ public final class TuiContext {
   volatile List<Map<String, Object>> asyncTableData;
   volatile List<String> asyncTableHeaders;
   volatile List<Map<String, Object>> asyncMetadataClasses;
+  volatile int asyncPreambleLines;
   volatile boolean eventBrowserPending;
 
   // ---- convenience accessors ----

@@ -22,6 +22,15 @@ public final class TableRenderer {
       int sample2 = Math.min(rows.size(), 1000);
       for (int i = 0; i < sample2; i++) cols.addAll(rows.get(i).keySet());
     }
+    // Remove complex-valued columns (Maps with >1 entry) — shown in detail pane only
+    cols.removeIf(
+        col -> {
+          for (int i = 0; i < sample; i++) {
+            Object v = rows.get(i).get(col);
+            if (v instanceof Map<?, ?> m && m.size() > 1) return true;
+          }
+          return false;
+        });
     List<String> headers = new ArrayList<>(cols);
     // Determine which columns should never truncate (special-case: "fields")
     boolean[] noTruncate = new boolean[headers.size()];
@@ -115,6 +124,7 @@ public final class TableRenderer {
 
   private static String toCell(Object v) {
     if (v == null) return "";
+    if (v instanceof long[] la) return TuiTableRenderer.sparkline(la);
     if (v instanceof Map<?, ?> m) {
       if (m.size() == 1) {
         return toCell(m.values().iterator().next());

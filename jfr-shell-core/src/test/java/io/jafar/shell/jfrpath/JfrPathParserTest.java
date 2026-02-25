@@ -287,4 +287,33 @@ class JfrPathParserTest {
     var op = (JfrPath.TimeRangeOp) q.pipeline.get(0);
     assertEquals("timerange(startTime, duration=dur)", op.toString());
   }
+
+  @Test
+  void parsesStackProfileNoArgsRequiresParens() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JfrPathParser.parse("events/jdk.ExecutionSample | stackprofile"));
+  }
+
+  @Test
+  void parsesStackProfileEmptyParens() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | stackprofile()");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.StackProfileOp) q.pipeline.get(0);
+    assertEquals("top-down", op.direction);
+    assertEquals(10, op.buckets);
+    assertEquals(1.0, op.minPct, 0.001);
+  }
+
+  @Test
+  void parsesStackProfileAllParams() {
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | stackprofile(direction=bottom-up, buckets=20, minPct=0.5)");
+    assertEquals(1, q.pipeline.size());
+    var op = (JfrPath.StackProfileOp) q.pipeline.get(0);
+    assertEquals("bottom-up", op.direction);
+    assertEquals(20, op.buckets);
+    assertEquals(0.5, op.minPct, 0.001);
+  }
 }

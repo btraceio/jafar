@@ -302,7 +302,8 @@ public final class JfrPath {
           DecorateByKeyOp,
           SelectOp,
           ToMapOp,
-          TimeRangeOp {}
+          TimeRangeOp,
+          StackProfileOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -665,6 +666,22 @@ public final class JfrPath {
     @Override
     public int hashCode() {
       return Objects.hash(valuePath, durationPath, format);
+    }
+  }
+
+  /**
+   * stackprofile([direction=top-down|bottom-up], [buckets=N], [minPct=D]) - Aggregate stacktrace
+   * data into a weighted call tree with temporal bucketing.
+   */
+  public static final class StackProfileOp implements PipelineOp {
+    public final String direction;
+    public final int buckets;
+    public final double minPct;
+
+    public StackProfileOp(String direction, int buckets, double minPct) {
+      this.direction = direction == null ? "top-down" : direction;
+      this.buckets = buckets <= 0 ? 10 : buckets;
+      this.minPct = minPct < 0 ? 1.0 : minPct;
     }
   }
 }

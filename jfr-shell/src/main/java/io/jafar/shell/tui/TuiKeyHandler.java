@@ -22,6 +22,7 @@ public final class TuiKeyHandler {
   private static final int MAC_OPT_D = 0x2202; // ∂
   private static final int MAC_OPT_C = 0x00E7; // ç
   private static final int MAC_OPT_S = 0x00DF; // ß
+  private static final int MAC_OPT_T = 0x2020; // †
 
   // Modifier codes in CSI sequences: ESC [ 1 ; <mod> <dir>
   private static final int MOD_NONE = 0;
@@ -187,6 +188,10 @@ public final class TuiKeyHandler {
       executor.openSessionPicker();
       return;
     }
+    if (key == MAC_OPT_T) {
+      handleAltT();
+      return;
+    }
 
     // {}: switch result tabs
     if (ctx.focus != Focus.INPUT
@@ -287,6 +292,20 @@ public final class TuiKeyHandler {
           ctx.historyIndex = -1;
         }
         break;
+    }
+  }
+
+  private void handleAltT() {
+    if (ctx.focus == Focus.DETAIL
+        && ctx.detailLineTypeRefs != null
+        && ctx.detailCursorLine >= 0
+        && ctx.detailCursorLine < ctx.detailLineTypeRefs.size()) {
+      String ref = ctx.detailLineTypeRefs.get(ctx.detailCursorLine);
+      if (ref != null && ref.startsWith("thread:")) {
+        executor.filterByThread(ref.substring("thread:".length()));
+      }
+    } else {
+      executor.clearThreadFilter();
     }
   }
 
@@ -548,6 +567,10 @@ public final class TuiKeyHandler {
     }
     if (next == 's') {
       executor.openSessionPicker();
+      return;
+    }
+    if (next == 't') {
+      handleAltT();
       return;
     }
     if (next != '[') return;
