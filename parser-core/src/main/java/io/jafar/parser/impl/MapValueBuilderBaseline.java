@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.ValueProcessor;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -160,8 +161,21 @@ final class MapValueBuilderBaseline implements ValueProcessor {
         }
       } else {
         // top-level complex value (event) - return HashMap directly (baseline, no optimization)
+        normalizeTimestamps(value, context.get(Control.ChunkInfo.class));
         root = value;
       }
+    }
+  }
+
+  private static void normalizeTimestamps(Map<String, Object> event, Control.ChunkInfo chunkInfo) {
+    if (chunkInfo == null) return;
+    Object st = event.get("startTime");
+    if (st instanceof Long) {
+      event.put("startTime", chunkInfo.asEpochNanos((Long) st));
+    }
+    Object dur = event.get("duration");
+    if (dur instanceof Long) {
+      event.put("duration", chunkInfo.asDuration((Long) dur).toNanos());
     }
   }
 

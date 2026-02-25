@@ -67,6 +67,16 @@ public interface Control {
     default Instant asInstant(long ticks) {
       return Instant.ofEpochMilli(0);
     }
+
+    /**
+     * Converts a raw tick value to epoch nanoseconds.
+     *
+     * @param ticks the raw tick value from the JFR event
+     * @return the corresponding epoch nanoseconds, or 0 if no info is available
+     */
+    default long asEpochNanos(long ticks) {
+      return 0;
+    }
   }
 
   /** Represents the current recording stream while the handler executes. */
