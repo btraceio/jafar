@@ -773,17 +773,17 @@ public final class JfrPathEvaluator {
 
               Object val = Values.get(map, valuePath.toArray());
               if (val instanceof Number n) {
-                long ticks = n.longValue();
-                if (ticks < minMax[0]) minMax[0] = ticks;
+                long epochNanos = n.longValue();
+                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
                 // For max, if duration is specified, use startTime + duration
-                long endTicks = ticks;
+                long endEpochNanos = epochNanos;
                 if (hasDuration) {
                   Object durVal = Values.get(map, durationPath.toArray());
                   if (durVal instanceof Number dn) {
-                    endTicks = ticks + dn.longValue();
+                    endEpochNanos = epochNanos + dn.longValue();
                   }
                 }
-                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
                 count[0]++;
               }
             });
@@ -798,17 +798,17 @@ public final class JfrPathEvaluator {
 
               Object val = Values.get(map, valuePath.toArray());
               if (val instanceof Number n) {
-                long ticks = n.longValue();
-                if (ticks < minMax[0]) minMax[0] = ticks;
+                long epochNanos = n.longValue();
+                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
                 // For max, if duration is specified, use startTime + duration
-                long endTicks = ticks;
+                long endEpochNanos = epochNanos;
                 if (hasDuration) {
                   Object durVal = Values.get(map, durationPath.toArray());
                   if (durVal instanceof Number dn) {
-                    endTicks = ticks + dn.longValue();
+                    endEpochNanos = epochNanos + dn.longValue();
                   }
                 }
-                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
                 count[0]++;
               }
             });
@@ -820,17 +820,17 @@ public final class JfrPathEvaluator {
       for (Map<String, Object> row : rows) {
         Object val = Values.get(row, valuePath.toArray());
         if (val instanceof Number n) {
-          long ticks = n.longValue();
-          if (ticks < minMax[0]) minMax[0] = ticks;
+          long epochNanos = n.longValue();
+          if (epochNanos < minMax[0]) minMax[0] = epochNanos;
           // For max, if duration is specified, use startTime + duration
-          long endTicks = ticks;
+          long endEpochNanos = epochNanos;
           if (hasDuration) {
             Object durVal = Values.get(row, durationPath.toArray());
             if (durVal instanceof Number dn) {
-              endTicks = ticks + dn.longValue();
+              endEpochNanos = epochNanos + dn.longValue();
             }
           }
-          if (endTicks > minMax[1]) minMax[1] = endTicks;
+          if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
           count[0]++;
         }
       }
@@ -842,16 +842,16 @@ public final class JfrPathEvaluator {
     result.put("field", String.join("/", valuePath));
 
     if (count[0] == 0) {
-      result.put("minTicks", null);
-      result.put("maxTicks", null);
+      result.put("minEpochNanos", null);
+      result.put("maxEpochNanos", null);
       result.put("minTime", null);
       result.put("maxTime", null);
       result.put("durationNanos", null);
       result.put("durationMs", null);
       result.put("duration", null);
     } else {
-      result.put("minTicks", minMax[0]);
-      result.put("maxTicks", minMax[1]);
+      result.put("minEpochNanos", minMax[0]);
+      result.put("maxEpochNanos", minMax[1]);
 
       // minMax values are already epoch nanos (normalized by the parser)
       Instant minInstant = Instant.ofEpochSecond(0, minMax[0]);
@@ -874,15 +874,9 @@ public final class JfrPathEvaluator {
 
   private List<Map<String, Object>> aggregateAsDateTime(
       JFRSession session, Query query, List<String> valuePath, String format) throws Exception {
-    List<String> vpath = valuePath;
-    if (vpath == null || vpath.isEmpty()) {
-      if (query.segments.size() < 2)
-        throw new IllegalArgumentException("asDateTime() requires projection or a value path");
-      vpath = query.segments.subList(1, query.segments.size());
-    }
     DateTimeFormatter formatter = getFormatter(format);
     List<Map<String, Object>> out = new ArrayList<>();
-    final List<String> path = vpath;
+    final List<String> path = valuePath;
     Consumer<Object> addFormatted =
         (val) -> {
           Map<String, Object> row = new HashMap<>();
@@ -2137,7 +2131,7 @@ public final class JfrPathEvaluator {
           if (!(v instanceof Number betweenNum)) return false;
           Object loArg = resolveArg(root, args.get(1));
           Object hiArg = resolveArg(root, args.get(2));
-          if (loArg instanceof String || hiArg instanceof String) {
+          if (loArg instanceof String && hiArg instanceof String) {
             long x = betweenNum.longValue();
             return x >= parseEpochNanos(String.valueOf(loArg))
                 && x <= parseEpochNanos(String.valueOf(hiArg));
@@ -2149,14 +2143,22 @@ public final class JfrPathEvaluator {
           ensureArgs(args, 2);
           Object beforeVal = resolveArg(root, args.get(0));
           if (!(beforeVal instanceof Number beforeNum)) return false;
-          long beforeThreshold = parseEpochNanos(String.valueOf(resolveArg(root, args.get(1))));
+          Object beforeArg = resolveArg(root, args.get(1));
+          long beforeThreshold =
+              beforeArg instanceof Number tn
+                  ? tn.longValue()
+                  : parseEpochNanos(String.valueOf(beforeArg));
           return beforeNum.longValue() < beforeThreshold;
         }
         case "after" -> {
           ensureArgs(args, 2);
           Object afterVal = resolveArg(root, args.get(0));
           if (!(afterVal instanceof Number afterNum)) return false;
-          long afterThreshold = parseEpochNanos(String.valueOf(resolveArg(root, args.get(1))));
+          Object afterArg = resolveArg(root, args.get(1));
+          long afterThreshold =
+              afterArg instanceof Number tn
+                  ? tn.longValue()
+                  : parseEpochNanos(String.valueOf(afterArg));
           return afterNum.longValue() > afterThreshold;
         }
         case "on" -> {
@@ -3045,6 +3047,10 @@ public final class JfrPathEvaluator {
     List<Map<String, Object>> result = new ArrayList<>();
     String key = path.isEmpty() ? null : String.join("/", path);
     for (Map<String, Object> row : rows) {
+      if (path.isEmpty() && row.isEmpty()) {
+        result.add(new LinkedHashMap<>(row));
+        continue;
+      }
       Map<String, Object> out = new LinkedHashMap<>(row);
       Object val =
           path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
