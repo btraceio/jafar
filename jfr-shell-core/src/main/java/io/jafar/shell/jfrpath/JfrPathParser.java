@@ -752,6 +752,8 @@ public final class JfrPathParser {
       return parseTimeRange();
     } else if ("stackprofile".equals(name)) {
       return parseStackProfile();
+    } else if ("asdatetime".equals(name)) {
+      return parseAsDateTime(valuePath);
     } else {
       throw error("Unknown pipeline function: " + name);
     }
@@ -980,6 +982,32 @@ public final class JfrPathParser {
     }
 
     return new JfrPath.TimeRangeOp(valuePath, durationPath, format);
+  }
+
+  private JfrPath.AsDateTimeOp parseAsDateTime(List<String> valuePath) {
+    String format = null;
+    if (peek() == '(') {
+      pos++;
+      skipWs();
+      while (peek() != ')' && !eof()) {
+        skipWs();
+        if (startsWithIgnoreCase("format=")) {
+          pos += 7;
+          skipWs();
+          Object lit = parseLiteral();
+          format = lit == null ? null : String.valueOf(lit);
+        } else if (peek() != ')' && peek() != ',') {
+          valuePath = parsePathArg();
+        }
+        skipWs();
+        if (peek() == ',') {
+          pos++;
+          skipWs();
+        }
+      }
+      expect(')');
+    }
+    return new JfrPath.AsDateTimeOp(valuePath, format);
   }
 
   private JfrPath.StackProfileOp parseStackProfile() {
