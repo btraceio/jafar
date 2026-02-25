@@ -296,6 +296,7 @@ public final class JfrPath {
           RoundOp,
           FloorOp,
           CeilOp,
+          FormatDurationOp,
           ContainsOp,
           ReplaceOp,
           DecorateByTimeOp,
@@ -449,6 +450,14 @@ public final class JfrPath {
     public final List<String> valuePath;
 
     public CeilOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+    }
+  }
+
+  public static final class FormatDurationOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public FormatDurationOp(List<String> valuePath) {
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
   }

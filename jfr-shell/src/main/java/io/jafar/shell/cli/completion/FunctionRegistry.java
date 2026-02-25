@@ -304,6 +304,17 @@ public final class FunctionRegistry {
             .positional(2, STRING, "Replacement string")
             .requiresString()
             .build());
+
+    // formatDuration([path]) - Format nanosecond duration as human-readable string
+    register(
+        FunctionSpec.builder("formatDuration")
+            .pipeline()
+            .description(
+                "Format a nanosecond duration as human-readable string (e.g., 123ns, 4.56ms, 1.23s, 5m 30s)")
+            .template("formatDuration(duration)")
+            .optionalPositional(0, FIELD_PATH, "Field containing duration in nanoseconds")
+            .requiresNumeric()
+            .build());
   }
 
   private static void registerDecoratorOperators() {

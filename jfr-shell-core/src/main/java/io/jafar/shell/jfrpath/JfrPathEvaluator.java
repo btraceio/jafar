@@ -633,6 +633,8 @@ public final class JfrPathEvaluator {
               aggregateNumberTransform(session, query, flo.valuePath, "floor");
           case JfrPath.CeilOp cei ->
               aggregateNumberTransform(session, query, cei.valuePath, "ceil");
+          case JfrPath.FormatDurationOp fd ->
+              aggregateFormatDurationTransform(session, query, fd.valuePath);
           case JfrPath.ContainsOp co ->
               aggregateStringPredicate(session, query, co.valuePath, "contains", co.substr);
           case JfrPath.ReplaceOp rp ->
@@ -1876,6 +1878,80 @@ public final class JfrPathEvaluator {
     return out;
   }
 
+  private List<Map<String, Object>> aggregateFormatDurationTransform(
+      JFRSession session, Query query, List<String> valuePathOverride) throws Exception {
+    List<String> vpath = valuePathOverride;
+    if (vpath == null || vpath.isEmpty()) {
+      if (query.segments.size() < 2)
+        throw new IllegalArgumentException("formatDuration() requires projection or a value path");
+      vpath = query.segments.subList(1, query.segments.size());
+    }
+    List<Map<String, Object>> out = new ArrayList<>();
+    final List<String> path = vpath;
+    java.util.function.Consumer<Object> addFormatted =
+        (val) -> {
+          Map<String, Object> row = new HashMap<>();
+          row.put("value", val instanceof Number n ? formatDuration(n.longValue()) : null);
+          out.add(row);
+        };
+    if (query.root == Root.EVENTS) {
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+      validateEventTypes(session, query.eventTypes);
+      if (query.isMultiType) {
+        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      } else {
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      }
+    } else {
+      List<Object> vals =
+          evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+      for (Object v : vals) addFormatted.accept(v);
+    }
+    return out;
+  }
+
+  private List<Map<String, Object>> applyFormatDurationTransform(
+      List<Map<String, Object>> rows, List<String> path) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      if (path.isEmpty() && row.isEmpty()) {
+        result.add(new LinkedHashMap<>(row));
+        continue;
+      }
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number n) {
+        String formatted = formatDuration(n.longValue());
+        if (key != null) {
+          out.put(key, formatted);
+        } else if (!row.isEmpty()) {
+          out.put(row.keySet().iterator().next(), formatted);
+        }
+      }
+      result.add(out);
+    }
+    return result;
+  }
+
   private List<Map<String, Object>> aggregateStringPredicate(
       JFRSession session, Query query, List<String> valuePathOverride, String opName, String arg)
       throws Exception {
@@ -2796,6 +2872,7 @@ public final class JfrPathEvaluator {
       case JfrPath.RoundOp ro -> applyNumberTransform(rows, ro.valuePath, Math::round);
       case JfrPath.FloorOp fl -> applyNumberTransform(rows, fl.valuePath, Math::floor);
       case JfrPath.CeilOp ce -> applyNumberTransform(rows, ce.valuePath, Math::ceil);
+      case JfrPath.FormatDurationOp fd -> applyFormatDurationTransform(rows, fd.valuePath);
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);

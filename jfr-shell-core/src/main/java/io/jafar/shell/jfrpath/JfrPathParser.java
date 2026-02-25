@@ -692,6 +692,16 @@ public final class JfrPathParser {
         expect(')');
       }
       return new JfrPath.CeilOp(valuePath);
+    } else if ("formatduration".equals(name)) {
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        if (peek() != ')') {
+          valuePath = parsePathArg();
+        }
+        expect(')');
+      }
+      return new JfrPath.FormatDurationOp(valuePath);
     } else if ("contains".equals(name)) {
       String substr = null;
       if (peek() == '(') {

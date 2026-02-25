@@ -649,10 +649,11 @@ events/jdk.ExecutionSample
   | groupBy(bucket, agg=count)
 ```
 
-**formatDuration(nanos)** - Format nanosecond duration as human-readable string
+**formatDuration(nanos)** - Format nanosecond duration as human-readable string. Also available as a pipeline operator: `| formatDuration([path])`
 ```
 events/jdk.JavaMonitorEnter | select(startTime, formatDuration(duration) as dur, monitorClass)
 events/jdk.FileRead | select(path, formatDuration(duration) as dur) | sortBy(duration) | top(10)
+events/jdk.JavaMonitorEnter/duration | formatDuration()
 ```
 
 **Mixed Fields and Expressions**:
@@ -706,6 +707,7 @@ Transform individual values (can also be used in filters where applicable):
 - `| round([path])` - Round to nearest integer
 - `| floor([path])` - Round down
 - `| ceil([path])` - Round up
+- `| formatDuration([path])` - Format nanosecond value as human-readable duration string
 
 **Examples**:
 ```
@@ -713,6 +715,7 @@ constants/jdk.types.Symbol/string | len()
 events/jdk.ExecutionSample/thread/name | uppercase()
 events/jdk.FileRead/path | replace("/tmp/", "/data/")
 events/jdk.FileRead/bytes | abs()
+events/jdk.JavaMonitorEnter/duration | formatDuration()
 ```
 
 ## Time Analysis
