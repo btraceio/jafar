@@ -206,7 +206,17 @@ class FunctionRegistryTest {
     void allFilterFunctionsRegistered() {
       List<String> expectedFunctions =
           List.of(
-              "contains", "exists", "empty", "between", "len", "matches", "startsWith", "endsWith");
+              "contains",
+              "exists",
+              "empty",
+              "between",
+              "len",
+              "matches",
+              "startsWith",
+              "endsWith",
+              "before",
+              "after",
+              "on");
 
       for (String func : expectedFunctions) {
         FunctionSpec spec = FunctionRegistry.getFilterFunction(func);
@@ -240,10 +250,10 @@ class FunctionRegistryTest {
       assertEquals(ParamType.FIELD_PATH, fieldParam.type());
 
       ParamSpec minParam = between.getPositionalParam(1);
-      assertEquals(ParamType.NUMBER, minParam.type());
+      assertEquals(ParamType.STRING, minParam.type());
 
       ParamSpec maxParam = between.getPositionalParam(2);
-      assertEquals(ParamType.NUMBER, maxParam.type());
+      assertEquals(ParamType.STRING, maxParam.type());
     }
 
     @Test
