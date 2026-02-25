@@ -2459,6 +2459,12 @@ public final class JfrPathEvaluator {
     public Object get(Object key) {
       String keyStr = String.valueOf(key);
 
+      // Handle bare "$decorator" key (from path navigation: "$decorator" / "field")
+      if ("$decorator".equals(keyStr)) {
+        if (decorators.isEmpty()) return null;
+        return decorators.get(0);
+      }
+
       // Check if accessing decorator field
       if (keyStr.startsWith(DECORATOR_PREFIX)) {
         String decoratorField = keyStr.substring(DECORATOR_PREFIX.length());
