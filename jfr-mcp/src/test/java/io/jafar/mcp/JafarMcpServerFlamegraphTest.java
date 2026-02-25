@@ -325,7 +325,7 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
-    assertTrue(json.contains("eventType is required"));
+    assertTrue(json.contains("Event type is required"));
   }
 
   @Test
@@ -343,7 +343,7 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
-    assertTrue(json.contains("eventType is required"));
+    assertTrue(json.contains("Event type is required"));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "dot");
 
     CallToolResult result =
@@ -64,7 +64,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "json");
 
     CallToolResult result =
@@ -91,7 +91,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "json");
 
     CallToolResult result =
@@ -125,7 +125,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "json");
     args.put("minWeight", 100);
 
@@ -151,7 +151,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("eventType", "jdk.ExecutionSample");
+    args.put("eventType", "datadog.ExecutionSample");
     args.put("minWeight", 0);
 
     CallToolResult result =
@@ -172,7 +172,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
         (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
 
     assertTrue(result.isError());
-    assertTrue(extractTextContent(result).contains("eventType is required"));
+    assertTrue(extractTextContent(result).contains("Event type is required"));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

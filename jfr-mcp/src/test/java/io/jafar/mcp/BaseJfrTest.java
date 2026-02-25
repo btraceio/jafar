@@ -4,13 +4,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeAll;
 
 /**
- * Base class for tests using real production JFR files.
+ * Base class for tests using real JFR files.
  *
- * <p>Tests extending this class use real JFR recordings from parser test resources. These tests
+ * <p>Tests extending this class use a small (~2MB) Datadog JFR recording to avoid OOM. These tests
  * exercise the full processing pipeline with realistic data.
  *
  * <p>These tests are excluded by default in build.gradle and require -DenableIntegrationTests=true
- * to run, as they need large JFR files that may not be available in all environments.
+ * to run.
  */
 public abstract class BaseJfrTest {
 
@@ -18,40 +18,38 @@ public abstract class BaseJfrTest {
 
   @BeforeAll
   static void findRealJfrFile() {
-    // Use real JFR file from demo test resources (smallest available at ~171MB)
-    realJfrFile = Path.of("../demo/src/test/resources/test-ap.jfr").normalize();
+    // Use small JFR file (~2MB) to avoid OOM
+    realJfrFile = Path.of("../demo/src/test/resources/test-dd.jfr").normalize();
     if (!realJfrFile.toFile().exists()) {
-      // Try alternative location
-      realJfrFile = Path.of("demo/src/test/resources/test-ap.jfr").normalize();
+      realJfrFile = Path.of("demo/src/test/resources/test-dd.jfr").normalize();
     }
     if (!realJfrFile.toFile().exists()) {
-      throw new IllegalStateException(
-          "Real JFR file not found at: " + realJfrFile.toAbsolutePath());
+      throw new IllegalStateException("JFR file not found at: " + realJfrFile.toAbsolutePath());
     }
   }
 
   /**
-   * Returns path to a real production JFR file for integration testing.
+   * Returns path to the JFR file for integration testing.
    *
-   * @return path to real JFR file (~171MB)
+   * @return path to JFR file (~2MB)
    */
   protected static String getComprehensiveJfr() {
     return realJfrFile.toString();
   }
 
   /**
-   * Returns path to execution sample JFR file (same as comprehensive for real files).
+   * Returns path to execution sample JFR file.
    *
-   * @return path to real JFR file
+   * @return path to JFR file
    */
   protected static String getExecutionSampleJfr() {
     return realJfrFile.toString();
   }
 
   /**
-   * Returns path to exception JFR file (same as comprehensive for real files).
+   * Returns path to exception JFR file.
    *
-   * @return path to real JFR file
+   * @return path to JFR file
    */
   protected static String getExceptionJfr() {
     return realJfrFile.toString();

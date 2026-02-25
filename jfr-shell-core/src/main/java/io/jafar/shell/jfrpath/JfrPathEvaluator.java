@@ -3181,7 +3181,6 @@ public final class JfrPathEvaluator {
     return tn != null ? tn.toString() : "<unknown>";
   }
 
-  @SuppressWarnings("unchecked")
   private static boolean hasStackTraceFrames(Map<String, Object> event) {
     Object stackTrace = event.get("stackTrace");
     if (stackTrace instanceof ComplexType ct) stackTrace = ct.getValue();
@@ -3247,7 +3246,7 @@ public final class JfrPathEvaluator {
 
     validateEventTypes(session, query.eventTypes);
 
-    // Pass 1: collect statistics (O(1) memory)
+    // Pass 1: collect statistics
     if (progress != null) {
       progress.onProgress(0, 3, "Scanning statistics...");
     }

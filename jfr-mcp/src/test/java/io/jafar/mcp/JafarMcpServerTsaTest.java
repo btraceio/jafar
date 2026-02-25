@@ -66,10 +66,10 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 
-    assertTrue(node.has("globalStateDistribution"));
-    JsonNode stateDist = node.get("globalStateDistribution");
+    assertTrue(node.has("stateDistribution"));
+    JsonNode stateDist = node.get("stateDistribution");
 
-    assertTrue(stateDist.isArray());
+    assertTrue(stateDist.isObject());
   }
 
   @Test
@@ -85,10 +85,10 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 
-    assertTrue(node.has("threadBreakdown"));
-    JsonNode threads = node.get("threadBreakdown");
+    assertTrue(node.has("threadProfiles"));
+    JsonNode threads = node.get("threadProfiles");
 
-    assertTrue(threads.isObject());
+    assertTrue(threads.isArray());
   }
 
   @Test
@@ -162,7 +162,9 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
     JsonNode node = MAPPER.readTree(json);
 
     assertTrue(node.has("insights"));
-    assertTrue(node.has("summary"));
+    JsonNode insights = node.get("insights");
+    assertTrue(insights.has("patterns"));
+    assertTrue(insights.has("recommendations"));
   }
 
   @Test

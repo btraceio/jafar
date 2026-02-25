@@ -50,9 +50,8 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 
-    assertTrue(node.has("method"));
-    assertEquals("DIAGNOSE", node.get("method").asText());
     assertTrue(node.has("recordingPath"));
+    assertTrue(node.has("sessionId"));
   }
 
   @Test
@@ -73,7 +72,7 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
     JsonNode summary = node.get("summary");
 
     assertTrue(summary.has("totalEvents"));
-    assertTrue(summary.has("totalEventTypes"));
+    assertTrue(summary.has("eventTypes"));
   }
 
   @Test

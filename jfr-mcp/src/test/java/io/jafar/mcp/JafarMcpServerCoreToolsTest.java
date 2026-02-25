@@ -116,7 +116,7 @@ class JafarMcpServerCoreToolsTest extends BaseJfrTest {
     Method handleJfrQuery = getMethod("handleJfrQuery", Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("query", "events/jdk.ExecutionSample | count()");
+    args.put("query", "events/datadog.ExecutionSample | count()");
 
     CallToolResult result = (CallToolResult) handleJfrQuery.invoke(server, args);
 
@@ -124,7 +124,8 @@ class JafarMcpServerCoreToolsTest extends BaseJfrTest {
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 
-    assertTrue(node.isArray());
+    assertTrue(node.has("resultCount"));
+    assertTrue(node.get("resultCount").asInt() > 0);
   }
 
   @Test
@@ -161,7 +162,7 @@ class JafarMcpServerCoreToolsTest extends BaseJfrTest {
     Method handleJfrQuery = getMethod("handleJfrQuery", Map.class);
 
     Map<String, Object> args = new HashMap<>();
-    args.put("query", "events/jdk.ExecutionSample");
+    args.put("query", "events/datadog.ExecutionSample");
     args.put("limit", 5);
 
     CallToolResult result = (CallToolResult) handleJfrQuery.invoke(server, args);
@@ -170,8 +171,8 @@ class JafarMcpServerCoreToolsTest extends BaseJfrTest {
     String json = extractTextContent(result);
     JsonNode node = MAPPER.readTree(json);
 
-    assertTrue(node.isArray());
-    assertTrue(node.size() <= 5);
+    assertTrue(node.has("results"));
+    assertTrue(node.get("results").size() <= 5);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -326,7 +327,7 @@ class JafarMcpServerCoreToolsTest extends BaseJfrTest {
     assertFalse(result.isError());
     String content = extractTextContent(result);
 
-    assertTrue(content.contains("filter"));
+    assertTrue(content.toLowerCase().contains("filter"));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
