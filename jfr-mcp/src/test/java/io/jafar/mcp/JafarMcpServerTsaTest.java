@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -36,11 +37,12 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaAnalyzesThreadStates() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -53,11 +55,12 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaIncludesGlobalStateDistribution() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -71,11 +74,12 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaIncludesThreadBreakdown() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -89,48 +93,52 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaRespectsTopThreadsParameter() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("topThreads", 3);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
   }
 
   @Test
   void tsaRespectsMinSamplesParameter() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("minSamples", 10);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
   }
 
   @Test
   void tsaCanDisableBlockingCorrelation() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("correlateBlocking", false);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
   }
 
   @Test
   void tsaCanDisableInsights() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("includeInsights", false);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -142,11 +150,12 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaIncludesInsightsByDefault() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -158,13 +167,14 @@ class JafarMcpServerTsaTest extends BaseJfrTest {
 
   @Test
   void tsaHandlesTimeWindow() throws Exception {
-    Method handleJfrTsa = getMethod("handleJfrTsa", Map.class);
+    Method handleJfrTsa = getMethod("handleJfrTsa", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("startTime", 0L);
     args.put("endTime", 1000000000L);
 
-    CallToolResult result = (CallToolResult) handleJfrTsa.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
   }

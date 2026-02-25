@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -37,11 +38,12 @@ class JafarMcpServerSummaryTest extends BaseJfrTest {
 
   @Test
   void summaryReturnsRecordingMetadata() throws Exception {
-    Method handleJfrSummary = getMethod("handleJfrSummary", Map.class);
+    Method handleJfrSummary = getMethod("handleJfrSummary", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrSummary.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrSummary.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -55,11 +57,12 @@ class JafarMcpServerSummaryTest extends BaseJfrTest {
 
   @Test
   void summaryIncludesTopEventTypes() throws Exception {
-    Method handleJfrSummary = getMethod("handleJfrSummary", Map.class);
+    Method handleJfrSummary = getMethod("handleJfrSummary", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrSummary.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrSummary.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -79,11 +82,12 @@ class JafarMcpServerSummaryTest extends BaseJfrTest {
 
   @Test
   void summaryIncludesHighlights() throws Exception {
-    Method handleJfrSummary = getMethod("handleJfrSummary", Map.class);
+    Method handleJfrSummary = getMethod("handleJfrSummary", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrSummary.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrSummary.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -98,24 +102,26 @@ class JafarMcpServerSummaryTest extends BaseJfrTest {
 
   @Test
   void summaryWorksWithSpecificSession() throws Exception {
-    Method handleJfrSummary = getMethod("handleJfrSummary", Map.class);
+    Method handleJfrSummary = getMethod("handleJfrSummary", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", sessionId);
 
-    CallToolResult result = (CallToolResult) handleJfrSummary.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrSummary.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
   }
 
   @Test
   void summaryFailsForNonexistentSession() throws Exception {
-    Method handleJfrSummary = getMethod("handleJfrSummary", Map.class);
+    Method handleJfrSummary = getMethod("handleJfrSummary", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "nonexistent");
 
-    CallToolResult result = (CallToolResult) handleJfrSummary.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrSummary.invoke(server, (McpSyncServerExchange) null, args);
 
     assertTrue(result.isError());
   }

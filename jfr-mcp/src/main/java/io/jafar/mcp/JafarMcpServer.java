@@ -1179,10 +1179,11 @@ public final class JafarMcpServer {
                 + "or direction=top-down to see call paths from entry points. "
                 + "Folded format is semicolon-separated paths compatible with standard flamegraph tools.",
             schema),
-        (exchange, args) -> handleJfrFlamegraph(args));
+        (exchange, args) -> handleJfrFlamegraph(exchange, args));
   }
 
-  private CallToolResult handleJfrFlamegraph(Map<String, Object> args) {
+  private CallToolResult handleJfrFlamegraph(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String eventType = (String) args.get("eventType");
     String direction = (String) args.getOrDefault("direction", "bottom-up");
     String format = (String) args.getOrDefault("format", "folded");
@@ -1210,11 +1211,13 @@ public final class JafarMcpServer {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
 
       // Query all events with non-empty stack traces
+      sendProgress(exchange, "flamegraph", 0, 2, "Querying events...");
       String query = "events/" + eventType;
       JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       // Build aggregation tree
+      sendProgress(exchange, "flamegraph", 1, 2, "Building flamegraph tree...");
       FlameNode root = new FlameNode("root");
       int processedEvents = 0;
 
@@ -1227,6 +1230,7 @@ public final class JafarMcpServer {
       }
 
       // Format output
+      sendProgress(exchange, "flamegraph", 2, 2, "Done");
       if ("tree".equals(format)) {
         return formatFlamegraphTree(root, direction, processedEvents, minSamples);
       } else {
@@ -1492,10 +1496,11 @@ public final class JafarMcpServer {
                 + "revealing convergence points where multiple callers invoke the same method. "
                 + "DOT format can be visualized with graphviz. JSON format includes node and edge data.",
             schema),
-        (exchange, args) -> handleJfrCallgraph(args));
+        (exchange, args) -> handleJfrCallgraph(exchange, args));
   }
 
-  private CallToolResult handleJfrCallgraph(Map<String, Object> args) {
+  private CallToolResult handleJfrCallgraph(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String eventType = (String) args.get("eventType");
     String format = (String) args.getOrDefault("format", "dot");
     String sessionId = (String) args.get("sessionId");
@@ -1515,11 +1520,13 @@ public final class JafarMcpServer {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
 
       // Query all events
+      sendProgress(exchange, "callgraph", 0, 2, "Querying events...");
       String query = "events/" + eventType;
       JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
 
       // Build call graph
+      sendProgress(exchange, "callgraph", 1, 2, "Building call graph...");
       CallGraph graph = new CallGraph();
       int processedEvents = 0;
 
@@ -1536,6 +1543,7 @@ public final class JafarMcpServer {
       graph.computeInDegree();
 
       // Format output
+      sendProgress(exchange, "callgraph", 2, 2, "Done");
       if ("json".equals(format)) {
         return formatCallgraphJson(graph, processedEvents, minWeight);
       } else {
@@ -1712,10 +1720,11 @@ public final class JafarMcpServer {
                 + "(jdk.JavaExceptionThrow) and profiler exception samples (datadog.ExceptionSample). "
                 + "Returns exception type counts, throw site locations, and patterns.",
             schema),
-        (exchange, args) -> handleJfrExceptions(args));
+        (exchange, args) -> handleJfrExceptions(exchange, args));
   }
 
-  private CallToolResult handleJfrExceptions(Map<String, Object> args) {
+  private CallToolResult handleJfrExceptions(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String eventType = (String) args.get("eventType");
     String sessionId = (String) args.get("sessionId");
     int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
@@ -1735,6 +1744,7 @@ public final class JafarMcpServer {
       }
 
       // Query exception events
+      sendProgress(exchange, "exceptions", 0, 2, "Querying exception events...");
       String query = "events/" + eventType;
       JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
@@ -1748,6 +1758,7 @@ public final class JafarMcpServer {
       }
 
       // Analyze exceptions
+      sendProgress(exchange, "exceptions", 1, 2, "Analyzing exception patterns...");
       ExceptionAnalysis analysis = analyzeExceptions(events);
 
       // Build result
@@ -1808,6 +1819,7 @@ public final class JafarMcpServer {
       }
       result.put("summary", summary);
 
+      sendProgress(exchange, "exceptions", 2, 2, "Done");
       return successResult(result);
 
     } catch (IllegalArgumentException e) {
@@ -2005,10 +2017,11 @@ public final class JafarMcpServer {
                 + "and key highlights like GC statistics, exception rates, and top CPU consumers. "
                 + "Useful for getting oriented with a new recording before deeper analysis.",
             schema),
-        (exchange, args) -> handleJfrSummary(args));
+        (exchange, args) -> handleJfrSummary(exchange, args));
   }
 
-  private CallToolResult handleJfrSummary(Map<String, Object> args) {
+  private CallToolResult handleJfrSummary(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String sessionId = (String) args.get("sessionId");
 
     try {
@@ -2026,7 +2039,12 @@ public final class JafarMcpServer {
 
       // Query for event type counts
       Set<String> types = sessionInfo.session().getAvailableTypes();
+      int typeIdx = 0;
+      int typeTotal = types.size();
+      sendProgress(
+          exchange, "summary", 0, typeTotal + 1, "Scanning " + typeTotal + " event types...");
       for (String type : types) {
+        typeIdx++;
         try {
           String query = "events/" + type + " | count()";
           JfrPath.Query parsed = queryParser.parse(query);
@@ -2043,6 +2061,14 @@ public final class JafarMcpServer {
           }
         } catch (Exception ignored) {
           // Skip types that fail to query
+        }
+        if (typeIdx % 10 == 0) {
+          sendProgress(
+              exchange,
+              "summary",
+              typeIdx,
+              typeTotal + 1,
+              "Counting events: " + typeIdx + "/" + typeTotal + " types");
         }
       }
 
@@ -2116,6 +2142,7 @@ public final class JafarMcpServer {
 
       result.put("highlights", highlights);
 
+      sendProgress(exchange, "summary", typeTotal + 1, typeTotal + 1, "Done");
       return successResult(result);
 
     } catch (Exception e) {
@@ -2262,10 +2289,11 @@ public final class JafarMcpServer {
                 + "Simpler and more compact than full flamegraph - just shows which methods are consuming CPU. "
                 + "Useful for quick CPU hotspot identification.",
             schema),
-        (exchange, args) -> handleJfrHotmethods(args));
+        (exchange, args) -> handleJfrHotmethods(exchange, args));
   }
 
-  private CallToolResult handleJfrHotmethods(Map<String, Object> args) {
+  private CallToolResult handleJfrHotmethods(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String eventType = (String) args.get("eventType");
     String sessionId = (String) args.get("sessionId");
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
@@ -2285,6 +2313,7 @@ public final class JafarMcpServer {
       }
 
       // Query execution events
+      sendProgress(exchange, "hotmethods", 0, 2, "Querying execution samples...");
       String query = "events/" + eventType;
       JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
@@ -2298,6 +2327,7 @@ public final class JafarMcpServer {
       }
 
       // Count leaf methods
+      sendProgress(exchange, "hotmethods", 1, 2, "Identifying hot methods...");
       Map<String, Long> methodCounts = new HashMap<>();
       for (Map<String, Object> event : events) {
         List<String> frames = extractFrames(event, "bottom-up", 1);
@@ -2346,6 +2376,7 @@ public final class JafarMcpServer {
       categoryBreakdown.put("java", javaSamples);
       result.put("categoryBreakdown", categoryBreakdown);
 
+      sendProgress(exchange, "hotmethods", 2, 2, "Done");
       return successResult(result);
 
     } catch (IllegalArgumentException e) {
@@ -2483,10 +2514,10 @@ public final class JafarMcpServer {
                 + "Examines CPU, Memory, Threads/Locks, and I/O resources to identify bottlenecks. "
                 + "Returns metrics for utilization (how busy), saturation (queued work), and errors for each resource.",
             schema),
-        (exchange, args) -> handleJfrUse(args));
+        (exchange, args) -> handleJfrUse(exchange, args));
   }
 
-  private CallToolResult handleJfrUse(Map<String, Object> args) {
+  private CallToolResult handleJfrUse(McpSyncServerExchange exchange, Map<String, Object> args) {
     String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
@@ -2515,35 +2546,43 @@ public final class JafarMcpServer {
       }
 
       Map<String, Object> resourceMetrics = new LinkedHashMap<>();
+      int step = 0;
+      int totalSteps = resources.size() + 1;
 
       // CPU Resource Analysis
       if (resources.contains("cpu")) {
+        sendProgress(exchange, "use", step++, totalSteps, "Analyzing CPU...");
         resourceMetrics.put("cpu", analyzeCpuResource(sessionInfo, timeFilter));
       }
 
       // Memory Resource Analysis
       if (resources.contains("memory")) {
+        sendProgress(exchange, "use", step++, totalSteps, "Analyzing memory...");
         resourceMetrics.put("memory", analyzeMemoryResource(sessionInfo, timeFilter));
       }
 
       // Threads/Locks Resource Analysis
       if (resources.contains("threads")) {
+        sendProgress(exchange, "use", step++, totalSteps, "Analyzing threads...");
         resourceMetrics.put("threads", analyzeThreadsResource(sessionInfo, timeFilter));
       }
 
       // I/O Resource Analysis
       if (resources.contains("io")) {
+        sendProgress(exchange, "use", step++, totalSteps, "Analyzing I/O...");
         resourceMetrics.put("io", analyzeIoResource(sessionInfo, timeFilter));
       }
 
       result.put("resources", resourceMetrics);
 
       // Generate insights and summary
+      sendProgress(exchange, "use", step, totalSteps, "Generating insights...");
       if (includeInsights) {
         result.put("insights", generateUseInsights(resourceMetrics));
         result.put("summary", generateUseSummary(resourceMetrics));
       }
 
+      sendProgress(exchange, "use", totalSteps, totalSteps, "Done");
       return successResult(result);
 
     } catch (IllegalArgumentException e) {
@@ -3388,10 +3427,10 @@ public final class JafarMcpServer {
                 + "Shows how threads spend their time across different states (RUNNABLE, WAITING, BLOCKED, etc.). "
                 + "Identifies problematic threads and correlates blocking states with contended locks/monitors.",
             schema),
-        (exchange, args) -> handleJfrTsa(args));
+        (exchange, args) -> handleJfrTsa(exchange, args));
   }
 
-  private CallToolResult handleJfrTsa(Map<String, Object> args) {
+  private CallToolResult handleJfrTsa(McpSyncServerExchange exchange, Map<String, Object> args) {
     String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
@@ -3411,6 +3450,7 @@ public final class JafarMcpServer {
       }
 
       // Get all execution samples
+      sendProgress(exchange, "tsa", 0, 3, "Querying execution samples...");
       String query = "events/" + eventType + timeFilter;
       JfrPath.Query parsed = queryParser.parse(query);
       List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
@@ -3445,9 +3485,11 @@ public final class JafarMcpServer {
       long totalSamples = samples.size();
 
       // Correlate with blocking events if requested
+      sendProgress(exchange, "tsa", 1, 3, "Analyzing thread states...");
       Map<String, MonitorCorrelation> correlations = new HashMap<>();
       Map<String, QueueCorrelation> queueCorrelations = new HashMap<>();
       if (correlateBlocking) {
+        sendProgress(exchange, "tsa", 2, 3, "Correlating blocking events...");
         correlations = correlateWithBlockingEvents(sessionInfo, timeFilter);
         queueCorrelations = correlateWithQueueEvents(sessionInfo, timeFilter);
       }
@@ -3505,6 +3547,7 @@ public final class JafarMcpServer {
                 threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
       }
 
+      sendProgress(exchange, "tsa", 3, 3, "Done");
       return successResult(result);
 
     } catch (IllegalArgumentException e) {
@@ -4045,11 +4088,12 @@ public final class JafarMcpServer {
                 + "Analyzes exception rates, GC pressure, CPU patterns, and suggests next steps. "
                 + "Use this as a first step when exploring an unfamiliar recording.",
             schema),
-        (exchange, args) -> handleJfrDiagnose(args));
+        (exchange, args) -> handleJfrDiagnose(exchange, args));
   }
 
   @SuppressWarnings("unchecked")
-  private CallToolResult handleJfrDiagnose(Map<String, Object> args) {
+  private CallToolResult handleJfrDiagnose(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String sessionId = (String) args.get("sessionId");
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
 
@@ -4061,7 +4105,8 @@ public final class JafarMcpServer {
       diagnosis.put("sessionId", sessionInfo.id());
 
       // Step 1: Get summary data
-      CallToolResult summaryResult = handleJfrSummary(args);
+      sendProgress(exchange, "diagnose", 0, 4, "Running summary...");
+      CallToolResult summaryResult = handleJfrSummary(exchange, args);
       if (summaryResult.isError()) {
         return summaryResult;
       }
@@ -4079,6 +4124,7 @@ public final class JafarMcpServer {
       Map<String, Object> analyses = new LinkedHashMap<>();
 
       // Step 2: Analyze exception patterns
+      sendProgress(exchange, "diagnose", 1, 4, "Analyzing exceptions...");
       if (highlights.containsKey("exceptions")) {
         Map<String, Object> exceptionStats = (Map<String, Object>) highlights.get("exceptions");
         Long exceptionCount = ((Number) exceptionStats.get("totalExceptions")).longValue();
@@ -4088,7 +4134,7 @@ public final class JafarMcpServer {
               String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
 
           // Run exception analysis
-          CallToolResult exceptionsResult = handleJfrExceptions(args);
+          CallToolResult exceptionsResult = handleJfrExceptions(exchange, args);
           if (!exceptionsResult.isError() && includeAnalysis) {
             String exceptionsJson = ((TextContent) exceptionsResult.content().get(0)).text();
             analyses.put("exceptions", MAPPER.readValue(exceptionsJson, Map.class));
@@ -4104,6 +4150,7 @@ public final class JafarMcpServer {
       }
 
       // Step 3: Analyze GC pressure
+      sendProgress(exchange, "diagnose", 2, 4, "Analyzing GC pressure...");
       if (highlights.containsKey("gc")) {
         Map<String, Object> gcStats = (Map<String, Object>) highlights.get("gc");
         if (gcStats.containsKey("totalCollections")) {
@@ -4143,6 +4190,7 @@ public final class JafarMcpServer {
       }
 
       // Step 4: Analyze CPU patterns
+      sendProgress(exchange, "diagnose", 3, 4, "Analyzing CPU patterns...");
       if (highlights.containsKey("cpu")) {
         Map<String, Object> cpuStats = (Map<String, Object>) highlights.get("cpu");
         Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
@@ -4151,7 +4199,7 @@ public final class JafarMcpServer {
           findings.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
-          CallToolResult hotmethodsResult = handleJfrHotmethods(args);
+          CallToolResult hotmethodsResult = handleJfrHotmethods(exchange, args);
           if (!hotmethodsResult.isError() && includeAnalysis) {
             String hotmethodsJson = ((TextContent) hotmethodsResult.content().get(0)).text();
             analyses.put("hotmethods", MAPPER.readValue(hotmethodsJson, Map.class));
@@ -4201,6 +4249,7 @@ public final class JafarMcpServer {
               "eventTypes", summary.get("totalEventTypes"),
               "highlights", highlights));
 
+      sendProgress(exchange, "diagnose", 4, 4, "Done");
       return successResult(diagnosis);
 
     } catch (Exception e) {
@@ -4314,14 +4363,7 @@ public final class JafarMcpServer {
               + ")";
       JfrPath.Query parsed = queryParser.parse(query);
       JfrPathEvaluator.ProgressListener progress =
-          (p, t, msg) -> {
-            try {
-              exchange.progressNotification(
-                  new McpSchema.ProgressNotification("stackprofile", p, t, msg));
-            } catch (Exception ignored) {
-              // Client may not support progress
-            }
-          };
+          (p, t, msg) -> sendProgress(exchange, "stackprofile", p, t, msg);
       List<Map<String, Object>> rows = evaluator.evaluate(sessionInfo.session(), parsed, progress);
 
       // Transform TUI rows into structured JSON
@@ -4439,6 +4481,17 @@ public final class JafarMcpServer {
       return new CallToolResult(List.of(new TextContent(json)), false);
     } catch (Exception e) {
       return new CallToolResult(List.of(new TextContent(data.toString())), false);
+    }
+  }
+
+  private void sendProgress(
+      McpSyncServerExchange exchange, String token, double progress, double total, String message) {
+    if (exchange == null) return;
+    try {
+      exchange.progressNotification(
+          new McpSchema.ProgressNotification(token, progress, total, message));
+    } catch (Exception ignored) {
+      // Client may not support progress
     }
   }
 

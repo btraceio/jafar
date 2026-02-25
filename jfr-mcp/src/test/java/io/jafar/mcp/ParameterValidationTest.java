@@ -2,6 +2,7 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.lang.reflect.Method;
 import java.util.HashMap;
@@ -204,9 +205,17 @@ class ParameterValidationTest {
 
   private CallToolResult invokeHandler(String methodName, Map<String, Object> args)
       throws Exception {
-    Method method = JafarMcpServer.class.getDeclaredMethod(methodName, Map.class);
-    method.setAccessible(true);
-    return (CallToolResult) method.invoke(server, args);
+    try {
+      Method method =
+          JafarMcpServer.class.getDeclaredMethod(
+              methodName, McpSyncServerExchange.class, Map.class);
+      method.setAccessible(true);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+    } catch (NoSuchMethodException e) {
+      Method method = JafarMcpServer.class.getDeclaredMethod(methodName, Map.class);
+      method.setAccessible(true);
+      return (CallToolResult) method.invoke(server, args);
+    }
   }
 
   private void assertError(CallToolResult result) {

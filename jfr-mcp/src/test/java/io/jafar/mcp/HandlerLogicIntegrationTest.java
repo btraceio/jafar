@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -73,8 +74,14 @@ class HandlerLogicIntegrationTest {
   }
 
   private CallToolResult invokeTool(String toolName, Map<String, Object> args) throws Exception {
-    Method method = getMethod(camelCase("handle_" + toolName), Map.class);
-    return (CallToolResult) method.invoke(server, args);
+    String methodName = camelCase("handle_" + toolName);
+    try {
+      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+    } catch (NoSuchMethodException e) {
+      Method method = getMethod(methodName, Map.class);
+      return (CallToolResult) method.invoke(server, args);
+    }
   }
 
   private String camelCase(String snakeCase) {

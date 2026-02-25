@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -27,11 +28,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   @Test
   void exceptionsAnalyzesExceptionPatterns() throws Exception {
-    Method handleJfrExceptions = getMethod("handleJfrExceptions", Map.class);
+    Method handleJfrExceptions =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError(), () -> "Error: " + extractTextContent(result));
     String json = extractTextContent(result);
@@ -43,11 +46,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   @Test
   void exceptionsIncludesExceptionTypes() throws Exception {
-    Method handleJfrExceptions = getMethod("handleJfrExceptions", Map.class);
+    Method handleJfrExceptions =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -62,12 +67,14 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   @Test
   void exceptionsRespectsLimit() throws Exception {
-    Method handleJfrExceptions = getMethod("handleJfrExceptions", Map.class);
+    Method handleJfrExceptions =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("limit", 5);
 
-    CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -81,12 +88,14 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   @Test
   void exceptionsRespectsMinCount() throws Exception {
-    Method handleJfrExceptions = getMethod("handleJfrExceptions", Map.class);
+    Method handleJfrExceptions =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("minCount", 10);
 
-    CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -103,11 +112,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
 
   @Test
   void exceptionsAutoDetectsEventType() throws Exception {
-    Method handleJfrExceptions = getMethod("handleJfrExceptions", Map.class);
+    Method handleJfrExceptions =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
 
     Map<String, Object> args = new HashMap<>();
 
-    CallToolResult result = (CallToolResult) handleJfrExceptions.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Constructor;
@@ -315,10 +316,12 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
     // No eventType provided
 
     Method handleJfrFlamegraph =
-        JafarMcpServer.class.getDeclaredMethod("handleJfrFlamegraph", Map.class);
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrFlamegraph", McpSyncServerExchange.class, Map.class);
     handleJfrFlamegraph.setAccessible(true);
 
-    CallToolResult result = (CallToolResult) handleJfrFlamegraph.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrFlamegraph.invoke(server, (McpSyncServerExchange) null, args);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
@@ -331,10 +334,12 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
     // No eventType provided
 
     Method handleJfrCallgraph =
-        JafarMcpServer.class.getDeclaredMethod("handleJfrCallgraph", Map.class);
+        JafarMcpServer.class.getDeclaredMethod(
+            "handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
     handleJfrCallgraph.setAccessible(true);
 
-    CallToolResult result = (CallToolResult) handleJfrCallgraph.invoke(server, args);
+    CallToolResult result =
+        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
