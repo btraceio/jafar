@@ -8,11 +8,14 @@ import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.parser.api.Values;
 import io.jafar.shell.jfrpath.JfrPath;
+import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
+import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
@@ -4259,11 +4262,12 @@ public final class JafarMcpServer {
                 + "analyze CPU behavior over time or across threads. Choose jfr_flamegraph when you need "
                 + "aggregated call-path data for visualization or simple hotspot listing.",
             schema),
-        (exchange, args) -> handleJfrStackprofile(args));
+        (exchange, args) -> handleJfrStackprofile(exchange, args));
   }
 
   @SuppressWarnings("unchecked")
-  private CallToolResult handleJfrStackprofile(Map<String, Object> args) {
+  private CallToolResult handleJfrStackprofile(
+      McpSyncServerExchange exchange, Map<String, Object> args) {
     String eventType = (String) args.get("eventType");
     String direction = (String) args.getOrDefault("direction", "top-down");
     int buckets = args.get("buckets") instanceof Number n ? n.intValue() : 10;
@@ -4309,7 +4313,16 @@ public final class JafarMcpServer {
               + minPct
               + ")";
       JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> rows = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPathEvaluator.ProgressListener progress =
+          (p, t, msg) -> {
+            try {
+              exchange.progressNotification(
+                  new McpSchema.ProgressNotification("stackprofile", p, t, msg));
+            } catch (Exception ignored) {
+              // Client may not support progress
+            }
+          };
+      List<Map<String, Object>> rows = evaluator.evaluate(sessionInfo.session(), parsed, progress);
 
       // Transform TUI rows into structured JSON
       Map<String, Object> result = new LinkedHashMap<>();

@@ -2,6 +2,7 @@ package io.jafar.mcp.query;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.jfrpath.JfrPath;
+import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.util.List;
 import java.util.Map;
 
@@ -21,4 +22,19 @@ public interface QueryEvaluator {
    * @throws Exception if evaluation fails
    */
   List<Map<String, Object>> evaluate(JFRSession session, JfrPath.Query query) throws Exception;
+
+  /**
+   * Evaluates a parsed query with progress reporting.
+   *
+   * @param session the JFR session to query
+   * @param query the parsed query to evaluate
+   * @param progress optional progress listener, may be null
+   * @return list of event maps matching the query
+   * @throws Exception if evaluation fails
+   */
+  default List<Map<String, Object>> evaluate(
+      JFRSession session, JfrPath.Query query, JfrPathEvaluator.ProgressListener progress)
+      throws Exception {
+    return evaluate(session, query);
+  }
 }

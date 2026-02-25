@@ -38,6 +38,11 @@ public final class JfrPathEvaluator {
     void streamEvents(Path recording, Consumer<Event> consumer) throws Exception;
   }
 
+  @FunctionalInterface
+  public interface ProgressListener {
+    void onProgress(double progress, double total, String message);
+  }
+
   public record Event(String typeName, Map<String, Object> value) {}
 
   private static final int SPARKLINE_WIDTH = 30;
@@ -64,8 +69,13 @@ public final class JfrPathEvaluator {
   }
 
   public List<Map<String, Object>> evaluate(JFRSession session, Query query) throws Exception {
+    return evaluate(session, query, null);
+  }
+
+  public List<Map<String, Object>> evaluate(
+      JFRSession session, Query query, ProgressListener progress) throws Exception {
     if (query.pipeline != null && !query.pipeline.isEmpty()) {
-      return evaluateAggregate(session, query);
+      return evaluateAggregate(session, query, progress);
     }
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty()) {
@@ -587,8 +597,8 @@ public final class JfrPathEvaluator {
   private record Slice(int start, int end) {}
 
   // Aggregations
-  private List<Map<String, Object>> evaluateAggregate(JFRSession session, Query query)
-      throws Exception {
+  private List<Map<String, Object>> evaluateAggregate(
+      JFRSession session, Query query, ProgressListener progress) throws Exception {
     // Execute the first operator
     JfrPath.PipelineOp op = query.pipeline.get(0);
     List<Map<String, Object>> result =
@@ -626,7 +636,7 @@ public final class JfrPathEvaluator {
           case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
           case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
           case JfrPath.StackProfileOp sp ->
-              aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct);
+              aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct, progress);
         };
 
     // Apply remaining operators in sequence
@@ -3224,7 +3234,12 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> aggregateStackProfile(
-      JFRSession session, Query query, String direction, int buckets, double minPct)
+      JFRSession session,
+      Query query,
+      String direction,
+      int buckets,
+      double minPct,
+      ProgressListener progress)
       throws Exception {
     if (query.root != Root.EVENTS || query.eventTypes.isEmpty()) {
       throw new IllegalArgumentException("stackprofile requires an event type");
@@ -3233,11 +3248,17 @@ public final class JfrPathEvaluator {
     validateEventTypes(session, query.eventTypes);
 
     // Pass 1: collect statistics (O(1) memory)
+    if (progress != null) {
+      progress.onProgress(0, 3, "Scanning statistics...");
+    }
     long[] stats = scanStackProfileStats(session, query);
     long totalCount = stats[0];
     long minTime = stats[1];
     long maxTime = stats[2];
     if (totalCount == 0) return List.of();
+    if (progress != null) {
+      progress.onProgress(1, 3, "Statistics collected: " + totalCount + " events");
+    }
 
     long range = maxTime - minTime;
     long[] pruneState = {(long) Math.floor(totalCount * minPct / 100.0)};
@@ -3246,6 +3267,7 @@ public final class JfrPathEvaluator {
     long[] eventCount = {0};
 
     // Pass 2: build tree inline (no intermediate lists)
+    long tc = totalCount;
     if (query.isMultiType) {
       Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
       source.streamEvents(
@@ -3267,6 +3289,12 @@ public final class JfrPathEvaluator {
             root.addPath(frames, 0, bucketIdx, threadName);
             eventCount[0]++;
             if (eventCount[0] % 100_000 == 0) {
+              if (progress != null) {
+                progress.onProgress(
+                    1.0 + (double) eventCount[0] / tc,
+                    3,
+                    "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+              }
               if (pruneState[0] > 0) {
                 pruneChildren(root, pruneState[0]);
               } else {
@@ -3299,6 +3327,12 @@ public final class JfrPathEvaluator {
             root.addPath(frames, 0, bucketIdx, threadName);
             eventCount[0]++;
             if (eventCount[0] % 100_000 == 0) {
+              if (progress != null) {
+                progress.onProgress(
+                    1.0 + (double) eventCount[0] / tc,
+                    3,
+                    "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+              }
               if (pruneState[0] > 0) {
                 pruneChildren(root, pruneState[0]);
               } else {
@@ -3317,7 +3351,14 @@ public final class JfrPathEvaluator {
       pruneChildren(root, pruneState[0]);
     }
 
-    return flattenProfileTree(root, root.total, minPct, buckets);
+    if (progress != null) {
+      progress.onProgress(2, 3, "Tree built, generating output...");
+    }
+    List<Map<String, Object>> result = flattenProfileTree(root, root.total, minPct, buckets);
+    if (progress != null) {
+      progress.onProgress(3, 3, "Done");
+    }
+    return result;
   }
 
   private List<Map<String, Object>> applyStackProfile(

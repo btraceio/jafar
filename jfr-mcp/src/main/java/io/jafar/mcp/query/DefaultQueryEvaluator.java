@@ -24,4 +24,11 @@ public final class DefaultQueryEvaluator implements QueryEvaluator {
       throws Exception {
     return evaluator.evaluate(session, query);
   }
+
+  @Override
+  public List<Map<String, Object>> evaluate(
+      JFRSession session, JfrPath.Query query, JfrPathEvaluator.ProgressListener progress)
+      throws Exception {
+    return evaluator.evaluate(session, query, progress);
+  }
 }
