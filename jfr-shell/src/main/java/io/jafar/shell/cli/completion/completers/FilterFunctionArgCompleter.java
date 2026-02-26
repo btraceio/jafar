@@ -7,6 +7,9 @@ import io.jafar.shell.cli.completion.FunctionRegistry;
 import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.ParamSpec;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.jline.reader.Candidate;
 
@@ -88,14 +91,27 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
         }
       }
       case STRING -> {
-        // Suggest an empty quoted string as a template with the param description as hint
-        if (partial.isEmpty() || partial.equals("\"")) {
+        // Suggest the current date/datetime so the expected format is immediately obvious.
+        // Use date-only for on(), full datetime for before()/after()/between().
+        if (partial.isEmpty() || partial.startsWith("\"")) {
+          String example = datetimeExample(ctx.functionName());
+          String quoted = "\"" + example + "\"";
           candidates.add(
               new Candidate(
-                  jlineWordPrefix + "\"\"", "\"\"", null, param.description(), null, null, true));
+                  jlineWordPrefix + quoted, quoted, null, param.description(), null, null, true));
         }
       }
       default -> {} // NUMBER, FIELD_PATH, etc. — no suggestion
     }
+  }
+
+  private static String datetimeExample(String functionName) {
+    if ("on".equalsIgnoreCase(functionName)) {
+      return LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+    }
+    return LocalDateTime.now()
+        .withSecond(0)
+        .withNano(0)
+        .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
   }
 }
