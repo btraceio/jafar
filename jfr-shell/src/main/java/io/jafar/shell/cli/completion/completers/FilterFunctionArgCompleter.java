@@ -53,9 +53,21 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
     String lowerPartial = partial.toLowerCase();
     List<String> fieldNames = metadata.getFieldNames(eventType);
 
+    // Compute the prefix that must be prepended to each candidate so JLine replaces only the
+    // partial field name and preserves everything before it (e.g., "events/Type[before(")
+    String jlineWord = ctx.jlineWord();
+    String jlineWordPrefix = "";
+    if (jlineWord != null && !jlineWord.isEmpty()) {
+      if (partial.isEmpty()) {
+        jlineWordPrefix = jlineWord;
+      } else if (jlineWord.length() > partial.length()) {
+        jlineWordPrefix = jlineWord.substring(0, jlineWord.length() - partial.length());
+      }
+    }
+
     for (String fieldName : fieldNames) {
       if (fieldName.toLowerCase().startsWith(lowerPartial)) {
-        candidates.add(noSpace(fieldName));
+        candidates.add(noSpace(jlineWordPrefix + fieldName));
       }
     }
   }
