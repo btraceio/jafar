@@ -3,7 +3,10 @@ package io.jafar.shell.cli.completion.completers;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
+import io.jafar.shell.cli.completion.FunctionRegistry;
+import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
+import io.jafar.shell.cli.completion.ParamSpec;
 import java.util.List;
 import org.jline.reader.Candidate;
 
@@ -40,21 +43,11 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
     String partial = ctx.partialInput();
     int paramIndex = ctx.parameterIndex();
 
-    // Only complete field names for the first parameter (index 0)
-    // Other parameters are typically literal values (strings, numbers)
-    if (paramIndex != 0) {
-      return;
-    }
-
     if (eventType == null || eventType.isEmpty()) {
       return;
     }
 
-    String lowerPartial = partial.toLowerCase();
-    List<String> fieldNames = metadata.getFieldNames(eventType);
-
-    // Compute the prefix that must be prepended to each candidate so JLine replaces only the
-    // partial field name and preserves everything before it (e.g., "events/Type[before(")
+    // Compute the jline prefix once — used for all param completions
     String jlineWord = ctx.jlineWord();
     String jlineWordPrefix = "";
     if (jlineWord != null && !jlineWord.isEmpty()) {
@@ -65,10 +58,44 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
       }
     }
 
-    for (String fieldName : fieldNames) {
-      if (fieldName.toLowerCase().startsWith(lowerPartial)) {
-        candidates.add(noSpace(jlineWordPrefix + fieldName));
+    // First parameter: field names from the event type
+    if (paramIndex == 0) {
+      String lowerPartial = partial.toLowerCase();
+      for (String fieldName : metadata.getFieldNames(eventType)) {
+        if (fieldName.toLowerCase().startsWith(lowerPartial)) {
+          candidates.add(noSpace(jlineWordPrefix + fieldName));
+        }
       }
+      return;
+    }
+
+    // Subsequent parameters: look up the FunctionSpec and suggest based on param type
+    FunctionSpec spec = FunctionRegistry.getFilterFunction(ctx.functionName());
+    if (spec == null) {
+      return;
+    }
+    ParamSpec param = spec.getPositionalParam(paramIndex);
+    if (param == null) {
+      return;
+    }
+
+    switch (param.type()) {
+      case ENUM -> {
+        for (String val : param.enumValues()) {
+          if (val.toLowerCase().startsWith(partial.toLowerCase())) {
+            candidates.add(noSpace(jlineWordPrefix + val));
+          }
+        }
+      }
+      case STRING -> {
+        // Suggest an empty quoted string as a template with the param description as hint
+        if (partial.isEmpty() || partial.equals("\"")) {
+          candidates.add(
+              new Candidate(
+                  jlineWordPrefix + "\"\"", "\"\"", null, param.description(), null, null, true));
+        }
+      }
+      default -> {} // NUMBER, FIELD_PATH, etc. — no suggestion
     }
   }
 }
