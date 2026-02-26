@@ -399,7 +399,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "jafar": {
       "command": "java",
-      "args": ["-jar", "/path/to/jafar/jfr-mcp/build/libs/jfr-mcp-0.15.1-all.jar", "--stdio"],
+      "args": ["-jar", "/path/to/jafar/jfr-mcp/build/libs/jfr-mcp-0.15.2-all.jar", "--stdio"],
       "env": {}
     }
   }
