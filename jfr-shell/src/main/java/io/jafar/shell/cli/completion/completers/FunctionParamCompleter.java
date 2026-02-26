@@ -3,6 +3,7 @@ package io.jafar.shell.cli.completion.completers;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
+import io.jafar.shell.cli.completion.FunctionRegistry;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
 import org.jline.reader.Candidate;
@@ -305,6 +306,18 @@ public final class FunctionParamCompleter implements ContextCompleter {
 
     String lowerLastSegment = lastSegment.toLowerCase();
     int added = 0;
+
+    // In select() expressions at top level, also suggest select functions (e.g., asDateTime,
+    // truncate)
+    if (ctx.type() == CompletionContextType.SELECT_EXPRESSION && pathSegments.isEmpty()) {
+      for (var spec : FunctionRegistry.getSelectFunctions()) {
+        if (spec.name().toLowerCase().startsWith(lowerLastSegment)) {
+          candidates.add(noSpace(jlineWordPrefix + keywordPrefix + spec.name() + "("));
+          added++;
+        }
+      }
+    }
+
     for (String fieldName : fieldNames) {
       if (fieldName.toLowerCase().startsWith(lowerLastSegment)) {
         // Use noSpace to not add trailing space after field name
