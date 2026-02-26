@@ -20,8 +20,10 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -125,11 +127,16 @@ public final class Scrubber {
    */
   public static void scrubFile(
       Path input, Path output, Function<String, ScrubField> scrubDefinition) throws Exception {
-    Set<SkipInfo> globalSkipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
     ParserContextFactory contextFactory = new UntypedParserContextFactory();
+    SkipInfoCollector collector = new SkipInfoCollector(scrubDefinition);
 
     try (StreamingChunkParser parser = new StreamingChunkParser(contextFactory)) {
-      parser.parse(input, new SkipInfoCollector(scrubDefinition, globalSkipInfo));
+      parser.parse(input, collector);
+    }
+
+    Set<SkipInfo> globalSkipInfo = new TreeSet<>(Comparator.comparingLong(o -> o.endPos));
+    for (Set<SkipInfo> chunkSkipInfo : collector.chunkResults) {
+      globalSkipInfo.addAll(chunkSkipInfo);
     }
 
     scrubFile(input, output, globalSkipInfo);
@@ -256,12 +263,10 @@ public final class Scrubber {
 
   private static class SkipInfoCollector implements ChunkParserListener {
     private final Function<String, ScrubField> scrubDefinition;
-    private final Set<SkipInfo> globalSkipInfo;
+    final Queue<Set<SkipInfo>> chunkResults = new ConcurrentLinkedQueue<>();
 
-    public SkipInfoCollector(
-        Function<String, ScrubField> scrubDefinition, Set<SkipInfo> globalSkipInfo) {
+    SkipInfoCollector(Function<String, ScrubField> scrubDefinition) {
       this.scrubDefinition = scrubDefinition;
-      this.globalSkipInfo = globalSkipInfo;
     }
 
     @Override
@@ -376,7 +381,7 @@ public final class Scrubber {
     @Override
     public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
       ScrubbingInfo info = context.get(SCRUBBING_INFO_KEY, ScrubbingInfo.class);
-      globalSkipInfo.addAll(info.skipInfo);
+      chunkResults.add(info.skipInfo);
       return true;
     }
   }
