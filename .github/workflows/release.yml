@@ -125,6 +125,15 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
 
+      - name: Upload shadow JARs for release
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-jars
+          path: |
+            jfr-shell/build/libs/*-all.jar
+            jfr-mcp/build/libs/*-all.jar
+          if-no-files-found: warn
+
   # Publish backend plugins only (for manual emergency releases)
   publish-backends-only:
     needs: prepare
@@ -308,10 +317,16 @@ jobs:
   # Create GitHub Release with notes
   create-release:
     needs: [prepare, publish-maven]
-    if: always() && !cancelled() && needs.prepare.outputs.is_manual == 'false'
+    if: needs.prepare.outputs.is_manual == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download shadow JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: shadow-jars
+          path: release-jars
 
       - name: Extract changelog for this version
         id: changelog
@@ -326,108 +341,29 @@ jobs:
             echo "Release $VERSION" > /tmp/release-notes.md
           fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ needs.prepare.outputs.version_tag }}
-          name: Release ${{ needs.prepare.outputs.version }}
-          body_path: /tmp/release-notes.md
-          files: |
-            **/build/libs/*.jar
-          draft: false
-          prerelease: false
+      - name: Delete existing release if present
+        run: |
+          TAG="${{ needs.prepare.outputs.version_tag }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Add release comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const version = '${{ needs.prepare.outputs.version }}';
-            const tag = '${{ needs.prepare.outputs.version_tag }}';
+      - name: Create GitHub Release
+        run: |
+          TAG="${{ needs.prepare.outputs.version_tag }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
 
-            const body = `## 🎉 Release ${version} Published Successfully
+          # Collect JAR files
+          JARS=$(find release-jars -name '*.jar' -type f)
+          JAR_ARGS=""
+          for jar in $JARS; do
+            JAR_ARGS="$JAR_ARGS $jar"
+            echo "Attaching: $jar"
+          done
 
-            This release has been published to:
-            - ✅ Maven Central (Sonatype): \`io.btrace:jafar-parser:${version}\`, \`io.btrace:jafar-tools:${version}\`, \`io.btrace:jafar-shell:${version}\`, \`io.btrace:jfr-mcp:${version}\`, \`io.btrace:jafar-gradle-plugin:${version}\`
-            - ✅ Maven Central - Backend Plugins: \`io.btrace:jfr-shell-jdk:${version}\`, \`io.btrace:jfr-shell-jafar:${version}\`
-            - ✅ JBang Catalog: Updated to ${version}
-
-            ### Usage
-
-            **Via JBang (recommended):**
-            \`\`\`bash
-            # Using catalog (always latest)
-            jbang jfr-shell@btraceio recording.jfr
-
-            # Version pinned (from Maven Central)
-            jbang io.btrace:jafar-shell:${version} recording.jfr
-
-            # Install as command
-            jbang app install jfr-shell@btraceio
-            jfr-shell recording.jfr
-            \`\`\`
-
-            **Via Maven/Gradle:**
-            \`\`\`xml
-            <!-- Parser -->
-            <dependency>
-              <groupId>io.btrace</groupId>
-              <artifactId>jafar-parser</artifactId>
-              <version>${version}</version>
-            </dependency>
-
-            <!-- JFR Shell -->
-            <dependency>
-              <groupId>io.btrace</groupId>
-              <artifactId>jafar-shell</artifactId>
-              <version>${version}</version>
-            </dependency>
-
-            <!-- JFR MCP Server -->
-            <dependency>
-              <groupId>io.btrace</groupId>
-              <artifactId>jfr-mcp</artifactId>
-              <version>${version}</version>
-            </dependency>
-            \`\`\`
-
-            **Gradle Plugin:**
-            \`\`\`gradle
-            plugins {
-              id 'io.btrace.jafar-gradle-plugin' version '${version}'
-            }
-            \`\`\`
-
-            **Backend Plugins (for JFR Shell):**
-            \`\`\`bash
-            # Install JDK backend plugin
-            java -jar jfr-shell.jar --install-plugin io.btrace:jfr-shell-jdk:${version}
-
-            # Install Jafar backend plugin
-            java -jar jfr-shell.jar --install-plugin io.btrace:jfr-shell-jafar:${version}
-
-            # Use specific backend
-            java -jar jfr-shell.jar --backend jdk recording.jfr
-            \`\`\`
-
-            ### Links
-            - 📦 [Maven Central](https://central.sonatype.com/artifact/io.btrace/jafar-parser/${version})
-            - 📚 [Documentation](https://github.com/btraceio/jafar#readme)
-            - 🔖 [Changelog](https://github.com/btraceio/jafar/blob/${tag}/CHANGELOG.md)`;
-
-            // Find the release and add a comment
-            const releases = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            });
-
-            const release = releases.data.find(r => r.tag_name === tag);
-            if (release) {
-              await github.rest.repos.updateRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: release.id,
-                body: release.body + '\n\n' + body
-              });
-            }
+          gh release create "$TAG" \
+            --title "Release $VERSION" \
+            --notes-file /tmp/release-notes.md \
+            $JAR_ARGS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
