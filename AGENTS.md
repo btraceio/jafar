@@ -117,7 +117,7 @@ The project uses a fully automated release workflow. See [RELEASING.md](RELEASIN
 The release workflow (`.github/workflows/release.yml`) automatically:
 - Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
 - Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
-- Publishes `jfr-shell` to GitHub Packages
+- Publishes `jfr-shell` to Maven Central
 - Triggers JitPack build and waits for completion
 - Updates [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog) with new version
 - Creates GitHub Release with changelog notes
@@ -169,8 +169,8 @@ If automated workflow fails:
 # Publish to Sonatype
 SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
 
-# Publish jfr-shell to GitHub Packages
-GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
+# Publish jfr-shell to Maven Central
+./gradlew :jfr-shell:publishAllPublicationsToMavenCentralRepository
 ```
 
 ## Development Notes

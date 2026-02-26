@@ -77,7 +77,7 @@ git push origin v0.4.0
 **This triggers the automated release workflow** which will:
 1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
 2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
-3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
+3. ✅ Publish `jfr-shell` to Maven Central
 4. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
 5. ✅ Create GitHub Release with changelog notes
 
@@ -114,7 +114,7 @@ The JBang catalog is updated automatically once artifacts are available on Maven
 After the workflow completes, verify:
 
 ```bash
-# Test JBang installation (may work immediately via GitHub Packages, or after Maven Central sync)
+# Test JBang installation (after Maven Central sync)
 jbang --fresh jfr-shell@btraceio --version
 
 # Test Maven artifact directly from Maven Central
@@ -214,10 +214,7 @@ If automated workflow fails, you can manually release:
 # 1. Publish to Sonatype
 SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
 
-# 2. Publish jfr-shell to GitHub Packages
-GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
-
-# 3. Trigger JitPack manually
+# 2. Trigger JitPack manually
 curl "https://jitpack.io/com/github/btraceio/jafar/v0.4.0/build.log"
 
 # 4. Update JBang catalog manually
