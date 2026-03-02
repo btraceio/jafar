@@ -26,8 +26,16 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
   /** Cached class ID value. */
   private Long classId = null;
 
-  /** Raw class ID string value. */
-  private String classIdVal = null;
+  /**
+   * Raw class ID string value.
+   *
+   * <p>Must NOT have an explicit {@code = null} field initializer. {@link #onAttribute} is called
+   * from the superclass constructor (via {@link
+   * io.jafar.parser.internal_api.metadata.AbstractMetadataElement#processAttributes()}), which runs
+   * before this class's field initializers. An explicit {@code = null} would reset the value
+   * written by {@code onAttribute} after {@code super()} returns.
+   */
+  private String classIdVal;
 
   /** The annotation value. */
   public String value;
@@ -68,7 +76,7 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
    * @return the metadata class type
    */
   public MetadataClass getType() {
-    return metadataLookup.getClass(classId);
+    return metadataLookup.getClass(getClassId());
   }
 
   /**
@@ -78,6 +86,9 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
    */
   public long getClassId() {
     if (classId == null) {
+      if (classIdVal == null) {
+        return 0L;
+      }
       classId = ParsingUtils.parseLongSWAR(classIdVal);
     }
     return classId;

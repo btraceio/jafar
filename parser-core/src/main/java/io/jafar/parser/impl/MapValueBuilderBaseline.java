@@ -70,6 +70,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
 
   @Override
   public void onIntValue(MetadataClass owner, String fld, long value) {
+    value = TemporalNormalizer.normalize(owner, fld, value, context.get(Control.ChunkInfo.class));
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.add(value);
@@ -82,6 +83,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
 
   @Override
   public void onLongValue(MetadataClass type, String fld, long value) {
+    value = TemporalNormalizer.normalize(type, fld, value, context.get(Control.ChunkInfo.class));
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.add(value);
@@ -161,21 +163,8 @@ final class MapValueBuilderBaseline implements ValueProcessor {
         }
       } else {
         // top-level complex value (event) - return HashMap directly (baseline, no optimization)
-        normalizeTimestamps(value, context.get(Control.ChunkInfo.class));
         root = value;
       }
-    }
-  }
-
-  private static void normalizeTimestamps(Map<String, Object> event, Control.ChunkInfo chunkInfo) {
-    if (chunkInfo == null) return;
-    Object st = event.get("startTime");
-    if (st instanceof Long) {
-      event.put("startTime", chunkInfo.asEpochNanos((Long) st));
-    }
-    Object dur = event.get("duration");
-    if (dur instanceof Long) {
-      event.put("duration", chunkInfo.asDuration((Long) dur).toNanos());
     }
   }
 

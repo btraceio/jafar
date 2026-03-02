@@ -106,11 +106,13 @@ public final class LazyMapValueBuilder implements ValueProcessor {
 
   @Override
   public void onIntValue(MetadataClass owner, String fld, long value) {
+    value = TemporalNormalizer.normalize(owner, fld, value, context.get(Control.ChunkInfo.class));
     addFieldValue(fld, value);
   }
 
   @Override
   public void onLongValue(MetadataClass type, String fld, long value) {
+    value = TemporalNormalizer.normalize(type, fld, value, context.get(Control.ChunkInfo.class));
     addFieldValue(fld, value);
   }
 
@@ -162,7 +164,6 @@ public final class LazyMapValueBuilder implements ValueProcessor {
     // Convert ArrayPool to LazyEventMap (ultra-lazy: arrays allocated on first access)
     if (value instanceof ArrayPool) {
       ArrayPool ap = (ArrayPool) value;
-      normalizeTimestamps(ap, context.get(Control.ChunkInfo.class));
       Map<String, Object> lazyMap = new LazyEventMap(ap, ap.size);
       value = lazyMap;
     }
@@ -216,17 +217,6 @@ public final class LazyMapValueBuilder implements ValueProcessor {
         ((ArrayPool) parent).add(fld, cpAccessor);
       } else if (parent instanceof Map) {
         ((Map<String, Object>) parent).put(fld, cpAccessor);
-      }
-    }
-  }
-
-  private static void normalizeTimestamps(ArrayPool ap, Control.ChunkInfo chunkInfo) {
-    if (chunkInfo == null) return;
-    for (int i = 0; i < ap.size; i++) {
-      if ("startTime".equals(ap.keys[i]) && ap.values[i] instanceof Long) {
-        ap.values[i] = chunkInfo.asEpochNanos((Long) ap.values[i]);
-      } else if ("duration".equals(ap.keys[i]) && ap.values[i] instanceof Long) {
-        ap.values[i] = chunkInfo.asDuration((Long) ap.values[i]).toNanos();
       }
     }
   }
