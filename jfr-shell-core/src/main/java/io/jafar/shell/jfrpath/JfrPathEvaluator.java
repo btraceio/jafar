@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +54,7 @@ public final class JfrPathEvaluator {
   public record Event(String typeName, Map<String, Object> value) {}
 
   private static final int SPARKLINE_WIDTH = 30;
+  private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
   private final EventSource source;
   private final JfrPath.MatchMode defaultListMatchMode;
@@ -96,7 +98,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -212,7 +214,7 @@ public final class JfrPathEvaluator {
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         p.handle(
             (type, value, ctl) -> {
               if (!typeSet.contains(type.getName())) return;
@@ -765,7 +767,7 @@ public final class JfrPathEvaluator {
       validateEventTypes(session, query.eventTypes);
 
       if (query.isMultiType) {
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -861,8 +863,8 @@ public final class JfrPathEvaluator {
 
       // Format the times
       DateTimeFormatter formatter = getFormatter(op.format);
-      result.put("minTime", formatter.format(minInstant.atZone(ZoneId.systemDefault())));
-      result.put("maxTime", formatter.format(maxInstant.atZone(ZoneId.systemDefault())));
+      result.put("minTime", formatter.format(minInstant.atZone(SYSTEM_ZONE)));
+      result.put("maxTime", formatter.format(maxInstant.atZone(SYSTEM_ZONE)));
 
       // Calculate duration (both values are epoch nanos)
       long durationNanos = minMax[1] - minMax[0];
@@ -884,7 +886,7 @@ public final class JfrPathEvaluator {
           Map<String, Object> row = new HashMap<>();
           if (val instanceof Number n) {
             Instant instant = Instant.ofEpochSecond(0, n.longValue());
-            row.put("value", formatter.format(instant.atZone(ZoneId.systemDefault())));
+            row.put("value", formatter.format(instant.atZone(SYSTEM_ZONE)));
           } else {
             row.put("value", null);
           }
@@ -895,7 +897,7 @@ public final class JfrPathEvaluator {
         throw new IllegalArgumentException("events root requires type");
       validateEventTypes(session, query.eventTypes);
       if (query.isMultiType) {
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1151,7 +1153,7 @@ public final class JfrPathEvaluator {
       format = fmt == null ? null : String.valueOf(fmt);
     }
     Instant instant = Instant.ofEpochSecond(0, n.longValue());
-    return getFormatter(format).format(instant.atZone(ZoneId.systemDefault()));
+    return getFormatter(format).format(instant.atZone(SYSTEM_ZONE));
   }
 
   private Object evalTruncate(List<JfrPath.Expr> args, Map<String, Object> row) {
@@ -1160,7 +1162,7 @@ public final class JfrPathEvaluator {
     Object val = evaluateExpression(args.get(0), row);
     if (!(val instanceof Number n)) return null;
     String unit = String.valueOf(evaluateExpression(args.get(1), row)).toLowerCase();
-    ZonedDateTime zdt = Instant.ofEpochSecond(0, n.longValue()).atZone(ZoneId.systemDefault());
+    ZonedDateTime zdt = Instant.ofEpochSecond(0, n.longValue()).atZone(SYSTEM_ZONE);
     ZonedDateTime truncated =
         switch (unit) {
           case "second" -> zdt.truncatedTo(ChronoUnit.SECONDS);
@@ -1206,7 +1208,7 @@ public final class JfrPathEvaluator {
       final long[] c = new long[1];
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1265,7 +1267,7 @@ public final class JfrPathEvaluator {
       List<String> path = vpath;
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1386,7 +1388,7 @@ public final class JfrPathEvaluator {
       final long[] c = {0};
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1458,7 +1460,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1652,7 +1654,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addLen =
+    Consumer<Object> addLen =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1678,7 +1680,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1730,7 +1732,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addTransformed =
+    Consumer<Object> addTransformed =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1762,7 +1764,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1804,7 +1806,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addTransformed =
+    Consumer<Object> addTransformed =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1847,7 +1849,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1888,7 +1890,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addFormatted =
+    Consumer<Object> addFormatted =
         (val) -> {
           Map<String, Object> row = new HashMap<>();
           row.put("value", val instanceof Number n ? formatDuration(n.longValue()) : null);
@@ -1899,7 +1901,7 @@ public final class JfrPathEvaluator {
         throw new IllegalArgumentException("events root requires type");
       validateEventTypes(session, query.eventTypes);
       if (query.isMultiType) {
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1964,7 +1966,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> add =
+    Consumer<Object> add =
         (val) -> {
           Boolean res = null;
           if (val == null) res = null;
@@ -2008,7 +2010,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> add =
+    Consumer<Object> add =
         (val) -> {
           String res = null;
           if (val == null) res = null;
@@ -2242,12 +2244,18 @@ public final class JfrPathEvaluator {
           Object onVal = resolveArg(root, args.get(0));
           if (!(onVal instanceof Number onNum)) return false;
           long epochNanos = onNum.longValue();
-          LocalDate date = LocalDate.parse(String.valueOf(resolveArg(root, args.get(1))));
+          String dateStr = String.valueOf(resolveArg(root, args.get(1)));
+          LocalDate date;
+          try {
+            date = LocalDate.parse(dateStr);
+          } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                "on() requires date in yyyy-MM-dd format: " + dateStr);
+          }
           long startOfDay =
-              date.atStartOfDay(ZoneId.systemDefault()).toInstant().getEpochSecond()
-                  * 1_000_000_000L;
+              date.atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond() * 1_000_000_000L;
           long endOfDay =
-              date.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().getEpochSecond()
+              date.plusDays(1).atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond()
                   * 1_000_000_000L;
           return epochNanos >= startOfDay && epochNanos < endOfDay;
         }
@@ -2289,13 +2297,13 @@ public final class JfrPathEvaluator {
     }
     // Local date-time without timezone, e.g. "2024-08-13T16:24:00"
     try {
-      Instant i = LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant();
+      Instant i = LocalDateTime.parse(s).atZone(SYSTEM_ZONE).toInstant();
       return i.getEpochSecond() * 1_000_000_000L + i.getNano();
     } catch (DateTimeParseException ignored) {
     }
     // Date only, e.g. "2024-08-13" — treated as start of day in local zone
     try {
-      Instant i = LocalDate.parse(s).atStartOfDay(ZoneId.systemDefault()).toInstant();
+      Instant i = LocalDate.parse(s).atStartOfDay(SYSTEM_ZONE).toInstant();
       return i.getEpochSecond() * 1_000_000_000L + i.getNano();
     } catch (DateTimeParseException ignored) {
     }
@@ -2704,7 +2712,7 @@ public final class JfrPathEvaluator {
     @Override
     public Set<Entry<String, Object>> entrySet() {
       // Lazily compute entry set combining primary + decorator fields
-      Set<Entry<String, Object>> entries = new java.util.HashSet<>(primaryEvent.entrySet());
+      Set<Entry<String, Object>> entries = new HashSet<>(primaryEvent.entrySet());
 
       if (!decorators.isEmpty()) {
         Map<String, Object> firstDecorator = decorators.get(0);
@@ -3133,7 +3141,7 @@ public final class JfrPathEvaluator {
           path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
       if (val instanceof Number n) {
         Instant instant = Instant.ofEpochSecond(0, n.longValue());
-        String formatted = formatter.format(instant.atZone(ZoneId.systemDefault()));
+        String formatted = formatter.format(instant.atZone(SYSTEM_ZONE));
         if (key != null) {
           out.put(key, formatted);
         } else if (!row.isEmpty()) {
@@ -3451,7 +3459,7 @@ public final class JfrPathEvaluator {
   private long[] scanStackProfileStats(JFRSession session, Query query) throws Exception {
     long[] stats = {0, Long.MAX_VALUE, Long.MIN_VALUE}; // count, min, max
     if (query.isMultiType) {
-      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
       source.streamEvents(
           session.getRecordingPath(),
           ev -> {
@@ -3520,7 +3528,7 @@ public final class JfrPathEvaluator {
     // Pass 2: build tree inline (no intermediate lists)
     long tc = totalCount;
     if (query.isMultiType) {
-      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
       source.streamEvents(
           session.getRecordingPath(),
           ev -> {

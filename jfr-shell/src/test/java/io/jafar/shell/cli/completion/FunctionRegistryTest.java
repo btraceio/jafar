@@ -30,6 +30,9 @@ class FunctionRegistryTest {
               "select",
               "toMap",
               "timerange",
+              "asDateTime",
+              "stackprofile",
+              "formatDuration",
               "len",
               "uppercase",
               "lowercase",
@@ -286,7 +289,16 @@ class FunctionRegistryTest {
     @Test
     void allSelectFunctionsRegistered() {
       List<String> expectedFunctions =
-          List.of("if", "upper", "lower", "substring", "length", "coalesce");
+          List.of(
+              "if",
+              "upper",
+              "lower",
+              "substring",
+              "length",
+              "coalesce",
+              "asDateTime",
+              "truncate",
+              "formatDuration");
 
       for (String func : expectedFunctions) {
         FunctionSpec spec = FunctionRegistry.getSelectFunction(func);

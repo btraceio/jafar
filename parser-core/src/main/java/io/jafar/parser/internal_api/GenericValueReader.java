@@ -94,10 +94,10 @@ public final class GenericValueReader {
       throws IOException {
     switch (type.getName()) {
       case "short":
-        processor.onShortValue(type, fldName, (short) stream.readVarint());
+        processor.onShortValue(owner, fldName, (short) stream.readVarint());
         break;
       case "char":
-        processor.onCharValue(type, fldName, (char) stream.readVarint());
+        processor.onCharValue(owner, fldName, (char) stream.readVarint());
         break;
       case "int":
         processor.onIntValue(owner, fldName, (int) stream.readVarint());
@@ -106,7 +106,7 @@ public final class GenericValueReader {
         processor.onLongValue(owner, fldName, stream.readVarint());
         break;
       case "byte":
-        processor.onByteValue(type, fldName, stream.read());
+        processor.onByteValue(owner, fldName, stream.read());
         break;
       case "boolean":
         processor.onBooleanValue(owner, fldName, stream.read() != 0);

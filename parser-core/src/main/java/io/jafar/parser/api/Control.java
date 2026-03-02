@@ -64,6 +64,16 @@ public interface Control {
       return Duration.ofNanos(0);
     }
 
+    /**
+     * Converts a raw tick value to a nanosecond duration without allocating a {@link Duration}.
+     *
+     * @param ticks the raw tick value
+     * @return the duration in nanoseconds, or 0 if no info is available
+     */
+    default long asDurationNanos(long ticks) {
+      return 0L;
+    }
+
     default Instant asInstant(long ticks) {
       return Instant.ofEpochMilli(0);
     }

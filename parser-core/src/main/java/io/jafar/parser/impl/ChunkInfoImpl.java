@@ -53,6 +53,11 @@ final class ChunkInfoImpl implements Control.ChunkInfo {
   }
 
   @Override
+  public long asDurationNanos(long ticks) {
+    return Math.round(nanosPerTick * ticks);
+  }
+
+  @Override
   public Instant asInstant(long ticks) {
     long tickDiff = ticks - startTicks;
     long nanoDiff = Math.round(tickDiff * nanosPerTick);
