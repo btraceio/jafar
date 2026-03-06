@@ -63,7 +63,7 @@ final class ConstantPoolAccessor implements ComplexType {
 
           // Read the single field value directly (it's stored unwrapped in the CP)
           builder.onComplexValueStart(null, null, clz);
-          r.readSingleValue(stream, fieldType, singleField.getName());
+          r.readSingleValue(stream, clz, fieldType, singleField.getName());
           builder.onComplexValueEnd(null, null, clz);
 
           v = builder.getRoot();

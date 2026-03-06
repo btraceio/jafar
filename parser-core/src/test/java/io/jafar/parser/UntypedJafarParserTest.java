@@ -31,7 +31,7 @@ public class UntypedJafarParserTest {
               (t, v, ctl) -> {
                 assertNotNull(ctl.chunkInfo());
                 assertNotEquals(Control.ChunkInfo.NONE, ctl.chunkInfo());
-                Instant i = ctl.chunkInfo().asInstant((long) (v.get("startTime")));
+                Instant i = Instant.ofEpochSecond(0, (long) (v.get("startTime")));
                 assertTrue(
                     i.isAfter(ctl.chunkInfo().startTime().minus(1, ChronoUnit.MILLIS)),
                     i + " is not after " + ctl.chunkInfo().startTime());

@@ -13,14 +13,22 @@ import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +54,7 @@ public final class JfrPathEvaluator {
   public record Event(String typeName, Map<String, Object> value) {}
 
   private static final int SPARKLINE_WIDTH = 30;
+  private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
   private final EventSource source;
   private final JfrPath.MatchMode defaultListMatchMode;
@@ -89,7 +98,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -205,7 +214,7 @@ public final class JfrPathEvaluator {
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         p.handle(
             (type, value, ctl) -> {
               if (!typeSet.contains(type.getName())) return;
@@ -626,6 +635,8 @@ public final class JfrPathEvaluator {
               aggregateNumberTransform(session, query, flo.valuePath, "floor");
           case JfrPath.CeilOp cei ->
               aggregateNumberTransform(session, query, cei.valuePath, "ceil");
+          case JfrPath.FormatDurationOp fd ->
+              aggregateFormatDurationTransform(session, query, fd.valuePath);
           case JfrPath.ContainsOp co ->
               aggregateStringPredicate(session, query, co.valuePath, "contains", co.substr);
           case JfrPath.ReplaceOp rp ->
@@ -637,6 +648,8 @@ public final class JfrPathEvaluator {
           case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
           case JfrPath.StackProfileOp sp ->
               aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct, progress);
+          case JfrPath.AsDateTimeOp ft ->
+              aggregateAsDateTime(session, query, ft.valuePath, ft.format);
         };
 
     // Apply remaining operators in sequence
@@ -738,27 +751,7 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> aggregateTimeRange(
       JFRSession session, Query query, JfrPath.TimeRangeOp op) throws Exception {
 
-    if (!ChunkProvider.isSupported()) {
-      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
-      throw new UnsupportedOperationException(
-          "Backend '"
-              + backend.getId()
-              + "' does not support timeRange() - chunk metadata required");
-    }
-
-    // Load chunk metadata to get timing info for conversion
-    List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getRecordingPath());
-    if (chunks.isEmpty()) {
-      throw new IllegalStateException("No chunks found in recording");
-    }
-
-    // Use first chunk's timing info (all chunks in a recording share the same clock)
-    Map<String, Object> firstChunk = chunks.get(0);
-    long startTicks = ((Number) firstChunk.get("startTicks")).longValue();
-    long startNanos = ((Number) firstChunk.get("startNanos")).longValue();
-    long frequency = ((Number) firstChunk.get("frequency")).longValue();
-
-    // Track min/max tick values
+    // Track min/max epoch-nanos values (startTime is normalized to epoch nanos by the parser)
     long[] minMax = {Long.MAX_VALUE, Long.MIN_VALUE};
     long[] count = {0};
 
@@ -774,7 +767,7 @@ public final class JfrPathEvaluator {
       validateEventTypes(session, query.eventTypes);
 
       if (query.isMultiType) {
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -784,17 +777,17 @@ public final class JfrPathEvaluator {
 
               Object val = Values.get(map, valuePath.toArray());
               if (val instanceof Number n) {
-                long ticks = n.longValue();
-                if (ticks < minMax[0]) minMax[0] = ticks;
+                long epochNanos = n.longValue();
+                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
                 // For max, if duration is specified, use startTime + duration
-                long endTicks = ticks;
+                long endEpochNanos = epochNanos;
                 if (hasDuration) {
                   Object durVal = Values.get(map, durationPath.toArray());
                   if (durVal instanceof Number dn) {
-                    endTicks = ticks + dn.longValue();
+                    endEpochNanos = epochNanos + dn.longValue();
                   }
                 }
-                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
                 count[0]++;
               }
             });
@@ -809,17 +802,17 @@ public final class JfrPathEvaluator {
 
               Object val = Values.get(map, valuePath.toArray());
               if (val instanceof Number n) {
-                long ticks = n.longValue();
-                if (ticks < minMax[0]) minMax[0] = ticks;
+                long epochNanos = n.longValue();
+                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
                 // For max, if duration is specified, use startTime + duration
-                long endTicks = ticks;
+                long endEpochNanos = epochNanos;
                 if (hasDuration) {
                   Object durVal = Values.get(map, durationPath.toArray());
                   if (durVal instanceof Number dn) {
-                    endTicks = ticks + dn.longValue();
+                    endEpochNanos = epochNanos + dn.longValue();
                   }
                 }
-                if (endTicks > minMax[1]) minMax[1] = endTicks;
+                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
                 count[0]++;
               }
             });
@@ -831,17 +824,17 @@ public final class JfrPathEvaluator {
       for (Map<String, Object> row : rows) {
         Object val = Values.get(row, valuePath.toArray());
         if (val instanceof Number n) {
-          long ticks = n.longValue();
-          if (ticks < minMax[0]) minMax[0] = ticks;
+          long epochNanos = n.longValue();
+          if (epochNanos < minMax[0]) minMax[0] = epochNanos;
           // For max, if duration is specified, use startTime + duration
-          long endTicks = ticks;
+          long endEpochNanos = epochNanos;
           if (hasDuration) {
             Object durVal = Values.get(row, durationPath.toArray());
             if (durVal instanceof Number dn) {
-              endTicks = ticks + dn.longValue();
+              endEpochNanos = epochNanos + dn.longValue();
             }
           }
-          if (endTicks > minMax[1]) minMax[1] = endTicks;
+          if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
           count[0]++;
         }
       }
@@ -853,34 +846,83 @@ public final class JfrPathEvaluator {
     result.put("field", String.join("/", valuePath));
 
     if (count[0] == 0) {
-      result.put("minTicks", null);
-      result.put("maxTicks", null);
+      result.put("minEpochNanos", null);
+      result.put("maxEpochNanos", null);
       result.put("minTime", null);
       result.put("maxTime", null);
       result.put("durationNanos", null);
       result.put("durationMs", null);
       result.put("duration", null);
     } else {
-      result.put("minTicks", minMax[0]);
-      result.put("maxTicks", minMax[1]);
+      result.put("minEpochNanos", minMax[0]);
+      result.put("maxEpochNanos", minMax[1]);
 
-      // Convert ticks to wall-clock time
-      Instant minInstant = ticksToInstant(minMax[0], startTicks, startNanos, frequency);
-      Instant maxInstant = ticksToInstant(minMax[1], startTicks, startNanos, frequency);
+      // minMax values are already epoch nanos (normalized by the parser)
+      Instant minInstant = Instant.ofEpochSecond(0, minMax[0]);
+      Instant maxInstant = Instant.ofEpochSecond(0, minMax[1]);
 
       // Format the times
       DateTimeFormatter formatter = getFormatter(op.format);
-      result.put("minTime", formatter.format(minInstant.atZone(ZoneId.systemDefault())));
-      result.put("maxTime", formatter.format(maxInstant.atZone(ZoneId.systemDefault())));
+      result.put("minTime", formatter.format(minInstant.atZone(SYSTEM_ZONE)));
+      result.put("maxTime", formatter.format(maxInstant.atZone(SYSTEM_ZONE)));
 
-      // Calculate duration
-      long durationNanos = ticksToNanos(minMax[1] - minMax[0], frequency);
+      // Calculate duration (both values are epoch nanos)
+      long durationNanos = minMax[1] - minMax[0];
       result.put("durationNanos", durationNanos);
       result.put("durationMs", durationNanos / 1_000_000.0);
       result.put("duration", formatDuration(durationNanos));
     }
 
     return List.of(result);
+  }
+
+  private List<Map<String, Object>> aggregateAsDateTime(
+      JFRSession session, Query query, List<String> valuePath, String format) throws Exception {
+    DateTimeFormatter formatter = getFormatter(format);
+    List<Map<String, Object>> out = new ArrayList<>();
+    final List<String> path = valuePath;
+    Consumer<Object> addFormatted =
+        (val) -> {
+          Map<String, Object> row = new HashMap<>();
+          if (val instanceof Number n) {
+            Instant instant = Instant.ofEpochSecond(0, n.longValue());
+            row.put("value", formatter.format(instant.atZone(SYSTEM_ZONE)));
+          } else {
+            row.put("value", null);
+          }
+          out.add(row);
+        };
+    if (query.root == Root.EVENTS) {
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+      validateEventTypes(session, query.eventTypes);
+      if (query.isMultiType) {
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      } else {
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      }
+    } else {
+      List<Object> vals =
+          evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+      for (Object v : vals) addFormatted.accept(v);
+    }
+    return out;
   }
 
   private static String formatDuration(long nanos) {
@@ -904,20 +946,6 @@ public final class JfrPathEvaluator {
       long secs = totalSecs % 60;
       return String.format("%dh %dm %ds", hours, mins, secs);
     }
-  }
-
-  private static Instant ticksToInstant(
-      long ticks, long startTicks, long startNanos, long frequency) {
-    long tickDiff = ticks - startTicks;
-    long nanoDiff = ticksToNanos(tickDiff, frequency);
-    return Instant.ofEpochSecond(0, startNanos + nanoDiff);
-  }
-
-  private static long ticksToNanos(long ticks, long frequency) {
-    // frequency is ticks per second, so:
-    // nanos = ticks * (1e9 / frequency) = (ticks * 1_000_000_000L) / frequency
-    // Use BigDecimal-like approach to avoid overflow
-    return Math.round(ticks * (1_000_000_000.0 / frequency));
   }
 
   private static DateTimeFormatter getFormatter(String format) {
@@ -1041,6 +1069,12 @@ public final class JfrPathEvaluator {
         return evalLength(args, row);
       case "coalesce":
         return evalCoalesce(args, row);
+      case "asdatetime":
+        return evalAsDateTime(args, row);
+      case "truncate":
+        return evalTruncate(args, row);
+      case "formatduration":
+        return evalFormatDuration(args, row);
       default:
         throw new IllegalArgumentException("Unknown function: " + funcName);
     }
@@ -1106,6 +1140,53 @@ public final class JfrPathEvaluator {
     return null;
   }
 
+  private Object evalAsDateTime(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.isEmpty() || args.size() > 2) {
+      throw new IllegalArgumentException(
+          "asDateTime() requires 1-2 arguments: epochNanos[, format]");
+    }
+    Object val = evaluateExpression(args.get(0), row);
+    if (!(val instanceof Number n)) return null;
+    String format = null;
+    if (args.size() == 2) {
+      Object fmt = evaluateExpression(args.get(1), row);
+      format = fmt == null ? null : String.valueOf(fmt);
+    }
+    Instant instant = Instant.ofEpochSecond(0, n.longValue());
+    return getFormatter(format).format(instant.atZone(SYSTEM_ZONE));
+  }
+
+  private Object evalTruncate(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 2)
+      throw new IllegalArgumentException("truncate() requires 2 arguments: epochNanos, unit");
+    Object val = evaluateExpression(args.get(0), row);
+    if (!(val instanceof Number n)) return null;
+    String unit = String.valueOf(evaluateExpression(args.get(1), row)).toLowerCase();
+    ZonedDateTime zdt = Instant.ofEpochSecond(0, n.longValue()).atZone(SYSTEM_ZONE);
+    ZonedDateTime truncated =
+        switch (unit) {
+          case "second" -> zdt.truncatedTo(ChronoUnit.SECONDS);
+          case "minute" -> zdt.truncatedTo(ChronoUnit.MINUTES);
+          case "hour" -> zdt.truncatedTo(ChronoUnit.HOURS);
+          case "day" -> zdt.truncatedTo(ChronoUnit.DAYS);
+          case "week" ->
+              zdt.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                  .truncatedTo(ChronoUnit.DAYS);
+          case "month" -> zdt.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+          default -> throw new IllegalArgumentException("Unknown truncate unit: " + unit);
+        };
+    Instant result = truncated.toInstant();
+    return result.getEpochSecond() * 1_000_000_000L + result.getNano();
+  }
+
+  private Object evalFormatDuration(List<JfrPath.Expr> args, Map<String, Object> row) {
+    if (args.size() != 1)
+      throw new IllegalArgumentException("formatDuration() requires 1 argument: nanoseconds");
+    Object val = evaluateExpression(args.get(0), row);
+    if (!(val instanceof Number n)) return null;
+    return formatDuration(n.longValue());
+  }
+
   private boolean toBoolean(Object obj) {
     if (obj == null) return false;
     if (obj instanceof Boolean b) return b;
@@ -1127,7 +1208,7 @@ public final class JfrPathEvaluator {
       final long[] c = new long[1];
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1186,7 +1267,7 @@ public final class JfrPathEvaluator {
       List<String> path = vpath;
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1307,7 +1388,7 @@ public final class JfrPathEvaluator {
       final long[] c = {0};
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1379,7 +1460,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1573,7 +1654,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addLen =
+    Consumer<Object> addLen =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1599,7 +1680,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1651,7 +1732,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addTransformed =
+    Consumer<Object> addTransformed =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1683,7 +1764,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1725,7 +1806,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> addTransformed =
+    Consumer<Object> addTransformed =
         (val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
@@ -1768,7 +1849,7 @@ public final class JfrPathEvaluator {
 
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
         source.streamEvents(
             session.getRecordingPath(),
             ev -> {
@@ -1799,6 +1880,80 @@ public final class JfrPathEvaluator {
     return out;
   }
 
+  private List<Map<String, Object>> aggregateFormatDurationTransform(
+      JFRSession session, Query query, List<String> valuePathOverride) throws Exception {
+    List<String> vpath = valuePathOverride;
+    if (vpath == null || vpath.isEmpty()) {
+      if (query.segments.size() < 2)
+        throw new IllegalArgumentException("formatDuration() requires projection or a value path");
+      vpath = query.segments.subList(1, query.segments.size());
+    }
+    List<Map<String, Object>> out = new ArrayList<>();
+    final List<String> path = vpath;
+    Consumer<Object> addFormatted =
+        (val) -> {
+          Map<String, Object> row = new HashMap<>();
+          row.put("value", val instanceof Number n ? formatDuration(n.longValue()) : null);
+          out.add(row);
+        };
+    if (query.root == Root.EVENTS) {
+      if (query.eventTypes.isEmpty())
+        throw new IllegalArgumentException("events root requires type");
+      validateEventTypes(session, query.eventTypes);
+      if (query.isMultiType) {
+        Set<String> typeSet = new HashSet<>(query.eventTypes);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!typeSet.contains(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      } else {
+        String eventType = query.eventTypes.get(0);
+        source.streamEvents(
+            session.getRecordingPath(),
+            ev -> {
+              if (!eventType.equals(ev.typeName())) return;
+              Map<String, Object> map = ev.value();
+              if (!matchesAll(map, query.predicates)) return;
+              addFormatted.accept(Values.get(map, path.toArray()));
+            });
+      }
+    } else {
+      List<Object> vals =
+          evaluateValues(session, new Query(query.root, query.segments, query.predicates));
+      for (Object v : vals) addFormatted.accept(v);
+    }
+    return out;
+  }
+
+  private List<Map<String, Object>> applyFormatDurationTransform(
+      List<Map<String, Object>> rows, List<String> path) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      if (path.isEmpty() && row.isEmpty()) {
+        result.add(new LinkedHashMap<>(row));
+        continue;
+      }
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number n) {
+        String formatted = formatDuration(n.longValue());
+        if (key != null) {
+          out.put(key, formatted);
+        } else if (!row.isEmpty()) {
+          out.put(row.keySet().iterator().next(), formatted);
+        }
+      }
+      result.add(out);
+    }
+    return result;
+  }
+
   private List<Map<String, Object>> aggregateStringPredicate(
       JFRSession session, Query query, List<String> valuePathOverride, String opName, String arg)
       throws Exception {
@@ -1811,7 +1966,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> add =
+    Consumer<Object> add =
         (val) -> {
           Boolean res = null;
           if (val == null) res = null;
@@ -1855,7 +2010,7 @@ public final class JfrPathEvaluator {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    java.util.function.Consumer<Object> add =
+    Consumer<Object> add =
         (val) -> {
           String res = null;
           if (val == null) res = null;
@@ -2051,11 +2206,58 @@ public final class JfrPathEvaluator {
         case "between" -> {
           ensureArgs(args, 3);
           Object v = resolveArg(root, args.get(0));
-          if (!(v instanceof Number)) return false;
-          double x = ((Number) v).doubleValue();
-          double a = toDouble(resolveArg(root, args.get(1)));
-          double b = toDouble(resolveArg(root, args.get(2)));
-          return x >= a && x <= b;
+          if (!(v instanceof Number betweenNum)) return false;
+          Object loArg = resolveArg(root, args.get(1));
+          Object hiArg = resolveArg(root, args.get(2));
+          if (loArg instanceof String && hiArg instanceof String) {
+            long x = betweenNum.longValue();
+            return x >= parseEpochNanos(String.valueOf(loArg))
+                && x <= parseEpochNanos(String.valueOf(hiArg));
+          }
+          double x = betweenNum.doubleValue();
+          return x >= toDouble(loArg) && x <= toDouble(hiArg);
+        }
+        case "before" -> {
+          ensureArgs(args, 2);
+          Object beforeVal = resolveArg(root, args.get(0));
+          if (!(beforeVal instanceof Number beforeNum)) return false;
+          Object beforeArg = resolveArg(root, args.get(1));
+          long beforeThreshold =
+              beforeArg instanceof Number tn
+                  ? tn.longValue()
+                  : parseEpochNanos(String.valueOf(beforeArg));
+          return beforeNum.longValue() < beforeThreshold;
+        }
+        case "after" -> {
+          ensureArgs(args, 2);
+          Object afterVal = resolveArg(root, args.get(0));
+          if (!(afterVal instanceof Number afterNum)) return false;
+          Object afterArg = resolveArg(root, args.get(1));
+          long afterThreshold =
+              afterArg instanceof Number tn
+                  ? tn.longValue()
+                  : parseEpochNanos(String.valueOf(afterArg));
+          return afterNum.longValue() > afterThreshold;
+        }
+        case "on" -> {
+          ensureArgs(args, 2);
+          Object onVal = resolveArg(root, args.get(0));
+          if (!(onVal instanceof Number onNum)) return false;
+          long epochNanos = onNum.longValue();
+          String dateStr = String.valueOf(resolveArg(root, args.get(1)));
+          LocalDate date;
+          try {
+            date = LocalDate.parse(dateStr);
+          } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                "on() requires date in yyyy-MM-dd format: " + dateStr);
+          }
+          long startOfDay =
+              date.atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond() * 1_000_000_000L;
+          long endOfDay =
+              date.plusDays(1).atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond()
+                  * 1_000_000_000L;
+          return epochNanos >= startOfDay && epochNanos < endOfDay;
         }
         default -> throw new IllegalArgumentException("Unknown function in filter: " + fb.name);
       }
@@ -2084,6 +2286,28 @@ public final class JfrPathEvaluator {
     return (o instanceof Number)
         ? ((Number) o).doubleValue()
         : Double.parseDouble(String.valueOf(o));
+  }
+
+  private static long parseEpochNanos(String s) {
+    // ISO instant with timezone offset, e.g. "2024-08-13T16:24:00Z"
+    try {
+      Instant i = Instant.parse(s);
+      return i.getEpochSecond() * 1_000_000_000L + i.getNano();
+    } catch (DateTimeParseException ignored) {
+    }
+    // Local date-time without timezone, e.g. "2024-08-13T16:24:00"
+    try {
+      Instant i = LocalDateTime.parse(s).atZone(SYSTEM_ZONE).toInstant();
+      return i.getEpochSecond() * 1_000_000_000L + i.getNano();
+    } catch (DateTimeParseException ignored) {
+    }
+    // Date only, e.g. "2024-08-13" — treated as start of day in local zone
+    try {
+      Instant i = LocalDate.parse(s).atStartOfDay(SYSTEM_ZONE).toInstant();
+      return i.getEpochSecond() * 1_000_000_000L + i.getNano();
+    } catch (DateTimeParseException ignored) {
+    }
+    throw new IllegalArgumentException("Cannot parse datetime: " + s);
   }
 
   private Object evalValueExpr(
@@ -2488,7 +2712,7 @@ public final class JfrPathEvaluator {
     @Override
     public Set<Entry<String, Object>> entrySet() {
       // Lazily compute entry set combining primary + decorator fields
-      Set<Entry<String, Object>> entries = new java.util.HashSet<>(primaryEvent.entrySet());
+      Set<Entry<String, Object>> entries = new HashSet<>(primaryEvent.entrySet());
 
       if (!decorators.isEmpty()) {
         Map<String, Object> firstDecorator = decorators.get(0);
@@ -2656,12 +2880,14 @@ public final class JfrPathEvaluator {
       case JfrPath.RoundOp ro -> applyNumberTransform(rows, ro.valuePath, Math::round);
       case JfrPath.FloorOp fl -> applyNumberTransform(rows, fl.valuePath, Math::floor);
       case JfrPath.CeilOp ce -> applyNumberTransform(rows, ce.valuePath, Math::ceil);
+      case JfrPath.FormatDurationOp fd -> applyFormatDurationTransform(rows, fd.valuePath);
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
       case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
       case JfrPath.StackProfileOp sp ->
           applyStackProfile(rows, sp.direction, sp.buckets, sp.minPct);
+      case JfrPath.AsDateTimeOp ft -> applyAsDateTime(rows, ft.valuePath, ft.format);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }
@@ -2893,6 +3119,34 @@ public final class JfrPathEvaluator {
         } else if (!row.isEmpty()) {
           String firstKey = row.keySet().iterator().next();
           out.put(firstKey, transformed);
+        }
+      }
+      result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyAsDateTime(
+      List<Map<String, Object>> rows, List<String> path, String format) {
+    DateTimeFormatter formatter = getFormatter(format);
+    List<Map<String, Object>> result = new ArrayList<>();
+    String key = path.isEmpty() ? null : String.join("/", path);
+    for (Map<String, Object> row : rows) {
+      if (path.isEmpty() && row.isEmpty()) {
+        result.add(new LinkedHashMap<>(row));
+        continue;
+      }
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object val =
+          path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+      if (val instanceof Number n) {
+        Instant instant = Instant.ofEpochSecond(0, n.longValue());
+        String formatted = formatter.format(instant.atZone(SYSTEM_ZONE));
+        if (key != null) {
+          out.put(key, formatted);
+        } else if (!row.isEmpty()) {
+          String firstKey = row.keySet().iterator().next();
+          out.put(firstKey, formatted);
         }
       }
       result.add(out);
@@ -3205,7 +3459,7 @@ public final class JfrPathEvaluator {
   private long[] scanStackProfileStats(JFRSession session, Query query) throws Exception {
     long[] stats = {0, Long.MAX_VALUE, Long.MIN_VALUE}; // count, min, max
     if (query.isMultiType) {
-      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
       source.streamEvents(
           session.getRecordingPath(),
           ev -> {
@@ -3274,7 +3528,7 @@ public final class JfrPathEvaluator {
     // Pass 2: build tree inline (no intermediate lists)
     long tc = totalCount;
     if (query.isMultiType) {
-      Set<String> typeSet = new java.util.HashSet<>(query.eventTypes);
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
       source.streamEvents(
           session.getRecordingPath(),
           ev -> {

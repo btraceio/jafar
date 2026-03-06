@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.api.Control;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.ValueProcessor;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -14,6 +15,7 @@ public final class MapValueBuilder implements ValueProcessor {
   private final ParserContext context;
   private final MultiTypeStack stack = new MultiTypeStack(20);
   private Map<String, Object> root;
+  private Control.ChunkInfo chunkInfo;
 
   public MapValueBuilder(ParserContext context) {
     this.context = context;
@@ -63,8 +65,14 @@ public final class MapValueBuilder implements ValueProcessor {
     }
   }
 
+  private Control.ChunkInfo chunkInfo() {
+    if (chunkInfo == null) chunkInfo = context.get(Control.ChunkInfo.class);
+    return chunkInfo;
+  }
+
   @Override
   public void onIntValue(MetadataClass owner, String fld, long value) {
+    value = TemporalNormalizer.normalize(owner, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.add(value);
@@ -77,6 +85,7 @@ public final class MapValueBuilder implements ValueProcessor {
 
   @Override
   public void onLongValue(MetadataClass type, String fld, long value) {
+    value = TemporalNormalizer.normalize(type, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.add(value);

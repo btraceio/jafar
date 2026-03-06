@@ -296,6 +296,7 @@ public final class JfrPath {
           RoundOp,
           FloorOp,
           CeilOp,
+          FormatDurationOp,
           ContainsOp,
           ReplaceOp,
           DecorateByTimeOp,
@@ -303,7 +304,8 @@ public final class JfrPath {
           SelectOp,
           ToMapOp,
           TimeRangeOp,
-          StackProfileOp {}
+          StackProfileOp,
+          AsDateTimeOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -448,6 +450,14 @@ public final class JfrPath {
     public final List<String> valuePath;
 
     public CeilOp(List<String> valuePath) {
+      this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+    }
+  }
+
+  public static final class FormatDurationOp implements PipelineOp {
+    public final List<String> valuePath;
+
+    public FormatDurationOp(List<String> valuePath) {
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
     }
   }
@@ -682,6 +692,17 @@ public final class JfrPath {
       this.direction = direction == null ? "top-down" : direction;
       this.buckets = buckets <= 0 ? 10 : buckets;
       this.minPct = minPct < 0 ? 1.0 : minPct;
+    }
+  }
+
+  public static final class AsDateTimeOp implements PipelineOp {
+    public final List<String> valuePath;
+    public final String format;
+
+    public AsDateTimeOp(List<String> valuePath, String format) {
+      this.valuePath =
+          valuePath == null || valuePath.isEmpty() ? List.of("startTime") : List.copyOf(valuePath);
+      this.format = format;
     }
   }
 }

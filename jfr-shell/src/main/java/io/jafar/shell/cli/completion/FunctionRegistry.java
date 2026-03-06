@@ -172,6 +172,17 @@ public final class FunctionRegistry {
             .requiresTime()
             .build());
 
+    // asDateTime([path][, format=str]) - Format epoch-nanos as datetime string
+    register(
+        FunctionSpec.builder("asDateTime")
+            .pipeline()
+            .description("Format epoch-nanosecond field as human-readable datetime strings")
+            .template("asDateTime(startTime)")
+            .optionalPositional(0, FIELD_PATH, "Time field (default: startTime)")
+            .optionalKeyword("format", STRING, "Date format string (default: ISO local datetime)")
+            .requiresTime()
+            .build());
+
     // stackprofile([direction=top-down|bottom-up], [buckets=N], [minPct=D])
     // Aggregate stacktrace data into a weighted call tree
     register(
@@ -293,6 +304,17 @@ public final class FunctionRegistry {
             .positional(2, STRING, "Replacement string")
             .requiresString()
             .build());
+
+    // formatDuration([path]) - Format nanosecond duration as human-readable string
+    register(
+        FunctionSpec.builder("formatDuration")
+            .pipeline()
+            .description(
+                "Format a nanosecond duration as human-readable string (e.g., 123ns, 4.56ms, 1.23s, 5m 30s)")
+            .template("formatDuration(duration)")
+            .optionalPositional(0, FIELD_PATH, "Field containing duration in nanoseconds")
+            .requiresNumeric()
+            .build());
   }
 
   private static void registerDecoratorOperators() {
@@ -354,15 +376,52 @@ public final class FunctionRegistry {
             .positional(0, FIELD_PATH, "Field to check")
             .build());
 
-    // between(field, min, max) - Range check
+    // between(field, min, max) - Range check (numeric or datetime strings)
     register(
         FunctionSpec.builder("between")
             .filter()
-            .description("Check if value is between min and max (inclusive)")
+            .description(
+                "Check if value is between min and max (inclusive). "
+                    + "Bounds can be numbers or datetime strings (ISO-8601, local datetime, or date)")
             .template("between(field, 0, 100)")
             .positional(0, FIELD_PATH, "Field to check")
-            .positional(1, NUMBER, "Minimum value")
-            .positional(2, NUMBER, "Maximum value")
+            .positional(1, STRING, "Minimum value (number or datetime string)")
+            .positional(2, STRING, "Maximum value (number or datetime string)")
+            .build());
+
+    // before(field, datetime) - Time-based filter
+    register(
+        FunctionSpec.builder("before")
+            .filter()
+            .description(
+                "Check if epoch-nanoseconds value is before a datetime threshold. "
+                    + "Accepts ISO-8601 instants, local datetimes, or dates (yyyy-MM-dd)")
+            .template("before(startTime, \"2024-01-01T12:00:00\")")
+            .positional(0, FIELD_PATH, "Time field (epoch nanoseconds)")
+            .positional(1, STRING, "Datetime threshold (ISO-8601, local datetime, or date)")
+            .build());
+
+    // after(field, datetime) - Time-based filter
+    register(
+        FunctionSpec.builder("after")
+            .filter()
+            .description(
+                "Check if epoch-nanoseconds value is after a datetime threshold. "
+                    + "Accepts ISO-8601 instants, local datetimes, or dates (yyyy-MM-dd)")
+            .template("after(startTime, \"2024-01-01T12:00:00\")")
+            .positional(0, FIELD_PATH, "Time field (epoch nanoseconds)")
+            .positional(1, STRING, "Datetime threshold (ISO-8601, local datetime, or date)")
+            .build());
+
+    // on(field, date) - Same-day filter
+    register(
+        FunctionSpec.builder("on")
+            .filter()
+            .description(
+                "Check if epoch-nanoseconds value falls on a specific calendar date (local timezone)")
+            .template("on(startTime, \"2024-01-01\")")
+            .positional(0, FIELD_PATH, "Time field (epoch nanoseconds)")
+            .positional(1, STRING, "Date in yyyy-MM-dd format")
             .build());
 
     // len(field) - Length for comparison
@@ -464,6 +523,43 @@ public final class FunctionRegistry {
             .template("coalesce(field1, field2, \"default\")")
             .varargs()
             .positional(0, EXPRESSION, "Values to check")
+            .build());
+
+    // asDateTime(epochNanos[, format]) - Format epoch-nanos as datetime string
+    register(
+        FunctionSpec.builder("asDateTime")
+            .select()
+            .description("Format epoch-nanoseconds as a human-readable datetime string")
+            .template("asDateTime(startTime)")
+            .positional(0, FIELD_PATH, "Field containing epoch nanoseconds")
+            .optionalPositional(1, STRING, "Date format string (default: ISO local datetime)")
+            .build());
+
+    // truncate(epochNanos, unit) - Truncate to time boundary, returns epoch nanos
+    register(
+        FunctionSpec.builder("truncate")
+            .select()
+            .description(
+                "Truncate epoch-nanoseconds to a time boundary. "
+                    + "Returns epoch nanoseconds; chain with asDateTime() for display")
+            .template("truncate(startTime, \"minute\")")
+            .positional(0, FIELD_PATH, "Field containing epoch nanoseconds")
+            .param(
+                ParamSpec.enumPositional(
+                    1,
+                    List.of("second", "minute", "hour", "day", "week", "month"),
+                    true,
+                    "Time unit to truncate to"))
+            .build());
+
+    // formatDuration(nanos) - Format nanosecond duration as human-readable string
+    register(
+        FunctionSpec.builder("formatDuration")
+            .select()
+            .description(
+                "Format a nanosecond duration as human-readable string (e.g., 123ns, 4.56ms, 1.23s, 5m 30s)")
+            .template("formatDuration(duration)")
+            .positional(0, FIELD_PATH, "Field containing duration in nanoseconds")
             .build());
   }
 

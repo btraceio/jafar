@@ -30,6 +30,9 @@ class FunctionRegistryTest {
               "select",
               "toMap",
               "timerange",
+              "asDateTime",
+              "stackprofile",
+              "formatDuration",
               "len",
               "uppercase",
               "lowercase",
@@ -206,7 +209,17 @@ class FunctionRegistryTest {
     void allFilterFunctionsRegistered() {
       List<String> expectedFunctions =
           List.of(
-              "contains", "exists", "empty", "between", "len", "matches", "startsWith", "endsWith");
+              "contains",
+              "exists",
+              "empty",
+              "between",
+              "len",
+              "matches",
+              "startsWith",
+              "endsWith",
+              "before",
+              "after",
+              "on");
 
       for (String func : expectedFunctions) {
         FunctionSpec spec = FunctionRegistry.getFilterFunction(func);
@@ -240,10 +253,10 @@ class FunctionRegistryTest {
       assertEquals(ParamType.FIELD_PATH, fieldParam.type());
 
       ParamSpec minParam = between.getPositionalParam(1);
-      assertEquals(ParamType.NUMBER, minParam.type());
+      assertEquals(ParamType.STRING, minParam.type());
 
       ParamSpec maxParam = between.getPositionalParam(2);
-      assertEquals(ParamType.NUMBER, maxParam.type());
+      assertEquals(ParamType.STRING, maxParam.type());
     }
 
     @Test
@@ -276,7 +289,16 @@ class FunctionRegistryTest {
     @Test
     void allSelectFunctionsRegistered() {
       List<String> expectedFunctions =
-          List.of("if", "upper", "lower", "substring", "length", "coalesce");
+          List.of(
+              "if",
+              "upper",
+              "lower",
+              "substring",
+              "length",
+              "coalesce",
+              "asDateTime",
+              "truncate",
+              "formatDuration");
 
       for (String func : expectedFunctions) {
         FunctionSpec spec = FunctionRegistry.getSelectFunction(func);

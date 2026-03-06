@@ -3,7 +3,10 @@ package io.jafar.shell.cli.completion.completers;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
+import io.jafar.shell.cli.completion.FunctionRegistry;
+import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
+import java.util.Collection;
 import java.util.List;
 import org.jline.reader.Candidate;
 
@@ -14,9 +17,8 @@ import org.jline.reader.Candidate;
 public final class FilterFieldCompleter implements ContextCompleter {
 
   private static final String[] OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
-  private static final String[] FILTER_FUNCTIONS = {
-    "contains(", "exists(", "startsWith(", "endsWith("
-  };
+  private static final Collection<FunctionSpec> FILTER_FUNCTIONS =
+      FunctionRegistry.getFilterFunctions();
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
@@ -122,7 +124,8 @@ public final class FilterFieldCompleter implements ContextCompleter {
     }
 
     // Suggest filter functions
-    for (String func : FILTER_FUNCTIONS) {
+    for (FunctionSpec spec : FILTER_FUNCTIONS) {
+      String func = spec.name() + "(";
       if (func.toLowerCase().startsWith(partial.toLowerCase()) || partial.isEmpty()) {
         candidates.add(noSpace(fullPrefix + nestedPath + func));
       }
@@ -157,7 +160,8 @@ public final class FilterFieldCompleter implements ContextCompleter {
     }
 
     // Suggest filter functions
-    for (String func : FILTER_FUNCTIONS) {
+    for (FunctionSpec spec : FILTER_FUNCTIONS) {
+      String func = spec.name() + "(";
       candidates.add(new Candidate(func, func, null, "filter function", null, null, false));
     }
   }

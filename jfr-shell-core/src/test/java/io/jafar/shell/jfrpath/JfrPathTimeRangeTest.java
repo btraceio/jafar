@@ -29,8 +29,8 @@ class JfrPathTimeRangeTest {
     // Verify expected fields are present
     assertTrue(result.containsKey("count"));
     assertTrue(result.containsKey("field"));
-    assertTrue(result.containsKey("minTicks"));
-    assertTrue(result.containsKey("maxTicks"));
+    assertTrue(result.containsKey("minEpochNanos"));
+    assertTrue(result.containsKey("maxEpochNanos"));
     assertTrue(result.containsKey("minTime"));
     assertTrue(result.containsKey("maxTime"));
     assertTrue(result.containsKey("durationNanos"));
@@ -43,10 +43,10 @@ class JfrPathTimeRangeTest {
     long count = (Long) result.get("count");
     assertTrue(count > 0, "Expected events to be found");
 
-    // Min/max ticks should be valid
-    long minTicks = (Long) result.get("minTicks");
-    long maxTicks = (Long) result.get("maxTicks");
-    assertTrue(minTicks <= maxTicks, "minTicks should be <= maxTicks");
+    // Min/max epoch nanos should be valid
+    long minEpochNanos = (Long) result.get("minEpochNanos");
+    long maxEpochNanos = (Long) result.get("maxEpochNanos");
+    assertTrue(minEpochNanos <= maxEpochNanos, "minEpochNanos should be <= maxEpochNanos");
 
     // Time strings should not be null
     assertNotNull(result.get("minTime"));
@@ -112,8 +112,8 @@ class JfrPathTimeRangeTest {
     assertEquals(1, rows.size());
     Map<String, Object> result = rows.get(0);
     assertEquals(0L, result.get("count"));
-    assertNull(result.get("minTicks"));
-    assertNull(result.get("maxTicks"));
+    assertNull(result.get("minEpochNanos"));
+    assertNull(result.get("maxEpochNanos"));
     assertNull(result.get("durationNanos"));
     assertNull(result.get("durationMs"));
     assertNull(result.get("duration"));

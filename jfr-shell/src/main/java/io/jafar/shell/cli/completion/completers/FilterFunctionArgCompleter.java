@@ -3,7 +3,13 @@ package io.jafar.shell.cli.completion.completers;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
+import io.jafar.shell.cli.completion.FunctionRegistry;
+import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
+import io.jafar.shell.cli.completion.ParamSpec;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.jline.reader.Candidate;
 
@@ -40,23 +46,72 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
     String partial = ctx.partialInput();
     int paramIndex = ctx.parameterIndex();
 
-    // Only complete field names for the first parameter (index 0)
-    // Other parameters are typically literal values (strings, numbers)
-    if (paramIndex != 0) {
-      return;
-    }
-
     if (eventType == null || eventType.isEmpty()) {
       return;
     }
 
-    String lowerPartial = partial.toLowerCase();
-    List<String> fieldNames = metadata.getFieldNames(eventType);
-
-    for (String fieldName : fieldNames) {
-      if (fieldName.toLowerCase().startsWith(lowerPartial)) {
-        candidates.add(noSpace(fieldName));
+    // Compute the jline prefix once — used for all param completions
+    String jlineWord = ctx.jlineWord();
+    String jlineWordPrefix = "";
+    if (jlineWord != null && !jlineWord.isEmpty()) {
+      if (partial.isEmpty()) {
+        jlineWordPrefix = jlineWord;
+      } else if (jlineWord.length() > partial.length()) {
+        jlineWordPrefix = jlineWord.substring(0, jlineWord.length() - partial.length());
       }
     }
+
+    // First parameter: field names from the event type
+    if (paramIndex == 0) {
+      String lowerPartial = partial.toLowerCase();
+      for (String fieldName : metadata.getFieldNames(eventType)) {
+        if (fieldName.toLowerCase().startsWith(lowerPartial)) {
+          candidates.add(noSpace(jlineWordPrefix + fieldName));
+        }
+      }
+      return;
+    }
+
+    // Subsequent parameters: look up the FunctionSpec and suggest based on param type
+    FunctionSpec spec = FunctionRegistry.getFilterFunction(ctx.functionName());
+    if (spec == null) {
+      return;
+    }
+    ParamSpec param = spec.getPositionalParam(paramIndex);
+    if (param == null) {
+      return;
+    }
+
+    switch (param.type()) {
+      case ENUM -> {
+        for (String val : param.enumValues()) {
+          if (val.toLowerCase().startsWith(partial.toLowerCase())) {
+            candidates.add(noSpace(jlineWordPrefix + val));
+          }
+        }
+      }
+      case STRING -> {
+        // Suggest the current date/datetime so the expected format is immediately obvious.
+        // Use date-only for on(), full datetime for before()/after()/between().
+        if (partial.isEmpty() || partial.startsWith("\"")) {
+          String example = datetimeExample(ctx.functionName());
+          String quoted = "\"" + example + "\"";
+          candidates.add(
+              new Candidate(
+                  jlineWordPrefix + quoted, quoted, null, param.description(), null, null, true));
+        }
+      }
+      default -> {} // NUMBER, FIELD_PATH, etc. — no suggestion
+    }
+  }
+
+  private static String datetimeExample(String functionName) {
+    if ("on".equalsIgnoreCase(functionName)) {
+      return LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+    }
+    return LocalDateTime.now()
+        .withSecond(0)
+        .withNano(0)
+        .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
   }
 }

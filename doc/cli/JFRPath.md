@@ -151,7 +151,7 @@ events/jdk.ExecutionSample[not empty(stackTrace/frames)]
 ```
 
 #### Numeric Functions
-- `between(field, min, max)` - Check if value is between min and max (inclusive)
+- `between(field, min, max)` - Check if value is between min and max (inclusive). Bounds can be numbers or datetime strings (see below)
 - `len(field)` - Get length of string or list (can be used in comparisons)
 
 **Examples**:
@@ -159,6 +159,39 @@ events/jdk.ExecutionSample[not empty(stackTrace/frames)]
 events/jdk.FileRead[between(bytes, 1000, 10000)]
 events/jdk.ExecutionSample[len(stackTrace/frames)>10]
 events/jdk.FileRead[len(path)>50]
+```
+
+#### Time Filter Functions
+
+Filter events by timestamp. All time fields (`startTime`) store epoch nanoseconds.
+Datetime strings are parsed in order: ISO-8601 instant → local datetime → date (start of day in local timezone).
+
+- `before(field, datetime)` - Event occurred before the given datetime
+- `after(field, datetime)` - Event occurred after the given datetime
+- `between(field, "datetime1", "datetime2")` - Event occurred within a datetime range (inclusive)
+- `on(field, "yyyy-MM-dd")` - Event occurred on a specific calendar date (local timezone)
+
+**Supported datetime formats**:
+- ISO-8601 instant: `"2024-08-13T16:24:00Z"` or `"2024-08-13T16:24:00+02:00"`
+- Local datetime: `"2024-08-13T16:24:00"` (interpreted in system timezone)
+- Date only: `"2024-08-13"` (treated as start of day in system timezone)
+
+**Examples**:
+```
+# Events before a point in time
+events/jdk.ExecutionSample[before(startTime, "2024-08-13T17:00:00")]
+
+# Events after a point in time
+events/jdk.ExecutionSample[after(startTime, "2024-08-13T16:00:00")]
+
+# Events within a time window
+events/jdk.ExecutionSample[between(startTime, "2024-08-13T16:00:00", "2024-08-13T17:00:00")]
+
+# Events on a specific date
+events/jdk.ExecutionSample[on(startTime, "2024-08-13")]
+
+# Combine with other filters
+events/jdk.JavaMonitorEnter[on(startTime, "2024-08-13") and duration>1000000]
 ```
 
 ### List/Array Matching
@@ -601,6 +634,28 @@ events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
 events/jdk.ExecutionSample | select(coalesce(thread/name, thread/osName, 'unnamed') as name)
 ```
 
+**asDateTime(epochNanos[, format])** - Format epoch-nanoseconds as datetime string
+```
+events/jdk.ExecutionSample | select(asDateTime(startTime) as time)
+events/jdk.FileRead | select(asDateTime(startTime, "HH:mm:ss.SSS") as time, path)
+```
+
+**truncate(epochNanos, unit)** - Truncate timestamp to a time boundary, returns epoch nanoseconds
+```
+# Units: "second", "minute", "hour", "day", "week", "month"
+events/jdk.ExecutionSample | select(asDateTime(truncate(startTime, "minute")) as bucket)
+events/jdk.ExecutionSample
+  | select(asDateTime(truncate(startTime, "minute")) as bucket, eventThread/name as thread)
+  | groupBy(bucket, agg=count)
+```
+
+**formatDuration(nanos)** - Format nanosecond duration as human-readable string. Also available as a pipeline operator: `| formatDuration([path])`
+```
+events/jdk.JavaMonitorEnter | select(startTime, formatDuration(duration) as dur, monitorClass)
+events/jdk.FileRead | select(path, formatDuration(duration) as dur) | sortBy(duration) | top(10)
+events/jdk.JavaMonitorEnter/duration | formatDuration()
+```
+
 **Mixed Fields and Expressions**:
 ```
 # Simple fields with computed expressions
@@ -652,6 +707,7 @@ Transform individual values (can also be used in filters where applicable):
 - `| round([path])` - Round to nearest integer
 - `| floor([path])` - Round down
 - `| ceil([path])` - Round up
+- `| formatDuration([path])` - Format nanosecond value as human-readable duration string
 
 **Examples**:
 ```
@@ -659,6 +715,94 @@ constants/jdk.types.Symbol/string | len()
 events/jdk.ExecutionSample/thread/name | uppercase()
 events/jdk.FileRead/path | replace("/tmp/", "/data/")
 events/jdk.FileRead/bytes | abs()
+events/jdk.JavaMonitorEnter/duration | formatDuration()
+```
+
+## Time Analysis
+
+### Time Range
+```
+| timerange([path], [duration=path], [format=str])
+```
+
+Computes the min/max time span covered by events. Returns a single-row summary with human-readable wall-clock times and duration.
+
+**Parameters**:
+- `path` - Time field to analyze (default: `startTime`)
+- `duration` - Duration field; if present, max is computed as `startTime + duration`
+- `format` - Output format string for `minTime`/`maxTime` (default: ISO local datetime)
+
+**Output fields**: `count`, `field`, `minEpochNanos`, `maxEpochNanos`, `minTime`, `maxTime`, `durationNanos`, `durationMs`, `duration`
+
+**Examples**:
+```
+# Recording time span
+events/jdk.ExecutionSample | timerange()
+
+# Span of file reads including their duration
+events/jdk.FileRead | timerange(startTime, duration=duration)
+
+# Custom output format
+events/jdk.ExecutionSample | timerange(format="HH:mm:ss")
+```
+
+### Format Timestamps — `asDateTime()`
+```
+| asDateTime([path][, format=str])
+```
+
+Converts epoch-nanosecond fields to human-readable datetime strings. Can be used both as a pipeline operator and as a `select()` expression function.
+
+**Parameters**:
+- `path` - Time field to format (default: `startTime`)
+- `format` - Date format string (default: ISO local datetime)
+
+**Examples**:
+```
+# Format startTime (pipeline operator)
+events/jdk.ExecutionSample | asDateTime(startTime)
+
+# Format as select expression
+events/jdk.ExecutionSample | select(asDateTime(startTime) as time, eventThread/name as thread)
+
+# Custom format
+events/jdk.ExecutionSample | select(asDateTime(startTime, "HH:mm:ss.SSS") as time)
+```
+
+### Time-Series Bucketing — `truncate()`
+
+`truncate(field, unit)` is a `select()` expression function that truncates an epoch-nanoseconds value to a time boundary, enabling time-series groupby.
+
+**Supported units**: `"second"`, `"minute"`, `"hour"`, `"day"`, `"week"`, `"month"`
+
+Returns epoch nanoseconds of the truncated instant (chains naturally with `asDateTime()`).
+
+**Examples**:
+```
+# Count samples per minute
+events/jdk.ExecutionSample
+  | select(asDateTime(truncate(startTime, "minute")) as bucket, eventThread/name as thread)
+  | groupBy(bucket, agg=count)
+
+# Allocations per hour
+events/jdk.ObjectAllocationSample
+  | select(truncate(startTime, "hour") as hourBucket, allocationSize)
+  | groupBy(hourBucket, agg=sum, value=allocationSize)
+```
+
+### Format Durations — `formatDuration()`
+
+`formatDuration(field)` is a `select()` expression function that converts a nanosecond duration to a human-readable string.
+
+**Output examples**: `"123ns"`, `"4.56us"`, `"789.12ms"`, `"1.23s"`, `"5m 30s"`, `"2h 15m 30s"`
+
+**Examples**:
+```
+# Show lock wait durations in readable form
+events/jdk.JavaMonitorEnter | select(startTime, formatDuration(duration) as dur, monitorClass)
+
+# Top slowest file reads
+events/jdk.FileRead | select(path, formatDuration(duration) as dur) | sortBy(duration) | top(10)
 ```
 
 ## Usage Patterns
@@ -827,6 +971,23 @@ events/jdk.ExecutionSample | decorateByKey(RequestStart,
 # GC impact: allocations during GC phases
 events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
+
+# Recording time span
+events/jdk.ExecutionSample | timerange()
+
+# Filter events to a specific hour
+events/jdk.ExecutionSample[between(startTime, "2024-08-13T16:00:00", "2024-08-13T17:00:00")]
+
+# Filter events on a specific date
+events/jdk.ExecutionSample[on(startTime, "2024-08-13")]
+
+# CPU samples per minute (time-series)
+events/jdk.ExecutionSample
+  | select(asDateTime(truncate(startTime, "minute")) as bucket, eventThread/name as thread)
+  | groupBy(bucket, agg=count)
+
+# Lock contention with human-readable durations
+events/jdk.JavaMonitorEnter | select(startTime, formatDuration(duration) as dur, monitorClass)
 ```
 
 ### Metadata Examples

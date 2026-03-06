@@ -37,7 +37,7 @@ public final class GenericValueReader {
    */
   public void readValue(RecordingStream stream, MetadataClass type) throws IOException {
     if (type.isPrimitive()) {
-      readSingleValue(stream, type, "");
+      readSingleValue(stream, null, type, "");
     }
     for (MetadataField fld : type.getFields()) {
       if (fld.getDimension() == 1) {
@@ -71,7 +71,7 @@ public final class GenericValueReader {
       processor.onConstantPoolIndex(type, fld.getName(), fld.getType(), idx);
     } else {
       if (fld.getType().isPrimitive()) {
-        readSingleValue(stream, fld.getType(), fld.getName());
+        readSingleValue(stream, type, fld.getType(), fld.getName());
       } else {
         processor.onComplexValueStart(type, fld.getName(), fld.getType());
         readValue(stream, fld.getType());
@@ -84,39 +84,41 @@ public final class GenericValueReader {
    * Reads a single primitive value from the recording stream.
    *
    * @param stream the recording stream to read from
-   * @param type the metadata class type
+   * @param owner the metadata class that owns the field (may be null for top-level primitives)
+   * @param type the primitive metadata class type of the field value
    * @param fldName the field name
    * @throws IOException if an I/O error occurs during reading
    */
-  public void readSingleValue(RecordingStream stream, MetadataClass type, String fldName)
+  public void readSingleValue(
+      RecordingStream stream, MetadataClass owner, MetadataClass type, String fldName)
       throws IOException {
     switch (type.getName()) {
       case "short":
-        processor.onShortValue(type, fldName, (short) stream.readVarint());
+        processor.onShortValue(owner, fldName, (short) stream.readVarint());
         break;
       case "char":
-        processor.onCharValue(type, fldName, (char) stream.readVarint());
+        processor.onCharValue(owner, fldName, (char) stream.readVarint());
         break;
       case "int":
-        processor.onIntValue(type, fldName, (int) stream.readVarint());
+        processor.onIntValue(owner, fldName, (int) stream.readVarint());
         break;
       case "long":
-        processor.onLongValue(type, fldName, stream.readVarint());
+        processor.onLongValue(owner, fldName, stream.readVarint());
         break;
       case "byte":
-        processor.onByteValue(type, fldName, stream.read());
+        processor.onByteValue(owner, fldName, stream.read());
         break;
       case "boolean":
-        processor.onBooleanValue(type, fldName, stream.read() != 0);
+        processor.onBooleanValue(owner, fldName, stream.read() != 0);
         break;
       case "double":
-        processor.onDoubleValue(type, fldName, stream.readDouble());
+        processor.onDoubleValue(owner, fldName, stream.readDouble());
         break;
       case "float":
-        processor.onFloatValue(type, fldName, stream.readFloat());
+        processor.onFloatValue(owner, fldName, stream.readFloat());
         break;
       case "java.lang.String":
-        processor.onStringValue(type, fldName, stream.readUTF8());
+        processor.onStringValue(owner, fldName, stream.readUTF8());
         break;
       default:
         throw new IllegalStateException("Unknown primitive type: " + type);
