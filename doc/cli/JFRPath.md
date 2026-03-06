@@ -41,6 +41,7 @@ Access chunk-level information from the recording.
 Access constant pool entries.
 - **Summary**: `constants` returns all CP types with counts
 - **Entries**: `constants/<type>` returns entries for specific type
+- **Crossref**: `constants/<type> | crossref()` crosschecks CP entries against event references
 - **Example**: `constants/jdk.types.Symbol`
 
 ## Path Segments
@@ -779,6 +780,12 @@ constants/jdk.types.Symbol | count()
 constants/jdk.types.Symbol/string | len()
 ```
 
+Crosscheck CP entries against event references:
+```
+constants/jdk.types.StackTrace | crossref()
+constants/jdk.types.Method | crossref()
+```
+
 ## Operator Limitations
 
 - Pipeline operators are **not chainable**: `| count() | sum()` is not supported
@@ -884,6 +891,9 @@ constants/jdk.types.Symbol/string | len()
 
 # Methods named "toString"
 constants/jdk.types.Method[name="toString"]
+
+# Crosscheck StackTrace CP entries against event references
+constants/jdk.types.StackTrace | crossref()
 ```
 
 ## Interactive Commands
@@ -901,6 +911,7 @@ In the interactive shell, use these commands:
 - `chunks [options]` - List chunks
 - `chunk <index> show` - Show specific chunk
 - `constants [<type>] [options]` - List constant pool entries (alias: `cp`)
+- `constants/<type> | crossref()` - Crosscheck CP entries against event references
 - `events/<type>[filter] [options]` - Query events (shorthand for `show events`)
 - `help [<command>]` - Show help
 - `exit` / `quit` - Exit

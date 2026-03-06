@@ -74,6 +74,18 @@ public final class ConstantPoolProvider {
   }
 
   /**
+   * Crosscheck CP entries against event references for a given type.
+   *
+   * @param recording the JFR recording file path
+   * @param typeName the CP type name
+   * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent
+   * @throws Exception if parsing fails
+   */
+  public static Map<String, Object> crossref(Path recording, String typeName) throws Exception {
+    return getSource().crossref(recording, typeName);
+  }
+
+  /**
    * Check if constant pool queries are supported by the current backend.
    *
    * @return true if supported
