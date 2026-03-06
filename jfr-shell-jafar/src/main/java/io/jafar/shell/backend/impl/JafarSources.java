@@ -492,15 +492,13 @@ final class JafarSources {
       // CP reference graph: cpType -> entryId -> refType -> Set<refId>
       Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new ConcurrentHashMap<>();
 
-      // Per-event-type: all direct CP refs (all ref types) — for seeding BFS per event type
-      Map<String, Map<String, Set<Long>>> eventTypeDirect = new ConcurrentHashMap<>();
       // Union of direct CP refs across all events (all ref types) — for global BFS seed
       Map<String, Set<Long>> directEventRefs = new ConcurrentHashMap<>();
       // Events per event type that directly reference the target CP type
       Map<String, Long> eventCounts = new ConcurrentHashMap<>();
       // Total non-unique direct target-type refs per event type
       Map<String, Long> totalRefsByEventType = new ConcurrentHashMap<>();
-      // Per-event-type unique target IDs: initially direct, replaced by transitive after BFS
+      // Per-event-type unique target IDs (direct refs only)
       Map<String, Set<Long>> idsByEventType = new ConcurrentHashMap<>();
 
       EdgeCollectingProcessor edgeProc = new EdgeCollectingProcessor(cpEdges);
@@ -603,29 +601,21 @@ final class JafarSources {
                   currentEventAllRefs.remove();
                 }
 
-                if (!allRefs.isEmpty()) {
+                // Seed global BFS and track per-event-type direct refs
+                List<Long> directTarget = allRefs.getOrDefault(typeName, Collections.emptyList());
+                if (!directTarget.isEmpty()) {
                   String et = eventType.getName();
-                  // Collect all ref types for BFS seeding
-                  allRefs.forEach(
-                      (refType, refIds) -> {
+                  eventCounts.merge(et, 1L, Long::sum);
+                  totalRefsByEventType.merge(et, (long) directTarget.size(), Long::sum);
+                  idsByEventType
+                      .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
+                      .addAll(directTarget);
+                }
+                allRefs.forEach(
+                    (refType, refIds) ->
                         directEventRefs
                             .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
-                            .addAll(refIds);
-                        eventTypeDirect
-                            .computeIfAbsent(et, k -> new ConcurrentHashMap<>())
-                            .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
-                            .addAll(refIds);
-                      });
-                  // Direct target-type refs
-                  List<Long> directTarget = allRefs.getOrDefault(typeName, Collections.emptyList());
-                  if (!directTarget.isEmpty()) {
-                    eventCounts.merge(et, 1L, Long::sum);
-                    totalRefsByEventType.merge(et, (long) directTarget.size(), Long::sum);
-                    idsByEventType
-                        .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
-                        .addAll(directTarget);
-                  }
-                }
+                            .addAll(refIds));
                 return true;
               }
             });
@@ -636,17 +626,6 @@ final class JafarSources {
       long total = allIds.size();
       long referenced = referencedIds.stream().filter(allIds::contains).count();
       long unused = total - referenced;
-
-      // Per-event-type BFS: replace direct-only idsByEventType with transitive target IDs
-      for (String evtType : eventTypeDirect.keySet()) {
-        Set<Long> unique =
-            bfsCpReachable(
-                eventTypeDirect.getOrDefault(evtType, Collections.emptyMap()), cpEdges, typeName);
-        unique.retainAll(allIds);
-        if (!unique.isEmpty()) {
-          idsByEventType.put(evtType, unique);
-        }
-      }
 
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("type", typeName);
