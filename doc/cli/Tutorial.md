@@ -163,6 +163,9 @@ chunks
 
 # Constant pools
 constants/jdk.types.Symbol
+
+# Crosscheck CP entries against event references
+constants/jdk.types.StackTrace | crossref()
 ```
 
 ### Path Navigation
