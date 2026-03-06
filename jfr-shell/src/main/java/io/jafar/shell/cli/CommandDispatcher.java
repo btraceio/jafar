@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -170,6 +171,14 @@ public class CommandDispatcher {
 
       // Handle 'constants/...' as a direct query (equivalent to 'show constants/...')
       if (cmd.startsWith("constants/")) {
+        // Detect: constants/<type> | crossref()
+        if (args.size() >= 2
+            && "|".equals(args.get(0))
+            && args.get(1).equalsIgnoreCase("crossref()")) {
+          String typeName = parts[0].substring("constants/".length());
+          cmdCrossref(typeName);
+          return true;
+        }
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
         showArgs.addAll(args);
@@ -801,6 +810,7 @@ public class CommandDispatcher {
     if ("constants".equals(sub)) {
       io.println(
           "Usage: constants [<type>] [--summary] [--range N-M] [--format table|json|csv|tui]");
+      io.println("       constants/<type> | crossref()");
       io.println("Browse constant pool entries in the current recording.");
       io.println("");
       io.println("Options:");
@@ -810,6 +820,7 @@ public class CommandDispatcher {
       io.println("  constants                     # browse all CP types");
       io.println("  constants jdk.types.Symbol     # list entries for a type");
       io.println("  constants jdk.types.Method --range 0-100");
+      io.println("  constants/jdk.types.StackTrace | crossref()  # crossref check");
       io.println("");
       io.println(
           "Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
@@ -984,6 +995,7 @@ public class CommandDispatcher {
           "Deprecated: use 'constants' instead. This alias will be removed in a future release.");
       io.println("");
       io.println("Usage: cp [--summary] [<type>] [--range N-M] [--format table|json|csv|tui]");
+      io.println("       cp <type> | crossref()");
       io.println("Browse constant pools in the current recording.");
       io.println("Options:");
       io.println("  --summary      Show per-type counts only (default when no type specified)");
@@ -992,6 +1004,7 @@ public class CommandDispatcher {
       io.println("  constants");
       io.println("  constants jdk.types.Symbol");
       io.println("  constants jdk.types.Method --range 0-100");
+      io.println("  cp jdk.types.StackTrace | crossref()");
       return;
     }
     if ("set".equals(sub) || "let".equals(sub)) {
@@ -1637,7 +1650,78 @@ public class CommandDispatcher {
     }
   }
 
-  /** constants [--summary] [<kind>] [--range N-M] constants <kind> [--range N-M] */
+  private void cmdCrossref(String typeName) throws Exception {
+    Optional<SessionManager.SessionRef> cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open. Use 'open <file>' first.");
+      return;
+    }
+    if (!ConstantPoolProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      io.error(
+          "Backend '"
+              + backend.getId()
+              + "' does not support constant pool queries. Use 'jafar' backend for full introspection.");
+      return;
+    }
+    Map<String, Object> result =
+        ConstantPoolProvider.crossref(cur.get().session.getRecordingPath(), typeName);
+    long total = ((Number) result.get("cpTotal")).longValue();
+    long referenced = ((Number) result.get("cpReferenced")).longValue();
+    long unused = ((Number) result.get("cpUnused")).longValue();
+    double usedPct = ((Number) result.get("usedPercent")).doubleValue();
+    double unusedPct = ((Number) result.get("unusedPercent")).doubleValue();
+    io.println(result.get("type") + " Constant Pool Crosscheck");
+    io.println(String.format("Type:              %s", result.get("type")));
+    io.println(String.format("Total CP entries:  %d", total));
+    io.println(String.format("Referenced:        %7d  (%.1f%%)", referenced, usedPct));
+    io.println(String.format("Unreferenced:      %7d  (%.1f%%)", unused, unusedPct));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Long> eventCounts = (Map<String, Long>) result.get("eventCounts");
+    @SuppressWarnings("unchecked")
+    Map<String, Set<?>> idsByEventType = (Map<String, Set<?>>) result.get("idsByEventType");
+    @SuppressWarnings("unchecked")
+    Map<String, Long> totalRefsByEventType = (Map<String, Long>) result.get("totalRefsByEventType");
+    String shortName =
+        typeName.contains(".") ? typeName.substring(typeName.lastIndexOf('.') + 1) : typeName;
+    String uniqueColName = "unique" + shortName;
+
+    Set<String> allEventTypes = new HashSet<>();
+    if (eventCounts != null) allEventTypes.addAll(eventCounts.keySet());
+    if (idsByEventType != null) allEventTypes.addAll(idsByEventType.keySet());
+
+    if (!allEventTypes.isEmpty()) {
+      io.println("");
+      io.println("Referencing event types:");
+      List<Map<String, Object>> histoRows = new ArrayList<>();
+      allEventTypes.stream()
+          .sorted(
+              (a, b) ->
+                  Long.compare(
+                      eventCounts != null ? eventCounts.getOrDefault(b, 0L) : 0L,
+                      eventCounts != null ? eventCounts.getOrDefault(a, 0L) : 0L))
+          .forEach(
+              evtType -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("eventType", evtType);
+                row.put("events", eventCounts != null ? eventCounts.getOrDefault(evtType, 0L) : 0L);
+                int uniqueCount =
+                    idsByEventType != null && idsByEventType.containsKey(evtType)
+                        ? idsByEventType.get(evtType).size()
+                        : 0;
+                row.put(uniqueColName, uniqueCount);
+                row.put(
+                    "total",
+                    totalRefsByEventType != null
+                        ? totalRefsByEventType.getOrDefault(evtType, 0L)
+                        : 0L);
+                histoRows.add(row);
+              });
+      TableRenderer.render(histoRows, io);
+    }
+  }
+
   private void cmdCp(List<String> args) throws Exception {
     Optional<SessionManager.SessionRef> cur = sessions.current();
     if (cur.isEmpty()) {
@@ -1654,13 +1738,34 @@ public class CommandDispatcher {
     }
 
     boolean summary = args.contains("--summary");
+    int pipeIdx = args.indexOf("|");
+    boolean crossref =
+        pipeIdx >= 0
+            && pipeIdx + 1 < args.size()
+            && args.get(pipeIdx + 1).equalsIgnoreCase("crossref()");
     List<String> cleanArgs = new ArrayList<>(args);
     cleanArgs.remove("--summary");
+    if (crossref) {
+      int pi = cleanArgs.indexOf("|");
+      if (pi >= 0) {
+        cleanArgs.remove(pi + 1); // "crossref()" — higher index first
+        cleanArgs.remove(pi); // "|"
+      }
+    }
 
     String range = extractOption(cleanArgs, "--range");
     String format = extractOption(cleanArgs, "--format");
     if (format == null) {
       format = cur.get().outputFormat;
+    }
+
+    if (crossref) {
+      if (cleanArgs.isEmpty()) {
+        io.error("Usage: cp <type> | crossref()");
+        return;
+      }
+      cmdCrossref(cleanArgs.get(0));
+      return;
     }
 
     if (cleanArgs.isEmpty() || summary) {

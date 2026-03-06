@@ -58,6 +58,7 @@ jfr> events/jdk.FileRead/bytes --limit 5
 - `chunks [--summary] [--range N-M]`: List chunk information.
 - `chunk <index> show`: Show specific chunk details.
 - `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
+- `constants/<type> | crossref()`: Crosscheck CP entries against event references.
 - `events/<type>[filter] [--limit N]`: Query events (shorthand for `show events`, both forms work).
 
 ### Variables
@@ -148,6 +149,9 @@ jfr-shell chunks recording.jfr --summary
 
 # Constant pool symbols
 jfr-shell constants recording.jfr --type jdk.types.Symbol
+
+# Crosscheck StackTrace CP entries against event references
+jfr-shell show recording.jfr "constants/jdk.types.StackTrace | crossref()"
 ```
 
 **Exit Codes:**
