@@ -76,8 +76,8 @@ public final class RecordingStream implements AutoCloseable {
   }
 
   /**
-   * Creates a new {@link RecordingStreamReader} that shares the same underlying memory-mapped buffer
-   * but has independent position tracking.
+   * Creates a new {@link RecordingStreamReader} that shares the same underlying memory-mapped
+   * buffer but has independent position tracking.
    *
    * <p>This is used for thread-safe lazy constant pool resolution: each resolver gets its own
    * position tracker so it can seek and read without interfering with the main parsing stream.

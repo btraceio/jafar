@@ -492,8 +492,7 @@ public final class UntypedCodeGenerator {
 
     // Handle constant pool references - wrap in ConstantPoolAccessor for lazy resolution
     if (field.hasConstantPool()) {
-      String cpAccessorName =
-          Type.getInternalName(io.jafar.parser.impl.ConstantPoolAccessor.class);
+      String cpAccessorName = Type.getInternalName(io.jafar.parser.impl.ConstantPoolAccessor.class);
       long fieldTypeId = fieldType.getId();
       // Stack: [...]
       mv.visitTypeInsn(Opcodes.NEW, cpAccessorName);
