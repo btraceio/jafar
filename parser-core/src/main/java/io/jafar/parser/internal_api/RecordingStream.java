@@ -21,6 +21,9 @@ public final class RecordingStream implements AutoCloseable {
   /** The marked position for reset operations. */
   private long mark = -1;
 
+  /** Thread-local cache of reader slices for constant pool resolution. */
+  private final ThreadLocal<RecordingStreamReader> threadLocalSlice = new ThreadLocal<>();
+
   /**
    * Constructs a new RecordingStream from a file path.
    *
@@ -64,7 +67,7 @@ public final class RecordingStream implements AutoCloseable {
    * @param context the parser context to use
    * @param register whether to register this stream in the context
    */
-  RecordingStream(RecordingStreamReader reader, ParserContext context, boolean register) {
+  public RecordingStream(RecordingStreamReader reader, ParserContext context, boolean register) {
     this.reader = reader;
     this.context = context;
     if (register) {
@@ -81,8 +84,27 @@ public final class RecordingStream implements AutoCloseable {
    *
    * @return a new reader slice with independent position
    */
-  RecordingStreamReader readerSlice() {
+  public RecordingStreamReader readerSlice() {
     return reader.slice(0, reader.length());
+  }
+
+  /**
+   * Returns a thread-local {@link RecordingStreamReader} slice, creating one lazily per thread.
+   *
+   * <p>This avoids allocating a new slice for every constant pool resolution. The slice shares the
+   * same underlying memory-mapped buffer and has independent position tracking. Since position is
+   * always set explicitly before each use, reuse across calls on the same thread is safe as long as
+   * accesses are not re-entrant.
+   *
+   * @return a reusable reader slice for the current thread
+   */
+  public RecordingStreamReader threadLocalReaderSlice() {
+    RecordingStreamReader slice = threadLocalSlice.get();
+    if (slice == null) {
+      slice = reader.slice(0, reader.length());
+      threadLocalSlice.set(slice);
+    }
+    return slice;
   }
 
   /**

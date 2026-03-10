@@ -6,7 +6,6 @@ import io.jafar.parser.internal_api.GenericValueReader;
 import io.jafar.parser.internal_api.MutableConstantPool;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.RecordingStream;
-import io.jafar.parser.internal_api.RecordingStreamReader;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.util.Map;
@@ -15,17 +14,16 @@ import java.util.Objects;
 /**
  * Lazy accessor for a constant pool entry that resolves into a Map on-demand.
  *
- * <p>Each accessor captures an independent {@link RecordingStreamReader} slice at construction time,
- * sharing the same underlying memory-mapped buffer but with independent position tracking. This
- * allows thread-safe lazy resolution even when the main parsing stream is being used concurrently
- * (e.g. in the {@link io.jafar.parser.api.EventIterator} producer-consumer pattern).
+ * <p>Resolution uses a thread-local {@link RecordingStreamReader} slice obtained from the main
+ * {@link RecordingStream}. The slice shares the same underlying memory-mapped buffer but has
+ * independent position tracking, allowing thread-safe lazy resolution even when the main parsing
+ * stream is being used concurrently (e.g. in the {@link io.jafar.parser.api.EventIterator}
+ * producer-consumer pattern). The thread-local caching avoids allocating a new slice per accessor.
  */
 public final class ConstantPoolAccessor implements ComplexType {
   private final ParserContext context;
   private final long typeId;
   private final long pointer;
-  private final RecordingStreamReader readerSlice;
-
   private volatile Map<String, Object> cached;
 
   public ConstantPoolAccessor(ParserContext context, MetadataClass type, long pointer) {
@@ -46,10 +44,6 @@ public final class ConstantPoolAccessor implements ComplexType {
     this.context = context;
     this.typeId = typeId;
     this.pointer = pointer;
-    // Capture an independent reader for thread-safe lazy access.
-    // The slice shares the memory-mapped buffer but has its own position.
-    RecordingStream stream = context.get(RecordingStream.class);
-    this.readerSlice = stream.readerSlice();
   }
 
   @Override
@@ -68,8 +62,12 @@ public final class ConstantPoolAccessor implements ComplexType {
       long offset = pool.getOffset(pointer);
       if (offset == 0) return null;
 
-      // Use the independent reader slice — no contention with the main parsing stream
-      RecordingStream cpStream = new RecordingStream(readerSlice, context, false);
+      // Use a thread-local reader slice for lazy, allocation-free constant pool access.
+      // The slice shares the memory-mapped buffer but has its own position tracking,
+      // avoiding contention with the main parsing stream.
+      RecordingStream mainStream = context.get(RecordingStream.class);
+      RecordingStream cpStream =
+          new RecordingStream(mainStream.threadLocalReaderSlice(), context, false);
       try {
         cpStream.position(offset);
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
