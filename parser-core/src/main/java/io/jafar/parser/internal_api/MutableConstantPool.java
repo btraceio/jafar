@@ -45,10 +45,12 @@ public final class MutableConstantPool implements ConstantPool {
   /**
    * Gets a constant pool entry by its ID, lazily deserializing if necessary.
    *
-   * <p>This method is thread-safe: it uses a thread-local reader slice to avoid contention with the
-   * main parsing stream, and synchronizes on the pool to prevent concurrent writes to the entry
-   * cache. This allows safe lazy resolution from the EventIterator consumer thread while the
-   * producer thread continues parsing events on the same chunk stream.
+   * <p>This method is thread-safe: it uses a fresh reader slice to avoid contention with the main
+   * parsing stream, and synchronizes on the pool to prevent concurrent writes to the entry cache. A
+   * new slice is created per call (not thread-local) because this method can be called
+   * re-entrantly: reading a CP entry may encounter a string field with CP encoding, which calls
+   * back into this method on the string constant pool. Reusing a thread-local slice would corrupt
+   * the position for the outer call.
    *
    * @param id the ID of the constant pool entry
    * @return the deserialized object, or {@code null} if not found
@@ -62,11 +64,10 @@ public final class MutableConstantPool implements ConstantPool {
         if (o != null) {
           return o;
         }
-        // Use a thread-local reader slice for thread-safe access.
-        // The slice shares the memory-mapped buffer but has independent position tracking,
-        // avoiding contention with the main parsing stream.
+        // Create a fresh reader slice (not thread-local) for re-entrant safety.
+        // The slice shares the memory-mapped buffer but has independent position tracking.
         RecordingStream cpStream =
-            new RecordingStream(stream.threadLocalReaderSlice(), stream.getContext(), false);
+            new RecordingStream(stream.readerSlice(), stream.getContext(), false);
         cpStream.position(offset);
         // Prefer typed deserialization if available; otherwise fall back to generic map building
         o = clazz.read(cpStream);
