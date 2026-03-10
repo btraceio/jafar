@@ -36,6 +36,12 @@ public final class Main implements Callable<Integer> {
       description = "JFR file to open immediately (interactive mode)")
   private String jfrFile;
 
+  @CommandLine.Parameters(
+      index = "0",
+      arity = "0..1",
+      description = "JFR file to open immediately (interactive mode)")
+  private String jfrFilePositional;
+
   @CommandLine.Option(
       names = {"-q", "--quiet"},
       description = "Suppress banner (interactive mode)")
@@ -104,11 +110,13 @@ public final class Main implements Callable<Integer> {
       return 1;
     }
 
+    // Support both positional argument and -f/--file option; -f takes precedence
+    String effectiveJfrFile = jfrFile != null ? jfrFile : jfrFilePositional;
     Path jfrPath = null;
-    if (jfrFile != null) {
-      jfrPath = Paths.get(jfrFile);
+    if (effectiveJfrFile != null) {
+      jfrPath = Paths.get(effectiveJfrFile);
       if (!Files.exists(jfrPath)) {
-        System.err.println("Error: JFR file not found: " + jfrFile);
+        System.err.println("Error: JFR file not found: " + effectiveJfrFile);
         return 1;
       }
     }

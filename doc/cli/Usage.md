@@ -13,7 +13,8 @@ An interactive CLI for exploring Java Flight Recorder (JFR) files: browse metada
 # Interactive mode
 java -jar jfr-shell/build/libs/jfr-shell-*.jar
 
-# Or pass a file immediately
+# Or pass a file immediately (positional argument or -f flag)
+java -jar jfr-shell/build/libs/jfr-shell-*.jar /path/to/recording.jfr
 java -jar jfr-shell/build/libs/jfr-shell-*.jar -f /path/to/recording.jfr
 
 # Or use the standalone distribution (includes bundled JRE)
