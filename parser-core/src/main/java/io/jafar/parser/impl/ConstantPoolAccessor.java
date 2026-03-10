@@ -6,23 +6,50 @@ import io.jafar.parser.internal_api.GenericValueReader;
 import io.jafar.parser.internal_api.MutableConstantPool;
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.internal_api.RecordingStreamReader;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.util.Map;
 import java.util.Objects;
 
-/** Lazy accessor for a constant pool entry that resolves into a Map on-demand. */
-final class ConstantPoolAccessor implements ComplexType {
+/**
+ * Lazy accessor for a constant pool entry that resolves into a Map on-demand.
+ *
+ * <p>Each accessor captures an independent {@link RecordingStreamReader} slice at construction time,
+ * sharing the same underlying memory-mapped buffer but with independent position tracking. This
+ * allows thread-safe lazy resolution even when the main parsing stream is being used concurrently
+ * (e.g. in the {@link io.jafar.parser.api.EventIterator} producer-consumer pattern).
+ */
+public final class ConstantPoolAccessor implements ComplexType {
   private final ParserContext context;
   private final long typeId;
   private final long pointer;
+  private final RecordingStreamReader readerSlice;
 
   private volatile Map<String, Object> cached;
 
-  ConstantPoolAccessor(ParserContext context, MetadataClass type, long pointer) {
+  public ConstantPoolAccessor(ParserContext context, MetadataClass type, long pointer) {
+    this(context, type.getId(), pointer);
+  }
+
+  /**
+   * Constructs a new ConstantPoolAccessor using a raw type ID.
+   *
+   * <p>This constructor is used by generated deserializers where the type ID is a compile-time
+   * constant.
+   *
+   * @param context the parser context for this chunk
+   * @param typeId the constant pool type ID
+   * @param pointer the constant pool entry pointer (index)
+   */
+  public ConstantPoolAccessor(ParserContext context, long typeId, long pointer) {
     this.context = context;
-    this.typeId = type.getId();
+    this.typeId = typeId;
     this.pointer = pointer;
+    // Capture an independent reader for thread-safe lazy access.
+    // The slice shares the memory-mapped buffer but has its own position.
+    RecordingStream stream = context.get(RecordingStream.class);
+    this.readerSlice = stream.readerSlice();
   }
 
   @Override
@@ -41,10 +68,10 @@ final class ConstantPoolAccessor implements ComplexType {
       long offset = pool.getOffset(pointer);
       if (offset == 0) return null;
 
-      RecordingStream stream = context.get(RecordingStream.class);
-      long pos = stream.position();
+      // Use the independent reader slice — no contention with the main parsing stream
+      RecordingStream cpStream = new RecordingStream(readerSlice, context, false);
       try {
-        stream.position(offset);
+        cpStream.position(offset);
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
 
         // For simple types, the constant pool stores the unwrapped field value directly
@@ -63,7 +90,7 @@ final class ConstantPoolAccessor implements ComplexType {
 
           // Read the single field value directly (it's stored unwrapped in the CP)
           builder.onComplexValueStart(null, null, clz);
-          r.readSingleValue(stream, clz, fieldType, singleField.getName());
+          r.readSingleValue(cpStream, clz, fieldType, singleField.getName());
           builder.onComplexValueEnd(null, null, clz);
 
           v = builder.getRoot();
@@ -75,15 +102,13 @@ final class ConstantPoolAccessor implements ComplexType {
         MapValueBuilder builder = new MapValueBuilder(context);
         GenericValueReader r = new GenericValueReader(builder);
         builder.onComplexValueStart(null, null, clz);
-        r.readValue(stream, clz);
+        r.readValue(cpStream, clz);
         builder.onComplexValueEnd(null, null, clz);
         v = builder.getRoot();
         cached = v;
         return v;
       } catch (Exception e) {
         throw new RuntimeException(e);
-      } finally {
-        stream.position(pos);
       }
     }
   }

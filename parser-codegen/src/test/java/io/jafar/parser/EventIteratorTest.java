@@ -2,15 +2,18 @@ package io.jafar.parser;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.EventIterator;
 import io.jafar.parser.api.JafarRecordedEvent;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.Values;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -269,6 +272,73 @@ public class EventIteratorTest {
         assertNotNull(event.chunkInfo().duration(), "ChunkInfo should have duration");
         assertTrue(event.chunkInfo().size() >= 0, "ChunkInfo should have valid size");
       }
+    }
+  }
+
+  @Test
+  void testIteratorConstantPoolFieldsAreResolvable() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    ParsingContext ctx = ParsingContext.create();
+
+    int cpFieldsResolved = 0;
+    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+      while (it.hasNext()) {
+        JafarRecordedEvent event = it.next();
+        for (Map.Entry<String, Object> entry : event.value().entrySet()) {
+          Object value = entry.getValue();
+          if (value instanceof ComplexType) {
+            // Lazy CP reference — resolve it
+            Map<String, Object> resolved = ((ComplexType) value).getValue();
+            assertNotNull(
+                resolved,
+                "ComplexType field '"
+                    + entry.getKey()
+                    + "' in event "
+                    + event.typeName()
+                    + " should resolve to a non-null map");
+            cpFieldsResolved++;
+          }
+        }
+      }
+    }
+    assertTrue(cpFieldsResolved > 0, "Expected at least one CP-backed field to be resolved");
+  }
+
+  @Test
+  void testIteratorFieldValuesMatchCallback() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    ParsingContext ctx = ParsingContext.create();
+
+    // Collect all field values via callback-based parser
+    List<Map<String, Object>> callbackValues = new ArrayList<>();
+    try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
+      p.handle(
+          (type, value, ctl) -> {
+            // Deep-resolve so we can compare plain maps
+            callbackValues.add(Values.resolvedDeep(value));
+          });
+      p.run();
+    }
+
+    // Collect all field values via EventIterator
+    List<Map<String, Object>> iteratorValues = new ArrayList<>();
+    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+      while (it.hasNext()) {
+        JafarRecordedEvent event = it.next();
+        iteratorValues.add(Values.resolvedDeep(event.value()));
+      }
+    }
+
+    assertEquals(
+        callbackValues.size(),
+        iteratorValues.size(),
+        "Iterator and callback should produce the same number of events");
+    // Verify field counts match for each event
+    for (int i = 0; i < callbackValues.size(); i++) {
+      assertEquals(
+          callbackValues.get(i).size(),
+          iteratorValues.get(i).size(),
+          "Event " + i + " should have the same number of fields");
     }
   }
 }

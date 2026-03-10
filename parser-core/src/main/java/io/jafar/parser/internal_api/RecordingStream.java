@@ -51,9 +51,38 @@ public final class RecordingStream implements AutoCloseable {
    * @param context the parser context to use
    */
   public RecordingStream(RecordingStreamReader reader, ParserContext context) {
+    this(reader, context, true);
+  }
+
+  /**
+   * Constructs a new RecordingStream with optional context registration.
+   *
+   * <p>When {@code register} is {@code false}, the stream is not registered in the context. This is
+   * used for creating temporary streams for thread-safe constant pool resolution.
+   *
+   * @param reader the reader for the recording data
+   * @param context the parser context to use
+   * @param register whether to register this stream in the context
+   */
+  RecordingStream(RecordingStreamReader reader, ParserContext context, boolean register) {
     this.reader = reader;
     this.context = context;
-    this.context.put(RecordingStream.class, this);
+    if (register) {
+      this.context.put(RecordingStream.class, this);
+    }
+  }
+
+  /**
+   * Creates a new {@link RecordingStreamReader} that shares the same underlying memory-mapped buffer
+   * but has independent position tracking.
+   *
+   * <p>This is used for thread-safe lazy constant pool resolution: each resolver gets its own
+   * position tracker so it can seek and read without interfering with the main parsing stream.
+   *
+   * @return a new reader slice with independent position
+   */
+  RecordingStreamReader readerSlice() {
+    return reader.slice(0, reader.length());
   }
 
   /**
