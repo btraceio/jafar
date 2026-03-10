@@ -45,41 +45,45 @@ public final class MutableConstantPool implements ConstantPool {
   /**
    * Gets a constant pool entry by its ID, lazily deserializing if necessary.
    *
+   * <p>This method is thread-safe: it uses a thread-local reader slice to avoid contention with the
+   * main parsing stream, and synchronizes on the pool to prevent concurrent writes to the entry
+   * cache. This allows safe lazy resolution from the EventIterator consumer thread while the
+   * producer thread continues parsing events on the same chunk stream.
+   *
    * @param id the ID of the constant pool entry
    * @return the deserialized object, or {@code null} if not found
    */
   public Object get(long id) {
     long offset = offsets.get(id);
     if (offset > 0) {
-      Object o = entries.get(id);
-      if (o == null) {
-        long pos = stream.position();
-        try {
-          stream.position(offsets.get(id));
-          // Prefer typed deserialization if available; otherwise fall back to generic map building
-          Object typed = clazz.read(stream);
-          if (typed != null) {
-            o = typed;
-          } else {
-            GenericValueReader r = stream.getContext().get(GenericValueReader.class);
-            if (r != null) {
-              MapValueBuilder builder = (MapValueBuilder) r.getProcessor();
-              builder.onComplexValueStart(null, null, clazz);
-              try {
-                r.readValue(stream, clazz);
-              } catch (java.io.IOException ioe) {
-                throw new RuntimeException(ioe);
-              }
-              builder.onComplexValueEnd(null, null, clazz);
-              o = builder.getRoot();
-            }
-            // If GenericValueReader is not available, o remains null
+      Object o;
+      synchronized (this) {
+        o = entries.get(id);
+        if (o != null) {
+          return o;
+        }
+        // Use a thread-local reader slice for thread-safe access.
+        // The slice shares the memory-mapped buffer but has independent position tracking,
+        // avoiding contention with the main parsing stream.
+        RecordingStream cpStream =
+            new RecordingStream(stream.threadLocalReaderSlice(), stream.getContext(), false);
+        cpStream.position(offset);
+        // Prefer typed deserialization if available; otherwise fall back to generic map building
+        o = clazz.read(cpStream);
+        if (o == null) {
+          MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+          GenericValueReader r = new GenericValueReader(builder);
+          builder.onComplexValueStart(null, null, clazz);
+          try {
+            r.readValue(cpStream, clazz);
+          } catch (java.io.IOException ioe) {
+            throw new RuntimeException(ioe);
           }
-          if (o != null) {
-            entries.put(id, o);
-          }
-        } finally {
-          stream.position(pos);
+          builder.onComplexValueEnd(null, null, clazz);
+          o = builder.getRoot();
+        }
+        if (o != null) {
+          entries.put(id, o);
         }
       }
       return o;

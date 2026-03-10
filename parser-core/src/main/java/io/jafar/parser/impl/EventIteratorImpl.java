@@ -105,6 +105,15 @@ public final class EventIteratorImpl implements EventIterator {
               } catch (InterruptedException e) {
                 // Thread was interrupted during queue.put(END_MARKER)
                 Thread.currentThread().interrupt();
+              } catch (Throwable t) {
+                // Catch any unexpected error to prevent consumer from hanging forever
+                // on queue.take() without receiving the END_MARKER sentinel.
+                parsingError = new IOException("Unexpected error during parsing", t);
+                try {
+                  queue.put(END_MARKER);
+                } catch (InterruptedException ie) {
+                  Thread.currentThread().interrupt();
+                }
               } finally {
                 // Clean up parser resources
                 try {
