@@ -4,8 +4,8 @@ import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.internal_api.collections.LongLongHashMap;
-import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Mutable implementation of ConstantPool that allows adding offsets and lazy-loading entries.
@@ -19,16 +19,13 @@ public final class MutableConstantPool implements ConstantPool {
   private final LongLongHashMap offsets;
 
   /** Map of constant pool entry IDs to their deserialized objects. */
-  private final LongObjectHashMap<Object> entries;
+  private final ConcurrentHashMap<Long, Object> entries;
 
   /** The recording stream for reading constant pool data. */
   private final RecordingStream stream;
 
   /** The metadata class for the constant pool type. */
   private final MetadataClass clazz;
-
-  /** Cached reader slice for CP resolution (lazy-initialized, one per pool instance). */
-  private RecordingStreamReader cachedSlice;
 
   /**
    * Constructs a new MutableConstantPool with the specified parameters.
@@ -39,7 +36,7 @@ public final class MutableConstantPool implements ConstantPool {
    */
   public MutableConstantPool(RecordingStream chunkStream, long typeId, int count) {
     this.offsets = new LongLongHashMap(count);
-    this.entries = new LongObjectHashMap<>(count);
+    this.entries = new ConcurrentHashMap<>(count);
     this.stream = chunkStream;
     ParserContext context = chunkStream.getContext();
     clazz = context.getMetadataLookup().getClass(typeId);
@@ -48,10 +45,11 @@ public final class MutableConstantPool implements ConstantPool {
   /**
    * Gets a constant pool entry by its ID, lazily deserializing if necessary.
    *
-   * <p>This method uses a single cached reader slice per pool instance to avoid excessive
-   * allocations. Access is synchronized for thread-safety between producer and consumer threads.
-   * Re-entrant calls (e.g., reading a CP entry that references the string CP) are safe because they
-   * target a different {@code MutableConstantPool} instance with its own monitor and cached slice.
+   * <p>This method is lock-free: each thread uses its own thread-local reader slice (cached per
+   * thread, sharing the underlying memory-mapped buffer with independent position tracking), and
+   * deserialized entries are stored in a {@link ConcurrentHashMap}. Position save/restore around
+   * deserialization handles re-entrancy when reading a CP entry triggers resolution of another CP
+   * type (e.g., string pool lookup).
    *
    * @param id the ID of the constant pool entry
    * @return the deserialized object, or {@code null} if not found
@@ -61,16 +59,13 @@ public final class MutableConstantPool implements ConstantPool {
     if (offset > 0) {
       Object o = entries.get(id);
       if (o == null) {
-        synchronized (this) {
-          o = entries.get(id);
-          if (o != null) {
-            return o;
-          }
-          // Lazy-init a single reader slice per pool instance (shares mmap, independent position)
-          if (cachedSlice == null) {
-            cachedSlice = stream.readerSlice();
-          }
-          RecordingStream cpStream = new RecordingStream(cachedSlice, stream.getContext(), false);
+        // Thread-local slice: one per thread, reused across calls (no per-call allocation).
+        // Save/restore position for re-entrancy (e.g., reading a CP entry triggers string
+        // pool lookup which re-enters get() on a different pool sharing the same slice).
+        RecordingStreamReader slice = stream.threadLocalReaderSlice();
+        long savedPos = slice.position();
+        try {
+          RecordingStream cpStream = new RecordingStream(slice, stream.getContext(), false);
           cpStream.position(offset);
           o = clazz.read(cpStream);
           if (o == null) {
@@ -86,8 +81,11 @@ public final class MutableConstantPool implements ConstantPool {
             o = builder.getRoot();
           }
           if (o != null) {
-            entries.put(id, o);
+            entries.putIfAbsent(id, o);
+            o = entries.get(id);
           }
+        } finally {
+          slice.position(savedPos);
         }
       }
       return o;
