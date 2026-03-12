@@ -1712,7 +1712,7 @@ public class CommandDispatcher {
                         : 0;
                 row.put(uniqueColName, uniqueCount);
                 row.put(
-                    "total",
+                    "directRefs",
                     totalRefsByEventType != null
                         ? totalRefsByEventType.getOrDefault(evtType, 0L)
                         : 0L);

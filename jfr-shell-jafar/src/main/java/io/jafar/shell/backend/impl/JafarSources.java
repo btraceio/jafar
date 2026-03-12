@@ -19,6 +19,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.shell.backend.ChunkSource;
 import io.jafar.shell.backend.ConstantPoolSource;
 import io.jafar.shell.backend.MetadataSource;
+import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -346,7 +347,7 @@ final class JafarSources {
 
     @Override
     public List<Map<String, Object>> loadSummary(Path recording) throws Exception {
-      final Map<String, Set<Long>> idSets = new ConcurrentHashMap<>();
+      final Map<String, Long> sizes = new HashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -359,29 +360,40 @@ final class JafarSources {
                     .pools()
                     .forEach(
                         cp -> {
-                          String name = cp.getType().getName();
-                          Set<Long> ids =
-                              idSets.computeIfAbsent(name, k -> ConcurrentHashMap.newKeySet());
                           try {
-                            cp.ensureIndexed();
+                            String name = cp.getType().getName();
+                            long count = extractConstantPoolCount(cp);
+                            sizes.merge(name, count, Long::sum);
                           } catch (Throwable ignore) {
                           }
-                          Iterator<Long> it = cp.ids();
-                          while (it.hasNext()) ids.add(it.next());
                         });
                 return true;
               }
             });
       }
       List<Map<String, Object>> rows = new ArrayList<>();
-      for (Map.Entry<String, Set<Long>> e : idSets.entrySet()) {
+      for (Map.Entry<String, Long> e : sizes.entrySet()) {
         Map<String, Object> m = new HashMap<>();
         m.put("name", e.getKey());
-        m.put("totalSize", (long) e.getValue().size());
+        m.put("totalSize", e.getValue());
         rows.add(m);
       }
       rows.sort((a, b) -> Long.compare((long) b.get("totalSize"), (long) a.get("totalSize")));
       return rows;
+    }
+
+    private static long extractConstantPoolCount(ConstantPool cp) {
+      try {
+        Field f = cp.getClass().getDeclaredField("offsets");
+        f.setAccessible(true);
+        Object offsets = f.get(cp);
+        try {
+          return (int) offsets.getClass().getMethod("size").invoke(offsets);
+        } catch (Throwable ignore) {
+        }
+      } catch (Throwable ignore) {
+      }
+      return cp.size();
     }
 
     @Override
@@ -486,22 +498,38 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> crossref(Path recording, String typeName) throws Exception {
-      // All CP entry IDs for the target type across all chunks
-      Set<Long> allIds = ConcurrentHashMap.newKeySet();
+      // JFR CP IDs are chunk-local. Global stats (total/referenced/unused CP entries) must be
+      // computed per chunk and then summed. Per-chunk state is reset on each onChunkStart.
+      long[] totalCpCount = {0};
+      long[] referencedCpCount = {0};
 
-      // CP reference graph: cpType -> entryId -> refType -> Set<refId>
+      // Per-chunk target-type CP IDs (reset per chunk)
+      Set<Long>[] chunkAllIds = new Set[] {new HashSet<>()};
+      // Per-chunk CP edge graph (reset per chunk, merged into cpEdges at chunk end)
+      Map<String, Map<Long, Map<String, Set<Long>>>>[] chunkCpEdges =
+          new Map[] {new ConcurrentHashMap<>()};
+      // Per-chunk union of all event CP refs — seed for per-chunk global BFS
+      Map<String, Set<Long>>[] chunkEventRefs = new Map[] {new ConcurrentHashMap<>()};
+      // Per-chunk edge processor (points at chunkCpEdges[0], recreated per chunk)
+      EdgeCollectingProcessor[] edgeProcRef = {new EdgeCollectingProcessor(chunkCpEdges[0])};
+
+      // Global merged CP edge graph — accumulated from all chunks for per-event-type BFS
       Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new ConcurrentHashMap<>();
 
-      // Union of direct CP refs across all events (all ref types) — for global BFS seed
-      Map<String, Set<Long>> directEventRefs = new ConcurrentHashMap<>();
+      // Per-event-type CP refs (all types) — seeds for per-event-type BFS
+      Map<String, Map<String, Set<Long>>> directEventRefsByType = new ConcurrentHashMap<>();
       // Events per event type that directly reference the target CP type
       Map<String, Long> eventCounts = new ConcurrentHashMap<>();
+      // Candidate event counts for types with transitive (not direct) refs — only promoted after
+      // BFS confirms reachable target IDs
+      Map<String, Long> candidateTransitiveCounts = new ConcurrentHashMap<>();
       // Total non-unique direct target-type refs per event type
       Map<String, Long> totalRefsByEventType = new ConcurrentHashMap<>();
       // Per-event-type unique target IDs (direct refs only)
       Map<String, Set<Long>> idsByEventType = new ConcurrentHashMap<>();
 
-      EdgeCollectingProcessor edgeProc = new EdgeCollectingProcessor(cpEdges);
+      // Metadata-derived ancestor types for transitive crossref counting
+      Set<String>[] ancestorTypes = new Set[] {Collections.emptySet()};
 
       // ThreadLocal: accumulates all CP refs (all types) seen in the current event
       ThreadLocal<Map<String, List<Long>>> currentEventAllRefs = new ThreadLocal<>();
@@ -524,14 +552,38 @@ final class JafarSources {
             recording,
             new ChunkParserListener() {
               @Override
+              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+                ancestorTypes[0] = buildAncestorTypes(metadata, typeName);
+                return true;
+              }
+
+              @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
+                chunkAllIds[0] = new HashSet<>();
+                chunkCpEdges[0] = new ConcurrentHashMap<>();
+                chunkEventRefs[0] = new ConcurrentHashMap<>();
+                edgeProcRef[0] = new EdgeCollectingProcessor(chunkCpEdges[0]);
                 context.put(GenericValueReader.class, new GenericValueReader(eventCollector));
                 return true;
               }
 
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
+                if (!skipped) {
+                  // Per-chunk BFS: which target-type IDs are reachable from events in this chunk?
+                  Set<Long> chunkReachable =
+                      bfsCpReachable(chunkEventRefs[0], chunkCpEdges[0], typeName);
+                  // totalCpCount is accumulated per-checkpoint via extractConstantPoolCount.
+                  referencedCpCount[0] +=
+                      chunkReachable.stream().filter(chunkAllIds[0]::contains).count();
+                  // Merge this chunk's CP edges into the global graph for per-event-type BFS.
+                  chunkCpEdges[0].forEach(
+                      (type, idMap) ->
+                          cpEdges
+                              .computeIfAbsent(type, k -> new ConcurrentHashMap<>())
+                              .putAll(idMap));
+                }
                 context.remove(GenericValueReader.class);
                 return true;
               }
@@ -539,22 +591,24 @@ final class JafarSources {
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent cp) {
                 RecordingStream stream = context.get(RecordingStream.class);
-                GenericValueReader edgeReader = new GenericValueReader(edgeProc);
+                GenericValueReader edgeReader = new GenericValueReader(edgeProcRef[0]);
                 context
                     .getConstantPools()
                     .pools()
                     .forEach(
                         pool -> {
-                          // Collect allIds for the target type
                           if (pool.getType().getName().equals(typeName)) {
-                            try {
-                              pool.ensureIndexed();
-                            } catch (Throwable ignore) {
+                            // Accumulate delta count for global total (mirrors loadSummary).
+                            totalCpCount[0] += extractConstantPoolCount(pool);
+                            // Collect IDs defined in this checkpoint for per-chunk BFS.
+                            MutableConstantPool targetMcp = (MutableConstantPool) pool;
+                            Iterator<Long> it = targetMcp.ids();
+                            while (it.hasNext()) {
+                              long id = it.next();
+                              if (targetMcp.getOffset(id) != 0) chunkAllIds[0].add(id);
                             }
-                            Iterator<Long> it = pool.ids();
-                            while (it.hasNext()) allIds.add(it.next());
                           }
-                          // Build CP reference edges for ALL types
+                          // Build per-chunk CP reference edges for ALL types
                           if (stream != null) {
                             MutableConstantPool mcp = (MutableConstantPool) pool;
                             Iterator<Long> it = mcp.ids();
@@ -562,7 +616,7 @@ final class JafarSources {
                               long id = it.next();
                               long offset = mcp.getOffset(id);
                               if (offset == 0) continue;
-                              edgeProc.startEntry(mcp.getType().getName(), id);
+                              edgeProcRef[0].startEntry(mcp.getType().getName(), id);
                               long saved = stream.position();
                               try {
                                 stream.position(offset);
@@ -570,7 +624,7 @@ final class JafarSources {
                               } catch (Throwable ignore) {
                               } finally {
                                 stream.position(saved);
-                                edgeProc.endEntry();
+                                edgeProcRef[0].endEntry();
                               }
                             }
                           }
@@ -601,7 +655,7 @@ final class JafarSources {
                   currentEventAllRefs.remove();
                 }
 
-                // Seed global BFS and track per-event-type direct refs
+                // Track per-event-type refs and seed per-chunk BFS
                 List<Long> directTarget = allRefs.getOrDefault(typeName, Collections.emptyList());
                 if (!directTarget.isEmpty()) {
                   String et = eventType.getName();
@@ -610,21 +664,52 @@ final class JafarSources {
                   idsByEventType
                       .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
                       .addAll(directTarget);
+                } else {
+                  // Check for transitive refs — count as candidate, confirmed after BFS
+                  for (String ancestor : ancestorTypes[0]) {
+                    if (allRefs.containsKey(ancestor)) {
+                      candidateTransitiveCounts.merge(eventType.getName(), 1L, Long::sum);
+                      break;
+                    }
+                  }
                 }
                 allRefs.forEach(
                     (refType, refIds) ->
-                        directEventRefs
+                        chunkEventRefs[0]
                             .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
                             .addAll(refIds));
+                if (!allRefs.isEmpty()) {
+                  String et = eventType.getName();
+                  allRefs.forEach(
+                      (refType, refIds) ->
+                          directEventRefsByType
+                              .computeIfAbsent(et, k -> new ConcurrentHashMap<>())
+                              .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
+                              .addAll(refIds));
+                }
                 return true;
               }
             });
       }
 
-      // Post-parse BFS: compute transitive reachability of target type from all event refs
-      Set<Long> referencedIds = bfsCpReachable(directEventRefs, cpEdges, typeName);
-      long total = allIds.size();
-      long referenced = referencedIds.stream().filter(allIds::contains).count();
+      // Per-event-type transitive BFS: merge transitive IDs and promote candidate event counts.
+      // Uses the global merged cpEdges accumulated from all chunks.
+      for (Map.Entry<String, Map<String, Set<Long>>> e : directEventRefsByType.entrySet()) {
+        String et = e.getKey();
+        Set<Long> transitiveIds = bfsCpReachable(e.getValue(), cpEdges, typeName);
+        if (!transitiveIds.isEmpty()) {
+          idsByEventType.computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
+              .addAll(transitiveIds);
+          // Promote candidate transitive event counts now that BFS confirmed reachability
+          Long candidateCount = candidateTransitiveCounts.get(et);
+          if (candidateCount != null) {
+            eventCounts.merge(et, candidateCount, Long::sum);
+          }
+        }
+      }
+
+      long total = totalCpCount[0];
+      long referenced = referencedCpCount[0];
       long unused = total - referenced;
 
       Map<String, Object> result = new LinkedHashMap<>();
@@ -638,6 +723,53 @@ final class JafarSources {
       result.put("idsByEventType", idsByEventType);
       result.put("totalRefsByEventType", totalRefsByEventType);
       return result;
+    }
+
+    /**
+     * Build the transitive set of CP type names that can contain references to {@code targetType},
+     * using the recording metadata. For example, if Method references Symbol and StackTrace
+     * contains inline StackFrame which references Method, then the ancestor set of Symbol includes
+     * Method and StackTrace.
+     */
+    private static Set<String> buildAncestorTypes(MetadataEvent metadata, String targetType) {
+      Map<String, Set<String>> referencedBy = new HashMap<>();
+      for (MetadataClass mc : metadata.getClasses()) {
+        collectCpRefs(mc, mc.getName(), referencedBy, new HashSet<>());
+      }
+      Set<String> ancestors = new HashSet<>();
+      List<String> worklist = new ArrayList<>();
+      worklist.add(targetType);
+      while (!worklist.isEmpty()) {
+        String current = worklist.remove(worklist.size() - 1);
+        Set<String> parents = referencedBy.get(current);
+        if (parents == null) continue;
+        for (String parent : parents) {
+          if (ancestors.add(parent)) {
+            worklist.add(parent);
+          }
+        }
+      }
+      return ancestors;
+    }
+
+    private static void collectCpRefs(
+        MetadataClass type,
+        String rootTypeName,
+        Map<String, Set<String>> referencedBy,
+        Set<String> visited) {
+      if (!visited.add(type.getName())) return;
+      for (MetadataField f : type.getFields()) {
+        try {
+          if (f.hasConstantPool()) {
+            referencedBy
+                .computeIfAbsent(f.getType().getName(), k -> new HashSet<>())
+                .add(rootTypeName);
+          } else if (f.getType() != null && !f.getType().isPrimitive()) {
+            collectCpRefs(f.getType(), rootTypeName, referencedBy, visited);
+          }
+        } catch (Throwable ignore) {
+        }
+      }
     }
 
     /**
