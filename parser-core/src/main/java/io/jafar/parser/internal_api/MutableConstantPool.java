@@ -75,16 +75,28 @@ public final class MutableConstantPool implements ConstantPool {
           cpStream.position(offset);
           o = clazz.read(cpStream);
           if (o == null) {
-            MapValueBuilder builder = new MapValueBuilder(stream.getContext());
-            GenericValueReader r = new GenericValueReader(builder);
-            builder.onComplexValueStart(null, null, clazz);
-            try {
-              r.readValue(cpStream, clazz);
-            } catch (java.io.IOException ioe) {
-              throw new RuntimeException(ioe);
+            // For String constant pool entries, read the string directly.
+            // Using the generic MapValueBuilder path would wrap the string in a Map,
+            // breaking ParsingUtils.readUTF8() which expects stringPool.get() to return
+            // a String (checked via instanceof String).
+            if (clazz.isPrimitive() && "java.lang.String".equals(clazz.getName())) {
+              try {
+                o = cpStream.readUTF8();
+              } catch (java.io.IOException ioe) {
+                throw new RuntimeException(ioe);
+              }
+            } else {
+              MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+              GenericValueReader r = new GenericValueReader(builder);
+              builder.onComplexValueStart(null, null, clazz);
+              try {
+                r.readValue(cpStream, clazz);
+              } catch (java.io.IOException ioe) {
+                throw new RuntimeException(ioe);
+              }
+              builder.onComplexValueEnd(null, null, clazz);
+              o = builder.getRoot();
             }
-            builder.onComplexValueEnd(null, null, clazz);
-            o = builder.getRoot();
           }
           if (o != null) {
             entries.putIfAbsent(id, o);
