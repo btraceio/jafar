@@ -345,6 +345,15 @@ public final class FunctionRegistry {
             .multiKeyword("fields", FIELD_PATH, "Fields to include from decorator")
             .requiresAny()
             .build());
+
+    // crossref() - Crosscheck CP entries against event references (constants only)
+    register(
+        FunctionSpec.builder("crossref")
+            .pipeline()
+            .description("Crosscheck CP entries against event references (constants only)")
+            .template("crossref()")
+            .requiresAny()
+            .build());
   }
 
   private static void registerFilterFunctions() {

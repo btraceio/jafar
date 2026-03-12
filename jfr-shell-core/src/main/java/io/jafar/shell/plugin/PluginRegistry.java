@@ -118,14 +118,26 @@ final class PluginRegistry {
         localMavenPlugins.size(),
         remotePlugins.size());
 
-    // Priority: Remote > Local Maven
     PluginDefinition remote = remotePlugins.get(pluginId.toLowerCase());
+    PluginDefinition localMaven = localMavenPlugins.get(pluginId.toLowerCase());
+
+    // Prefer local Maven when it has a newer version than remote (e.g. local SNAPSHOT builds)
+    if (localMaven != null && remote != null) {
+      if (compareVersions(localMaven.version(), remote.version()) > 0) {
+        log.debug(
+            "Preferring local Maven plugin '{}' ({}) over remote ({})",
+            pluginId,
+            localMaven.version(),
+            remote.version());
+        return Optional.of(localMaven);
+      }
+    }
+
     if (remote != null) {
       log.debug("Found plugin '{}' in remote registry: {}", pluginId, remote.version());
       return Optional.of(remote);
     }
 
-    PluginDefinition localMaven = localMavenPlugins.get(pluginId.toLowerCase());
     if (localMaven != null) {
       log.debug("Found plugin '{}' in local Maven: {}", pluginId, localMaven.version());
     } else {
