@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -89,7 +91,33 @@ public final class PluginManager {
    */
   private void loadInstalledPlugins() {
     try {
-      List<Path> pluginJars = storageManager.getAllInstalledJars();
+      List<Path> pluginJars = new ArrayList<>(storageManager.getAllInstalledJars());
+
+      // Prepend any local override jars specified via -Djfr.shell.backend.jars=<path>[:<path>...]
+      // Local jars appear first so they shadow the installed plugin versions.
+      String localJars = System.getProperty("jfr.shell.backend.jars");
+      if (localJars != null && !localJars.isBlank()) {
+        for (String entry : localJars.split(java.io.File.pathSeparator)) {
+          Path p = Paths.get(entry.trim());
+          if (Files.exists(p)) {
+            pluginJars.add(0, p);
+            log.info("Local backend override: {}", p);
+          } else {
+            log.warn("Local backend jar not found, skipping: {}", p);
+          }
+        }
+      }
+
+      // Auto-detect local Maven SNAPSHOT builds and prepend them so they shadow installed versions.
+      // This allows developers building from source to automatically use their local backend JARs
+      // without needing -Djfr.shell.backend.jars.
+      if (localJars == null || localJars.isBlank()) {
+        List<Path> snapshotJars = discoverLocalMavenSnapshots();
+        for (Path jar : snapshotJars) {
+          pluginJars.add(0, jar);
+          log.info("Local Maven SNAPSHOT override: {}", jar);
+        }
+      }
 
       // Create ClassLoader with plugin JARs (or empty if no plugins installed)
       ClassLoader parent = PluginManager.class.getClassLoader();
@@ -272,6 +300,89 @@ public final class PluginManager {
       }
     }
     return null;
+  }
+
+  /**
+   * Scan the local Maven repository for SNAPSHOT builds of jfr-shell backend plugins that are newer
+   * than the installed versions. Returns the JAR paths for any such SNAPSHOTs found.
+   */
+  private List<Path> discoverLocalMavenSnapshots() {
+    List<Path> result = new ArrayList<>();
+    String userHome = System.getProperty("user.home");
+    Path btraceRepo = Paths.get(userHome, ".m2", "repository", "io", "btrace");
+    if (!Files.exists(btraceRepo)) {
+      return result;
+    }
+
+    Map<String, PluginMetadata> installed;
+    try {
+      installed = storageManager.loadInstalled();
+    } catch (IOException e) {
+      return result;
+    }
+
+    try (var stream = Files.list(btraceRepo)) {
+      stream
+          .filter(Files::isDirectory)
+          .filter(p -> p.getFileName().toString().startsWith("jfr-shell-"))
+          .forEach(
+              artifactDir -> {
+                String artifactId = artifactDir.getFileName().toString();
+                String pluginId = artifactId.substring("jfr-shell-".length()).toLowerCase();
+                // Find the highest SNAPSHOT version that is newer than the installed version
+                try (var versions = Files.list(artifactDir)) {
+                  String bestVersion =
+                      versions
+                          .filter(Files::isDirectory)
+                          .map(p -> p.getFileName().toString())
+                          .filter(v -> v.endsWith("-SNAPSHOT"))
+                          .reduce(
+                              null,
+                              (best, v) -> best == null || isNewerVersion(v, best) ? v : best);
+                  if (bestVersion != null) {
+                    Path jarPath =
+                        artifactDir
+                            .resolve(bestVersion)
+                            .resolve(artifactId + "-" + bestVersion + ".jar");
+                    if (Files.exists(jarPath)) {
+                      PluginMetadata current = installed.get(pluginId);
+                      if (current == null || isNewerVersion(bestVersion, current.version())) {
+                        result.add(jarPath);
+                      }
+                    }
+                  }
+                } catch (IOException e) {
+                  log.debug("Error scanning {}", artifactDir, e);
+                }
+              });
+    } catch (IOException e) {
+      log.debug("Error scanning local Maven repository", e);
+    }
+    return result;
+  }
+
+  /**
+   * Check if candidate version is newer than the current version using simple numeric comparison.
+   * SNAPSHOT qualifier is stripped before comparison.
+   */
+  private static boolean isNewerVersion(String candidate, String current) {
+    String[] c = candidate.split("-", 2)[0].split("\\.");
+    String[] r = current.split("-", 2)[0].split("\\.");
+    int len = Math.max(c.length, r.length);
+    for (int i = 0; i < len; i++) {
+      int cv = i < c.length ? parseIntSafe(c[i]) : 0;
+      int rv = i < r.length ? parseIntSafe(r[i]) : 0;
+      if (cv != rv) return cv > rv;
+    }
+    return false;
+  }
+
+  private static int parseIntSafe(String s) {
+    try {
+      return Integer.parseInt(s);
+    } catch (NumberFormatException e) {
+      return 0;
+    }
   }
 
   /**

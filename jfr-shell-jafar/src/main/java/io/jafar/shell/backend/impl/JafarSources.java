@@ -698,7 +698,8 @@ final class JafarSources {
         String et = e.getKey();
         Set<Long> transitiveIds = bfsCpReachable(e.getValue(), cpEdges, typeName);
         if (!transitiveIds.isEmpty()) {
-          idsByEventType.computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
+          idsByEventType
+              .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
               .addAll(transitiveIds);
           // Promote candidate transitive event counts now that BFS confirmed reachability
           Long candidateCount = candidateTransitiveCounts.get(et);
