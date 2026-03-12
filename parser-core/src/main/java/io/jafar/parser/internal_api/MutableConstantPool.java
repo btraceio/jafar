@@ -27,6 +27,9 @@ public final class MutableConstantPool implements ConstantPool {
   /** The metadata class for the constant pool type. */
   private final MetadataClass clazz;
 
+  /** Cached reader slice for CP resolution (lazy-initialized, one per pool instance). */
+  private RecordingStreamReader cachedSlice;
+
   /**
    * Constructs a new MutableConstantPool with the specified parameters.
    *
@@ -45,12 +48,10 @@ public final class MutableConstantPool implements ConstantPool {
   /**
    * Gets a constant pool entry by its ID, lazily deserializing if necessary.
    *
-   * <p>This method is thread-safe: it uses a fresh reader slice to avoid contention with the main
-   * parsing stream, and synchronizes on the pool to prevent concurrent writes to the entry cache. A
-   * new slice is created per call (not thread-local) because this method can be called
-   * re-entrantly: reading a CP entry may encounter a string field with CP encoding, which calls
-   * back into this method on the string constant pool. Reusing a thread-local slice would corrupt
-   * the position for the outer call.
+   * <p>This method uses a single cached reader slice per pool instance to avoid excessive
+   * allocations. Access is synchronized for thread-safety between producer and consumer threads.
+   * Re-entrant calls (e.g., reading a CP entry that references the string CP) are safe because they
+   * target a different {@code MutableConstantPool} instance with its own monitor and cached slice.
    *
    * @param id the ID of the constant pool entry
    * @return the deserialized object, or {@code null} if not found
@@ -58,33 +59,35 @@ public final class MutableConstantPool implements ConstantPool {
   public Object get(long id) {
     long offset = offsets.get(id);
     if (offset > 0) {
-      Object o;
-      synchronized (this) {
-        o = entries.get(id);
-        if (o != null) {
-          return o;
-        }
-        // Create a fresh reader slice (not thread-local) for re-entrant safety.
-        // The slice shares the memory-mapped buffer but has independent position tracking.
-        RecordingStream cpStream =
-            new RecordingStream(stream.readerSlice(), stream.getContext(), false);
-        cpStream.position(offset);
-        // Prefer typed deserialization if available; otherwise fall back to generic map building
-        o = clazz.read(cpStream);
-        if (o == null) {
-          MapValueBuilder builder = new MapValueBuilder(stream.getContext());
-          GenericValueReader r = new GenericValueReader(builder);
-          builder.onComplexValueStart(null, null, clazz);
-          try {
-            r.readValue(cpStream, clazz);
-          } catch (java.io.IOException ioe) {
-            throw new RuntimeException(ioe);
+      Object o = entries.get(id);
+      if (o == null) {
+        synchronized (this) {
+          o = entries.get(id);
+          if (o != null) {
+            return o;
           }
-          builder.onComplexValueEnd(null, null, clazz);
-          o = builder.getRoot();
-        }
-        if (o != null) {
-          entries.put(id, o);
+          // Lazy-init a single reader slice per pool instance (shares mmap, independent position)
+          if (cachedSlice == null) {
+            cachedSlice = stream.readerSlice();
+          }
+          RecordingStream cpStream = new RecordingStream(cachedSlice, stream.getContext(), false);
+          cpStream.position(offset);
+          o = clazz.read(cpStream);
+          if (o == null) {
+            MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+            GenericValueReader r = new GenericValueReader(builder);
+            builder.onComplexValueStart(null, null, clazz);
+            try {
+              r.readValue(cpStream, clazz);
+            } catch (java.io.IOException ioe) {
+              throw new RuntimeException(ioe);
+            }
+            builder.onComplexValueEnd(null, null, clazz);
+            o = builder.getRoot();
+          }
+          if (o != null) {
+            entries.put(id, o);
+          }
         }
       }
       return o;
