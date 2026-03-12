@@ -21,8 +21,12 @@ public final class RecordingStream implements AutoCloseable {
   /** The marked position for reset operations. */
   private long mark = -1;
 
-  /** Thread-local cache of reader slices for constant pool resolution. */
-  private final ThreadLocal<RecordingStreamReader> threadLocalSlice = new ThreadLocal<>();
+  /**
+   * Thread-local cache of reader slices for constant pool resolution. Lazy-initialized to avoid
+   * allocating a ThreadLocal on short-lived wrapper instances (e.g. those created per CP resolution
+   * with register=false) that never call {@link #threadLocalReaderSlice()}.
+   */
+  private volatile ThreadLocal<RecordingStreamReader> threadLocalSlice;
 
   /**
    * Constructs a new RecordingStream from a file path.
@@ -99,10 +103,20 @@ public final class RecordingStream implements AutoCloseable {
    * @return a reusable reader slice for the current thread
    */
   public RecordingStreamReader threadLocalReaderSlice() {
-    RecordingStreamReader slice = threadLocalSlice.get();
+    ThreadLocal<RecordingStreamReader> tl = threadLocalSlice;
+    if (tl == null) {
+      synchronized (this) {
+        tl = threadLocalSlice;
+        if (tl == null) {
+          tl = new ThreadLocal<>();
+          threadLocalSlice = tl;
+        }
+      }
+    }
+    RecordingStreamReader slice = tl.get();
     if (slice == null) {
       slice = reader.slice(0, reader.length());
-      threadLocalSlice.set(slice);
+      tl.set(slice);
     }
     return slice;
   }
