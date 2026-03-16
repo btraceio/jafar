@@ -364,6 +364,57 @@ objects | distinct(class)                  # Unique class names
 gcroots | distinct(type)                   # Unique root types
 ```
 
+### `pathToRoot`
+Trace the path from each input object to its nearest GC root. Shows the reference chain
+that keeps the object alive.
+
+```
+# Why is this object alive?
+objects[id = 0x12345678] | pathToRoot
+
+# Trace the largest HashMap
+objects/java.util.HashMap | top(1, retained) | pathToRoot
+
+# Trace large Object arrays
+objects/java.lang.Object[][retained > 100MB] | pathToRoot
+```
+
+Aliases: `pathRoot`, `path`.
+
+### `checkLeaks([detector="name"] [, minSize=size] [, threshold=N])`
+Run built-in leak detectors against the heap dump. Without arguments, runs an interactive
+wizard that executes all detectors. With parameters, runs a specific detector.
+
+Can be used standalone (without a root) or as a pipeline operator:
+
+```
+# Interactive wizard — runs all detectors
+checkLeaks()
+
+# Run a specific detector
+checkLeaks(detector="threadlocal-leak")
+
+# Set thresholds
+checkLeaks(detector="growing-collections", minSize=10MB)
+checkLeaks(detector="duplicate-strings", threshold=100)
+
+# As pipeline operator
+objects | checkLeaks
+```
+
+**Available detectors:**
+
+| Detector | Description |
+|----------|-------------|
+| `threadlocal-leak` | ThreadLocal instances with large retained sizes |
+| `classloader-leak` | ClassLoader instances that should have been GC'd |
+| `duplicate-strings` | Identical string values with high instance counts |
+| `growing-collections` | Collections (HashMap, ArrayList, etc.) with large retained sizes |
+| `listener-leak` | Event listeners that may not have been deregistered |
+| `finalizer-queue` | Objects stuck in the finalizer queue |
+
+Aliases: `leaks`.
+
 ### `retentionPaths()`
 Find all paths to GC root for each input object, then merge them at the class level.
 Individual object IDs are discarded; identical class-level paths are counted together.
@@ -576,5 +627,5 @@ objects | select(class, shallow) | abs(shallow)
 
 - [JfrPath Reference](jfrpath.md) — Query language for JFR event analysis (same shell, similar syntax)
 - [Heap Dump Quick Start](hdump-shell-quickstart.md) — Get started in 5 minutes
-- [Heap Dump Tutorial](tutorials/hdump-shell-tutorial.md) — Full analysis guide
-- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) — JFR analysis tutorial
+- [Heap Dump Tutorial](cli/hdump-shell-tutorial.md) — Full analysis guide
+- [JFR Shell Tutorial](cli/Tutorial.md) — JFR analysis tutorial

@@ -6,25 +6,25 @@ Get started analyzing Java heap dumps in 5 minutes.
 
 ```bash
 # Using JBang (recommended)
-jbang app install jfr-shell@btraceio
+jbang app install jafar-shell@btraceio
 ```
 
 Or build from source:
 ```bash
-./gradlew :jfr-shell:shadowJar
-alias jfr-shell="java -jar jfr-shell/build/libs/jfr-shell-*-all.jar"
+./gradlew :jafar-shell:shadowJar
+alias jafar-shell="java -jar jafar-shell/build/libs/jafar-shell-*-all.jar"
 ```
 
 ## Open a Heap Dump
 
 ```bash
-jfr-shell /path/to/dump.hprof
+jafar-shell /path/to/dump.hprof
 ```
 
 Or start the shell and open later:
 ```bash
-jfr-shell
-jfr> open /path/to/dump.hprof
+jafar-shell
+jafar> open /path/to/dump.hprof
 ```
 
 ## Essential Queries
@@ -33,49 +33,49 @@ jfr> open /path/to/dump.hprof
 
 ```bash
 # Count all objects
-jfr> objects | count
+hdump> objects | count
 
 # Memory statistics
-jfr> objects | stats(shallow)
+hdump> objects | stats(shallow)
 
 # Class count
-jfr> classes | count
+hdump> classes | count
 ```
 
 ### Find Memory Hogs
 
 ```bash
 # Top 10 classes by object count
-jfr> classes | top(10, instanceCount)
+hdump> classes | top(10, instanceCount)
 
 # Top 10 classes by total memory
-jfr> objects | groupBy(class, agg=sum) | top(10, sum)
+hdump> objects | groupBy(class, agg=sum) | top(10, sum)
 
 # Largest individual objects
-jfr> objects | top(10, shallow)
+hdump> objects | top(10, shallow)
 ```
 
 ### Analyze Specific Types
 
 ```bash
 # String objects
-jfr> objects/java.lang.String | stats(shallow)
+hdump> objects/java.lang.String | stats(shallow)
 
 # Map implementations
-jfr> objects/instanceof/java.util.Map | groupBy(class) | top(5, count)
+hdump> objects/instanceof/java.util.Map | groupBy(class) | top(5, count)
 
 # Your application classes
-jfr> classes/com.myapp.* | top(10, instanceCount)
+hdump> classes/com.myapp.* | top(10, instanceCount)
 ```
 
 ### GC Roots
 
 ```bash
 # Root distribution
-jfr> gcroots | groupBy(type) | sortBy(count desc)
+hdump> gcroots | groupBy(type) | sortBy(count desc)
 
 # Thread roots
-jfr> gcroots/THREAD_OBJ | head(10)
+hdump> gcroots/THREAD_OBJ | head(10)
 ```
 
 ## Query Syntax Cheat Sheet
@@ -124,79 +124,79 @@ objects/instanceof/java.util.Map      # Include subclasses
 
 ```bash
 # Quick leak scan with built-in detectors
-jfr> checkLeaks()
+hdump> checkLeaks()
 
 # Or run specific detectors
-jfr> checkLeaks(detector="threadlocal-leak")
-jfr> checkLeaks(detector="classloader-leak")
-jfr> checkLeaks(detector="growing-collections")
+hdump> checkLeaks(detector="threadlocal-leak")
+hdump> checkLeaks(detector="classloader-leak")
+hdump> checkLeaks(detector="growing-collections")
 
 # Manual investigation
-jfr> classes | top(20, instanceCount)
-jfr> classes/com.myapp.* | top(10, instanceCount)
-jfr> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
+hdump> classes | top(20, instanceCount)
+hdump> classes/com.myapp.* | top(10, instanceCount)
+hdump> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
 ```
 
 ### Retained Size Analysis
 
 ```bash
 # Top objects by retained size (memory kept alive)
-jfr> objects | top(10, retained)
+hdump> objects | top(10, retained)
 
 # Find path from object to GC root
-jfr> objects[id = 0x12345] | pathToRoot
+hdump> objects[id = 0x12345] | pathToRoot
 
 # Dominator tree (what dominates memory)
-jfr> objects[id = 0x12345] | dominators
+hdump> objects[id = 0x12345] | dominators
 ```
 
 ### Heap Size Analysis
 
 ```bash
 # Total heap usage
-jfr> objects | sum(shallow)
+hdump> objects | sum(shallow)
 
 # Memory by class
-jfr> objects | groupBy(class, agg=sum) | top(20, sum)
+hdump> objects | groupBy(class, agg=sum) | top(20, sum)
 
 # Large objects
-jfr> objects[shallow > 1MB] | top(10, shallow)
+hdump> objects[shallow > 1MB] | top(10, shallow)
 ```
 
 ### String Analysis
 
 ```bash
 # String statistics
-jfr> objects/java.lang.String | stats(shallow)
+hdump> objects/java.lang.String | stats(shallow)
 
 # Large strings
-jfr> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
+hdump> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
 
 # String count
-jfr> objects/java.lang.String | count
+hdump> objects/java.lang.String | count
 ```
 
 ## Output Options
 
 ### Limit Results
 ```bash
-jfr> objects | top(10, shallow) --limit 5
+hdump> objects | top(10, shallow) --limit 5
 ```
 
 ### Output Formats
 ```bash
 # Table (default)
-jfr> objects | top(10, shallow)
+hdump> objects | top(10, shallow)
 
 # JSON
-jfr> objects | top(10, shallow) --format json
+hdump> objects | top(10, shallow) --format json
 
 # CSV
-jfr> objects | top(10, shallow) --format csv
+hdump> objects | top(10, shallow) --format csv
 ```
 
 ## Next Steps
 
-- [Full Tutorial](tutorials/hdump-shell-tutorial.md) - Complete heap dump analysis guide
+- [Full Tutorial](cli/hdump-shell-tutorial.md) - Complete heap dump analysis guide
 - [HdumpPath Reference](hdumppath.md) - Query language reference
-- [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) - JFR analysis (same shell!)
+- [JFR Shell Tutorial](cli/Tutorial.md) - JFR analysis (same shell!)
