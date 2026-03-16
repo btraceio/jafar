@@ -30,6 +30,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -603,6 +604,45 @@ public final class JfrPathEvaluator {
     return null;
   }
 
+  /**
+   * Recursively unwraps "simple types" - maps with exactly one attribute. Continues unwrapping
+   * until reaching a non-map value or a map with multiple attributes.
+   */
+  private static Object unwrapSimpleType(Object v) {
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG] unwrapSimpleType() called");
+      System.err.println("[DEBUG]   input: " + v);
+      System.err.println("[DEBUG]   input type: " + (v != null ? v.getClass().getName() : "null"));
+      if (v instanceof java.util.Map<?, ?> m) {
+        System.err.println("[DEBUG]   is Map: true, size=" + m.size() + ", keys=" + m.keySet());
+      }
+    }
+
+    while (v instanceof java.util.Map<?, ?> m) {
+      if (m.size() == 1) {
+        // Get the single value and recurse
+        Object next = m.values().iterator().next();
+        if (System.getProperty("jfr.shell.query.debug") != null) {
+          System.err.println("[DEBUG]   unwrapping single-key map, next value: " + next);
+        }
+        v = next;
+      } else {
+        // Multiple attributes - stop unwrapping
+        if (System.getProperty("jfr.shell.query.debug") != null) {
+          System.err.println("[DEBUG]   stopping unwrap: map has " + m.size() + " keys");
+        }
+        break;
+      }
+    }
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG]   unwrapped result: " + v);
+      System.err.println("[DEBUG]   result type: " + (v != null ? v.getClass().getName() : "null"));
+    }
+
+    return v;
+  }
+
   private record Slice(int start, int end) {}
 
   // Aggregations
@@ -619,8 +659,15 @@ public final class JfrPathEvaluator {
           case JfrPath.SumOp sm -> aggregateSum(session, query, sm.valuePath);
           case JfrPath.GroupByOp gb ->
               aggregateGroupBy(
-                  session, query, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
-          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.field, sort.ascending);
+                  session,
+                  query,
+                  gb.keyPath,
+                  gb.aggFunc,
+                  gb.valuePath,
+                  gb.valueExpr,
+                  gb.sortBy,
+                  gb.ascending);
+          case JfrPath.SortByOp sort -> aggregateSortBy(session, query, sort.fields);
           case JfrPath.TopOp tp -> aggregateTop(session, query, tp.n, tp.byPath, tp.ascending);
           case JfrPath.LenOp ln -> aggregateLen(session, query, ln.valuePath);
           case JfrPath.UppercaseOp up ->
@@ -646,6 +693,22 @@ public final class JfrPathEvaluator {
           case JfrPath.SelectOp so -> evaluateSelect(session, query, so);
           case JfrPath.ToMapOp tm -> evaluateToMap(session, query, tm);
           case JfrPath.TimeRangeOp tr -> aggregateTimeRange(session, query, tr);
+          case JfrPath.HeadOp head -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield rows.subList(0, Math.min(head.n, rows.size()));
+          }
+          case JfrPath.TailOp tail -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield rows.subList(Math.max(0, rows.size() - tail.n), rows.size());
+          }
+          case JfrPath.FilterOp filter -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield applyFilter(rows, filter.predicate);
+          }
+          case JfrPath.DistinctOp dist -> {
+            List<Map<String, Object>> rows = collectAllRows(session, query);
+            yield applyDistinct(rows, dist.field);
+          }
           case JfrPath.StackProfileOp sp ->
               aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct, progress);
           case JfrPath.AsDateTimeOp ft ->
@@ -751,7 +814,27 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> aggregateTimeRange(
       JFRSession session, Query query, JfrPath.TimeRangeOp op) throws Exception {
 
-    // Track min/max epoch-nanos values (startTime is normalized to epoch nanos by the parser)
+    if (!ChunkProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      throw new UnsupportedOperationException(
+          "Backend '"
+              + backend.getId()
+              + "' does not support timeRange() - chunk metadata required");
+    }
+
+    // Load chunk metadata to get timing info for conversion
+    List<Map<String, Object>> chunks = ChunkProvider.loadAllChunks(session.getRecordingPath());
+    if (chunks.isEmpty()) {
+      throw new IllegalStateException("No chunks found in recording");
+    }
+
+    // Use first chunk's timing info (all chunks in a recording share the same clock)
+    Map<String, Object> firstChunk = chunks.get(0);
+    long startTicks = ((Number) firstChunk.get("startTicks")).longValue();
+    long startNanos = ((Number) firstChunk.get("startNanos")).longValue();
+    long frequency = ((Number) firstChunk.get("frequency")).longValue();
+
+    // Track min/max tick values
     long[] minMax = {Long.MAX_VALUE, Long.MIN_VALUE};
     long[] count = {0};
 
@@ -1442,6 +1525,7 @@ public final class JfrPathEvaluator {
       List<String> keyPath,
       String aggFunc,
       List<String> valuePath,
+      JfrPath.Expr valueExpr,
       String sortBy,
       boolean ascending)
       throws Exception {
@@ -1449,7 +1533,8 @@ public final class JfrPathEvaluator {
 
     // Pre-build path tokens for array iteration support
     List<Object> keyTokens = buildPathTokens(keyPath);
-    List<Object> valueTokens = valuePath.isEmpty() ? null : buildPathTokens(valuePath);
+    List<Object> valueTokens =
+        (valuePath.isEmpty() && valueExpr == null) ? null : buildPathTokens(valuePath);
 
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1476,6 +1561,12 @@ public final class JfrPathEvaluator {
 
                 if ("count".equals(aggFunc)) {
                   acc.add(1);
+                } else if (valueExpr != null) {
+                  // Use expression evaluation
+                  Object val = evaluateExpression(valueExpr, map);
+                  if (val instanceof Number n) {
+                    acc.add(n.doubleValue());
+                  }
                 } else {
                   List<Object> vals =
                       valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
@@ -1505,6 +1596,12 @@ public final class JfrPathEvaluator {
 
                 if ("count".equals(aggFunc)) {
                   acc.add(1);
+                } else if (valueExpr != null) {
+                  // Use expression evaluation
+                  Object val = evaluateExpression(valueExpr, map);
+                  if (val instanceof Number n) {
+                    acc.add(n.doubleValue());
+                  }
                 } else {
                   List<Object> vals =
                       valueTokens == null ? List.of() : extractAllValues(map, valueTokens);
@@ -1529,6 +1626,12 @@ public final class JfrPathEvaluator {
 
           if ("count".equals(aggFunc)) {
             acc.add(1);
+          } else if (valueExpr != null) {
+            // Use expression evaluation
+            Object val = evaluateExpression(valueExpr, row);
+            if (val instanceof Number n) {
+              acc.add(n.doubleValue());
+            }
           } else {
             List<Object> vals =
                 valueTokens == null ? List.of() : extractAllValues(row, valueTokens);
@@ -1558,12 +1661,17 @@ public final class JfrPathEvaluator {
     return result;
   }
 
+  private List<Map<String, Object>> collectAllRows(JFRSession session, Query query)
+      throws Exception {
+    return evaluate(session, new Query(query.root, query.segments, query.predicates));
+  }
+
   private List<Map<String, Object>> aggregateSortBy(
-      JFRSession session, Query query, String field, boolean ascending) throws Exception {
+      JFRSession session, Query query, List<JfrPath.SortField> sortFields) throws Exception {
     // Materialize all rows first, then sort
     List<Map<String, Object>> rows =
         evaluate(session, new Query(query.root, query.segments, query.predicates));
-    return applySortBy(rows, field, ascending);
+    return applySortBy(rows, sortFields);
   }
 
   private List<Map<String, Object>> aggregateTop(
@@ -2156,6 +2264,8 @@ public final class JfrPathEvaluator {
       Map<String, Object> root, io.jafar.shell.jfrpath.JfrPath.BoolExpr expr) {
     if (expr instanceof io.jafar.shell.jfrpath.JfrPath.CompExpr ce) {
       Object val = evalValueExpr(root, ce.lhs);
+      // Unwrap simple types before comparison
+      val = unwrapSimpleType(val);
       return compare(val, ce.op, ce.literal);
     } else if (expr instanceof io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr fb) {
       String n = fb.name.toLowerCase(java.util.Locale.ROOT);
@@ -2347,7 +2457,25 @@ public final class JfrPathEvaluator {
       current = at.getArray();
     }
     if (idx >= path.size()) {
-      // At leaf; apply comparison to current
+      // At leaf; unwrap simple types (single-value maps) and apply comparison
+      if (System.getProperty("jfr.shell.query.debug") != null) {
+        System.err.println("[DEBUG] deepMatch() at leaf");
+        System.err.println(
+            "[DEBUG]   before unwrap: "
+                + current
+                + " (type: "
+                + (current != null ? current.getClass().getName() : "null")
+                + ")");
+      }
+      current = unwrapSimpleType(current);
+      if (System.getProperty("jfr.shell.query.debug") != null) {
+        System.err.println(
+            "[DEBUG]   after unwrap: "
+                + current
+                + " (type: "
+                + (current != null ? current.getClass().getName() : "null")
+                + ")");
+      }
       return compare(current, op, lit);
     }
     String seg = path.get(idx);
@@ -2432,17 +2560,48 @@ public final class JfrPathEvaluator {
 
   private static boolean compare(Object actual, Op op, Object lit) {
     if (actual == null) return false;
-    return switch (op) {
-      case EQ -> Objects.equals(coerce(actual, lit), lit);
-      case NE -> !Objects.equals(coerce(actual, lit), lit);
-      case GT -> compareNum(actual, lit) > 0;
-      case GE -> compareNum(actual, lit) >= 0;
-      case LT -> compareNum(actual, lit) < 0;
-      case LE -> compareNum(actual, lit) <= 0;
-      case REGEX -> String.valueOf(actual).matches(String.valueOf(lit));
-      case PLUS, MINUS, MULT, DIV ->
-          throw new IllegalArgumentException("Arithmetic operators not supported in comparisons");
-    };
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG] compare()");
+      System.err.println(
+          "[DEBUG]   actual: " + actual + " (type: " + actual.getClass().getName() + ")");
+      System.err.println("[DEBUG]   op: " + op);
+      System.err.println("[DEBUG]   lit: " + lit);
+    }
+
+    boolean result =
+        switch (op) {
+          case EQ -> Objects.equals(coerce(actual, lit), lit);
+          case NE -> !Objects.equals(coerce(actual, lit), lit);
+          case GT -> compareNum(actual, lit) > 0;
+          case GE -> compareNum(actual, lit) >= 0;
+          case LT -> compareNum(actual, lit) < 0;
+          case LE -> compareNum(actual, lit) <= 0;
+          case REGEX -> {
+            String actualStr = String.valueOf(actual);
+            String pattern = String.valueOf(lit);
+            boolean matches = actualStr.matches(pattern);
+            if (System.getProperty("jfr.shell.query.debug") != null) {
+              System.err.println(
+                  "[DEBUG]   REGEX: \""
+                      + actualStr
+                      + "\" matches \""
+                      + pattern
+                      + "\" = "
+                      + matches);
+            }
+            yield matches;
+          }
+          case PLUS, MINUS, MULT, DIV ->
+              throw new IllegalArgumentException(
+                  "Arithmetic operators not supported in comparisons");
+        };
+
+    if (System.getProperty("jfr.shell.query.debug") != null) {
+      System.err.println("[DEBUG]   result: " + result);
+    }
+
+    return result;
   }
 
   private static Object coerce(Object actual, Object lit) {
@@ -2869,8 +3028,9 @@ public final class JfrPathEvaluator {
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
       case JfrPath.GroupByOp gb ->
-          applyGroupBy(rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.sortBy, gb.ascending);
-      case JfrPath.SortByOp sort -> applySortBy(rows, sort.field, sort.ascending);
+          applyGroupBy(
+              rows, gb.keyPath, gb.aggFunc, gb.valuePath, gb.valueExpr, gb.sortBy, gb.ascending);
+      case JfrPath.SortByOp sort -> applySortBy(rows, sort.fields);
       case JfrPath.QuantilesOp q -> applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up -> applyStringTransform(rows, up.valuePath, String::toUpperCase);
@@ -2883,6 +3043,10 @@ public final class JfrPathEvaluator {
       case JfrPath.FormatDurationOp fd -> applyFormatDurationTransform(rows, fd.valuePath);
       case JfrPath.ContainsOp co -> applyContains(rows, co.valuePath, co.substr);
       case JfrPath.ReplaceOp rp -> applyReplace(rows, rp.valuePath, rp.target, rp.replacement);
+      case JfrPath.HeadOp head -> rows.subList(0, Math.min(head.n, rows.size()));
+      case JfrPath.TailOp tail -> rows.subList(Math.max(0, rows.size() - tail.n), rows.size());
+      case JfrPath.FilterOp filter -> applyFilter(rows, filter.predicate);
+      case JfrPath.DistinctOp dist -> applyDistinct(rows, dist.field);
       case JfrPath.ToMapOp tm -> applyToMap(rows, tm.keyField, tm.valueField);
       case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
       case JfrPath.StackProfileOp sp ->
@@ -2971,6 +3135,7 @@ public final class JfrPathEvaluator {
       List<String> keyPath,
       String aggFunc,
       List<String> valuePath,
+      JfrPath.Expr valueExpr,
       String sortBy,
       boolean ascending) {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
@@ -2981,6 +3146,12 @@ public final class JfrPathEvaluator {
 
       if ("count".equals(aggFunc)) {
         acc.add(0); // Just increment count
+      } else if (valueExpr != null) {
+        // Use expression evaluation
+        Object val = evaluateExpression(valueExpr, row);
+        if (val instanceof Number n) {
+          acc.add(n.doubleValue());
+        }
       } else {
         Object val =
             valuePath.isEmpty()
@@ -3043,21 +3214,27 @@ public final class JfrPathEvaluator {
   }
 
   private List<Map<String, Object>> applySortBy(
-      List<Map<String, Object>> rows, String field, boolean ascending) {
-    if (rows.isEmpty()) return rows;
+      List<Map<String, Object>> rows, List<JfrPath.SortField> sortFields) {
+    if (rows.isEmpty() || sortFields.isEmpty()) return rows;
 
-    // Validate field exists in first row (all rows have same structure after pipeline ops)
-    if (!rows.get(0).containsKey(field)) {
-      throw new IllegalArgumentException(
-          "sortBy: field '" + field + "' not found. Available: " + rows.get(0).keySet());
+    // Validate all fields exist in first row
+    for (JfrPath.SortField sf : sortFields) {
+      if (!rows.get(0).containsKey(sf.field())) {
+        throw new IllegalArgumentException(
+            "sortBy: field '" + sf.field() + "' not found. Available: " + rows.get(0).keySet());
+      }
     }
 
     List<Map<String, Object>> result = new ArrayList<>(rows);
     Comparator<Map<String, Object>> comparator =
-        (a, b) -> compareValues(a.get(field), b.get(field));
-    if (!ascending) {
-      comparator = comparator.reversed();
-    }
+        (a, b) -> {
+          for (JfrPath.SortField sf : sortFields) {
+            int cmp = compareValues(a.get(sf.field()), b.get(sf.field()));
+            if (sf.descending()) cmp = -cmp;
+            if (cmp != 0) return cmp;
+          }
+          return 0;
+        };
     result.sort(comparator);
     return result;
   }
@@ -3209,6 +3386,83 @@ public final class JfrPathEvaluator {
         }
       }
       result.add(out);
+    }
+    return result;
+  }
+
+  private List<Map<String, Object>> applyFilter(
+      List<Map<String, Object>> rows, JfrPath.Predicate predicate) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      if (matchesPredicate(row, predicate)) {
+        result.add(row);
+      }
+    }
+    return result;
+  }
+
+  private boolean matchesPredicate(Map<String, Object> row, JfrPath.Predicate predicate) {
+    if (predicate instanceof JfrPath.FieldPredicate fp) {
+      // For pipeline filter, field path is typically a single column name
+      Object val = Values.get(row, fp.fieldPath.toArray());
+      return matchOp(val, fp.op, fp.literal);
+    } else if (predicate instanceof JfrPath.ExprPredicate ep) {
+      return matchBoolExpr(row, ep.expr);
+    }
+    return false;
+  }
+
+  private boolean matchBoolExpr(Map<String, Object> row, JfrPath.BoolExpr expr) {
+    if (expr instanceof JfrPath.CompExpr ce) {
+      Object val;
+      if (ce.lhs instanceof JfrPath.PathRef pr) {
+        val = Values.get(row, pr.path.toArray());
+      } else if (ce.lhs instanceof JfrPath.FuncValueExpr fve) {
+        // Evaluate function on row - simplified: just use the first path arg
+        val = null;
+        for (JfrPath.Arg arg : fve.args) {
+          if (arg instanceof JfrPath.PathArg pa) {
+            val = Values.get(row, pa.path.toArray());
+            break;
+          }
+        }
+      } else {
+        val = null;
+      }
+      return matchOp(val, ce.op, ce.literal);
+    } else if (expr instanceof JfrPath.LogicalExpr le) {
+      boolean left = matchBoolExpr(row, le.left);
+      boolean right = matchBoolExpr(row, le.right);
+      return le.op == JfrPath.LogicalExpr.Lop.AND ? left && right : left || right;
+    } else if (expr instanceof JfrPath.NotExpr ne) {
+      return !matchBoolExpr(row, ne.inner);
+    }
+    return false;
+  }
+
+  private boolean matchOp(Object val, JfrPath.Op op, Object literal) {
+    if (val == null) return false;
+    int cmp = compareValues(val, literal);
+    return switch (op) {
+      case EQ -> cmp == 0;
+      case NE -> cmp != 0;
+      case GT -> cmp > 0;
+      case GE -> cmp >= 0;
+      case LT -> cmp < 0;
+      case LE -> cmp <= 0;
+      case REGEX -> String.valueOf(val).matches(String.valueOf(literal));
+      default -> false;
+    };
+  }
+
+  private List<Map<String, Object>> applyDistinct(List<Map<String, Object>> rows, String field) {
+    Set<Object> seen = new LinkedHashSet<>();
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      Object val = row.get(field);
+      if (seen.add(val)) {
+        result.add(row);
+      }
     }
     return result;
   }

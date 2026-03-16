@@ -4,9 +4,9 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.backend.BackendCapability;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
+import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
-import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -44,10 +44,10 @@ public class CommandDispatcher {
   }
 
   public interface SessionChangeListener {
-    void onCurrentSessionChanged(SessionManager.SessionRef current);
+    void onCurrentSessionChanged(SessionManager.SessionRef<JFRSession> current);
   }
 
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final IO io;
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
@@ -61,17 +61,21 @@ public class CommandDispatcher {
 
   private final JfrSelector selector;
 
-  public CommandDispatcher(SessionManager sessions, IO io, SessionChangeListener listener) {
+  public CommandDispatcher(
+      SessionManager<JFRSession> sessions, IO io, SessionChangeListener listener) {
     this(sessions, io, listener, null, null, true);
   }
 
   public CommandDispatcher(
-      SessionManager sessions, IO io, SessionChangeListener listener, JfrSelector selector) {
+      SessionManager<JFRSession> sessions,
+      IO io,
+      SessionChangeListener listener,
+      JfrSelector selector) {
     this(sessions, io, listener, selector, null, true);
   }
 
   public CommandDispatcher(
-      SessionManager sessions,
+      SessionManager<JFRSession> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -80,7 +84,7 @@ public class CommandDispatcher {
   }
 
   public CommandDispatcher(
-      SessionManager sessions,
+      SessionManager<JFRSession> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -286,7 +290,7 @@ public class CommandDispatcher {
     }
 
     Path path = Paths.get(pathStr);
-    SessionManager.SessionRef ref = sessions.open(path, alias);
+    SessionManager.SessionRef<JFRSession> ref = sessions.open(path, alias);
     if (verbose) {
       io.println(
           "Opened session #"
@@ -299,13 +303,13 @@ public class CommandDispatcher {
   }
 
   private void cmdSessions() {
-    List<SessionManager.SessionRef> list = sessions.list();
+    List<SessionManager.SessionRef<JFRSession>> list = sessions.list();
     if (list.isEmpty()) {
       io.println("No sessions.");
       return;
     }
-    Optional<SessionManager.SessionRef> current = sessions.current();
-    for (SessionManager.SessionRef ref : list) {
+    Optional<SessionManager.SessionRef<JFRSession>> current = sessions.current();
+    for (SessionManager.SessionRef<JFRSession> ref : list) {
       boolean isCurrent = current.isPresent() && current.get().id == ref.id;
       io.printf(
           "%s#%d %s - %s%n",
@@ -333,7 +337,7 @@ public class CommandDispatcher {
   private void cmdClose(List<String> args) throws Exception {
     if (args.isEmpty()) {
       // close current
-      Optional<SessionManager.SessionRef> cur = sessions.current();
+      Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
       if (cur.isEmpty()) {
         io.error("No session to close");
         return;
@@ -357,7 +361,7 @@ public class CommandDispatcher {
   }
 
   private void cmdInfo(List<String> args) {
-    Optional<SessionManager.SessionRef> ref;
+    Optional<SessionManager.SessionRef<JFRSession>> ref;
     if (args.isEmpty()) {
       ref = sessions.current();
       if (ref.isEmpty()) {
@@ -1534,7 +1538,7 @@ public class CommandDispatcher {
 
   /** chunks [--summary|--list] [--range N-M] Default: list all chunks */
   private void cmdChunks(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1607,7 +1611,7 @@ public class CommandDispatcher {
 
   /** chunk <index> show [--header|--events|--constants] Show detailed view of a single chunk */
   private void cmdChunk(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1651,7 +1655,7 @@ public class CommandDispatcher {
   }
 
   private void cmdCrossref(String typeName) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1724,7 +1728,7 @@ public class CommandDispatcher {
 
   /** constants [--summary] [<kind>] [--range N-M] constants <kind> [--range N-M] */
   private void cmdCp(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1951,7 +1955,7 @@ public class CommandDispatcher {
         // Copy the variable value with independent state
         // For LazyQueryValue, create a new instance so each variable has independent cache
         Value valueToCopy = existingValue;
-        if (existingValue instanceof VariableStore.LazyQueryValue lazyValue) {
+        if (existingValue instanceof LazyQueryValue lazyValue) {
           valueToCopy = lazyValue.copy();
         }
         store.set(varName, valueToCopy);
@@ -1970,7 +1974,7 @@ public class CommandDispatcher {
     }
 
     // Treat as JfrPath query
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
       return;
@@ -2482,7 +2486,7 @@ public class CommandDispatcher {
     boolean showGlobal = args.isEmpty() || args.contains("--global") || args.contains("--all");
     boolean showSession = args.isEmpty() || args.contains("--session") || args.contains("--all");
 
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
 
     if (showGlobal && !globalStore.isEmpty()) {
       io.println("Global variables:");
@@ -2510,7 +2514,7 @@ public class CommandDispatcher {
     Value val = null;
     String scope = null;
 
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     if (cur.isPresent() && cur.get().variables.contains(name)) {
       val = cur.get().variables.get(name);
       scope = "session #" + cur.get().id;
@@ -2619,12 +2623,12 @@ public class CommandDispatcher {
     if (global) {
       return globalStore;
     }
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     return cur.isPresent() ? cur.get().variables : globalStore;
   }
 
   private VariableStore getSessionStore() {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    Optional<SessionManager.SessionRef<JFRSession>> cur = sessions.current();
     return cur.isPresent() ? cur.get().variables : null;
   }
 

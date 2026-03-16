@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Console appender - only show WARN and ERROR to avoid polluting interactive shell -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Root logger - set to WARN for console output -->
+    <root level="WARN">
+        <appender-ref ref="CONSOLE" />
+    </root>
+
+    <!-- Optional: Set specific loggers to DEBUG for troubleshooting when needed -->
+    <!-- Uncomment these to enable debug logging for specific components -->
+    <!--
+    <logger name="io.jafar.shell" level="DEBUG" />
+    <logger name="io.jafar.parser" level="DEBUG" />
+    <logger name="io.jafar.hdump" level="DEBUG" additivity="false">
+        <appender-ref ref="DEBUG_CONSOLE" />
+    </logger>
+    -->
+</configuration>

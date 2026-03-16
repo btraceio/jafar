@@ -1,5 +1,6 @@
 package io.jafar.shell.tui;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
@@ -40,7 +41,7 @@ public final class TuiKeyHandler {
   private final TuiBrowserController browser;
   private final TuiCommandExecutor executor;
   private final TuiDetailBuilder detailBuilder;
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
 
   TuiKeyHandler(
       TuiContext ctx,
@@ -48,7 +49,7 @@ public final class TuiKeyHandler {
       TuiBrowserController browser,
       TuiCommandExecutor executor,
       TuiDetailBuilder detailBuilder,
-      SessionManager sessions) {
+      SessionManager<JFRSession> sessions) {
     this.ctx = ctx;
     this.backend = backend;
     this.browser = browser;

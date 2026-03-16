@@ -41,7 +41,7 @@ import org.jline.reader.ParsedLine;
 @PropertyDefaults(tries = 500, shrinking = ShrinkingMode.FULL)
 public class MutationBasedCompletionTests {
 
-  private static SessionManager sessionManager;
+  private static SessionManager<JFRSession> sessionManager;
   private static ShellCompleter completer;
   private static MetadataService metadataService;
   private static CompletionContextAnalyzer analyzer;
@@ -57,7 +57,8 @@ public class MutationBasedCompletionTests {
 
     // Create SessionManager with ParsingContext
     ParsingContext ctx = ParsingContext.create();
-    sessionManager = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    sessionManager =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
 
     // Open the test session
     sessionManager.open(testJfr, "test");

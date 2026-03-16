@@ -19,6 +19,7 @@ import dev.tamboui.widgets.scrollbar.Scrollbar;
 import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.SessionManager;
@@ -37,10 +38,10 @@ public final class TuiRenderer {
   private static final Style HIGHLIGHT_STYLE = Style.create().bg(Color.YELLOW).fg(Color.BLACK);
 
   private final TuiContext ctx;
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final TuiDetailBuilder detailBuilder;
 
-  TuiRenderer(TuiContext ctx, SessionManager sessions, TuiDetailBuilder detailBuilder) {
+  TuiRenderer(TuiContext ctx, SessionManager<JFRSession> sessions, TuiDetailBuilder detailBuilder) {
     this.ctx = ctx;
     this.sessions = sessions;
     this.detailBuilder = detailBuilder;
@@ -1063,7 +1064,7 @@ public final class TuiRenderer {
     int currentId = sessions.current().map(r -> r.id).orElse(-1);
     int maxWidth = 0;
     List<String> labels = new ArrayList<>(ctx.sessionPickerEntries.size());
-    for (SessionManager.SessionRef ref : ctx.sessionPickerEntries) {
+    for (SessionManager.SessionRef<JFRSession> ref : ctx.sessionPickerEntries) {
       String marker = ref.id == currentId ? "* " : "  ";
       String name =
           ref.alias != null ? ref.alias : ref.session.getRecordingPath().getFileName().toString();

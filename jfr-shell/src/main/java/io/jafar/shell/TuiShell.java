@@ -21,7 +21,7 @@ import org.jline.terminal.TerminalBuilder;
  */
 public final class TuiShell implements AutoCloseable {
   private final Terminal jlineTerminal;
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final ExecutorService commandExecutor;
   private final TuiWiring.Components components;
 
@@ -43,7 +43,8 @@ public final class TuiShell implements AutoCloseable {
             });
 
     ParsingContext parsingCtx = ParsingContext.create();
-    this.sessions = new SessionManager(parsingCtx, (path, c) -> new JFRSession(path, c));
+    this.sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), parsingCtx);
 
     this.components = TuiWiring.wire(backend, tuiTerminal, sessions, commandExecutor);
   }

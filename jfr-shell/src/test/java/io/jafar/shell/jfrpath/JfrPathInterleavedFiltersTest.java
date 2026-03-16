@@ -20,7 +20,8 @@ class JfrPathInterleavedFiltersTest {
   void gcHeapSummaryFilterBeforeProjection() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
@@ -33,7 +34,8 @@ class JfrPathInterleavedFiltersTest {
   void gcHeapSummaryFilterRelativeToProjection() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();

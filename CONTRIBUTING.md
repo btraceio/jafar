@@ -21,7 +21,6 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ### Prerequisites
 
 - **Java 21+**: Required for building and testing
-- **Git LFS**: Required for test resources (install from [GitHub docs](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage))
 - **Gradle**: Included via wrapper (`./gradlew`)
 
 ### First-Time Setup

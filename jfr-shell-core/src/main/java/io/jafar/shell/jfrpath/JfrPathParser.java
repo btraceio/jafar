@@ -7,8 +7,15 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Minimal JfrPath parser v0. Supports: root segment (events|metadata|chunks|constants), path
- * segments, filters in brackets like: events/jdk.ExecutionSample[thread/name~"main"][duration>10]
+ * Minimal JfrPath parser v0. Supports: root segment (events|metadata|chunks|cp), path segments,
+ * filters in brackets like: events/jdk.ExecutionSample[thread/name~"main"][duration>10]
+ *
+ * <p>String literals support two forms:
+ *
+ * <ul>
+ *   <li>Double quotes ("...") - process escape sequences (\n, \", \\, etc.)
+ *   <li>Single quotes ('...') - raw strings, only \' is processed (backslashes are literal)
+ * </ul>
  */
 public final class JfrPathParser {
   private final String input;
@@ -329,20 +336,75 @@ public final class JfrPathParser {
   private Object parseLiteral() {
     if (peek() == '"' || peek() == '\'') {
       char quote = (char) peek();
+      boolean isRawString = (quote == '\''); // Single quotes = raw string literal
+
+      if (System.getProperty("jfr.shell.parser.debug") != null) {
+        System.err.println("[PARSER] parseLiteral() starting");
+        System.err.println("[PARSER]   quote char: '" + quote + "'");
+        System.err.println("[PARSER]   isRawString: " + isRawString);
+        System.err.println("[PARSER]   remaining input: " + input.substring(pos));
+      }
+
       pos++;
       StringBuilder sb = new StringBuilder();
       while (!eof() && peek() != quote) {
         char c = (char) peek();
-        if (c == '\\') {
-          pos++;
-          if (eof()) break;
-          c = (char) peek();
+
+        if (System.getProperty("jfr.shell.parser.debug") != null) {
+          System.err.println(
+              "[PARSER]   char at pos " + pos + ": '" + c + "' (code: " + (int) c + ")");
         }
-        sb.append(c);
-        pos++;
+
+        if (c == '\\') {
+          pos++; // Consume backslash
+          if (eof()) break;
+          char next = (char) peek();
+
+          if (System.getProperty("jfr.shell.parser.debug") != null) {
+            System.err.println("[PARSER]   BACKSLASH detected, next char: '" + next + "'");
+          }
+
+          if (isRawString) {
+            // Raw strings: only process \' to allow embedded single quotes
+            if (next == '\'') {
+              sb.append('\'');
+              pos++;
+            } else {
+              // Not an escaped quote - keep both backslash and next char literal
+              sb.append('\\');
+              sb.append(next);
+              pos++;
+
+              if (System.getProperty("jfr.shell.parser.debug") != null) {
+                System.err.println("[PARSER]   RAW STRING: appended backslash + '" + next + "'");
+                System.err.println("[PARSER]   sb now: " + sb.toString());
+              }
+            }
+          } else {
+            // Double-quoted strings: process all escape sequences
+            sb.append(next);
+            pos++;
+          }
+        } else {
+          sb.append(c);
+          pos++;
+        }
       }
       expect(quote);
-      return sb.toString();
+
+      String result = sb.toString();
+      if (System.getProperty("jfr.shell.parser.debug") != null) {
+        System.err.println("[PARSER] parseLiteral() result: '" + result + "'");
+        System.err.println("[PARSER]   result length: " + result.length());
+        StringBuilder codes = new StringBuilder();
+        for (int i = 0; i < result.length(); i++) {
+          if (i > 0) codes.append(", ");
+          codes.append((int) result.charAt(i));
+        }
+        System.err.println("[PARSER]   char codes: " + codes);
+      }
+
+      return result;
     }
     // boolean literals
     if (startsWithIgnoreCase("true")) {
@@ -372,9 +434,32 @@ public final class JfrPathParser {
     }
     if (pos == start) throw error("Expected literal");
     String num = input.substring(start, pos);
+
+    // Size suffixes: KB/K, MB/M, GB/G (case-insensitive)
+    long multiplier = 1;
+    if (startsWithIgnoreCase("KB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024;
+    } else if (startsWithIgnoreCase("MB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024 * 1024;
+    } else if (startsWithIgnoreCase("GB") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1024L * 1024 * 1024;
+    } else if (startsWithIgnoreCase("K") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024;
+    } else if (startsWithIgnoreCase("M") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024 * 1024;
+    } else if (startsWithIgnoreCase("G") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1024L * 1024 * 1024;
+    }
+
     try {
-      if (dot) return Double.parseDouble(num);
-      return Long.parseLong(num);
+      if (dot) return Double.parseDouble(num) * multiplier;
+      return Long.parseLong(num) * multiplier;
     } catch (NumberFormatException e) {
       throw error("Invalid number literal: " + num);
     }
@@ -425,6 +510,26 @@ public final class JfrPathParser {
       if (a != b) return false;
     }
     return true;
+  }
+
+  /** Returns true if position {@code idx} is at end-of-input or a non-identifier character. */
+  private boolean isWordBoundaryAt(int idx) {
+    return idx >= input.length()
+        || (!Character.isLetterOrDigit(input.charAt(idx)) && input.charAt(idx) != '_');
+  }
+
+  /**
+   * Parse an optional bare asc/desc keyword at the current position. Returns the descending flag.
+   */
+  private boolean parseSortDirection(boolean defaultDescending) {
+    if (startsWithIgnoreCase("asc") && isWordBoundaryAt(pos + 3)) {
+      pos += 3;
+      return false;
+    } else if (startsWithIgnoreCase("desc") && isWordBoundaryAt(pos + 4)) {
+      pos += 4;
+      return true;
+    }
+    return defaultDescending;
   }
 
   private JfrPath.PipelineOp parsePipelineOp() {
@@ -500,6 +605,7 @@ public final class JfrPathParser {
       List<String> keyPath = List.of();
       String aggFunc = "count";
       List<String> aggValuePath = List.of();
+      JfrPath.Expr valueExpr = null;
       String sortBy = null;
       boolean ascending = false;
       if (peek() == '(') {
@@ -519,13 +625,18 @@ public final class JfrPathParser {
           } else if (startsWithIgnoreCase("value=")) {
             pos += 6;
             skipWs();
-            aggValuePath = parsePathArg();
-          } else if (startsWithIgnoreCase("sortBy=")) {
-            pos += 7;
+            // Parse as expression (supports arithmetic)
+            valueExpr = parseExpression();
+            // If it's a simple field reference, also populate valuePath for compatibility
+            if (valueExpr instanceof JfrPath.FieldRef fr) {
+              aggValuePath = fr.fieldPath;
+            }
+          } else if (startsWithIgnoreCase("sortBy=") || startsWithIgnoreCase("sort=")) {
+            pos += startsWithIgnoreCase("sortBy=") ? 7 : 5;
             skipWs();
             String sortVal = readIdent().toLowerCase(Locale.ROOT);
             if (!"key".equals(sortVal) && !"value".equals(sortVal)) {
-              throw error("sortBy= expects 'key' or 'value'");
+              throw error("sortBy=/sort= expects 'key' or 'value'");
             }
             sortBy = sortVal;
           } else if (startsWithIgnoreCase("asc=")) {
@@ -540,45 +651,55 @@ public final class JfrPathParser {
               throw error("asc= expects 'true' or 'false'");
             }
           } else {
-            throw error("groupBy() expects agg=, value=, sortBy=, or asc= parameters");
+            throw error("groupBy() expects agg=, value=, sortBy=/sort=, or asc= parameters");
           }
           skipWs();
         }
         expect(')');
       }
-      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, sortBy, ascending);
-    } else if ("sortby".equals(name)) {
-      String field = null;
-      boolean ascending = false;
+      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, valueExpr, sortBy, ascending);
+    } else if ("sortby".equals(name)
+        || "sort".equals(name)
+        || "orderby".equals(name)
+        || "order".equals(name)) {
+      List<JfrPath.SortField> sortFields = new ArrayList<>();
       if (peek() == '(') {
         pos++;
         skipWs();
-        field = readIdent(); // required field name
+        String field = readIdent();
+        boolean descending = true; // default descending
         skipWs();
-        // Optional asc= parameter
+        // Check for immediate asc/desc after field
+        descending = parseSortDirection(descending);
+        sortFields.add(new JfrPath.SortField(field, descending));
+        skipWs();
         while (peek() == ',') {
           pos++;
           skipWs();
+          // After comma: could be asc=/asc/desc modifier for previous field, or a new field
           if (startsWithIgnoreCase("asc=")) {
+            // Named param: modify the last field's direction
             pos += 4;
             skipWs();
             String ascVal = readIdent().toLowerCase(Locale.ROOT);
-            if ("true".equals(ascVal)) {
-              ascending = true;
-            } else if (!"false".equals(ascVal)) {
-              throw error("sortBy() asc= expects 'true' or 'false'");
-            }
+            JfrPath.SortField last = sortFields.remove(sortFields.size() - 1);
+            sortFields.add(new JfrPath.SortField(last.field(), !"true".equals(ascVal)));
           } else {
-            throw error("sortBy() expects asc= parameter");
+            // New sort field
+            field = readIdent();
+            descending = true;
+            skipWs();
+            descending = parseSortDirection(descending);
+            sortFields.add(new JfrPath.SortField(field, descending));
           }
           skipWs();
         }
         expect(')');
       }
-      if (field == null || field.isEmpty()) {
-        throw error("sortBy() requires a field name");
+      if (sortFields.isEmpty()) {
+        throw error("sortBy() requires at least one field name");
       }
-      return new JfrPath.SortByOp(field, ascending);
+      return new JfrPath.SortByOp(sortFields);
     } else if ("top".equals(name)) {
       int n = 10; // default
       List<String> byPath = List.of("value");
@@ -591,7 +712,7 @@ public final class JfrPathParser {
         if (!(lit instanceof Number)) throw error("top() expects numeric count");
         n = ((Number) lit).intValue();
         skipWs();
-        // Parse optional by= and asc= parameters
+        // Parse optional by=/asc= named params or positional field + asc/desc keywords
         while (peek() == ',') {
           pos++;
           skipWs();
@@ -604,14 +725,60 @@ public final class JfrPathParser {
             skipWs();
             Object boolLit = parseLiteral();
             ascending = Boolean.TRUE.equals(boolLit);
+          } else if (startsWithIgnoreCase("asc") && isWordBoundaryAt(pos + 3)) {
+            pos += 3;
+            ascending = true;
+          } else if (startsWithIgnoreCase("desc") && isWordBoundaryAt(pos + 4)) {
+            pos += 4;
+            ascending = false;
           } else {
-            throw error("top() expects by= or asc= parameters");
+            // Positional field name (HdumpPath-compatible syntax)
+            byPath = parsePathArg();
           }
           skipWs();
         }
         expect(')');
       }
       return new JfrPath.TopOp(n, byPath, ascending);
+    } else if ("head".equals(name)) {
+      int n = 10;
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("head() expects numeric count");
+        n = ((Number) lit).intValue();
+        skipWs();
+        expect(')');
+      }
+      return new JfrPath.HeadOp(n);
+    } else if ("tail".equals(name)) {
+      int n = 10;
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        Object lit = parseLiteral();
+        if (!(lit instanceof Number)) throw error("tail() expects numeric count");
+        n = ((Number) lit).intValue();
+        skipWs();
+        expect(')');
+      }
+      return new JfrPath.TailOp(n);
+    } else if ("filter".equals(name) || "where".equals(name)) {
+      expect('(');
+      skipWs();
+      Predicate pred = parsePredicate();
+      skipWs();
+      expect(')');
+      return new JfrPath.FilterOp(pred);
+    } else if ("distinct".equals(name) || "unique".equals(name)) {
+      expect('(');
+      skipWs();
+      String field = readIdent();
+      if (field.isEmpty()) throw error("distinct() requires a field name");
+      skipWs();
+      expect(')');
+      return new JfrPath.DistinctOp(field);
     } else if ("len".equals(name)) {
       if (peek() == '(') {
         pos++;

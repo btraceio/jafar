@@ -3,6 +3,7 @@ package io.jafar.shell.tui;
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
@@ -48,7 +49,7 @@ public final class TuiCommandExecutor {
 
   // Set after construction to break circular dependency (dispatcher → IO → executor)
   private CommandDispatcher dispatcher;
-  private SessionManager sessions;
+  private SessionManager<JFRSession> sessions;
   private ShellCompleter completer;
   private TuiBrowserController browser;
   private TuiDetailBuilder detailBuilder;
@@ -62,7 +63,7 @@ public final class TuiCommandExecutor {
     this.dispatcher = dispatcher;
   }
 
-  void setSessions(SessionManager sessions) {
+  void setSessions(SessionManager<JFRSession> sessions) {
     this.sessions = sessions;
   }
 
@@ -1164,7 +1165,7 @@ public final class TuiCommandExecutor {
   // ---- session picker ----
 
   void openSessionPicker() {
-    List<SessionManager.SessionRef> all = sessions.list();
+    List<SessionManager.SessionRef<JFRSession>> all = sessions.list();
     if (all.size() < 2) return;
     ctx.sessionPickerEntries = all;
     int currentId = sessions.current().map(r -> r.id).orElse(-1);

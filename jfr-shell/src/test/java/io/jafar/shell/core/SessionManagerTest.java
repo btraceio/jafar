@@ -13,7 +13,7 @@ class SessionManagerTest {
 
   private final ParsingContext ctx = ParsingContext.create();
 
-  private SessionManager.JFRSessionFactory factory() {
+  private SessionManager.SessionFactory<JFRSession> factory() {
     return (path, c) -> {
       JFRSession s = Mockito.mock(JFRSession.class);
       when(s.getRecordingPath()).thenReturn(path);
@@ -23,10 +23,10 @@ class SessionManagerTest {
 
   @Test
   void openAssignsIdsAliasesAndSwitchesCurrent() throws Exception {
-    SessionManager sm = new SessionManager(ctx, factory());
+    SessionManager<JFRSession> sm = new SessionManager<>(factory(), ctx);
 
-    SessionManager.SessionRef s1 = sm.open(Path.of("/tmp/a.jfr"), "a1");
-    SessionManager.SessionRef s2 = sm.open(Path.of("/tmp/b.jfr"), null);
+    SessionManager.SessionRef<JFRSession> s1 = sm.open(Path.of("/tmp/a.jfr"), "a1");
+    SessionManager.SessionRef<JFRSession> s2 = sm.open(Path.of("/tmp/b.jfr"), null);
 
     assertEquals(1, s1.id);
     assertEquals("a1", s1.alias);
@@ -48,7 +48,7 @@ class SessionManagerTest {
 
   @Test
   void rejectsDuplicateAlias() throws Exception {
-    SessionManager sm = new SessionManager(ctx, factory());
+    SessionManager<JFRSession> sm = new SessionManager<>(factory(), ctx);
     sm.open(Path.of("/x.jfr"), "dup");
     assertThrows(IllegalArgumentException.class, () -> sm.open(Path.of("/y.jfr"), "dup"));
   }

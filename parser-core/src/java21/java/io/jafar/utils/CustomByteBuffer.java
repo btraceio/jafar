@@ -59,6 +59,16 @@ public interface CustomByteBuffer {
 
   long getLong();
 
+  long limit();
+
+  byte get(long offset);
+
+  int getInt(long offset);
+
+  long getLong(long offset);
+
+  void close() throws IOException;
+
   class ByteBufferWrapper implements CustomByteBuffer {
     private final MappedByteBuffer delegate;
     private final boolean nativeOrder;
@@ -153,6 +163,31 @@ public interface CustomByteBuffer {
     @Override
     public long getLong() {
       return delegate.getLong();
+    }
+
+    @Override
+    public long limit() {
+      return delegate.limit();
+    }
+
+    @Override
+    public byte get(long offset) {
+      return delegate.get((int) offset);
+    }
+
+    @Override
+    public int getInt(long offset) {
+      return delegate.getInt((int) offset);
+    }
+
+    @Override
+    public long getLong(long offset) {
+      return delegate.getLong((int) offset);
+    }
+
+    @Override
+    public void close() throws IOException {
+      // MappedByteBuffers are unmapped by GC
     }
   }
 }

@@ -2,6 +2,7 @@ package io.jafar.shell.tui;
 
 import dev.tamboui.terminal.Backend;
 import dev.tamboui.terminal.Terminal;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
@@ -37,7 +38,7 @@ public final class TuiWiring {
   public static Components wire(
       Backend backend,
       Terminal<? extends Backend> tuiTerminal,
-      SessionManager sessions,
+      SessionManager<JFRSession> sessions,
       ExecutorService commandExecutor) {
 
     TuiContext ctx = new TuiContext();

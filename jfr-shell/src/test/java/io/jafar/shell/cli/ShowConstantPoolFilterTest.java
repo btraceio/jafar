@@ -24,7 +24,8 @@ class ShowConstantPoolFilterTest {
   void filtersCpEntriesByStringEquality() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();

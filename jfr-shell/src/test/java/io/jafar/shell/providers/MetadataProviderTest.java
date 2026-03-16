@@ -60,12 +60,13 @@ class MetadataProviderTest {
   void commandDispatcher_metadata_class_json_outputs() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
-    SessionManager.SessionRef ref = sessions.open(jfr, null);
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
+    SessionManager.SessionRef<JFRSession> ref = sessions.open(jfr, null);
 
     StringBuilder out = new StringBuilder();
     StringBuilder err = new StringBuilder();
-    AtomicReference<SessionManager.SessionRef> current = new AtomicReference<>(ref);
+    AtomicReference<SessionManager.SessionRef<JFRSession>> current = new AtomicReference<>(ref);
     CommandDispatcher dispatcher =
         new CommandDispatcher(
             sessions,

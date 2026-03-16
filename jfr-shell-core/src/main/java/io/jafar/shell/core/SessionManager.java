@@ -1,25 +1,36 @@
 package io.jafar.shell.core;
 
-import io.jafar.parser.api.ParsingContext;
-import io.jafar.shell.JFRSession;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Manages multiple JFR sessions, allowing open/list/switch/close operations. */
-public final class SessionManager {
-  public interface JFRSessionFactory {
-    JFRSession create(Path path, ParsingContext ctx) throws Exception;
+/**
+ * Manages multiple sessions, allowing open/list/switch/close operations.
+ *
+ * @param <S> the session type
+ */
+public final class SessionManager<S extends Session> {
+
+  /** Factory for creating sessions from file paths. */
+  public interface SessionFactory<S extends Session> {
+    S create(Path path, Object context) throws Exception;
   }
 
-  public static final class SessionRef {
+  /** A reference to an open session with its metadata and variable store. */
+  public static final class SessionRef<S extends Session> {
     public final int id;
     public final String alias;
-    public final JFRSession session;
+    public final S session;
     public final VariableStore variables;
     public String outputFormat = "table";
 
-    public SessionRef(int id, String alias, JFRSession session) {
+    public SessionRef(int id, String alias, S session) {
       this.id = id;
       this.alias = alias;
       this.session = session;
@@ -27,27 +38,33 @@ public final class SessionManager {
     }
   }
 
-  private final ParsingContext context;
-  private final JFRSessionFactory factory;
+  private final SessionFactory<S> factory;
+  private final Object factoryContext;
   private final AtomicInteger nextId = new AtomicInteger(1);
-  private final Map<Integer, SessionRef> byId = new LinkedHashMap<>();
+  private final Map<Integer, SessionRef<S>> byId = new LinkedHashMap<>();
   private final Map<String, Integer> byAlias = new HashMap<>();
   private Integer currentId = null;
 
-  public SessionManager(ParsingContext context, JFRSessionFactory factory) {
-    this.context = Objects.requireNonNull(context, "context");
+  /**
+   * Creates a new session manager.
+   *
+   * @param factory the session factory
+   * @param factoryContext optional context passed to the factory
+   */
+  public SessionManager(SessionFactory<S> factory, Object factoryContext) {
     this.factory = Objects.requireNonNull(factory, "factory");
+    this.factoryContext = factoryContext;
   }
 
-  public synchronized SessionRef open(Path path, String alias) throws Exception {
+  public synchronized SessionRef<S> open(Path path, String alias) throws Exception {
     int id = nextId.getAndIncrement();
     if (alias != null) {
       if (byAlias.containsKey(alias)) {
         throw new IllegalArgumentException("Alias already in use: " + alias);
       }
     }
-    JFRSession session = factory.create(path, context);
-    SessionRef ref = new SessionRef(id, alias, session);
+    S session = factory.create(path, factoryContext);
+    SessionRef<S> ref = new SessionRef<>(id, alias, session);
     byId.put(id, ref);
     if (alias != null) {
       byAlias.put(alias, id);
@@ -56,19 +73,19 @@ public final class SessionManager {
     return ref;
   }
 
-  public synchronized List<SessionRef> list() {
+  public synchronized List<SessionRef<S>> list() {
     return new ArrayList<>(byId.values());
   }
 
-  public synchronized Optional<SessionRef> current() {
+  public synchronized Optional<SessionRef<S>> current() {
     return currentId == null ? Optional.empty() : Optional.ofNullable(byId.get(currentId));
   }
 
-  public synchronized Optional<SessionRef> getCurrent() { // alias
+  public synchronized Optional<SessionRef<S>> getCurrent() {
     return current();
   }
 
-  public synchronized Optional<SessionRef> get(String idOrAlias) {
+  public synchronized Optional<SessionRef<S>> get(String idOrAlias) {
     Integer id = parseId(idOrAlias);
     if (id == null) {
       id = byAlias.get(idOrAlias);
@@ -77,7 +94,7 @@ public final class SessionManager {
   }
 
   public synchronized boolean use(String idOrAlias) {
-    Optional<SessionRef> ref = get(idOrAlias);
+    Optional<SessionRef<S>> ref = get(idOrAlias);
     if (ref.isPresent()) {
       currentId = ref.get().id;
       return true;
@@ -86,7 +103,7 @@ public final class SessionManager {
   }
 
   public synchronized boolean close(String idOrAlias) throws Exception {
-    Optional<SessionRef> ref = get(idOrAlias);
+    Optional<SessionRef<S>> ref = get(idOrAlias);
     if (ref.isEmpty()) return false;
     closeById(ref.get().id);
     return true;
@@ -100,10 +117,10 @@ public final class SessionManager {
   }
 
   private void closeById(int id) throws Exception {
-    SessionRef ref = byId.remove(id);
+    SessionRef<S> ref = byId.remove(id);
     if (ref != null) {
       if (ref.alias != null) byAlias.remove(ref.alias);
-      ref.variables.clear(); // Release all session variables
+      ref.variables.clear();
       ref.session.close();
     }
     if (Objects.equals(currentId, id)) {

@@ -22,10 +22,11 @@ import java.util.Set;
  */
 public final class TuiBrowserController {
   private final TuiContext ctx;
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final TuiDetailBuilder detailBuilder;
 
-  TuiBrowserController(TuiContext ctx, SessionManager sessions, TuiDetailBuilder detailBuilder) {
+  TuiBrowserController(
+      TuiContext ctx, SessionManager<JFRSession> sessions, TuiDetailBuilder detailBuilder) {
     this.ctx = ctx;
     this.sessions = sessions;
     this.detailBuilder = detailBuilder;

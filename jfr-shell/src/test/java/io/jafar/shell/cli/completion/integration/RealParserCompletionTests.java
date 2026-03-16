@@ -33,7 +33,7 @@ public class RealParserCompletionTests {
   private static ParsingContext parsingContext;
   private static JLineTestEnvironment testEnv;
 
-  private SessionManager sessionManager;
+  private SessionManager<JFRSession> sessionManager;
   private ShellCompleter completer;
   private MetadataService metadataService;
   private DefaultParser jlineParser;
@@ -50,7 +50,8 @@ public class RealParserCompletionTests {
 
   @BeforeTry
   void setupPerTry() throws Exception {
-    sessionManager = new SessionManager(parsingContext, (path, c) -> new JFRSession(path, c));
+    sessionManager =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), parsingContext);
     sessionManager.open(testJfrPath, "test");
     completer = new ShellCompleter(sessionManager, null);
     metadataService = new MetadataService(sessionManager);

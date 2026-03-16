@@ -1,0 +1,55 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+group = 'io.btrace'
+version = rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+    maven {
+        url "https://central.sonatype.com/repository/maven-snapshots/"
+        mavenContent {
+            snapshotsOnly()
+        }
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    implementation project(':jfr-shell-core')
+    implementation project(':jfr-shell')
+    implementation project(':hdump-shell')
+
+    // JFR backend implementations (discovered via ServiceLoader)
+    runtimeOnly project(':jfr-shell-jafar')
+    runtimeOnly project(':jfr-shell-jdk')
+
+    implementation 'info.picocli:picocli:4.7.5'
+    implementation 'org.jline:jline:3.26.1'
+    implementation 'org.slf4j:slf4j-api:2.0.12'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.3'
+}
+
+application {
+    mainClass = 'io.jafar.shell.Main'
+}
+
+shadowJar {
+    archiveBaseName = 'jafar-shell'
+    archiveClassifier = 'all'
+    mergeServiceFiles()
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

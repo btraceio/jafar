@@ -50,6 +50,10 @@ final class JafarSources {
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
       final AtomicReference<Map<String, Object>> ref = new AtomicReference<>();
+      if (System.getProperty("jfr.shell.completion.debug") != null) {
+        System.err.println("[DEBUG] JafarMetadataSource.loadClass() called for: " + typeName);
+      }
+
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -61,13 +65,41 @@ final class JafarSources {
                 for (MetadataClass mc : metadata.getClasses()) {
                   byName.put(mc.getName(), mc);
                 }
+
+                if (System.getProperty("jfr.shell.completion.debug") != null) {
+                  System.err.println("[DEBUG]   Metadata has " + byName.size() + " classes");
+                  // Show matching classes
+                  java.util.List<String> matching =
+                      byName.keySet().stream()
+                          .filter(n -> n.contains("ExecutionSample"))
+                          .sorted()
+                          .toList();
+                  if (!matching.isEmpty()) {
+                    System.err.println("[DEBUG]   Classes matching 'ExecutionSample':");
+                    matching.forEach(n -> System.err.println("[DEBUG]     - " + n));
+                  }
+                }
+
                 MetadataClass clazz = byName.get(typeName);
                 if (clazz != null) {
+                  if (System.getProperty("jfr.shell.completion.debug") != null) {
+                    System.err.println("[DEBUG]   Found matching class: " + typeName);
+                  }
                   ref.set(convertClass(clazz));
+                } else {
+                  if (System.getProperty("jfr.shell.completion.debug") != null) {
+                    System.err.println("[DEBUG]   Class NOT found: " + typeName);
+                  }
                 }
                 return false;
               }
             });
+      }
+
+      if (System.getProperty("jfr.shell.completion.debug") != null) {
+        System.err.println(
+            "[DEBUG] JafarMetadataSource.loadClass() returning: "
+                + (ref.get() != null ? "non-null" : "NULL"));
       }
       return ref.get();
     }

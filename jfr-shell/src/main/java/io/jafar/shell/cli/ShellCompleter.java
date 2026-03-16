@@ -1,5 +1,6 @@
 package io.jafar.shell.cli;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextAnalyzer;
 import io.jafar.shell.cli.completion.ContextCompleter;
@@ -47,7 +48,7 @@ public final class ShellCompleter implements Completer {
   private static final Path SCRIPTS_DIR =
       Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
 
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final CommandDispatcher dispatcher;
   private final CompletionContextAnalyzer analyzer;
   private final MetadataService metadata;
@@ -55,7 +56,7 @@ public final class ShellCompleter implements Completer {
   private final org.jline.reader.impl.completer.FileNameCompleter fileCompleter =
       new org.jline.reader.impl.completer.FileNameCompleter();
 
-  public ShellCompleter(SessionManager sessions, CommandDispatcher dispatcher) {
+  public ShellCompleter(SessionManager<JFRSession> sessions, CommandDispatcher dispatcher) {
     this.sessions = sessions;
     this.dispatcher = dispatcher;
     this.analyzer = new CompletionContextAnalyzer();
