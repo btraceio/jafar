@@ -51,8 +51,19 @@ public final class HdumpPipelineOperatorCompleter
       case "filter" -> "filter(predicate)";
       case "distinct" -> "distinct(field)";
       case "pathToRoot" -> "pathToRoot()";
+      case "retentionPaths" -> "retentionPaths()";
+      case "retainedBreakdown" -> "retainedBreakdown(depth=N)";
       case "checkLeaks" -> "checkLeaks(detector=\"name\", threshold=N, minSize=N)";
       case "dominators" -> "dominators()";
+      case "len" -> "len(field)";
+      case "uppercase" -> "uppercase(field)";
+      case "lowercase" -> "lowercase(field)";
+      case "trim" -> "trim(field)";
+      case "replace" -> "replace(field, \"old\", \"new\")";
+      case "abs" -> "abs(field)";
+      case "round" -> "round(field)";
+      case "floor" -> "floor(field)";
+      case "ceil" -> "ceil(field)";
       default -> op + "(...)";
     };
   }
@@ -71,15 +82,26 @@ public final class HdumpPipelineOperatorCompleter
       case "filter" -> "filter results by condition";
       case "distinct" -> "get distinct values";
       case "pathToRoot" -> "find path to GC root";
+      case "retentionPaths" -> "merge retention paths at class level";
+      case "retainedBreakdown" -> "expand dominator subtree by class";
       case "checkLeaks" -> "run leak detection analysis";
       case "dominators" -> "get dominated objects";
+      case "len" -> "string length or collection size";
+      case "uppercase" -> "convert to uppercase";
+      case "lowercase" -> "convert to lowercase";
+      case "trim" -> "trim whitespace";
+      case "replace" -> "replace occurrences in string";
+      case "abs" -> "absolute value";
+      case "round" -> "round to nearest integer";
+      case "floor" -> "round down";
+      case "ceil" -> "round up";
       default -> null;
     };
   }
 
   private boolean hasParameters(String op) {
     return switch (op) {
-      case "count", "pathToRoot", "dominators" -> false;
+      case "count", "pathToRoot", "retentionPaths", "dominators" -> false;
       default -> true;
     };
   }

@@ -41,6 +41,11 @@ test {
     maxHeapSize = '2g'
 }
 
+javadoc {
+    options.addStringOption('Xdoclint:none', '-quiet')
+    failOnError = false
+}
+
 group = 'io.btrace'
 version = component_version
 description = 'Fast HPROF heap dump parser with minimal API'

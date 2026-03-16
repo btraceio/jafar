@@ -591,9 +591,9 @@ See **[doc/hdump-shell-quickstart.md](doc/hdump-shell-quickstart.md)** for quick
 - **[doc/mcp/JBANGUsage.md](doc/mcp/JBANGUsage.md)** - JBang installation and usage
 
 ### Heap Dump Analysis
-- **[doc/cli/HdumpQuickstart.md](doc/cli/HdumpQuickstart.md)** - Quick start guide for heap dump analysis
-- **[doc/cli/HdumpTutorial.md](doc/cli/HdumpTutorial.md)** - Complete heap dump analysis tutorial
-- **[doc/cli/HdumpPath.md](doc/cli/HdumpPath.md)** - HdumpPath query language reference
+- **[doc/hdump-shell-quickstart.md](doc/hdump-shell-quickstart.md)** - Quick start guide for heap dump analysis
+- **[doc/cli/hdump-shell-tutorial.md](doc/cli/hdump-shell-tutorial.md)** - Complete heap dump analysis tutorial
+- **[doc/hdumppath.md](doc/hdumppath.md)** - HdumpPath query language reference
 
 ### General
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes

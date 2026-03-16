@@ -17,7 +17,7 @@ import java.nio.file.Path;
  *   <li>Random access: O(1) with direct offset calculation
  *   <li>Memory footprint: Only mapped pages consume RAM (lazy loading)
  *   <li>Cache efficiency: OS handles page caching transparently
- *   <li>Typical working set: <100 MB for hot objects
+ *   <li>Typical working set: &lt;100 MB for hot objects
  * </ul>
  *
  * <p><strong>Usage:</strong>

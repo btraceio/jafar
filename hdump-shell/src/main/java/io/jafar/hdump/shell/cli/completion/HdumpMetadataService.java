@@ -33,8 +33,19 @@ public final class HdumpMetadataService implements MetadataService {
           "filter",
           "distinct",
           "pathToRoot",
+          "retentionPaths",
+          "retainedBreakdown",
           "checkLeaks",
-          "dominators");
+          "dominators",
+          "len",
+          "uppercase",
+          "lowercase",
+          "trim",
+          "replace",
+          "abs",
+          "round",
+          "floor",
+          "ceil");
 
   /** Field names for objects root type */
   private static final List<String> OBJECT_FIELDS =
