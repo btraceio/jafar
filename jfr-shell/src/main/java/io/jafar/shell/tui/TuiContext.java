@@ -2,7 +2,7 @@ package io.jafar.shell.tui;
 
 import dev.tamboui.layout.Rect;
 import dev.tamboui.widgets.input.TextInputState;
-import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -233,7 +233,7 @@ public final class TuiContext {
 
   // Session picker state
   boolean sessionPickerVisible;
-  List<SessionManager.SessionRef<JFRSession>> sessionPickerEntries;
+  List<SessionManager.SessionRef<? extends Session>> sessionPickerEntries;
   int sessionPickerSelectedIndex;
 
   // Export popup state

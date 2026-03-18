@@ -7,6 +7,7 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
@@ -236,7 +237,7 @@ public final class TuiCommandExecutor {
       Path metaRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
       if (metaRec != null) {
         try {
-          var sess = sessions.current().map(ref -> ref.session).orElse(null);
+          JFRSession sess = sessions.current().map(ref -> ref.session).orElse(null);
           if (sess != null) {
             var allTypeNames = sess.getNonPrimitiveMetadataTypes();
             var eventNames = sess.getAvailableTypes();
@@ -1165,7 +1166,9 @@ public final class TuiCommandExecutor {
   // ---- session picker ----
 
   void openSessionPicker() {
-    List<SessionManager.SessionRef<JFRSession>> all = sessions.list();
+    @SuppressWarnings("unchecked")
+    List<SessionManager.SessionRef<? extends Session>> all =
+        (List<SessionManager.SessionRef<? extends Session>>) (List<?>) sessions.list();
     if (all.size() < 2) return;
     ctx.sessionPickerEntries = all;
     int currentId = sessions.current().map(r -> r.id).orElse(-1);
