@@ -250,6 +250,9 @@ public final class TuiCommandExecutor {
             ctx.commandFuture =
                 commandExecutor.submit(
                     () -> {
+                      PrintStream origErr = System.err;
+                      ProgressCapturingStream progressStream = new ProgressCapturingStream(ctx);
+                      System.setErr(progressStream);
                       try {
                         List<Map<String, Object>> summary =
                             tuiAdapter.loadBrowseSummary(session, category);
@@ -258,6 +261,8 @@ public final class TuiCommandExecutor {
                         ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
                         ctx.asyncBrowserPending = false;
                       } finally {
+                        System.setErr(origErr);
+                        ctx.asyncProgressMessage = null;
                         ctx.commandRunning = false;
                       }
                     });

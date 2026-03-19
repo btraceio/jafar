@@ -1801,8 +1801,12 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> applyRetentionPaths(
       HeapDump dump, List<Map<String, Object>> results) {
 
-    // path string → (count, total retainedSize)
+    // path string → (count, total retainedSize, depth)
     Map<String, long[]> pathStats = new LinkedHashMap<>();
+    // path string → structured detail map (first-seen only)
+    Map<String, LinkedHashMap<String, Object>> pathDetails = new LinkedHashMap<>();
+    // path string → [gcRoot class name, leaf class name]
+    Map<String, String[]> pathEndpoints = new LinkedHashMap<>();
 
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
@@ -1818,18 +1822,32 @@ public final class HdumpPathEvaluator {
 
       // Build class-level path string: "GCRoot[TYPE] → ClassName1 → … → TargetClass"
       StringBuilder sb = new StringBuilder();
+      LinkedHashMap<String, Object> detail = new LinkedHashMap<>();
       for (int i = 0; i < path.size(); i++) {
         if (i > 0) sb.append(" → ");
         PathStep step = path.get(i);
         HeapObject stepObj = step.object();
         HeapClass cls = stepObj.getHeapClass();
-        if (cls != null) {
-          sb.append(cls.getName().replace('/', '.'));
-        } else {
-          sb.append("unknown");
-        }
+        String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
+        sb.append(className);
+        String value = step.fieldName() != null ? step.fieldName() : "GC Root";
+        detail.put((i + 1) + ". " + className, value);
       }
       String pathKey = sb.toString();
+
+      pathDetails.putIfAbsent(pathKey, detail);
+      pathEndpoints.putIfAbsent(
+          pathKey,
+          new String[] {
+            ClassNameUtil.toHumanReadable(
+                path.get(0).object().getHeapClass() != null
+                    ? path.get(0).object().getHeapClass().getName()
+                    : "unknown"),
+            ClassNameUtil.toHumanReadable(
+                path.get(path.size() - 1).object().getHeapClass() != null
+                    ? path.get(path.size() - 1).object().getHeapClass().getName()
+                    : "unknown")
+          });
 
       long retained = obj.getRetainedSize();
       long[] stats = pathStats.computeIfAbsent(pathKey, k -> new long[] {0L, 0L, path.size()});
@@ -1843,10 +1861,14 @@ public final class HdumpPathEvaluator {
         .map(
             e -> {
               Map<String, Object> result = new LinkedHashMap<>();
+              String[] endpoints = pathEndpoints.get(e.getKey());
+              result.put("gcRoot", endpoints != null ? endpoints[0] : "");
+              result.put("leaf", endpoints != null ? endpoints[1] : "");
               result.put("count", e.getValue()[0]);
               result.put("depth", (int) e.getValue()[2]);
               result.put("retainedSize", e.getValue()[1]);
               result.put("path", e.getKey());
+              result.put("pathDetail", pathDetails.get(e.getKey()));
               return result;
             })
         .collect(Collectors.toList());

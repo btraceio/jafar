@@ -9,6 +9,7 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +23,12 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
   private final SessionManager<?> sessions;
   private final Completer completer;
+
+  /** Stored command for retention paths browser (set by detectBrowserCommand). */
+  private String pendingRetentionPathsCommand;
+
+  /** Cached full result rows from retention paths evaluation. */
+  private List<Map<String, Object>> cachedRetentionPathRows;
 
   public HdumpTuiAdapter(SessionManager<?> sessions) {
     this.sessions = sessions;
@@ -42,11 +49,17 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
   @Override
   public Set<String> getBrowsableCategories() {
-    return Set.of("classes");
+    return Set.of("classes", "retentionPaths");
   }
 
   @Override
   public String detectBrowserCommand(String command) {
+    // Retention paths browser: intercept commands containing "| retentionPaths()"
+    if (command.contains("| retentionPaths(")) {
+      pendingRetentionPathsCommand = command.trim();
+      return "retentionPaths";
+    }
+
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return null;
     String first = parts[0].toLowerCase();
@@ -67,6 +80,11 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   public List<Map<String, Object>> loadBrowseSummary(Session session, String category)
       throws Exception {
     if (!(session instanceof HeapSession heap)) return null;
+
+    if ("retentionPaths".equals(category)) {
+      return loadRetentionPathsSummary(heap);
+    }
+
     if (!"classes".equals(category)) return null;
 
     // Use HdumpPath to query class summary
@@ -90,6 +108,11 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   public List<Map<String, Object>> loadBrowseEntries(
       Session session, String category, String typeName, int limit) throws Exception {
     if (!(session instanceof HeapSession heap)) return null;
+
+    if ("retentionPaths".equals(category)) {
+      return loadRetentionPathsEntries(typeName, limit);
+    }
+
     if (!"classes".equals(category)) return null;
 
     int effectiveLimit = limit > 0 ? limit : 100;
@@ -110,11 +133,88 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     if ("classes".equals(category)) {
       return new BrowseCategoryDescriptor("Classes", "instanceCount", null, null, false, false);
     }
+    if ("retentionPaths".equals(category)) {
+      return new BrowseCategoryDescriptor("GC Roots", "count", null, null, true, false);
+    }
     return null;
   }
 
   @Override
   public String getPromptPrefix() {
     return "hdump";
+  }
+
+  // ---- retention paths browser helpers ----
+
+  @SuppressWarnings("unchecked")
+  private List<Map<String, Object>> loadRetentionPathsSummary(HeapSession heap) throws Exception {
+    String cmd = pendingRetentionPathsCommand;
+    if (cmd == null) return null;
+    pendingRetentionPathsCommand = null;
+
+    // Strip "show " prefix if present — the parser expects the query part only
+    String queryStr = cmd;
+    if (queryStr.toLowerCase().startsWith("show ")) {
+      queryStr = queryStr.substring(5).trim();
+    }
+
+    var query = HdumpPathParser.parse(queryStr);
+    List<Map<String, Object>> allRows =
+        (List<Map<String, Object>>) (List<?>) HdumpPathEvaluator.evaluate(heap, query);
+    cachedRetentionPathRows = allRows;
+
+    // Group by gcRoot: aggregate count and retainedSize
+    Map<String, long[]> grouped = new LinkedHashMap<>();
+    for (Map<String, Object> row : allRows) {
+      String gcRoot = String.valueOf(row.getOrDefault("gcRoot", ""));
+      long count = toLong(row.get("count"));
+      long retained = toLong(row.get("retainedSize"));
+      long[] agg = grouped.computeIfAbsent(gcRoot, k -> new long[2]);
+      agg[0] += count;
+      agg[1] += retained;
+    }
+
+    // Build sidebar rows sorted by retainedSize descending
+    List<Map<String, Object>> sidebar = new ArrayList<>();
+    for (Map.Entry<String, long[]> e : grouped.entrySet()) {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("name", e.getKey());
+      row.put("count", e.getValue()[0]);
+      row.put("retainedSize", e.getValue()[1]);
+      sidebar.add(row);
+    }
+    sidebar.sort(
+        (a, b) -> Long.compare(toLong(b.get("retainedSize")), toLong(a.get("retainedSize"))));
+    return sidebar;
+  }
+
+  private List<Map<String, Object>> loadRetentionPathsEntries(String typeName, int limit) {
+    if (cachedRetentionPathRows == null) return null;
+
+    int effectiveLimit = limit > 0 ? limit : 500;
+    List<Map<String, Object>> entries = new ArrayList<>();
+    for (Map<String, Object> row : cachedRetentionPathRows) {
+      if (!typeName.equals(String.valueOf(row.getOrDefault("gcRoot", "")))) continue;
+      Map<String, Object> entry = new LinkedHashMap<>(row);
+      entry.put("name", row.getOrDefault("leaf", ""));
+      entry.remove("gcRoot");
+      entry.remove("leaf");
+      entry.remove("path");
+      entries.add(entry);
+      if (entries.size() >= effectiveLimit) break;
+    }
+    return entries;
+  }
+
+  private static long toLong(Object v) {
+    if (v instanceof Number n) return n.longValue();
+    if (v instanceof String s) {
+      try {
+        return Long.parseLong(s);
+      } catch (NumberFormatException e) {
+        return 0L;
+      }
+    }
+    return 0L;
   }
 }
