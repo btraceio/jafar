@@ -1263,6 +1263,10 @@ public final class TuiCommandExecutor {
    * Complete {@code \n}-terminated lines are collected for display after the command finishes.
    */
   private static final class ProgressCapturingStream extends PrintStream {
+    // Matches logback pattern: "HH:mm:ss.SSS [thread] LEVEL ..."
+    private static final java.util.regex.Pattern LOGBACK_LINE =
+        java.util.regex.Pattern.compile("^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+\\[.+]\\s+\\w+\\s+.*");
+
     private final TuiContext ctx;
     private final StringBuilder currentLine = new StringBuilder();
     private final List<String> outputLines = new ArrayList<>();
@@ -1293,10 +1297,9 @@ public final class TuiCommandExecutor {
         }
         currentLine.setLength(0);
       } else if (c == '\n') {
-        // Complete line — collect for final output
+        // Complete line — show in spinner but don't add to final output
         String line = currentLine.toString().trim();
-        if (!line.isEmpty()) {
-          outputLines.add(line);
+        if (!line.isEmpty() && !LOGBACK_LINE.matcher(line).matches()) {
           ctx.asyncProgressMessage = line;
         }
         currentLine.setLength(0);
@@ -1311,11 +1314,6 @@ public final class TuiCommandExecutor {
     }
 
     List<String> getOutputLines() {
-      // Flush any remaining partial line
-      String remaining = currentLine.toString().trim();
-      if (!remaining.isEmpty()) {
-        outputLines.add(remaining);
-      }
       currentLine.setLength(0);
       return outputLines;
     }
