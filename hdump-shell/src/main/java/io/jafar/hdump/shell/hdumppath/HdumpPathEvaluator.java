@@ -3,6 +3,7 @@ package io.jafar.hdump.shell.hdumppath;
 import io.jafar.hdump.api.*;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
+import io.jafar.hdump.util.ClassNameUtil;
 import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.expr.ValueExpr;
 import java.util.*;
@@ -18,6 +19,49 @@ import java.util.stream.Stream;
  * transformations to produce result sets.
  */
 public final class HdumpPathEvaluator {
+
+  /** Maps short alias field names to their canonical counterparts. */
+  private static final Map<String, String> FIELD_ALIASES =
+      Map.of(
+          "class", ObjectFields.CLASS_NAME,
+          "shallow", ObjectFields.SHALLOW_SIZE,
+          "retained", ObjectFields.RETAINED_SIZE);
+
+  /**
+   * A LinkedHashMap that resolves field aliases on {@code get} and {@code containsKey}. Alias keys
+   * are never stored; lookups for alias names transparently delegate to canonical names.
+   */
+  private static final class AliasMap extends LinkedHashMap<String, Object> {
+    @Override
+    public Object get(Object key) {
+      Object v = super.get(key);
+      if (v == null && key instanceof String s) {
+        String canonical = FIELD_ALIASES.get(s);
+        if (canonical != null) v = super.get(canonical);
+      }
+      return v;
+    }
+
+    @Override
+    public boolean containsKey(Object key) {
+      if (super.containsKey(key)) return true;
+      if (key instanceof String s) {
+        String canonical = FIELD_ALIASES.get(s);
+        return canonical != null && super.containsKey(canonical);
+      }
+      return false;
+    }
+  }
+
+  /** Gets a value from a map, resolving field aliases. */
+  static Object getField(Map<String, Object> map, String field) {
+    Object v = map.get(field);
+    if (v == null) {
+      String canonical = FIELD_ALIASES.get(field);
+      if (canonical != null) v = map.get(canonical);
+    }
+    return v;
+  }
 
   private HdumpPathEvaluator() {}
 
@@ -162,8 +206,8 @@ public final class HdumpPathEvaluator {
     if (topOp.orderBy() != null) {
       comparator =
           (m1, m2) -> {
-            Object v1 = m1.get(topOp.orderBy());
-            Object v2 = m2.get(topOp.orderBy());
+            Object v1 = getField(m1, topOp.orderBy());
+            Object v2 = getField(m2, topOp.orderBy());
             int cmp = compareValues(v1, v2);
             return topOp.descending() ? -cmp : cmp;
           };
@@ -228,7 +272,7 @@ public final class HdumpPathEvaluator {
           // Extract group key
           List<Object> key = new ArrayList<>();
           for (String field : op.groupFields()) {
-            key.add(map.get(field));
+            key.add(getField(map, field));
           }
 
           // Get or create accumulator for this group
@@ -388,8 +432,8 @@ public final class HdumpPathEvaluator {
     if (topOp.orderBy() != null) {
       Comparator<Map<String, Object>> comparator =
           (m1, m2) -> {
-            Object v1 = m1.get(topOp.orderBy());
-            Object v2 = m2.get(topOp.orderBy());
+            Object v1 = getField(m1, topOp.orderBy());
+            Object v2 = getField(m2, topOp.orderBy());
             int cmp = compareValues(v1, v2);
             return topOp.descending() ? -cmp : cmp;
           };
@@ -545,7 +589,7 @@ public final class HdumpPathEvaluator {
       } else if (op.aggregation() != AggOp.COUNT) {
         // For non-COUNT aggregations, need a value field
         // Use first group field as default
-        value = row.get(op.groupFields().get(0));
+        value = getField(row, op.groupFields().get(0));
       } else {
         value = null;
       }
@@ -615,7 +659,7 @@ public final class HdumpPathEvaluator {
       // Extract group key
       List<Object> key = new ArrayList<>();
       for (String field : op.groupFields()) {
-        key.add(row.get(field));
+        key.add(getField(row, field));
       }
 
       // Get or create accumulator
@@ -918,18 +962,16 @@ public final class HdumpPathEvaluator {
   // === Object to Map conversions ===
 
   private static Map<String, Object> objectToMap(HeapObject obj) {
-    Map<String, Object> map = new LinkedHashMap<>();
+    Map<String, Object> map = new AliasMap();
     HeapClass cls = obj.getHeapClass();
 
+    String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
     map.put(ObjectFields.ID, obj.getId());
-    map.put(ObjectFields.CLASS, cls != null ? cls.getName() : "unknown");
-    map.put(ObjectFields.CLASS_NAME, cls != null ? cls.getName() : "unknown");
-    map.put(ObjectFields.SHALLOW, obj.getShallowSize());
+    map.put(ObjectFields.CLASS_NAME, className);
     map.put(ObjectFields.SHALLOW_SIZE, obj.getShallowSize());
 
     long retained = obj.getRetainedSize();
     if (retained >= 0) {
-      map.put(ObjectFields.RETAINED, retained);
       map.put(ObjectFields.RETAINED_SIZE, retained);
     }
 
@@ -938,7 +980,7 @@ public final class HdumpPathEvaluator {
     }
 
     // Add string value for String objects
-    if (cls != null && "java.lang.String".equals(cls.getName())) {
+    if ("java.lang.String".equals(className)) {
       String value = obj.getStringValue();
       if (value != null) {
         map.put(ObjectFields.STRING_VALUE, value);
@@ -950,15 +992,19 @@ public final class HdumpPathEvaluator {
 
   private static Map<String, Object> classToMap(HeapClass cls) {
     Map<String, Object> map = new LinkedHashMap<>();
+    String formattedName = ClassNameUtil.toHumanReadable(cls.getName());
+    int lastDot = formattedName.lastIndexOf('.');
+    String simpleName = lastDot >= 0 ? formattedName.substring(lastDot + 1) : formattedName;
+
     map.put(ClassFields.ID, cls.getId());
-    map.put(ClassFields.NAME, cls.getName());
-    map.put(ClassFields.SIMPLE_NAME, cls.getSimpleName());
+    map.put(ClassFields.NAME, formattedName);
+    map.put(ClassFields.SIMPLE_NAME, simpleName);
     map.put(ClassFields.INSTANCE_COUNT, cls.getInstanceCount());
     map.put(ClassFields.INSTANCE_SIZE, cls.getInstanceSize());
 
     HeapClass superClass = cls.getSuperClass();
     if (superClass != null) {
-      map.put(ClassFields.SUPER_CLASS, superClass.getName());
+      map.put(ClassFields.SUPER_CLASS, ClassNameUtil.toHumanReadable(superClass.getName()));
     }
 
     map.put(ClassFields.IS_ARRAY, cls.isArray());
@@ -966,7 +1012,7 @@ public final class HdumpPathEvaluator {
   }
 
   private static Map<String, Object> gcRootToMap(GcRoot root) {
-    Map<String, Object> map = new LinkedHashMap<>();
+    Map<String, Object> map = new AliasMap();
     map.put(GcRootFields.TYPE, root.getType().name());
     map.put(GcRootFields.OBJECT_ID, root.getObjectId());
 
@@ -975,15 +1021,15 @@ public final class HdumpPathEvaluator {
       HeapClass cls = obj.getHeapClass();
       map.put(
           GcRootFields.OBJECT,
-          cls != null ? cls.getName() + "@" + Long.toHexString(obj.getId()) : "unknown");
+          cls != null
+              ? ClassNameUtil.toHumanReadable(cls.getName()) + "@" + Long.toHexString(obj.getId())
+              : "unknown");
 
       // Add size fields from the rooted object
-      map.put(GcRootFields.SHALLOW, obj.getShallowSize());
       map.put(GcRootFields.SHALLOW_SIZE, obj.getShallowSize());
 
       long retained = obj.getRetainedSize();
       if (retained >= 0) {
-        map.put(GcRootFields.RETAINED, retained);
         map.put(GcRootFields.RETAINED_SIZE, retained);
       }
     }
@@ -1095,7 +1141,7 @@ public final class HdumpPathEvaluator {
   private static Object extractFieldValue(Map<String, Object> map, List<String> path) {
     if (path.isEmpty()) return null;
 
-    Object current = map.get(path.get(0));
+    Object current = getField(map, path.get(0));
     for (int i = 1; i < path.size() && current != null; i++) {
       if (current instanceof Map<?, ?> m) {
         current = m.get(path.get(i));
