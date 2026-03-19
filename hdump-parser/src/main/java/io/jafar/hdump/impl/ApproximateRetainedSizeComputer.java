@@ -261,9 +261,9 @@ public final class ApproximateRetainedSizeComputer {
         continue;
       }
 
-      // Expand to outbound references
+      // Expand to strong outbound references (skip Reference.referent)
       current
-          .getOutboundReferences()
+          .getStrongOutboundReferences()
           .forEach(
               ref -> {
                 if (!visited.contains(ref.getId())) {
@@ -309,7 +309,7 @@ public final class ApproximateRetainedSizeComputer {
 
     for (HeapObjectImpl obj : objectsById.values()) {
       // Use direct long[] access instead of Stream to avoid 1.14B allocations
-      long[] refIds = obj.getOutboundReferenceIds();
+      long[] refIds = obj.getStrongOutboundReferenceIds();
       for (int i = 0; i < refIds.length; i++) {
         counts.addTo(refIds[i], 1);
       }

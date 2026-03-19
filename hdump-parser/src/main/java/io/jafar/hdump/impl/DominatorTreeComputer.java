@@ -352,7 +352,7 @@ public final class DominatorTreeComputer {
     if (obj == null) return;
 
     // Visit all outbound references (use direct array access for performance)
-    long[] refIds = obj.getOutboundReferenceIds();
+    long[] refIds = obj.getStrongOutboundReferenceIds();
     for (int i = 0; i < refIds.length; i++) {
       dfsPostOrder(objectsById, refIds[i], visited, postOrder);
     }
@@ -398,7 +398,7 @@ public final class DominatorTreeComputer {
         }
 
         // Process references with direct array access (avoid Stream overhead)
-        long[] refIds = obj.getOutboundReferenceIds();
+        long[] refIds = obj.getStrongOutboundReferenceIds();
         long refCount = 0;
         long lastRefReportTime = System.currentTimeMillis();
 

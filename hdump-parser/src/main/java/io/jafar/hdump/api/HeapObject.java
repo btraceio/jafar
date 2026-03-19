@@ -54,6 +54,17 @@ public interface HeapObject {
   Stream<HeapObject> getOutboundReferences();
 
   /**
+   * Returns objects that this object strongly references, excluding {@code
+   * java.lang.ref.Reference.referent} fields. For non-Reference objects this is identical to {@link
+   * #getOutboundReferences()}.
+   *
+   * @return stream of strongly referenced objects
+   */
+  default Stream<HeapObject> getStrongOutboundReferences() {
+    return getOutboundReferences();
+  }
+
+  /**
    * Returns objects that directly reference this object.
    *
    * <p><strong>Note:</strong> This method requires the heap dump to be parsed with {@link

@@ -258,7 +258,7 @@ public final class HybridDominatorComputer {
       // Cast to impl for efficient array access
       HeapObjectImpl obj = (HeapObjectImpl) heapObj;
       // Use direct array access to avoid Stream overhead
-      long[] refIds = obj.getOutboundReferenceIds();
+      long[] refIds = obj.getStrongOutboundReferenceIds();
       long objId = obj.getId();
       for (int i = 0; i < refIds.length; i++) {
         inboundRefs.computeIfAbsent(refIds[i], k -> new ArrayList<>()).add(objId);

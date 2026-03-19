@@ -1,6 +1,7 @@
 package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
+import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapObject;
 import io.jafar.hdump.api.PathStep;
@@ -127,6 +128,9 @@ public final class PathFinder {
   /**
    * Visits all outbound object references of {@code obj}, calling {@code visitor} with the field
    * name and the referenced object. For array elements the name has the form {@code [i]}.
+   *
+   * <p>The {@code referent} and {@code discovered} fields of {@code java.lang.ref.Reference}
+   * subclasses are skipped because they do not represent strong reachability edges.
    */
   private static void visitOutboundEdges(HeapObject obj, EdgeVisitor visitor) {
     if (obj.isArray()) {
@@ -138,8 +142,13 @@ public final class PathFinder {
         }
       }
     } else {
+      HeapClass cls = obj.getHeapClass();
+      boolean isReference = cls instanceof HeapClassImpl impl && impl.isReferenceSubclass();
       for (Map.Entry<String, Object> entry : obj.getFieldValues().entrySet()) {
         if (entry.getValue() instanceof HeapObject ref) {
+          if (isReference
+              && ("referent".equals(entry.getKey()) || "discovered".equals(entry.getKey())))
+            continue;
           visitor.visit(entry.getKey(), ref);
         }
       }
@@ -213,9 +222,9 @@ public final class PathFinder {
       // Found a path - make a copy and add to results
       allPaths.add(new ArrayList<>(currentPath));
     } else {
-      // Continue exploring
+      // Continue exploring (strong references only)
       current
-          .getOutboundReferences()
+          .getStrongOutboundReferences()
           .forEach(
               ref -> {
                 if (!visited.contains(ref.getId())) {

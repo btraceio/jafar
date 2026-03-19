@@ -2116,7 +2116,7 @@ public final class HdumpPathEvaluator {
     String mode = op.mode();
     if (mode == null) {
       // Default: top-retainers view — input objects ranked by retained size, no expansion
-      return applyDominatorsTopRetainers(results, minRetained);
+      return applyDominatorsTopRetainers(dump, results, minRetained);
     }
     return switch (mode) {
       case "objects" -> applyDominatorsObjects(dump, results, minRetained);
@@ -2127,7 +2127,7 @@ public final class HdumpPathEvaluator {
 
   /** Default mode: input objects ranked by retained size, no expansion. */
   private static List<Map<String, Object>> applyDominatorsTopRetainers(
-      List<Map<String, Object>> results, long minRetained) {
+      HeapDump dump, List<Map<String, Object>> results, long minRetained) {
     List<Map<String, Object>> filtered =
         results.stream()
             .filter(row -> retainedOf(row) >= minRetained)
@@ -2142,7 +2142,38 @@ public final class HdumpPathEvaluator {
               .limit(10)
               .collect(Collectors.toList());
     }
+    Iterator<Map<String, Object>> it = filtered.iterator();
+    while (it.hasNext()) {
+      Map<String, Object> row = it.next();
+      Object idObj = row.get("id");
+      if (idObj instanceof Number num) {
+        Map<String, Object> pathDetail = buildGcRootPathDetail(dump, num.longValue());
+        if (pathDetail != null) {
+          row.put("gcRootPath", pathDetail);
+        } else {
+          it.remove();
+        }
+      }
+    }
     return filtered;
+  }
+
+  private static Map<String, Object> buildGcRootPathDetail(HeapDump dump, long objectId) {
+    HeapObject obj = dump.getObjectById(objectId).orElse(null);
+    if (obj == null) return null;
+    List<PathStep> path = dump.findPathToGcRoot(obj);
+    if (path.size() < 2) return null;
+    LinkedHashMap<String, Object> detail = new LinkedHashMap<>();
+    for (int i = 0; i < path.size(); i++) {
+      PathStep step = path.get(i);
+      HeapObject stepObj = step.object();
+      HeapClass cls = stepObj.getHeapClass();
+      String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
+      String key = (i + 1) + ". " + className;
+      String value = step.fieldName() != null ? step.fieldName() : "GC Root";
+      detail.put(key, value);
+    }
+    return detail;
   }
 
   private static long retainedOf(Map<String, Object> row) {

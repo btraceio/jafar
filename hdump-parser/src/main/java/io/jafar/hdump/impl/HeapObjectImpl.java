@@ -34,6 +34,9 @@ final class HeapObjectImpl implements HeapObject {
   // Cached outbound reference IDs (null = not cached, empty array = no refs)
   private long[] cachedOutboundRefIds;
 
+  // Cached strong outbound reference IDs (excludes Reference.referent); null = not computed
+  private long[] cachedStrongOutboundRefIds;
+
   // Constant for objects with no references
   private static final long[] EMPTY_LONG_ARRAY = new long[0];
 
@@ -225,6 +228,60 @@ final class HeapObjectImpl implements HeapObject {
   }
 
   /**
+   * Like {@link #extractInstanceReferences()} but skips the {@code referent} and {@code discovered}
+   * fields. Only called for {@code java.lang.ref.Reference} subclasses.
+   */
+  private long[] extractStrongInstanceReferences() {
+    if (heapClass == null) return EMPTY_LONG_ARRAY;
+    List<HeapField> allFields = heapClass.getAllInstanceFields();
+    if (allFields.isEmpty()) return EMPTY_LONG_ARRAY;
+
+    int refFieldCount = 0;
+    for (HeapField field : allFields) {
+      if (field.getType() == BasicType.OBJECT && isStrongReferenceField(field.getName())) {
+        refFieldCount++;
+      }
+    }
+    if (refFieldCount == 0) return EMPTY_LONG_ARRAY;
+
+    HprofReader reader = dump.getReader();
+    long savedPos = reader.position();
+    try {
+      reader.position(dataPosition);
+      long[] refIds = new long[refFieldCount];
+      int refIndex = 0;
+      for (HeapField field : allFields) {
+        int type = field.getType();
+        if (type == BasicType.OBJECT) {
+          long refId = reader.readId();
+          if (refId != 0 && isStrongReferenceField(field.getName())) {
+            refIds[refIndex++] = refId;
+          }
+        } else {
+          reader.skip(BasicType.sizeOf(type, reader.getIdSize()));
+        }
+      }
+      if (refIndex < refFieldCount) {
+        long[] trimmed = new long[refIndex];
+        System.arraycopy(refIds, 0, trimmed, 0, refIndex);
+        return trimmed;
+      }
+      return refIds;
+    } finally {
+      reader.position(savedPos);
+    }
+  }
+
+  /**
+   * Returns {@code true} if the field name represents a strong reference on a {@code
+   * java.lang.ref.Reference} subclass. The {@code referent} and {@code discovered} fields are
+   * excluded because they are not strong reachability edges.
+   */
+  private static boolean isStrongReferenceField(String name) {
+    return !"referent".equals(name) && !"discovered".equals(name);
+  }
+
+  /**
    * Extracts outbound reference IDs from object array elements. Reads the contiguous block of
    * object IDs from the array.
    */
@@ -298,6 +355,20 @@ final class HeapObjectImpl implements HeapObject {
     return cachedOutboundRefIds;
   }
 
+  /**
+   * Returns outbound reference IDs excluding {@code java.lang.ref.Reference.referent}. For
+   * non-Reference objects this returns the same array as {@link #getOutboundReferenceIds()}.
+   */
+  public long[] getStrongOutboundReferenceIds() {
+    if (cachedStrongOutboundRefIds != null) return cachedStrongOutboundRefIds;
+    if (heapClass == null || !heapClass.isReferenceSubclass()) {
+      cachedStrongOutboundRefIds = getOutboundReferenceIds();
+      return cachedStrongOutboundRefIds;
+    }
+    cachedStrongOutboundRefIds = extractStrongInstanceReferences();
+    return cachedStrongOutboundRefIds;
+  }
+
   @Override
   public Stream<HeapObject> getOutboundReferences() {
     // Use getOutboundReferenceIds() to avoid duplication
@@ -307,6 +378,15 @@ final class HeapObjectImpl implements HeapObject {
       return Stream.empty();
     }
 
+    return java.util.Arrays.stream(refIds)
+        .mapToObj(id -> (HeapObject) dump.getObjectByIdInternal(id))
+        .filter(obj -> obj != null);
+  }
+
+  @Override
+  public Stream<HeapObject> getStrongOutboundReferences() {
+    long[] refIds = getStrongOutboundReferenceIds();
+    if (refIds.length == 0) return Stream.empty();
     return java.util.Arrays.stream(refIds)
         .mapToObj(id -> (HeapObject) dump.getObjectByIdInternal(id))
         .filter(obj -> obj != null);

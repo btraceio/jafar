@@ -24,6 +24,9 @@ final class HeapClassImpl implements HeapClass {
   // Cache for all instance fields including inherited (lazily populated)
   private List<HeapField> allInstanceFieldsCache;
 
+  // Cached flag: true if this class extends java.lang.ref.Reference (-1 = not computed)
+  private int referenceSubclass = -1;
+
   HeapClassImpl(long id, String name, HeapDumpImpl dump) {
     this.id = id;
     this.name = name;
@@ -139,6 +142,22 @@ final class HeapClassImpl implements HeapClass {
       return dump.getClassByName(compName).orElse(null);
     }
     return null;
+  }
+
+  private static final String REFERENCE_CLASS_NAME = "java/lang/ref/Reference";
+
+  /** Returns true if this class is {@code java.lang.ref.Reference} or a subclass of it. */
+  boolean isReferenceSubclass() {
+    if (referenceSubclass == -1) {
+      referenceSubclass = 0;
+      for (HeapClass c = this; c != null; c = c.getSuperClass()) {
+        if (REFERENCE_CLASS_NAME.equals(c.getName())) {
+          referenceSubclass = 1;
+          break;
+        }
+      }
+    }
+    return referenceSubclass == 1;
   }
 
   @Override
