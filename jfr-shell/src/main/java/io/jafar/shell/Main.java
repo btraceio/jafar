@@ -21,7 +21,7 @@ import picocli.CommandLine;
 @CommandLine.Command(
     name = "jfr-shell",
     description = "JFR analysis tool with interactive and non-interactive modes",
-    version = "0.1.0",
+    versionProvider = Main.VersionProvider.class,
     mixinStandardHelpOptions = true,
     subcommands = {
       Main.ShowCommand.class,
@@ -66,6 +66,13 @@ public final class Main implements Callable<Integer> {
       names = {"--install-plugin"},
       description = "Install a backend plugin from a local JAR file and exit")
   private String installPlugin;
+
+  static final class VersionProvider implements CommandLine.IVersionProvider {
+    @Override
+    public String[] getVersion() {
+      return new String[] {Version.VALUE};
+    }
+  }
 
   public static void main(String[] args) {
     // Parse CLI args to extract plugin-dir and install-plugin before initialization
