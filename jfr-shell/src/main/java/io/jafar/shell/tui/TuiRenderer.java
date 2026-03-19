@@ -288,6 +288,12 @@ public final class TuiRenderer {
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
       String progressMsg = ctx.asyncProgressMessage;
+      if (progressMsg != null
+          && System.nanoTime() - ctx.asyncProgressMessageTime
+              >= TuiContext.PROGRESS_MESSAGE_EXPIRY_NS) {
+        ctx.asyncProgressMessage = null;
+        progressMsg = null;
+      }
       String status = progressMsg != null ? progressMsg : "Running...";
       Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " " + status);
       frame.renderWidget(spinner, inner);

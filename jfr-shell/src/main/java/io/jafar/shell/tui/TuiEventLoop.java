@@ -37,8 +37,6 @@ public final class TuiEventLoop {
   public void run() throws IOException {
     backend.enterAlternateScreen();
     backend.enableRawMode();
-    backend.hideCursor();
-
     try {
       while (ctx.running) {
         if (ctx.commandFuture != null && ctx.commandFuture.isDone()) {
@@ -54,7 +52,6 @@ public final class TuiEventLoop {
         }
 
         tuiTerminal.draw(renderer::render);
-        backend.showCursor();
 
         int key = backend.read(100);
         if (key == TuiContext.READ_EXPIRED) continue;

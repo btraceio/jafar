@@ -49,6 +49,7 @@ public final class TuiContext {
   static final int SCROLL_SPEED = 2;
   static final int HINT_MESSAGE_TICKS = 50; // ~5s at 100ms per tick
   static final long BROWSER_NAV_DEBOUNCE_NS = 100_000_000L; // 100ms
+  static final long PROGRESS_MESSAGE_EXPIRY_NS = 5_000_000_000L; // 5s
 
   // ---- enums ----
 
@@ -260,6 +261,7 @@ public final class TuiContext {
 
   // Async command execution state
   volatile String asyncProgressMessage; // latest progress status from stderr, shown in spinner
+  volatile long asyncProgressMessageTime; // nanoTime when asyncProgressMessage was last set
   volatile boolean commandRunning;
   long commandStartTick;
   Future<?> commandFuture;
