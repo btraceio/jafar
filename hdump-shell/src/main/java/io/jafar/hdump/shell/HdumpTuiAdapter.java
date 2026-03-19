@@ -3,6 +3,7 @@ package io.jafar.hdump.shell;
 import io.jafar.hdump.shell.cli.HdumpShellCompleter;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
+import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -100,6 +101,14 @@ public final class HdumpTuiAdapter implements TuiAdapter {
         rows = new ArrayList<>(rows.subList(0, effectiveLimit));
       }
       return rows;
+    }
+    return null;
+  }
+
+  @Override
+  public BrowseCategoryDescriptor describeBrowseCategory(String category) {
+    if ("classes".equals(category)) {
+      return new BrowseCategoryDescriptor("Classes", "instanceCount", null, null, false, false);
     }
     return null;
   }

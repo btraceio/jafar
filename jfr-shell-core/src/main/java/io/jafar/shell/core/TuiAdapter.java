@@ -106,14 +106,13 @@ public interface TuiAdapter {
       Session session, String category, String typeName, int limit) throws Exception;
 
   /**
-   * Whether the events summary should be loaded asynchronously. Event scanning can be expensive
-   * (full file parse), so the TUI runs it in a background thread.
+   * Describes the rendering and behavior of a browse category so the TUI framework can display
+   * sidebar entries without knowing engine-specific field names.
    *
-   * @return true if {@link #loadBrowseSummary} for the "events" category is expensive
+   * @param category the browser category (from {@link #getBrowsableCategories})
+   * @return a descriptor for the category, or null if the category is not recognized
    */
-  default boolean isEventsSummaryAsync() {
-    return false;
-  }
+  BrowseCategoryDescriptor describeBrowseCategory(String category);
 
   /**
    * Returns the default prompt prefix for this module (e.g., "jfr", "hdump"). Used to construct the

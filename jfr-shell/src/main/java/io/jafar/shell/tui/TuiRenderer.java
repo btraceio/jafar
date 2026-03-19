@@ -391,7 +391,9 @@ public final class TuiRenderer {
       scrollBase = activeTab.dataStartLine;
       scrollLineCount = Math.max(0, lineCount - scrollBase);
       highlightLine = activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1;
-    } else if (ctx.metadataBrowserMode && !ctx.sidebarFocused) {
+    } else if (ctx.activeBrowserDescriptor != null
+        && ctx.activeBrowserDescriptor.hasMetadataClasses()
+        && !ctx.sidebarFocused) {
       scrollBase = 0;
       scrollLineCount = lineCount;
       highlightLine = activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1;
@@ -428,7 +430,8 @@ public final class TuiRenderer {
           visible = visible + " ".repeat(visibleWidth - visible.length());
         }
         styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
-      } else if (ctx.metadataBrowserMode
+      } else if (ctx.activeBrowserDescriptor != null
+          && ctx.activeBrowserDescriptor.hasMetadataClasses()
           && ctx.metadataBrowserLineRefs != null
           && i < ctx.metadataBrowserLineRefs.size()
           && ctx.metadataBrowserLineRefs.get(i) != null) {
@@ -462,14 +465,10 @@ public final class TuiRenderer {
 
   private void renderSidebar(Frame frame, Rect area) {
     String sidebarTitle;
-    if (ctx.browserCategory != null) {
-      sidebarTitle = capitalize(ctx.browserCategory);
-    } else if (ctx.metadataBrowserMode) {
-      sidebarTitle = "Metadata Types";
-    } else if (ctx.eventBrowserMode) {
-      sidebarTitle = "Event Types";
+    if (ctx.activeBrowserDescriptor != null) {
+      sidebarTitle = ctx.activeBrowserDescriptor.sidebarTitle();
     } else {
-      sidebarTitle = "Constant Types";
+      sidebarTitle = "Browser";
     }
     if (ctx.focus == Focus.SEARCH && ctx.searchOriginSidebar) {
       String q = ctx.searchInputState.text();
@@ -525,13 +524,15 @@ public final class TuiRenderer {
       Map<String, Object> typeRow = ctx.sidebarTypes.get(i);
       String name = String.valueOf(typeRow.getOrDefault("name", ""));
       String display;
-      if (ctx.metadataBrowserMode) {
-        String event = String.valueOf(typeRow.getOrDefault("event", ""));
-        display = " " + name + (event.isEmpty() ? "" : " *");
+      var desc = ctx.activeBrowserDescriptor;
+      if (desc != null && desc.decorationField() != null) {
+        String deco = String.valueOf(typeRow.getOrDefault(desc.decorationField(), ""));
+        display = " " + name + (deco.isEmpty() ? "" : desc.decorationSuffix());
+      } else if (desc != null && desc.countField() != null) {
+        String count = String.valueOf(typeRow.getOrDefault(desc.countField(), ""));
+        display = " " + name + (count.isEmpty() ? "" : " (" + count + ")");
       } else {
-        String countKey = ctx.eventBrowserMode ? "count" : "totalSize";
-        String count = String.valueOf(typeRow.getOrDefault(countKey, ""));
-        display = " " + name + " (" + count + ")";
+        display = " " + name;
       }
       if (display.length() > contentArea.width()) {
         display = display.substring(0, contentArea.width());
@@ -832,9 +833,12 @@ public final class TuiRenderer {
     } else if (ctx.focus == Focus.RESULTS && ctx.browserMode) {
       if (ctx.sidebarFocused) {
         String pinsHint = ctx.tabs.size() > 1 ? "  {}:pins" : "";
-        String viewLabel = ctx.metadataBrowserMode ? "view detail" : "view entries";
+        boolean isMeta =
+            ctx.activeBrowserDescriptor != null && ctx.activeBrowserDescriptor.hasMetadataClasses();
+        String viewLabel = isMeta ? "view detail" : "view entries";
         hints = " \u2191\u2193:select  Enter/\u2192:" + viewLabel + "  Esc:close" + pinsHint;
-      } else if (ctx.metadataBrowserMode) {
+      } else if (ctx.activeBrowserDescriptor != null
+          && ctx.activeBrowserDescriptor.hasMetadataClasses()) {
         ResultTab at = ctx.activeTab();
         String navHint = "";
         if (ctx.metadataBrowserLineRefs != null

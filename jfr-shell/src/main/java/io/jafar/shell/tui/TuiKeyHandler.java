@@ -230,7 +230,8 @@ public final class TuiKeyHandler {
           ctx.browserNavPending = null;
           String name = browser.getSelectedSidebarName();
           if (!name.isEmpty()) browser.loadBrowserEntries(name, false);
-        } else if (ctx.metadataBrowserMode
+        } else if (ctx.activeBrowserDescriptor != null
+            && ctx.activeBrowserDescriptor.hasMetadataClasses()
             && ctx.metadataBrowserLineRefs != null
             && ctx.activeTab().selectedRow >= 0
             && ctx.activeTab().selectedRow < ctx.metadataBrowserLineRefs.size()) {
@@ -506,13 +507,7 @@ public final class TuiKeyHandler {
             ctx.sidebarSearchQuery = "";
             ctx.sidebarFilteredIndices = null;
           } else {
-            if (ctx.metadataBrowserMode) {
-              browser.exitMetadataBrowserMode();
-            } else if (ctx.eventBrowserMode) {
-              browser.exitEventBrowserMode();
-            } else {
-              browser.exitCpBrowserMode();
-            }
+            browser.exitBrowserMode();
             ctx.focus = Focus.INPUT;
           }
         }
@@ -699,7 +694,9 @@ public final class TuiKeyHandler {
         case 'A':
           if (hasTable) {
             executor.moveSelectedRow(rt, -1);
-          } else if (ctx.metadataBrowserMode && rt.selectedRow >= 0) {
+          } else if (ctx.activeBrowserDescriptor != null
+              && ctx.activeBrowserDescriptor.hasMetadataClasses()
+              && rt.selectedRow >= 0) {
             detailBuilder.moveMetadataCursor(rt, -1);
           } else {
             executor.scrollResults(-1);
@@ -708,7 +705,9 @@ public final class TuiKeyHandler {
         case 'B':
           if (hasTable) {
             executor.moveSelectedRow(rt, 1);
-          } else if (ctx.metadataBrowserMode && rt.selectedRow >= 0) {
+          } else if (ctx.activeBrowserDescriptor != null
+              && ctx.activeBrowserDescriptor.hasMetadataClasses()
+              && rt.selectedRow >= 0) {
             detailBuilder.moveMetadataCursor(rt, 1);
           } else {
             executor.scrollResults(1);

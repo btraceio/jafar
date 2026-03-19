@@ -3,6 +3,7 @@ package io.jafar.shell;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -117,8 +118,16 @@ public final class JfrTuiAdapter implements TuiAdapter {
   }
 
   @Override
-  public boolean isEventsSummaryAsync() {
-    return true;
+  public BrowseCategoryDescriptor describeBrowseCategory(String category) {
+    return switch (category) {
+      case "metadata" ->
+          new BrowseCategoryDescriptor("Metadata Types", null, "event", " *", false, true);
+      case "events" ->
+          new BrowseCategoryDescriptor("Event Types", "count", null, null, true, false);
+      case "constants" ->
+          new BrowseCategoryDescriptor("Constant Types", "totalSize", null, null, false, false);
+      default -> null;
+    };
   }
 
   @Override

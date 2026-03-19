@@ -4,6 +4,7 @@ import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -23,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -110,14 +110,7 @@ public final class TuiCommandExecutor {
     if (command.isEmpty()) return;
 
     if (ctx.browserMode) {
-      ctx.browserMode = false;
-      ctx.eventBrowserMode = false;
-      ctx.metadataBrowserMode = false;
-      ctx.sidebarFocused = false;
-      ctx.sidebarSearchQuery = "";
-      ctx.sidebarFilteredIndices = null;
-      ctx.metadataBrowserLineRefs = null;
-      ctx.metadataByName = null;
+      browser.exitBrowserMode();
     }
 
     if ("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)) {
@@ -241,9 +234,11 @@ public final class TuiCommandExecutor {
       if (category != null) {
         Session session = sessions.current().map(ref -> ref.session).orElse(null);
         if (session != null) {
+          BrowseCategoryDescriptor desc = tuiAdapter.describeBrowseCategory(category);
+
           // Async loading for expensive categories (e.g. JFR events scan)
-          if ("events".equals(category) && tuiAdapter.isEventsSummaryAsync()) {
-            ctx.eventBrowserPending = true;
+          if (desc != null && desc.asyncLoading()) {
+            ctx.asyncBrowserPending = true;
             ctx.browserCategory = category;
             ctx.asyncLinesBeforeDispatch = 0;
             ctx.asyncOutputBuffer = new ArrayList<>();
@@ -261,7 +256,7 @@ public final class TuiCommandExecutor {
                         ctx.asyncTableData = summary;
                       } catch (Exception e) {
                         ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
-                        ctx.eventBrowserPending = false;
+                        ctx.asyncBrowserPending = false;
                       } finally {
                         ctx.commandRunning = false;
                       }
@@ -269,23 +264,14 @@ public final class TuiCommandExecutor {
             return;
           }
 
-          // Synchronous browser mode (metadata, constants, etc.)
+          // Synchronous browser mode
           try {
-            if ("metadata".equals(category)) {
-              List<Map<String, Object>> typeRows = tuiAdapter.loadBrowseSummary(session, category);
-              Map<String, Map<String, Object>> allMeta = tuiAdapter.loadMetadataClasses(session);
-              if (typeRows != null && !typeRows.isEmpty()) {
-                browser.enterMetadataBrowserMode(
-                    activeTab, typeRows, allMeta != null ? allMeta : new HashMap<>());
-                return;
-              }
-            } else {
-              List<Map<String, Object>> summary = tuiAdapter.loadBrowseSummary(session, category);
-              if (summary != null && !summary.isEmpty()) {
-                activeTab.tableData = summary;
-                browser.enterBrowserMode(activeTab, category);
-                return;
-              }
+            List<Map<String, Object>> summary = tuiAdapter.loadBrowseSummary(session, category);
+            if (summary != null && !summary.isEmpty()) {
+              activeTab.tableData = summary;
+              ctx.browserCategory = category;
+              browser.enterBrowserMode(activeTab, category);
+              return;
             }
           } catch (Exception ignore) {
             // Fall through to normal dispatch
@@ -363,8 +349,8 @@ public final class TuiCommandExecutor {
   }
 
   void finishAsyncCommand() {
-    if (ctx.eventBrowserPending) {
-      ctx.eventBrowserPending = false;
+    if (ctx.asyncBrowserPending) {
+      ctx.asyncBrowserPending = false;
       ResultTab activeTab = ctx.activeTab();
       List<Map<String, Object>> summary = ctx.asyncTableData;
       ctx.asyncTableData = null;
@@ -568,16 +554,14 @@ public final class TuiCommandExecutor {
     ResultTab newTab = ctx.tabs.get(newIndex);
     if (newTab.sidebarIndex >= 0 && newTab.browserTypes != null) {
       ctx.browserMode = true;
-      ctx.eventBrowserMode = newTab.isEventBrowserTab;
-      ctx.metadataBrowserMode = newTab.isMetadataBrowserTab;
+      ctx.activeBrowserDescriptor = newTab.browserDescriptor;
       ctx.sidebarTypes = newTab.browserTypes;
       ctx.sidebarSelectedIndex = newTab.sidebarIndex;
       ctx.sidebarFocused = false;
     } else {
       if (newTab.sidebarIndex >= 0) newTab.sidebarIndex = -1;
       ctx.browserMode = false;
-      ctx.eventBrowserMode = false;
-      ctx.metadataBrowserMode = false;
+      ctx.activeBrowserDescriptor = null;
       ctx.sidebarFocused = false;
     }
     detailBuilder.buildDetailTabs(newTab);

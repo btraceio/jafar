@@ -2,6 +2,7 @@ package io.jafar.shell.tui;
 
 import dev.tamboui.layout.Rect;
 import dev.tamboui.widgets.input.TextInputState;
+import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.io.BufferedReader;
@@ -98,8 +99,7 @@ public final class TuiContext {
     long marqueeTick0; // renderTick when name was set (marquee epoch)
     int sidebarIndex = -1; // sidebar selection index for browser tabs (-1 = not a browser tab)
     List<Map<String, Object>> browserTypes; // sidebar type list for this browser tab
-    boolean isEventBrowserTab; // true if this tab was opened in event browser mode
-    boolean isMetadataBrowserTab; // true if this tab was opened in metadata browser mode
+    BrowseCategoryDescriptor browserDescriptor; // descriptor for this browser tab, or null
 
     // Paginated rendering — render only a page of rows at a time
     List<Map<String, Object>> cpAllEntries; // full entries from provider (null for non-CP)
@@ -243,8 +243,7 @@ public final class TuiContext {
 
   // Browser mode
   boolean browserMode;
-  boolean eventBrowserMode;
-  boolean metadataBrowserMode;
+  BrowseCategoryDescriptor activeBrowserDescriptor; // null when not browsing
   String browserCategory; // generic category name for adapter-driven browser modes
   List<Map<String, Object>> sidebarTypes;
   int sidebarSelectedIndex;
@@ -270,7 +269,7 @@ public final class TuiContext {
   volatile List<String> asyncTableHeaders;
   volatile List<Map<String, Object>> asyncMetadataClasses;
   volatile int asyncPreambleLines;
-  volatile boolean eventBrowserPending;
+  volatile boolean asyncBrowserPending;
 
   // ---- convenience accessors ----
 

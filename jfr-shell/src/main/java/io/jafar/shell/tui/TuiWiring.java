@@ -48,8 +48,7 @@ public final class TuiWiring {
       // Exit browser mode on adapter swap
       if (ctx.browserMode) {
         ctx.browserMode = false;
-        ctx.eventBrowserMode = false;
-        ctx.metadataBrowserMode = false;
+        ctx.activeBrowserDescriptor = null;
         ctx.browserCategory = null;
         ctx.sidebarFocused = false;
         ctx.sidebarSearchQuery = "";
