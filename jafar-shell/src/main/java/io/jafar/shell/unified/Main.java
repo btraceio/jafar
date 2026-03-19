@@ -1,5 +1,6 @@
-package io.jafar.shell;
+package io.jafar.shell.unified;
 
+import io.jafar.shell.TuiShell;
 import io.jafar.shell.plugin.PluginManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,10 +20,21 @@ public final class Main implements Callable<Integer> {
       description = "File to open immediately (interactive mode)")
   private String file;
 
+  @CommandLine.Parameters(
+      index = "0",
+      arity = "0..1",
+      description = "File to open (JFR recording or HPROF heap dump)")
+  private String positionalFile;
+
   @CommandLine.Option(
       names = {"-q", "--quiet"},
       description = "Suppress banner (interactive mode)")
   private boolean quiet;
+
+  @CommandLine.Option(
+      names = {"--tui"},
+      description = "Launch full-screen TUI mode instead of readline REPL")
+  private boolean tui;
 
   public static void main(String[] args) {
     // Initialize plugin system before BackendRegistry is accessed
@@ -58,14 +70,28 @@ public final class Main implements Callable<Integer> {
 
   @Override
   public Integer call() throws Exception {
+    // -f/--file takes precedence over positional argument
+    String target = file != null ? file : positionalFile;
+    Path targetPath = null;
+    if (target != null) {
+      targetPath = Paths.get(target);
+      if (!Files.exists(targetPath)) {
+        System.err.println("Error: File not found: " + target);
+        return 1;
+      }
+    }
+
+    if (tui) {
+      try (TuiShell tuiShell = new TuiShell(targetPath)) {
+        tuiShell.openIfPresent(targetPath);
+        tuiShell.run();
+        return 0;
+      }
+    }
+
     try (Shell shell = new Shell()) {
-      if (file != null) {
-        Path p = Paths.get(file);
-        if (!Files.exists(p)) {
-          System.err.println("Error: File not found: " + file);
-          return 1;
-        }
-        shell.openIfPresent(p);
+      if (targetPath != null) {
+        shell.openIfPresent(targetPath);
       }
       shell.run();
       return 0;

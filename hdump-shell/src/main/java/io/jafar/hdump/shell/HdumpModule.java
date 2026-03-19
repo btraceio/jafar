@@ -6,6 +6,7 @@ import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.TuiAdapter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -72,7 +73,8 @@ public final class HdumpModule implements ShellModule {
       return true;
     } catch (IOException e) {
       LOG.debug("Failed to check magic bytes for {}: {}", path, e.getMessage());
-      return false;
+      // Fall back to extension check (e.g. when file has macOS quarantine restrictions)
+      return ShellModule.super.canHandle(path);
     }
   }
 
@@ -103,6 +105,11 @@ public final class HdumpModule implements ShellModule {
         "show objects/java.lang.Thread[name='main']",
         "show classes/java.* | select(name, instanceCount, totalSize)",
         "show gcroots | stats(retainedSize)");
+  }
+
+  @Override
+  public TuiAdapter createTuiAdapter(SessionManager<?> sessions, Object context) {
+    return new HdumpTuiAdapter(sessions);
   }
 
   @Override

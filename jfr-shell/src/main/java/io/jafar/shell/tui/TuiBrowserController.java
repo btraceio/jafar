@@ -2,7 +2,9 @@ package io.jafar.shell.tui;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.TuiAdapter;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ConstantPoolProvider;
@@ -22,14 +24,19 @@ import java.util.Set;
  */
 public final class TuiBrowserController {
   private final TuiContext ctx;
-  private final SessionManager<JFRSession> sessions;
+  private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
+  private TuiAdapter tuiAdapter;
 
   TuiBrowserController(
-      TuiContext ctx, SessionManager<JFRSession> sessions, TuiDetailBuilder detailBuilder) {
+      TuiContext ctx, SessionManager<? extends Session> sessions, TuiDetailBuilder detailBuilder) {
     this.ctx = ctx;
     this.sessions = sessions;
     this.detailBuilder = detailBuilder;
+  }
+
+  void setTuiAdapter(TuiAdapter adapter) {
+    this.tuiAdapter = adapter;
   }
 
   // ---- command detection ----
@@ -133,6 +140,48 @@ public final class TuiBrowserController {
 
     String firstName = getSelectedSidebarName();
     if (!firstName.isEmpty()) loadCpEntries(firstName, true);
+  }
+
+  /**
+   * Generic entry point for browser mode. Routes to the appropriate specialized browser mode based
+   * on the category name.
+   */
+  void enterBrowserMode(ResultTab tab, String category) {
+    if ("events".equals(category)) {
+      enterEventBrowserMode(tab);
+    } else if ("metadata".equals(category)) {
+      // Metadata browser needs extra data; use enterMetadataBrowserMode directly
+      enterCpBrowserMode(tab);
+    } else if ("constants".equals(category)) {
+      enterCpBrowserMode(tab);
+    } else {
+      // Generic browser mode for module-provided categories
+      tab.name = category;
+      tab.marqueeTick0 = ctx.renderTick;
+      ctx.browserMode = true;
+      ctx.eventBrowserMode = false;
+      ctx.metadataBrowserMode = false;
+      ctx.browserCategory = category;
+      ctx.sidebarTypes = tab.tableData;
+      ctx.sidebarSelectedIndex = 0;
+      ctx.sidebarScrollOffset = 0;
+      ctx.sidebarFocused = true;
+      tab.sidebarIndex = 0;
+      tab.browserTypes = ctx.sidebarTypes;
+      tab.isEventBrowserTab = false;
+      tab.isMetadataBrowserTab = false;
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.dataStartLine = -1;
+      tab.lines.clear();
+      tab.maxLineWidth = 0;
+      clearDetailState();
+      ctx.focus = Focus.RESULTS;
+
+      String firstName = getSelectedSidebarName();
+      if (!firstName.isEmpty()) loadBrowserEntriesViaAdapter(firstName, true);
+    }
   }
 
   void exitCpBrowserMode() {
@@ -244,13 +293,114 @@ public final class TuiBrowserController {
       loadMetadataDetail(typeName, keepTypesFocused);
     } else if (ctx.eventBrowserMode) {
       loadEventEntries(typeName, keepTypesFocused);
+    } else if (ctx.browserCategory != null
+        && !"constants".equals(ctx.browserCategory)
+        && tuiAdapter != null) {
+      loadBrowserEntriesViaAdapter(typeName, keepTypesFocused);
     } else {
       loadCpEntries(typeName, keepTypesFocused);
     }
   }
 
+  private void loadBrowserEntriesViaAdapter(String typeName, boolean keepTypesFocused) {
+    Session session = sessions.current().map(ref -> ref.session).orElse(null);
+    if (session == null || tuiAdapter == null) return;
+
+    List<Map<String, Object>> entries;
+    try {
+      entries = tuiAdapter.loadBrowseEntries(session, ctx.browserCategory, typeName, -1);
+    } catch (Exception e) {
+      ResultTab tab = ctx.activeTab();
+      tab.lines.clear();
+      tab.lines.add("  Error: " + e.getMessage());
+      tab.maxLineWidth = tab.lines.get(0).length();
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.dataStartLine = -1;
+      tab.cpAllEntries = null;
+      tab.cpColumnHeaders = null;
+      tab.cpColumnWidths = null;
+      tab.cpRenderedCount = 0;
+      if (!keepTypesFocused) ctx.sidebarFocused = false;
+      return;
+    }
+    if (entries == null) entries = List.of();
+    // Reuse CP-style paginated rendering for adapter entries
+    loadEntriesIntoTab(entries, keepTypesFocused);
+  }
+
+  private void loadEntriesIntoTab(List<Map<String, Object>> entries, boolean keepTypesFocused) {
+    ResultTab tab = ctx.activeTab();
+    tab.sidebarIndex = ctx.sidebarSelectedIndex;
+    tab.lines.clear();
+    tab.scrollOffset = 0;
+    tab.hScrollOffset = 0;
+    tab.maxLineWidth = 0;
+    tab.searchQuery = "";
+    tab.detailSearchQuery = "";
+    tab.filteredIndices = null;
+    tab.filteredMaxLineWidth = 0;
+    tab.sortColumn = -1;
+    tab.sortAscending = true;
+    tab.metadataClassCache = null;
+
+    if (entries.isEmpty()) {
+      tab.lines.add("  (no entries)");
+      tab.maxLineWidth = tab.lines.get(0).length();
+      tab.tableData = null;
+      tab.tableHeaders = null;
+      tab.selectedRow = -1;
+      tab.dataStartLine = -1;
+      tab.cpAllEntries = null;
+      tab.cpColumnHeaders = null;
+      tab.cpColumnWidths = null;
+      tab.cpRenderedCount = 0;
+      clearDetailState();
+      if (!keepTypesFocused) ctx.sidebarFocused = false;
+      return;
+    }
+
+    Set<String> cols = new java.util.LinkedHashSet<>();
+    int sample = Math.min(entries.size(), 200);
+    for (int i = 0; i < sample; i++) cols.addAll(entries.get(i).keySet());
+    if (cols.size() <= 2 && entries.size() > sample) {
+      int sample2 = Math.min(entries.size(), 1000);
+      for (int i = 0; i < sample2; i++) cols.addAll(entries.get(i).keySet());
+    }
+    List<String> headers = new ArrayList<>(cols);
+
+    int[] widths = TuiTableRenderer.computeMaxWidths(headers, entries);
+
+    tab.cpAllEntries = entries;
+    tab.cpColumnHeaders = headers;
+    tab.cpColumnWidths = widths;
+
+    StringBuilder sb = new StringBuilder("  ");
+    for (int c = 0; c < headers.size(); c++) {
+      if (c > 0) sb.append("  ");
+      sb.append(String.format("%-" + widths[c] + "s", headers.get(c)));
+    }
+    String headerLine = sb.toString();
+    tab.lines.add(headerLine);
+    tab.maxLineWidth = Math.max(tab.maxLineWidth, headerLine.length());
+
+    int pageSize = Math.min(entries.size(), Math.max(ctx.resultsAreaHeight + 5, 20));
+    renderCpPage(tab, 0, pageSize);
+
+    tab.tableData = new ArrayList<>(entries.subList(0, pageSize));
+    tab.tableHeaders = headers;
+    tab.cpRenderedCount = pageSize;
+    tab.selectedRow = 0;
+    tab.dataStartLine = 1;
+    detailBuilder.buildDetailTabs(tab);
+
+    tab.scrollOffset = 0;
+    if (!keepTypesFocused) ctx.sidebarFocused = false;
+  }
+
   void loadCpEntries(String typeName, boolean keepTypesFocused) {
-    Path recording = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
+    Path recording = sessions.current().map(ref -> ref.session.getFilePath()).orElse(null);
     if (recording == null) return;
 
     List<Map<String, Object>> entries;
@@ -348,8 +498,8 @@ public final class TuiBrowserController {
   }
 
   void loadEventEntries(String typeName, boolean keepTypesFocused) {
-    JFRSession session = sessions.current().map(ref -> ref.session).orElse(null);
-    if (session == null) return;
+    Session sess = sessions.current().map(ref -> ref.session).orElse(null);
+    if (!(sess instanceof JFRSession session)) return;
 
     List<Map<String, Object>> entries;
     try {

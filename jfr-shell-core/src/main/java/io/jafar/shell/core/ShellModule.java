@@ -62,6 +62,18 @@ public interface ShellModule {
   /** Returns the module priority (higher = preferred when multiple modules match). */
   int getPriority();
 
+  /**
+   * Creates a TUI adapter for this module, enabling full-screen TUI mode. Modules that don't
+   * support TUI mode should return null (the default).
+   *
+   * @param sessions the session manager
+   * @param context optional context object (module-specific)
+   * @return a TUI adapter, or null if TUI mode is not supported
+   */
+  default TuiAdapter createTuiAdapter(SessionManager<?> sessions, Object context) {
+    return null;
+  }
+
   /** Called once during module initialization. */
   void initialize();
 

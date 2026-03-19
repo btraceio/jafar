@@ -2,15 +2,11 @@ package io.jafar.shell.tui;
 
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
-import io.jafar.parser.api.ParsingContext;
-import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
-import io.jafar.shell.providers.ConstantPoolProvider;
-import io.jafar.shell.providers.MetadataProvider;
+import io.jafar.shell.core.TuiAdapter;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import io.jafar.shell.tui.TuiContext.TuiParsedLine;
@@ -26,10 +22,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,10 +44,11 @@ public final class TuiCommandExecutor {
 
   // Set after construction to break circular dependency (dispatcher → IO → executor)
   private CommandDispatcher dispatcher;
-  private SessionManager<JFRSession> sessions;
-  private ShellCompleter completer;
+  private SessionManager<? extends Session> sessions;
+  private org.jline.reader.Completer completer;
   private TuiBrowserController browser;
   private TuiDetailBuilder detailBuilder;
+  private TuiAdapter tuiAdapter;
 
   TuiCommandExecutor(TuiContext ctx, ExecutorService commandExecutor) {
     this.ctx = ctx;
@@ -64,11 +59,11 @@ public final class TuiCommandExecutor {
     this.dispatcher = dispatcher;
   }
 
-  void setSessions(SessionManager<JFRSession> sessions) {
+  void setSessions(SessionManager<? extends Session> sessions) {
     this.sessions = sessions;
   }
 
-  void setCompleter(ShellCompleter completer) {
+  public void setCompleter(org.jline.reader.Completer completer) {
     this.completer = completer;
   }
 
@@ -78,6 +73,14 @@ public final class TuiCommandExecutor {
 
   void setDetailBuilder(TuiDetailBuilder detailBuilder) {
     this.detailBuilder = detailBuilder;
+  }
+
+  public void setTuiAdapter(TuiAdapter adapter) {
+    this.tuiAdapter = adapter;
+  }
+
+  TuiAdapter getTuiAdapter() {
+    return tuiAdapter;
   }
 
   // ---- output capture ----
@@ -232,106 +235,62 @@ public final class TuiCommandExecutor {
     activeTab.cpColumnWidths = null;
     activeTab.cpRenderedCount = 0;
 
-    // Metadata browser mode
-    if (TuiBrowserController.isMetadataSummaryCommand(command) && MetadataProvider.isSupported()) {
-      Path metaRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
-      if (metaRec != null) {
-        try {
-          JFRSession sess = sessions.current().map(ref -> ref.session).orElse(null);
-          if (sess != null) {
-            var allTypeNames = sess.getNonPrimitiveMetadataTypes();
-            var eventNames = sess.getAvailableTypes();
-            List<String> sortedTypes = new ArrayList<>(allTypeNames);
-            Collections.sort(sortedTypes);
+    // Browser mode detection via TuiAdapter
+    if (tuiAdapter != null) {
+      String category = tuiAdapter.detectBrowserCommand(command);
+      if (category != null) {
+        Session session = sessions.current().map(ref -> ref.session).orElse(null);
+        if (session != null) {
+          // Async loading for expensive categories (e.g. JFR events scan)
+          if ("events".equals(category) && tuiAdapter.isEventsSummaryAsync()) {
+            ctx.eventBrowserPending = true;
+            ctx.browserCategory = category;
+            ctx.asyncLinesBeforeDispatch = 0;
+            ctx.asyncOutputBuffer = new ArrayList<>();
+            ctx.asyncMaxLineWidth = 0;
+            ctx.commandRunning = true;
+            ctx.commandStartTick = ctx.renderTick;
+            ctx.focus = Focus.RESULTS;
 
-            Map<String, Long> typeIds = sess.getMetadataTypeIds();
-            List<Map<String, Object>> typeRows = new ArrayList<>();
-            for (String t : sortedTypes) {
-              Long typeId = typeIds.get(t);
-              Map<String, Object> row = new LinkedHashMap<>();
-              row.put("id", typeId != null ? typeId : "?");
-              row.put("name", t);
-              row.put("event", eventNames.contains(t) ? "yes" : "");
-              typeRows.add(row);
-            }
-
-            Map<String, Map<String, Object>> allMeta = new HashMap<>();
-            List<Map<String, Object>> allMetaList = MetadataProvider.loadAllClasses(metaRec);
-            if (allMetaList != null) {
-              for (Map<String, Object> m : allMetaList) {
-                Object n = m.get("name");
-                if (n != null) allMeta.put(n.toString(), m);
-              }
-            }
-
-            if (!typeRows.isEmpty()) {
-              browser.enterMetadataBrowserMode(activeTab, typeRows, allMeta);
-              return;
-            }
-          }
-        } catch (Exception ignore) {
-          // Fall through to normal dispatch
-        }
-      }
-    }
-
-    // CP browser mode
-    if (TuiBrowserController.isCpSummaryCommand(command) && ConstantPoolProvider.isSupported()) {
-      Path cpRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
-      if (cpRec != null) {
-        try {
-          List<Map<String, Object>> cpSummary = ConstantPoolProvider.loadSummary(cpRec);
-          if (cpSummary != null && !cpSummary.isEmpty()) {
-            activeTab.tableData = cpSummary;
-            browser.enterCpBrowserMode(activeTab);
+            ctx.commandFuture =
+                commandExecutor.submit(
+                    () -> {
+                      try {
+                        List<Map<String, Object>> summary =
+                            tuiAdapter.loadBrowseSummary(session, category);
+                        ctx.asyncTableData = summary;
+                      } catch (Exception e) {
+                        ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
+                        ctx.eventBrowserPending = false;
+                      } finally {
+                        ctx.commandRunning = false;
+                      }
+                    });
             return;
           }
-        } catch (Exception ignore) {
+
+          // Synchronous browser mode (metadata, constants, etc.)
+          try {
+            if ("metadata".equals(category)) {
+              List<Map<String, Object>> typeRows = tuiAdapter.loadBrowseSummary(session, category);
+              Map<String, Map<String, Object>> allMeta = tuiAdapter.loadMetadataClasses(session);
+              if (typeRows != null && !typeRows.isEmpty()) {
+                browser.enterMetadataBrowserMode(
+                    activeTab, typeRows, allMeta != null ? allMeta : new HashMap<>());
+                return;
+              }
+            } else {
+              List<Map<String, Object>> summary = tuiAdapter.loadBrowseSummary(session, category);
+              if (summary != null && !summary.isEmpty()) {
+                activeTab.tableData = summary;
+                browser.enterBrowserMode(activeTab, category);
+                return;
+              }
+            }
+          } catch (Exception ignore) {
+            // Fall through to normal dispatch
+          }
         }
-      }
-    }
-
-    // Event browser mode — async scan
-    if (TuiBrowserController.isEventsSummaryCommand(command)) {
-      Path evtRec = sessions.current().map(ref -> ref.session.getRecordingPath()).orElse(null);
-      if (evtRec != null) {
-        ctx.eventBrowserPending = true;
-        ctx.asyncLinesBeforeDispatch = 0;
-        ctx.asyncOutputBuffer = new ArrayList<>();
-        ctx.asyncMaxLineWidth = 0;
-        ctx.commandRunning = true;
-        ctx.commandStartTick = ctx.renderTick;
-        ctx.focus = Focus.RESULTS;
-
-        ctx.commandFuture =
-            commandExecutor.submit(
-                () -> {
-                  try {
-                    Map<String, long[]> counts = new HashMap<>();
-                    try (var p = ParsingContext.create().newUntypedParser(evtRec)) {
-                      p.handle(
-                          (type, value, ctl) ->
-                              counts.computeIfAbsent(type.getName(), k -> new long[1])[0]++);
-                      p.run();
-                    }
-                    List<Map<String, Object>> summary = new ArrayList<>();
-                    counts.forEach(
-                        (name, c) -> {
-                          Map<String, Object> row = new LinkedHashMap<>();
-                          row.put("name", name);
-                          row.put("count", c[0]);
-                          summary.add(row);
-                        });
-                    summary.sort(Comparator.comparing(r -> String.valueOf(r.get("name"))));
-                    ctx.asyncTableData = summary;
-                  } catch (Exception e) {
-                    ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
-                    ctx.eventBrowserPending = false;
-                  } finally {
-                    ctx.commandRunning = false;
-                  }
-                });
-        return;
       }
     }
 
@@ -354,6 +313,31 @@ public final class TuiCommandExecutor {
               System.setErr(new PrintStream(errBuf));
               try {
                 boolean handled = dispatcher.dispatch(command);
+                if (!handled && tuiAdapter != null) {
+                  try {
+                    tuiAdapter.dispatch(
+                        command,
+                        new TuiAdapter.CommandIO() {
+                          @Override
+                          public void println(String s) {
+                            addOutputLine(s);
+                          }
+
+                          @Override
+                          public void printf(String fmt, Object... args) {
+                            addOutputLine(String.format(fmt, args));
+                          }
+
+                          @Override
+                          public void error(String s) {
+                            addOutputLine("ERROR: " + s);
+                          }
+                        });
+                    handled = true;
+                  } catch (Exception ignore) {
+                    // Adapter dispatch failed — fall through to unknown command
+                  }
+                }
                 if (!handled) {
                   ctx.asyncOutputBuffer.add(
                       "  Unknown command. Type 'help' for available commands.");
@@ -392,10 +376,12 @@ public final class TuiCommandExecutor {
 
       if (summary != null && !summary.isEmpty()) {
         activeTab.tableData = summary;
-        browser.enterEventBrowserMode(activeTab);
+        String category = ctx.browserCategory != null ? ctx.browserCategory : "events";
+        ctx.browserCategory = null;
+        browser.enterBrowserMode(activeTab, category);
       } else {
         activeTab.lines.clear();
-        activeTab.lines.add("  No events found.");
+        activeTab.lines.add("  No entries found.");
         activeTab.maxLineWidth = activeTab.lines.get(0).length();
       }
       return;

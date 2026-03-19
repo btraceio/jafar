@@ -32,7 +32,7 @@ public final class TuiContext {
   static final int EOF = -1;
   static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[0-9;]*[A-Za-z]");
   static final Path HISTORY_PATH =
-      Path.of(System.getProperty("user.home"), ".jfr-shell", "history");
+      Path.of(System.getProperty("user.home"), ".jafar-shell", "history");
   static final int MAX_HISTORY = 5000;
   static final int COMPLETION_MAX_WIDTH = 50;
   static final int COMPLETION_MAX_HEIGHT = 12;
@@ -245,6 +245,7 @@ public final class TuiContext {
   boolean browserMode;
   boolean eventBrowserMode;
   boolean metadataBrowserMode;
+  String browserCategory; // generic category name for adapter-driven browser modes
   List<Map<String, Object>> sidebarTypes;
   int sidebarSelectedIndex;
   int sidebarScrollOffset;

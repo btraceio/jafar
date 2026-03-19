@@ -122,7 +122,7 @@ public final class Main implements Callable<Integer> {
     }
 
     if (tui) {
-      try (TuiShell tuiShell = new TuiShell()) {
+      try (TuiShell tuiShell = new TuiShell(jfrPath)) {
         tuiShell.openIfPresent(jfrPath);
         tuiShell.run();
         return 0;

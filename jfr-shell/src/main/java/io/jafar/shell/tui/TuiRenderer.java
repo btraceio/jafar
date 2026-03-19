@@ -23,6 +23,7 @@ import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.TuiAdapter;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import java.util.ArrayList;
@@ -40,12 +41,17 @@ public final class TuiRenderer {
   private final TuiContext ctx;
   private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
+  private TuiAdapter tuiAdapter;
 
   TuiRenderer(
       TuiContext ctx, SessionManager<? extends Session> sessions, TuiDetailBuilder detailBuilder) {
     this.ctx = ctx;
     this.sessions = sessions;
     this.detailBuilder = detailBuilder;
+  }
+
+  void setTuiAdapter(TuiAdapter adapter) {
+    this.tuiAdapter = adapter;
   }
 
   void render(Frame frame) {
@@ -137,7 +143,11 @@ public final class TuiRenderer {
       sessionHint = " | " + altMod + "+s:switch";
     }
 
-    String status = " JFR Shell TUI" + sessionInfo + backendName + sessionHint;
+    String title =
+        tuiAdapter != null
+            ? " " + capitalize(tuiAdapter.getPromptPrefix()) + " Shell TUI"
+            : " Jafar Shell TUI";
+    String status = title + sessionInfo + backendName + sessionHint;
     if (status.length() < area.width()) {
       status = status + " ".repeat(area.width() - status.length());
     }
@@ -451,10 +461,16 @@ public final class TuiRenderer {
   // ---- sidebar ----
 
   private void renderSidebar(Frame frame, Rect area) {
-    String sidebarTitle =
-        ctx.metadataBrowserMode
-            ? "Metadata Types"
-            : ctx.eventBrowserMode ? "Event Types" : "Constant Types";
+    String sidebarTitle;
+    if (ctx.browserCategory != null) {
+      sidebarTitle = capitalize(ctx.browserCategory);
+    } else if (ctx.metadataBrowserMode) {
+      sidebarTitle = "Metadata Types";
+    } else if (ctx.eventBrowserMode) {
+      sidebarTitle = "Event Types";
+    } else {
+      sidebarTitle = "Constant Types";
+    }
     if (ctx.focus == Focus.SEARCH && ctx.searchOriginSidebar) {
       String q = ctx.searchInputState.text();
       if (!q.isEmpty()) sidebarTitle += " /" + q;
@@ -1227,5 +1243,10 @@ public final class TuiRenderer {
       return headerText.substring(0, pos) + indicator + headerText.substring(pos);
     }
     return headerText;
+  }
+
+  private static String capitalize(String s) {
+    if (s == null || s.isEmpty()) return s;
+    return Character.toUpperCase(s.charAt(0)) + s.substring(1);
   }
 }
