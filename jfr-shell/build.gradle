@@ -8,6 +8,26 @@ plugins {
 def libraryName = "jfr-shell"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
+def generateVersionSource = tasks.register('generateVersionSource') {
+    def outDir = layout.buildDirectory.dir('generated/sources/version/main/java')
+    outputs.dir(outDir)
+    inputs.property('version', component_version)
+    doLast {
+        def f = outDir.get().file('io/jafar/shell/Version.java').asFile
+        f.parentFile.mkdirs()
+        f.text = """\
+package io.jafar.shell;
+
+final class Version {
+    static final String VALUE = "${component_version}";
+    private Version() {}
+}
+"""
+    }
+}
+compileJava.dependsOn(generateVersionSource)
+sourceSets.main.java.srcDir(generateVersionSource.map { it.outputs.files.singleFile })
+
 repositories {
     mavenCentral()
     mavenLocal()

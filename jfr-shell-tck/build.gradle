@@ -5,7 +5,7 @@ plugins {
 }
 
 def libraryName = "jfr-shell-tck"
-def component_version = "0.1.0-SNAPSHOT"
+def component_version = rootProject.version
 
 repositories {
     mavenCentral()

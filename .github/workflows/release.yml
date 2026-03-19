@@ -246,22 +246,28 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="${{ needs.prepare.outputs.version_tag }}"
 
+          # Read the next snapshot version from main branch build.gradle
+          # (developer bumps this right after cutting the release tag)
+          NEXT_SNAPSHOT=$(curl -sf "https://raw.githubusercontent.com/${{ github.repository }}/main/build.gradle" | grep "^project.version=" | cut -d'"' -f2)
+          if [ -z "$NEXT_SNAPSHOT" ] || [[ "$NEXT_SNAPSHOT" != *-SNAPSHOT ]]; then
+            echo "ERROR: Could not determine next snapshot version from main branch (got: '$NEXT_SNAPSHOT')"
+            exit 1
+          fi
+
+          echo "Released: $VERSION, next snapshot: $NEXT_SNAPSHOT"
+
           cd catalog
 
-          # Update jbang-catalog.json using jq for precise updates
-          # Update jafar-shell-latest (Maven Central release)
-          jq --arg ver "$VERSION" '.aliases["jafar-shell-latest"]["script-ref"] = "io.btrace:jafar-shell:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
-
-          # Update jfr-mcp (stable release, not jfr-mcp-dev)
+          # Update stable aliases to released version
+          jq --arg ver "$VERSION" '.aliases["jafar-shell"]["script-ref"] = "io.btrace:jafar-shell:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
           jq --arg ver "$VERSION" '.aliases["jfr-mcp"]["script-ref"] = "io.btrace:jfr-mcp:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
 
-          # Update jafar-shell.java (//DEPS for snapshot/dev builds)
-          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
+          # Update jfr-shell.java stable wrapper to released version
+          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jfr-shell.java
 
-          # Update jfr-mcp.java (if exists)
-          if [ -f jfr-mcp.java ]; then
-            sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$VERSION|g" jfr-mcp.java
-          fi
+          # Bump -latest wrappers to the next snapshot version
+          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$NEXT_SNAPSHOT|g" jafar-shell-latest.java
+          sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$NEXT_SNAPSHOT|g" jfr-mcp-latest.java
 
           # Clean up backup files
           rm -f *.bak
@@ -287,10 +293,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Stage all modified catalog files
-          git add jbang-catalog.json jafar-shell.java
-          [ -f jfr-mcp.java ] && git add jfr-mcp.java
+          git add jbang-catalog.json jfr-shell.java jafar-shell-latest.java jfr-mcp-latest.java
 
-          if git commit -m "Update jafar-shell and jfr-mcp to version $VERSION"; then
+          if git commit -m "Release $VERSION; bump snapshots to next version"; then
             git push || echo "⚠️ Push failed - update catalog manually at https://github.com/btraceio/jbang-catalog"
           fi
 
