@@ -116,8 +116,9 @@ class CommandDispatcherTest {
     assertFalse(genericDispatcher.dispatch("constants/jdk.types.Symbol"));
     assertFalse(genericDispatcher.dispatch("backend"));
 
-    // show should also return false for non-JFR (no module evaluator set)
-    assertFalse(genericDispatcher.dispatch("show events/jdk.ExecutionSample"));
+    // show is always handled (returns true) — produces error when no session/evaluator
+    assertTrue(genericDispatcher.dispatch("show events/jdk.ExecutionSample"));
+    assertTrue(genericIo.text().contains("No session"));
   }
 
   @Test
@@ -156,8 +157,10 @@ class CommandDispatcherTest {
 
     genericSm.open(Path.of("/tmp/test.hprof"), null);
 
-    // Without module evaluator, show returns false
-    assertFalse(genericDispatcher.dispatch("show objects/java.lang.String"));
+    // Without module evaluator, show is handled but produces error
+    assertTrue(genericDispatcher.dispatch("show objects/java.lang.String"));
+    assertTrue(genericIo.text().contains("No session"));
+    genericIo.clear();
 
     // Set a mock module evaluator
     io.jafar.shell.core.QueryEvaluator mockEval =

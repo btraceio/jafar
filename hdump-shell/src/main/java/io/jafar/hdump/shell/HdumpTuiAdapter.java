@@ -21,7 +21,6 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
   private final SessionManager<?> sessions;
   private final Completer completer;
-  private final HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
 
   public HdumpTuiAdapter(SessionManager<?> sessions) {
     this.sessions = sessions;
@@ -29,27 +28,10 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public void dispatch(String command, CommandIO io) throws Exception {
-    Session session = sessions.current().map(ref -> ref.session).orElse(null);
-    if (session == null) {
-      io.error("No session open");
-      return;
-    }
-    // Strip "show " prefix if present — the dispatcher already handles "show" routing
-    // but this method is called as a fallback for unrecognized commands
-    String expr = command.trim();
-    if (expr.toLowerCase().startsWith("show ")) {
-      expr = expr.substring(5).trim();
-    }
-    Object query = evaluator.parse(expr);
-    Object result = evaluator.evaluate(session, query);
-    if (result instanceof List<?> list) {
-      List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
-      for (Map<String, Object> row : rows) {
-        io.println(row.toString());
-      }
-    }
+    // Most queries are now handled by CommandDispatcher via module root-type aliases
+    // and the show/cmdShowModule path. This fallback handles any remaining edge cases.
+    io.error("Unknown command: " + command.trim());
   }
 
   @Override
@@ -67,10 +49,14 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return null;
     String first = parts[0].toLowerCase();
-    if ("classes".equals(first)) return "classes";
-    if ("show".equals(first) && parts.length >= 2 && "classes".equalsIgnoreCase(parts[1])) {
-      // Only bare "show classes" triggers browser, not "show classes/..."
-      if (parts.length == 2) return "classes";
+    // Bare "classes" or "objects" triggers browser (list all classes)
+    if ("classes".equals(first) || "objects".equals(first)) return "classes";
+    if ("show".equals(first) && parts.length >= 2) {
+      String second = parts[1].toLowerCase();
+      // Only bare "show classes" / "show objects" triggers browser, not "show classes/..." etc.
+      if (parts.length == 2 && ("classes".equals(second) || "objects".equals(second))) {
+        return "classes";
+      }
     }
     return null;
   }

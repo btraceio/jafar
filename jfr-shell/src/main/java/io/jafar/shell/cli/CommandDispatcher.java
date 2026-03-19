@@ -216,6 +216,19 @@ public class CommandDispatcher {
         return true;
       }
 
+      // Handle module-specific root types as show aliases (e.g. objects/, classes, gcroots)
+      if (moduleEvaluator != null && currentJfrSession() == null) {
+        for (String root : moduleEvaluator.getRootTypes()) {
+          if (cmd.equals(root) || cmd.startsWith(root + "/")) {
+            List<String> showArgs = new ArrayList<>(args.size() + 1);
+            showArgs.add(parts[0]);
+            showArgs.addAll(args);
+            cmdShowModule(showArgs, "show " + line.trim(), moduleEvaluator);
+            return true;
+          }
+        }
+      }
+
       switch (cmd) {
         case "open":
           cmdOpen(args);
@@ -247,7 +260,9 @@ public class CommandDispatcher {
             cmdShowModule(args, line, moduleEvaluator);
             return true;
           }
-          return false;
+          // No JFR session and no module evaluator — report no session
+          io.error("No session open");
+          return true;
         case "help":
           cmdHelp(args);
           return true;
