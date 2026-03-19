@@ -41,7 +41,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'io.jafar.shell.Main'
+    mainClass = 'io.jafar.shell.unified.Main'
 }
 
 shadowJar {

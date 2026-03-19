@@ -1,4 +1,4 @@
-package io.jafar.shell;
+package io.jafar.shell.unified;
 
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.SessionManager;

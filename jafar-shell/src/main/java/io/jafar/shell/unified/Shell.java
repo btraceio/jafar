@@ -1,10 +1,13 @@
-package io.jafar.shell;
+package io.jafar.shell.unified;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
 import java.io.IOException;
@@ -12,12 +15,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.ServiceLoader;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -50,14 +51,14 @@ public final class Shell implements AutoCloseable {
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
-    this.modules = loadModules();
+    this.modules = ShellModuleLoader.loadAll();
     this.moduleById = new HashMap<>();
     for (ShellModule module : modules) {
       moduleById.put(module.getId(), module);
     }
 
     // Create session manager with factory that routes to appropriate module
-    this.sessions = new SessionManager<>(this::createSessionForFile, null);
+    this.sessions = new SessionManager<>(new ModuleSessionFactory(modules), null);
     this.globalStore = new VariableStore();
 
     Path histPath = Paths.get(System.getProperty("user.home"), ".jafar-shell", "history");
@@ -141,35 +142,6 @@ public final class Shell implements AutoCloseable {
             .completer(dynamicCompleter)
             .parser(parser)
             .build();
-  }
-
-  private Session createSessionForFile(Path path, Object context) throws Exception {
-    // Find a module that can handle this file
-    for (ShellModule module : modules) {
-      if (module.canHandle(path)) {
-        return module.createSession(path, context);
-      }
-    }
-    throw new IllegalArgumentException("No module can handle file: " + path);
-  }
-
-  private List<ShellModule> loadModules() {
-    List<ShellModule> loaded = new ArrayList<>();
-    ServiceLoader<ShellModule> loader = ServiceLoader.load(ShellModule.class);
-    for (ShellModule module : loader) {
-      try {
-        module.initialize();
-        loaded.add(module);
-        LOG.info("Loaded module: {} ({})", module.getDisplayName(), module.getId());
-      } catch (Exception e) {
-        LOG.error("Failed to initialize module: {}", module.getId(), e);
-      }
-    }
-
-    // Sort by priority (highest first)
-    loaded.sort(Comparator.comparingInt(ShellModule::getPriority).reversed());
-
-    return loaded;
   }
 
   public void run() {

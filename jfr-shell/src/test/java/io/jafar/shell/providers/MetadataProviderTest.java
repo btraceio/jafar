@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -66,7 +67,8 @@ class MetadataProviderTest {
 
     StringBuilder out = new StringBuilder();
     StringBuilder err = new StringBuilder();
-    AtomicReference<SessionManager.SessionRef<JFRSession>> current = new AtomicReference<>(ref);
+    AtomicReference<SessionManager.SessionRef<? extends Session>> current =
+        new AtomicReference<>(ref);
     CommandDispatcher dispatcher =
         new CommandDispatcher(
             sessions,
