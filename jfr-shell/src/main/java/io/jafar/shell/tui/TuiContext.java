@@ -259,6 +259,7 @@ public final class TuiContext {
   Map<String, Map<String, Object>> metadataByName;
 
   // Async command execution state
+  volatile String asyncProgressMessage; // latest progress status from stderr, shown in spinner
   volatile boolean commandRunning;
   long commandStartTick;
   Future<?> commandFuture;

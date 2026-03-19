@@ -295,8 +295,8 @@ public final class TuiCommandExecutor {
             () -> {
               TuiTableRenderer.clearLastData();
               PrintStream origErr = System.err;
-              ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
-              System.setErr(new PrintStream(errBuf));
+              ProgressCapturingStream progressStream = new ProgressCapturingStream(ctx);
+              System.setErr(progressStream);
               try {
                 boolean handled = dispatcher.dispatch(command);
                 if (!handled && tuiAdapter != null) {
@@ -332,11 +332,9 @@ public final class TuiCommandExecutor {
                 ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
               } finally {
                 System.setErr(origErr);
-                String errOutput = errBuf.toString().trim();
-                if (!errOutput.isEmpty()) {
-                  for (String errLine : errOutput.split("\n")) {
-                    addOutputLine("  " + errLine);
-                  }
+                ctx.asyncProgressMessage = null;
+                for (String errLine : progressStream.getOutputLines()) {
+                  addOutputLine("  " + errLine);
                 }
                 ctx.asyncTableData = TuiTableRenderer.getLastTableData();
                 ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
@@ -1257,5 +1255,69 @@ public final class TuiCommandExecutor {
       return '"' + s.replace("\"", "\"\"") + '"';
     }
     return s;
+  }
+
+  /**
+   * A PrintStream that routes stderr output to the TUI spinner for progress updates. Lines
+   * containing {@code \r} are treated as progress updates and shown in the spinner status area.
+   * Complete {@code \n}-terminated lines are collected for display after the command finishes.
+   */
+  private static final class ProgressCapturingStream extends PrintStream {
+    private final TuiContext ctx;
+    private final StringBuilder currentLine = new StringBuilder();
+    private final List<String> outputLines = new ArrayList<>();
+
+    ProgressCapturingStream(TuiContext ctx) {
+      super(new ByteArrayOutputStream(0)); // dummy backing stream
+      this.ctx = ctx;
+    }
+
+    @Override
+    public void write(int b) {
+      handleChar((char) b);
+    }
+
+    @Override
+    public void write(byte[] buf, int off, int len) {
+      for (int i = off; i < off + len; i++) {
+        handleChar((char) buf[i]);
+      }
+    }
+
+    private void handleChar(char c) {
+      if (c == '\r') {
+        // Progress update — show in spinner, reset current line
+        String progress = currentLine.toString().trim();
+        if (!progress.isEmpty()) {
+          ctx.asyncProgressMessage = progress;
+        }
+        currentLine.setLength(0);
+      } else if (c == '\n') {
+        // Complete line — collect for final output
+        String line = currentLine.toString().trim();
+        if (!line.isEmpty()) {
+          outputLines.add(line);
+          ctx.asyncProgressMessage = line;
+        }
+        currentLine.setLength(0);
+      } else {
+        currentLine.append(c);
+      }
+    }
+
+    @Override
+    public void flush() {
+      // no-op — progress is routed immediately
+    }
+
+    List<String> getOutputLines() {
+      // Flush any remaining partial line
+      String remaining = currentLine.toString().trim();
+      if (!remaining.isEmpty()) {
+        outputLines.add(remaining);
+      }
+      currentLine.setLength(0);
+      return outputLines;
+    }
   }
 }

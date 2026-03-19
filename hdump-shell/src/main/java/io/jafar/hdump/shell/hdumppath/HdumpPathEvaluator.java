@@ -2128,11 +2128,21 @@ public final class HdumpPathEvaluator {
   /** Default mode: input objects ranked by retained size, no expansion. */
   private static List<Map<String, Object>> applyDominatorsTopRetainers(
       List<Map<String, Object>> results, long minRetained) {
-    return results.stream()
-        .filter(row -> retainedOf(row) >= minRetained)
-        .sorted((a, b) -> Long.compare(retainedOf(b), retainedOf(a)))
-        .limit(10)
-        .collect(Collectors.toList());
+    List<Map<String, Object>> filtered =
+        results.stream()
+            .filter(row -> retainedOf(row) >= minRetained)
+            .sorted((a, b) -> Long.compare(retainedOf(b), retainedOf(a)))
+            .limit(10)
+            .collect(Collectors.toList());
+    if (filtered.isEmpty() && minRetained > 0 && !results.isEmpty()) {
+      // minRetained filtered everything — fall back to top 10 by retained size
+      filtered =
+          results.stream()
+              .sorted((a, b) -> Long.compare(retainedOf(b), retainedOf(a)))
+              .limit(10)
+              .collect(Collectors.toList());
+    }
+    return filtered;
   }
 
   private static long retainedOf(Map<String, Object> row) {

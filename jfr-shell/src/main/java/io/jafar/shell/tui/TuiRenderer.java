@@ -287,7 +287,9 @@ public final class TuiRenderer {
     // Spinner while command running
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
-      Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " Running...");
+      String progressMsg = ctx.asyncProgressMessage;
+      String status = progressMsg != null ? progressMsg : "Running...";
+      Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " " + status);
       frame.renderWidget(spinner, inner);
       ctx.resultsAreaHeight = inner.height();
       return;
