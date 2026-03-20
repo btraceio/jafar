@@ -530,6 +530,7 @@ public final class HdumpPathParser {
       case "retainedbreakdown", "breakdown", "expanddominators" -> parseRetainedBreakdownOp();
       case "checkleaks", "leaks" -> parseCheckLeaksOp();
       case "dominators", "dominated" -> parseDominatorsOp();
+      case "join" -> parseJoinOp();
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };
   }
@@ -1109,6 +1110,47 @@ public final class HdumpPathParser {
       expect(')');
     }
     return new RetainedBreakdownOp(maxDepth);
+  }
+
+  private JoinOp parseJoinOp() {
+    expect('(');
+    String sessionRef = null;
+    String byField = null;
+
+    do {
+      skipWs();
+      if (lookahead("session=") || lookahead("session =")) {
+        matchKeyword("session");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Session value: quoted string, bare identifier, or integer literal
+        if (peek() == '"' || peek() == '\'') {
+          sessionRef = parseStringLiteral();
+        } else if (Character.isDigit(peek())) {
+          sessionRef = String.valueOf(parseNumber().intValue());
+        } else {
+          sessionRef = parseIdentifier();
+        }
+      } else if (lookahead("by=") || lookahead("by =")) {
+        matchKeyword("by");
+        skipWs();
+        expect('=');
+        skipWs();
+        byField = parseIdentifier();
+      } else {
+        throw new HdumpPathParseException("Expected session= or by= parameter in join()");
+      }
+      skipWs();
+    } while (matchChar(','));
+
+    expect(')');
+
+    if (sessionRef == null) {
+      throw new HdumpPathParseException("join() requires session= parameter");
+    }
+
+    return new JoinOp(sessionRef, byField);
   }
 
   private String parseStringOrIdentifier() {

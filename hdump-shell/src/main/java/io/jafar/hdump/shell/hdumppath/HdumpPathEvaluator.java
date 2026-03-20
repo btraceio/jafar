@@ -5,6 +5,9 @@ import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
 import io.jafar.hdump.util.ClassNameUtil;
 import io.jafar.shell.core.RowSorter;
+import io.jafar.shell.core.Session;
+import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.expr.ValueExpr;
 import java.util.*;
 import java.util.function.Function;
@@ -66,13 +69,31 @@ public final class HdumpPathEvaluator {
   private HdumpPathEvaluator() {}
 
   /**
-   * Evaluates a query against a heap session.
+   * Evaluates a query with access to other sessions for cross-session operators (e.g. join).
+   *
+   * @param session the heap session
+   * @param query the parsed query
+   * @param resolver resolves session references by ID or alias, may be null
+   * @return list of result maps
+   */
+  public static List<Map<String, Object>> evaluate(
+      HeapSession session, Query query, SessionResolver resolver) {
+    return evaluateInternal(session, query, resolver);
+  }
+
+  /**
+   * Evaluates a query against a heap session (no cross-session support).
    *
    * @param session the heap session
    * @param query the parsed query
    * @return list of result maps
    */
   public static List<Map<String, Object>> evaluate(HeapSession session, Query query) {
+    return evaluateInternal(session, query, null);
+  }
+
+  private static List<Map<String, Object>> evaluateInternal(
+      HeapSession session, Query query, SessionResolver resolver) {
     HeapDump dump = session.getHeapDump();
 
     // NOTE: Retained sizes are computed lazily when needed (e.g., by checkLeaks operations)
@@ -177,7 +198,7 @@ public final class HdumpPathEvaluator {
 
         // Apply the remaining (non-filter) pipeline ops to the limited results
         for (PipelineOp op : streamingPipeline) {
-          results = applyPipelineOp(session, results, op);
+          results = applyPipelineOp(session, results, op, query, resolver);
         }
         return results;
       }
@@ -193,7 +214,7 @@ public final class HdumpPathEvaluator {
 
     // Apply pipeline operations
     for (PipelineOp op : query.pipeline()) {
-      results = applyPipelineOp(session, results, op);
+      results = applyPipelineOp(session, results, op, query, resolver);
     }
 
     return results;
@@ -840,7 +861,7 @@ public final class HdumpPathEvaluator {
 
     // Apply remaining pipeline operations
     for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(null, results, op);
+      results = applyPipelineOp(session, results, op);
     }
 
     return results;
@@ -1201,6 +1222,18 @@ public final class HdumpPathEvaluator {
   // === Pipeline operations ===
 
   private static List<Map<String, Object>> applyPipelineOp(
+      HeapSession session,
+      List<Map<String, Object>> results,
+      PipelineOp op,
+      Query query,
+      SessionResolver resolver) {
+    if (op instanceof JoinOp j) {
+      return applyJoin(session, results, j, query, resolver);
+    }
+    return applyPipelineOp(session, results, op);
+  }
+
+  private static List<Map<String, Object>> applyPipelineOp(
       HeapSession session, List<Map<String, Object>> results, PipelineOp op) {
     return switch (op) {
       case SelectOp s -> applySelect(results, s);
@@ -1315,6 +1348,119 @@ public final class HdumpPathEvaluator {
         }
         yield applyDominators(session, session.getHeapDump(), results, d);
       }
+      case JoinOp j ->
+          throw new IllegalStateException(
+              "join() is not supported in this context (no multi-session access available)");
+    };
+  }
+
+  private static List<Map<String, Object>> applyJoin(
+      HeapSession session,
+      List<Map<String, Object>> results,
+      JoinOp joinOp,
+      Query query,
+      SessionResolver resolver) {
+    if (resolver == null) {
+      throw new IllegalStateException(
+          "join() requires a session resolver (no multi-session context)");
+    }
+
+    // Resolve baseline session
+    Optional<SessionManager.SessionRef<? extends Session>> baseRef =
+        resolver.resolve(joinOp.sessionRef());
+    if (baseRef.isEmpty()) {
+      throw new IllegalArgumentException("Cannot resolve session: " + joinOp.sessionRef());
+    }
+    Session baseSession = baseRef.get().session;
+    if (!(baseSession instanceof HeapSession baseHeapSession)) {
+      throw new IllegalArgumentException(
+          "Session " + joinOp.sessionRef() + " is not a heap session");
+    }
+
+    // Determine join key
+    String joinKey = joinOp.byField();
+    if (joinKey == null) {
+      joinKey = inferJoinKey(query.root());
+    }
+
+    // Build baseline query: same root/typePattern/predicates, empty pipeline
+    Query baselineQuery =
+        new Query(
+            query.root(), query.typePattern(), query.instanceof_(), query.predicates(), List.of());
+
+    // Evaluate baseline
+    List<Map<String, Object>> baselineResults = evaluate(baseHeapSession, baselineQuery);
+
+    // Index baseline results by join key (first occurrence wins for duplicate keys)
+    Map<Object, Map<String, Object>> baselineIndex = new LinkedHashMap<>();
+    for (Map<String, Object> row : baselineResults) {
+      Object key = getField(row, joinKey);
+      if (key != null) {
+        baselineIndex.putIfAbsent(key, row);
+      }
+    }
+
+    // Collect numeric field names from baseline for delta computation
+    Set<String> numericFields = new LinkedHashSet<>();
+    if (!baselineResults.isEmpty()) {
+      for (Map.Entry<String, Object> e : baselineResults.get(0).entrySet()) {
+        if (e.getValue() instanceof Number) {
+          numericFields.add(e.getKey());
+        }
+      }
+    }
+    // Also collect from current results
+    if (!results.isEmpty()) {
+      for (Map.Entry<String, Object> e : results.get(0).entrySet()) {
+        if (e.getValue() instanceof Number) {
+          numericFields.add(e.getKey());
+        }
+      }
+    }
+
+    // Left-join: for each current row, lookup baseline, add baseline.* and *Delta columns
+    List<Map<String, Object>> joined = new ArrayList<>(results.size());
+    for (Map<String, Object> row : results) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object key = getField(row, joinKey);
+      Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
+
+      out.put("baseline.exists", baseRow != null);
+
+      for (String field : numericFields) {
+        Object currentVal = getField(row, field);
+        Object baseVal = baseRow != null ? getField(baseRow, field) : null;
+        out.put("baseline." + field, baseVal);
+
+        if (currentVal instanceof Number cn && baseVal instanceof Number bn) {
+          if (currentVal instanceof Long && baseVal instanceof Long) {
+            out.put(field + "Delta", cn.longValue() - bn.longValue());
+          } else {
+            out.put(field + "Delta", cn.doubleValue() - bn.doubleValue());
+          }
+        } else if (currentVal instanceof Number cn) {
+          // Present in current but not in baseline
+          if (currentVal instanceof Long) {
+            out.put(field + "Delta", cn.longValue());
+          } else {
+            out.put(field + "Delta", cn.doubleValue());
+          }
+        } else {
+          out.put(field + "Delta", null);
+        }
+      }
+
+      joined.add(out);
+    }
+
+    return joined;
+  }
+
+  private static String inferJoinKey(Root root) {
+    return switch (root) {
+      case CLASSES -> ClassFields.NAME;
+      case OBJECTS -> ObjectFields.CLASS_NAME;
+      case GCROOTS -> GcRootFields.TYPE;
     };
   }
 

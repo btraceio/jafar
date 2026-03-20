@@ -153,7 +153,8 @@ public final class HdumpPath {
           RetentionPathsOp,
           RetainedBreakdownOp,
           CheckLeaksOp,
-          DominatorsOp {}
+          DominatorsOp,
+          JoinOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -446,6 +447,15 @@ public final class HdumpPath {
       this(mode, null, 0L);
     }
   }
+
+  /**
+   * Join with another session (heap diff). The join key is auto-inferred from the query root type
+   * unless overridden via {@code byField}.
+   *
+   * @param sessionRef session ID or alias string
+   * @param byField explicit join key field, or null for auto-inference
+   */
+  public record JoinOp(String sessionRef, String byField) implements PipelineOp {}
 
   // === Built-in field names for objects ===
 

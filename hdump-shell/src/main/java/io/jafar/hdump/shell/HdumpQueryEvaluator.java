@@ -6,6 +6,7 @@ import io.jafar.hdump.shell.hdumppath.HdumpPathParseException;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
+import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +31,22 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
           "head",
           "tail",
           "filter",
-          "distinct");
+          "distinct",
+          "pathToRoot",
+          "retentionPaths",
+          "retainedBreakdown",
+          "checkLeaks",
+          "dominators",
+          "join",
+          "len",
+          "uppercase",
+          "lowercase",
+          "trim",
+          "replace",
+          "abs",
+          "round",
+          "floor",
+          "ceil");
 
   @Override
   public Object parse(String queryString) throws QueryParseException {
@@ -50,6 +66,17 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       throw new IllegalArgumentException("Expected HdumpPath.Query, got " + query.getClass());
     }
     return HdumpPathEvaluator.evaluate(heapSession, hdumpQuery);
+  }
+
+  @Override
+  public Object evaluate(Session session, Object query, SessionResolver resolver) throws Exception {
+    if (!(session instanceof HeapSession heapSession)) {
+      throw new IllegalArgumentException("HdumpQueryEvaluator requires a HeapSession");
+    }
+    if (!(query instanceof Query hdumpQuery)) {
+      throw new IllegalArgumentException("Expected HdumpPath.Query, got " + query.getClass());
+    }
+    return HdumpPathEvaluator.evaluate(heapSession, hdumpQuery, resolver);
   }
 
   @Override
@@ -77,6 +104,23 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "tail" -> "tail(n) - Take last N results";
       case "filter", "where" -> "filter(predicate) - Filter results by condition";
       case "distinct", "unique" -> "distinct(field) - Get distinct values";
+      case "pathtoroot", "path" -> "pathToRoot() - Find path to GC root";
+      case "retentionpaths" -> "retentionPaths() - Merge retention paths at class level";
+      case "retainedbreakdown", "breakdown" ->
+          "retainedBreakdown(depth=N) - Expand dominator subtree by class";
+      case "checkleaks", "leaks" ->
+          "checkLeaks(detector=\"name\", threshold=N, minSize=N) - Run leak detection";
+      case "dominators", "dominated" -> "dominators() - Get dominated objects";
+      case "join" -> "join(session=id|alias[, by=field]) - Join with another session (heap diff)";
+      case "len" -> "len(field) - String length or collection size";
+      case "uppercase" -> "uppercase(field) - Convert to uppercase";
+      case "lowercase" -> "lowercase(field) - Convert to lowercase";
+      case "trim" -> "trim(field) - Trim whitespace";
+      case "replace" -> "replace(field, \"old\", \"new\") - Replace occurrences in string";
+      case "abs" -> "abs(field) - Absolute value";
+      case "round" -> "round(field) - Round to nearest integer";
+      case "floor" -> "floor(field) - Round down";
+      case "ceil" -> "ceil(field) - Round up";
       default -> null;
     };
   }

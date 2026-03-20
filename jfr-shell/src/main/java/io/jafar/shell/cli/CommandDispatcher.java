@@ -8,6 +8,7 @@ import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
@@ -862,7 +863,11 @@ public class CommandDispatcher {
       expr = sub.substitute(expr);
     }
     Object query = evaluator.parse(expr);
-    Object result = evaluator.evaluate(cur.get().session, query);
+    @SuppressWarnings("unchecked")
+    SessionResolver resolver =
+        id ->
+            (Optional<SessionManager.SessionRef<? extends Session>>) (Optional<?>) sessions.get(id);
+    Object result = evaluator.evaluate(cur.get().session, query, resolver);
     if (result instanceof List<?> list) {
       List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);

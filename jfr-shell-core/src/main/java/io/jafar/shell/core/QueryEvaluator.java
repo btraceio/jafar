@@ -24,6 +24,21 @@ public interface QueryEvaluator {
    */
   Object evaluate(Session session, Object query) throws Exception;
 
+  /**
+   * Evaluates a parsed query with access to other sessions via a resolver. Implementations that
+   * support cross-session operators (e.g. join) should override this method.
+   *
+   * @param session the session to query
+   * @param query the parsed query object
+   * @param resolver resolves session references by ID or alias
+   * @return the result
+   * @throws Exception if evaluation fails
+   */
+  default Object evaluate(Session session, Object query, SessionResolver resolver)
+      throws Exception {
+    return evaluate(session, query);
+  }
+
   /** Returns the root types supported by this query language (e.g. "events", "objects"). */
   List<String> getRootTypes();
 

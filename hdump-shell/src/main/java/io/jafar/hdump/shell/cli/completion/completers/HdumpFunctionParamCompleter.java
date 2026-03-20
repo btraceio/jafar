@@ -121,6 +121,27 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
       return;
     }
 
+    // For join, handle named parameters
+    if ("join".equals(functionName)) {
+      if ("session=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "session=", "session=", "session ID or alias"));
+      }
+      if ("by=".startsWith(partial) || partial.isEmpty()) {
+        candidates.add(candidateNoSpace(prefix + "by=", "by=", "join key field override"));
+      }
+      // If completing by= value, suggest fields
+      if (partial.startsWith("by=")) {
+        String valuePartial = partial.substring(3);
+        List<String> fieldsList = metadata.getFieldsForRootType(rootType);
+        for (String field : fieldsList) {
+          if (field.startsWith(valuePartial)) {
+            candidates.add(candidateNoSpace(prefix + "by=" + field, field, null));
+          }
+        }
+      }
+      return;
+    }
+
     // For groupBy, check if we're completing a named parameter value
     if ("groupBy".equals(functionName) && ctx.parameterIndex() > 0) {
       // Check if completing sort= value
