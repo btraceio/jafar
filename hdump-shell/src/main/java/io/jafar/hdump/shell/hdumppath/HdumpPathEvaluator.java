@@ -4,6 +4,9 @@ import io.jafar.hdump.api.*;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
 import io.jafar.hdump.util.ClassNameUtil;
+import io.jafar.shell.core.AllocationAggregator;
+import io.jafar.shell.core.CrossSessionContext;
+import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -1379,10 +1382,6 @@ public final class HdumpPathEvaluator {
       throw new IllegalArgumentException("Cannot resolve session: " + joinOp.sessionRef());
     }
     Session baseSession = baseRef.get().session;
-    if (!(baseSession instanceof HeapSession baseHeapSession)) {
-      throw new IllegalArgumentException(
-          "Session " + joinOp.sessionRef() + " is not a heap session");
-    }
 
     // Determine join key
     String joinKey = joinOp.byField();
@@ -1390,6 +1389,27 @@ public final class HdumpPathEvaluator {
       joinKey = inferJoinKey(query.root());
     }
 
+    if (baseSession instanceof HeapSession baseHeapSession && joinOp.root() == null) {
+      // Heap-to-heap diff (existing behaviour)
+      return applyHeapJoin(session, results, joinOp, query, baseHeapSession, joinKey);
+    } else if (joinOp.root() != null) {
+      // Cross-type join (JFR correlation)
+      return applyCrossTypeJoin(results, joinOp, baseSession, joinKey, resolver);
+    } else {
+      throw new IllegalArgumentException(
+          "Session "
+              + joinOp.sessionRef()
+              + " is not a heap session — use root= for cross-type join");
+    }
+  }
+
+  private static List<Map<String, Object>> applyHeapJoin(
+      HeapSession session,
+      List<Map<String, Object>> results,
+      JoinOp joinOp,
+      Query query,
+      HeapSession baseHeapSession,
+      String joinKey) {
     // Build baseline query: same root/typePattern/predicates, empty pipeline
     Query baselineQuery =
         new Query(
@@ -1446,7 +1466,6 @@ public final class HdumpPathEvaluator {
             out.put(field + "Delta", cn.doubleValue() - bn.doubleValue());
           }
         } else if (currentVal instanceof Number cn) {
-          // Present in current but not in baseline
           if (currentVal instanceof Long) {
             out.put(field + "Delta", cn.longValue());
           } else {
@@ -1455,6 +1474,83 @@ public final class HdumpPathEvaluator {
         } else {
           out.put(field + "Delta", null);
         }
+      }
+
+      joined.add(out);
+    }
+
+    return joined;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> applyCrossTypeJoin(
+      List<Map<String, Object>> results,
+      JoinOp joinOp,
+      Session baseSession,
+      String joinKey,
+      SessionResolver resolver) {
+    if (!(resolver instanceof CrossSessionContext ctx)) {
+      throw new IllegalStateException(
+          "Cross-type join requires a CrossSessionContext (not available in this shell context)");
+    }
+
+    Optional<QueryEvaluator> evalOpt = ctx.evaluatorFor(baseSession);
+    if (evalOpt.isEmpty()) {
+      throw new IllegalArgumentException(
+          "No query evaluator found for session type: " + baseSession.getType());
+    }
+    QueryEvaluator jfrEvaluator = evalOpt.get();
+
+    // Query all events of the specified root type from the JFR session
+    String jfrQueryStr = "events/" + joinOp.root();
+    List<Map<String, Object>> jfrRows;
+    try {
+      Object parsed = jfrEvaluator.parse(jfrQueryStr);
+      Object jfrResult = jfrEvaluator.evaluate(baseSession, parsed);
+      if (jfrResult instanceof List<?> list) {
+        jfrRows = (List<Map<String, Object>>) list;
+      } else {
+        jfrRows = List.of();
+      }
+    } catch (Exception e) {
+      throw new IllegalStateException(
+          "Failed to query JFR session for " + joinOp.root() + ": " + e.getMessage(), e);
+    }
+
+    // Aggregate JFR events by class
+    Map<String, Map<String, Object>> allocStats = AllocationAggregator.aggregate(jfrRows);
+
+    // Left-join: enrich each heap row with allocation statistics
+    List<Map<String, Object>> joined = new ArrayList<>(results.size());
+    for (Map<String, Object> row : results) {
+      Map<String, Object> out = new LinkedHashMap<>(row);
+      Object keyObj = getField(row, joinKey);
+      String className = keyObj != null ? String.valueOf(keyObj) : null;
+
+      Map<String, Object> stats = className != null ? allocStats.get(className) : null;
+
+      if (stats != null) {
+        out.put("allocCount", stats.get("allocCount"));
+        out.put("allocWeight", stats.get("allocWeight"));
+        out.put("allocRate", stats.get("allocRate"));
+        out.put("topAllocSite", stats.get("topAllocSite"));
+
+        // Compute survivalRatio = instanceCount / allocCount
+        Object instanceCountObj = getField(row, "instanceCount");
+        Object allocCountObj = stats.get("allocCount");
+        if (instanceCountObj instanceof Number ic
+            && allocCountObj instanceof Number ac
+            && ac.longValue() > 0) {
+          out.put("survivalRatio", ic.doubleValue() / ac.doubleValue());
+        } else {
+          out.put("survivalRatio", null);
+        }
+      } else {
+        out.put("allocCount", null);
+        out.put("allocWeight", null);
+        out.put("allocRate", null);
+        out.put("topAllocSite", null);
+        out.put("survivalRatio", null);
       }
 
       joined.add(out);

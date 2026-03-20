@@ -121,7 +121,7 @@ objects/instanceof/java.util.Map      # Include subclasses
 | `checkLeaks` | `checkLeaks()` or `objects \| checkLeaks` |
 | `dominators` | `objects \| dominators(groupBy="class")` |
 | `waste` | `objects/instanceof/java.util.HashMap \| waste()` |
-| `join` | `classes \| join(session=1)` |
+| `join` | `classes \| join(session=1)` or `classes \| join(session=1, root="jdk.ObjectAllocationSample", by=class)` |
 
 ## Common Workflows
 
@@ -193,6 +193,23 @@ hdump> classes | join(session=1) | sortBy(instanceCountDelta desc) | head(20)
 
 # Find growing classes
 hdump> classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCountDelta)
+```
+
+### JFR + Heap Dump Correlation
+
+```bash
+# Open a JFR recording and a heap dump
+hdump> open recording.jfr
+hdump> open dump.hprof
+
+# Enrich class histogram with allocation data from JFR
+hdump> classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-churn classes (many allocations, few survivors)
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+
+# Top classes by allocation weight
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
 ```
 
 ## Output Options

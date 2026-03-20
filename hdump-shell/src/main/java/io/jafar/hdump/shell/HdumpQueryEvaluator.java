@@ -112,7 +112,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "checkleaks", "leaks" ->
           "checkLeaks(detector=\"name\", threshold=N, minSize=N) - Run leak detection";
       case "dominators", "dominated" -> "dominators() - Get dominated objects";
-      case "join" -> "join(session=id|alias[, by=field]) - Join with another session (heap diff)";
+      case "join" ->
+          "join(session=id|alias[, root=\"eventType\", by=field]) - Join with another session (heap diff or JFR correlation)";
       case "len" -> "len(field) - String length or collection size";
       case "uppercase" -> "uppercase(field) - Convert to uppercase";
       case "lowercase" -> "lowercase(field) - Convert to lowercase";

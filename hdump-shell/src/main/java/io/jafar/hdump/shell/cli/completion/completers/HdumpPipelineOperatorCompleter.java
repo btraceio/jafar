@@ -56,7 +56,7 @@ public final class HdumpPipelineOperatorCompleter
       case "retainedBreakdown" -> "retainedBreakdown(depth=N)";
       case "checkLeaks" -> "checkLeaks(detector=\"name\", threshold=N, minSize=N)";
       case "dominators" -> "dominators()";
-      case "join" -> "join(session=id|alias, by=field)";
+      case "join" -> "join(session=id|alias, root=\"eventType\", by=field)";
       case "len" -> "len(field)";
       case "uppercase" -> "uppercase(field)";
       case "lowercase" -> "lowercase(field)";
@@ -89,7 +89,7 @@ public final class HdumpPipelineOperatorCompleter
       case "retainedBreakdown" -> "expand dominator subtree by class";
       case "checkLeaks" -> "run leak detection analysis";
       case "dominators" -> "get dominated objects";
-      case "join" -> "join with another session (heap diff)";
+      case "join" -> "join with another session (heap diff or JFR correlation)";
       case "len" -> "string length or collection size";
       case "uppercase" -> "convert to uppercase";
       case "lowercase" -> "convert to lowercase";

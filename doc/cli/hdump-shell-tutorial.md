@@ -460,6 +460,31 @@ The `join` operator adds `baseline.*` and `*Delta` columns for every numeric fie
 The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots)
 and can be overridden with `by=field`.
 
+### JFR + Heap Dump Correlation
+
+When you have both a JFR recording and a heap dump from the same application, you can
+correlate allocation activity (from JFR) with heap state (from the dump). Use the `root=`
+parameter to specify the JFR event type:
+
+```bash
+# Open both sources
+hdump> open recording.jfr
+hdump> open dump.hprof
+
+# Enrich class histogram with allocation data from JFR
+hdump> classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-churn classes: many allocations but few survivors in the heap
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+
+# Top classes by total allocation weight
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
+```
+
+The JFR correlation adds enrichment columns: `allocCount`, `allocWeight`, `allocRate`,
+`topAllocSite`, and `survivalRatio` (instanceCount / allocCount). Classes with no matching
+JFR events get null values for all enrichment columns.
+
 ### Export for Further Analysis
 
 ```bash

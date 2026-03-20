@@ -2,6 +2,7 @@ package io.jafar.shell.unified;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
@@ -493,7 +494,8 @@ public final class Shell implements AutoCloseable {
     }
 
     try {
-      Object result = evaluator.evaluate(ref.session, cleanQuery);
+      CrossSessionContext ctx = buildCrossSessionContext();
+      Object result = evaluator.evaluate(ref.session, cleanQuery, ctx);
       if (limit != null && result instanceof List<?> list) {
         result = list.subList(0, Math.min(limit, list.size()));
       }
@@ -503,6 +505,23 @@ public final class Shell implements AutoCloseable {
       e.printStackTrace();
       terminal.flush();
     }
+  }
+
+  private CrossSessionContext buildCrossSessionContext() {
+    return new CrossSessionContext() {
+      @Override
+      @SuppressWarnings("unchecked")
+      public Optional<SessionManager.SessionRef<? extends Session>> resolve(String idOrAlias) {
+        return (Optional<SessionManager.SessionRef<? extends Session>>)
+            (Optional<?>) sessions.get(idOrAlias);
+      }
+
+      @Override
+      public Optional<QueryEvaluator> evaluatorFor(Session session) {
+        ShellModule module = moduleById.get(session.getType());
+        return module != null ? Optional.of(module.getQueryEvaluator()) : Optional.empty();
+      }
+    };
   }
 
   private void printResult(Object result) {

@@ -538,9 +538,14 @@ objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, valu
 
 Non-collection objects pass through with null waste columns.
 
-### `join(session=id|alias [, by=field])`
-Join with another heap dump session to compute heap diffs. Performs a left-join: for each row
-in the current result set, looks up the matching row in the baseline session and adds delta columns.
+### `join(session=id|alias [, root="eventType", by=field])`
+Join with another session. Supports two modes:
+
+**Heap-to-heap diff** (no `root=`): Performs a left-join against another heap session,
+adding delta columns for numeric fields.
+
+**JFR correlation** (`root=` specified): Joins heap data with JFR allocation events,
+enriching class rows with allocation statistics from a JFR recording.
 
 The join key is auto-inferred from the query root type:
 - `classes` → `name`
@@ -548,6 +553,8 @@ The join key is auto-inferred from the query root type:
 - `gcroots` → `type`
 
 Override with `by=field` when needed.
+
+#### Heap diff mode
 
 **Output columns added:** for each numeric field `F`:
 - `baseline.F` — value from the baseline session (null if absent)
@@ -576,6 +583,36 @@ classes | join(session=1) | filter(baseline.exists = false)
 
 # GC root type diff
 gcroots | groupBy(type, agg=count) | join(session=1)
+```
+
+#### JFR correlation mode
+
+When `root=` specifies a JFR event type (e.g. `jdk.ObjectAllocationSample`), the join
+queries the JFR session for those events and aggregates them by class name.
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `allocCount` | Long | Number of allocation sample events for this class |
+| `allocWeight` | Long | Total sampled allocation weight (bytes) |
+| `allocRate` | Double | Allocations per second (null if timestamps unavailable) |
+| `topAllocSite` | String | Most frequent allocation stack frame |
+| `survivalRatio` | Double | `instanceCount / allocCount` (null if allocCount is 0 or absent) |
+
+```
+# Open JFR recording and heap dump
+open recording.jfr
+open dump.hprof
+
+# Enrich class histogram with JFR allocation data
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-alloc, low-retention classes (churn)
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000 and retained < 1MB)
+
+# Top classes by allocation weight
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(20)
 ```
 
 ## Complete Examples
@@ -632,6 +669,23 @@ classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCou
 
 # New classes not present in baseline
 classes | join(session=1) | filter(baseline.exists = false)
+```
+
+### JFR + Heap Dump Correlation
+
+```
+# Open both a JFR recording and a heap dump
+open recording.jfr
+open dump.hprof
+
+# Enrich class histogram with allocation data from JFR
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-churn classes: many allocations but few survivors
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+
+# Top allocation weight classes
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
 ```
 
 ### Finding Specific Objects

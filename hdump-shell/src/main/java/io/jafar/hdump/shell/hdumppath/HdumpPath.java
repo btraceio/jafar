@@ -450,13 +450,19 @@ public final class HdumpPath {
   }
 
   /**
-   * Join with another session (heap diff). The join key is auto-inferred from the query root type
-   * unless overridden via {@code byField}.
+   * Join with another session. Supports heap-to-heap diff and cross-type JFR correlation when
+   * {@code root} is specified.
    *
    * @param sessionRef session ID or alias string
    * @param byField explicit join key field, or null for auto-inference
+   * @param root JFR event type root for cross-type join (e.g. "jdk.ObjectAllocationSample"), or
+   *     null for heap-to-heap diff
    */
-  public record JoinOp(String sessionRef, String byField) implements PipelineOp {}
+  public record JoinOp(String sessionRef, String byField, String root) implements PipelineOp {
+    public JoinOp(String sessionRef, String byField) {
+      this(sessionRef, byField, null);
+    }
+  }
 
   /** Analyze collection capacity waste (capacity, size, loadFactor, wastedBytes, wasteType). */
   public record WasteOp() implements PipelineOp {}

@@ -763,6 +763,65 @@ class HdumpPathTest {
     assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(1));
   }
 
+  // === Join parser tests ===
+
+  @Test
+  void testParseJoinWithSession() {
+    Query query = HdumpPathParser.parse("classes | join(session=1)");
+    assertEquals(1, query.pipeline().size());
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("1", op.sessionRef());
+    assertNull(op.byField());
+    assertNull(op.root());
+  }
+
+  @Test
+  void testParseJoinWithSessionAndBy() {
+    Query query = HdumpPathParser.parse("classes | join(session=1, by=name)");
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("1", op.sessionRef());
+    assertEquals("name", op.byField());
+    assertNull(op.root());
+  }
+
+  @Test
+  void testParseJoinWithRoot() {
+    Query query =
+        HdumpPathParser.parse(
+            "classes | join(session=1, root=\"jdk.ObjectAllocationSample\", by=class)");
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("1", op.sessionRef());
+    assertEquals("jdk.ObjectAllocationSample", op.root());
+    assertEquals("class", op.byField());
+  }
+
+  @Test
+  void testParseJoinWithUnquotedRoot() {
+    // Unquoted dotted name should be parsed correctly
+    Query query =
+        HdumpPathParser.parse("classes | join(session=1, root=jdk.ObjectAllocationSample)");
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("jdk.ObjectAllocationSample", op.root());
+  }
+
+  @Test
+  void testParseJoinWithRootOnly() {
+    Query query =
+        HdumpPathParser.parse(
+            "classes | join(session=\"recording.jfr\", root=\"jdk.ObjectAllocationSample\")");
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("recording.jfr", op.sessionRef());
+    assertEquals("jdk.ObjectAllocationSample", op.root());
+    assertNull(op.byField());
+  }
+
+  @Test
+  void testParseJoinWithBareRoot() {
+    Query query = HdumpPathParser.parse("classes | join(session=1, root=jdk)");
+    HdumpPath.JoinOp op = (HdumpPath.JoinOp) query.pipeline().get(0);
+    assertEquals("jdk", op.root());
+  }
+
   @Test
   void testParseContainsPredicate() {
     Query query = HdumpPathParser.parse("objects[contains(className, \"HashMap\")]");

@@ -1,5 +1,7 @@
 # JFR + Heap Dump Cross-Correlation
 
+**Status: Implemented** — Class-level join with `allocCount`, `allocWeight`, `allocRate`, `topAllocSite`, and `survivalRatio` enrichment columns. The `allocSites` (top-N) column is not yet implemented.
+
 ## Goal
 
 Correlate JFR allocation data with heap dump retention data to answer: "Which method allocated the 2GB of `byte[]` that's still live?"

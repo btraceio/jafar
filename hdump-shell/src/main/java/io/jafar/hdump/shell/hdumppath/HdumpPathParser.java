@@ -1120,6 +1120,7 @@ public final class HdumpPathParser {
     expect('(');
     String sessionRef = null;
     String byField = null;
+    String root = null;
 
     do {
       skipWs();
@@ -1136,6 +1137,13 @@ public final class HdumpPathParser {
         } else {
           sessionRef = parseIdentifier();
         }
+      } else if (lookahead("root=") || lookahead("root =")) {
+        matchKeyword("root");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Root is a JFR event type (e.g. jdk.ObjectAllocationSample) — allow dots
+        root = parseDottedNameOrString();
       } else if (lookahead("by=") || lookahead("by =")) {
         matchKeyword("by");
         skipWs();
@@ -1143,7 +1151,7 @@ public final class HdumpPathParser {
         skipWs();
         byField = parseIdentifier();
       } else {
-        throw new HdumpPathParseException("Expected session= or by= parameter in join()");
+        throw new HdumpPathParseException("Expected session=, root=, or by= parameter in join()");
       }
       skipWs();
     } while (matchChar(','));
@@ -1154,7 +1162,7 @@ public final class HdumpPathParser {
       throw new HdumpPathParseException("join() requires session= parameter");
     }
 
-    return new JoinOp(sessionRef, byField);
+    return new JoinOp(sessionRef, byField, root);
   }
 
   private String parseStringOrIdentifier() {
@@ -1164,5 +1172,19 @@ public final class HdumpPathParser {
     } else {
       return parseIdentifier();
     }
+  }
+
+  /** Parses a quoted string or a dotted name (e.g. {@code jdk.ObjectAllocationSample}). */
+  private String parseDottedNameOrString() {
+    skipWs();
+    if (peek() == '"' || peek() == '\'') {
+      return parseStringLiteral();
+    }
+    StringBuilder sb = new StringBuilder(parseIdentifier());
+    while (peek() == '.') {
+      sb.append(advance()); // consume '.'
+      sb.append(parseIdentifier());
+    }
+    return sb.toString();
   }
 }
