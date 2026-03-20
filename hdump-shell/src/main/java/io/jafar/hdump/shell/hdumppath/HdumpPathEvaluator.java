@@ -1980,7 +1980,7 @@ public final class HdumpPathEvaluator {
 
     for (HeapObject child : children) {
       HeapClass cls = child.getHeapClass();
-      String className = cls != null ? cls.getName().replace('/', '.') : "unknown";
+      String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
       String key = depth + "\0" + className;
       long[] s = agg.computeIfAbsent(key, k -> new long[3]);
       s[0]++;

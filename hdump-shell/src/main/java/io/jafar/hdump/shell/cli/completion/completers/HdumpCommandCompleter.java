@@ -12,6 +12,9 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
 
   private static final String[] COMMANDS = {
     "show",
+    "objects",
+    "classes",
+    "gcroots",
     "open",
     "close",
     "use",
@@ -50,6 +53,9 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
   private String getCommandDescription(String cmd) {
     return switch (cmd) {
       case "show" -> "execute a query";
+      case "objects" -> "query heap objects";
+      case "classes" -> "query class summary";
+      case "gcroots" -> "query GC roots";
       case "open" -> "open a heap dump file";
       case "close" -> "close current session";
       case "use" -> "switch to a session";

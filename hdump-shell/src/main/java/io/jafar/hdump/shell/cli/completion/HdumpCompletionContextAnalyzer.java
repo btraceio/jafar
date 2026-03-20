@@ -45,8 +45,8 @@ public final class HdumpCompletionContextAnalyzer {
           .build();
     }
 
-    // For 'show' command - analyze the query expression
-    if ("show".equals(command)) {
+    // For 'show' command or short syntax (objects/classes/gcroots) - analyze the query expression
+    if ("show".equals(command) || isRootType(command)) {
       return analyzeShowContext(line);
     }
 
@@ -58,6 +58,10 @@ public final class HdumpCompletionContextAnalyzer {
         .fullLine(fullLine)
         .cursor(cursor)
         .build();
+  }
+
+  private static boolean isRootType(String word) {
+    return "objects".equals(word) || "classes".equals(word) || "gcroots".equals(word);
   }
 
   /** Analyze context specifically for 'show' command. */
@@ -283,8 +287,16 @@ public final class HdumpCompletionContextAnalyzer {
   private String extractExpression(String line) {
     // Find 'show ' and return everything after
     int showIdx = line.toLowerCase().indexOf("show ");
-    if (showIdx < 0) return "";
-    return line.substring(showIdx + 5).trim();
+    if (showIdx >= 0) {
+      return line.substring(showIdx + 5).trim();
+    }
+    // Short syntax: line starts with root type (objects/classes/gcroots)
+    String trimmed = line.trim();
+    String lower = trimmed.toLowerCase();
+    if (lower.startsWith("objects") || lower.startsWith("classes") || lower.startsWith("gcroots")) {
+      return trimmed;
+    }
+    return "";
   }
 
   private String extractRootType(String expression) {

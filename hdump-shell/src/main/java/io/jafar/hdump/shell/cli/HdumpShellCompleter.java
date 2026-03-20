@@ -80,12 +80,12 @@ public final class HdumpShellCompleter implements Completer {
 
     String cmd = words.get(0).toLowerCase();
 
-    // For show command, use the completion framework
-    if ("show".equals(cmd)) {
+    // For show command or short syntax (objects/classes/gcroots), use the completion framework
+    if ("show".equals(cmd) || isRootType(cmd)) {
       completeWithFramework(line, candidates);
       if (DEBUG) {
         System.err.println(
-            "[HDUMP COMPLETION] Generated " + candidates.size() + " candidates for 'show'");
+            "[HDUMP COMPLETION] Generated " + candidates.size() + " candidates for '" + cmd + "'");
       }
       return;
     }
@@ -102,6 +102,10 @@ public final class HdumpShellCompleter implements Completer {
     if (DEBUG) {
       System.err.println("[HDUMP COMPLETION] No special completion for command: " + cmd);
     }
+  }
+
+  private static boolean isRootType(String word) {
+    return "objects".equals(word) || "classes".equals(word) || "gcroots".equals(word);
   }
 
   /** Complete using the framework with context-specific completers. */
