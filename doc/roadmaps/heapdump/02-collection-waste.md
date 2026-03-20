@@ -25,19 +25,19 @@ Pure per-object enrichment: takes a stream of collection objects and adds waste-
 
 ```
 # Analyze all HashMap instances
-objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes)
+objects/java.util.HashMap | waste() | sortBy(wastedBytes desc)
 
 # Find the worst offenders — large capacity, few entries
-objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+objects/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
 
 # Analyze ArrayList backing array waste
-objects/instanceof/java.util.ArrayList | waste() | sortBy(wastedBytes)
+objects/java.util.ArrayList | waste() | sortBy(wastedBytes desc)
 
-# Aggregate waste by class
-objects/instanceof/java.util.Map | waste() | groupBy(class) | sortBy(totalWasted)
+# Aggregate waste by collection class
+objects/java.util.HashMap | waste() | groupBy(class, agg=sum, value=wastedBytes)
 
-# Show all collection types with significant waste
-objects/instanceof/java.util.Collection | waste() | filter(wastedBytes > 1024) | top(50)
+# Find HashMaps with significant waste
+objects/java.util.HashMap | waste() | filter(wastedBytes > 1024) | top(50)
 ```
 
 ## Design
@@ -82,7 +82,7 @@ Where `entryOverhead` depends on the collection type:
 1. When `waste()` operator encounters an object, check its class against the known collection types
 2. Read the internal fields using the HPROF field access API (same mechanism leak detectors use)
 3. Compute waste metrics and append as enrichment columns
-4. Non-collection objects pass through with null waste columns (or are filtered out if `waste()` is used after `instanceof` filter)
+4. Non-collection objects pass through with null waste columns
 
 ## Key decisions
 

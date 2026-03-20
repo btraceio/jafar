@@ -542,16 +542,16 @@ Supported collections: `HashMap`, `LinkedHashMap`, `HashSet`, `LinkedHashSet`, `
 
 ```
 # Analyze all HashMap instances for waste
-objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
+objects/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
 
 # Find worst offenders — large capacity, few entries
-objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+objects/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
 
 # ArrayList backing array waste
-objects/instanceof/java.util.ArrayList | waste() | sortBy(wastedBytes desc)
+objects/java.util.ArrayList | waste() | sortBy(wastedBytes desc)
 
 # Aggregate waste by class
-objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, value=wastedBytes) | sortBy(sum desc)
+objects/java.util.HashMap | waste() | groupBy(class, agg=sum, value=wastedBytes)
 ```
 
 **Output columns added:**

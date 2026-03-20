@@ -127,7 +127,7 @@ final class CollectionWasteAnalyzer {
     row.put("capacity", capacity);
     row.put("size", size);
     row.put("loadFactor", capacity > 0 ? (double) size / capacity : 0.0);
-    long wastedBytes = (long) (capacity - size) * refSize;
+    long wastedBytes = ((long) capacity - size) * refSize;
     row.put("wastedBytes", wastedBytes);
     String wasteType;
     if (capacity == 0 && size == 0) {

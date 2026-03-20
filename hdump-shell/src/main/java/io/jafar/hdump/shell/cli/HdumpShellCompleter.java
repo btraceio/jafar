@@ -80,8 +80,8 @@ public final class HdumpShellCompleter implements Completer {
 
     String cmd = words.get(0).toLowerCase();
 
-    // For show command or short syntax (objects/classes/gcroots), use the completion framework
-    if ("show".equals(cmd) || isRootType(cmd)) {
+    // For show command or short syntax (objects/classes/gcroots/clusters), use completion framework
+    if ("show".equals(cmd) || isRootType(cmd) || startsWithRoot(cmd)) {
       completeWithFramework(line, candidates);
       if (DEBUG) {
         System.err.println(
@@ -105,7 +105,15 @@ public final class HdumpShellCompleter implements Completer {
   }
 
   private static boolean isRootType(String word) {
-    return "objects".equals(word) || "classes".equals(word) || "gcroots".equals(word);
+    return "objects".equals(word)
+        || "classes".equals(word)
+        || "gcroots".equals(word)
+        || "clusters".equals(word);
+  }
+
+  private static boolean startsWithRoot(String word) {
+    int slash = word.indexOf('/');
+    return slash > 0 && isRootType(word.substring(0, slash));
   }
 
   /** Complete using the framework with context-specific completers. */

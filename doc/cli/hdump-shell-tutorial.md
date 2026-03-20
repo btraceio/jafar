@@ -356,13 +356,14 @@ Find over-allocated collections wasting memory:
 
 ```bash
 # Analyze HashMap waste — find over-allocated instances
-hdump> objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
+hdump> objects/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
 
 # Find collections with large capacity but few entries
-hdump> objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+hdump> objects/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
 
-# Aggregate waste by collection class
-hdump> objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, value=wastedBytes) | sortBy(sum desc)
+# Aggregate waste by collection class (analyze each supported type separately)
+hdump> objects/java.util.HashMap | waste() | groupBy(class, agg=sum, value=wastedBytes)
+hdump> objects/java.util.ArrayList | waste() | groupBy(class, agg=sum, value=wastedBytes)
 ```
 
 ### Automatic Leak Cluster Detection

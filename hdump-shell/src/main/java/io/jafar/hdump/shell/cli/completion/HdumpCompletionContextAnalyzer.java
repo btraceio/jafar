@@ -22,8 +22,12 @@ public final class HdumpCompletionContextAnalyzer {
     int wordIndex = line.wordIndex();
     String currentWord = line.word();
 
-    // Empty line or first word -> COMMAND
+    // Empty line or first word -> COMMAND, unless it starts with a root type + '/'
     if (wordIndex == 0) {
+      // Check if first word is a short-syntax query path (e.g. "objects/java.util.H")
+      if (startsWithRootSlash(currentWord)) {
+        return analyzeShowContext(line);
+      }
       return CompletionContext.builder()
           .type(CompletionContextType.COMMAND)
           .partialInput(currentWord)
@@ -45,8 +49,8 @@ public final class HdumpCompletionContextAnalyzer {
           .build();
     }
 
-    // For 'show' command or short syntax (objects/classes/gcroots) - analyze the query expression
-    if ("show".equals(command) || isRootType(command)) {
+    // For 'show' command or short syntax (objects/classes/gcroots/clusters) - analyze the query
+    if ("show".equals(command) || isRootType(command) || startsWithRootSlash(command)) {
       return analyzeShowContext(line);
     }
 
@@ -61,7 +65,16 @@ public final class HdumpCompletionContextAnalyzer {
   }
 
   private static boolean isRootType(String word) {
-    return "objects".equals(word) || "classes".equals(word) || "gcroots".equals(word);
+    return "objects".equals(word)
+        || "classes".equals(word)
+        || "gcroots".equals(word)
+        || "clusters".equals(word);
+  }
+
+  /** Returns true if the word starts with a root type followed by '/'. */
+  private static boolean startsWithRootSlash(String word) {
+    int slash = word.indexOf('/');
+    return slash > 0 && isRootType(word.substring(0, slash));
   }
 
   /** Analyze context specifically for 'show' command. */
@@ -293,7 +306,10 @@ public final class HdumpCompletionContextAnalyzer {
     // Short syntax: line starts with root type (objects/classes/gcroots)
     String trimmed = line.trim();
     String lower = trimmed.toLowerCase();
-    if (lower.startsWith("objects") || lower.startsWith("classes") || lower.startsWith("gcroots")) {
+    if (lower.startsWith("objects")
+        || lower.startsWith("classes")
+        || lower.startsWith("gcroots")
+        || lower.startsWith("clusters")) {
       return trimmed;
     }
     return "";
