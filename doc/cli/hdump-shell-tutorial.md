@@ -344,7 +344,7 @@ See what objects dominate memory (keep other objects alive):
 hdump> objects[id = 0x12345678] | dominators
 
 # Dominators grouped by class
-hdump> objects[id = 0x12345678] | dominators("byClass")
+hdump> objects[id = 0x12345678] | dominators(groupBy="class")
 
 # Full dominator tree view
 hdump> objects[id = 0x12345678] | dominators("tree")
@@ -420,22 +420,30 @@ hdump> classes | count
 hdump> objects | groupBy(class, agg=sum) | top(10, sum)
 ```
 
-### Compare Before/After
+### Compare Before/After (Heap Diff)
 
-Open two heap dumps in separate sessions:
+Open two heap dumps and use `join` to diff them:
 
 ```bash
 hdump> open before.hprof
 hdump> open after.hprof
 
-hdump> use 0
-hdump> objects/java.lang.String | count
-# 100,000
+# Diff class histograms — session 1 is before.hprof (the baseline)
+hdump> classes | join(session=1) | sortBy(instanceCountDelta desc) | head(20)
 
-hdump> use 1
-hdump> objects/java.lang.String | count
-# 150,000 (50% increase!)
+# Find classes with growing instance counts
+hdump> classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCountDelta)
+
+# New classes not present in the baseline
+hdump> classes | join(session=1) | filter(baseline.exists = false)
+
+# GC root type changes
+hdump> gcroots | groupBy(type, agg=count) | join(session=1) | sortBy(countDelta desc)
 ```
+
+The `join` operator adds `baseline.*` and `*Delta` columns for every numeric field.
+The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots)
+and can be overridden with `by=field`.
 
 ### Export for Further Analysis
 
@@ -478,7 +486,14 @@ classes/com.myapp.* | top(10, instanceCount)
 
 ### 4. Compare Heap Dumps
 
-Take dumps at different times and compare:
+Take dumps at different times and use `join` to diff them:
+```bash
+open before.hprof
+open after.hprof
+classes | join(session=1) | filter(instanceCountDelta > 0) | top(20, instanceCountDelta)
+```
+
+Good scenarios for comparison:
 - Before and after a suspected leak operation
 - Under normal load vs. high load
 - Fresh start vs. after extended run

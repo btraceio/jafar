@@ -114,9 +114,13 @@ objects/instanceof/java.util.Map      # Include subclasses
 | `tail(n)` | `objects \| tail(10)` |
 | `filter(pred)` | `objects \| filter(shallow > 1KB)` |
 | `distinct(field)` | `objects \| distinct(class)` |
+| `sortBy(field)` | `classes \| sortBy(instanceCount desc)` |
 | `pathToRoot` | `objects[id = 123] \| pathToRoot` |
+| `retentionPaths` | `objects/java.util.HashMap \| retentionPaths()` |
+| `retainedBreakdown` | `objects[retained > 10MB] \| retainedBreakdown()` |
 | `checkLeaks` | `checkLeaks()` or `objects \| checkLeaks` |
-| `dominators` | `objects[id = 123] \| dominators` |
+| `dominators` | `objects \| dominators(groupBy="class")` |
+| `join` | `classes \| join(session=1)` |
 
 ## Common Workflows
 
@@ -174,6 +178,20 @@ hdump> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
 
 # String count
 hdump> objects/java.lang.String | count
+```
+
+### Heap Diff (Compare Two Dumps)
+
+```bash
+# Open two dumps
+hdump> open before.hprof
+hdump> open after.hprof
+
+# Diff class histograms (session 1 = before.hprof)
+hdump> classes | join(session=1) | sortBy(instanceCountDelta desc) | head(20)
+
+# Find growing classes
+hdump> classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCountDelta)
 ```
 
 ## Output Options

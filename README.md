@@ -548,6 +548,9 @@ jfr> gcroots | groupBy(type) | sortBy(count desc)
 - **Class analysis**: Instance counts, memory footprint
 - **GC root inspection**: Thread roots, JNI references, stack frames
 - **Aggregations**: count, sum, stats, groupBy, top
+- **Memory analysis**: pathToRoot, retentionPaths, retainedBreakdown, dominators
+- **Leak detection**: Built-in detectors for common leak patterns
+- **Heap diff**: `join(session=id)` compares two heap dumps side-by-side
 - **Size units**: Use `1KB`, `1MB`, `1GB` in predicates
 - **Instanceof support**: Query all implementations of interfaces
 

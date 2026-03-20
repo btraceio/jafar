@@ -504,6 +504,46 @@ objects[retained > 500MB] | dominators("tree", minRetained=10MB)
 
 **`minRetained`** accepts size suffixes: `1KB`, `10MB`, `1GB`.
 
+### `join(session=id|alias [, by=field])`
+Join with another heap dump session to compute heap diffs. Performs a left-join: for each row
+in the current result set, looks up the matching row in the baseline session and adds delta columns.
+
+The join key is auto-inferred from the query root type:
+- `classes` → `name`
+- `objects` → `className`
+- `gcroots` → `type`
+
+Override with `by=field` when needed.
+
+**Output columns added:** for each numeric field `F`:
+- `baseline.F` — value from the baseline session (null if absent)
+- `FDelta` — `F - baseline.F`
+- `baseline.exists` — boolean, true if the row exists in the baseline
+
+```
+# Open two heap dumps
+open before.hprof
+open after.hprof
+
+# Basic class histogram diff (join by name, auto-inferred)
+classes | join(session=1) | sortBy(instanceCountDelta desc)
+
+# Using session alias
+classes | join(session="before.hprof") | sortBy(instanceCountDelta desc)
+
+# With explicit join key
+classes | join(session=1, by=name) | filter(instanceCountDelta > 0) | top(20, instanceCountDelta)
+
+# Object-level diff (joins by className)
+objects | groupBy(class, agg=count) | join(session=1) | sortBy(countDelta desc)
+
+# Find classes that only exist in the new dump
+classes | join(session=1) | filter(baseline.exists = false)
+
+# GC root type diff
+gcroots | groupBy(type, agg=count) | join(session=1)
+```
+
 ## Complete Examples
 
 ### Memory Analysis
@@ -543,6 +583,21 @@ objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
 
 # Collection analysis
 objects/instanceof/java.util.Collection | groupBy(class, agg=sum) | top(10, sum)
+```
+
+### Heap Diff (Cross-Session Comparison)
+
+```
+# Open two dumps and diff class histograms
+open before.hprof
+open after.hprof
+classes | join(session=1) | sortBy(instanceCountDelta desc) | head(20)
+
+# Find classes with growing instance counts
+classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCountDelta)
+
+# New classes not present in baseline
+classes | join(session=1) | filter(baseline.exists = false)
 ```
 
 ### Finding Specific Objects
