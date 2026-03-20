@@ -726,6 +726,43 @@ class HdumpPathTest {
     assertInstanceOf(HdumpPath.CeilOp.class, query.pipeline().get(0));
   }
 
+  // === Waste parser tests ===
+
+  @Test
+  void testWasteNoArgs() {
+    Query query = HdumpPathParser.parse("objects | waste()");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.WasteOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testWasteNoParens() {
+    Query query = HdumpPathParser.parse("objects | waste");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.WasteOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testWasteInPipeline() {
+    Query query =
+        HdumpPathParser.parse(
+            "objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)");
+    assertEquals(3, query.pipeline().size());
+    assertInstanceOf(HdumpPath.WasteOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.SortByOp.class, query.pipeline().get(1));
+    assertInstanceOf(HdumpPath.TopOp.class, query.pipeline().get(2));
+  }
+
+  @Test
+  void testWasteWithFilter() {
+    Query query =
+        HdumpPathParser.parse(
+            "objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1)");
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.WasteOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(1));
+  }
+
   @Test
   void testParseContainsPredicate() {
     Query query = HdumpPathParser.parse("objects[contains(className, \"HashMap\")]");

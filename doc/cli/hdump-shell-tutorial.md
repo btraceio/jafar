@@ -350,6 +350,21 @@ hdump> objects[id = 0x12345678] | dominators(groupBy="class")
 hdump> objects[id = 0x12345678] | dominators("tree")
 ```
 
+### Collection Waste Analysis
+
+Find over-allocated collections wasting memory:
+
+```bash
+# Analyze HashMap waste — find over-allocated instances
+hdump> objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
+
+# Find collections with large capacity but few entries
+hdump> objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+
+# Aggregate waste by collection class
+hdump> objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, value=wastedBytes) | sortBy(sum desc)
+```
+
 ### Manual Leak Patterns
 
 #### Pattern 1: Unusually Large Instance Counts

@@ -1,5 +1,7 @@
 # Collection Right-Sizing & Waste Analysis
 
+**Status:** Implemented (core `waste()` operator)
+
 ## Goal
 
 Analyze the internal structure of standard JDK collections to detect wasted memory caused by over-allocation, empty backing arrays, and poor sizing choices.
@@ -48,7 +50,7 @@ objects/instanceof/java.util.Collection | waste() | filter(wastedBytes > 1024) |
 | `size` | int | Actual element count |
 | `loadFactor` | double | `size / capacity` (0.0 to 1.0) |
 | `wastedBytes` | long | Estimated bytes wasted due to over-allocation |
-| `wasteType` | String | Category: `over-allocated`, `empty`, `sparse`, `encoding` |
+| `wasteType` | String | Category: `overCapacity`, `emptyDefault`, `normal` |
 
 ### Collection introspection rules
 
@@ -58,7 +60,7 @@ Each JDK collection type requires specific field-reading logic:
 |------------|---------------|------------|-------|
 | `HashMap` | `table.length` | `size` | Capacity is always power-of-2 |
 | `LinkedHashMap` | `table.length` | `size` | Same as HashMap |
-| `ConcurrentHashMap` | `table.length` | count via segments | More complex; segment-based in older JDKs |
+| `ConcurrentHashMap` | `table.length` | `baseCount` + `counterCells` | Sums striped counters for accurate size |
 | `ArrayList` | `elementData.length` | `size` | Default capacity = 10 |
 | `ArrayDeque` | `elements.length` | computed | Circular buffer |
 | `HashSet` | delegates to internal `HashMap` | `map.size` | Wrapper around HashMap |
@@ -108,3 +110,16 @@ Where `entryOverhead` depends on the collection type:
 - **JDK version matrix**: test against HPROF files from JDK 8, 11, 17, 21 to verify field layout assumptions
 - **Edge cases**: null backing array, concurrent modification during dump (partially initialized), subclassed collections
 - **Accuracy**: compare waste numbers against Eclipse MAT's collection analysis for the same heap
+
+## Implementation Notes
+
+The `waste()` operator is implemented in `CollectionWasteAnalyzer.java` as a zero-arg pipeline operator.
+Supported collection types: HashMap, LinkedHashMap, HashSet, LinkedHashSet, ArrayList,
+ConcurrentHashMap, ArrayDeque. Waste is calculated as `(capacity - size) * refSize` where refSize
+is the heap dump's ID size (4 or 8 bytes).
+
+Future work:
+- Boxed primitive waste detection
+- Sparse array analysis
+- String encoding waste (pre-compact-strings JDKs)
+- Third-party collection support (Guava, Eclipse Collections)

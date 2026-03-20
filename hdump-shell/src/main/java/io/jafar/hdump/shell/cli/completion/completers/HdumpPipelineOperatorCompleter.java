@@ -66,6 +66,7 @@ public final class HdumpPipelineOperatorCompleter
       case "round" -> "round(field)";
       case "floor" -> "floor(field)";
       case "ceil" -> "ceil(field)";
+      case "waste" -> "waste()";
       default -> op + "(...)";
     };
   }
@@ -98,13 +99,14 @@ public final class HdumpPipelineOperatorCompleter
       case "round" -> "round to nearest integer";
       case "floor" -> "round down";
       case "ceil" -> "round up";
+      case "waste" -> "analyze collection capacity waste";
       default -> null;
     };
   }
 
   private boolean hasParameters(String op) {
     return switch (op) {
-      case "count", "pathToRoot", "retentionPaths", "dominators" -> false;
+      case "count", "pathToRoot", "retentionPaths", "dominators", "waste" -> false;
       default -> true;
     };
   }

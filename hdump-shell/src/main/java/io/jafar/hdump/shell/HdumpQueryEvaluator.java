@@ -46,7 +46,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
           "abs",
           "round",
           "floor",
-          "ceil");
+          "ceil",
+          "waste");
 
   @Override
   public Object parse(String queryString) throws QueryParseException {
@@ -121,6 +122,7 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "round" -> "round(field) - Round to nearest integer";
       case "floor" -> "floor(field) - Round down";
       case "ceil" -> "ceil(field) - Round up";
+      case "waste" -> "waste() - Analyze collection capacity waste (capacity, size, wastedBytes)";
       default -> null;
     };
   }

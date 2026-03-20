@@ -504,6 +504,40 @@ objects[retained > 500MB] | dominators("tree", minRetained=10MB)
 
 **`minRetained`** accepts size suffixes: `1KB`, `10MB`, `1GB`.
 
+### `waste()`
+
+Enrich collection objects with capacity and waste metrics. Reads internal fields of known JDK
+collection types to compute how much memory is wasted by over-allocation.
+
+Supported collections: `HashMap`, `LinkedHashMap`, `HashSet`, `LinkedHashSet`, `ArrayList`,
+`ConcurrentHashMap`, `ArrayDeque`.
+
+```
+# Analyze all HashMap instances for waste
+objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
+
+# Find worst offenders — large capacity, few entries
+objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+
+# ArrayList backing array waste
+objects/instanceof/java.util.ArrayList | waste() | sortBy(wastedBytes desc)
+
+# Aggregate waste by class
+objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, value=wastedBytes) | sortBy(sum desc)
+```
+
+**Output columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `capacity` | Integer | Backing array/table length |
+| `size` | Integer | Logical element count |
+| `loadFactor` | Double | `size / capacity` (0.0 to 1.0) |
+| `wastedBytes` | Long | `(capacity - size) * refSize` for unused slots |
+| `wasteType` | String | `"emptyDefault"`, `"overCapacity"`, `"normal"`, or null |
+
+Non-collection objects pass through with null waste columns.
+
 ### `join(session=id|alias [, by=field])`
 Join with another heap dump session to compute heap diffs. Performs a left-join: for each row
 in the current result set, looks up the matching row in the baseline session and adds delta columns.

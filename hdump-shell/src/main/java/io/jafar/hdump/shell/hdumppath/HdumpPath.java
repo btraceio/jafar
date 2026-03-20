@@ -154,7 +154,8 @@ public final class HdumpPath {
           RetainedBreakdownOp,
           CheckLeaksOp,
           DominatorsOp,
-          JoinOp {}
+          JoinOp,
+          WasteOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -456,6 +457,9 @@ public final class HdumpPath {
    * @param byField explicit join key field, or null for auto-inference
    */
   public record JoinOp(String sessionRef, String byField) implements PipelineOp {}
+
+  /** Analyze collection capacity waste (capacity, size, loadFactor, wastedBytes, wasteType). */
+  public record WasteOp() implements PipelineOp {}
 
   // === Built-in field names for objects ===
 

@@ -120,6 +120,7 @@ objects/instanceof/java.util.Map      # Include subclasses
 | `retainedBreakdown` | `objects[retained > 10MB] \| retainedBreakdown()` |
 | `checkLeaks` | `checkLeaks()` or `objects \| checkLeaks` |
 | `dominators` | `objects \| dominators(groupBy="class")` |
+| `waste` | `objects/instanceof/java.util.HashMap \| waste()` |
 | `join` | `classes \| join(session=1)` |
 
 ## Common Workflows

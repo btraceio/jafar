@@ -1348,6 +1348,13 @@ public final class HdumpPathEvaluator {
         }
         yield applyDominators(session, session.getHeapDump(), results, d);
       }
+      case WasteOp w -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "waste requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyWaste(session.getHeapDump(), results);
+      }
       case JoinOp j ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
@@ -1896,6 +1903,40 @@ public final class HdumpPathEvaluator {
     }
     regex.append("$");
     return Pattern.compile(regex.toString());
+  }
+
+  private static List<Map<String, Object>> applyWaste(
+      HeapDump dump, List<Map<String, Object>> results) {
+    int refSize = dump.getIdSize();
+    List<Map<String, Object>> enriched = new ArrayList<>(results.size());
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) {
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        CollectionWasteAnalyzer.addNullWasteColumns(copy);
+        enriched.add(copy);
+        continue;
+      }
+
+      long id =
+          idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject obj = dump.getObjectById(id).orElse(null);
+      if (obj == null) {
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        CollectionWasteAnalyzer.addNullWasteColumns(copy);
+        enriched.add(copy);
+        continue;
+      }
+
+      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      if (!CollectionWasteAnalyzer.analyze(obj, enrichedRow, refSize)) {
+        CollectionWasteAnalyzer.addNullWasteColumns(enrichedRow);
+      }
+      enriched.add(enrichedRow);
+    }
+
+    return enriched;
   }
 
   private static List<Map<String, Object>> applyPathToRoot(

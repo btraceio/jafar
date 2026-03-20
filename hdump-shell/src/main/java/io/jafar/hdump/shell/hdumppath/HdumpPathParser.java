@@ -531,6 +531,10 @@ public final class HdumpPathParser {
       case "checkleaks", "leaks" -> parseCheckLeaksOp();
       case "dominators", "dominated" -> parseDominatorsOp();
       case "join" -> parseJoinOp();
+      case "waste" -> {
+        consumeOptionalEmptyParens();
+        yield new WasteOp();
+      }
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };
   }
