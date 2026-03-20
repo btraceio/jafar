@@ -21,11 +21,12 @@ public final class HdumpVariableReferenceCompleter
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), "${" + partial);
 
     Set<String> varNames = metadata.getVariableNames();
     for (String name : varNames) {
       if (name.startsWith(partial)) {
-        candidates.add(candidate(name, name, "variable"));
+        candidates.add(candidate(prefix + "${" + name + "}", name, "variable"));
       }
     }
   }

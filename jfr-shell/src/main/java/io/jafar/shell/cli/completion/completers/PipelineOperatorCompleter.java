@@ -27,6 +27,7 @@ public final class PipelineOperatorCompleter implements ContextCompleter {
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput().toLowerCase();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
     String eventType = ctx.eventType();
 
     // Analyze available field types for semantic filtering
@@ -59,7 +60,7 @@ public final class PipelineOperatorCompleter implements ContextCompleter {
 
       // Show template in display for user reference, but insert simpler value
       // This allows function parameter completer to suggest actual fields
-      candidates.add(candidateNoSpace(value, template, description));
+      candidates.add(candidateNoSpace(prefix + value, template, description));
     }
   }
 }

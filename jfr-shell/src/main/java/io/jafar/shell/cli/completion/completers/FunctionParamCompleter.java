@@ -163,19 +163,6 @@ public final class FunctionParamCompleter implements ContextCompleter {
     return KeywordResult.HANDLED;
   }
 
-  private String calculateJlinePrefix(String jlineWord, String partial) {
-    if (jlineWord == null || jlineWord.isEmpty()) {
-      return "";
-    }
-    if (partial.isEmpty()) {
-      return jlineWord;
-    }
-    if (jlineWord.length() > partial.length()) {
-      return jlineWord.substring(0, jlineWord.length() - partial.length());
-    }
-    return "";
-  }
-
   @Override
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {

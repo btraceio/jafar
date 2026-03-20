@@ -18,7 +18,8 @@ public final class HdumpFilterLogicalCompleter implements ContextCompleter<Hdump
   @Override
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
-    candidates.add(candidate("&&", "&&", "logical AND"));
-    candidates.add(candidate("||", "||", "logical OR"));
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), ctx.partialInput());
+    candidates.add(candidate(prefix + "&&", "&&", "logical AND"));
+    candidates.add(candidate(prefix + "||", "||", "logical OR"));
   }
 }

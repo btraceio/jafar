@@ -24,11 +24,12 @@ public final class HdumpFilterOperatorCompleter implements ContextCompleter<Hdum
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     for (String op : OPERATORS) {
       if (op.startsWith(partial)) {
         String description = getOperatorDescription(op);
-        candidates.add(candidate(op, op, description));
+        candidates.add(candidate(prefix + op, op, description));
       }
     }
   }

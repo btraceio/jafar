@@ -23,6 +23,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput();
     String rootType = ctx.rootType();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     // Get fields for the current root type
     List<String> fields = metadata.getFieldsForRootType(rootType);
@@ -30,7 +31,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
     for (String field : fields) {
       if (field.startsWith(partial)) {
         String description = getFieldDescription(rootType, field);
-        candidates.add(candidate(field, field, description));
+        candidates.add(candidate(prefix + field, field, description));
       }
     }
   }

@@ -78,7 +78,7 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
           if (detectorName.startsWith(valuePartial)) {
             candidates.add(
                 candidateNoSpace(
-                    "detector=\"" + detectorName + "\"",
+                    prefix + "detector=\"" + detectorName + "\"",
                     detectorName,
                     io.jafar.hdump.shell.leaks.LeakDetectorRegistry.getDetector(detectorName)
                         .getDescription()));
@@ -97,7 +97,7 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
 
         // Suggest variable references starting with $
         if (valuePartial.isEmpty() || "$".startsWith(valuePartial)) {
-          candidates.add(candidateNoSpace("filter=\"$", "$", "variable reference"));
+          candidates.add(candidateNoSpace(prefix + "filter=\"$", "$", "variable reference"));
         }
         return;
       }
@@ -128,10 +128,11 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
       if (partial.startsWith("sort=")) {
         String valuePartial = partial.substring(5);
         if ("key".startsWith(valuePartial)) {
-          candidates.add(candidateNoSpace("sort=key", "key", "sort by group key"));
+          candidates.add(candidateNoSpace(prefix + "sort=key", "key", "sort by group key"));
         }
         if ("value".startsWith(valuePartial)) {
-          candidates.add(candidateNoSpace("sort=value", "value", "sort by aggregated value"));
+          candidates.add(
+              candidateNoSpace(prefix + "sort=value", "value", "sort by aggregated value"));
         }
         return;
       }
@@ -140,10 +141,10 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
       if (partial.startsWith("asc=")) {
         String valuePartial = partial.substring(4);
         if ("true".startsWith(valuePartial)) {
-          candidates.add(candidateNoSpace("asc=true", "true", "ascending order"));
+          candidates.add(candidateNoSpace(prefix + "asc=true", "true", "ascending order"));
         }
         if ("false".startsWith(valuePartial)) {
-          candidates.add(candidateNoSpace("asc=false", "false", "descending order"));
+          candidates.add(candidateNoSpace(prefix + "asc=false", "false", "descending order"));
         }
         return;
       }
@@ -153,7 +154,7 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
         String valuePartial = partial.substring(4);
         for (String agg : AGGREGATE_FUNCTIONS) {
           if (agg.startsWith(valuePartial)) {
-            candidates.add(candidateNoSpace("agg=" + agg, agg, "aggregation"));
+            candidates.add(candidateNoSpace(prefix + "agg=" + agg, agg, "aggregation"));
           }
         }
         return;

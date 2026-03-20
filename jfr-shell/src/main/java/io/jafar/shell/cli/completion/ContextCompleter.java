@@ -43,4 +43,21 @@ public interface ContextCompleter {
   default Candidate candidateNoSpace(String value, String display, String description) {
     return new Candidate(value, display, null, description, null, null, false);
   }
+
+  /**
+   * Calculates the prefix that JLine has consumed from the partial input. When JLine's word
+   * boundary differs from the logical partial, this finds the common prefix to prepend.
+   */
+  default String calculateJlinePrefix(String jlineWord, String fullPartial) {
+    if (jlineWord == null || jlineWord.isEmpty()) {
+      return "";
+    }
+    if (jlineWord.equals(fullPartial)) {
+      return "";
+    }
+    if (jlineWord.endsWith(fullPartial)) {
+      return jlineWord.substring(0, jlineWord.length() - fullPartial.length());
+    }
+    return "";
+  }
 }

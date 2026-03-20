@@ -23,6 +23,7 @@ public final class HdumpPipelineOperatorCompleter
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput().toLowerCase();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     for (String op : metadata.getOperators()) {
       if (op.toLowerCase().startsWith(partial)) {
@@ -32,7 +33,7 @@ public final class HdumpPipelineOperatorCompleter
         // For no-arg operators like count, complete with "name()"
         boolean hasParams = hasParameters(op);
         String value = hasParams ? op + "(" : op + "()";
-        candidates.add(candidateNoSpace(value, template, description));
+        candidates.add(candidateNoSpace(prefix + value, template, description));
       }
     }
   }
