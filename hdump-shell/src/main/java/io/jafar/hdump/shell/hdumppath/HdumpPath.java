@@ -33,7 +33,9 @@ public final class HdumpPath {
     /** Query class metadata. */
     CLASSES,
     /** Query GC roots. */
-    GCROOTS
+    GCROOTS,
+    /** Query leak clusters detected by graph-based analysis. */
+    CLUSTERS
   }
 
   /** Comparison operators. */
@@ -155,7 +157,8 @@ public final class HdumpPath {
           CheckLeaksOp,
           DominatorsOp,
           JoinOp,
-          WasteOp {}
+          WasteOp,
+          ObjectsOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -467,6 +470,12 @@ public final class HdumpPath {
   /** Analyze collection capacity waste (capacity, size, loadFactor, wastedBytes, wasteType). */
   public record WasteOp() implements PipelineOp {}
 
+  /**
+   * Drill down from cluster rows into member object rows. Input rows must contain a cluster ID
+   * field (typically from the {@code clusters} root). Rows without a cluster ID are skipped.
+   */
+  public record ObjectsOp() implements PipelineOp {}
+
   // === Built-in field names for objects ===
 
   /** Standard field names available on heap objects. */
@@ -510,5 +519,19 @@ public final class HdumpPath {
     public static final String RETAINED_SIZE = "retainedSize";
 
     private GcRootFields() {}
+  }
+
+  /** Standard field names available on leak clusters. */
+  public static final class ClusterFields {
+    public static final String ID = "id";
+    public static final String OBJECT_COUNT = "objectCount";
+    public static final String RETAINED_SIZE = "retainedSize";
+    public static final String ROOT_PATH_COUNT = "rootPathCount";
+    public static final String SCORE = "score";
+    public static final String DOMINANT_CLASS = "dominantClass";
+    public static final String ANCHOR_TYPE = "anchorType";
+    public static final String ANCHOR_OBJECT = "anchorObject";
+
+    private ClusterFields() {}
   }
 }

@@ -2,6 +2,7 @@ package io.jafar.hdump.shell.cli.completion;
 
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ClassFields;
+import io.jafar.hdump.shell.hdumppath.HdumpPath.ClusterFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.GcRootFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ObjectFields;
 import io.jafar.shell.core.SessionManager;
@@ -17,7 +18,8 @@ import java.util.Set;
  */
 public final class HdumpMetadataService implements MetadataService {
 
-  private static final List<String> ROOT_TYPES = List.of("objects", "classes", "gcroots");
+  private static final List<String> ROOT_TYPES =
+      List.of("objects", "classes", "gcroots", "clusters");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -45,7 +47,10 @@ public final class HdumpMetadataService implements MetadataService {
           "abs",
           "round",
           "floor",
-          "ceil");
+          "ceil",
+          "waste",
+          "join",
+          "objects");
 
   /** Field names for objects root type */
   private static final List<String> OBJECT_FIELDS =
@@ -79,6 +84,18 @@ public final class HdumpMetadataService implements MetadataService {
           GcRootFields.OBJECT,
           GcRootFields.THREAD_SERIAL,
           GcRootFields.FRAME_NUMBER);
+
+  /** Field names for clusters root type */
+  private static final List<String> CLUSTER_FIELDS =
+      List.of(
+          ClusterFields.ID,
+          ClusterFields.OBJECT_COUNT,
+          ClusterFields.RETAINED_SIZE,
+          ClusterFields.ROOT_PATH_COUNT,
+          ClusterFields.SCORE,
+          ClusterFields.DOMINANT_CLASS,
+          ClusterFields.ANCHOR_TYPE,
+          ClusterFields.ANCHOR_OBJECT);
 
   private final SessionManager<HeapSession> sessions;
 
@@ -124,6 +141,7 @@ public final class HdumpMetadataService implements MetadataService {
       case "objects" -> OBJECT_FIELDS;
       case "classes" -> CLASS_FIELDS;
       case "gcroots" -> GC_ROOT_FIELDS;
+      case "clusters" -> CLUSTER_FIELDS;
       default -> Collections.emptyList();
     };
   }

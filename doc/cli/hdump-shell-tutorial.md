@@ -365,6 +365,28 @@ hdump> objects/instanceof/java.util.HashMap | waste() | filter(loadFactor < 0.1)
 hdump> objects/instanceof/java.util.Collection | waste() | groupBy(class, agg=sum, value=wastedBytes) | sortBy(sum desc)
 ```
 
+### Automatic Leak Cluster Detection
+
+The `clusters` root uses graph-based analysis to detect unknown leak patterns
+by identifying densely-connected subgraphs with high retained size but few GC root anchors.
+
+```bash
+# List all detected clusters ranked by suspiciousness
+hdump> clusters | sortBy(score desc) | head(10)
+
+# Filter for significant clusters
+hdump> clusters | filter(retainedSize > 10MB)
+
+# Drill into a specific cluster to see its member objects
+hdump> clusters[id = 3] | objects | sortBy(retained desc) | head(10)
+
+# Find clusters anchored by thread objects
+hdump> clusters | filter(anchorType = "THREAD_OBJ") | sortBy(retainedSize desc)
+```
+
+The leak score (`retainedSize / rootPathCount`) indicates how suspicious a cluster is:
+fewer GC root paths holding more memory is more suspicious.
+
 ### Manual Leak Patterns
 
 #### Pattern 1: Unusually Large Instance Counts

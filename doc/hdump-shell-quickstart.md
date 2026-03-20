@@ -181,6 +181,22 @@ hdump> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
 hdump> objects/java.lang.String | count
 ```
 
+### Automatic Leak Cluster Detection
+
+```bash
+# Detect leak clusters ranked by suspiciousness
+hdump> clusters | sortBy(score desc) | head(10)
+
+# Filter for large clusters
+hdump> clusters | filter(retainedSize > 10MB)
+
+# Drill into a specific cluster's objects
+hdump> clusters[id = 3] | objects | top(10, retained)
+
+# Filter by anchor type
+hdump> clusters | filter(anchorType = "THREAD_OBJ")
+```
+
 ### Heap Diff (Compare Two Dumps)
 
 ```bash

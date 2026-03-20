@@ -92,6 +92,34 @@ gcroots/JNI_GLOBAL                         # JNI global references
 | `threadSerial` | int | Thread serial number |
 | `frameNumber` | int | Stack frame number |
 
+### `clusters`
+
+Query leak clusters detected by graph-based analysis. Identifies densely-connected subgraphs
+with high retained size but few GC root anchors. Results are cached after first computation.
+
+```
+clusters                                   # All detected clusters
+clusters | sortBy(score desc)              # Ranked by suspiciousness
+clusters | filter(retainedSize > 10MB)     # Large clusters only
+clusters[id = 3] | objects                 # Drill down to member objects
+clusters | filter(anchorType = "THREAD_OBJ")  # Filter by anchor type
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Cluster identifier |
+| `objectCount` | int | Number of objects in the cluster |
+| `retainedSize` | long | Total retained size of the cluster |
+| `rootPathCount` | int | Number of distinct GC root paths reaching the cluster |
+| `score` | double | Leak suspiciousness score (`retainedSize / rootPathCount`) |
+| `dominantClass` | String | Most common class in the cluster |
+| `anchorType` | String | GC root type of the primary anchor |
+| `anchorObject` | String | Description of the anchoring root object |
+
+**Pipeline operators:**
+- `objects` — expands cluster rows into member object rows (use after filtering by cluster id)
+
 ## Type Specifications
 
 ### Exact Match

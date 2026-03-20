@@ -889,4 +889,72 @@ class HdumpPathTest {
     assertInstanceOf(HdumpPath.FuncExpr.class, le.left());
     assertInstanceOf(HdumpPath.CompExpr.class, le.right());
   }
+
+  // === Cluster parser tests ===
+
+  @Test
+  void testParseClusters() {
+    Query query = HdumpPathParser.parse("clusters");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertNull(query.typePattern());
+    assertTrue(query.predicates().isEmpty());
+    assertTrue(query.pipeline().isEmpty());
+  }
+
+  @Test
+  void testParseClustersWithPredicate() {
+    Query query = HdumpPathParser.parse("clusters[score > 0.5]");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertEquals(1, query.predicates().size());
+  }
+
+  @Test
+  void testParseClustersWithTop() {
+    Query query = HdumpPathParser.parse("clusters | top(10)");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.TopOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseClustersWithSortByScore() {
+    Query query = HdumpPathParser.parse("clusters | sortBy(score desc)");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    HdumpPath.SortByOp sortOp = (HdumpPath.SortByOp) query.pipeline().get(0);
+    assertEquals("score", sortOp.fields().get(0).field());
+    assertTrue(sortOp.fields().get(0).descending());
+  }
+
+  @Test
+  void testParseClustersWithFilterRetainedSize() {
+    Query query = HdumpPathParser.parse("clusters | filter(retainedSize > 10MB)");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseClustersObjectsDrillDown() {
+    Query query = HdumpPathParser.parse("clusters[id = 3] | objects");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertEquals(1, query.predicates().size());
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ObjectsOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseClustersObjectsWithPipeline() {
+    Query query = HdumpPathParser.parse("clusters[id = 3] | objects | top(10, retained)");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ObjectsOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.TopOp.class, query.pipeline().get(1));
+  }
+
+  @Test
+  void testParseClustersFilterAnchorType() {
+    Query query = HdumpPathParser.parse("clusters | filter(anchorType = \"THREAD_OBJ\")");
+    assertEquals(HdumpPath.Root.CLUSTERS, query.root());
+    assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(0));
+  }
 }

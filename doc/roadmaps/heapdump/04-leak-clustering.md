@@ -1,5 +1,7 @@
 # Automatic Leak Cluster Detection via Graph Analysis
 
+**Status: IMPLEMENTED**
+
 ## Goal
 
 Detect unknown memory leak patterns by analyzing the object reference graph structure, rather than relying on hand-written pattern detectors.

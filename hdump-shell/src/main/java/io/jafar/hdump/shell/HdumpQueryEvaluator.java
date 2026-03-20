@@ -17,7 +17,8 @@ import java.util.Map;
  */
 public final class HdumpQueryEvaluator implements QueryEvaluator {
 
-  private static final List<String> ROOT_TYPES = List.of("objects", "classes", "gcroots");
+  private static final List<String> ROOT_TYPES =
+      List.of("objects", "classes", "gcroots", "clusters");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -47,7 +48,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
           "round",
           "floor",
           "ceil",
-          "waste");
+          "waste",
+          "objects");
 
   @Override
   public Object parse(String queryString) throws QueryParseException {
@@ -124,6 +126,7 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "floor" -> "floor(field) - Round down";
       case "ceil" -> "ceil(field) - Round up";
       case "waste" -> "waste() - Analyze collection capacity waste (capacity, size, wastedBytes)";
+      case "objects" -> "objects() - Drill down from cluster rows into member object rows";
       default -> null;
     };
   }

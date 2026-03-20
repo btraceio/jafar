@@ -120,9 +120,11 @@ public final class HdumpPathParser {
       return Root.CLASSES;
     } else if (matchKeyword("gcroots")) {
       return Root.GCROOTS;
+    } else if (matchKeyword("clusters")) {
+      return Root.CLUSTERS;
     } else {
       throw new HdumpPathParseException(
-          "Expected 'objects', 'classes', or 'gcroots' at position " + pos);
+          "Expected 'objects', 'classes', 'gcroots', or 'clusters' at position " + pos);
     }
   }
 
@@ -534,6 +536,10 @@ public final class HdumpPathParser {
       case "waste" -> {
         consumeOptionalEmptyParens();
         yield new WasteOp();
+      }
+      case "objects" -> {
+        consumeOptionalEmptyParens();
+        yield new ObjectsOp();
       }
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };

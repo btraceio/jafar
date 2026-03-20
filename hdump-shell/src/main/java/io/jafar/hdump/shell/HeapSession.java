@@ -3,6 +3,7 @@ package io.jafar.hdump.shell;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
+import io.jafar.hdump.shell.hdumppath.ClusterDetector;
 import io.jafar.hdump.shell.leaks.LeakDetector;
 import io.jafar.hdump.shell.leaks.LeakDetectorRegistry;
 import io.jafar.shell.core.InteractiveMenu;
@@ -33,6 +34,7 @@ public final class HeapSession implements Session {
   private final HeapDump dump;
   private final ParserOptions options;
   private volatile boolean closed = false;
+  private volatile ClusterDetector.Result cachedClusters;
 
   private HeapSession(Path path, HeapDump dump, ParserOptions options) {
     this.path = path;
@@ -275,6 +277,30 @@ public final class HeapSession implements Session {
     System.err.println("Dominator tree computation complete!");
     System.err.println();
     return true;
+  }
+
+  /**
+   * Returns cached cluster detection results, computing them if needed.
+   *
+   * @return cluster detection result with rows and membership index
+   */
+  public ClusterDetector.Result getOrComputeClusters() {
+    ClusterDetector.Result result = cachedClusters;
+    if (result != null) {
+      return result;
+    }
+    synchronized (this) {
+      if (cachedClusters != null) {
+        return cachedClusters;
+      }
+      // Ensure retained sizes are computed first
+      computeApproximateRetainedSizes();
+      System.err.println("Detecting leak clusters...");
+      cachedClusters = ClusterDetector.detect(dump, 0, 15);
+      System.err.println("Found " + cachedClusters.rows().size() + " cluster(s).");
+      System.err.println();
+      return cachedClusters;
+    }
   }
 
   private static String createProgressBar(double progress, int width) {

@@ -67,6 +67,7 @@ public final class HdumpPipelineOperatorCompleter
       case "floor" -> "floor(field)";
       case "ceil" -> "ceil(field)";
       case "waste" -> "waste()";
+      case "objects" -> "objects()";
       default -> op + "(...)";
     };
   }
@@ -100,13 +101,14 @@ public final class HdumpPipelineOperatorCompleter
       case "floor" -> "round down";
       case "ceil" -> "round up";
       case "waste" -> "analyze collection capacity waste";
+      case "objects" -> "drill down from clusters to member objects";
       default -> null;
     };
   }
 
   private boolean hasParameters(String op) {
     return switch (op) {
-      case "count", "pathToRoot", "retentionPaths", "dominators", "waste" -> false;
+      case "count", "pathToRoot", "retentionPaths", "dominators", "waste", "objects" -> false;
       default -> true;
     };
   }

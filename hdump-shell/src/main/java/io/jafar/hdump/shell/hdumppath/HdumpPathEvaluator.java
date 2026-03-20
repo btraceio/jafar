@@ -213,6 +213,7 @@ public final class HdumpPathEvaluator {
           case OBJECTS -> evaluateObjects(dump, query);
           case CLASSES -> evaluateClasses(dump, query);
           case GCROOTS -> evaluateGcRoots(dump, query);
+          case CLUSTERS -> evaluateClusters(session, query);
         };
 
     // Apply pipeline operations
@@ -983,6 +984,20 @@ public final class HdumpPathEvaluator {
     return results;
   }
 
+  private static List<Map<String, Object>> evaluateClusters(HeapSession session, Query query) {
+    ClusterDetector.Result clusterResult = session.getOrComputeClusters();
+    List<Map<String, Object>> results = new ArrayList<>(clusterResult.rows());
+
+    if (!query.predicates().isEmpty()) {
+      results =
+          results.stream()
+              .filter(map -> matchesAllPredicates(map, query.predicates()))
+              .collect(Collectors.toList());
+    }
+
+    return results;
+  }
+
   // === Object to Map conversions ===
 
   private static Map<String, Object> objectToMap(HeapObject obj) {
@@ -1358,6 +1373,13 @@ public final class HdumpPathEvaluator {
         }
         yield applyWaste(session.getHeapDump(), results);
       }
+      case ObjectsOp o -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "objects requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyObjectsDrillDown(session, results);
+      }
       case JoinOp j ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
@@ -1564,6 +1586,7 @@ public final class HdumpPathEvaluator {
       case CLASSES -> ClassFields.NAME;
       case OBJECTS -> ObjectFields.CLASS_NAME;
       case GCROOTS -> GcRootFields.TYPE;
+      case CLUSTERS -> ClusterFields.ID;
     };
   }
 
@@ -1999,6 +2022,34 @@ public final class HdumpPathEvaluator {
     }
     regex.append("$");
     return Pattern.compile(regex.toString());
+  }
+
+  private static List<Map<String, Object>> applyObjectsDrillDown(
+      HeapSession session, List<Map<String, Object>> results) {
+    ClusterDetector.Result clusterResult = session.getOrComputeClusters();
+    HeapDump dump = session.getHeapDump();
+    List<Map<String, Object>> objectRows = new ArrayList<>();
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get(HdumpPath.ClusterFields.ID);
+      if (idObj == null) continue;
+      int clusterId =
+          idObj instanceof Number
+              ? ((Number) idObj).intValue()
+              : Integer.parseInt(idObj.toString());
+
+      long[] memberIds = clusterResult.membership().get(clusterId);
+      if (memberIds == null) continue;
+
+      for (long memberId : memberIds) {
+        HeapObject obj = dump.getObjectById(memberId).orElse(null);
+        if (obj != null) {
+          objectRows.add(objectToMap(obj));
+        }
+      }
+    }
+
+    return objectRows;
   }
 
   private static List<Map<String, Object>> applyWaste(
