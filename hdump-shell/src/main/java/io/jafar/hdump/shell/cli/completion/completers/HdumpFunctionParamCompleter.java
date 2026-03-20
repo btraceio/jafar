@@ -56,8 +56,8 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
               + "'");
     }
 
-    // Get fields for the current root type
-    List<String> fields = metadata.getFieldsForRootType(rootType);
+    // Get fields for the current root type, enriched with upstream pipeline operator columns
+    List<String> fields = enrichFieldsFromPipeline(metadata.getFieldsForRootType(rootType), ctx);
 
     if (DEBUG) {
       System.err.println("[FunctionParamCompleter] fields for " + rootType + ": " + fields);
@@ -228,8 +228,34 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
       }
     }
 
-    // For sortBy and top, suggest sort directions
-    if (("sortBy".equals(functionName) || "top".equals(functionName)) && ctx.parameterIndex() > 0) {
+    // For sortBy, suggest sort directions after field name (space-separated, not after comma).
+    // Syntax: sortBy(field [asc|desc], field2 [asc|desc])
+    // After comma = new field; direction is the space-separated token after a field name.
+    if ("sortBy".equals(functionName)) {
+      // Detect if partial looks like it follows a field name (empty or starts with a/d)
+      // by checking if the raw param text before partial contains a field-like token
+      String rawParam = ctx.fullLine().substring(ctx.fullLine().lastIndexOf('(') + 1, ctx.cursor());
+      // Strip only leading whitespace — trailing space indicates direction position
+      String lastSegment =
+          rawParam.contains(",")
+              ? rawParam.substring(rawParam.lastIndexOf(',') + 1).stripLeading()
+              : rawParam.stripLeading();
+      // If lastSegment contains a space, the part after the space is a direction candidate
+      int spaceIdx = lastSegment.indexOf(' ');
+      if (spaceIdx > 0) {
+        String dirPartial = lastSegment.substring(spaceIdx + 1).trim();
+        if ("asc".startsWith(dirPartial)) {
+          candidates.add(candidate(prefix + "asc", "asc", "ascending order"));
+        }
+        if ("desc".startsWith(dirPartial)) {
+          candidates.add(candidate(prefix + "desc", "desc", "descending order"));
+        }
+        return; // Don't offer field names when completing direction
+      }
+    }
+
+    // For top, suggest sort directions after the count parameter
+    if ("top".equals(functionName) && ctx.parameterIndex() > 0) {
       if ("asc".startsWith(partial)) {
         candidates.add(candidate(prefix + "asc", "asc", "ascending order"));
       }
@@ -373,4 +399,31 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
    * @param identPartial The partial identifier being typed (e.g., "inst")
    */
   private record ValueExprContext(String contextPrefix, String exprPrefix, String identPartial) {}
+
+  private static final List<String> WASTE_FIELDS =
+      List.of("capacity", "size", "loadFactor", "wastedBytes", "wasteType");
+
+  private static final List<String> JOIN_DELTA_FIELDS =
+      List.of("baseline.exists", "shallowSizeDelta", "retainedSizeDelta", "instanceCountDelta");
+
+  /**
+   * Extends the base field list with columns added by upstream pipeline operators detected in the
+   * query line.
+   */
+  private static List<String> enrichFieldsFromPipeline(
+      List<String> baseFields, CompletionContext ctx) {
+    String line = ctx.fullLine();
+    if (line == null) return baseFields;
+
+    String lower = line.toLowerCase();
+    boolean hasWaste = lower.contains("waste()") || lower.contains("waste(");
+    boolean hasJoin = lower.contains("join(");
+
+    if (!hasWaste && !hasJoin) return baseFields;
+
+    List<String> enriched = new java.util.ArrayList<>(baseFields);
+    if (hasWaste) enriched.addAll(WASTE_FIELDS);
+    if (hasJoin) enriched.addAll(JOIN_DELTA_FIELDS);
+    return enriched;
+  }
 }

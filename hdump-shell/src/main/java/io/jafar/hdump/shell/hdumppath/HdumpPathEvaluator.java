@@ -1915,7 +1915,7 @@ public final class HdumpPathEvaluator {
       }
 
       Comparator<Map<String, Object>> fieldCmp =
-          Comparator.comparing(m -> toComparable(m.get(sf.field())));
+          (m1, m2) -> compareValues(getField(m1, sf.field()), getField(m2, sf.field()));
       if (sf.descending()) {
         fieldCmp = fieldCmp.reversed();
       }

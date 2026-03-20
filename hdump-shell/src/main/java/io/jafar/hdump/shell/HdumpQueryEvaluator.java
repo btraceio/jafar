@@ -65,9 +65,7 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
     if (!(session instanceof HeapSession heapSession)) {
       throw new IllegalArgumentException("HdumpQueryEvaluator requires a HeapSession");
     }
-    if (!(query instanceof Query hdumpQuery)) {
-      throw new IllegalArgumentException("Expected HdumpPath.Query, got " + query.getClass());
-    }
+    Query hdumpQuery = toQuery(query);
     return HdumpPathEvaluator.evaluate(heapSession, hdumpQuery);
   }
 
@@ -76,10 +74,19 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
     if (!(session instanceof HeapSession heapSession)) {
       throw new IllegalArgumentException("HdumpQueryEvaluator requires a HeapSession");
     }
-    if (!(query instanceof Query hdumpQuery)) {
-      throw new IllegalArgumentException("Expected HdumpPath.Query, got " + query.getClass());
-    }
+    Query hdumpQuery = toQuery(query);
     return HdumpPathEvaluator.evaluate(heapSession, hdumpQuery, resolver);
+  }
+
+  private Query toQuery(Object query) {
+    if (query instanceof Query q) {
+      return q;
+    }
+    if (query instanceof String s) {
+      return (Query) parse(s);
+    }
+    throw new IllegalArgumentException(
+        "Expected HdumpPath.Query or String, got " + query.getClass());
   }
 
   @Override

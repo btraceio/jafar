@@ -90,11 +90,12 @@ final class HeapClassImpl implements HeapClass {
   @Override
   public List<HeapField> getAllInstanceFields() {
     if (allInstanceFieldsCache == null) {
-      // Lazily build and cache the full field list
+      // Build the full field list in subclass-first order matching HPROF instance data layout:
+      // the HPROF writer emits fields starting from the most-derived class, then superclass fields.
       List<HeapField> all = new ArrayList<>();
       HeapClass cls = this;
       while (cls != null) {
-        all.addAll(0, cls.getInstanceFields()); // Add superclass fields first
+        all.addAll(cls.getInstanceFields());
         cls = cls.getSuperClass();
       }
       allInstanceFieldsCache = Collections.unmodifiableList(all);
