@@ -601,7 +601,14 @@ public final class TuiBrowserController {
       ctx.hintMessageTick = ctx.renderTick;
       return;
     }
-    pushNavEntry(tab);
+    if (tab.pinned) {
+      // Navigate from a pinned tab: open in the intermediary tab without adding to history
+      int unpinnedIdx = findOrCreateUnpinnedTabIndex();
+      ctx.activeTabIndex = unpinnedIdx;
+      clearNavHistory();
+    } else {
+      pushNavEntry(tab);
+    }
     loadEntriesIntoTab(List.of(row), false);
   }
 
@@ -638,6 +645,14 @@ public final class TuiBrowserController {
     if (navBackStack.size() > 20) {
       navBackStack.remove(0);
     }
+  }
+
+  private int findOrCreateUnpinnedTabIndex() {
+    for (int i = ctx.tabs.size() - 1; i >= 0; i--) {
+      if (!ctx.tabs.get(i).pinned) return i;
+    }
+    ctx.tabs.add(new TuiContext.ResultTab(""));
+    return ctx.tabs.size() - 1;
   }
 
   private void restoreNavEntry(NavigationEntry e) {
