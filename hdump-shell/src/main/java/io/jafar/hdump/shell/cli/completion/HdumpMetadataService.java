@@ -3,6 +3,7 @@ package io.jafar.hdump.shell.cli.completion;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ClassFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ClusterFields;
+import io.jafar.hdump.shell.hdumppath.HdumpPath.DuplicateFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.GcRootFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ObjectFields;
 import io.jafar.shell.core.SessionManager;
@@ -19,7 +20,7 @@ import java.util.Set;
 public final class HdumpMetadataService implements MetadataService {
 
   private static final List<String> ROOT_TYPES =
-      List.of("objects", "classes", "gcroots", "clusters");
+      List.of("objects", "classes", "gcroots", "clusters", "duplicates");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -99,6 +100,18 @@ public final class HdumpMetadataService implements MetadataService {
           ClusterFields.ANCHOR_TYPE,
           ClusterFields.ANCHOR_OBJECT);
 
+  /** Field names for duplicates root type */
+  private static final List<String> DUPLICATE_FIELDS =
+      List.of(
+          DuplicateFields.ID,
+          DuplicateFields.ROOT_CLASS,
+          DuplicateFields.FINGERPRINT,
+          DuplicateFields.COPIES,
+          DuplicateFields.UNIQUE_SIZE,
+          DuplicateFields.WASTED_BYTES,
+          DuplicateFields.DEPTH,
+          DuplicateFields.NODE_COUNT);
+
   private final SessionManager<HeapSession> sessions;
 
   public HdumpMetadataService(SessionManager<HeapSession> sessions) {
@@ -144,6 +157,7 @@ public final class HdumpMetadataService implements MetadataService {
       case "classes" -> CLASS_FIELDS;
       case "gcroots" -> GC_ROOT_FIELDS;
       case "clusters" -> CLUSTER_FIELDS;
+      case "duplicates" -> DUPLICATE_FIELDS;
       default -> Collections.emptyList();
     };
   }

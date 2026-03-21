@@ -145,7 +145,8 @@ public final class HdumpPathEvaluator {
                   query.typePattern(),
                   query.instanceof_(),
                   mergedPredicates,
-                  pipeline.subList(firstNonFilter, pipeline.size()))
+                  pipeline.subList(firstNonFilter, pipeline.size()),
+                  query.rootParam())
               : query;
       List<PipelineOp> streamingPipeline = streamingQuery.pipeline();
 
@@ -224,6 +225,7 @@ public final class HdumpPathEvaluator {
           case CLASSES -> evaluateClasses(dump, query);
           case GCROOTS -> evaluateGcRoots(dump, query);
           case CLUSTERS -> evaluateClusters(session, query);
+          case DUPLICATES -> evaluateDuplicates(session, query);
         };
 
     // Apply pipeline operations
@@ -1008,6 +1010,19 @@ public final class HdumpPathEvaluator {
     return results;
   }
 
+  private static List<Map<String, Object>> evaluateDuplicates(HeapSession session, Query query) {
+    int depth = query.rootParam() > 0 ? query.rootParam() : 3;
+    SubgraphFingerprinter.Result result = session.getOrComputeDuplicates(depth);
+    List<Map<String, Object>> rows = new ArrayList<>(result.rows());
+    if (!query.predicates().isEmpty()) {
+      rows =
+          rows.stream()
+              .filter(m -> matchesAllPredicates(m, query.predicates()))
+              .collect(Collectors.toList());
+    }
+    return rows;
+  }
+
   // === Object to Map conversions ===
 
   public static Map<String, Object> objectToRow(HeapObject obj) {
@@ -1503,7 +1518,12 @@ public final class HdumpPathEvaluator {
     // Build baseline query: same root/typePattern/predicates, empty pipeline
     Query baselineQuery =
         new Query(
-            query.root(), query.typePattern(), query.instanceof_(), query.predicates(), List.of());
+            query.root(),
+            query.typePattern(),
+            query.instanceof_(),
+            query.predicates(),
+            List.of(),
+            query.rootParam());
 
     // Evaluate baseline
     List<Map<String, Object>> baselineResults = evaluate(baseHeapSession, baselineQuery);
@@ -1655,6 +1675,7 @@ public final class HdumpPathEvaluator {
       case OBJECTS -> ObjectFields.CLASS_NAME;
       case GCROOTS -> GcRootFields.TYPE;
       case CLUSTERS -> ClusterFields.ID;
+      case DUPLICATES -> HdumpPath.DuplicateFields.ID;
     };
   }
 
@@ -2169,12 +2190,22 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get(HdumpPath.ClusterFields.ID);
       if (idObj == null) continue;
-      int clusterId =
+      int groupId =
           idObj instanceof Number
               ? ((Number) idObj).intValue()
               : Integer.parseInt(idObj.toString());
 
-      long[] memberIds = clusterResult.membership().get(clusterId);
+      // Try clusters first
+      long[] memberIds = clusterResult.membership().get(groupId);
+
+      // If not in clusters, check any cached duplicate results
+      if (memberIds == null) {
+        for (SubgraphFingerprinter.Result dupResult : session.getAllCachedDuplicates().values()) {
+          memberIds = dupResult.memberIds().get(groupId);
+          if (memberIds != null) break;
+        }
+      }
+
       if (memberIds == null) continue;
 
       for (long memberId : memberIds) {

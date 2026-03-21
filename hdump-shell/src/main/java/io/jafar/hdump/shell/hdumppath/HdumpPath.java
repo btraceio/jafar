@@ -35,7 +35,9 @@ public final class HdumpPath {
     /** Query GC roots. */
     GCROOTS,
     /** Query leak clusters detected by graph-based analysis. */
-    CLUSTERS
+    CLUSTERS,
+    /** Query structurally-identical duplicate object subgraphs. */
+    DUPLICATES
   }
 
   /** Comparison operators. */
@@ -86,7 +88,8 @@ public final class HdumpPath {
       String typePattern, // Class name pattern (null for all)
       boolean instanceof_, // Whether to include subclasses
       List<Predicate> predicates,
-      List<PipelineOp> pipeline) {
+      List<PipelineOp> pipeline,
+      int rootParam) { // Root-specific integer parameter (e.g. depth for duplicates)
 
     public Query {
       predicates = predicates == null ? List.of() : List.copyOf(predicates);
@@ -566,5 +569,34 @@ public final class HdumpPath {
     public static final String ANCHOR_OBJECT = "anchorObject";
 
     private ClusterFields() {}
+  }
+
+  /** Standard field names available on duplicate subgraph groups. */
+  public static final class DuplicateFields {
+    /** 1-based group identifier. */
+    public static final String ID = "id";
+
+    /** Fully-qualified class name of the root object. */
+    public static final String ROOT_CLASS = "rootClass";
+
+    /** 16-character hex string of the 64-bit FNV-1a structural fingerprint. */
+    public static final String FINGERPRINT = "fingerprint";
+
+    /** Number of structurally-identical copies. */
+    public static final String COPIES = "copies";
+
+    /** Shallow size of one copy's root object in bytes. */
+    public static final String UNIQUE_SIZE = "uniqueSize";
+
+    /** {@code (copies - 1) * uniqueSize} — memory that could be saved by deduplication. */
+    public static final String WASTED_BYTES = "wastedBytes";
+
+    /** Fingerprint depth used for this group. */
+    public static final String DEPTH = "depth";
+
+    /** Number of objects visited in one copy's subtree during fingerprinting. */
+    public static final String NODE_COUNT = "nodeCount";
+
+    private DuplicateFields() {}
   }
 }

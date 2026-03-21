@@ -6,7 +6,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ```
 <query>     ::= <root> ("/" <type-spec>)? ("[" <predicates> "]")? ("|" <pipeline>)*
-<root>      ::= "objects" | "classes" | "gcroots"
+<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")?
 <type-spec> ::= ("instanceof" "/")? <class-pattern>
 <predicates>::= <predicate> (("and" | "or") <predicate>)*
 <predicate> ::= <field-path> <op> <literal> | "not" <predicate> | "(" <predicates> ")"
@@ -15,7 +15,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ## Roots
 
-HdumpPath queries start with one of three roots:
+HdumpPath queries start with one of five roots:
 
 ### `objects`
 
@@ -119,6 +119,41 @@ clusters | filter(anchorType = "THREAD_OBJ")  # Filter by anchor type
 
 **Pipeline operators:**
 - `objects` — expands cluster rows into member object rows (use after filtering by cluster id)
+
+### `duplicates`
+
+Detect structurally identical object subgraphs. Objects are grouped by a FNV-1a 64-bit
+fingerprint of their class, fields, and referenced subtrees. Groups are sorted by
+`wastedBytes` descending. Results are cached per depth after first computation.
+
+**Syntax:**
+```
+duplicates                                 # Default depth (3)
+duplicates(depth=N)                        # Custom fingerprint depth
+```
+
+**Examples:**
+```
+duplicates | sortBy(wastedBytes desc)
+duplicates(depth=1) | top(10)
+duplicates[rootClass = "com.example.Config"] | select(copies, wastedBytes)
+duplicates[copies > 5] | objects() | head(3)
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Group identifier (1-based) |
+| `rootClass` | String | Fully-qualified class name of the root object |
+| `fingerprint` | String | 16-char hex of the 64-bit structural fingerprint |
+| `copies` | int | Number of structurally-identical instances |
+| `uniqueSize` | long | Shallow size of one copy's root object in bytes |
+| `wastedBytes` | long | `(copies - 1) * uniqueSize` — deduplication savings |
+| `depth` | int | Fingerprint depth used for this group |
+| `nodeCount` | int | Objects visited in one copy's subtree |
+
+**Pipeline operators:**
+- `objects` — expands duplicate group rows into member object rows
 
 ## Type Specifications
 

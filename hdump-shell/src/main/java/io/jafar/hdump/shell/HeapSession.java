@@ -4,6 +4,7 @@ import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.shell.hdumppath.ClusterDetector;
+import io.jafar.hdump.shell.hdumppath.SubgraphFingerprinter;
 import io.jafar.hdump.shell.leaks.LeakDetector;
 import io.jafar.hdump.shell.leaks.LeakDetectorRegistry;
 import io.jafar.shell.core.InteractiveMenu;
@@ -14,10 +15,12 @@ import java.io.PrintWriter;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +40,8 @@ public final class HeapSession implements Session {
   private volatile ClusterDetector.Result cachedClusters;
   private volatile io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.Result
       cachedThreadOwnership;
+  private final Map<Integer, SubgraphFingerprinter.Result> cachedDuplicates =
+      new ConcurrentHashMap<>();
 
   private HeapSession(Path path, HeapDump dump, ParserOptions options) {
     this.path = path;
@@ -322,6 +327,33 @@ public final class HeapSession implements Session {
       System.err.println();
       return cachedClusters;
     }
+  }
+
+  /**
+   * Returns cached duplicate subgraph results for the given depth, computing them if needed.
+   *
+   * @param depth fingerprint depth (0 = class name only; higher = deeper field traversal)
+   * @return fingerprinting result with duplicate group rows and member ID index
+   */
+  public SubgraphFingerprinter.Result getOrComputeDuplicates(int depth) {
+    return cachedDuplicates.computeIfAbsent(
+        depth,
+        d -> {
+          System.err.println("Computing duplicate subgraph fingerprints (depth=" + d + ")...");
+          SubgraphFingerprinter.Result r = SubgraphFingerprinter.compute(dump, d);
+          System.err.println("Found " + r.rows().size() + " duplicate group(s).");
+          return r;
+        });
+  }
+
+  /**
+   * Returns all previously computed duplicate results keyed by depth, without triggering new
+   * computation.
+   *
+   * @return unmodifiable view of the cached duplicate results
+   */
+  public Map<Integer, SubgraphFingerprinter.Result> getAllCachedDuplicates() {
+    return Collections.unmodifiableMap(cachedDuplicates);
   }
 
   private static String createProgressBar(double progress, int width) {

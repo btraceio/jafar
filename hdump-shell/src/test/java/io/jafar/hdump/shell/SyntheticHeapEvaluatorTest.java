@@ -156,4 +156,59 @@ class SyntheticHeapEvaluatorTest {
           "ownership must be 'exclusive' or 'shared', got: " + ownership);
     }
   }
+
+  @Test
+  void duplicatesReturnsGroupsWithRequiredFields() {
+    // Heap has 3 Foo and 2 Bar instances, all with the same structure → 2 duplicate groups
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(session, HdumpPathParser.parse("duplicates"));
+    assertFalse(result.isEmpty(), "duplicates must find at least one group");
+
+    for (Map<String, Object> row : result) {
+      assertTrue(row.containsKey("id"), "duplicate row missing 'id'");
+      assertTrue(row.containsKey("rootClass"), "duplicate row missing 'rootClass'");
+      assertTrue(row.containsKey("fingerprint"), "duplicate row missing 'fingerprint'");
+      assertTrue(row.containsKey("copies"), "duplicate row missing 'copies'");
+      assertTrue(row.containsKey("uniqueSize"), "duplicate row missing 'uniqueSize'");
+      assertTrue(row.containsKey("wastedBytes"), "duplicate row missing 'wastedBytes'");
+      assertTrue(row.containsKey("depth"), "duplicate row missing 'depth'");
+      assertTrue(row.containsKey("nodeCount"), "duplicate row missing 'nodeCount'");
+      assertTrue(((Number) row.get("copies")).intValue() >= 2, "copies must be >= 2");
+    }
+  }
+
+  @Test
+  void duplicatesFooGroupHasThreeCopies() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("duplicates[rootClass = \"com.example.Foo\"]"));
+    assertEquals(1, result.size(), "exactly one Foo duplicate group");
+    assertEquals(3, ((Number) result.get(0).get("copies")).intValue());
+  }
+
+  @Test
+  void duplicatesDepthParamIsParsedAndStored() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(session, HdumpPathParser.parse("duplicates(depth=1)"));
+    // All rows must report depth=1
+    for (Map<String, Object> row : result) {
+      assertEquals(1, ((Number) row.get("depth")).intValue());
+    }
+  }
+
+  @Test
+  void duplicatesObjectsDrillDown() {
+    // duplicates | objects should expand the duplicate group into its member object rows
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session,
+            HdumpPathParser.parse("duplicates[rootClass = \"com.example.Foo\"] | objects()"));
+    // Foo has 3 instances → objects() should return 3 rows
+    assertEquals(3, result.size());
+    for (Map<String, Object> row : result) {
+      assertTrue(row.containsKey("id"), "object row missing 'id'");
+      assertTrue(row.containsKey("class"), "object row missing 'class'");
+      assertEquals("com.example.Foo", row.get("class"));
+    }
+  }
 }

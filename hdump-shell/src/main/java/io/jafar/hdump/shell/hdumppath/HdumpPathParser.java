@@ -60,6 +60,24 @@ public final class HdumpPathParser {
     Root root = parseRoot();
     skipWs();
 
+    // Parse optional root parameter for roots that accept one (e.g. duplicates(depth=N))
+    int rootParam = 0;
+    if (root == Root.DUPLICATES && peek() == '(') {
+      advance(); // consume '('
+      skipWs();
+      if (peek() != ')') {
+        if (lookahead("depth=") || lookahead("depth =")) {
+          while (peek() != '=') advance();
+          advance(); // consume '='
+          skipWs();
+        }
+        rootParam = parseNumber().intValue();
+        skipWs();
+      }
+      expect(')');
+      skipWs();
+    }
+
     // Parse optional type specification
     String typePattern = null;
     boolean instanceof_ = false;
@@ -110,7 +128,7 @@ public final class HdumpPathParser {
       throw new HdumpPathParseException("Unexpected input at position " + pos + ": " + remaining());
     }
 
-    return new Query(root, typePattern, instanceof_, predicates, pipeline);
+    return new Query(root, typePattern, instanceof_, predicates, pipeline, rootParam);
   }
 
   private Root parseRoot() {
@@ -122,9 +140,12 @@ public final class HdumpPathParser {
       return Root.GCROOTS;
     } else if (matchKeyword("clusters")) {
       return Root.CLUSTERS;
+    } else if (matchKeyword("duplicates")) {
+      return Root.DUPLICATES;
     } else {
       throw new HdumpPathParseException(
-          "Expected 'objects', 'classes', 'gcroots', or 'clusters' at position " + pos);
+          "Expected 'objects', 'classes', 'gcroots', 'clusters', or 'duplicates' at position "
+              + pos);
     }
   }
 
@@ -923,7 +944,7 @@ public final class HdumpPathParser {
     PipelineOp checkLeaksOp = parseCheckLeaksOp();
 
     // Create a query with Root.OBJECTS and the checkLeaks operation
-    return new Query(Root.OBJECTS, null, false, List.of(), List.of(checkLeaksOp));
+    return new Query(Root.OBJECTS, null, false, List.of(), List.of(checkLeaksOp), 0);
   }
 
   // === Lexer utilities ===
