@@ -68,6 +68,8 @@ public final class HdumpPipelineOperatorCompleter
       case "ceil" -> "ceil(field)";
       case "waste" -> "waste()";
       case "objects" -> "objects()";
+      case "threadOwner" -> "threadOwner()";
+      case "dominatedSize" -> "dominatedSize()";
       default -> op + "(...)";
     };
   }
@@ -102,13 +104,23 @@ public final class HdumpPipelineOperatorCompleter
       case "ceil" -> "round up";
       case "waste" -> "analyze collection capacity waste";
       case "objects" -> "drill down from clusters to member objects";
+      case "threadOwner" -> "enrich objects with owning thread (exclusive/shared)";
+      case "dominatedSize" -> "enrich GC roots with dominated memory size and count";
       default -> null;
     };
   }
 
   private boolean hasParameters(String op) {
     return switch (op) {
-      case "count", "pathToRoot", "retentionPaths", "dominators", "waste", "objects" -> false;
+      case "count",
+          "pathToRoot",
+          "retentionPaths",
+          "dominators",
+          "waste",
+          "objects",
+          "threadOwner",
+          "dominatedSize" ->
+          false;
       default -> true;
     };
   }

@@ -1424,6 +1424,20 @@ public final class HdumpPathEvaluator {
         }
         yield applyObjectsDrillDown(session, results);
       }
+      case ThreadOwnerOp t -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "threadOwner requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyThreadOwner(session, results);
+      }
+      case DominatedSizeOp d -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "dominatedSize requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyDominatedSize(session, results);
+      }
       case JoinOp j ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
@@ -2094,6 +2108,52 @@ public final class HdumpPathEvaluator {
     }
 
     return objectRows;
+  }
+
+  private static List<Map<String, Object>> applyThreadOwner(
+      HeapSession session, List<Map<String, Object>> results) {
+    ThreadOwnershipAnalyzer.Result ownership = session.getOrComputeThreadOwnership();
+    List<Map<String, Object>> enriched = new ArrayList<>(results.size());
+    for (Map<String, Object> row : results) {
+      Map<String, Object> out = new AliasMap();
+      out.putAll(row);
+      Object idObj = row.get(ObjectFields.ID);
+      String owner = null;
+      if (idObj instanceof Number n) {
+        owner = ownership.ownerNameByObjectId().get(n.longValue());
+      }
+      if (owner == null) owner = "shared";
+      out.put("ownerThread", owner);
+      out.put("ownership", "shared".equals(owner) ? "shared" : "exclusive");
+      enriched.add(out);
+    }
+    return enriched;
+  }
+
+  private static List<Map<String, Object>> applyDominatedSize(
+      HeapSession session, List<Map<String, Object>> results) {
+    ThreadOwnershipAnalyzer.Result ownership = session.getOrComputeThreadOwnership();
+    List<Map<String, Object>> enriched = new ArrayList<>(results.size());
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get(GcRootFields.OBJECT_ID);
+      if (idObj == null) {
+        enriched.add(row);
+        continue;
+      }
+      long objId = idObj instanceof Number n ? n.longValue() : Long.parseLong(idObj.toString());
+      ThreadOwnershipAnalyzer.Stats stats = ownership.statsByThreadObjId().get(objId);
+      if (stats == null) {
+        enriched.add(row);
+        continue;
+      }
+      Map<String, Object> out = new AliasMap();
+      out.putAll(row);
+      out.put("threadName", stats.threadName());
+      out.put("dominated", stats.dominated());
+      out.put("dominatedCount", stats.dominatedCount());
+      enriched.add(out);
+    }
+    return enriched;
   }
 
   private static List<Map<String, Object>> applyWaste(

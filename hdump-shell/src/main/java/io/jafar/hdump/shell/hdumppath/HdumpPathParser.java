@@ -541,6 +541,14 @@ public final class HdumpPathParser {
         consumeOptionalEmptyParens();
         yield new ObjectsOp();
       }
+      case "threadowner", "ownerthread" -> {
+        consumeOptionalEmptyParens();
+        yield new ThreadOwnerOp();
+      }
+      case "dominatedsize", "threaddominated" -> {
+        consumeOptionalEmptyParens();
+        yield new DominatedSizeOp();
+      }
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };
   }

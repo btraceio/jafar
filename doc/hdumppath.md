@@ -566,6 +566,59 @@ objects/java.util.HashMap | waste() | groupBy(class, agg=sum, value=wastedBytes)
 
 Non-collection objects pass through with null waste columns.
 
+### `threadOwner()`
+
+Enrich object rows with thread ownership columns. For each object, walks the dominator tree to
+find the thread (THREAD_OBJ GC root) that exclusively dominates it. Objects not dominated by any
+single thread are labelled `"shared"`.
+
+Requires a full dominator tree (computed automatically on first use).
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `ownerThread` | String | Thread name, or `"shared"` |
+| `ownership` | String | `"exclusive"` or `"shared"` |
+
+```
+# Which thread owns the largest HashMaps?
+objects/java.util.HashMap[retained > 1MB] | threadOwner() | select(id, class, retained, ownerThread)
+
+# Find shared objects over 1 MB
+objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
+
+# Per-thread breakdown of large byte arrays
+objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(value desc)
+```
+
+### `dominatedSize()`
+
+Enrich THREAD_OBJ GC root rows with dominated memory statistics. For each row whose `objectId`
+matches a THREAD_OBJ root, adds thread name and the retained size and object count of the
+dominated subtree. Rows that do not correspond to a THREAD_OBJ root pass through unchanged.
+
+Requires a full dominator tree (computed automatically on first use).
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `threadName` | String | Thread name |
+| `dominated` | Long | Retained size of the thread object (bytes) |
+| `dominatedCount` | Integer | Objects in the dominated subtree |
+
+```
+# Per-thread dominated memory, sorted by size
+gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
+
+# Thread memory table
+gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)
+
+# Top 10 memory-hungry threads
+gcroots/THREAD_OBJ | dominatedSize() | top(10, dominated)
+```
+
 ### `join(session=id|alias [, root="eventType", by=field])`
 Join with another session. Supports two modes:
 
@@ -659,6 +712,22 @@ objects[shallow > 1MB] | groupBy(class, agg=count) | sortBy(count desc)
 
 # String memory statistics
 objects/java.lang.String | stats(shallow)
+```
+
+### Thread Memory Attribution
+
+```
+# Which threads own the most memory?
+gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
+
+# Per-thread summary
+gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)
+
+# Which thread owns this large object?
+objects/com.example.Cache[retained > 100MB] | threadOwner() | select(id, retained, ownerThread)
+
+# Find shared objects (not exclusively owned by any thread)
+objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
 ```
 
 ### GC Root Analysis

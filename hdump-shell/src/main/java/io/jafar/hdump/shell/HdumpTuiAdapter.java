@@ -25,10 +25,10 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   private final Completer completer;
 
   /** Stored command for retention paths browser (set by detectBrowserCommand). */
-  private String pendingRetentionPathsCommand;
+  private volatile String pendingRetentionPathsCommand;
 
   /** Cached full result rows from retention paths evaluation. */
-  private List<Map<String, Object>> cachedRetentionPathRows;
+  private volatile List<Map<String, Object>> cachedRetentionPathRows;
 
   public HdumpTuiAdapter(SessionManager<?> sessions) {
     this.sessions = sessions;

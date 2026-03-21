@@ -35,6 +35,8 @@ public final class HeapSession implements Session {
   private final ParserOptions options;
   private volatile boolean closed = false;
   private volatile ClusterDetector.Result cachedClusters;
+  private volatile io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.Result
+      cachedThreadOwnership;
 
   private HeapSession(Path path, HeapDump dump, ParserOptions options) {
     this.path = path;
@@ -277,6 +279,25 @@ public final class HeapSession implements Session {
     System.err.println("Dominator tree computation complete!");
     System.err.println();
     return true;
+  }
+
+  /**
+   * Returns cached thread ownership analysis, computing it if needed.
+   *
+   * <p>Ensures the full dominator tree is computed before running the analysis.
+   *
+   * @return thread ownership result
+   */
+  public io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.Result
+      getOrComputeThreadOwnership() {
+    io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.Result result = cachedThreadOwnership;
+    if (result != null) return result;
+    synchronized (this) {
+      if (cachedThreadOwnership != null) return cachedThreadOwnership;
+      promptAndComputeDominatorTree();
+      cachedThreadOwnership = io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.compute(dump);
+      return cachedThreadOwnership;
+    }
   }
 
   /**

@@ -36,6 +36,7 @@ public final class HprofReader implements Closeable {
   private final int idSize;
   private final long timestamp;
   private final int headerSize;
+  private final boolean ownsBuffer; // false for views created by createView()
 
   /**
    * Opens an HPROF file for reading.
@@ -45,6 +46,7 @@ public final class HprofReader implements Closeable {
    */
   public HprofReader(Path path) throws IOException {
     this.path = path;
+    this.ownsBuffer = true;
 
     // Use SplicedMappedByteBuffer to handle files of any size
     this.buffer = CustomByteBuffer.map(path, SPLICE_SIZE);
@@ -58,6 +60,34 @@ public final class HprofReader implements Closeable {
     }
     this.timestamp = buffer.getLong();
     this.headerSize = (int) buffer.position();
+  }
+
+  /** Private constructor for view instances created by {@link #createView()}. */
+  private HprofReader(
+      Path path,
+      CustomByteBuffer buffer,
+      String formatVersion,
+      int idSize,
+      long timestamp,
+      int headerSize) {
+    this.path = path;
+    this.buffer = buffer;
+    this.formatVersion = formatVersion;
+    this.idSize = idSize;
+    this.timestamp = timestamp;
+    this.headerSize = headerSize;
+    this.ownsBuffer = false;
+  }
+
+  /**
+   * Creates an independent view of this reader with its own position state. Shares the same
+   * underlying memory-mapped buffer, so no additional I/O resources are consumed. The view's {@link
+   * #close()} is a no-op; only the original reader releases the buffer.
+   */
+  public HprofReader createView() {
+    CustomByteBuffer slice = buffer.slice();
+    slice.order(ByteOrder.BIG_ENDIAN);
+    return new HprofReader(path, slice, formatVersion, idSize, timestamp, headerSize);
   }
 
   private String readFormatString() throws IOException {
@@ -204,9 +234,16 @@ public final class HprofReader implements Closeable {
     buffer.position(buffer.position() + bytes);
   }
 
+  /** Skips bytes in the buffer (long overload to avoid overflow for large arrays). */
+  public void skip(long bytes) {
+    buffer.position(buffer.position() + bytes);
+  }
+
   @Override
   public void close() throws IOException {
-    buffer.close();
+    if (ownsBuffer) {
+      buffer.close();
+    }
   }
 
   /** Record header information. */

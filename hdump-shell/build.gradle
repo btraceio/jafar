@@ -23,6 +23,9 @@ dependencies {
     // HPROF parser
     api project(':hdump-parser')
 
+    // Primitive collections (avoids Long autoboxing in large ownership maps)
+    implementation 'it.unimi.dsi:fastutil:8.5.12'
+
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.5'
 

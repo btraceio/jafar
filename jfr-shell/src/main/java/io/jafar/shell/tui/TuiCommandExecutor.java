@@ -1289,8 +1289,9 @@ public final class TuiCommandExecutor {
 
     @Override
     public void write(byte[] buf, int off, int len) {
-      for (int i = off; i < off + len; i++) {
-        handleChar((char) buf[i]);
+      String decoded = new String(buf, off, len, StandardCharsets.UTF_8);
+      for (int i = 0; i < decoded.length(); i++) {
+        handleChar(decoded.charAt(i));
       }
     }
 

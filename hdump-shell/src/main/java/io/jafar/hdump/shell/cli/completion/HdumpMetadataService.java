@@ -50,7 +50,9 @@ public final class HdumpMetadataService implements MetadataService {
           "ceil",
           "waste",
           "join",
-          "objects");
+          "objects",
+          "threadOwner",
+          "dominatedSize");
 
   /** Field names for objects root type */
   private static final List<String> OBJECT_FIELDS =

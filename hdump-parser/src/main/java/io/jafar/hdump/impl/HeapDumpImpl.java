@@ -142,6 +142,7 @@ public final class HeapDumpImpl implements HeapDump {
     this.path = path;
     this.reader = reader;
     this.options = options;
+    this.threadLocalReader = ThreadLocal.withInitial(reader::createView);
   }
 
   /**
@@ -561,10 +562,16 @@ public final class HeapDumpImpl implements HeapDump {
       long entryCount = buffer.getLong();
       buffer.getInt(); // skip flags
 
+      if (entryCount > Integer.MAX_VALUE) {
+        throw new IOException(
+            "Object map too large: " + entryCount + " entries (max " + Integer.MAX_VALUE + ")");
+      }
+      int entryCountInt = (int) entryCount;
+
       // Initialize address mapping with correct size
-      addressToId32 = new Long2IntOpenHashMap((int) entryCount);
+      addressToId32 = new Long2IntOpenHashMap(entryCountInt);
       addressToId32.defaultReturnValue(-1);
-      id32ToAddress = new Int2LongOpenHashMap((int) entryCount);
+      id32ToAddress = new Int2LongOpenHashMap(entryCountInt);
       id32ToAddress.defaultReturnValue(-1L);
 
       // Load mappings
@@ -642,7 +649,7 @@ public final class HeapDumpImpl implements HeapDump {
           reader.readI4(); // stack trace
           int length = reader.readI4();
           reader.readId(); // array class ID
-          reader.skip(length * reader.getIdSize());
+          reader.skip((long) length * reader.getIdSize());
         }
         case HeapTag.PRIM_ARRAY_DUMP -> {
           long objId = reader.readId();
@@ -651,7 +658,7 @@ public final class HeapDumpImpl implements HeapDump {
           int length = reader.readI4();
           int elemType = reader.readU1();
           int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
-          reader.skip(length * elemSize);
+          reader.skip((long) length * elemSize);
         }
         case HeapTag.CLASS_DUMP -> {
           // Just collect class address - defer parsing to separate phase
@@ -761,7 +768,7 @@ public final class HeapDumpImpl implements HeapDump {
         reader.readI4(); // stack trace
         int length = reader.readI4();
         reader.readId(); // array class ID
-        reader.skip(length * reader.getIdSize());
+        reader.skip((long) length * reader.getIdSize());
       }
       case HeapTag.PRIM_ARRAY_DUMP -> {
         reader.readId(); // object ID
@@ -769,7 +776,7 @@ public final class HeapDumpImpl implements HeapDump {
         int length = reader.readI4();
         int elemType = reader.readU1();
         int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
-        reader.skip(length * elemSize);
+        reader.skip((long) length * elemSize);
       }
       default -> skipGcRoot(subTag);
     }
@@ -1038,6 +1045,7 @@ public final class HeapDumpImpl implements HeapDump {
       buffer.getInt(); // skip flags
 
       // Read GC roots
+      GcRoot.Type[] gcRootTypes = GcRoot.Type.values();
       for (int i = 0; i < entryCount; i++) {
         byte typeOrdinal = buffer.get();
         int objectId32 = buffer.getInt();
@@ -1048,7 +1056,12 @@ public final class HeapDumpImpl implements HeapDump {
         long objectAddress = id32ToAddress.get(objectId32);
 
         if (objectAddress != -1) {
-          GcRoot.Type type = GcRoot.Type.values()[typeOrdinal];
+          int ord = typeOrdinal & 0xFF;
+          if (ord >= gcRootTypes.length) {
+            LOG.warn("Unknown GC root type ordinal {} in index, skipping", ord);
+            continue;
+          }
+          GcRoot.Type type = gcRootTypes[ord];
           gcRoots.add(new GcRootImpl(type, objectAddress, threadSerial, frameNumber, this));
         }
       }
@@ -1093,8 +1106,9 @@ public final class HeapDumpImpl implements HeapDump {
           int length = reader.readI4();
           long arrayClassAddress = reader.readId();
           long fileOffset = reader.position();
-          int dataSize = length * reader.getIdSize();
-          reader.skip(dataSize);
+          long dataSizeLong = (long) length * reader.getIdSize();
+          int dataSize = dataSizeLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) dataSizeLong;
+          reader.skip(dataSizeLong);
 
           int objectId32 = addressToId32.get(objAddress);
           int classId = getOrCreateClassId(arrayClassAddress, classIdMap);
@@ -1119,8 +1133,9 @@ public final class HeapDumpImpl implements HeapDump {
           int elemType = reader.readU1();
           int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
           long fileOffset = reader.position();
-          int dataSize = length * elemSize;
-          reader.skip(dataSize);
+          long dataSizeLong = (long) length * elemSize;
+          int dataSize = dataSizeLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) dataSizeLong;
+          reader.skip(dataSizeLong);
 
           int objectId32 = addressToId32.get(objAddress);
 
@@ -1534,8 +1549,9 @@ public final class HeapDumpImpl implements HeapDump {
     long arrayClassId = reader.readId();
 
     long dataPos = reader.position();
-    int dataSize = length * reader.getIdSize();
-    reader.skip(dataSize);
+    long dataSizeLong = (long) length * reader.getIdSize();
+    int dataSize = dataSizeLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) dataSizeLong;
+    reader.skip(dataSizeLong);
 
     HeapClassImpl cls = classesById.get(arrayClassId);
     HeapObjectImpl obj = new HeapObjectImpl(objId, cls, dataPos, dataSize, this);
@@ -1564,8 +1580,9 @@ public final class HeapDumpImpl implements HeapDump {
 
     int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
     long dataPos = reader.position();
-    int dataSize = length * elemSize;
-    reader.skip(dataSize);
+    long dataSizeLong = (long) length * elemSize;
+    int dataSize = dataSizeLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) dataSizeLong;
+    reader.skip(dataSizeLong);
 
     // Create synthetic class name for primitive arrays
     String arrayClassName =
@@ -1607,6 +1624,17 @@ public final class HeapDumpImpl implements HeapDump {
   HprofReader getReader() {
     return reader;
   }
+
+  /**
+   * Returns a thread-local view of the HPROF reader. Each thread gets its own independent position
+   * state backed by a slice of the same memory-mapped buffer, so reads from multiple threads never
+   * interfere — no locking required.
+   */
+  HprofReader getThreadLocalReader() {
+    return threadLocalReader.get();
+  }
+
+  private final ThreadLocal<HprofReader> threadLocalReader;
 
   String getString(long id) {
     return strings.get(id);
@@ -1978,53 +2006,56 @@ public final class HeapDumpImpl implements HeapDump {
    */
   public void computeDominators(ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
     if (dominatorsComputed) return;
-    LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.0, "Initializing retained size computation");
-    }
-
-    // For indexed mode, ensure inbound index is built first
-    ensureInboundIndexBuilt(progressCallback);
-
-    if (options.parsingMode() == HeapDumpParser.ParsingMode.INDEXED) {
-      // Streaming mode with persistent storage - avoids loading all 114M objects into memory
-      LOG.info("Using streaming computation with persistent retained size storage");
+    synchronized (this) {
+      if (dominatorsComputed) return;
+      LOG.debug("Computing approximate retained sizes for {} objects...", objectCount);
 
       if (progressCallback != null) {
-        progressCallback.onProgress(0.01, "Creating retained size storage");
+        progressCallback.onProgress(0.0, "Initializing retained size computation");
       }
 
-      try {
-        // Create persistent storage writer for ALL id32 values (including classes)
-        // Classes will have retained size = 0, but this avoids complex id32 remapping
-        int totalEntries = addressToId32.size(); // includes classes
-        io.jafar.hdump.index.RetainedSizeWriter writer =
-            new io.jafar.hdump.index.RetainedSizeWriter(indexDir, totalEntries);
+      // For indexed mode, ensure inbound index is built first
+      ensureInboundIndexBuilt(progressCallback);
 
-        try {
-          // Stream through ALL id32 values (objects + classes) without caching
-          Iterable<HeapObjectImpl> streamingIterator = createStreamingObjectIterator();
-          ApproximateRetainedSizeComputer.computeAll(
-              this, streamingIterator, totalEntries, gcRoots, writer, progressCallback);
-        } finally {
-          writer.close(); // Atomic commit to retained.idx
+      if (options.parsingMode() == HeapDumpParser.ParsingMode.INDEXED) {
+        // Streaming mode with persistent storage - avoids loading all 114M objects into memory
+        LOG.info("Using streaming computation with persistent retained size storage");
+
+        if (progressCallback != null) {
+          progressCallback.onProgress(0.01, "Creating retained size storage");
         }
 
-        // Open reader for future queries
-        retainedSizeReader = new io.jafar.hdump.index.RetainedSizeReader(indexDir);
-        LOG.info("Retained sizes persisted to {}", indexDir.resolve("retained.idx"));
+        try {
+          // Create persistent storage writer for ALL id32 values (including classes)
+          // Classes will have retained size = 0, but this avoids complex id32 remapping
+          int totalEntries = addressToId32.size(); // includes classes
+          io.jafar.hdump.index.RetainedSizeWriter writer =
+              new io.jafar.hdump.index.RetainedSizeWriter(indexDir, totalEntries);
 
-      } catch (java.io.IOException e) {
-        throw new RuntimeException("Failed to compute retained sizes in streaming mode", e);
+          try {
+            // Stream through ALL id32 values (objects + classes) without caching
+            Iterable<HeapObjectImpl> streamingIterator = createStreamingObjectIterator();
+            ApproximateRetainedSizeComputer.computeAll(
+                this, streamingIterator, totalEntries, gcRoots, writer, progressCallback);
+          } finally {
+            writer.close(); // Atomic commit to retained.idx
+          }
+
+          // Open reader for future queries
+          retainedSizeReader = new io.jafar.hdump.index.RetainedSizeReader(indexDir);
+          LOG.info("Retained sizes persisted to {}", indexDir.resolve("retained.idx"));
+
+        } catch (java.io.IOException e) {
+          throw new RuntimeException("Failed to compute retained sizes in streaming mode", e);
+        }
+      } else {
+        // In-memory mode: objects already in unbounded map, set retained sizes directly on objects
+        ApproximateRetainedSizeComputer.computeAll(
+            this, objectsByIdUnbounded, gcRoots, progressCallback);
       }
-    } else {
-      // In-memory mode: objects already in unbounded map, set retained sizes directly on objects
-      ApproximateRetainedSizeComputer.computeAll(
-          this, objectsByIdUnbounded, gcRoots, progressCallback);
-    }
 
-    dominatorsComputed = true;
+      dominatorsComputed = true;
+    } // end synchronized
   }
 
   /**
@@ -2570,6 +2601,12 @@ public final class HeapDumpImpl implements HeapDump {
     }
     if (retainedSizeReader != null) {
       retainedSizeReader.close();
+    }
+    if (classInstancesOffsetReader != null) {
+      classInstancesOffsetReader.close();
+    }
+    if (classInstancesDataReader != null) {
+      classInstancesDataReader.close();
     }
 
     // Clear object caches to free memory

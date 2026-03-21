@@ -28,8 +28,8 @@ final class HeapObjectImpl implements HeapObject {
   private int primitiveArrayType = -1; // -1 = not primitive array
   private boolean isObjectArray = false;
 
-  // Cached field values (lazily populated)
-  private Map<String, Object> fieldValues;
+  // Cached field values (lazily populated, volatile for double-checked locking)
+  private volatile Map<String, Object> fieldValues;
 
   // Cached outbound reference IDs (null = not cached, empty array = no refs)
   private long[] cachedOutboundRefIds;
@@ -127,42 +127,39 @@ final class HeapObjectImpl implements HeapObject {
     if (fieldValues != null) {
       return;
     }
-    fieldValues = new LinkedHashMap<>();
-
-    if (heapClass == null || isArray()) {
-      return; // Arrays don't have fields
-    }
-
-    // Get all fields including inherited
-    List<HeapField> allFields = heapClass.getAllInstanceFields();
-    if (allFields.isEmpty()) {
-      return;
-    }
-
-    HprofReader reader = dump.getReader();
-    int idSize = reader.getIdSize();
-    long savedPos = reader.position();
-    try {
-      reader.position(dataPosition);
-
-      for (HeapField field : allFields) {
-        int type = field.getType();
-        Object value = reader.readValue(type);
-
-        // Resolve object references to HeapObject instances
-        if (type == BasicType.OBJECT && value instanceof Long refId) {
-          if (refId != 0) {
-            HeapObject refObj = dump.getObjectByIdInternal(refId);
-            value = refObj; // May be null if object not found
-          } else {
-            value = null;
-          }
-        }
-
-        fieldValues.put(field.getName(), value);
+    synchronized (this) {
+      if (fieldValues != null) {
+        return;
       }
-    } finally {
-      reader.position(savedPos);
+      if (heapClass == null || isArray()) {
+        fieldValues = new LinkedHashMap<>();
+        return;
+      }
+
+      List<HeapField> allFields = heapClass.getAllInstanceFields();
+      if (allFields.isEmpty()) {
+        fieldValues = new LinkedHashMap<>();
+        return;
+      }
+
+      // Thread-local reader has its own position state — no lock needed
+      HprofReader reader = dump.getThreadLocalReader();
+      Map<String, Object> values = new LinkedHashMap<>();
+      long savedPos = reader.position();
+      try {
+        reader.position(dataPosition);
+        for (HeapField field : allFields) {
+          int type = field.getType();
+          Object value = reader.readValue(type);
+          if (type == BasicType.OBJECT && value instanceof Long refId) {
+            value = refId != 0 ? dump.getObjectByIdInternal(refId) : null;
+          }
+          values.put(field.getName(), value);
+        }
+      } finally {
+        reader.position(savedPos);
+      }
+      fieldValues = values;
     }
   }
 
@@ -193,8 +190,8 @@ final class HeapObjectImpl implements HeapObject {
       return EMPTY_LONG_ARRAY;
     }
 
-    // Extract reference IDs
-    HprofReader reader = dump.getReader();
+    // Thread-local reader has its own position state — no lock needed
+    HprofReader reader = dump.getThreadLocalReader();
     long savedPos = reader.position();
     try {
       reader.position(dataPosition);
@@ -210,12 +207,10 @@ final class HeapObjectImpl implements HeapObject {
             refIds[refIndex++] = refId;
           }
         } else {
-          // Skip primitive field
           reader.skip(BasicType.sizeOf(type, reader.getIdSize()));
         }
       }
 
-      // Return array trimmed to actual non-null refs
       if (refIndex < refFieldCount) {
         long[] trimmed = new long[refIndex];
         System.arraycopy(refIds, 0, trimmed, 0, refIndex);
@@ -244,7 +239,7 @@ final class HeapObjectImpl implements HeapObject {
     }
     if (refFieldCount == 0) return EMPTY_LONG_ARRAY;
 
-    HprofReader reader = dump.getReader();
+    HprofReader reader = dump.getThreadLocalReader();
     long savedPos = reader.position();
     try {
       reader.position(dataPosition);
@@ -290,12 +285,11 @@ final class HeapObjectImpl implements HeapObject {
       return EMPTY_LONG_ARRAY;
     }
 
-    HprofReader reader = dump.getReader();
+    HprofReader reader = dump.getThreadLocalReader();
     long savedPos = reader.position();
     try {
       reader.position(dataPosition);
 
-      // Count non-null references first
       long[] tempIds = new long[arrayLength];
       int refCount = 0;
 
@@ -306,7 +300,6 @@ final class HeapObjectImpl implements HeapObject {
         }
       }
 
-      // Return trimmed array
       if (refCount == 0) {
         return EMPTY_LONG_ARRAY;
       }
@@ -414,27 +407,21 @@ final class HeapObjectImpl implements HeapObject {
       return null;
     }
 
-    HprofReader reader = dump.getReader();
-    int idSize = reader.getIdSize();
+    // Thread-local reader has its own position state — no lock needed
+    HprofReader reader = dump.getThreadLocalReader();
     long savedPos = reader.position();
     try {
       reader.position(dataPosition);
       Object[] elements = new Object[arrayLength];
 
       if (primitiveArrayType >= 0) {
-        // Primitive array
         for (int i = 0; i < arrayLength; i++) {
           elements[i] = reader.readValue(primitiveArrayType);
         }
       } else if (isObjectArray) {
-        // Object array
         for (int i = 0; i < arrayLength; i++) {
           long refId = reader.readId();
-          if (refId != 0) {
-            elements[i] = dump.getObjectByIdInternal(refId);
-          } else {
-            elements[i] = null;
-          }
+          elements[i] = refId != 0 ? dump.getObjectByIdInternal(refId) : null;
         }
       }
 

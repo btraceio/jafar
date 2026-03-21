@@ -158,7 +158,9 @@ public final class HdumpPath {
           DominatorsOp,
           JoinOp,
           WasteOp,
-          ObjectsOp {}
+          ObjectsOp,
+          ThreadOwnerOp,
+          DominatedSizeOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -475,6 +477,37 @@ public final class HdumpPath {
    * field (typically from the {@code clusters} root). Rows without a cluster ID are skipped.
    */
   public record ObjectsOp() implements PipelineOp {}
+
+  /**
+   * Enrich object rows with thread ownership columns.
+   *
+   * <p>Adds two columns to each row:
+   *
+   * <ul>
+   *   <li>{@code ownerThread} - the thread name that dominates this object, or {@code "shared"}
+   *   <li>{@code ownership} - {@code "exclusive"} if owned by a single thread, {@code "shared"}
+   *       otherwise
+   * </ul>
+   *
+   * <p>Requires a full dominator tree.
+   */
+  public record ThreadOwnerOp() implements PipelineOp {}
+
+  /**
+   * Enrich THREAD_OBJ GC root rows with dominated memory statistics.
+   *
+   * <p>Adds three columns to each matching row:
+   *
+   * <ul>
+   *   <li>{@code threadName} - the thread name
+   *   <li>{@code dominated} - retained size of the thread object (bytes)
+   *   <li>{@code dominatedCount} - number of objects in the dominated subtree
+   * </ul>
+   *
+   * <p>Rows that do not correspond to a THREAD_OBJ root are passed through unchanged. Requires a
+   * full dominator tree.
+   */
+  public record DominatedSizeOp() implements PipelineOp {}
 
   // === Built-in field names for objects ===
 
