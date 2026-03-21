@@ -1026,7 +1026,47 @@ public final class HdumpPathEvaluator {
       }
     }
 
+    // Include instance fields for TUI detail pane rendering
+    if (!obj.isArray()) {
+      Map<String, Object> fieldValues = obj.getFieldValues();
+      if (fieldValues != null && !fieldValues.isEmpty()) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : fieldValues.entrySet()) {
+          fields.put(e.getKey(), fieldValueForDisplay(e.getValue()));
+        }
+        map.put("fields", fields);
+      }
+    } else if (obj.getArrayLength() > 0 && obj.getArrayLength() <= 100) {
+      // For small arrays, include elements
+      Object[] elements = obj.getArrayElements();
+      if (elements != null) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (int i = 0; i < elements.length; i++) {
+          fields.put("[" + i + "]", fieldValueForDisplay(elements[i]));
+        }
+        map.put("fields", fields);
+      }
+    }
+
     return map;
+  }
+
+  private static Object fieldValueForDisplay(Object val) {
+    if (val instanceof HeapObject ref) {
+      HeapClass refCls = ref.getHeapClass();
+      String typeName =
+          refCls != null ? ClassNameUtil.toHumanReadable(refCls.getName()) : "unknown";
+      // For strings, show the value inline
+      if ("java.lang.String".equals(typeName)) {
+        String sv = ref.getStringValue();
+        if (sv != null) {
+          if (sv.length() > 80) sv = sv.substring(0, 77) + "...";
+          return "\"" + sv + "\"";
+        }
+      }
+      return typeName + "@" + Long.toHexString(ref.getId());
+    }
+    return val;
   }
 
   private static Map<String, Object> classToMap(HeapClass cls) {
