@@ -20,6 +20,42 @@ import java.util.Set;
  * browser modes, loading entries, and sidebar navigation.
  */
 public final class TuiBrowserController {
+
+  private static final class NavigationEntry {
+    final List<Map<String, Object>> tableData;
+    final List<Map<String, Object>> cpAllEntries;
+    final List<String> cpColumnHeaders;
+    final int[] cpColumnWidths;
+    final List<String> tableHeaders;
+    final List<String> lines;
+    final int maxLineWidth;
+    final int selectedRow;
+    final int scrollOffset;
+    final int dataStartLine;
+    final int cpRenderedCount;
+    final int activeDetailTabIndex;
+    final int detailCursorLine;
+
+    NavigationEntry(ResultTab tab, TuiContext ctx) {
+      this.tableData = tab.tableData != null ? new ArrayList<>(tab.tableData) : null;
+      this.cpAllEntries = tab.cpAllEntries;
+      this.cpColumnHeaders = tab.cpColumnHeaders;
+      this.cpColumnWidths = tab.cpColumnWidths != null ? tab.cpColumnWidths.clone() : null;
+      this.tableHeaders = tab.tableHeaders;
+      this.lines = new ArrayList<>(tab.lines);
+      this.maxLineWidth = tab.maxLineWidth;
+      this.selectedRow = tab.selectedRow;
+      this.scrollOffset = tab.scrollOffset;
+      this.dataStartLine = tab.dataStartLine;
+      this.cpRenderedCount = tab.cpRenderedCount;
+      this.activeDetailTabIndex = ctx.activeDetailTabIndex;
+      this.detailCursorLine = ctx.detailCursorLine;
+    }
+  }
+
+  private final List<NavigationEntry> navBackStack = new ArrayList<>();
+  private final List<NavigationEntry> navForwardStack = new ArrayList<>();
+
   private final TuiContext ctx;
   private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
@@ -492,6 +528,10 @@ public final class TuiBrowserController {
   }
 
   void navigateToType(String typeName) {
+    if (typeName.startsWith("object:")) {
+      navigateToObjectId(typeName.substring("object:".length()));
+      return;
+    }
     ResultTab tab = ctx.activeTab();
     if (tab.tableData == null) return;
     if (tab.filteredIndices != null) {
@@ -513,6 +553,110 @@ public final class TuiBrowserController {
         return;
       }
     }
+  }
+
+  private void navigateToObjectId(String hexId) {
+    ResultTab tab = ctx.activeTab();
+    long targetId;
+    try {
+      targetId = Long.parseUnsignedLong(hexId, 16);
+    } catch (NumberFormatException e) {
+      ctx.hintMessage = "Invalid object id: " + hexId;
+      ctx.hintMessageTick = ctx.renderTick;
+      return;
+    }
+
+    // Scan current tableData first — compare as long, not hex string
+    if (tab.tableData != null) {
+      for (int i = 0; i < tab.tableData.size(); i++) {
+        Object idObj = tab.tableData.get(i).get("id");
+        if (idObj instanceof Number n && n.longValue() == targetId) {
+          tab.selectedRow = i;
+          if (i < tab.scrollOffset) tab.scrollOffset = i;
+          else if (i >= tab.scrollOffset + ctx.resultsAreaHeight)
+            tab.scrollOffset = i - ctx.resultsAreaHeight + 1;
+          detailBuilder.buildDetailTabs(tab);
+          return;
+        }
+      }
+    }
+
+    // Not found in current data: load via adapter
+    Session session = sessions.current().map(ref -> ref.session).orElse(null);
+    if (session == null || tuiAdapter == null) {
+      ctx.hintMessage = "No active session";
+      ctx.hintMessageTick = ctx.renderTick;
+      return;
+    }
+    Map<String, Object> row;
+    try {
+      row = tuiAdapter.loadObjectById(session, hexId);
+    } catch (Exception e) {
+      ctx.hintMessage = "Error: " + e.getMessage();
+      ctx.hintMessageTick = ctx.renderTick;
+      return;
+    }
+    if (row == null) {
+      ctx.hintMessage = "Object not found: @" + hexId;
+      ctx.hintMessageTick = ctx.renderTick;
+      return;
+    }
+    pushNavEntry(tab);
+    loadEntriesIntoTab(List.of(row), false);
+  }
+
+  boolean canNavigateBack() {
+    return !navBackStack.isEmpty();
+  }
+
+  boolean canNavigateForward() {
+    return !navForwardStack.isEmpty();
+  }
+
+  void navigateBack() {
+    if (!canNavigateBack()) return;
+    NavigationEntry prev = navBackStack.remove(navBackStack.size() - 1);
+    navForwardStack.add(new NavigationEntry(ctx.activeTab(), ctx));
+    restoreNavEntry(prev);
+  }
+
+  void navigateForward() {
+    if (!canNavigateForward()) return;
+    NavigationEntry next = navForwardStack.remove(navForwardStack.size() - 1);
+    navBackStack.add(new NavigationEntry(ctx.activeTab(), ctx));
+    restoreNavEntry(next);
+  }
+
+  void clearNavHistory() {
+    navBackStack.clear();
+    navForwardStack.clear();
+  }
+
+  private void pushNavEntry(ResultTab tab) {
+    navForwardStack.clear();
+    navBackStack.add(new NavigationEntry(tab, ctx));
+    if (navBackStack.size() > 20) {
+      navBackStack.remove(0);
+    }
+  }
+
+  private void restoreNavEntry(NavigationEntry e) {
+    ResultTab tab = ctx.activeTab();
+    tab.tableData = e.tableData;
+    tab.cpAllEntries = e.cpAllEntries;
+    tab.cpColumnHeaders = e.cpColumnHeaders;
+    tab.cpColumnWidths = e.cpColumnWidths != null ? e.cpColumnWidths.clone() : null;
+    tab.tableHeaders = e.tableHeaders;
+    tab.lines.clear();
+    tab.lines.addAll(e.lines);
+    tab.maxLineWidth = e.maxLineWidth;
+    tab.selectedRow = e.selectedRow;
+    tab.scrollOffset = e.scrollOffset;
+    tab.dataStartLine = e.dataStartLine;
+    tab.cpRenderedCount = e.cpRenderedCount;
+    ctx.activeDetailTabIndex = e.activeDetailTabIndex;
+    ctx.detailCursorLine = e.detailCursorLine;
+    detailBuilder.buildDetailTabs(tab);
   }
 
   void navigateToSidebarType(String typeName) {

@@ -535,13 +535,21 @@ public final class TuiKeyHandler {
       }
       return;
     }
-    // ESC b / ESC f — Option+Left/Right
-    if (next == 'b' && ctx.tabs.size() > 1) {
-      executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+    // ESC b / ESC f — Option+Left/Right (back/forward history, or tab switch)
+    if (next == 'b') {
+      if (browser.canNavigateBack()) {
+        browser.navigateBack();
+      } else if (ctx.tabs.size() > 1) {
+        executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+      }
       return;
     }
-    if (next == 'f' && ctx.tabs.size() > 1) {
-      executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+    if (next == 'f') {
+      if (browser.canNavigateForward()) {
+        browser.navigateForward();
+      } else if (ctx.tabs.size() > 1) {
+        executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+      }
       return;
     }
     // ESC r/d/c/s — Alt+R/D/C/S on Linux
@@ -637,14 +645,24 @@ public final class TuiKeyHandler {
       return;
     }
 
-    // Ctrl/Alt+Left/Right: tab switch
-    if ((modifier == MOD_CTRL || modifier == MOD_ALT)
-        && (direction == 'C' || direction == 'D')
-        && ctx.tabs.size() > 1) {
-      if (direction == 'D') {
-        executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
-      } else {
-        executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+    // Ctrl/Alt+Left/Right: back/forward history (Alt), or tab switch
+    if ((modifier == MOD_CTRL || modifier == MOD_ALT) && (direction == 'C' || direction == 'D')) {
+      if (modifier == MOD_ALT) {
+        if (direction == 'D' && browser.canNavigateBack()) {
+          browser.navigateBack();
+          return;
+        }
+        if (direction == 'C' && browser.canNavigateForward()) {
+          browser.navigateForward();
+          return;
+        }
+      }
+      if (ctx.tabs.size() > 1) {
+        if (direction == 'D') {
+          executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+        } else {
+          executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+        }
       }
       return;
     }

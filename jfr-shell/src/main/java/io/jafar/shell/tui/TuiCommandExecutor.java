@@ -227,6 +227,7 @@ public final class TuiCommandExecutor {
     activeTab.cpColumnHeaders = null;
     activeTab.cpColumnWidths = null;
     activeTab.cpRenderedCount = 0;
+    browser.clearNavHistory();
 
     // Browser mode detection via TuiAdapter
     if (tuiAdapter != null) {

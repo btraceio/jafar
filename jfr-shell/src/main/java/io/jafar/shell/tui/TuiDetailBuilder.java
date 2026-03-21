@@ -72,11 +72,22 @@ public final class TuiDetailBuilder {
     // Iterate all row keys (not just tableHeaders) to find complex values for detail pane
     for (String key : row.keySet()) {
       Object val = row.get(key);
-      if (isComplexValue(val) || ("threads".equals(key) && val instanceof Map<?, ?>)) {
+      boolean include = isComplexValue(val) || ("threads".equals(key) && val instanceof Map<?, ?>);
+      // "fields" tab: show even for single-field objects (size == 1 is meaningful here)
+      if (!include && "fields".equals(key) && val instanceof Map<?, ?> m && !m.isEmpty()) {
+        include = true;
+      }
+      if (include) {
         names.add(key);
         values.add(val);
       }
     }
+    // Fallback: if no complex-value tabs found, show a "details" tab with all scalar row fields
+    if (names.isEmpty() && !row.isEmpty()) {
+      names.add("details");
+      values.add(row);
+    }
+
     ctx.detailTabNames = names;
     ctx.detailMarqueeTick0 = ctx.renderTick;
     ctx.detailTabValues = values;
@@ -91,6 +102,26 @@ public final class TuiDetailBuilder {
       int threadsIdx = names.indexOf("threads");
       if (threadsIdx >= 0 && values.get(threadsIdx) instanceof Map<?, ?> tm && tm.size() > 1) {
         buildThreadDetailRefs(tm, threadsIdx);
+      }
+    }
+
+    // Build object field refs for the "fields" detail tab
+    if (ctx.detailLineTypeRefs == null) {
+      int fieldsIdx = names.indexOf("fields");
+      if (fieldsIdx >= 0 && values.get(fieldsIdx) instanceof Map<?, ?> fm) {
+        List<String> refs = buildObjectFieldRefs(fm);
+        boolean hasRef = false;
+        for (String r : refs) {
+          if (r != null) {
+            hasRef = true;
+            break;
+          }
+        }
+        if (hasRef) {
+          ctx.detailLineTypeRefs = refs;
+          ctx.detailCursorLine = 0;
+          ctx.activeDetailTabIndex = fieldsIdx;
+        }
       }
     }
   }
@@ -328,6 +359,75 @@ public final class TuiDetailBuilder {
     } else if (tab.selectedRow >= tab.scrollOffset + ctx.resultsAreaHeight) {
       tab.scrollOffset = tab.selectedRow - ctx.resultsAreaHeight + 1;
     }
+  }
+
+  // ---- object field ref helpers ----
+
+  private static List<String> buildObjectFieldRefs(Map<?, ?> fieldsMap) {
+    List<String> refs = new ArrayList<>();
+    buildObjectFieldRefsForMap(refs, fieldsMap);
+    return refs;
+  }
+
+  private static void buildObjectFieldRefsForMap(List<String> refs, Map<?, ?> map) {
+    var entries = new ArrayList<>(map.entrySet());
+    for (Map.Entry<?, ?> entry : entries) {
+      Object val = resolveForDisplay(entry.getValue());
+      while (val instanceof Map<?, ?> inner && inner.size() == 1) {
+        val = resolveForDisplay(inner.values().iterator().next());
+      }
+      if (val instanceof Map<?, ?> nested && nested.size() > 1) {
+        refs.add(null);
+        buildObjectFieldRefsForMap(refs, nested);
+      } else if (val instanceof long[]) {
+        refs.add(null);
+      } else if (val != null && val.getClass().isArray()) {
+        refs.add(null);
+        int len = Array.getLength(val);
+        for (int i = 0; i < len; i++) {
+          Object item = resolveForDisplay(Array.get(val, i));
+          while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+            item = resolveForDisplay(inner.values().iterator().next());
+          }
+          if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+            refs.add(null);
+            buildObjectFieldRefsForMap(refs, nested);
+          } else {
+            refs.add(null);
+          }
+        }
+      } else if (val instanceof Collection<?> coll) {
+        refs.add(null);
+        for (Object raw : coll) {
+          Object item = resolveForDisplay(raw);
+          while (item instanceof Map<?, ?> inner && inner.size() == 1) {
+            item = resolveForDisplay(inner.values().iterator().next());
+          }
+          if (item instanceof Map<?, ?> nested && nested.size() > 1) {
+            refs.add(null);
+            buildObjectFieldRefsForMap(refs, nested);
+          } else {
+            refs.add(null);
+          }
+        }
+      } else {
+        refs.add(extractObjectRef(val));
+      }
+    }
+  }
+
+  private static String extractObjectRef(Object val) {
+    if (val == null) return null;
+    String s = val.toString();
+    int atIdx = s.lastIndexOf('@');
+    if (atIdx < 0 || atIdx == s.length() - 1) return null;
+    for (int i = atIdx + 1; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+        return null;
+      }
+    }
+    return "object:" + s.substring(atIdx + 1);
   }
 
   // ---- static tree formatters ----
