@@ -306,6 +306,9 @@ public final class ApproximateRetainedSizeComputer {
 
     int processed = 0;
     int lastReportedPercent = 0;
+    // Hoist constant outside the loop — recomputing per iteration wastes time for 100M+ objects
+    int reportingInterval =
+        totalObjects > 10_000_000 ? totalObjects / 100 : Math.max(totalObjects / 20, 100000);
 
     for (HeapObjectImpl obj : objectsById.values()) {
       // Use direct long[] access instead of Stream to avoid 1.14B allocations
@@ -316,9 +319,6 @@ public final class ApproximateRetainedSizeComputer {
 
       processed++;
 
-      // Report progress more frequently for large heaps (every 1% for >10M objects)
-      int reportingInterval =
-          totalObjects > 10_000_000 ? totalObjects / 100 : Math.max(totalObjects / 20, 100000);
       if (progressCallback != null && processed % reportingInterval == 0) {
         double progress = 0.3 * (processed / (double) totalObjects);
         int percentComplete = (int) (progress * 100);

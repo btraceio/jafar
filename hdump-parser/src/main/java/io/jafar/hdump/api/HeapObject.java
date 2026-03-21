@@ -26,9 +26,23 @@ public interface HeapObject {
    * if this object became unreachable. Computing retained size requires dominator analysis and may
    * be expensive.
    *
+   * <p>This method triggers retained size computation on first access if not yet available.
+   *
    * @return retained size, or -1 if not yet computed
    */
   long getRetainedSize();
+
+  /**
+   * Returns the retained size if already computed, or -1 without triggering computation.
+   *
+   * <p>Use this instead of {@link #getRetainedSize()} when building intermediate representations
+   * (e.g. result maps) where triggering a heap-wide computation would be an unintended side-effect.
+   *
+   * @return retained size if available, or -1 if not yet computed
+   */
+  default long getRetainedSizeIfAvailable() {
+    return -1L;
+  }
 
   /**
    * Returns the value of a field by name. For object references, returns the HeapObject. For
@@ -70,6 +84,10 @@ public interface HeapObject {
    * <p><strong>Note:</strong> This method requires the heap dump to be parsed with {@link
    * HeapDumpParser.ParserOptions#trackInboundRefs()} enabled. If inbound reference tracking was not
    * enabled, this method returns an empty stream.
+   *
+   * <p><strong>Current status:</strong> Inbound reference tracking is not yet implemented. This
+   * method always returns an empty stream regardless of parser options. Use {@link
+   * HeapDump#getGcRoots()} and outbound reference traversal to build inbound edges manually.
    *
    * @return stream of referencing objects, or empty stream if tracking not enabled
    */

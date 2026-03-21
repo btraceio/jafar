@@ -24,6 +24,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -32,10 +33,14 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1205,42 +1210,6 @@ public final class HeapDumpImpl implements HeapDump {
     return classId;
   }
 
-  private void skipClassDumpInPass2() {
-    // Skip entire class dump record during index building
-    reader.readId(); // class ID
-    reader.readI4(); // stack trace
-    reader.readId(); // super class
-    reader.readId(); // class loader
-    reader.readId(); // signers
-    reader.readId(); // protection domain
-    reader.readId(); // reserved
-    reader.readId(); // reserved
-    reader.readI4(); // instance size
-
-    // Skip constant pool
-    int cpSize = reader.readU2();
-    for (int i = 0; i < cpSize; i++) {
-      reader.readU2();
-      int type = reader.readU1();
-      reader.readValue(type);
-    }
-
-    // Skip static fields
-    int staticCount = reader.readU2();
-    for (int i = 0; i < staticCount; i++) {
-      reader.readId();
-      int type = reader.readU1();
-      reader.readValue(type);
-    }
-
-    // Skip instance fields
-    int fieldCount = reader.readU2();
-    for (int i = 0; i < fieldCount; i++) {
-      reader.readId();
-      reader.readU1();
-    }
-  }
-
   /** Skip GC root during Pass 1 (only collecting object addresses). */
   private void skipGcRoot(int subTag) throws IOException {
     switch (subTag) {
@@ -1267,11 +1236,20 @@ public final class HeapDumpImpl implements HeapDump {
       case HeapTag.ROOT_INTERNED_STRING,
           HeapTag.ROOT_FINALIZING,
           HeapTag.ROOT_VM_INTERNAL,
-          HeapTag.ROOT_REFERENCE_CLEANUP ->
+          HeapTag.ROOT_REFERENCE_CLEANUP,
+          HeapTag.UNREACHABLE ->
           reader.readId();
-      default -> {
-        // Unknown GC root type
+      case HeapTag.HEAP_DUMP_INFO -> {
+        reader.readI4();
+        reader.readId();
       }
+      default ->
+          throw new IOException(
+              "Unknown heap sub-tag 0x"
+                  + Integer.toHexString(subTag)
+                  + " during Pass 1 at position "
+                  + reader.position()
+                  + ". Cannot determine record size to skip.");
     }
   }
 
@@ -1363,10 +1341,14 @@ public final class HeapDumpImpl implements HeapDump {
 
   private void parseUtf8(RecordHeader header) {
     long id = reader.readId();
-    int strLen = header.length() - reader.getIdSize();
-    byte[] bytes = new byte[strLen];
+    long strLenLong = header.length() - reader.getIdSize();
+    if (strLenLong < 0 || strLenLong > Integer.MAX_VALUE) {
+      LOG.warn("Skipping malformed UTF-8 record: strLen={}", strLenLong);
+      return;
+    }
+    byte[] bytes = new byte[(int) strLenLong];
     reader.readBytes(bytes);
-    strings.put(id, new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+    strings.put(id, new String(bytes, StandardCharsets.UTF_8));
   }
 
   private void parseLoadClass(RecordHeader header) {
@@ -1702,7 +1684,18 @@ public final class HeapDumpImpl implements HeapDump {
 
       // Create object with lazy loading support
       HeapObjectImpl obj = new HeapObjectImpl(id, cls, meta.fileOffset, meta.dataSize, this);
-      obj.setShallowSize(meta.dataSize); // Approximate
+
+      // Compute shallowSize including object header overhead, matching in-memory mode formulas
+      int idSize = reader.getIdSize();
+      int shallowSize;
+      if (meta.isObjectArray()) {
+        shallowSize = idSize * 2 + 12 + meta.dataSize;
+      } else if (meta.isPrimitiveArray()) {
+        shallowSize = idSize + 12 + meta.dataSize;
+      } else {
+        shallowSize = idSize * 2 + 8 + meta.dataSize;
+      }
+      obj.setShallowSize(shallowSize);
 
       if (meta.isArray()) {
         obj.setArrayLength(meta.arrayLength);
@@ -1782,9 +1775,11 @@ public final class HeapDumpImpl implements HeapDump {
     // In indexed mode, iterate through all object addresses and lazy-load
     // Filter out class objects (classes are accessed via getClasses(), not getObjects())
     if (objectIndexReader != null) {
-      return addressToId32.keySet().stream()
+      // Use primitive LongStream via fastutil spliterator to avoid boxing 114M Long objects
+      return StreamSupport.longStream(addressToId32.keySet().spliterator(), false)
           .filter(addr -> !classAddresses.contains(addr)) // Exclude class objects
-          .map(this::getObjectByIdInternal)
+          .mapToObj(this::getObjectByIdInternal)
+          .filter(Objects::nonNull)
           .map(o -> (HeapObject) o);
     }
     // In-memory mode: return all cached objects
@@ -2235,7 +2230,18 @@ public final class HeapDumpImpl implements HeapDump {
 
       // Create object with lazy loading support
       HeapObjectImpl obj = new HeapObjectImpl(objectId, cls, meta.fileOffset, meta.dataSize, this);
-      obj.setShallowSize(meta.dataSize); // Approximate
+
+      // Compute shallowSize including object header overhead, matching in-memory mode formulas
+      int idSz = reader.getIdSize();
+      int shallowSz;
+      if (meta.isObjectArray()) {
+        shallowSz = idSz * 2 + 12 + meta.dataSize;
+      } else if (meta.isPrimitiveArray()) {
+        shallowSz = idSz + 12 + meta.dataSize;
+      } else {
+        shallowSz = idSz * 2 + 8 + meta.dataSize;
+      }
+      obj.setShallowSize(shallowSz);
 
       if (meta.isArray()) {
         obj.setArrayLength(meta.arrayLength);
@@ -2464,19 +2470,25 @@ public final class HeapDumpImpl implements HeapDump {
       computeDominators();
     }
 
-    // Identify all objects matching patterns (streams through objects)
+    // Pre-compile patterns once to avoid recompiling per object
+    List<Pattern> compiledPatterns =
+        classPatterns.stream().map(HeapDumpImpl::compilePattern).collect(Collectors.toList());
+
+    // Identify all objects matching patterns (streams without materializing all objects)
     LongOpenHashSet matching = new LongOpenHashSet();
-    for (HeapObject obj : getObjects().toList()) {
-      if (obj.getHeapClass() != null) {
-        String className = obj.getHeapClass().getName();
-        for (String pattern : classPatterns) {
-          if (matchesPattern(className, pattern)) {
-            matching.add(obj.getId());
-            break;
-          }
-        }
-      }
-    }
+    getObjects()
+        .forEach(
+            obj -> {
+              if (obj.getHeapClass() != null) {
+                String className = obj.getHeapClass().getName();
+                for (Pattern p : compiledPatterns) {
+                  if (p.matcher(className).matches()) {
+                    matching.add(obj.getId());
+                    break;
+                  }
+                }
+              }
+            });
 
     if (matching.isEmpty()) {
       LOG.warn("No objects matched patterns: {}", classPatterns);
@@ -2491,13 +2503,13 @@ public final class HeapDumpImpl implements HeapDump {
     HybridDominatorComputer.computeExactForSubgraph(this, gcRoots, expanded, progressCallback);
   }
 
-  private static boolean matchesPattern(String text, String pattern) {
+  private static Pattern compilePattern(String pattern) {
     if (pattern.equals("*")) {
-      return true;
+      return Pattern.compile(".*");
     }
     String regex =
         pattern.replace(".", "\\.").replace("*", ".*").replace("?", ".").replace("$", "\\$");
-    return text.matches(regex);
+    return Pattern.compile(regex);
   }
 
   @Override
@@ -2591,6 +2603,9 @@ public final class HeapDumpImpl implements HeapDump {
   public void close() throws IOException {
     // Capture cache size before clearing
     int cachedObjects = getCachedObjectCount();
+
+    // Release this thread's reader view (other threads' views are GC'd with the buffer)
+    threadLocalReader.remove();
 
     reader.close();
     if (objectIndexReader != null) {

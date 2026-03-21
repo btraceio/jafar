@@ -112,6 +112,11 @@ final class HeapObjectImpl implements HeapObject {
   }
 
   @Override
+  public long getRetainedSizeIfAvailable() {
+    return retainedSize; // Returns -1 if not computed; never triggers computation
+  }
+
+  @Override
   public Object getFieldValue(String fieldName) {
     ensureFieldsLoaded();
     return fieldValues.get(fieldName);

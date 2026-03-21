@@ -1,5 +1,7 @@
 package io.jafar.hdump.impl;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -48,9 +50,9 @@ final class LruCache<K, V> {
 
   /**
    * Returns the value associated with the key, or null if not present. Accessing a key marks it as
-   * recently used.
+   * recently used. Synchronized because access-ordered LinkedHashMap mutates its structure on get.
    */
-  V get(K key) {
+  synchronized V get(K key) {
     return cache.get(key);
   }
 
@@ -58,12 +60,12 @@ final class LruCache<K, V> {
    * Associates the value with the key. If cache is at capacity, evicts the least recently used
    * entry. The newly added entry becomes most recently used.
    */
-  void put(K key, V value) {
+  synchronized void put(K key, V value) {
     cache.put(key, value);
   }
 
   /** Returns the current number of entries in the cache. */
-  int size() {
+  synchronized int size() {
     return cache.size();
   }
 
@@ -73,20 +75,20 @@ final class LruCache<K, V> {
   }
 
   /** Removes all entries from the cache. */
-  void clear() {
+  synchronized void clear() {
     cache.clear();
   }
 
   /** Returns true if the cache contains the key. Note: This marks the key as recently accessed. */
-  boolean containsKey(K key) {
+  synchronized boolean containsKey(K key) {
     return cache.containsKey(key);
   }
 
   /**
-   * Returns all values currently in the cache. Used for algorithms that need to iterate all cached
-   * objects.
+   * Returns a snapshot of all values currently in the cache. Used for algorithms that need to
+   * iterate all cached objects.
    */
-  java.util.Collection<V> values() {
-    return cache.values();
+  synchronized Collection<V> values() {
+    return new ArrayList<>(cache.values());
   }
 }

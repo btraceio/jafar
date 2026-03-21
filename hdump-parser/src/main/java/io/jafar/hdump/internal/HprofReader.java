@@ -85,7 +85,10 @@ public final class HprofReader implements Closeable {
    * #close()} is a no-op; only the original reader releases the buffer.
    */
   public HprofReader createView() {
-    CustomByteBuffer slice = buffer.slice();
+    // slice(0, limit) creates a full-file view at position 0, regardless of the current reader
+    // position. A relative slice() would only cover bytes from the current position onward,
+    // which would break seeks to earlier positions when the view is first created mid-parse.
+    CustomByteBuffer slice = buffer.slice(0, buffer.limit());
     slice.order(ByteOrder.BIG_ENDIAN);
     return new HprofReader(path, slice, formatVersion, idSize, timestamp, headerSize);
   }
@@ -159,7 +162,7 @@ public final class HprofReader implements Closeable {
     }
     int tag = buffer.get() & 0xFF;
     int timeOffset = buffer.getInt();
-    int length = buffer.getInt();
+    long length = buffer.getInt() & 0xFFFFFFFFL; // u4 in spec — must be unsigned
     return new RecordHeader(tag, timeOffset, length, buffer.position());
   }
 
@@ -247,7 +250,7 @@ public final class HprofReader implements Closeable {
   }
 
   /** Record header information. */
-  public record RecordHeader(int tag, int timeOffset, int length, long bodyPosition) {
+  public record RecordHeader(int tag, int timeOffset, long length, long bodyPosition) {
     public String tagName() {
       return HprofTag.nameOf(tag);
     }

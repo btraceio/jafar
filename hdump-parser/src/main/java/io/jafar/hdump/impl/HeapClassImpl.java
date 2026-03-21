@@ -21,11 +21,11 @@ final class HeapClassImpl implements HeapClass {
   private List<HeapFieldImpl> instanceFields = Collections.emptyList();
   private int primitiveArrayType = -1; // -1 means not a primitive array
 
-  // Cache for all instance fields including inherited (lazily populated)
-  private List<HeapField> allInstanceFieldsCache;
+  // Cache for all instance fields including inherited (volatile for safe lazy publication)
+  private volatile List<HeapField> allInstanceFieldsCache;
 
-  // Cached flag: true if this class extends java.lang.ref.Reference (-1 = not computed)
-  private int referenceSubclass = -1;
+  // Cached flag: -1 = not computed, 0 = false, 1 = true. Volatile for safe lazy publication.
+  private volatile int referenceSubclass = -1;
 
   HeapClassImpl(long id, String name, HeapDumpImpl dump) {
     this.id = id;

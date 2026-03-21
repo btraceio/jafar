@@ -110,7 +110,8 @@ public final class InboundIndexBuilder {
       HprofReader.RecordHeader header,
       Long2IntOpenHashMap addressToId32,
       Long2ObjectMap<? extends HeapClass> classesById,
-      Int2IntOpenHashMap inboundCounts) {
+      Int2IntOpenHashMap inboundCounts)
+      throws IOException {
 
     long endPos = header.bodyPosition() + header.length();
 
@@ -123,6 +124,7 @@ public final class InboundIndexBuilder {
           reader.readI4(); // stack trace
           long classAddress = reader.readId();
           int dataSize = reader.readI4();
+          long dataStart = reader.position();
 
           // Extract outbound references from instance data
           HeapClass heapClass = classesById.get(classAddress);
@@ -146,10 +148,10 @@ public final class InboundIndexBuilder {
                 reader.readValue(field.getType());
               }
             }
-          } else {
-            // Class not found, skip the data
-            reader.skip(dataSize);
           }
+          // Always advance to the end of the declared instance data, regardless of how many
+          // field bytes were consumed (guards against class-not-found and field-count mismatch).
+          reader.position(dataStart + dataSize);
         }
         case HeapTag.OBJ_ARRAY_DUMP -> {
           reader.readId(); // object ID (not needed)
@@ -174,7 +176,7 @@ public final class InboundIndexBuilder {
           int length = reader.readI4();
           int elemType = reader.readU1();
           int elemSize = BasicType.sizeOf(elemType, reader.getIdSize());
-          reader.skip(length * elemSize);
+          reader.skip((long) length * elemSize);
           // Primitive arrays have no outbound references
         }
         case HeapTag.CLASS_DUMP -> skipClassDump(reader);
@@ -218,7 +220,7 @@ public final class InboundIndexBuilder {
     }
   }
 
-  private static void skipGcRoot(HprofReader reader, int subTag) {
+  private static void skipGcRoot(HprofReader reader, int subTag) throws IOException {
     switch (subTag) {
       case HeapTag.ROOT_UNKNOWN, HeapTag.ROOT_STICKY_CLASS, HeapTag.ROOT_MONITOR_USED ->
           reader.readId();
@@ -226,13 +228,15 @@ public final class InboundIndexBuilder {
         reader.readId();
         reader.readId();
       }
-      case HeapTag.ROOT_JNI_LOCAL, HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK -> {
+      // ROOT_JNI_LOCAL, ROOT_JAVA_FRAME, ROOT_JNI_MONITOR: id + threadSerial + frameNumber
+      case HeapTag.ROOT_JNI_LOCAL, HeapTag.ROOT_JAVA_FRAME, HeapTag.ROOT_JNI_MONITOR -> {
         reader.readId();
+        reader.readI4();
         reader.readI4();
       }
-      case HeapTag.ROOT_JAVA_FRAME -> {
+      // ROOT_NATIVE_STACK, ROOT_THREAD_BLOCK, ROOT_DEBUGGER: id + threadSerial
+      case HeapTag.ROOT_NATIVE_STACK, HeapTag.ROOT_THREAD_BLOCK, HeapTag.ROOT_DEBUGGER -> {
         reader.readId();
-        reader.readI4();
         reader.readI4();
       }
       case HeapTag.ROOT_THREAD_OBJ -> {
@@ -240,9 +244,25 @@ public final class InboundIndexBuilder {
         reader.readI4();
         reader.readI4();
       }
-      default -> {
-        // Unknown tag
+      // Extended tags (HPROF 1.0.3): id only
+      case HeapTag.ROOT_INTERNED_STRING,
+          HeapTag.ROOT_FINALIZING,
+          HeapTag.ROOT_VM_INTERNAL,
+          HeapTag.ROOT_REFERENCE_CLEANUP,
+          HeapTag.UNREACHABLE ->
+          reader.readId();
+      // HEAP_DUMP_INFO: i4 (class serial) + id (class ID)
+      case HeapTag.HEAP_DUMP_INFO -> {
+        reader.readI4();
+        reader.readId();
       }
+      default ->
+          throw new IOException(
+              "Unknown heap sub-tag 0x"
+                  + Integer.toHexString(subTag)
+                  + " in InboundIndexBuilder at position "
+                  + reader.position()
+                  + ". Cannot determine record size to skip.");
     }
   }
 

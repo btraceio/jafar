@@ -957,4 +957,200 @@ class HdumpPathTest {
     assertEquals(HdumpPath.Root.CLUSTERS, query.root());
     assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(0));
   }
+
+  // === threadOwner() parser tests ===
+
+  @Test
+  void testParseThreadOwnerWithParens() {
+    Query query = HdumpPathParser.parse("objects | threadOwner()");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ThreadOwnerOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseThreadOwnerWithoutParens() {
+    Query query = HdumpPathParser.parse("objects | threadOwner");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ThreadOwnerOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseThreadOwnerAlias() {
+    Query query = HdumpPathParser.parse("objects | ownerThread()");
+    assertInstanceOf(HdumpPath.ThreadOwnerOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseThreadOwnerInPipeline() {
+    Query query =
+        HdumpPathParser.parse(
+            "objects/java.util.HashMap[retained > 1MB] | threadOwner() | select(id, ownerThread)");
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ThreadOwnerOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.SelectOp.class, query.pipeline().get(1));
+  }
+
+  @Test
+  void testParseThreadOwnerChainedWithFilter() {
+    Query query =
+        HdumpPathParser.parse(
+            "objects[retained > 1MB] | threadOwner() | filter(ownerThread = \"shared\")");
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.ThreadOwnerOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.FilterOp.class, query.pipeline().get(1));
+  }
+
+  // === dominatedSize() parser tests ===
+
+  @Test
+  void testParseDominatedSizeWithParens() {
+    Query query = HdumpPathParser.parse("gcroots/THREAD_OBJ | dominatedSize()");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.DominatedSizeOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseDominatedSizeWithoutParens() {
+    Query query = HdumpPathParser.parse("gcroots | dominatedSize");
+    assertEquals(1, query.pipeline().size());
+    assertInstanceOf(HdumpPath.DominatedSizeOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseDominatedSizeAlias() {
+    Query query = HdumpPathParser.parse("gcroots | threadDominated()");
+    assertInstanceOf(HdumpPath.DominatedSizeOp.class, query.pipeline().get(0));
+  }
+
+  @Test
+  void testParseDominatedSizeInPipeline() {
+    Query query =
+        HdumpPathParser.parse("gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)");
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.DominatedSizeOp.class, query.pipeline().get(0));
+    assertInstanceOf(HdumpPath.SortByOp.class, query.pipeline().get(1));
+    HdumpPath.SortByOp sort = (HdumpPath.SortByOp) query.pipeline().get(1);
+    assertEquals("dominated", sort.fields().get(0).field());
+    assertTrue(sort.fields().get(0).descending());
+  }
+
+  @Test
+  void testParseDominatedSizeSelectColumns() {
+    Query query =
+        HdumpPathParser.parse(
+            "gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)");
+    assertEquals(2, query.pipeline().size());
+    assertInstanceOf(HdumpPath.DominatedSizeOp.class, query.pipeline().get(0));
+    HdumpPath.SelectOp select = (HdumpPath.SelectOp) query.pipeline().get(1);
+    assertEquals(
+        List.of("threadName", "dominated", "dominatedCount"),
+        select.fields().stream().map(HdumpPath.SelectField::field).toList());
+  }
+
+  // === queryNeedsRetainedSize() unit tests ===
+
+  @Test
+  void testQueryDoesNotNeedRetainedSize_count() {
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(HdumpPathParser.parse("objects | count()")));
+  }
+
+  @Test
+  void testQueryDoesNotNeedRetainedSize_groupByClass() {
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | groupBy(class, agg=count)")));
+  }
+
+  @Test
+  void testQueryDoesNotNeedRetainedSize_head() {
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(HdumpPathParser.parse("objects | head(10)")));
+  }
+
+  @Test
+  void testQueryDoesNotNeedRetainedSize_selectShallow() {
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | select(id, class, shallow)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_inlinePredicate() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects[retained > 1MB]")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_inlinePredicateAlias() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects[retainedSize > 1MB]")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_filterOp() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | filter(retained > 1MB)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_sortByRetained() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | sortBy(retained desc)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_topByRetained() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | top(10, retained)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_sumRetained() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | sum(retained)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_statsRetained() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | stats(retainedSize)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_groupByValueRetained() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | groupBy(class, agg=sum, value=retained)")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_complexPredicate() {
+    assertTrue(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects[shallow > 100 and retained > 1MB]")));
+  }
+
+  @Test
+  void testQueryDoesNotNeedRetainedSize_threadOwner() {
+    // threadOwner itself doesn't need retained size
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("objects | threadOwner()")));
+  }
+
+  @Test
+  void testQueryNeedsRetainedSize_dominatedSizeHasNoRetained() {
+    // dominatedSize operates on gcroots, not object retained sizes
+    assertFalse(
+        HdumpPathEvaluator.queryNeedsRetainedSize(
+            HdumpPathParser.parse("gcroots/THREAD_OBJ | dominatedSize()")));
+  }
 }

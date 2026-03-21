@@ -11,6 +11,9 @@ import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
+import io.jafar.shell.core.expr.BinaryExpr;
+import io.jafar.shell.core.expr.FieldRef;
+import io.jafar.shell.core.expr.NumberLiteral;
 import io.jafar.shell.core.expr.ValueExpr;
 import java.util.*;
 import java.util.function.Function;
@@ -99,8 +102,15 @@ public final class HdumpPathEvaluator {
       HeapSession session, Query query, SessionResolver resolver) {
     HeapDump dump = session.getHeapDump();
 
-    // NOTE: Retained sizes are computed lazily when needed (e.g., by checkLeaks operations)
-    // Do NOT eagerly compute them here - many queries don't need retained sizes!
+    // If the query references retained size, ensure it is computed before evaluation starts.
+    // This prevents per-object lazy computation mid-stream (which would be a side-effect of
+    // objectToMap() after the switch to getRetainedSizeIfAvailable()).
+    if (query.root() == Root.OBJECTS
+        && !dump.hasDominators()
+        && session != null
+        && queryNeedsRetainedSize(query)) {
+      session.computeApproximateRetainedSizes();
+    }
 
     // Optimization: For large heaps with object queries, use streaming to avoid OOM
     // This handles all cases: unfiltered, type patterns, predicates
@@ -547,7 +557,7 @@ public final class HdumpPathEvaluator {
       Stream<HeapObject> stream, long totalObjects, StatsOp op) {
     double[] sum = {0.0};
     double[] min = {Double.MAX_VALUE};
-    double[] max = {Double.MIN_VALUE};
+    double[] max = {Double.NEGATIVE_INFINITY};
     long[] count = {0};
     long[] counter = {0};
     long[] lastReport = {System.currentTimeMillis()};
@@ -598,7 +608,7 @@ public final class HdumpPathEvaluator {
     private long count = 0;
     private double sum = 0.0;
     private double min = Double.MAX_VALUE;
-    private double max = Double.MIN_VALUE;
+    private double max = Double.NEGATIVE_INFINITY;
 
     GroupAccumulator(List<Object> key, GroupByOp op) {
       this.key = key;
@@ -1013,7 +1023,7 @@ public final class HdumpPathEvaluator {
     map.put(ObjectFields.CLASS_NAME, className);
     map.put(ObjectFields.SHALLOW_SIZE, obj.getShallowSize());
 
-    long retained = obj.getRetainedSize();
+    long retained = obj.getRetainedSizeIfAvailable(); // never triggers computation
     if (retained >= 0) {
       map.put(ObjectFields.RETAINED_SIZE, retained);
     }
@@ -1111,7 +1121,7 @@ public final class HdumpPathEvaluator {
       // Add size fields from the rooted object
       map.put(GcRootFields.SHALLOW_SIZE, obj.getShallowSize());
 
-      long retained = obj.getRetainedSize();
+      long retained = obj.getRetainedSizeIfAvailable(); // never triggers computation
       if (retained >= 0) {
         map.put(GcRootFields.RETAINED_SIZE, retained);
       }
@@ -1862,12 +1872,80 @@ public final class HdumpPathEvaluator {
         row.put(columnName, min);
       }
       case MAX -> {
-        double max = Double.MIN_VALUE;
+        double max = Double.NEGATIVE_INFINITY;
         for (double v : values) if (v > max) max = v;
         row.put(columnName, max);
       }
       default -> {}
     }
+  }
+
+  // === Retained size dependency analysis ===
+
+  private static boolean isRetainedField(String field) {
+    return ObjectFields.RETAINED.equals(field) || ObjectFields.RETAINED_SIZE.equals(field);
+  }
+
+  private static boolean boolExprReferencesRetained(BoolExpr expr) {
+    return switch (expr) {
+      case CompExpr ce -> ce.fieldPath().stream().anyMatch(HdumpPathEvaluator::isRetainedField);
+      case LogicalExpr le ->
+          boolExprReferencesRetained(le.left()) || boolExprReferencesRetained(le.right());
+      case NotExpr ne -> boolExprReferencesRetained(ne.inner());
+      case FuncExpr fe ->
+          fe.args().stream()
+              .filter(a -> a instanceof String)
+              .map(a -> (String) a)
+              .anyMatch(HdumpPathEvaluator::isRetainedField);
+    };
+  }
+
+  private static boolean predicateReferencesRetained(Predicate pred) {
+    return switch (pred) {
+      case FieldPredicate fp ->
+          fp.fieldPath().stream().anyMatch(HdumpPathEvaluator::isRetainedField);
+      case ExprPredicate ep -> boolExprReferencesRetained(ep.expr());
+    };
+  }
+
+  private static boolean valueExprReferencesRetained(ValueExpr expr) {
+    return switch (expr) {
+      case FieldRef fr -> isRetainedField(fr.field());
+      case BinaryExpr be ->
+          valueExprReferencesRetained(be.left()) || valueExprReferencesRetained(be.right());
+      case NumberLiteral nl -> false;
+    };
+  }
+
+  private static boolean opReferencesRetained(PipelineOp op) {
+    return switch (op) {
+      case FilterOp f -> predicateReferencesRetained(f.predicate());
+      case SortByOp s ->
+          s.fields().stream().map(SortField::field).anyMatch(HdumpPathEvaluator::isRetainedField);
+      case TopOp t -> t.orderBy() != null && isRetainedField(t.orderBy());
+      case SumOp s -> isRetainedField(s.field());
+      case StatsOp s -> isRetainedField(s.field());
+      case SelectOp s ->
+          s.fields().stream().map(SelectField::field).anyMatch(HdumpPathEvaluator::isRetainedField);
+      case GroupByOp g ->
+          g.groupFields().stream().anyMatch(HdumpPathEvaluator::isRetainedField)
+              || (g.valueExpr() != null && valueExprReferencesRetained(g.valueExpr()));
+      default -> false;
+    };
+  }
+
+  /**
+   * Returns true if any part of the query references retained or retainedSize fields. Used to
+   * decide whether to compute retained sizes before streaming object evaluation.
+   */
+  public static boolean queryNeedsRetainedSize(Query query) {
+    for (Predicate pred : query.predicates()) {
+      if (predicateReferencesRetained(pred)) return true;
+    }
+    for (PipelineOp op : query.pipeline()) {
+      if (opReferencesRetained(op)) return true;
+    }
+    return false;
   }
 
   /** Checks if a field name indicates memory values. */
@@ -1906,8 +1984,8 @@ public final class HdumpPathEvaluator {
   }
 
   /** Extracts field name from a ValueExpr if it's a simple field reference. */
-  private static String extractFieldNameFromExpr(io.jafar.shell.core.expr.ValueExpr expr) {
-    if (expr instanceof io.jafar.shell.core.expr.FieldRef ref) {
+  private static String extractFieldNameFromExpr(ValueExpr expr) {
+    if (expr instanceof FieldRef ref) {
       return ref.field();
     }
     return null;

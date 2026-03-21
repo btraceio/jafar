@@ -1,11 +1,11 @@
 package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.HeapClass;
-import io.jafar.hdump.api.HeapObject;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,22 +61,6 @@ public final class HybridDominatorComputer {
 
     LongOpenHashSet interesting = new LongOpenHashSet();
 
-    // Heuristic 1: Top N by approximate retained size
-    // Stream through all objects efficiently (uses lazy loading in indexed mode)
-    List<HeapObject> topRetainers =
-        dump.getObjects()
-            .filter(obj -> obj.getRetainedSize() > 0)
-            .sorted(Comparator.comparingLong(HeapObject::getRetainedSize).reversed())
-            .limit(topN)
-            .collect(Collectors.toList());
-
-    for (HeapObject obj : topRetainers) {
-      interesting.add(obj.getId());
-    }
-
-    LOG.debug("Added {} objects from top retainers", topRetainers.size());
-
-    // Heuristic 2: Known leak-prone classes
     Set<String> leakProneClasses =
         Set.of(
             "java.lang.ThreadLocal",
@@ -90,38 +74,66 @@ public final class HybridDominatorComputer {
             "java.lang.ref.WeakReference",
             "java.lang.ref.SoftReference");
 
-    int leakProneCount = 0;
-    for (HeapObject obj : dump.getObjects().toList()) {
-      HeapClass cls = obj.getHeapClass();
-      if (cls != null && leakProneClasses.contains(cls.getName())) {
-        // Only include if they're large enough
-        if (obj.getRetainedSize() > 1024 * 1024) { // > 1 MB
-          interesting.add(obj.getId());
-          leakProneCount++;
-        }
-      }
-    }
+    // Pre-compile patterns once before the scan
+    List<Pattern> compiledPatterns =
+        (classPatterns != null && !classPatterns.isEmpty())
+            ? classPatterns.stream()
+                .map(HybridDominatorComputer::compilePattern)
+                .collect(Collectors.toList())
+            : Collections.emptyList();
 
-    LOG.debug("Added {} objects from leak-prone classes", leakProneCount);
+    // Single pass over all objects — covers all three heuristics at once.
+    // Heuristic 1 uses a bounded min-heap so we never sort more than topN+1 entries in memory.
+    // [retained, objectId]  — ascending by retained so poll() removes the smallest
+    PriorityQueue<long[]> topNQueue =
+        new PriorityQueue<>(topN + 1, Comparator.comparingLong(a -> a[0]));
+    int[] leakProneCount = {0};
+    int[] patternCount = {0};
 
-    // Heuristic 3: User-provided class patterns
-    if (classPatterns != null && !classPatterns.isEmpty()) {
-      int patternCount = 0;
-      for (HeapObject obj : dump.getObjects().toList()) {
-        HeapClass cls = obj.getHeapClass();
-        if (cls != null) {
-          String className = cls.getName();
-          for (String pattern : classPatterns) {
-            if (matchesPattern(className, pattern)) {
-              interesting.add(obj.getId());
-              patternCount++;
-              break;
-            }
-          }
-        }
-      }
-      LOG.debug("Added {} objects matching user patterns", patternCount);
+    dump.getObjects()
+        .forEach(
+            obj -> {
+              long retained = obj.getRetainedSize();
+              HeapClass cls = obj.getHeapClass();
+              String className = cls != null ? cls.getName() : null;
+
+              // Heuristic 1: maintain bounded top-N by retained size
+              if (retained > 0) {
+                topNQueue.offer(new long[] {retained, obj.getId()});
+                if (topNQueue.size() > topN) {
+                  topNQueue.poll(); // evict smallest
+                }
+              }
+
+              // Heuristic 2: large instances of known leak-prone classes
+              if (className != null
+                  && leakProneClasses.contains(className)
+                  && retained > 1024 * 1024) {
+                interesting.add(obj.getId());
+                leakProneCount[0]++;
+              }
+
+              // Heuristic 3: user-provided class patterns
+              if (className != null) {
+                for (Pattern p : compiledPatterns) {
+                  if (p.matcher(className).matches()) {
+                    interesting.add(obj.getId());
+                    patternCount[0]++;
+                    break;
+                  }
+                }
+              }
+            });
+
+    // Drain the top-N queue into the interesting set
+    for (long[] entry : topNQueue) {
+      interesting.add(entry[1]);
     }
+    LOG.debug(
+        "Single-pass heuristics: {} top retainers, {} leak-prone, {} pattern matches",
+        topNQueue.size(),
+        leakProneCount[0],
+        patternCount[0]);
 
     LOG.info("Identified {} interesting objects total", interesting.size());
     return interesting;
@@ -230,16 +242,13 @@ public final class HybridDominatorComputer {
    *
    * <p>Supports wildcards: * matches any sequence, ? matches single character
    */
-  private static boolean matchesPattern(String text, String pattern) {
+  private static Pattern compilePattern(String pattern) {
     if (pattern.equals("*")) {
-      return true;
+      return Pattern.compile(".*");
     }
-
-    // Convert glob to regex
     String regex =
         pattern.replace(".", "\\.").replace("*", ".*").replace("?", ".").replace("$", "\\$");
-
-    return text.matches(regex);
+    return Pattern.compile(regex);
   }
 
   /** Builds map of object ID to list of objects that reference it. */
@@ -253,17 +262,17 @@ public final class HybridDominatorComputer {
     int estimatedSize = Math.max(dump.getObjectCount() / 10, 16);
     Long2ObjectMap<List<Long>> inboundRefs = new Long2ObjectOpenHashMap<>(estimatedSize);
 
-    // Stream through all objects (uses lazy loading in indexed mode)
-    for (HeapObject heapObj : dump.getObjects().toList()) {
-      // Cast to impl for efficient array access
-      HeapObjectImpl obj = (HeapObjectImpl) heapObj;
-      // Use direct array access to avoid Stream overhead
-      long[] refIds = obj.getStrongOutboundReferenceIds();
-      long objId = obj.getId();
-      for (int i = 0; i < refIds.length; i++) {
-        inboundRefs.computeIfAbsent(refIds[i], k -> new ArrayList<>()).add(objId);
-      }
-    }
+    // Stream through all objects without materializing (uses lazy loading in indexed mode)
+    dump.getObjects()
+        .forEach(
+            heapObj -> {
+              HeapObjectImpl obj = (HeapObjectImpl) heapObj;
+              long[] refIds = obj.getStrongOutboundReferenceIds();
+              long objId = obj.getId();
+              for (int i = 0; i < refIds.length; i++) {
+                inboundRefs.computeIfAbsent(refIds[i], k -> new ArrayList<>()).add(objId);
+              }
+            });
 
     return inboundRefs;
   }

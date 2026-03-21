@@ -1,11 +1,9 @@
 package io.jafar.hdump.index;
 
+import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
 /**
  * Memory-mapped reader for retained.idx with O(1) random access.
@@ -32,8 +30,9 @@ import java.nio.file.StandardOpenOption;
  */
 public final class RetainedSizeReader implements AutoCloseable {
 
-  private final FileChannel channel;
-  private final MappedByteBuffer buffer;
+  private static final int SPLICE_SIZE = 256 * 1024 * 1024; // 256 MB
+
+  private final CustomByteBuffer buffer;
   private final int entryCount;
   private final int formatVersion;
 
@@ -46,11 +45,7 @@ public final class RetainedSizeReader implements AutoCloseable {
   public RetainedSizeReader(Path indexDir) throws IOException {
     Path indexFile = indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME);
 
-    // Open file channel
-    channel = FileChannel.open(indexFile, StandardOpenOption.READ);
-
-    // Memory-map entire file
-    buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+    buffer = CustomByteBuffer.map(indexFile, SPLICE_SIZE);
     buffer.order(ByteOrder.BIG_ENDIAN);
 
     // Read and validate header
@@ -95,10 +90,10 @@ public final class RetainedSizeReader implements AutoCloseable {
               "Object ID out of range: %d (valid range: 0 to %d)", objectId32, entryCount - 1));
     }
 
-    // Calculate entry offset: header + (id32 × entry size) + size field offset
-    int offset =
-        IndexFormat.HEADER_SIZE
-            + (objectId32 * IndexFormat.RETAINED_ENTRY_SIZE)
+    // Calculate entry offset with long arithmetic to avoid int overflow for >178M objects
+    long offset =
+        (long) IndexFormat.HEADER_SIZE
+            + (long) objectId32 * IndexFormat.RETAINED_ENTRY_SIZE
             + IndexFormat.RETAINED_OFFSET_SIZE;
 
     return buffer.getLong(offset);
@@ -124,8 +119,6 @@ public final class RetainedSizeReader implements AutoCloseable {
 
   @Override
   public void close() throws IOException {
-    if (channel != null && channel.isOpen()) {
-      channel.close();
-    }
+    buffer.close();
   }
 }

@@ -68,8 +68,7 @@ public final class HeapTag {
   public static boolean isGcRoot(int tag) {
     return tag == ROOT_UNKNOWN
         || (tag >= 0x01 && tag <= 0x08) // Standard GC roots
-        || (tag >= 0x89 && tag <= 0x8e) // Extended GC roots (HPROF 1.0.3)
-        || tag == 0x90 // UNREACHABLE
-        || tag == 0xfe; // HEAP_DUMP_INFO
+        || (tag >= 0x89 && tag <= 0x8e); // Extended GC roots (HPROF 1.0.3)
+    // Note: UNREACHABLE (0x90) and HEAP_DUMP_INFO (0xfe) are NOT GC roots.
   }
 }

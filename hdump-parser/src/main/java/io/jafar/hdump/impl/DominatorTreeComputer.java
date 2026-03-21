@@ -156,7 +156,9 @@ public final class DominatorTreeComputer {
         processed++;
 
         // Show progress within iteration every 10% for first few iterations
-        if (iteration <= 5 && progressCallback != null && processed % (rpo.size() / 10) == 0) {
+        if (iteration <= 5
+            && progressCallback != null
+            && processed % Math.max(rpo.size() / 10, 1) == 0) {
           int percentWithinIteration = (int) ((processed / (double) rpo.size()) * 100);
           if (percentWithinIteration > lastReportedPercent) {
             progressCallback.onProgress(
@@ -236,8 +238,6 @@ public final class DominatorTreeComputer {
         iteration,
         totalIterationTime,
         totalIterationTime / iteration);
-
-    LOG.debug("Converged after {} iterations", iteration);
 
     if (progressCallback != null) {
       progressCallback.onProgress(0.7, "Computing retained sizes...");
@@ -319,18 +319,57 @@ public final class DominatorTreeComputer {
     return b1;
   }
 
-  /** Build reverse post-order traversal from GC roots. */
+  private static final long[] EMPTY_REFS = new long[0];
+
+  /**
+   * Build reverse post-order traversal from GC roots using iterative DFS. Iterative avoids
+   * StackOverflowError on deep object graphs (e.g. linked lists, DOM trees with chains > ~500
+   * deep).
+   *
+   * <p>Each DFS frame is stored as a pair of parallel longs: {@code nodeStack[i]} is the object ID
+   * and {@code childIdxStack[i]} is the index of the next child to visit.
+   */
   private static List<Long> buildReversePostOrder(
       Long2ObjectMap<HeapObjectImpl> objectsById, List<GcRootImpl> gcRoots) {
 
     LongOpenHashSet visited = new LongOpenHashSet();
     LongArrayList postOrder = new LongArrayList();
+    LongArrayList nodeStack = new LongArrayList();
+    LongArrayList childIdxStack = new LongArrayList();
 
-    // DFS from each GC root
     for (GcRoot root : gcRoots) {
       long rootId = root.getObjectId();
-      if (objectsById.containsKey(rootId)) {
-        dfsPostOrder(objectsById, rootId, visited, postOrder);
+      if (objectsById.containsKey(rootId) && visited.add(rootId)) {
+        nodeStack.add(rootId);
+        childIdxStack.add(0L);
+      }
+    }
+
+    while (!nodeStack.isEmpty()) {
+      int top = nodeStack.size() - 1;
+      long nodeId = nodeStack.getLong(top);
+      HeapObjectImpl obj = objectsById.get(nodeId);
+      long[] refIds = (obj != null) ? obj.getStrongOutboundReferenceIds() : EMPTY_REFS;
+      int childIdx = (int) childIdxStack.getLong(top);
+
+      // Scan forward to find the next unvisited reachable child
+      boolean foundChild = false;
+      while (childIdx < refIds.length) {
+        long refId = refIds[childIdx++];
+        if (visited.add(refId) && objectsById.containsKey(refId)) {
+          childIdxStack.set(top, childIdx); // save resume point
+          nodeStack.add(refId);
+          childIdxStack.add(0L);
+          foundChild = true;
+          break;
+        }
+      }
+
+      if (!foundChild) {
+        // All children visited — pop frame and record node in post-order
+        nodeStack.removeLong(top);
+        childIdxStack.removeLong(top);
+        postOrder.add(nodeId);
       }
     }
 
@@ -340,26 +379,6 @@ public final class DominatorTreeComputer {
       rpo.add(postOrder.getLong(i));
     }
     return rpo;
-  }
-
-  private static void dfsPostOrder(
-      Long2ObjectMap<HeapObjectImpl> objectsById,
-      long nodeId,
-      LongOpenHashSet visited,
-      LongArrayList postOrder) {
-
-    if (!visited.add(nodeId)) return;
-
-    HeapObjectImpl obj = objectsById.get(nodeId);
-    if (obj == null) return;
-
-    // Visit all outbound references (use direct array access for performance)
-    long[] refIds = obj.getStrongOutboundReferenceIds();
-    for (int i = 0; i < refIds.length; i++) {
-      dfsPostOrder(objectsById, refIds[i], visited, postOrder);
-    }
-
-    postOrder.add(nodeId);
   }
 
   /**

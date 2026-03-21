@@ -98,14 +98,20 @@ public final class RetainedSizeWriter implements AutoCloseable {
    */
   @Override
   public void close() throws IOException {
+    try {
+      out.close();
+    } catch (IOException e) {
+      Files.deleteIfExists(tempFile);
+      throw e;
+    }
+
     if (entriesWritten != expectedCount) {
+      Files.deleteIfExists(tempFile);
       throw new IllegalStateException(
           String.format(
               "Incomplete retained size index: expected %d entries, wrote %d",
               expectedCount, entriesWritten));
     }
-
-    out.close();
 
     // Atomic rename to final location
     Files.move(tempFile, indexFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
