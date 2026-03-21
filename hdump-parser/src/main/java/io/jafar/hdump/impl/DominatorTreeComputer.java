@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -361,128 +363,74 @@ public final class DominatorTreeComputer {
   }
 
   /**
-   * Build predecessor map (reverse edges) with progress reporting. This can be slow for large heaps
-   * as it traverses all references.
+   * Build predecessor map (reverse edges) in parallel. Each thread processes a disjoint slice of
+   * the RPO list and builds a local map; slices are merged sequentially at the end. Thread-local
+   * HprofReader views make outbound-ref extraction lock-free.
    */
   private static Map<Long, List<Long>> buildPredecessorMap(
       Long2ObjectMap<HeapObjectImpl> objectsById,
       List<Long> rpo,
       ProgressCallback progressCallback) {
 
-    // Pre-size to avoid rehashing (estimate: ~10-20% of objects have predecessors)
-    int estimatedSize = Math.max(rpo.size() / 10, 16);
-    Map<Long, List<Long>> predecessors = new HashMap<>(estimatedSize);
+    int n = rpo.size();
     LongOpenHashSet reachable = new LongOpenHashSet(rpo);
 
-    int processed = 0;
-    int totalObjects = rpo.size();
-    int lastReportedPercent = 0;
-    long lastReportTime = System.currentTimeMillis();
+    int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
+    int chunkSize = Math.max(1, (n + nThreads - 1) / nThreads);
+    int actualChunks = (n + chunkSize - 1) / chunkSize;
 
-    LOG.debug("Building predecessor map for {} objects...", totalObjects);
+    LOG.debug("Building predecessor map for {} objects using {} parallel chunks", n, actualChunks);
 
-    for (long nodeId : rpo) {
-      long objectStartTime = System.currentTimeMillis();
-      HeapObjectImpl obj = objectsById.get(nodeId);
-      if (obj != null) {
-        String className = obj.getHeapClass() != null ? obj.getHeapClass().getName() : "unknown";
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.2, "Building predecessor map (parallel)...");
+    }
 
-        // For huge arrays, warn BEFORE processing
-        if (obj.isArray() && obj.getArrayLength() > 1000000) {
-          String arrayMsg =
-              String.format(
-                  "⚠ Huge array at object %,d: %s with %,d elements (ID: %s)",
-                  processed + 1, className, obj.getArrayLength(), Long.toHexString(nodeId));
-          System.err.println(arrayMsg);
-          LOG.warn(arrayMsg);
-        }
+    AtomicInteger chunksCompleted = new AtomicInteger(0);
 
-        // Process references with direct array access (avoid Stream overhead)
-        long[] refIds = obj.getStrongOutboundReferenceIds();
-        long refCount = 0;
-        long lastRefReportTime = System.currentTimeMillis();
+    @SuppressWarnings("unchecked")
+    HashMap<Long, List<Long>>[] localMaps = new HashMap[actualChunks];
 
-        for (int i = 0; i < refIds.length; i++) {
-          refCount++;
-          long refId = refIds[i];
-          if (reachable.contains(refId)) {
-            predecessors.computeIfAbsent(refId, k -> new ArrayList<>()).add(nodeId);
-          }
+    IntStream.range(0, actualChunks)
+        .parallel()
+        .forEach(
+            chunk -> {
+              int start = chunk * chunkSize;
+              int end = Math.min(start + chunkSize, n);
+              HashMap<Long, List<Long>> local = new HashMap<>();
 
-          // Report progress DURING reference iteration for huge objects
-          if (refCount % 100000 == 0) {
-            long now = System.currentTimeMillis();
-            long elapsed = now - objectStartTime;
-            if (now - lastRefReportTime > 5000) {
-              String refMsg =
-                  String.format(
-                      "  ... processing object %s: %,d refs in %,dms (%.0f refs/sec)",
-                      Long.toHexString(nodeId),
-                      refCount,
-                      elapsed,
-                      elapsed > 0 ? (refCount / (elapsed / 1000.0)) : 0);
-              System.err.println(refMsg);
-              lastRefReportTime = now;
-            }
-          }
-        }
+              for (int i = start; i < end; i++) {
+                long nodeId = rpo.get(i);
+                HeapObjectImpl obj = objectsById.get(nodeId);
+                if (obj == null) continue;
+                for (long refId : obj.getStrongOutboundReferenceIds()) {
+                  if (reachable.contains(refId)) {
+                    local.computeIfAbsent(refId, k -> new ArrayList<>(4)).add(nodeId);
+                  }
+                }
+              }
 
-        long objectElapsed = System.currentTimeMillis() - objectStartTime;
+              localMaps[chunk] = local;
 
-        // Warn about objects that take >1 second to process OR have >100K references
-        if (objectElapsed > 1000 || refCount > 100000) {
-          String warnMsg =
-              String.format(
-                  "⚠ Slow object: %s (class: %s, refs: %d, time: %dms) - processed %d/%d",
-                  Long.toHexString(nodeId),
-                  className,
-                  refCount,
-                  objectElapsed,
-                  processed + 1,
-                  totalObjects);
-          LOG.warn(warnMsg);
-          System.err.println(warnMsg); // Also output to console
-        }
-      }
+              int done = chunksCompleted.incrementAndGet();
+              if (progressCallback != null && done % Math.max(1, actualChunks / 10) == 0) {
+                progressCallback.onProgress(
+                    0.2 + 0.15 * done / actualChunks,
+                    String.format("Building predecessor map (%d%%)", done * 100 / actualChunks));
+              }
+            });
 
-      processed++;
+    if (progressCallback != null) {
+      progressCallback.onProgress(0.37, "Merging predecessor map...");
+    }
 
-      // Check progress and report frequently
-      long now = System.currentTimeMillis();
-
-      // Watchdog: detect if we're completely hung (check every 1000 objects)
-      if (processed % 1000 == 0) {
-        long timeSinceLastReport = now - lastReportTime;
-        if (timeSinceLastReport > 30000) { // No progress update for 30 seconds
-          String errorMsg =
-              String.format(
-                  "🚨 WATCHDOG: No progress update for %dms at object %d/%d (%d%%)",
-                  timeSinceLastReport,
-                  processed,
-                  totalObjects,
-                  (int) ((processed / (double) totalObjects) * 100));
-          LOG.error(errorMsg);
-          System.err.println(errorMsg); // Also output to console
-        }
-      }
-
-      // Report progress more frequently (every 10K objects OR every 2 seconds)
-      boolean shouldReport =
-          processed % Math.min(totalObjects / 50, 10000) == 0 || (now - lastReportTime) >= 2000;
-
-      if (progressCallback != null && shouldReport) {
-        // Progress from 0.2 to 0.4 (20% to 40%) during predecessor map building
-        double progress = 0.2 + (0.2 * (processed / (double) totalObjects));
-        int percentComplete = (int) (progress * 100);
-        if (percentComplete > lastReportedPercent || (now - lastReportTime) >= 2000) {
-          progressCallback.onProgress(
-              progress,
-              String.format(
-                  "Building predecessor map (%d%%, %d/%d objects)...",
-                  percentComplete, processed, totalObjects));
-          lastReportedPercent = percentComplete;
-          lastReportTime = now;
-        }
+    // Sequential merge of per-chunk maps
+    Map<Long, List<Long>> predecessors = new HashMap<>(n / 2);
+    for (HashMap<Long, List<Long>> local : localMaps) {
+      if (local == null) continue;
+      for (Map.Entry<Long, List<Long>> entry : local.entrySet()) {
+        predecessors
+            .computeIfAbsent(entry.getKey(), k -> new ArrayList<>())
+            .addAll(entry.getValue());
       }
     }
 
