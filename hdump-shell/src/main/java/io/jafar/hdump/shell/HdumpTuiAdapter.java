@@ -144,6 +144,13 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     return "hdump";
   }
 
+  @Override
+  public Map<String, Object> loadObjectById(Session session, String hexId) throws Exception {
+    if (!(session instanceof HeapSession heap)) return null;
+    long id = Long.parseUnsignedLong(hexId, 16);
+    return heap.getHeapDump().getObjectById(id).map(HdumpPathEvaluator::objectToRow).orElse(null);
+  }
+
   // ---- retention paths browser helpers ----
 
   @SuppressWarnings("unchecked")

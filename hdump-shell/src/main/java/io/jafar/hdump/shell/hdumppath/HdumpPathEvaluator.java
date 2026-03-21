@@ -1000,6 +1000,10 @@ public final class HdumpPathEvaluator {
 
   // === Object to Map conversions ===
 
+  public static Map<String, Object> objectToRow(HeapObject obj) {
+    return objectToMap(obj);
+  }
+
   private static Map<String, Object> objectToMap(HeapObject obj) {
     Map<String, Object> map = new AliasMap();
     HeapClass cls = obj.getHeapClass();

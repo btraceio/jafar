@@ -121,4 +121,17 @@ public interface TuiAdapter {
    * @return prompt prefix
    */
   String getPromptPrefix();
+
+  /**
+   * Looks up a single heap object by its hex ID string. Returns {@code null} if unsupported or not
+   * found.
+   *
+   * @param session the active session
+   * @param hexId the object ID as a hex string (no "0x" prefix)
+   * @return a row map for the object, or null
+   * @throws Exception if lookup fails
+   */
+  default Map<String, Object> loadObjectById(Session session, String hexId) throws Exception {
+    return null;
+  }
 }
