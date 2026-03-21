@@ -68,7 +68,8 @@ public final class HdumpCompletionContextAnalyzer {
     return "objects".equals(word)
         || "classes".equals(word)
         || "gcroots".equals(word)
-        || "clusters".equals(word);
+        || "clusters".equals(word)
+        || "duplicates".equals(word);
   }
 
   /** Returns true if the word starts with a root type followed by '/'. */
@@ -309,7 +310,8 @@ public final class HdumpCompletionContextAnalyzer {
     if (lower.startsWith("objects")
         || lower.startsWith("classes")
         || lower.startsWith("gcroots")
-        || lower.startsWith("clusters")) {
+        || lower.startsWith("clusters")
+        || lower.startsWith("duplicates")) {
       return trimmed;
     }
     return "";

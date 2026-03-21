@@ -103,7 +103,7 @@ public final class HdumpPipelineOperatorCompleter
       case "floor" -> "round down";
       case "ceil" -> "round up";
       case "waste" -> "analyze collection capacity waste";
-      case "objects" -> "drill down from clusters to member objects";
+      case "objects" -> "drill down from clusters or duplicate groups to member objects";
       case "threadOwner" -> "enrich objects with owning thread (exclusive/shared)";
       case "dominatedSize" -> "enrich GC roots with dominated memory size and count";
       default -> null;

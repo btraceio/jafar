@@ -15,6 +15,8 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
     "objects",
     "classes",
     "gcroots",
+    "clusters",
+    "duplicates",
     "open",
     "close",
     "use",
@@ -56,6 +58,8 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
       case "objects" -> "query heap objects";
       case "classes" -> "query class summary";
       case "gcroots" -> "query GC roots";
+      case "clusters" -> "detect leak clusters";
+      case "duplicates" -> "detect duplicate subgraphs";
       case "open" -> "open a heap dump file";
       case "close" -> "close current session";
       case "use" -> "switch to a session";

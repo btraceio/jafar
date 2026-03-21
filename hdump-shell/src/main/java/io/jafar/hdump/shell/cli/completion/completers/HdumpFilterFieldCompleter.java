@@ -42,6 +42,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "objects" -> getObjectFieldDescription(field);
       case "classes" -> getClassFieldDescription(field);
       case "gcroots" -> getGcRootFieldDescription(field);
+      case "duplicates" -> getDuplicateFieldDescription(field);
       default -> null;
     };
   }
@@ -78,6 +79,20 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "object" -> "object reference";
       case "threadSerial" -> "thread serial number";
       case "frameNumber" -> "stack frame number";
+      default -> null;
+    };
+  }
+
+  private String getDuplicateFieldDescription(String field) {
+    return switch (field) {
+      case "id" -> "group identifier";
+      case "rootClass" -> "class of the root object";
+      case "fingerprint" -> "64-bit structural fingerprint (hex)";
+      case "copies" -> "number of identical copies";
+      case "uniqueSize" -> "shallow size of one copy in bytes";
+      case "wastedBytes" -> "(copies - 1) * uniqueSize";
+      case "depth" -> "fingerprint depth used";
+      case "nodeCount" -> "objects in one copy's subtree";
       default -> null;
     };
   }
