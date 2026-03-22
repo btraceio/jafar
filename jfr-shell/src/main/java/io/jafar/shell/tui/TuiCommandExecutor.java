@@ -1366,8 +1366,9 @@ public final class TuiCommandExecutor {
       } else if (c == '\n') {
         String line = currentLine.toString().trim();
         if (!line.isEmpty() && !LOGBACK_LINE.matcher(line).matches()) {
+          // Milestone message: update spinner only. Adding to asyncProgressLines would
+          // duplicate the text that the spinner already shows on the same frame.
           ctx.asyncProgressMessage = line;
-          ctx.asyncProgressLines.add("  " + line);
           lastWasInPlace = false;
         }
         currentLine.setLength(0);
