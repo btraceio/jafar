@@ -4,6 +4,7 @@ import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapField;
 import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.util.ClassNameUtil;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -96,7 +97,7 @@ public final class SubgraphFingerprinter {
       computeFingerprint(first, depth, new ArrayDeque<>(), nodeCount);
 
       HeapClass cls = first.getHeapClass();
-      String className = cls != null ? cls.getName().replace('/', '.') : "unknown";
+      String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
 
       Map<String, Object> row = new LinkedHashMap<>();
       row.put(HdumpPath.DuplicateFields.ID, groupId);
