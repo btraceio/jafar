@@ -168,9 +168,11 @@ public final class HdumpPathParser {
       return Root.DUPLICATES;
     } else if (matchKeyword("whatif")) {
       return Root.WHATIF;
+    } else if (matchKeyword("ages")) {
+      return Root.AGES;
     } else {
       throw new HdumpPathParseException(
-          "Expected 'objects', 'classes', 'gcroots', 'clusters', 'duplicates', or 'whatif' at position "
+          "Expected 'objects', 'classes', 'gcroots', 'clusters', 'duplicates', 'whatif', or 'ages' at position "
               + pos);
     }
   }
@@ -595,6 +597,10 @@ public final class HdumpPathParser {
       case "dominatedsize", "threaddominated" -> {
         consumeOptionalEmptyParens();
         yield new DominatedSizeOp();
+      }
+      case "estimateage", "age" -> {
+        consumeOptionalEmptyParens();
+        yield new EstimateAgeOp();
       }
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };

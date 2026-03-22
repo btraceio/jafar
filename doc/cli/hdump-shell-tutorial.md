@@ -13,8 +13,9 @@ This tutorial teaches you how to use JAFAR's heap dump analysis capabilities for
 7. [GC Root Analysis](#gc-root-analysis)
 8. [Memory Leak Detection](#memory-leak-detection)
 9. [What-If Simulation](#what-if-simulation)
-10. [Common Analysis Patterns](#common-analysis-patterns)
-11. [Tips and Best Practices](#tips-and-best-practices)
+10. [Object Age Estimation](#object-age-estimation)
+11. [Common Analysis Patterns](#common-analysis-patterns)
+12. [Tips and Best Practices](#tips-and-best-practices)
 
 ## Prerequisites
 
@@ -474,6 +475,39 @@ Use the `id` filter to simulate removing a single known instance:
 hdump> whatif objects[id = 12345]
 hdump> whatif objects[id = 12345] | select(freedBytes, freedPct)
 ```
+
+## Object Age Estimation
+
+The `ages` root and `estimateAge()` operator estimate how long objects have been alive using
+structural signals from a single heap snapshot — no second dump required.
+
+**Scoring signals (0–100):**
+- GC root type: `STICKY_CLASS` (system classes) → +30, `JNI_GLOBAL` → +25, `THREAD_OBJ` → +5
+- Inbound reference count: `min(25, refCount × 2)`
+- BFS depth from GC root: `max(0, 10 − depth)` (shallower = older)
+
+**Age buckets:** `ephemeral` (0–25), `medium` (26–50), `tenured` (51–75), `permanent` (76–100)
+
+```bash
+# Distribution of all objects by age bucket
+hdump> ages | groupBy(ageBucket, agg=count)
+
+# Oldest objects by retained size
+hdump> ages | filter(ageBucket = "tenured") | top(10, retained)
+
+# Class-filtered age view
+hdump> ages/com.example.SessionStore | select(id, estimatedAge, ageBucket)
+
+# As a pipeline operator on any object stream
+hdump> objects/java.util.HashMap | estimateAge() | sortBy(estimatedAge desc) | top(20)
+
+# Suspicious: WeakReferences that should be short-lived but are old
+hdump> objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenured") | top(20)
+```
+
+> **Note:** Age scores are heuristic estimates based on structural signals, not GC generation
+> metadata. Objects not reachable from any GC root default to score 20 (`ephemeral`). The first
+> `ages` or `estimateAge()` call triggers a two-pass scan; subsequent calls use the cached result.
 
 ## Common Analysis Patterns
 

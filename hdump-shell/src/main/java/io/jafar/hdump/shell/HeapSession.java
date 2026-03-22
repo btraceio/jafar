@@ -4,6 +4,7 @@ import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.shell.hdumppath.ClusterDetector;
+import io.jafar.hdump.shell.hdumppath.ObjectAgeEstimator;
 import io.jafar.hdump.shell.hdumppath.SubgraphFingerprinter;
 import io.jafar.hdump.shell.leaks.LeakDetector;
 import io.jafar.hdump.shell.leaks.LeakDetectorRegistry;
@@ -37,6 +38,7 @@ public final class HeapSession implements Session {
   private final HeapDump dump;
   private final ParserOptions options;
   private volatile boolean closed = false;
+  private volatile ObjectAgeEstimator.Result cachedAgeEstimation;
   private volatile ClusterDetector.Result cachedClusters;
   private volatile io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.Result
       cachedThreadOwnership;
@@ -302,6 +304,31 @@ public final class HeapSession implements Session {
       promptAndComputeDominatorTree();
       cachedThreadOwnership = io.jafar.hdump.shell.hdumppath.ThreadOwnershipAnalyzer.compute(dump);
       return cachedThreadOwnership;
+    }
+  }
+
+  /**
+   * Returns cached object age estimation, computing it if needed.
+   *
+   * <p>Performs two O(n+edges) passes on first call; result is cached for reuse.
+   *
+   * @return age estimation result
+   */
+  public ObjectAgeEstimator.Result getOrComputeAgeEstimation() {
+    ObjectAgeEstimator.Result result = cachedAgeEstimation;
+    if (result != null) return result;
+    synchronized (this) {
+      if (cachedAgeEstimation != null) return cachedAgeEstimation;
+      System.err.println();
+      System.err.println("Computing object age estimates...");
+      System.err.printf(
+          "Scanning %,d objects and their references (may take a while for large dumps)%n",
+          dump.getObjectCount());
+      System.err.println();
+      cachedAgeEstimation = ObjectAgeEstimator.compute(dump);
+      System.err.println("Object age estimation complete!");
+      System.err.println();
+      return cachedAgeEstimation;
     }
   }
 

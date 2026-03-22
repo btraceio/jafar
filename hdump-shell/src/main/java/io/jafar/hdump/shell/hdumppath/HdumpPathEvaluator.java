@@ -227,6 +227,7 @@ public final class HdumpPathEvaluator {
           case CLUSTERS -> evaluateClusters(session, query);
           case DUPLICATES -> evaluateDuplicates(session, query);
           case WHATIF -> evaluateWhatIf(session, query);
+          case AGES -> evaluateAges(session, query);
         };
 
     // Apply pipeline operations
@@ -1098,6 +1099,39 @@ public final class HdumpPathEvaluator {
     return List.of(row);
   }
 
+  private static List<Map<String, Object>> evaluateAges(HeapSession session, Query query) {
+    // Delegate object filtering to evaluateObjects, then enrich with age data
+    Query objectsQuery =
+        new Query(
+            Root.OBJECTS,
+            query.typePattern(),
+            query.instanceof_(),
+            query.predicates(),
+            List.of(),
+            0);
+    List<Map<String, Object>> objectRows = evaluateObjects(session.getHeapDump(), objectsQuery);
+    return applyEstimateAge(session, objectRows);
+  }
+
+  private static List<Map<String, Object>> applyEstimateAge(
+      HeapSession session, List<Map<String, Object>> results) {
+    ObjectAgeEstimator.Result ages = session.getOrComputeAgeEstimation();
+    List<Map<String, Object>> enriched = new ArrayList<>(results.size());
+    for (Map<String, Object> row : results) {
+      Map<String, Object> out = new AliasMap();
+      out.putAll(row);
+      Object idObj = row.get(ObjectFields.ID);
+      if (idObj instanceof Number n) {
+        ObjectAgeEstimator.AgeData data = ages.getAgeData(n.longValue());
+        out.put(HdumpPath.AgeFields.ESTIMATED_AGE, data.score());
+        out.put(HdumpPath.AgeFields.AGE_BUCKET, data.bucket());
+        out.put(HdumpPath.AgeFields.AGE_SIGNALS, data.signals());
+      }
+      enriched.add(out);
+    }
+    return enriched;
+  }
+
   // === Object to Map conversions ===
 
   public static Map<String, Object> objectToRow(HeapObject obj) {
@@ -1538,6 +1572,13 @@ public final class HdumpPathEvaluator {
         }
         yield applyDominatedSize(session, results);
       }
+      case EstimateAgeOp e -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "estimateAge requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyEstimateAge(session, results);
+      }
       case JoinOp j ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
@@ -1752,6 +1793,7 @@ public final class HdumpPathEvaluator {
       case CLUSTERS -> ClusterFields.ID;
       case DUPLICATES -> HdumpPath.DuplicateFields.ID;
       case WHATIF -> HdumpPath.WhatIfFields.TARGET_QUERY;
+      case AGES -> ObjectFields.ID;
     };
   }
 

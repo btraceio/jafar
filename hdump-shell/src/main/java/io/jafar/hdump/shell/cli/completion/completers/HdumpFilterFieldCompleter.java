@@ -44,6 +44,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "gcroots" -> getGcRootFieldDescription(field);
       case "duplicates" -> getDuplicateFieldDescription(field);
       case "whatif" -> getWhatIfFieldDescription(field);
+      case "ages" -> getAgeFieldDescription(field);
       default -> null;
     };
   }
@@ -94,6 +95,19 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "wastedBytes" -> "(copies - 1) * uniqueSize";
       case "depth" -> "fingerprint depth used";
       case "nodeCount" -> "objects in one copy's subtree";
+      default -> null;
+    };
+  }
+
+  private String getAgeFieldDescription(String field) {
+    return switch (field) {
+      case "id" -> "object ID";
+      case "class", "className" -> "class name";
+      case "shallow", "shallowSize" -> "shallow size in bytes";
+      case "retained", "retainedSize" -> "retained size in bytes";
+      case "estimatedAge" -> "age score 0-100";
+      case "ageBucket" -> "ephemeral / medium / tenured / permanent";
+      case "ageSignals" -> "debug: signal breakdown";
       default -> null;
     };
   }

@@ -6,7 +6,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ```
 <query>     ::= <root> ("/" <type-spec>)? ("[" <predicates> "]")? ("|" <pipeline>)*
-<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")? | "whatif" ["remove"] <query>
+<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")? | "whatif" ["remove"] <query> | "ages"
 <type-spec> ::= ("instanceof" "/")? <class-pattern>
 <predicates>::= <predicate> (("and" | "or") <predicate>)*
 <predicate> ::= <field-path> <op> <literal> | "not" <predicate> | "(" <predicates> ")"
@@ -15,7 +15,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ## Roots
 
-HdumpPath queries start with one of six roots:
+HdumpPath queries start with one of seven roots:
 
 ### `objects`
 
@@ -187,6 +187,29 @@ whatif remove <inner-query>
 | `freedObjects` | int | Objects in dominated subtrees (exact with full dominator tree, else `targetCount`) |
 | `freedPct` | double | `freedBytes / totalHeapSize * 100`, one decimal place |
 | `remainingRetained` | long | `totalHeapSize - freedBytes` |
+
+### `ages`
+
+Query all heap objects pre-enriched with estimated age data. Equivalent to `objects | estimateAge()` but more concise. Supports optional class-pattern filtering and predicates.
+
+```
+ages | groupBy(ageBucket, agg=count)
+ages | filter(ageBucket = "tenured") | top(10, retained)
+ages/com.example.Foo | select(id, estimatedAge, ageBucket)
+ages[estimatedAge > 50] | top(20, retained)
+```
+
+**Available fields** (all `objects` fields plus):
+| Field | Type | Description |
+|-------|------|-------------|
+| `estimatedAge` | int | Age score 0–100 |
+| `ageBucket` | String | `ephemeral` (0–25) / `medium` (26–50) / `tenured` (51–75) / `permanent` (76–100) |
+| `ageSignals` | String | Debug: `"root:STICKY_CLASS:+30,refs:4:+8,depth:2:+8"` |
+
+The age score is computed using three structural signals (no dominator tree required):
+1. **GC root type** — `STICKY_CLASS` → +30, `JNI_GLOBAL` → +25, `THREAD_OBJ` → +5, stack frames → +0
+2. **Inbound reference count** — `min(25, refCount × 2)`
+3. **BFS depth from a GC root** — `max(0, 10 − depth)` (shallower = older)
 
 ## Type Specifications
 
@@ -685,6 +708,26 @@ gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCo
 
 # Top 10 memory-hungry threads
 gcroots/THREAD_OBJ | dominatedSize() | top(10, dominated)
+```
+
+### `estimateAge()`
+
+Enrich object rows with estimated age data. Adds `estimatedAge`, `ageBucket`, and `ageSignals`
+columns to each row. Uses the same scoring algorithm as the `ages` root (see above). Result is
+cached in the session after the first call.
+
+```
+# Find the oldest large objects
+objects[retained > 10MB] | estimateAge() | sortBy(estimatedAge desc) | top(20)
+
+# Age distribution of HashMap instances
+objects/java.util.HashMap | estimateAge() | groupBy(ageBucket, agg=count)
+
+# Per-class average age
+objects | estimateAge() | groupBy(class, agg=avg, value=estimatedAge) | top(10, avg)
+
+# Suspiciously old short-lived types
+objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenured") | top(20)
 ```
 
 ### `join(session=id|alias [, root="eventType", by=field])`

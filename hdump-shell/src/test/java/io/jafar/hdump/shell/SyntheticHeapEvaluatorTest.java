@@ -289,4 +289,122 @@ class SyntheticHeapEvaluatorTest {
       }
     }
   }
+
+  /**
+   * Isolated tests for the {@code ages} root and {@code estimateAge()} operator. Uses a dedicated
+   * session to avoid polluting the shared session used by other tests.
+   */
+  @Nested
+  class AgeEstimationTests {
+
+    @TempDir Path ageTempDir;
+
+    private HeapSession ageSession() throws IOException {
+      Path hprof =
+          new MinimalHprofBuilder()
+              .addClass(300, "com/example/Foo")
+              .addClass(301, "com/example/Bar")
+              .addInstance(3000, 300)
+              .addInstance(3001, 300)
+              .addInstance(3002, 300)
+              .addInstance(3003, 301)
+              .addInstance(3004, 301)
+              .addGcRoot(3000)
+              .write(ageTempDir);
+      return HeapSession.open(hprof);
+    }
+
+    private static final java.util.Set<String> VALID_BUCKETS =
+        java.util.Set.of("ephemeral", "medium", "tenured", "permanent");
+
+    @Test
+    void agesRootReturnsAllObjects() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("ages | count()"));
+        assertEquals(1, result.size());
+        assertEquals(5L, ((Number) result.get(0).get("count")).longValue());
+      }
+    }
+
+    @Test
+    void agesRootHasAgeFields() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("ages | head(5)"));
+        assertEquals(5, result.size());
+        for (Map<String, Object> row : result) {
+          assertTrue(row.containsKey("estimatedAge"), "missing estimatedAge");
+          assertTrue(row.containsKey("ageBucket"), "missing ageBucket");
+          assertTrue(row.containsKey("ageSignals"), "missing ageSignals");
+        }
+      }
+    }
+
+    @Test
+    void agesRootFilterByClass() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("ages/com.example.Foo | count()"));
+        assertEquals(1, result.size());
+        assertEquals(3L, ((Number) result.get(0).get("count")).longValue());
+      }
+    }
+
+    @Test
+    void estimateAgeOpEnriches() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s, HdumpPathParser.parse("objects | estimateAge() | head(3)"));
+        assertEquals(3, result.size());
+        for (Map<String, Object> row : result) {
+          assertTrue(row.containsKey("estimatedAge"), "missing estimatedAge");
+          assertTrue(row.containsKey("ageBucket"), "missing ageBucket");
+          assertTrue(row.containsKey("ageSignals"), "missing ageSignals");
+          // original object fields must be preserved
+          assertTrue(row.containsKey("id"), "missing id");
+          assertTrue(row.containsKey("class"), "missing class");
+        }
+      }
+    }
+
+    @Test
+    void ageBucketIsValid() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("ages | head(5)"));
+        for (Map<String, Object> row : result) {
+          String bucket = (String) row.get("ageBucket");
+          assertTrue(VALID_BUCKETS.contains(bucket), "invalid ageBucket: " + bucket);
+        }
+      }
+    }
+
+    @Test
+    void agesScoreInRange() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("ages | head(5)"));
+        for (Map<String, Object> row : result) {
+          int score = ((Number) row.get("estimatedAge")).intValue();
+          assertTrue(score >= 0 && score <= 100, "score out of range: " + score);
+        }
+      }
+    }
+
+    @Test
+    void agesWithPipeline() throws IOException {
+      try (HeapSession s = ageSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s,
+                HdumpPathParser.parse(
+                    "ages | filter(ageBucket = \"ephemeral\") | select(estimatedAge)"));
+        for (Map<String, Object> row : result) {
+          assertTrue(row.containsKey("estimatedAge"));
+        }
+      }
+    }
+  }
 }

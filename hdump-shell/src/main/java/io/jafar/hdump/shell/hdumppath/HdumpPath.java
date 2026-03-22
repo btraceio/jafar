@@ -39,7 +39,9 @@ public final class HdumpPath {
     /** Query structurally-identical duplicate object subgraphs. */
     DUPLICATES,
     /** Simulate the effect of removing a set of objects from the heap. */
-    WHATIF
+    WHATIF,
+    /** Query heap objects enriched with estimated age scores. */
+    AGES
   }
 
   /** Comparison operators. */
@@ -165,7 +167,8 @@ public final class HdumpPath {
           WasteOp,
           ObjectsOp,
           ThreadOwnerOp,
-          DominatedSizeOp {}
+          DominatedSizeOp,
+          EstimateAgeOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -514,6 +517,23 @@ public final class HdumpPath {
    */
   public record DominatedSizeOp() implements PipelineOp {}
 
+  /**
+   * Enrich object rows with estimated age score, age bucket, and signal breakdown.
+   *
+   * <p>Adds three columns to each row:
+   *
+   * <ul>
+   *   <li>{@code estimatedAge} — 0–100 age score
+   *   <li>{@code ageBucket} — {@code "ephemeral"}, {@code "medium"}, {@code "tenured"}, or {@code
+   *       "permanent"}
+   *   <li>{@code ageSignals} — debug string showing which signals contributed
+   * </ul>
+   *
+   * <p>Requires no dominator tree. Uses two O(n+edges) passes on first invocation; result is cached
+   * in the session.
+   */
+  public record EstimateAgeOp() implements PipelineOp {}
+
   // === Built-in field names for objects ===
 
   /** Standard field names available on heap objects. */
@@ -629,5 +649,21 @@ public final class HdumpPath {
     public static final String REMAINING_RETAINED = "remainingRetained";
 
     private WhatIfFields() {}
+  }
+
+  /** Standard field names produced by the {@code ages} root and {@code estimateAge()} operator. */
+  public static final class AgeFields {
+    /** Age score 0–100. */
+    public static final String ESTIMATED_AGE = "estimatedAge";
+
+    /**
+     * Age bucket: {@code "ephemeral"}, {@code "medium"}, {@code "tenured"}, or {@code "permanent"}.
+     */
+    public static final String AGE_BUCKET = "ageBucket";
+
+    /** Debug string showing which signals contributed to the score. */
+    public static final String AGE_SIGNALS = "ageSignals";
+
+    private AgeFields() {}
   }
 }

@@ -1,6 +1,7 @@
 package io.jafar.hdump.shell.cli.completion;
 
 import io.jafar.hdump.shell.HeapSession;
+import io.jafar.hdump.shell.hdumppath.HdumpPath.AgeFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ClassFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ClusterFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.DuplicateFields;
@@ -21,7 +22,7 @@ import java.util.Set;
 public final class HdumpMetadataService implements MetadataService {
 
   private static final List<String> ROOT_TYPES =
-      List.of("objects", "classes", "gcroots", "clusters", "duplicates", "whatif");
+      List.of("objects", "classes", "gcroots", "clusters", "duplicates", "whatif", "ages");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -113,6 +114,17 @@ public final class HdumpMetadataService implements MetadataService {
           DuplicateFields.DEPTH,
           DuplicateFields.NODE_COUNT);
 
+  /** Field names for ages root type */
+  private static final List<String> AGE_FIELDS =
+      List.of(
+          ObjectFields.ID,
+          ObjectFields.CLASS_NAME,
+          ObjectFields.SHALLOW_SIZE,
+          ObjectFields.RETAINED_SIZE,
+          AgeFields.ESTIMATED_AGE,
+          AgeFields.AGE_BUCKET,
+          AgeFields.AGE_SIGNALS);
+
   /** Field names for whatif root type */
   private static final List<String> WHATIF_FIELDS =
       List.of(
@@ -171,6 +183,7 @@ public final class HdumpMetadataService implements MetadataService {
       case "clusters" -> CLUSTER_FIELDS;
       case "duplicates" -> DUPLICATE_FIELDS;
       case "whatif" -> WHATIF_FIELDS;
+      case "ages" -> AGE_FIELDS;
       default -> Collections.emptyList();
     };
   }

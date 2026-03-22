@@ -18,7 +18,7 @@ import java.util.Map;
 public final class HdumpQueryEvaluator implements QueryEvaluator {
 
   private static final List<String> ROOT_TYPES =
-      List.of("objects", "classes", "gcroots", "clusters", "whatif");
+      List.of("objects", "classes", "gcroots", "clusters", "whatif", "ages");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -136,6 +136,9 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "objects" -> "objects() - Drill down from cluster rows into member object rows";
       case "whatif" ->
           "whatif remove <query> — simulate removing matched objects and report freed memory";
+      case "ages" -> "ages[/class] — query objects with estimated age score";
+      case "estimateage", "age" ->
+          "estimateAge() — enrich object rows with estimatedAge, ageBucket, ageSignals";
       default -> null;
     };
   }
