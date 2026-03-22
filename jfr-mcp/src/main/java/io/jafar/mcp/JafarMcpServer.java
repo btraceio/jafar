@@ -87,10 +87,16 @@ public final class JafarMcpServer {
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /** Default idle timeout in minutes before the server exits. */
+  private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 10;
+
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
   private final QueryEvaluator evaluator;
   private final QueryParser queryParser;
+
+  /** Timestamp of the last tool invocation, in nanoseconds. Updated on every tool call. */
+  private volatile long lastActivityNanos = System.nanoTime();
 
   /** Creates a server with default dependencies for production use. */
   public JafarMcpServer() {
@@ -170,6 +176,8 @@ public final class JafarMcpServer {
                     mcpServer.close();
                   }));
 
+      startIdleWatchdog();
+
       // Keep the main thread alive - use a latch that never counts down
       // The server will exit when stdin closes (EOF) or on SIGTERM
       var latch = new java.util.concurrent.CountDownLatch(1);
@@ -237,6 +245,8 @@ public final class JafarMcpServer {
                     }
                   }));
 
+      startIdleWatchdog();
+
       // Start server
       jettyServer.start();
       LOG.info("Jafar MCP Server started at http://localhost:{}/mcp", port);
@@ -248,6 +258,69 @@ public final class JafarMcpServer {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
       System.exit(1);
     }
+  }
+
+  /** Updates the last-activity timestamp. Called on every tool invocation. */
+  private void touchActivity() {
+    lastActivityNanos = System.nanoTime();
+  }
+
+  /**
+   * Starts a daemon thread that exits the process when no tool has been called for the configured
+   * idle timeout period.
+   *
+   * <p>Timeout is read from system property {@code mcp.idle.timeout.minutes} (default: {@value
+   * DEFAULT_IDLE_TIMEOUT_MINUTES}).
+   */
+  private void startIdleWatchdog() {
+    int timeoutMinutes =
+        Integer.getInteger("mcp.idle.timeout.minutes", DEFAULT_IDLE_TIMEOUT_MINUTES);
+    if (timeoutMinutes <= 0) {
+      LOG.info("Idle watchdog disabled (mcp.idle.timeout.minutes={})", timeoutMinutes);
+      return;
+    }
+
+    long timeoutNanos = (long) timeoutMinutes * 60L * 1_000_000_000L;
+    long checkIntervalMs = 30_000L; // check every 30 seconds
+
+    Thread watchdog =
+        new Thread(
+            () -> {
+              LOG.info("Idle watchdog started (timeout={}m)", timeoutMinutes);
+              while (!Thread.currentThread().isInterrupted()) {
+                try {
+                  Thread.sleep(checkIntervalMs);
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  return;
+                }
+                long idleNanos = System.nanoTime() - lastActivityNanos;
+                if (idleNanos >= timeoutNanos) {
+                  LOG.info(
+                      "Idle timeout reached ({}m), shutting down", idleNanos / 60_000_000_000L);
+                  System.exit(0);
+                }
+              }
+            },
+            "mcp-idle-watchdog");
+    watchdog.setDaemon(true);
+    watchdog.start();
+  }
+
+  /**
+   * Wraps a tool specification so that every invocation updates the last-activity timestamp.
+   *
+   * @param spec the original specification
+   * @return wrapped specification
+   */
+  private McpServerFeatures.SyncToolSpecification withActivityTracking(
+      McpServerFeatures.SyncToolSpecification spec) {
+    return new McpServerFeatures.SyncToolSpecification(
+        spec.tool(),
+        (exchange, args) -> {
+          touchActivity();
+          return spec.call().apply(exchange, args);
+        });
   }
 
   /**
@@ -277,26 +350,26 @@ public final class JafarMcpServer {
    */
   private List<McpServerFeatures.SyncToolSpecification> createToolSpecifications() {
     List<McpServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
-    tools.add(createJfrOpenTool());
-    tools.add(createJfrQueryTool());
-    tools.add(createJfrListTypesTool());
-    tools.add(createJfrCloseTool());
-    tools.add(createJfrHelpTool());
-    tools.add(createJfrFlamegraphTool());
-    tools.add(createJfrCallgraphTool());
-    tools.add(createJfrExceptionsTool());
-    tools.add(createJfrSummaryTool());
-    tools.add(createJfrHotmethodsTool());
-    tools.add(createJfrUseTool());
-    tools.add(createJfrTsaTool());
-    tools.add(createJfrDiagnoseTool());
-    tools.add(createJfrStackprofileTool());
-    tools.add(createHdumpOpenTool());
-    tools.add(createHdumpCloseTool());
-    tools.add(createHdumpQueryTool());
-    tools.add(createHdumpSummaryTool());
-    tools.add(createHdumpReportTool());
-    tools.add(createHdumpHelpTool());
+    tools.add(withActivityTracking(createJfrOpenTool()));
+    tools.add(withActivityTracking(createJfrQueryTool()));
+    tools.add(withActivityTracking(createJfrListTypesTool()));
+    tools.add(withActivityTracking(createJfrCloseTool()));
+    tools.add(withActivityTracking(createJfrHelpTool()));
+    tools.add(withActivityTracking(createJfrFlamegraphTool()));
+    tools.add(withActivityTracking(createJfrCallgraphTool()));
+    tools.add(withActivityTracking(createJfrExceptionsTool()));
+    tools.add(withActivityTracking(createJfrSummaryTool()));
+    tools.add(withActivityTracking(createJfrHotmethodsTool()));
+    tools.add(withActivityTracking(createJfrUseTool()));
+    tools.add(withActivityTracking(createJfrTsaTool()));
+    tools.add(withActivityTracking(createJfrDiagnoseTool()));
+    tools.add(withActivityTracking(createJfrStackprofileTool()));
+    tools.add(withActivityTracking(createHdumpOpenTool()));
+    tools.add(withActivityTracking(createHdumpCloseTool()));
+    tools.add(withActivityTracking(createHdumpQueryTool()));
+    tools.add(withActivityTracking(createHdumpSummaryTool()));
+    tools.add(withActivityTracking(createHdumpReportTool()));
+    tools.add(withActivityTracking(createHdumpHelpTool()));
     return tools;
   }
 
