@@ -304,7 +304,8 @@ public final class TuiRenderer {
         progressMsg = null;
       }
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
-      String elapsed = elapsedSec > 0 ? " (" + elapsedSec + "s)" : "";
+      String elapsed =
+          elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
       String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
       Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " " + status);
       frame.renderWidget(spinner, inner);
