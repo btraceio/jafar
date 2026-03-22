@@ -151,11 +151,18 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     return heap.getHeapDump().getObjectById(id).map(HdumpPathEvaluator::objectToRow).orElse(null);
   }
 
+  /** Object count above which a retained-size pre-computation is considered expensive. */
+  private static final int EXPENSIVE_OBJECT_THRESHOLD = 500_000;
+
   @Override
   public String getExpensiveOperationWarning(String command, Session session) {
     if (!(session instanceof HeapSession heap)) return null;
     // If retained sizes are already computed, all operations are fast
     if (heap.getHeapDump().hasDominators()) return null;
+
+    // Small heaps complete in a few seconds — not worth interrupting the user
+    long objectCount = heap.getHeapDump().getObjectCount();
+    if (objectCount < EXPENSIVE_OBJECT_THRESHOLD) return null;
 
     String lower = command.toLowerCase().trim();
     // Strip leading "show " prefix
@@ -176,7 +183,6 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
     if (!isExpensive) return null;
 
-    long objectCount = heap.getHeapDump().getObjectCount();
     return String.format(
         "Requires computing retained sizes for %,d objects — may take several minutes.",
         objectCount);
