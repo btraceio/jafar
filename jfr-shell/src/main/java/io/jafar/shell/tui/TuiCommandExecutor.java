@@ -322,6 +322,7 @@ public final class TuiCommandExecutor {
     ctx.asyncMaxLineWidth = 0;
     ctx.commandRunning = true;
     ctx.commandStartTick = ctx.renderTick;
+    ctx.commandStartTimeMs = System.currentTimeMillis();
     ctx.focus = Focus.RESULTS;
 
     ctx.commandFuture =
