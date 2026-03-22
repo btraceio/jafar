@@ -2,6 +2,8 @@ package io.jafar.shell.tui;
 
 import dev.tamboui.layout.Rect;
 import dev.tamboui.widgets.input.TextInputState;
+import io.jafar.shell.core.BrowseCategoryDescriptor;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -9,10 +11,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import org.jline.reader.Candidate;
@@ -31,12 +33,14 @@ public final class TuiContext {
   static final int EOF = -1;
   static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[0-9;]*[A-Za-z]");
   static final Path HISTORY_PATH =
-      Path.of(System.getProperty("user.home"), ".jfr-shell", "history");
+      Path.of(System.getProperty("user.home"), ".jafar-shell", "history");
   static final int MAX_HISTORY = 5000;
   static final int COMPLETION_MAX_WIDTH = 50;
   static final int COMPLETION_MAX_HEIGHT = 12;
   static final int TIP_ROTATE_TICKS = 300; // ~30s at 100ms per tick
-  static final String[] TIPS = loadTips();
+  static final String[] TIPS_JFR = loadTips("/tips-shared.txt", "/tips-jfr.txt");
+  static final String[] TIPS_HDUMP = loadTips("/tips-shared.txt", "/tips-hdump.txt");
+  static final String[] TIPS_DEFAULT = loadTips("/tips-shared.txt");
   static final String[] SPINNER = {
     "\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807",
     "\u280F"
@@ -97,8 +101,7 @@ public final class TuiContext {
     long marqueeTick0; // renderTick when name was set (marquee epoch)
     int sidebarIndex = -1; // sidebar selection index for browser tabs (-1 = not a browser tab)
     List<Map<String, Object>> browserTypes; // sidebar type list for this browser tab
-    boolean isEventBrowserTab; // true if this tab was opened in event browser mode
-    boolean isMetadataBrowserTab; // true if this tab was opened in metadata browser mode
+    BrowseCategoryDescriptor browserDescriptor; // descriptor for this browser tab, or null
 
     // Paginated rendering — render only a page of rows at a time
     List<Map<String, Object>> cpAllEntries; // full entries from provider (null for non-CP)
@@ -232,7 +235,7 @@ public final class TuiContext {
 
   // Session picker state
   boolean sessionPickerVisible;
-  List<SessionManager.SessionRef> sessionPickerEntries;
+  List<SessionManager.SessionRef<? extends Session>> sessionPickerEntries;
   int sessionPickerSelectedIndex;
 
   // Export popup state
@@ -242,8 +245,8 @@ public final class TuiContext {
 
   // Browser mode
   boolean browserMode;
-  boolean eventBrowserMode;
-  boolean metadataBrowserMode;
+  BrowseCategoryDescriptor activeBrowserDescriptor; // null when not browsing
+  String browserCategory; // generic category name for adapter-driven browser modes
   List<Map<String, Object>> sidebarTypes;
   int sidebarSelectedIndex;
   int sidebarScrollOffset;
@@ -258,8 +261,18 @@ public final class TuiContext {
   Map<String, Map<String, Object>> metadataByName;
 
   // Async command execution state
+  volatile String asyncProgressMessage; // latest progress status from stderr, shown in spinner
+
+  /** Ephemeral progress lines from stderr — shown live during execution, discarded after. */
+  final CopyOnWriteArrayList<String> asyncProgressLines = new CopyOnWriteArrayList<>();
+
   volatile boolean commandRunning;
   long commandStartTick;
+  volatile long commandStartTimeMs;
+  // Confirmation state for expensive operations
+  boolean awaitingConfirmation;
+  String pendingConfirmCommand;
+  String confirmationMessage;
   Future<?> commandFuture;
   List<String> asyncOutputBuffer;
   int asyncMaxLineWidth;
@@ -268,7 +281,7 @@ public final class TuiContext {
   volatile List<String> asyncTableHeaders;
   volatile List<Map<String, Object>> asyncMetadataClasses;
   volatile int asyncPreambleLines;
-  volatile boolean eventBrowserPending;
+  volatile boolean asyncBrowserPending;
 
   // ---- convenience accessors ----
 
@@ -317,20 +330,23 @@ public final class TuiContext {
 
   // ---- tips loader ----
 
-  private static String[] loadTips() {
-    try (var in = TuiContext.class.getResourceAsStream("/tips.txt")) {
-      if (in == null) return new String[] {"Type 'help' for available commands"};
-      String[] tips =
-          new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
-              .lines()
-              .map(String::trim)
-              .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-              .map(l -> "Tip: " + l)
-              .toArray(String[]::new);
-      Collections.shuffle(Arrays.asList(tips));
-      return tips;
-    } catch (IOException e) {
-      return new String[] {"Type 'help' for available commands"};
+  private static String[] loadTips(String... resources) {
+    List<String> lines = new ArrayList<>();
+    for (String resource : resources) {
+      try (var in = TuiContext.class.getResourceAsStream(resource)) {
+        if (in == null) continue;
+        new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
+            .lines()
+            .map(String::trim)
+            .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+            .map(l -> "Tip: " + l)
+            .forEach(lines::add);
+      } catch (IOException e) {
+        // skip missing resource
+      }
     }
+    if (lines.isEmpty()) return new String[] {"Type 'help' for available commands"};
+    Collections.shuffle(lines);
+    return lines.toArray(String[]::new);
   }
 }

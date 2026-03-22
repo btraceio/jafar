@@ -21,7 +21,9 @@ import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.TuiAdapter;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import java.util.ArrayList;
@@ -37,13 +39,19 @@ public final class TuiRenderer {
   private static final Style HIGHLIGHT_STYLE = Style.create().bg(Color.YELLOW).fg(Color.BLACK);
 
   private final TuiContext ctx;
-  private final SessionManager sessions;
+  private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
+  private TuiAdapter tuiAdapter;
 
-  TuiRenderer(TuiContext ctx, SessionManager sessions, TuiDetailBuilder detailBuilder) {
+  TuiRenderer(
+      TuiContext ctx, SessionManager<? extends Session> sessions, TuiDetailBuilder detailBuilder) {
     this.ctx = ctx;
     this.sessions = sessions;
     this.detailBuilder = detailBuilder;
+  }
+
+  void setTuiAdapter(TuiAdapter adapter) {
+    this.tuiAdapter = adapter;
   }
 
   void render(Frame frame) {
@@ -118,7 +126,7 @@ public final class TuiRenderer {
                   String name =
                       ref.alias != null
                           ? ref.alias
-                          : ref.session.getRecordingPath().getFileName().toString();
+                          : ref.session.getFilePath().getFileName().toString();
                   return " | session: " + name;
                 })
             .orElse(" | no session");
@@ -135,7 +143,11 @@ public final class TuiRenderer {
       sessionHint = " | " + altMod + "+s:switch";
     }
 
-    String status = " JFR Shell TUI" + sessionInfo + backendName + sessionHint;
+    String title =
+        tuiAdapter != null
+            ? " " + capitalize(tuiAdapter.getPromptPrefix()) + " Shell TUI"
+            : " Jafar Shell TUI";
+    String status = title + sessionInfo + backendName + sessionHint;
     if (status.length() < area.width()) {
       status = status + " ".repeat(area.width() - status.length());
     }
@@ -272,12 +284,51 @@ public final class TuiRenderer {
       frame.renderWidget(cpEntriesBlock, hSplit.get(1));
     }
 
-    // Spinner while command running
+    // Confirmation prompt for expensive operations
+    if (ctx.awaitingConfirmation && ctx.confirmationMessage != null) {
+      Paragraph prompt =
+          Paragraph.from("  " + ctx.confirmationMessage + "  [y] confirm  [n/Esc] cancel");
+      frame.renderWidget(prompt, inner);
+      ctx.resultsAreaHeight = inner.height();
+      return;
+    }
+
+    // Spinner + live progress output while command running
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
-      Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " Running...");
-      frame.renderWidget(spinner, inner);
+      String progressMsg = ctx.asyncProgressMessage;
+      long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
+      String elapsed =
+          elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
+      String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
+
+      // Split: one line for the spinner, the rest for live progress lines
+      List<Rect> spinnerSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(inner);
+      Paragraph spinner =
+          Paragraph.builder()
+              .text(Text.raw("  " + TuiContext.SPINNER[spinIdx] + " " + status))
+              .style(Style.create().fg(Color.CYAN))
+              .build();
+      frame.renderWidget(spinner, spinnerSplit.get(0));
       ctx.resultsAreaHeight = inner.height();
+
+      // Render the last N live-progress lines below the spinner.
+      // Snapshot the CopyOnWriteArrayList to avoid concurrent modification during iteration.
+      List<String> progressSnap = new ArrayList<>(ctx.asyncProgressLines);
+      if (!progressSnap.isEmpty()) {
+        Rect progressArea = spinnerSplit.get(1);
+        int visHeight = progressArea.height();
+        if (visHeight > 0) {
+          int startIdx = Math.max(0, progressSnap.size() - visHeight);
+          List<Line> progressLines = new ArrayList<>();
+          for (int i = startIdx; i < progressSnap.size(); i++) {
+            progressLines.add(Line.from(progressSnap.get(i)));
+          }
+          Paragraph progressPara = Paragraph.builder().text(new Text(progressLines, null)).build();
+          frame.renderWidget(progressPara, progressArea);
+        }
+      }
       return;
     }
 
@@ -331,11 +382,8 @@ public final class TuiRenderer {
     int maxHScroll = Math.max(0, maxWidth - visibleWidth);
     activeTab.hScrollOffset = Math.min(activeTab.hScrollOffset, maxHScroll);
 
-    // Sticky header
-    boolean hasTable =
-        activeTab.tableData != null
-            && activeTab.dataStartLine >= 1
-            && activeTab.filteredIndices == null;
+    // Sticky header — shown whenever there is table data, including during filtered search
+    boolean hasTable = activeTab.tableData != null && activeTab.dataStartLine >= 1;
     int headerLine = hasTable ? activeTab.dataStartLine - 1 : -1;
     Rect headerArea = null;
     if (hasTable && headerLine >= 0 && headerLine < lineCount) {
@@ -379,7 +427,9 @@ public final class TuiRenderer {
       scrollBase = activeTab.dataStartLine;
       scrollLineCount = Math.max(0, lineCount - scrollBase);
       highlightLine = activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1;
-    } else if (ctx.metadataBrowserMode && !ctx.sidebarFocused) {
+    } else if (ctx.activeBrowserDescriptor != null
+        && ctx.activeBrowserDescriptor.hasMetadataClasses()
+        && !ctx.sidebarFocused) {
       scrollBase = 0;
       scrollLineCount = lineCount;
       highlightLine = activeTab.selectedRow >= 0 ? activeTab.selectedRow : -1;
@@ -416,7 +466,8 @@ public final class TuiRenderer {
           visible = visible + " ".repeat(visibleWidth - visible.length());
         }
         styledLines.add(Line.from(Span.styled(visible, highlightStyle)));
-      } else if (ctx.metadataBrowserMode
+      } else if (ctx.activeBrowserDescriptor != null
+          && ctx.activeBrowserDescriptor.hasMetadataClasses()
           && ctx.metadataBrowserLineRefs != null
           && i < ctx.metadataBrowserLineRefs.size()
           && ctx.metadataBrowserLineRefs.get(i) != null) {
@@ -449,10 +500,12 @@ public final class TuiRenderer {
   // ---- sidebar ----
 
   private void renderSidebar(Frame frame, Rect area) {
-    String sidebarTitle =
-        ctx.metadataBrowserMode
-            ? "Metadata Types"
-            : ctx.eventBrowserMode ? "Event Types" : "Constant Types";
+    String sidebarTitle;
+    if (ctx.activeBrowserDescriptor != null) {
+      sidebarTitle = ctx.activeBrowserDescriptor.sidebarTitle();
+    } else {
+      sidebarTitle = "Browser";
+    }
     if (ctx.focus == Focus.SEARCH && ctx.searchOriginSidebar) {
       String q = ctx.searchInputState.text();
       if (!q.isEmpty()) sidebarTitle += " /" + q;
@@ -507,13 +560,15 @@ public final class TuiRenderer {
       Map<String, Object> typeRow = ctx.sidebarTypes.get(i);
       String name = String.valueOf(typeRow.getOrDefault("name", ""));
       String display;
-      if (ctx.metadataBrowserMode) {
-        String event = String.valueOf(typeRow.getOrDefault("event", ""));
-        display = " " + name + (event.isEmpty() ? "" : " *");
+      var desc = ctx.activeBrowserDescriptor;
+      if (desc != null && desc.decorationField() != null) {
+        String deco = String.valueOf(typeRow.getOrDefault(desc.decorationField(), ""));
+        display = " " + name + (deco.isEmpty() ? "" : desc.decorationSuffix());
+      } else if (desc != null && desc.countField() != null) {
+        String count = String.valueOf(typeRow.getOrDefault(desc.countField(), ""));
+        display = " " + name + (count.isEmpty() ? "" : " (" + count + ")");
       } else {
-        String countKey = ctx.eventBrowserMode ? "count" : "totalSize";
-        String count = String.valueOf(typeRow.getOrDefault(countKey, ""));
-        display = " " + name + " (" + count + ")";
+        display = " " + name;
       }
       if (display.length() > contentArea.width()) {
         display = display.substring(0, contentArea.width());
@@ -744,8 +799,15 @@ public final class TuiRenderer {
   }
 
   private void renderTipLine(Frame frame, Rect area) {
-    int tipIndex = (int) ((ctx.renderTick / TuiContext.TIP_ROTATE_TICKS) % TuiContext.TIPS.length);
-    String tip = TuiContext.TIPS[tipIndex];
+    String sessionType = sessions.current().map(r -> r.session.getType()).orElse("");
+    String[] tips =
+        switch (sessionType) {
+          case "jfr" -> TuiContext.TIPS_JFR;
+          case "hdump" -> TuiContext.TIPS_HDUMP;
+          default -> TuiContext.TIPS_DEFAULT;
+        };
+    int tipIndex = (int) ((ctx.renderTick / TuiContext.TIP_ROTATE_TICKS) % tips.length);
+    String tip = tips[tipIndex];
     Paragraph bar =
         Paragraph.builder()
             .text(Text.from(Line.from(Span.styled(tip, Style.create().fg(Color.DARK_GRAY)))))
@@ -814,9 +876,12 @@ public final class TuiRenderer {
     } else if (ctx.focus == Focus.RESULTS && ctx.browserMode) {
       if (ctx.sidebarFocused) {
         String pinsHint = ctx.tabs.size() > 1 ? "  {}:pins" : "";
-        String viewLabel = ctx.metadataBrowserMode ? "view detail" : "view entries";
+        boolean isMeta =
+            ctx.activeBrowserDescriptor != null && ctx.activeBrowserDescriptor.hasMetadataClasses();
+        String viewLabel = isMeta ? "view detail" : "view entries";
         hints = " \u2191\u2193:select  Enter/\u2192:" + viewLabel + "  Esc:close" + pinsHint;
-      } else if (ctx.metadataBrowserMode) {
+      } else if (ctx.activeBrowserDescriptor != null
+          && ctx.activeBrowserDescriptor.hasMetadataClasses()) {
         ResultTab at = ctx.activeTab();
         String navHint = "";
         if (ctx.metadataBrowserLineRefs != null
@@ -1063,10 +1128,10 @@ public final class TuiRenderer {
     int currentId = sessions.current().map(r -> r.id).orElse(-1);
     int maxWidth = 0;
     List<String> labels = new ArrayList<>(ctx.sessionPickerEntries.size());
-    for (SessionManager.SessionRef ref : ctx.sessionPickerEntries) {
+    for (SessionManager.SessionRef<? extends Session> ref : ctx.sessionPickerEntries) {
       String marker = ref.id == currentId ? "* " : "  ";
       String name =
-          ref.alias != null ? ref.alias : ref.session.getRecordingPath().getFileName().toString();
+          ref.alias != null ? ref.alias : ref.session.getFilePath().getFileName().toString();
       String label = marker + "#" + ref.id + " " + name;
       labels.add(label);
       maxWidth = Math.max(maxWidth, label.length());
@@ -1225,5 +1290,10 @@ public final class TuiRenderer {
       return headerText.substring(0, pos) + indicator + headerText.substring(pos);
     }
     return headerText;
+  }
+
+  private static String capitalize(String s) {
+    if (s == null || s.isEmpty()) return s;
+    return Character.toUpperCase(s.charAt(0)) + s.substring(1);
   }
 }

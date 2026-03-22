@@ -1,0 +1,1239 @@
+package io.jafar.hdump.shell.hdumppath;
+
+import io.jafar.hdump.shell.hdumppath.HdumpPath.*;
+import io.jafar.shell.core.expr.BinaryExpr;
+import io.jafar.shell.core.expr.FieldRef;
+import io.jafar.shell.core.expr.NumberLiteral;
+import io.jafar.shell.core.expr.ValueExpr;
+import io.jafar.shell.core.expr.ValueExpr.ArithOp;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+
+/**
+ * Recursive descent parser for HdumpPath query language.
+ *
+ * <p>Grammar (simplified):
+ *
+ * <pre>
+ * query      := root ('/' type_spec)? ('[' predicates ']')? ('|' pipeline)*
+ * root       := 'objects' | 'classes' | 'gcroots'
+ * type_spec  := ('instanceof' '/')? class_pattern
+ * predicates := predicate (('and'|'or') predicate)*
+ * predicate  := field_path op literal | 'not' predicate | '(' predicates ')'
+ * pipeline   := op_name ('(' args ')')?
+ * </pre>
+ */
+public final class HdumpPathParser {
+
+  private final String input;
+  private int pos;
+
+  private HdumpPathParser(String input) {
+    this.input = input;
+    this.pos = 0;
+  }
+
+  /**
+   * Parses an HdumpPath query string.
+   *
+   * @param input the query string
+   * @return parsed Query object
+   * @throws HdumpPathParseException if parsing fails
+   */
+  public static Query parse(String input) {
+    if (input == null || input.isBlank()) {
+      throw new HdumpPathParseException("Empty query");
+    }
+    return new HdumpPathParser(input.trim()).parseQuery();
+  }
+
+  private Query parseQuery() {
+    skipWs();
+
+    // Special case: checkLeaks(...) without root defaults to "objects |"
+    if (matchKeyword("checkLeaks")) {
+      return parseCheckLeaksShorthand();
+    }
+
+    // Parse root
+    Root root = parseRoot();
+    skipWs();
+
+    // Parse optional root parameter for roots that accept one (e.g. duplicates(depth=N))
+    int rootParam = 0;
+    if (root == Root.DUPLICATES && peek() == '(') {
+      advance(); // consume '('
+      skipWs();
+      if (peek() != ')') {
+        if (lookahead("depth=") || lookahead("depth =")) {
+          while (peek() != '=') advance();
+          advance(); // consume '='
+          skipWs();
+        }
+        rootParam = parseNumber().intValue();
+        skipWs();
+      }
+      expect(')');
+      skipWs();
+    }
+
+    // Parse optional type specification
+    String typePattern = null;
+    boolean instanceof_ = false;
+
+    if (peek() == '/') {
+      advance(); // consume '/'
+      skipWs();
+
+      // Check for 'instanceof' keyword
+      if (matchKeyword("instanceof")) {
+        instanceof_ = true;
+        skipWs();
+        if (peek() == '/') {
+          advance();
+          skipWs();
+        }
+      }
+
+      // Parse class/type pattern.
+      // Allow '[' only when it starts a JVM array descriptor (e.g. [Ljava.lang.Object; or [I).
+      if (peek() != '|' && !isAtEnd() && (peek() != '[' || isArrayDescriptorAhead())) {
+        typePattern = parseTypePattern();
+      }
+    }
+
+    skipWs();
+
+    // Parse optional predicates
+    List<Predicate> predicates = new ArrayList<>();
+    if (peek() == '[') {
+      advance(); // consume '['
+      predicates = parsePredicates();
+      expect(']');
+    }
+
+    skipWs();
+
+    // Parse pipeline operations
+    List<PipelineOp> pipeline = new ArrayList<>();
+    while (peek() == '|') {
+      advance(); // consume '|'
+      skipWs();
+      pipeline.add(parsePipelineOp());
+      skipWs();
+    }
+
+    if (!isAtEnd()) {
+      throw new HdumpPathParseException("Unexpected input at position " + pos + ": " + remaining());
+    }
+
+    return new Query(root, typePattern, instanceof_, predicates, pipeline, rootParam);
+  }
+
+  private Root parseRoot() {
+    if (matchKeyword("objects")) {
+      return Root.OBJECTS;
+    } else if (matchKeyword("classes")) {
+      return Root.CLASSES;
+    } else if (matchKeyword("gcroots")) {
+      return Root.GCROOTS;
+    } else if (matchKeyword("clusters")) {
+      return Root.CLUSTERS;
+    } else if (matchKeyword("duplicates")) {
+      return Root.DUPLICATES;
+    } else if (matchKeyword("ages")) {
+      return Root.AGES;
+    } else {
+      throw new HdumpPathParseException(
+          "Expected 'objects', 'classes', 'gcroots', 'clusters', 'duplicates', or 'ages' at position "
+              + pos);
+    }
+  }
+
+  private String parseTypePattern() {
+    StringBuilder sb = new StringBuilder();
+    if (peek() == '[') {
+      // JVM array descriptor: [I, [Ljava.lang.Object;, [[I, etc.
+      parseArrayDescriptor(sb);
+    } else {
+      // Regular class name: read until '[', '|', or whitespace
+      while (!isAtEnd() && peek() != '[' && peek() != '|' && !Character.isWhitespace(peek())) {
+        sb.append(advance());
+      }
+      // Handle Java array notation suffix: ClassName[] or ClassName[][]
+      if (!isAtEnd() && peek() == '[' && pos + 1 < input.length() && input.charAt(pos + 1) == ']') {
+        String className = sb.toString();
+        sb.setLength(0);
+        int dims = 0;
+        while (!isAtEnd()
+            && peek() == '['
+            && pos + 1 < input.length()
+            && input.charAt(pos + 1) == ']') {
+          dims++;
+          advance(); // consume '['
+          advance(); // consume ']'
+        }
+        for (int i = 0; i < dims; i++) {
+          sb.append('[');
+        }
+        String primitiveCode = primitiveArrayCode(className);
+        if (primitiveCode != null) {
+          sb.append(primitiveCode);
+        } else {
+          sb.append('L').append(className).append(';');
+        }
+      }
+    }
+    return sb.toString().isEmpty() ? null : sb.toString();
+  }
+
+  /**
+   * Parses a JVM array type descriptor into {@code sb}. Handles: {@code [I}, {@code
+   * [Ljava.lang.Object;}, {@code [[Z}, etc.
+   */
+  private void parseArrayDescriptor(StringBuilder sb) {
+    if (isAtEnd() || peek() != '[') {
+      throw new HdumpPathParseException(
+          "Expected '[' for array type descriptor at position " + pos);
+    }
+    sb.append(advance()); // consume '['
+    if (isAtEnd()) {
+      throw new HdumpPathParseException("Incomplete array type descriptor at position " + pos);
+    }
+    char next = peek();
+    if (next == '[') {
+      parseArrayDescriptor(sb);
+    } else if (next == 'L') {
+      sb.append(advance()); // consume 'L'
+      while (!isAtEnd() && peek() != ';' && peek() != '|' && !Character.isWhitespace(peek())) {
+        sb.append(advance());
+      }
+      if (!isAtEnd() && peek() == ';') {
+        sb.append(advance()); // consume ';'
+      }
+    } else if ("ZCIJFDSB".indexOf(next) >= 0) {
+      sb.append(advance()); // consume primitive type code
+    } else {
+      throw new HdumpPathParseException(
+          "Invalid array type descriptor at position "
+              + pos
+              + ": expected L, [, or primitive code (Z/C/I/J/F/D/S/B)");
+    }
+  }
+
+  /**
+   * Returns true when the current position holds {@code [} and the next char looks like a JVM array
+   * descriptor.
+   */
+  private boolean isArrayDescriptorAhead() {
+    if (pos + 1 >= input.length()) return false;
+    char next = input.charAt(pos + 1);
+    return next == '[' || next == 'L' || "ZCIJFDSB".indexOf(next) >= 0;
+  }
+
+  /**
+   * Maps a Java primitive type name to its JVM array type code, or {@code null} if not primitive.
+   */
+  private static String primitiveArrayCode(String name) {
+    return switch (name) {
+      case "boolean" -> "Z";
+      case "char" -> "C";
+      case "int" -> "I";
+      case "long" -> "J";
+      case "float" -> "F";
+      case "double" -> "D";
+      case "short" -> "S";
+      case "byte" -> "B";
+      default -> null;
+    };
+  }
+
+  private List<Predicate> parsePredicates() {
+    List<Predicate> predicates = new ArrayList<>();
+    skipWs();
+
+    if (peek() == ']') {
+      return predicates; // Empty predicate list
+    }
+
+    BoolExpr expr = parseBoolExpr();
+    predicates.add(new ExprPredicate(expr));
+
+    return predicates;
+  }
+
+  private BoolExpr parseBoolExpr() {
+    return parseOrExpr();
+  }
+
+  private BoolExpr parseOrExpr() {
+    BoolExpr left = parseAndExpr();
+    skipWs();
+
+    while (matchKeyword("or")) {
+      skipWs();
+      BoolExpr right = parseAndExpr();
+      left = new LogicalExpr(left, LogicalOp.OR, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private BoolExpr parseAndExpr() {
+    BoolExpr left = parseNotExpr();
+    skipWs();
+
+    while (matchKeyword("and")) {
+      skipWs();
+      BoolExpr right = parseNotExpr();
+      left = new LogicalExpr(left, LogicalOp.AND, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private BoolExpr parseNotExpr() {
+    skipWs();
+    if (matchKeyword("not")) {
+      skipWs();
+      return new NotExpr(parseNotExpr());
+    }
+    return parsePrimaryBool();
+  }
+
+  private BoolExpr parsePrimaryBool() {
+    skipWs();
+
+    if (peek() == '(') {
+      advance(); // consume '('
+      BoolExpr expr = parseBoolExpr();
+      skipWs();
+      expect(')');
+      return expr;
+    }
+
+    // Check if this is a function call: identifier followed by '('
+    int saved = pos;
+    String ident = parseIdentifier();
+    skipWs();
+    if (peek() == '(') {
+      // Function predicate: contains(field, "str"), startsWith(...), etc.
+      advance(); // consume '('
+      List<Object> args = new ArrayList<>();
+      skipWs();
+      while (peek() != ')') {
+        if (!args.isEmpty()) {
+          expect(',');
+          skipWs();
+        }
+        if (peek() == '"' || peek() == '\'') {
+          args.add(parseStringLiteral());
+        } else if (Character.isDigit(peek()) || peek() == '-') {
+          args.add(parseLiteral());
+        } else {
+          // Field name as argument
+          args.add(parseIdentifier());
+        }
+        skipWs();
+      }
+      expect(')');
+      return new FuncExpr(ident.toLowerCase(), args);
+    }
+
+    // Not a function — backtrack and parse as comparison: fieldPath op literal
+    pos = saved;
+    List<String> fieldPath = parseFieldPath();
+    skipWs();
+    Op op = parseOp();
+    skipWs();
+    Object literal = parseLiteral();
+
+    return new CompExpr(fieldPath, op, literal);
+  }
+
+  private List<String> parseFieldPath() {
+    List<String> path = new ArrayList<>();
+    path.add(parseIdentifier());
+
+    while (peek() == '.') {
+      advance(); // consume '.'
+      path.add(parseIdentifier());
+    }
+
+    return path;
+  }
+
+  private String parseIdentifier() {
+    StringBuilder sb = new StringBuilder();
+    skipWs();
+
+    // First character must be letter or underscore or $
+    if (!isAtEnd() && (Character.isLetter(peek()) || peek() == '_' || peek() == '$')) {
+      sb.append(advance());
+    } else {
+      throw new HdumpPathParseException("Expected identifier at position " + pos);
+    }
+
+    // Subsequent characters can include digits
+    while (!isAtEnd() && (Character.isLetterOrDigit(peek()) || peek() == '_' || peek() == '$')) {
+      sb.append(advance());
+    }
+
+    return sb.toString();
+  }
+
+  private Op parseOp() {
+    if (match(">=")) return Op.GE;
+    if (match("<=")) return Op.LE;
+    if (match("!=")) return Op.NE;
+    if (match("==")) return Op.EQ;
+    if (match("=")) return Op.EQ;
+    if (match(">")) return Op.GT;
+    if (match("<")) return Op.LT;
+    if (match("~")) return Op.REGEX;
+
+    throw new HdumpPathParseException("Expected operator at position " + pos);
+  }
+
+  private Object parseLiteral() {
+    skipWs();
+
+    // String literal
+    if (peek() == '"' || peek() == '\'') {
+      return parseStringLiteral();
+    }
+
+    // Boolean
+    if (matchKeyword("true")) return true;
+    if (matchKeyword("false")) return false;
+
+    // Null
+    if (matchKeyword("null")) return null;
+
+    // Number
+    return parseNumber();
+  }
+
+  private String parseStringLiteral() {
+    char quote = advance();
+    boolean isRaw = (quote == '\''); // Single quotes = raw string (backslashes literal)
+    StringBuilder sb = new StringBuilder();
+
+    while (!isAtEnd() && peek() != quote) {
+      if (peek() == '\\') {
+        advance(); // consume backslash
+        if (!isAtEnd()) {
+          if (isRaw) {
+            // Raw strings: only process \' to allow embedded single quotes
+            char next = advance();
+            if (next == '\'') {
+              sb.append('\'');
+            } else {
+              sb.append('\\');
+              sb.append(next);
+            }
+          } else {
+            // Double-quoted strings: process escape sequences
+            char escaped = advance();
+            sb.append(
+                switch (escaped) {
+                  case 'n' -> '\n';
+                  case 'r' -> '\r';
+                  case 't' -> '\t';
+                  case '\\' -> '\\';
+                  case '"' -> '"';
+                  default -> escaped;
+                });
+          }
+        }
+      } else {
+        sb.append(advance());
+      }
+    }
+
+    if (isAtEnd()) {
+      throw new HdumpPathParseException("Unterminated string literal");
+    }
+    advance(); // consume closing quote
+
+    return sb.toString();
+  }
+
+  private Number parseNumber() {
+    StringBuilder sb = new StringBuilder();
+
+    // Optional sign
+    if (peek() == '-' || peek() == '+') {
+      sb.append(advance());
+    }
+
+    // Integer part
+    while (!isAtEnd() && Character.isDigit(peek())) {
+      sb.append(advance());
+    }
+
+    // Optional decimal part
+    boolean isFloat = false;
+    if (peek() == '.') {
+      isFloat = true;
+      sb.append(advance());
+      while (!isAtEnd() && Character.isDigit(peek())) {
+        sb.append(advance());
+      }
+    }
+
+    // Optional exponent
+    if (peek() == 'e' || peek() == 'E') {
+      isFloat = true;
+      sb.append(advance());
+      if (peek() == '-' || peek() == '+') {
+        sb.append(advance());
+      }
+      while (!isAtEnd() && Character.isDigit(peek())) {
+        sb.append(advance());
+      }
+    }
+
+    // Size suffixes
+    long multiplier = 1;
+    if (matchKeyword("KB") || matchKeyword("kb") || matchKeyword("K") || matchKeyword("k")) {
+      multiplier = 1024;
+    } else if (matchKeyword("MB") || matchKeyword("mb") || matchKeyword("M") || matchKeyword("m")) {
+      multiplier = 1024 * 1024;
+    } else if (matchKeyword("GB") || matchKeyword("gb") || matchKeyword("G") || matchKeyword("g")) {
+      multiplier = 1024 * 1024 * 1024;
+    }
+
+    String numStr = sb.toString();
+    if (numStr.isEmpty()) {
+      throw new HdumpPathParseException("Expected number at position " + pos);
+    }
+
+    if (isFloat) {
+      return Double.parseDouble(numStr) * multiplier;
+    } else {
+      return Long.parseLong(numStr) * multiplier;
+    }
+  }
+
+  private PipelineOp parsePipelineOp() {
+    String opName = parseIdentifier().toLowerCase();
+    skipWs();
+
+    return switch (opName) {
+      case "select" -> parseSelectOp();
+      case "top" -> parseTopOp();
+      case "groupby", "group" -> parseGroupByOp();
+      case "count" -> {
+        consumeOptionalEmptyParens();
+        yield new CountOp();
+      }
+      case "sum" -> parseSumOp();
+      case "stats" -> parseStatsOp();
+      case "sortby", "sort", "orderby", "order" -> parseSortByOp();
+      case "head" -> parseHeadOp();
+      case "tail" -> parseTailOp();
+      case "filter", "where" -> parseFilterOp();
+      case "distinct", "unique" -> parseDistinctOp();
+      case "len", "length" -> parseFieldOp(LenOp::new);
+      case "uppercase", "upper" -> parseFieldOp(UppercaseOp::new);
+      case "lowercase", "lower" -> parseFieldOp(LowercaseOp::new);
+      case "trim" -> parseFieldOp(TrimOp::new);
+      case "replace" -> parseReplaceOp();
+      case "abs" -> parseFieldOp(AbsOp::new);
+      case "round" -> parseFieldOp(RoundOp::new);
+      case "floor" -> parseFieldOp(FloorOp::new);
+      case "ceil" -> parseFieldOp(CeilOp::new);
+      case "pathtoroot", "pathroot", "path" -> parsePathToRootOp();
+      case "retentionpaths", "retentionpath", "classpaths", "classpathtoroot" -> {
+        consumeOptionalEmptyParens();
+        yield new RetentionPathsOp();
+      }
+      case "retainedbreakdown", "breakdown", "expanddominators" -> parseRetainedBreakdownOp();
+      case "checkleaks", "leaks" -> parseCheckLeaksOp();
+      case "dominators", "dominated" -> parseDominatorsOp();
+      case "join" -> parseJoinOp();
+      case "waste" -> {
+        consumeOptionalEmptyParens();
+        yield new WasteOp();
+      }
+      case "objects" -> {
+        consumeOptionalEmptyParens();
+        yield new ObjectsOp();
+      }
+      case "threadowner", "ownerthread" -> {
+        consumeOptionalEmptyParens();
+        yield new ThreadOwnerOp();
+      }
+      case "dominatedsize", "threaddominated" -> {
+        consumeOptionalEmptyParens();
+        yield new DominatedSizeOp();
+      }
+      case "estimateage", "age" -> {
+        consumeOptionalEmptyParens();
+        yield new EstimateAgeOp();
+      }
+      case "whatif" -> {
+        consumeOptionalEmptyParens();
+        yield new WhatIfOp();
+      }
+      case "cachestats", "cache" -> {
+        consumeOptionalEmptyParens();
+        yield new CacheStatsOp();
+      }
+      default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
+    };
+  }
+
+  private SelectOp parseSelectOp() {
+    expect('(');
+    List<SelectField> fields = new ArrayList<>();
+
+    do {
+      skipWs();
+      String field = parseIdentifier();
+      String alias = null;
+      skipWs();
+
+      if (matchKeyword("as")) {
+        skipWs();
+        alias = parseIdentifier();
+        skipWs();
+      }
+
+      fields.add(new SelectField(field, alias));
+    } while (matchChar(','));
+
+    expect(')');
+    return new SelectOp(fields);
+  }
+
+  private TopOp parseTopOp() {
+    expect('(');
+    skipWs();
+
+    int n = parseNumber().intValue();
+    String orderBy = null;
+    boolean descending = true;
+
+    skipWs();
+    // Parse optional field and sort direction — accepts both positional and named param styles
+    while (matchChar(',')) {
+      skipWs();
+      if (lookahead("by=") || lookahead("by =")) {
+        matchKeyword("by");
+        skipWs();
+        expect('=');
+        skipWs();
+        orderBy = parseIdentifier();
+      } else if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        descending = !("true".equals(ascValue) || "yes".equals(ascValue));
+      } else if (matchKeyword("asc")) {
+        descending = false;
+      } else if (matchKeyword("desc")) {
+        descending = true;
+      } else {
+        // Positional field name
+        orderBy = parseIdentifier();
+      }
+      skipWs();
+    }
+
+    expect(')');
+    return new TopOp(n, orderBy, descending);
+  }
+
+  private GroupByOp parseGroupByOp() {
+    expect('(');
+    List<String> groupFields = new ArrayList<>();
+    AggOp aggOp = AggOp.COUNT; // Default aggregation
+    ValueExpr valueExpr = null;
+    String sortBy = null;
+    boolean ascending = false; // Default to descending (most common for aggregates)
+
+    do {
+      skipWs();
+      // Check for agg= parameter
+      if (lookahead("agg=") || lookahead("agg =")) {
+        matchKeyword("agg");
+        skipWs();
+        expect('=');
+        skipWs();
+        String aggName = parseIdentifier().toLowerCase();
+        aggOp =
+            switch (aggName) {
+              case "count" -> AggOp.COUNT;
+              case "sum" -> AggOp.SUM;
+              case "avg" -> AggOp.AVG;
+              case "min" -> AggOp.MIN;
+              case "max" -> AggOp.MAX;
+              default -> throw new HdumpPathParseException("Unknown aggregation: " + aggName);
+            };
+      } else if (lookahead("value=") || lookahead("value =")) {
+        matchKeyword("value");
+        skipWs();
+        expect('=');
+        skipWs();
+        valueExpr = parseValueExpr();
+      } else if (lookahead("sortBy=")
+          || lookahead("sortBy =")
+          || lookahead("sort=")
+          || lookahead("sort =")) {
+        if (lookahead("sortBy")) {
+          matchKeyword("sortBy");
+        } else {
+          matchKeyword("sort");
+        }
+        skipWs();
+        expect('=');
+        skipWs();
+        String sortValue = parseIdentifier().toLowerCase();
+        if ("key".equals(sortValue) || "value".equals(sortValue)) {
+          sortBy = sortValue;
+        } else {
+          throw new HdumpPathParseException(
+              "sortBy=/sort= must be 'key' or 'value', got: " + sortValue);
+        }
+      } else if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        ascending = "true".equals(ascValue) || "yes".equals(ascValue) || "1".equals(ascValue);
+      } else {
+        // Check for aggregate function call syntax: sum(expr), avg(expr), etc.
+        String ident = parseIdentifier();
+        skipWs();
+        if (peek() == '(') {
+          // This might be an aggregate function call
+          AggOp funcAgg = tryParseAggOp(ident.toLowerCase());
+          if (funcAgg != null) {
+            advance(); // consume '('
+            skipWs();
+            valueExpr = parseValueExpr();
+            skipWs();
+            expect(')');
+            aggOp = funcAgg;
+          } else {
+            // Not an aggregate function, treat as group field
+            groupFields.add(ident);
+          }
+        } else {
+          groupFields.add(ident);
+        }
+      }
+      skipWs();
+    } while (matchChar(','));
+
+    expect(')');
+    return new GroupByOp(groupFields, aggOp, valueExpr, sortBy, ascending);
+  }
+
+  /** Try to parse an aggregate operation from the given name, returns null if not recognized. */
+  private AggOp tryParseAggOp(String name) {
+    return switch (name) {
+      case "count" -> AggOp.COUNT;
+      case "sum" -> AggOp.SUM;
+      case "avg" -> AggOp.AVG;
+      case "min" -> AggOp.MIN;
+      case "max" -> AggOp.MAX;
+      default -> null;
+    };
+  }
+
+  // === Value expression parsing (for groupBy value=) ===
+
+  private ValueExpr parseValueExpr() {
+    return parseAdditiveExpr();
+  }
+
+  private ValueExpr parseAdditiveExpr() {
+    ValueExpr left = parseMultiplicativeExpr();
+    skipWs();
+
+    while (peek() == '+' || peek() == '-') {
+      char opChar = advance();
+      ArithOp op = ArithOp.fromSymbol(String.valueOf(opChar));
+      skipWs();
+      ValueExpr right = parseMultiplicativeExpr();
+      left = new BinaryExpr(left, op, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private ValueExpr parseMultiplicativeExpr() {
+    ValueExpr left = parsePrimaryValueExpr();
+    skipWs();
+
+    while (peek() == '*' || peek() == '/') {
+      char opChar = advance();
+      ArithOp op = ArithOp.fromSymbol(String.valueOf(opChar));
+      skipWs();
+      ValueExpr right = parsePrimaryValueExpr();
+      left = new BinaryExpr(left, op, right);
+      skipWs();
+    }
+
+    return left;
+  }
+
+  private ValueExpr parsePrimaryValueExpr() {
+    skipWs();
+
+    // Parenthesized expression
+    if (peek() == '(') {
+      advance();
+      ValueExpr expr = parseValueExpr();
+      skipWs();
+      expect(')');
+      return expr;
+    }
+
+    // Number literal
+    if (Character.isDigit(peek()) || peek() == '-' || peek() == '+') {
+      // Check if it's actually a number (not just + or - followed by non-digit)
+      if (peek() == '-' || peek() == '+') {
+        int savedPos = pos;
+        advance();
+        skipWs();
+        if (!Character.isDigit(peek())) {
+          pos = savedPos;
+          // Not a number, must be identifier
+          return new FieldRef(parseIdentifier());
+        }
+        pos = savedPos;
+      }
+      return new NumberLiteral(parseNumber().doubleValue());
+    }
+
+    // Field reference
+    return new FieldRef(parseIdentifier());
+  }
+
+  private SumOp parseSumOp() {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(')');
+    return new SumOp(field);
+  }
+
+  private StatsOp parseStatsOp() {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(')');
+    return new StatsOp(field);
+  }
+
+  private SortByOp parseSortByOp() {
+    expect('(');
+    List<SortField> fields = new ArrayList<>();
+    skipWs();
+
+    // Parse first sort field
+    String field = parseIdentifier();
+    boolean descending = parseSortFieldDirection();
+    fields.add(new SortField(field, descending));
+    skipWs();
+
+    while (matchChar(',')) {
+      skipWs();
+      // After comma: could be asc=/asc modifier for previous field, or a new field
+      if (lookahead("asc=") || lookahead("asc =")) {
+        matchKeyword("asc");
+        skipWs();
+        expect('=');
+        skipWs();
+        String ascValue = parseIdentifier().toLowerCase();
+        SortField last = fields.remove(fields.size() - 1);
+        fields.add(
+            new SortField(last.field(), !("true".equals(ascValue) || "yes".equals(ascValue))));
+      } else {
+        // New sort field
+        field = parseIdentifier();
+        descending = parseSortFieldDirection();
+        fields.add(new SortField(field, descending));
+      }
+      skipWs();
+    }
+
+    expect(')');
+    return new SortByOp(fields);
+  }
+
+  /** Parse an optional bare asc/desc keyword at the current position. */
+  private boolean parseSortFieldDirection() {
+    skipWs();
+    if (matchKeyword("desc")) {
+      return true;
+    } else if (matchKeyword("asc")) {
+      return false;
+    }
+    return false; // default ascending
+  }
+
+  private HeadOp parseHeadOp() {
+    expect('(');
+    skipWs();
+    int n = parseNumber().intValue();
+    skipWs();
+    expect(')');
+    return new HeadOp(n);
+  }
+
+  private TailOp parseTailOp() {
+    expect('(');
+    skipWs();
+    int n = parseNumber().intValue();
+    skipWs();
+    expect(')');
+    return new TailOp(n);
+  }
+
+  private FilterOp parseFilterOp() {
+    expect('(');
+    skipWs();
+    BoolExpr expr = parseBoolExpr();
+    skipWs();
+    expect(')');
+    return new FilterOp(new ExprPredicate(expr));
+  }
+
+  private DistinctOp parseDistinctOp() {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(')');
+    return new DistinctOp(field);
+  }
+
+  private <T extends PipelineOp> T parseFieldOp(Function<String, T> factory) {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(')');
+    return factory.apply(field);
+  }
+
+  private ReplaceOp parseReplaceOp() {
+    expect('(');
+    skipWs();
+    String field = parseIdentifier();
+    skipWs();
+    expect(',');
+    skipWs();
+    String target = parseStringLiteral();
+    skipWs();
+    expect(',');
+    skipWs();
+    String replacement = parseStringLiteral();
+    skipWs();
+    expect(')');
+    return new ReplaceOp(field, target, replacement);
+  }
+
+  /**
+   * Parses checkLeaks shorthand: checkLeaks(...) → objects | checkLeaks(...) This allows users to
+   * type just "checkLeaks(detector="duplicate-strings")" instead of "show objects |
+   * checkLeaks(detector="duplicate-strings")"
+   */
+  private Query parseCheckLeaksShorthand() {
+    // We already matched "checkLeaks", now parse it as a pipeline op
+    PipelineOp checkLeaksOp = parseCheckLeaksOp();
+
+    // Create a query with Root.OBJECTS and the checkLeaks operation
+    return new Query(Root.OBJECTS, null, false, List.of(), List.of(checkLeaksOp), 0);
+  }
+
+  // === Lexer utilities ===
+
+  private char peek() {
+    return isAtEnd() ? '\0' : input.charAt(pos);
+  }
+
+  private char advance() {
+    return input.charAt(pos++);
+  }
+
+  private boolean isAtEnd() {
+    return pos >= input.length();
+  }
+
+  private void skipWs() {
+    while (!isAtEnd() && Character.isWhitespace(peek())) {
+      pos++;
+    }
+  }
+
+  private boolean match(String expected) {
+    if (input.substring(pos).startsWith(expected)) {
+      pos += expected.length();
+      return true;
+    }
+    return false;
+  }
+
+  private boolean matchChar(char c) {
+    skipWs();
+    if (peek() == c) {
+      advance();
+      return true;
+    }
+    return false;
+  }
+
+  private boolean matchKeyword(String keyword) {
+    int savedPos = pos;
+    if (input.substring(pos).toLowerCase().startsWith(keyword.toLowerCase())) {
+      int endPos = pos + keyword.length();
+      // Ensure it's not part of a longer identifier
+      if (endPos >= input.length()
+          || !Character.isLetterOrDigit(input.charAt(endPos)) && input.charAt(endPos) != '_') {
+        pos = endPos;
+        return true;
+      }
+    }
+    pos = savedPos;
+    return false;
+  }
+
+  private boolean lookahead(String expected) {
+    return input.substring(pos).toLowerCase().startsWith(expected.toLowerCase());
+  }
+
+  private void expect(char c) {
+    skipWs();
+    if (peek() != c) {
+      throw new HdumpPathParseException(
+          "Expected '" + c + "' at position " + pos + ", found '" + peek() + "'");
+    }
+    advance();
+  }
+
+  /**
+   * Consumes {@code ()} if present, allowing no-arg ops to be written as either {@code op} or
+   * {@code op()}.
+   */
+  private void consumeOptionalEmptyParens() {
+    skipWs();
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      expect(')');
+    }
+  }
+
+  private String remaining() {
+    return input.substring(pos);
+  }
+
+  private PathToRootOp parsePathToRootOp() {
+    // pathToRoot has no parameters - it's a zero-arg operator
+    // Optional empty parens allowed: pathToRoot() or pathToRoot
+    skipWs();
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      expect(')');
+    }
+    return new PathToRootOp();
+  }
+
+  private CheckLeaksOp parseCheckLeaksOp() {
+    expect('(');
+    String detector = null;
+    String filter = null;
+    Integer threshold = null;
+    Integer minSize = null;
+
+    do {
+      skipWs();
+      if (lookahead("detector=") || lookahead("detector =")) {
+        matchKeyword("detector");
+        skipWs();
+        expect('=');
+        skipWs();
+        detector = parseStringOrIdentifier();
+      } else if (lookahead("filter=") || lookahead("filter =")) {
+        matchKeyword("filter");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Filter is a variable reference like $myQuery
+        if (peek() == '$') {
+          advance();
+          filter = parseIdentifier();
+        } else {
+          filter = parseStringOrIdentifier();
+        }
+      } else if (lookahead("threshold=") || lookahead("threshold =")) {
+        matchKeyword("threshold");
+        skipWs();
+        expect('=');
+        skipWs();
+        threshold = parseNumber().intValue();
+      } else if (lookahead("minsize=") || lookahead("minsize =")) {
+        matchKeyword("minsize");
+        skipWs();
+        expect('=');
+        skipWs();
+        minSize = parseNumber().intValue();
+      } else {
+        throw new HdumpPathParseException(
+            "Expected detector=, filter=, threshold=, or minsize= parameter");
+      }
+      skipWs();
+    } while (matchChar(','));
+
+    expect(')');
+    return new CheckLeaksOp(detector, filter, threshold, minSize);
+  }
+
+  private DominatorsOp parseDominatorsOp() {
+    // Syntax: dominators()
+    //         | dominators("tree") | dominators("tree", minRetained=50MB)
+    //         | dominators(groupBy="class")
+    //         | dominators(groupBy="package", minRetained=10MB)
+    skipWs();
+    String mode = null;
+    String groupBy = null;
+    long minRetained = -1; // -1 = use record default
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      if (peek() != ')') {
+        do {
+          skipWs();
+          if (lookahead("minRetained=") || lookahead("minretained=") || lookahead("min=")) {
+            while (peek() != '=') advance();
+            advance(); // consume '='
+            skipWs();
+            minRetained = parseNumber().longValue();
+          } else if (lookahead("groupBy=") || lookahead("groupby=")) {
+            while (peek() != '=') advance();
+            advance(); // consume '='
+            skipWs();
+            groupBy = parseStringOrIdentifier();
+          } else {
+            mode = parseStringOrIdentifier();
+          }
+          skipWs();
+        } while (matchChar(','));
+      }
+      skipWs();
+      expect(')');
+    }
+    long effectiveMin =
+        minRetained < 0 ? (mode == null && groupBy == null ? 1024 * 1024L : 0L) : minRetained;
+    return new DominatorsOp(mode, groupBy, effectiveMin);
+  }
+
+  private RetainedBreakdownOp parseRetainedBreakdownOp() {
+    // Syntax: retainedBreakdown() | retainedBreakdown(depth=N) | retainedBreakdown(N)
+    skipWs();
+    int maxDepth = 4; // default
+    if (peek() == '(') {
+      advance();
+      skipWs();
+      if (peek() != ')') {
+        if (lookahead("depth=") || lookahead("depth =")) {
+          while (peek() != '=') advance();
+          advance(); // consume '='
+          skipWs();
+        }
+        maxDepth = parseNumber().intValue();
+        skipWs();
+      }
+      expect(')');
+    }
+    return new RetainedBreakdownOp(maxDepth);
+  }
+
+  private JoinOp parseJoinOp() {
+    expect('(');
+    String sessionRef = null;
+    String byField = null;
+    String root = null;
+
+    do {
+      skipWs();
+      if (lookahead("session=") || lookahead("session =")) {
+        matchKeyword("session");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Session value: quoted string, bare identifier, or integer literal
+        if (peek() == '"' || peek() == '\'') {
+          sessionRef = parseStringLiteral();
+        } else if (Character.isDigit(peek())) {
+          sessionRef = String.valueOf(parseNumber().intValue());
+        } else {
+          sessionRef = parseIdentifier();
+        }
+      } else if (lookahead("root=") || lookahead("root =")) {
+        matchKeyword("root");
+        skipWs();
+        expect('=');
+        skipWs();
+        // Root is a JFR event type (e.g. jdk.ObjectAllocationSample) — allow dots
+        root = parseDottedNameOrString();
+      } else if (lookahead("by=") || lookahead("by =")) {
+        matchKeyword("by");
+        skipWs();
+        expect('=');
+        skipWs();
+        byField = parseIdentifier();
+      } else {
+        throw new HdumpPathParseException("Expected session=, root=, or by= parameter in join()");
+      }
+      skipWs();
+    } while (matchChar(','));
+
+    expect(')');
+
+    if (sessionRef == null) {
+      throw new HdumpPathParseException("join() requires session= parameter");
+    }
+
+    return new JoinOp(sessionRef, byField, root);
+  }
+
+  private String parseStringOrIdentifier() {
+    skipWs();
+    if (peek() == '"' || peek() == '\'') {
+      return parseStringLiteral();
+    } else {
+      return parseIdentifier();
+    }
+  }
+
+  /** Parses a quoted string or a dotted name (e.g. {@code jdk.ObjectAllocationSample}). */
+  private String parseDottedNameOrString() {
+    skipWs();
+    if (peek() == '"' || peek() == '\'') {
+      return parseStringLiteral();
+    }
+    StringBuilder sb = new StringBuilder(parseIdentifier());
+    while (peek() == '.') {
+      sb.append(advance()); // consume '.'
+      sb.append(parseIdentifier());
+    }
+    return sb.toString();
+  }
+}

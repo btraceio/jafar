@@ -1,5 +1,6 @@
 package io.jafar.shell.cli.completion.stateful;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
 import java.nio.file.Path;
@@ -19,7 +20,8 @@ public sealed interface SessionAction {
    * @param variableStore the variable store for variable operations
    * @throws Exception if the action fails
    */
-  void execute(SessionManager sessionManager, VariableStore variableStore) throws Exception;
+  void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore)
+      throws Exception;
 
   /** Returns a description of this action for debugging. */
   String describe();
@@ -29,7 +31,7 @@ public sealed interface SessionAction {
   /** Opens a JFR recording file. */
   record OpenRecording(Path path, String alias) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore)
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore)
         throws Exception {
       sessionManager.open(path, alias);
     }
@@ -43,7 +45,7 @@ public sealed interface SessionAction {
   /** Closes a session by alias. */
   record CloseSession(String alias) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore)
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore)
         throws Exception {
       sessionManager.close(alias);
     }
@@ -57,7 +59,7 @@ public sealed interface SessionAction {
   /** Switches to a different session by alias. */
   record SwitchSession(String alias) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore)
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore)
         throws Exception {
       sessionManager.use(alias);
     }
@@ -73,7 +75,7 @@ public sealed interface SessionAction {
   /** Sets a string variable. */
   record SetVariable(String name, String value) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore) {
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore) {
       variableStore.set(name, new VariableStore.ScalarValue(value));
     }
 
@@ -86,7 +88,7 @@ public sealed interface SessionAction {
   /** Sets a numeric variable. */
   record SetNumericVariable(String name, Number value) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore) {
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore) {
       variableStore.set(name, new VariableStore.ScalarValue(value));
     }
 
@@ -99,7 +101,7 @@ public sealed interface SessionAction {
   /** Removes a variable. */
   record UnsetVariable(String name) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore) {
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore) {
       variableStore.remove(name);
     }
 
@@ -114,7 +116,7 @@ public sealed interface SessionAction {
   /** Invalidates the metadata cache. */
   record InvalidateCache() implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore) {
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore) {
       // Metadata cache invalidation happens automatically on session changes
       // This is a marker action for test sequences
     }
@@ -130,7 +132,7 @@ public sealed interface SessionAction {
   /** A sequence of actions executed together. */
   record ActionSequence(java.util.List<SessionAction> actions) implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore)
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore)
         throws Exception {
       for (SessionAction action : actions) {
         action.execute(sessionManager, variableStore);
@@ -151,7 +153,7 @@ public sealed interface SessionAction {
   /** A no-op action for testing. */
   record NoOp() implements SessionAction {
     @Override
-    public void execute(SessionManager sessionManager, VariableStore variableStore) {
+    public void execute(SessionManager<JFRSession> sessionManager, VariableStore variableStore) {
       // Do nothing
     }
 

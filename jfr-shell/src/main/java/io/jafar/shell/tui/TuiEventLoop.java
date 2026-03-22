@@ -37,8 +37,6 @@ public final class TuiEventLoop {
   public void run() throws IOException {
     backend.enterAlternateScreen();
     backend.enableRawMode();
-    backend.hideCursor();
-
     try {
       while (ctx.running) {
         if (ctx.commandFuture != null && ctx.commandFuture.isDone()) {
@@ -54,7 +52,6 @@ public final class TuiEventLoop {
         }
 
         tuiTerminal.draw(renderer::render);
-        backend.showCursor();
 
         int key = backend.read(100);
         if (key == TuiContext.READ_EXPIRED) continue;
@@ -62,7 +59,11 @@ public final class TuiEventLoop {
           ctx.running = false;
           continue;
         }
-        if (ctx.commandRunning) continue;
+        if (ctx.commandRunning) {
+          // Allow Ctrl+C to cancel a running command even while input is otherwise blocked
+          if (key == 3) keyHandler.handleKey(key);
+          continue;
+        }
         keyHandler.handleKey(key);
       }
     } finally {

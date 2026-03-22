@@ -26,13 +26,14 @@ public final class VariableReferenceCompleter implements ContextCompleter {
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput();
     String lowerPartial = partial.toLowerCase();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), "${" + partial);
 
     Set<String> variableNames = metadata.getSessionVariableNames();
 
     for (String varName : variableNames) {
       if (varName.toLowerCase().startsWith(lowerPartial)) {
         // Include ${ prefix and closing } in the candidate
-        String value = "${" + varName + "}";
+        String value = prefix + "${" + varName + "}";
         candidates.add(noSpace(value));
       }
     }

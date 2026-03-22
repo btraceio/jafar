@@ -32,6 +32,11 @@ The project is organized as a multi-module Gradle build with the following struc
 - **demo/**: Demonstration application comparing different JFR parsers
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces
+- **jfr-shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions)
+- **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
+- **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes)
+- **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
+- **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump) via ServiceLoader
 
 Key architectural components:
 - `JafarParser`: Main entry point supporting both typed and untyped parsing

@@ -4,9 +4,12 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.backend.BackendCapability;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
+import io.jafar.shell.core.LazyQueryValue;
+import io.jafar.shell.core.QueryEvaluator;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
-import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -44,10 +47,10 @@ public class CommandDispatcher {
   }
 
   public interface SessionChangeListener {
-    void onCurrentSessionChanged(SessionManager.SessionRef current);
+    void onCurrentSessionChanged(SessionManager.SessionRef<? extends Session> current);
   }
 
-  private final SessionManager sessions;
+  private final SessionManager<? extends Session> sessions;
   private final IO io;
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
@@ -60,18 +63,23 @@ public class CommandDispatcher {
   }
 
   private final JfrSelector selector;
+  private QueryEvaluator moduleEvaluator;
 
-  public CommandDispatcher(SessionManager sessions, IO io, SessionChangeListener listener) {
+  public CommandDispatcher(
+      SessionManager<? extends Session> sessions, IO io, SessionChangeListener listener) {
     this(sessions, io, listener, null, null, true);
   }
 
   public CommandDispatcher(
-      SessionManager sessions, IO io, SessionChangeListener listener, JfrSelector selector) {
+      SessionManager<? extends Session> sessions,
+      IO io,
+      SessionChangeListener listener,
+      JfrSelector selector) {
     this(sessions, io, listener, selector, null, true);
   }
 
   public CommandDispatcher(
-      SessionManager sessions,
+      SessionManager<? extends Session> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -80,7 +88,7 @@ public class CommandDispatcher {
   }
 
   public CommandDispatcher(
-      SessionManager sessions,
+      SessionManager<? extends Session> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -92,6 +100,14 @@ public class CommandDispatcher {
     this.selector = selector;
     this.globalStore = globalStore != null ? globalStore : new VariableStore();
     this.verbose = verbose || isVerboseEnabled();
+  }
+
+  /**
+   * Sets a fallback query evaluator for non-JFR sessions. When set, the {@code show} command
+   * delegates to this evaluator when the current session is not a JFR session.
+   */
+  public void setModuleEvaluator(QueryEvaluator evaluator) {
+    this.moduleEvaluator = evaluator;
   }
 
   /**
@@ -110,6 +126,18 @@ public class CommandDispatcher {
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     return false;
+  }
+
+  /**
+   * Returns the current session as a {@link JFRSession}, or {@code null} if no session is open or
+   * the current session is not a JFR session.
+   */
+  private JFRSession currentJfrSession() {
+    var cur = sessions.current();
+    if (cur.isPresent() && cur.get().session instanceof JFRSession jfr) {
+      return jfr;
+    }
+    return null;
   }
 
   /** Returns the global variable store. */
@@ -153,6 +181,7 @@ public class CommandDispatcher {
 
       // Handle 'events' alias (equivalent to 'show events ...')
       if (cmd.equals("events") || cmd.startsWith("events/")) {
+        if (currentJfrSession() == null) return false;
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
         showArgs.addAll(args);
@@ -162,6 +191,7 @@ public class CommandDispatcher {
 
       // Handle 'metadata/...' as a direct query (equivalent to 'show metadata/...')
       if (cmd.startsWith("metadata/")) {
+        if (currentJfrSession() == null) return false;
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
         showArgs.addAll(args);
@@ -171,6 +201,7 @@ public class CommandDispatcher {
 
       // Handle 'constants/...' as a direct query (equivalent to 'show constants/...')
       if (cmd.startsWith("constants/")) {
+        if (currentJfrSession() == null) return false;
         // Detect: constants/<type> | crossref()
         if (args.size() >= 2
             && "|".equals(args.get(0))
@@ -184,6 +215,19 @@ public class CommandDispatcher {
         showArgs.addAll(args);
         cmdShow(showArgs, "show " + line.trim());
         return true;
+      }
+
+      // Handle module-specific root types as show aliases (e.g. objects/, classes, gcroots)
+      if (moduleEvaluator != null && currentJfrSession() == null) {
+        for (String root : moduleEvaluator.getRootTypes()) {
+          if (cmd.equals(root) || cmd.startsWith(root + "/")) {
+            List<String> showArgs = new ArrayList<>(args.size() + 1);
+            showArgs.add(parts[0]);
+            showArgs.addAll(args);
+            cmdShowModule(showArgs, "show " + line.trim(), moduleEvaluator);
+            return true;
+          }
+        }
       }
 
       switch (cmd) {
@@ -204,18 +248,27 @@ public class CommandDispatcher {
           cmdInfo(args);
           return true;
         case "show":
-          cmdShow(args, line);
-          return true;
         case "select":
-          if (verbose) {
+          if ("select".equals(cmd) && verbose) {
             io.println("Note: 'select' is deprecated. Use 'show' instead.");
           }
-          cmdShow(args, line);
+          if (currentJfrSession() != null) {
+            cmdShow(args, line);
+            return true;
+          }
+          // Delegate to module evaluator for non-JFR sessions
+          if (moduleEvaluator != null) {
+            cmdShowModule(args, line, moduleEvaluator);
+            return true;
+          }
+          // No JFR session and no module evaluator — report no session
+          io.error("No session open");
           return true;
         case "help":
           cmdHelp(args);
           return true;
         case "metadata":
+          if (currentJfrSession() == null) return false;
           // Support: 'metadata class <name> [--tree|--json] [--fields] [--annotations]' and listing
           if (!args.isEmpty() && "class".equalsIgnoreCase(args.get(0))) {
             cmdMetadataClass(args.subList(1, args.size()));
@@ -224,19 +277,23 @@ public class CommandDispatcher {
           }
           return true;
         case "types":
+          if (currentJfrSession() == null) return false;
           if (verbose) {
             io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
           }
           cmdTypes(args);
           return true;
         case "chunks":
+          if (currentJfrSession() == null) return false;
           cmdChunks(args);
           return true;
         case "chunk":
+          if (currentJfrSession() == null) return false;
           cmdChunk(args);
           return true;
         case "cp":
         case "constants":
+          if (currentJfrSession() == null) return false;
           cmdCp(args);
           return true;
         case "set":
@@ -256,9 +313,20 @@ public class CommandDispatcher {
           cmdInvalidate(args);
           return true;
         case "backend":
+          if (currentJfrSession() == null) return false;
           cmdBackend(args);
           return true;
         default:
+          // Last resort: try the module evaluator for shorthands not covered by root types
+          // (e.g. checkLeaks(...)).  The evaluator's own evaluate() will reject incompatible
+          // session types; that exception is caught and shown as an error by the caller.
+          if (moduleEvaluator != null) {
+            List<String> showArgs = new ArrayList<>(args.size() + 1);
+            showArgs.add(parts[0]);
+            showArgs.addAll(args);
+            cmdShowModule(showArgs, "show " + line.trim(), moduleEvaluator);
+            return true;
+          }
           return false;
       }
     } catch (Exception e) {
@@ -286,33 +354,34 @@ public class CommandDispatcher {
     }
 
     Path path = Paths.get(pathStr);
-    SessionManager.SessionRef ref = sessions.open(path, alias);
+    SessionManager.SessionRef<? extends Session> ref = sessions.open(path, alias);
     if (verbose) {
       io.println(
           "Opened session #"
               + ref.id
               + (ref.alias != null ? " (" + ref.alias + ")" : "")
               + ": "
-              + ref.session.getRecordingPath());
+              + ref.session.getFilePath());
     }
     listener.onCurrentSessionChanged(ref);
   }
 
   private void cmdSessions() {
-    List<SessionManager.SessionRef> list = sessions.list();
+    List<? extends SessionManager.SessionRef<? extends Session>> list = sessions.list();
     if (list.isEmpty()) {
       io.println("No sessions.");
       return;
     }
-    Optional<SessionManager.SessionRef> current = sessions.current();
-    for (SessionManager.SessionRef ref : list) {
+    Optional<? extends SessionManager.SessionRef<? extends Session>> current = sessions.current();
+    for (SessionManager.SessionRef<? extends Session> ref : list) {
       boolean isCurrent = current.isPresent() && current.get().id == ref.id;
       io.printf(
-          "%s#%d %s - %s%n",
+          "%s#%d %s - %s [%s]%n",
           isCurrent ? "*" : " ",
           ref.id,
           ref.alias != null ? ref.alias : "",
-          String.valueOf(ref.session.getRecordingPath()));
+          String.valueOf(ref.session.getFilePath()),
+          ref.session.getType());
     }
   }
 
@@ -333,7 +402,7 @@ public class CommandDispatcher {
   private void cmdClose(List<String> args) throws Exception {
     if (args.isEmpty()) {
       // close current
-      Optional<SessionManager.SessionRef> cur = sessions.current();
+      var cur = sessions.current();
       if (cur.isEmpty()) {
         io.error("No session to close");
         return;
@@ -357,7 +426,7 @@ public class CommandDispatcher {
   }
 
   private void cmdInfo(List<String> args) {
-    Optional<SessionManager.SessionRef> ref;
+    Optional<? extends SessionManager.SessionRef<? extends Session>> ref;
     if (args.isEmpty()) {
       ref = sessions.current();
       if (ref.isEmpty()) {
@@ -371,15 +440,15 @@ public class CommandDispatcher {
         return;
       }
     }
-    JFRSession s = ref.get().session;
+    Session s = ref.get().session;
     io.println("Session Information:");
-    io.println("  Recording: " + s.getRecordingPath());
-    io.println("  Event Types: " + s.getAvailableTypes().size());
-    io.println("  Handlers: " + s.getHandlerCount());
-    io.println("  Has Run: " + s.hasRun());
-    if (s.hasRun()) {
-      io.println("  Total Events Processed: " + s.getTotalEvents());
-      io.println("  Uptime: " + (s.getUptime() / 1_000_000) + "ms");
+    io.println("  Type: " + s.getType());
+    io.println("  File: " + s.getFilePath());
+    Map<String, Object> stats = s.getStatistics();
+    if (!stats.isEmpty()) {
+      for (Map.Entry<String, Object> entry : stats.entrySet()) {
+        io.println("  " + entry.getKey() + ": " + entry.getValue());
+      }
     }
   }
 
@@ -567,8 +636,8 @@ public class CommandDispatcher {
     }
 
     // Evaluate
-    if (selector != null) {
-      List<Map<String, Object>> rows = selector.select(cur.get().session, expr);
+    if (selector != null && cur.get().session instanceof JFRSession jfrSession) {
+      List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -585,7 +654,7 @@ public class CommandDispatcher {
     var eval = new JfrPathEvaluator(listMatchMode);
     // If aggregation pipeline present, always evaluate as rows (preempts other handlers)
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
-      var rows = eval.evaluate(cur.get().session, q);
+      var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -623,10 +692,10 @@ public class CommandDispatcher {
         if (fieldName != null && !fieldName.isEmpty()) {
           if ("tui".equalsIgnoreCase(format)) {
             TuiTreeRenderer.renderFieldRecursive(
-                cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+                cur.get().session.getFilePath(), typeName, fieldName, io, maxDepth);
           } else {
             TreeRenderer.renderFieldRecursive(
-                cur.get().session.getRecordingPath(), typeName, fieldName, io, maxDepth);
+                cur.get().session.getFilePath(), typeName, fieldName, io, maxDepth);
           }
           return;
         }
@@ -634,10 +703,10 @@ public class CommandDispatcher {
       // Otherwise, render the class tree for the requested type
       if ("tui".equalsIgnoreCase(format)) {
         TuiTreeRenderer.renderMetadataRecursive(
-            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            cur.get().session.getFilePath(), typeName, io, maxDepth);
       } else {
         TreeRenderer.renderMetadataRecursive(
-            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            cur.get().session.getFilePath(), typeName, io, maxDepth);
       }
       return;
     }
@@ -651,7 +720,7 @@ public class CommandDispatcher {
       String fieldName = q.segments.get(1);
       if ("fields".equals(fieldName) || "fieldsByName".equals(fieldName)) {
         // Delegate to generic evaluator to support 'fields' and 'fieldsByName'
-        var values = eval.evaluateValues(cur.get().session, q);
+        var values = eval.evaluateValues((JFRSession) cur.get().session, q);
         if (limit != null && limit < values.size()) values = values.subList(0, limit);
         if ("json".equalsIgnoreCase(format)) {
           printJson(values, io);
@@ -666,7 +735,7 @@ public class CommandDispatcher {
       }
       var evalMeta = new JfrPathEvaluator();
       Map<String, Object> fm =
-          evalMeta.loadFieldMetadata(cur.get().session.getRecordingPath(), typeName, fieldName);
+          evalMeta.loadFieldMetadata(cur.get().session.getFilePath(), typeName, fieldName);
       if (fm == null) {
         io.println("(no rows)");
       } else {
@@ -692,8 +761,8 @@ public class CommandDispatcher {
     if (q.segments.size() > 1) {
       var values =
           (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateValuesWithLimit(cur.get().session, q, limit)
-              : eval.evaluateValues(cur.get().session, q);
+              ? eval.evaluateValuesWithLimit((JFRSession) cur.get().session, q, limit)
+              : eval.evaluateValues((JFRSession) cur.get().session, q);
       if (limit != null && limit < values.size()) values = values.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(values, io);
@@ -707,8 +776,8 @@ public class CommandDispatcher {
     } else {
       var rows =
           (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateWithLimit(cur.get().session, q, limit)
-              : eval.evaluate(cur.get().session, q);
+              ? eval.evaluateWithLimit((JFRSession) cur.get().session, q, limit)
+              : eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
@@ -755,16 +824,102 @@ public class CommandDispatcher {
     }
   }
 
+  @SuppressWarnings("unchecked")
+  private void cmdShowModule(List<String> args, String fullLine, QueryEvaluator evaluator)
+      throws Exception {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      io.error("No session open");
+      return;
+    }
+    // Parse --limit and --format options
+    Integer limit = null;
+    String format = cur.get().outputFormat;
+    List<String> tokens = args;
+    for (int i = 0; i < tokens.size(); i++) {
+      String t = tokens.get(i);
+      if ("--limit".equals(t) && i + 1 < tokens.size()) {
+        limit = Integer.parseInt(tokens.get(i + 1));
+        tokens = new ArrayList<>(tokens);
+        tokens.remove(i + 1);
+        tokens.remove(i);
+        i -= 1;
+        continue;
+      }
+      if ("--format".equals(t) && i + 1 < tokens.size()) {
+        format = tokens.get(i + 1);
+        tokens = new ArrayList<>(tokens);
+        tokens.remove(i + 1);
+        tokens.remove(i);
+        i -= 1;
+      }
+    }
+    if (tokens.isEmpty()) {
+      io.error("Usage: show <expr> [--limit N] [--format table|json|csv|tui]");
+      return;
+    }
+    // Extract expression from fullLine to preserve pipe operators
+    String expr;
+    int showIdx = fullLine.indexOf("show");
+    if (showIdx >= 0) {
+      String afterShow = fullLine.substring(showIdx + 4).trim();
+      expr = afterShow.replaceAll("--limit\\s+\\d+", "").replaceAll("--format\\s+\\S+", "").trim();
+    } else {
+      expr = String.join(" ", tokens);
+    }
+    // Substitute variables if present
+    if (VariableSubstitutor.hasVariables(expr)) {
+      VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
+      expr = sub.substitute(expr);
+    }
+    Object query = evaluator.parse(expr);
+    @SuppressWarnings("unchecked")
+    SessionResolver resolver =
+        id ->
+            (Optional<SessionManager.SessionRef<? extends Session>>) (Optional<?>) sessions.get(id);
+    Object result = evaluator.evaluate(cur.get().session, query, resolver);
+    if (result instanceof List<?> list) {
+      List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
+      if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      if ("json".equalsIgnoreCase(format)) {
+        printJson(rows, io);
+      } else if ("csv".equalsIgnoreCase(format)) {
+        CsvRenderer.render(rows, io);
+      } else if ("tui".equalsIgnoreCase(format)) {
+        TuiTableRenderer.render(rows, io);
+      } else {
+        TableRenderer.render(rows, io);
+      }
+    }
+  }
+
   private void cmdHelp(List<String> args) {
     if (args.isEmpty()) {
+      boolean isJfr = currentJfrSession() != null;
       io.println("Available commands:");
-      io.println("  events    - Query events (alias for 'show events')");
-      io.println("  constants - Browse constant pool entries");
-      io.println("  show      - Execute JfrPath queries (events, metadata, chunks, constants)");
-      io.println("  metadata  - List and inspect metadata types");
-      io.println("  chunks    - List chunk information");
-      io.println("  chunk     - Show specific chunk details");
-      io.println("  cp        - Browse constant pool entries (deprecated, use 'constants')");
+      if (isJfr) {
+        io.println("  events    - Query events (alias for 'show events')");
+        io.println("  constants - Browse constant pool entries");
+        io.println("  show      - Execute JfrPath queries (events, metadata, chunks, constants)");
+        io.println("  metadata  - List and inspect metadata types");
+        io.println("  chunks    - List chunk information");
+        io.println("  chunk     - Show specific chunk details");
+        io.println("  cp        - Browse constant pool entries (deprecated, use 'constants')");
+      } else if (moduleEvaluator != null) {
+        io.println("  show      - Execute queries against the current session");
+        io.println("");
+        io.println("  Query roots: " + String.join(", ", moduleEvaluator.getRootTypes()));
+        io.println("  Operators:   " + String.join(", ", moduleEvaluator.getOperators()));
+      } else {
+        io.println("  show      - Execute queries against the current session");
+      }
+      io.println("");
+      io.println("Session commands:");
+      io.println("  open      - Open a file");
+      io.println("  close     - Close session");
+      io.println("  sessions  - List open sessions");
+      io.println("  use       - Switch to session");
+      io.println("  info      - Show session information");
       io.println("");
       io.println("Variable commands:");
       io.println("  set       - Assign variable or set session options");
@@ -778,17 +933,19 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
-      io.println("");
-      io.println("System:");
-      io.println("  backend   - Show current backend and list available backends");
-      io.println("");
-      io.println("Tab completion:");
-      io.println("  Press Tab at any point for context-aware suggestions:");
-      io.println("  - Query roots: events/, metadata/, constants/, chunks/");
-      io.println("  - Event types, field paths, and nested fields");
-      io.println("  - Filter operators, functions, and logical operators");
-      io.println("  - Pipeline operators and function parameters");
-      io.println("  - Command options (--limit, --format, etc.)");
+      if (isJfr) {
+        io.println("");
+        io.println("System:");
+        io.println("  backend   - Show current backend and list available backends");
+        io.println("");
+        io.println("Tab completion:");
+        io.println("  Press Tab at any point for context-aware suggestions:");
+        io.println("  - Query roots: events/, metadata/, constants/, chunks/");
+        io.println("  - Event types, field paths, and nested fields");
+        io.println("  - Filter operators, functions, and logical operators");
+        io.println("  - Pipeline operators and function parameters");
+        io.println("  - Command options (--limit, --format, etc.)");
+      }
       io.println("");
       io.println("Type 'help <command>' for detailed usage (e.g., 'help show')");
       return;
@@ -1283,15 +1440,19 @@ public class CommandDispatcher {
           if (search == null) search = a; // allow 'types pattern'
       }
     }
+    JFRSession sess = currentJfrSession();
+    if (sess == null) {
+      io.error("Current session is not a JFR session");
+      return;
+    }
     try {
       if (refresh) {
-        cur.get().session.refreshTypes();
+        sess.refreshTypes();
       }
     } catch (Exception e) {
       io.error("Failed to refresh types: " + e.getMessage());
       return;
     }
-    var sess = cur.get().session;
     Set<String> all =
         primitives ? sess.getPrimitiveMetadataTypes() : sess.getNonPrimitiveMetadataTypes();
     Set<String> events = sess.getAvailableTypes();
@@ -1353,7 +1514,7 @@ public class CommandDispatcher {
       Map<String, Map<String, Object>> metaByName = Collections.emptyMap();
       try {
         List<Map<String, Object>> allMeta =
-            MetadataProvider.loadAllClasses(cur.get().session.getRecordingPath());
+            MetadataProvider.loadAllClasses(cur.get().session.getFilePath());
         if (allMeta != null) {
           metaByName = new HashMap<>();
           for (Map<String, Object> m : allMeta) {
@@ -1368,7 +1529,7 @@ public class CommandDispatcher {
       List<Map<String, Object>> rows = new ArrayList<>();
       List<Map<String, Object>> metaClasses = new ArrayList<>();
       for (String t : types) {
-        Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+        Long typeId = sess.getMetadataTypeIds().get(t);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", typeId != null ? typeId : "?");
         row.put("name", t);
@@ -1390,7 +1551,7 @@ public class CommandDispatcher {
               + nonEventsCnt
               + "]:");
       for (String t : types) {
-        Long typeId = cur.get().session.getMetadataTypeIds().get(t);
+        Long typeId = sess.getMetadataTypeIds().get(t);
         String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
         io.println("  " + idStr + " - " + t);
       }
@@ -1447,7 +1608,7 @@ public class CommandDispatcher {
     }
     Map<String, Object> meta;
     try {
-      meta = MetadataProvider.loadClass(cur.get().session.getRecordingPath(), typeName);
+      meta = MetadataProvider.loadClass(cur.get().session.getFilePath(), typeName);
     } catch (Exception e) {
       io.error("Failed to load metadata: " + e.getMessage());
       return;
@@ -1466,10 +1627,10 @@ public class CommandDispatcher {
       String metaFormat = cur.get().outputFormat;
       if ("tui".equalsIgnoreCase(metaFormat)) {
         TuiTreeRenderer.renderMetadataRecursive(
-            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            cur.get().session.getFilePath(), typeName, io, maxDepth);
       } else {
         TreeRenderer.renderMetadataRecursive(
-            cur.get().session.getRecordingPath(), typeName, io, maxDepth);
+            cur.get().session.getFilePath(), typeName, io, maxDepth);
       }
       return;
     }
@@ -1534,7 +1695,7 @@ public class CommandDispatcher {
 
   /** chunks [--summary|--list] [--range N-M] Default: list all chunks */
   private void cmdChunks(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1561,8 +1722,7 @@ public class CommandDispatcher {
     }
 
     if (summary) {
-      Map<String, Object> stats =
-          ChunkProvider.getChunkSummary(cur.get().session.getRecordingPath());
+      Map<String, Object> stats = ChunkProvider.getChunkSummary(cur.get().session.getFilePath());
       if ("json".equalsIgnoreCase(format)) {
         printJson(List.of(stats), io);
       } else if ("csv".equalsIgnoreCase(format)) {
@@ -1574,7 +1734,7 @@ public class CommandDispatcher {
       }
     } else {
       List<Map<String, Object>> chunks =
-          ChunkProvider.loadAllChunks(cur.get().session.getRecordingPath());
+          ChunkProvider.loadAllChunks(cur.get().session.getFilePath());
 
       // Apply range filter if provided: --range 0-5
       if (range != null) {
@@ -1607,7 +1767,7 @@ public class CommandDispatcher {
 
   /** chunk <index> show [--header|--events|--constants] Show detailed view of a single chunk */
   private void cmdChunk(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1634,7 +1794,7 @@ public class CommandDispatcher {
     }
 
     Map<String, Object> chunk =
-        ChunkProvider.loadChunk(cur.get().session.getRecordingPath(), chunkIndex);
+        ChunkProvider.loadChunk(cur.get().session.getFilePath(), chunkIndex);
 
     if (chunk == null) {
       io.error("Chunk " + chunkIndex + " not found");
@@ -1651,7 +1811,7 @@ public class CommandDispatcher {
   }
 
   private void cmdCrossref(String typeName) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1665,7 +1825,7 @@ public class CommandDispatcher {
       return;
     }
     Map<String, Object> result =
-        ConstantPoolProvider.crossref(cur.get().session.getRecordingPath(), typeName);
+        ConstantPoolProvider.crossref(cur.get().session.getFilePath(), typeName);
     long total = ((Number) result.get("cpTotal")).longValue();
     long referenced = ((Number) result.get("cpReferenced")).longValue();
     long unused = ((Number) result.get("cpUnused")).longValue();
@@ -1724,7 +1884,7 @@ public class CommandDispatcher {
 
   /** constants [--summary] [<kind>] [--range N-M] constants <kind> [--range N-M] */
   private void cmdCp(List<String> args) throws Exception {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open. Use 'open <file>' first.");
       return;
@@ -1772,7 +1932,7 @@ public class CommandDispatcher {
     if (cleanArgs.isEmpty() || summary) {
       // cp or cp --summary: show type summary
       List<Map<String, Object>> summaryRows =
-          ConstantPoolProvider.loadSummary(cur.get().session.getRecordingPath());
+          ConstantPoolProvider.loadSummary(cur.get().session.getFilePath());
       if ("json".equalsIgnoreCase(format)) {
         printJson(summaryRows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
@@ -1786,7 +1946,7 @@ public class CommandDispatcher {
       // cp <type>: list entries
       String typeName = cleanArgs.get(0);
       List<Map<String, Object>> entries =
-          ConstantPoolProvider.loadEntries(cur.get().session.getRecordingPath(), typeName);
+          ConstantPoolProvider.loadEntries(cur.get().session.getFilePath(), typeName);
 
       // Apply range filter if needed
       if (range != null) {
@@ -1951,7 +2111,7 @@ public class CommandDispatcher {
         // Copy the variable value with independent state
         // For LazyQueryValue, create a new instance so each variable has independent cache
         Value valueToCopy = existingValue;
-        if (existingValue instanceof VariableStore.LazyQueryValue lazyValue) {
+        if (existingValue instanceof LazyQueryValue lazyValue) {
           valueToCopy = lazyValue.copy();
         }
         store.set(varName, valueToCopy);
@@ -1970,7 +2130,7 @@ public class CommandDispatcher {
     }
 
     // Treat as JfrPath query
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
       return;
@@ -1985,12 +2145,19 @@ public class CommandDispatcher {
       return;
     }
 
+    if (!(cur.get().session instanceof JFRSession)) {
+      io.error("Variable assignment requires a JFR session");
+      return;
+    }
+    @SuppressWarnings("unchecked")
+    SessionManager.SessionRef<JFRSession> jfrRef =
+        (SessionManager.SessionRef<JFRSession>) (SessionManager.SessionRef<?>) cur.get();
     // Use static analysis to determine if query produces a scalar
     if (isDefinitelyScalar(query)) {
       // Scalar-producing query: evaluate immediately and store as scalar
       try {
         JfrPathEvaluator evaluator = new JfrPathEvaluator();
-        Object result = evaluator.evaluate(cur.get().session, query);
+        Object result = evaluator.evaluate((JFRSession) cur.get().session, query);
         Object scalarValue = extractScalarIfSingle(result);
         if (scalarValue != null) {
           store.set(varName, new ScalarValue(scalarValue));
@@ -1999,7 +2166,7 @@ public class CommandDispatcher {
           }
         } else {
           // Fallback: store as lazy (shouldn't happen for scalar queries)
-          LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+          LazyQueryValue lqv = new LazyQueryValue(query, jfrRef, exprPart);
           lqv.setCachedResult(result);
           store.set(varName, lqv);
           if (verbose) {
@@ -2013,7 +2180,7 @@ public class CommandDispatcher {
       // Map-producing query: evaluate and store as MapValue
       try {
         JfrPathEvaluator evaluator = new JfrPathEvaluator();
-        Object result = evaluator.evaluate(cur.get().session, query);
+        Object result = evaluator.evaluate((JFRSession) cur.get().session, query);
 
         // Extract map from single-element list result
         if (result instanceof List<?> list && list.size() == 1) {
@@ -2031,7 +2198,7 @@ public class CommandDispatcher {
         }
 
         // Fallback: store as lazy if not a clean map result
-        LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+        LazyQueryValue lqv = new LazyQueryValue(query, jfrRef, exprPart);
         lqv.setCachedResult(result);
         store.set(varName, lqv);
         if (verbose) {
@@ -2042,7 +2209,7 @@ public class CommandDispatcher {
       }
     } else {
       // Non-scalar query: store as lazy (not evaluated until accessed)
-      LazyQueryValue lqv = new LazyQueryValue(query, cur.get(), exprPart);
+      LazyQueryValue lqv = new LazyQueryValue(query, jfrRef, exprPart);
       store.set(varName, lqv);
       if (verbose) {
         io.println("Set " + varName + " = lazy[" + exprPart + "] (not evaluated)");
@@ -2482,7 +2649,7 @@ public class CommandDispatcher {
     boolean showGlobal = args.isEmpty() || args.contains("--global") || args.contains("--all");
     boolean showSession = args.isEmpty() || args.contains("--session") || args.contains("--all");
 
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
 
     if (showGlobal && !globalStore.isEmpty()) {
       io.println("Global variables:");
@@ -2510,7 +2677,7 @@ public class CommandDispatcher {
     Value val = null;
     String scope = null;
 
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     if (cur.isPresent() && cur.get().variables.contains(name)) {
       val = cur.get().variables.get(name);
       scope = "session #" + cur.get().id;
@@ -2619,12 +2786,12 @@ public class CommandDispatcher {
     if (global) {
       return globalStore;
     }
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     return cur.isPresent() ? cur.get().variables : globalStore;
   }
 
   private VariableStore getSessionStore() {
-    Optional<SessionManager.SessionRef> cur = sessions.current();
+    var cur = sessions.current();
     return cur.isPresent() ? cur.get().variables : null;
   }
 

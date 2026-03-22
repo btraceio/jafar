@@ -129,7 +129,7 @@ public final class Main implements Callable<Integer> {
     }
 
     if (tui) {
-      try (TuiShell tuiShell = new TuiShell()) {
+      try (TuiShell tuiShell = new TuiShell(jfrPath)) {
         tuiShell.openIfPresent(jfrPath);
         tuiShell.run();
         return 0;
@@ -279,7 +279,8 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+        SessionManager<JFRSession> sessions =
+            new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
 
@@ -562,7 +563,8 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager sessions = new SessionManager(ctx, (p, c) -> new JFRSession(p, c));
+        SessionManager<JFRSession> sessions =
+            new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
 

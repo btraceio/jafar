@@ -289,6 +289,175 @@ class JfrPathParserTest {
   }
 
   @Test
+  void parsesGroupBySortByParam() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)");
+    assertEquals(1, q.pipeline.size());
+    var gb = (JfrPath.GroupByOp) q.pipeline.get(0);
+    assertEquals("value", gb.sortBy);
+  }
+
+  @Test
+  void parsesGroupBySortParam() {
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample | groupBy(thread/name, sort=key)");
+    assertEquals(1, q.pipeline.size());
+    var gb = (JfrPath.GroupByOp) q.pipeline.get(0);
+    assertEquals("key", gb.sortBy);
+  }
+
+  @Test
+  void parsesTopWithNamedParams() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(10, by=bytes, asc=true)");
+    assertEquals(1, q.pipeline.size());
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(10, top.n);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertTrue(top.ascending);
+  }
+
+  @Test
+  void parsesTopWithPositionalFieldAndBareKeyword() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(5, bytes, desc)");
+    assertEquals(1, q.pipeline.size());
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(5, top.n);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertFalse(top.ascending);
+  }
+
+  @Test
+  void parsesTopWithPositionalFieldAsc() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(5, bytes, asc)");
+    var top = (JfrPath.TopOp) q.pipeline.get(0);
+    assertEquals(java.util.List.of("bytes"), top.byPath);
+    assertTrue(top.ascending);
+  }
+
+  @Test
+  void parsesSortByMultiField() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | sortBy(path asc, bytes desc)");
+    assertEquals(1, q.pipeline.size());
+    var sort = (JfrPath.SortByOp) q.pipeline.get(0);
+    assertEquals(2, sort.fields.size());
+    assertEquals("path", sort.fields.get(0).field());
+    assertFalse(sort.fields.get(0).descending());
+    assertEquals("bytes", sort.fields.get(1).field());
+    assertTrue(sort.fields.get(1).descending());
+  }
+
+  @Test
+  void parsesSortByAliases() {
+    // sort alias
+    var q1 = JfrPathParser.parse("events/jdk.FileRead | sort(bytes)");
+    assertTrue(q1.pipeline.get(0) instanceof JfrPath.SortByOp);
+
+    // orderBy alias
+    var q2 = JfrPathParser.parse("events/jdk.FileRead | orderBy(bytes)");
+    assertTrue(q2.pipeline.get(0) instanceof JfrPath.SortByOp);
+
+    // order alias
+    var q3 = JfrPathParser.parse("events/jdk.FileRead | order(bytes)");
+    assertTrue(q3.pipeline.get(0) instanceof JfrPath.SortByOp);
+  }
+
+  @Test
+  void parsesSortByWithAscParam() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | sortBy(bytes, asc=true)");
+    var sort = (JfrPath.SortByOp) q.pipeline.get(0);
+    assertEquals(1, sort.fields.size());
+    assertEquals("bytes", sort.fields.get(0).field());
+    assertFalse(sort.fields.get(0).descending());
+  }
+
+  @Test
+  void parsesSizeUnitKB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 10KB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(10L * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(10L * 1024, ((Number) ce.literal).longValue());
+    }
+  }
+
+  @Test
+  void parsesSizeUnitMB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 1MB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(1L * 1024 * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(1L * 1024 * 1024, ((Number) ce.literal).longValue());
+    }
+  }
+
+  @Test
+  void parsesSizeUnitGB() {
+    var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 2GB]");
+    assertEquals(1, q.predicates.size());
+    if (q.predicates.get(0) instanceof JfrPath.FieldPredicate p) {
+      assertEquals(2L * 1024 * 1024 * 1024, ((Number) p.literal).longValue());
+    } else if (q.predicates.get(0) instanceof JfrPath.ExprPredicate ep) {
+      var ce = (JfrPath.CompExpr) ep.expr;
+      assertEquals(2L * 1024 * 1024 * 1024, ((Number) ce.literal).longValue());
+    }
+  }
+
+  @Test
+  void parsesHeadOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | head(20)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.HeadOp.class, q.pipeline.get(0));
+    assertEquals(20, ((JfrPath.HeadOp) q.pipeline.get(0)).n);
+  }
+
+  @Test
+  void parsesTailOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | tail(5)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.TailOp.class, q.pipeline.get(0));
+    assertEquals(5, ((JfrPath.TailOp) q.pipeline.get(0)).n);
+  }
+
+  @Test
+  void parsesFilterOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | groupBy(path) | filter(count > 100)");
+    assertEquals(2, q.pipeline.size());
+    assertInstanceOf(JfrPath.FilterOp.class, q.pipeline.get(1));
+    var filter = (JfrPath.FilterOp) q.pipeline.get(1);
+    assertInstanceOf(JfrPath.ExprPredicate.class, filter.predicate);
+    var ep = (JfrPath.ExprPredicate) filter.predicate;
+    assertInstanceOf(JfrPath.CompExpr.class, ep.expr);
+    var ce = (JfrPath.CompExpr) ep.expr;
+    assertEquals(JfrPath.Op.GT, ce.op);
+    assertEquals(100L, ((Number) ce.literal).longValue());
+  }
+
+  @Test
+  void parsesWhereAlias() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | where(bytes > 1000)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.FilterOp.class, q.pipeline.get(0));
+  }
+
+  @Test
+  void parsesDistinctOp() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | distinct(path)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.DistinctOp.class, q.pipeline.get(0));
+    assertEquals("path", ((JfrPath.DistinctOp) q.pipeline.get(0)).field);
+  }
+
+  @Test
+  void parsesUniqueAlias() {
+    var q = JfrPathParser.parse("events/jdk.FileRead | unique(path)");
+    assertEquals(1, q.pipeline.size());
+    assertInstanceOf(JfrPath.DistinctOp.class, q.pipeline.get(0));
+    assertEquals("path", ((JfrPath.DistinctOp) q.pipeline.get(0)).field);
+  }
+
+  @Test
   void parsesStackProfileNoArgsRequiresParens() {
     assertThrows(
         IllegalArgumentException.class,

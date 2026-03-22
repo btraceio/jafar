@@ -28,7 +28,8 @@ class ShellCompleterFunctionParametersTest {
     // Use real JFR file so metadata loading works
     Path jfr = resource("test-ap.jfr"); // Use test-ap.jfr which has JDK events
     ParsingContext ctx = ParsingContext.create();
-    SessionManager sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
     completer = new ShellCompleter(sessions, null);
   }
@@ -364,18 +365,11 @@ class ShellCompleterFunctionParametersTest {
       System.out.println("  value='" + c.value() + "'");
     }
 
-    // Should suggest pipeline functions with space prefix (not "| " prefix)
+    // Candidate values include the full JLine word prefix for correct word replacement
     assertFalse(cands.isEmpty(), "Should suggest pipeline functions after |");
+    assertTrue(cands.stream().anyMatch(c -> c.value().contains("count")), "Should suggest count()");
     assertTrue(
-        cands.stream().anyMatch(c -> c.value().trim().startsWith("count")),
-        "Should suggest count()");
-    assertTrue(
-        cands.stream().anyMatch(c -> c.value().trim().startsWith("groupBy")),
-        "Should suggest groupBy(");
-    // Should NOT include the | prefix since it's already in the word
-    assertFalse(
-        cands.stream().anyMatch(c -> c.value().startsWith("|")),
-        "Should not include | prefix when | is already part of current word");
+        cands.stream().anyMatch(c -> c.value().contains("groupBy")), "Should suggest groupBy(");
   }
 
   @Test

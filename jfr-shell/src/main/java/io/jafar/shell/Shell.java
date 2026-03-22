@@ -28,7 +28,7 @@ public final class Shell implements AutoCloseable {
 
   private final Terminal terminal;
   private final LineReader lineReader;
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
   private final CommandDispatcher dispatcher;
   private boolean running = true;
   private final DefaultHistory history;
@@ -36,7 +36,8 @@ public final class Shell implements AutoCloseable {
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
     ParsingContext ctx = ParsingContext.create();
-    this.sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    this.sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     java.nio.file.Path histPath =
         java.nio.file.Paths.get(System.getProperty("user.home"), ".jfr-shell", "history");
     try {

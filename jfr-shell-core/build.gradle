@@ -26,6 +26,9 @@ dependencies {
     api project(':parser')
     implementation project(':tools')
 
+    // JLine (needed for InteractiveMenu and ContextCompleter)
+    api 'org.jline:jline:3.21.0'
+
     // JSON processing for plugin metadata
     implementation 'com.google.code.gson:gson:2.10.1'
 

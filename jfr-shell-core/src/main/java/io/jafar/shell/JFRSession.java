@@ -10,6 +10,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Represents an active JFR analysis session with a loaded recording. Manages the parser, context,
  * and provides statistics about the recording.
  */
-public final class JFRSession implements AutoCloseable {
+public final class JFRSession implements Session {
 
   private final Path recordingPath;
   private final ParsingContext parsingContext;
@@ -306,6 +307,27 @@ public final class JFRSession implements AutoCloseable {
    */
   public Path getRecordingPath() {
     return recordingPath;
+  }
+
+  @Override
+  public String getType() {
+    return "jfr";
+  }
+
+  @Override
+  public Path getFilePath() {
+    return recordingPath;
+  }
+
+  @Override
+  public Map<String, Object> getStatistics() {
+    Map<String, Object> stats = new HashMap<>();
+    stats.put("recordingPath", recordingPath.toString());
+    stats.put("totalEvents", totalEvents.get());
+    stats.put("eventTypeCount", eventTypeCounts.size());
+    stats.put("handlerCount", handlerCount.get());
+    stats.put("hasRun", hasRun);
+    return stats;
   }
 
   /**

@@ -1,0 +1,721 @@
+package io.jafar.hdump.shell.hdumppath;
+
+import io.jafar.shell.core.expr.ValueExpr;
+import java.util.List;
+
+/**
+ * AST model for HdumpPath query language. Provides OQL-inspired queries for heap dump analysis.
+ *
+ * <p>Query syntax examples:
+ *
+ * <pre>
+ * # Object queries
+ * objects/java.lang.String[shallow > 100] | top(10, shallow)
+ * objects/instanceof/java.util.Map | groupBy(class) | stats(shallow)
+ *
+ * # Class queries
+ * classes/java.util.HashMap | select(name, instanceCount, shallowSize)
+ * classes[instanceCount > 1000] | top(10, instanceCount)
+ *
+ * # GC root queries
+ * gcroots | groupBy(type)
+ * gcroots/THREAD_OBJ | select(type, object)
+ * </pre>
+ */
+public final class HdumpPath {
+
+  private HdumpPath() {}
+
+  /** Query root types. */
+  public enum Root {
+    /** Query heap objects. */
+    OBJECTS,
+    /** Query class metadata. */
+    CLASSES,
+    /** Query GC roots. */
+    GCROOTS,
+    /** Query leak clusters detected by graph-based analysis. */
+    CLUSTERS,
+    /** Query structurally-identical duplicate object subgraphs. */
+    DUPLICATES,
+    /** Query heap objects enriched with estimated age scores. */
+    AGES
+  }
+
+  /** Comparison operators. */
+  public enum Op {
+    EQ("="),
+    NE("!="),
+    GT(">"),
+    GE(">="),
+    LT("<"),
+    LE("<="),
+    REGEX("~");
+
+    private final String symbol;
+
+    Op(String symbol) {
+      this.symbol = symbol;
+    }
+
+    public String symbol() {
+      return symbol;
+    }
+
+    public static Op fromSymbol(String s) {
+      return switch (s) {
+        case "=", "==" -> EQ;
+        case "!=" -> NE;
+        case ">" -> GT;
+        case ">=" -> GE;
+        case "<" -> LT;
+        case "<=" -> LE;
+        case "~" -> REGEX;
+        default -> throw new IllegalArgumentException("Unknown operator: " + s);
+      };
+    }
+  }
+
+  /** Logical operators for combining predicates. */
+  public enum LogicalOp {
+    AND,
+    OR
+  }
+
+  // === Query structure ===
+
+  /** A complete HdumpPath query. */
+  public record Query(
+      Root root,
+      String typePattern, // Class name pattern (null for all)
+      boolean instanceof_, // Whether to include subclasses
+      List<Predicate> predicates,
+      List<PipelineOp> pipeline,
+      int rootParam) { // Root-specific integer parameter (e.g. depth for duplicates)
+
+    public Query {
+      predicates = predicates == null ? List.of() : List.copyOf(predicates);
+      pipeline = pipeline == null ? List.of() : List.copyOf(pipeline);
+    }
+  }
+
+  // === Predicates (filters) ===
+
+  /** Base interface for filter predicates. */
+  public sealed interface Predicate permits FieldPredicate, ExprPredicate {}
+
+  /** Simple field-based predicate: field op value */
+  public record FieldPredicate(List<String> fieldPath, Op op, Object literal)
+      implements Predicate {}
+
+  /** Expression-based predicate for complex boolean logic. */
+  public record ExprPredicate(BoolExpr expr) implements Predicate {}
+
+  // === Boolean expressions ===
+
+  /** Boolean expression hierarchy for complex filters. */
+  public sealed interface BoolExpr permits CompExpr, FuncExpr, LogicalExpr, NotExpr {}
+
+  /** Comparison expression: path op literal */
+  public record CompExpr(List<String> fieldPath, Op op, Object literal) implements BoolExpr {}
+
+  /** Function predicate: contains(field, "str"), startsWith(field, "prefix"), etc. */
+  public record FuncExpr(String name, List<Object> args) implements BoolExpr {
+    public FuncExpr {
+      args = List.copyOf(args);
+    }
+  }
+
+  /** Logical expression combining two boolean expressions. */
+  public record LogicalExpr(BoolExpr left, LogicalOp op, BoolExpr right) implements BoolExpr {}
+
+  /** Negation of a boolean expression. */
+  public record NotExpr(BoolExpr inner) implements BoolExpr {}
+
+  // === Pipeline operations ===
+
+  /** Pipeline operation interface. */
+  public sealed interface PipelineOp
+      permits SelectOp,
+          TopOp,
+          GroupByOp,
+          CountOp,
+          SumOp,
+          StatsOp,
+          SortByOp,
+          HeadOp,
+          TailOp,
+          FilterOp,
+          DistinctOp,
+          LenOp,
+          UppercaseOp,
+          LowercaseOp,
+          TrimOp,
+          ReplaceOp,
+          AbsOp,
+          RoundOp,
+          FloorOp,
+          CeilOp,
+          PathToRootOp,
+          RetentionPathsOp,
+          RetainedBreakdownOp,
+          CheckLeaksOp,
+          DominatorsOp,
+          JoinOp,
+          WasteOp,
+          ObjectsOp,
+          ThreadOwnerOp,
+          DominatedSizeOp,
+          EstimateAgeOp,
+          WhatIfOp,
+          CacheStatsOp {}
+
+  /** Select specific fields/expressions. */
+  public record SelectOp(List<SelectField> fields) implements PipelineOp {
+    public SelectOp {
+      fields = List.copyOf(fields);
+    }
+  }
+
+  /** A field selection with optional alias. */
+  public record SelectField(String field, String alias) {
+    public SelectField(String field) {
+      this(field, null);
+    }
+  }
+
+  /** Top N results by a field. */
+  public record TopOp(int n, String orderBy, boolean descending) implements PipelineOp {
+    public TopOp(int n, String orderBy) {
+      this(n, orderBy, true); // Default descending
+    }
+
+    public TopOp(int n) {
+      this(n, null, true);
+    }
+  }
+
+  /**
+   * Group by field(s) with aggregation.
+   *
+   * @param groupFields fields to group by
+   * @param aggregation aggregation operation (COUNT, SUM, AVG, MIN, MAX)
+   * @param valueExpr optional value expression for aggregation
+   * @param sortBy "key" to sort by group key, "value" to sort by aggregated value, null for no
+   *     sorting
+   * @param ascending sort order (true = ascending, false = descending)
+   */
+  public record GroupByOp(
+      List<String> groupFields,
+      AggOp aggregation,
+      ValueExpr valueExpr,
+      String sortBy,
+      boolean ascending)
+      implements PipelineOp {
+    public GroupByOp {
+      groupFields = List.copyOf(groupFields);
+    }
+
+    public GroupByOp(List<String> groupFields, AggOp aggregation) {
+      this(groupFields, aggregation, null, null, false);
+    }
+
+    public GroupByOp(List<String> groupFields, AggOp aggregation, ValueExpr valueExpr) {
+      this(groupFields, aggregation, valueExpr, null, false);
+    }
+  }
+
+  /** Aggregation operations for groupBy. */
+  public enum AggOp {
+    COUNT,
+    SUM,
+    AVG,
+    MIN,
+    MAX
+  }
+
+  /** Count operation. */
+  public record CountOp() implements PipelineOp {}
+
+  /** Sum operation on a field. */
+  public record SumOp(String field) implements PipelineOp {}
+
+  /** Statistics operation (min, max, avg, sum, count). */
+  public record StatsOp(String field) implements PipelineOp {}
+
+  /** Sort by field(s). */
+  public record SortByOp(List<SortField> fields) implements PipelineOp {
+    public SortByOp {
+      fields = List.copyOf(fields);
+    }
+  }
+
+  /** A sort field with direction. */
+  public record SortField(String field, boolean descending) {
+    public SortField(String field) {
+      this(field, false);
+    }
+  }
+
+  /** Take first N results. */
+  public record HeadOp(int n) implements PipelineOp {}
+
+  /** Take last N results. */
+  public record TailOp(int n) implements PipelineOp {}
+
+  /** Filter with predicate. */
+  public record FilterOp(Predicate predicate) implements PipelineOp {}
+
+  /** Distinct values. */
+  public record DistinctOp(String field) implements PipelineOp {}
+
+  /** String or list length. */
+  public record LenOp(String field) implements PipelineOp {}
+
+  /** Convert to uppercase. */
+  public record UppercaseOp(String field) implements PipelineOp {}
+
+  /** Convert to lowercase. */
+  public record LowercaseOp(String field) implements PipelineOp {}
+
+  /** Trim whitespace. */
+  public record TrimOp(String field) implements PipelineOp {}
+
+  /** Replace occurrences. */
+  public record ReplaceOp(String field, String target, String replacement) implements PipelineOp {}
+
+  /** Absolute value. */
+  public record AbsOp(String field) implements PipelineOp {}
+
+  /** Round to nearest integer. */
+  public record RoundOp(String field) implements PipelineOp {}
+
+  /** Round down. */
+  public record FloorOp(String field) implements PipelineOp {}
+
+  /** Round up. */
+  public record CeilOp(String field) implements PipelineOp {}
+
+  /**
+   * Find shortest path to GC root for each object in the result set.
+   *
+   * <p>Transforms object results into path representations. Each result becomes a path from a GC
+   * root to that object, showing the reference chain that keeps it alive.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/com.example.Cache[retained > 1GB] | pathToRoot | head(1)
+   * </pre>
+   */
+  public record PathToRootOp() implements PipelineOp {}
+
+  /**
+   * Aggregate paths to GC root at the class level across all input objects.
+   *
+   * <p>For each input object, finds the shortest path to a GC root, then collapses all individual
+   * object paths into class-level paths by replacing each object with its class name. Identical
+   * class paths are merged and counted.
+   *
+   * <p>Output columns: {@code count}, {@code depth}, {@code retainedSize}, {@code path} (class
+   * names joined with " → ", from GC root to target).
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * # Which classes retain the most ConcurrentHashMap instances?
+   * objects/java.util.concurrent.ConcurrentHashMap | retentionPaths()
+   *
+   * # Top retention paths for large strings
+   * objects/java.lang.String[retained > 1MB] | retentionPaths() | head(10)
+   * </pre>
+   */
+  public record RetentionPathsOp() implements PipelineOp {}
+
+  /**
+   * Recursively expand the dominator subtree of each input object and aggregate the result at the
+   * class level.
+   *
+   * <p>For every input object the dominated subtree is walked up to {@code maxDepth} levels deep.
+   * All visited objects are grouped by {@code (depth, className)} and their counts and sizes are
+   * summed. Depth 0 = immediate dominatees of the input objects; depth 1 = their dominatees; etc.
+   *
+   * <p>Output columns: {@code depth}, {@code className}, {@code count}, {@code shallowSize}, {@code
+   * retainedSize}. Rows are sorted by depth ascending then retainedSize descending.
+   *
+   * <p>An ASCII tree is also printed to stderr for quick visual inspection.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * # Break down what a set of large HashMaps actually retains
+   * objects/java.util.HashMap[retained > 10MB] | retainedBreakdown()
+   *
+   * # Limit to 3 levels and filter only the significant classes
+   * objects/java.util.HashMap[retained > 10MB] | retainedBreakdown(depth=3)
+   * </pre>
+   *
+   * @param maxDepth maximum recursion depth (default 4)
+   */
+  public record RetainedBreakdownOp(int maxDepth) implements PipelineOp {
+    public RetainedBreakdownOp() {
+      this(4);
+    }
+  }
+
+  /**
+   * Check for memory leaks using built-in detectors or custom filters.
+   *
+   * <p>Supports two modes:
+   *
+   * <ul>
+   *   <li><strong>Built-in detector:</strong> {@code checkLeaks(detector="duplicate-strings",
+   *       threshold=100)}
+   *   <li><strong>Custom filter:</strong> {@code checkLeaks(filter=$myQuery)} where $myQuery is a
+   *       saved HdumpPath query
+   * </ul>
+   *
+   * <p>Built-in detectors:
+   *
+   * <ul>
+   *   <li>{@code duplicate-strings} - Find identical string values above threshold count
+   *   <li>{@code growing-collections} - Detect collections with large retained sizes
+   *   <li>{@code threadlocal-leak} - ThreadLocals not removed from threads
+   *   <li>{@code classloader-leak} - ClassLoaders that should be GC'd but aren't
+   *   <li>{@code listener-leak} - Event listeners not deregistered
+   *   <li>{@code finalizer-queue} - Objects stuck in finalizer queue
+   * </ul>
+   *
+   * @param detector name of built-in detector (mutually exclusive with filter)
+   * @param filter custom HdumpPath query (mutually exclusive with detector)
+   * @param threshold numeric threshold for detector (e.g., minimum duplicate count)
+   * @param minSize minimum size threshold for detector (e.g., collection size)
+   */
+  public record CheckLeaksOp(String detector, String filter, Integer threshold, Integer minSize)
+      implements PipelineOp {
+    public CheckLeaksOp {
+      if (detector != null && filter != null) {
+        throw new IllegalArgumentException("Cannot specify both detector and filter");
+      }
+      if (detector == null && filter == null) {
+        throw new IllegalArgumentException("Must specify either detector or filter");
+      }
+    }
+
+    public CheckLeaksOp(String detector, Integer threshold, Integer minSize) {
+      this(detector, null, threshold, minSize);
+    }
+
+    public CheckLeaksOp(String filter) {
+      this(null, filter, null, null);
+    }
+  }
+
+  /**
+   * Analyse memory retained by the input objects.
+   *
+   * <p><strong>Default (no arguments):</strong> ranks input objects by retained size, showing only
+   * those above {@code minRetained} (default 1 MB). This is the fastest way to identify the biggest
+   * memory holders without expanding the full dominated set.
+   *
+   * <p><strong>Named modes:</strong>
+   *
+   * <ul>
+   *   <li>"tree" - ASCII dominator tree for each input object (use after pre-filtering)
+   *   <li>"objects" - Individual dominated objects (use after pre-filtering)
+   * </ul>
+   *
+   * <p><strong>Parameters:</strong>
+   *
+   * <ul>
+   *   <li>{@code groupBy="class"|"package"} - retained-size histogram over the whole heap grouped
+   *       by class name or package name. Ignores the input stream (always heap-wide).
+   *   <li>{@code minRetained=<bytes>} - minimum retained size to include (default 1 MB for default
+   *       mode, 0 for named modes). Supports size suffixes: 1KB, 10MB, 1GB.
+   * </ul>
+   *
+   * <p>Examples:
+   *
+   * <pre>
+   * # Top retainers ≥ 1 MB (default)
+   * objects | dominators()
+   *
+   * # Retained-size histogram by class
+   * objects | dominators(groupBy="class")
+   *
+   * # Retained-size histogram by package, ≥ 10 MB
+   * objects | dominators(groupBy="package", minRetained=10MB)
+   *
+   * # Full dominator tree for large objects
+   * objects[retained > 100MB] | dominators("tree")
+   * </pre>
+   */
+  public record DominatorsOp(String mode, String groupBy, long minRetained) implements PipelineOp {
+    /** Default: top-retainers view with 1 MB minimum. */
+    public DominatorsOp() {
+      this(null, null, 1024 * 1024L);
+    }
+
+    /** Named mode with default minRetained (0 = no filter). */
+    public DominatorsOp(String mode) {
+      this(mode, null, 0L);
+    }
+  }
+
+  /**
+   * Join with another session. Supports heap-to-heap diff and cross-type JFR correlation when
+   * {@code root} is specified.
+   *
+   * @param sessionRef session ID or alias string
+   * @param byField explicit join key field, or null for auto-inference
+   * @param root JFR event type root for cross-type join (e.g. "jdk.ObjectAllocationSample"), or
+   *     null for heap-to-heap diff
+   */
+  public record JoinOp(String sessionRef, String byField, String root) implements PipelineOp {
+    public JoinOp(String sessionRef, String byField) {
+      this(sessionRef, byField, null);
+    }
+  }
+
+  /** Analyze collection capacity waste (capacity, size, loadFactor, wastedBytes, wasteType). */
+  public record WasteOp() implements PipelineOp {}
+
+  /**
+   * Drill down from cluster rows into member object rows. Input rows must contain a cluster ID
+   * field (typically from the {@code clusters} root). Rows without a cluster ID are skipped.
+   */
+  public record ObjectsOp() implements PipelineOp {}
+
+  /**
+   * Enrich object rows with thread ownership columns.
+   *
+   * <p>Adds two columns to each row:
+   *
+   * <ul>
+   *   <li>{@code ownerThread} - the thread name that dominates this object, or {@code "shared"}
+   *   <li>{@code ownership} - {@code "exclusive"} if owned by a single thread, {@code "shared"}
+   *       otherwise
+   * </ul>
+   *
+   * <p>Requires a full dominator tree.
+   */
+  public record ThreadOwnerOp() implements PipelineOp {}
+
+  /**
+   * Enrich THREAD_OBJ GC root rows with dominated memory statistics.
+   *
+   * <p>Adds three columns to each matching row:
+   *
+   * <ul>
+   *   <li>{@code threadName} - the thread name
+   *   <li>{@code dominated} - retained size of the thread object (bytes)
+   *   <li>{@code dominatedCount} - number of objects in the dominated subtree
+   * </ul>
+   *
+   * <p>Rows that do not correspond to a THREAD_OBJ root are passed through unchanged. Requires a
+   * full dominator tree.
+   */
+  public record DominatedSizeOp() implements PipelineOp {}
+
+  /**
+   * Enrich object rows with estimated age score, age bucket, and signal breakdown.
+   *
+   * <p>Adds three columns to each row:
+   *
+   * <ul>
+   *   <li>{@code estimatedAge} — 0–100 age score
+   *   <li>{@code ageBucket} — {@code "ephemeral"}, {@code "medium"}, {@code "tenured"}, or {@code
+   *       "permanent"}
+   *   <li>{@code ageSignals} — debug string showing which signals contributed
+   * </ul>
+   *
+   * <p>Requires no dominator tree. Uses two O(n+edges) passes on first invocation; result is cached
+   * in the session.
+   */
+  public record EstimateAgeOp() implements PipelineOp {}
+
+  /**
+   * Simulate removing the input objects from the heap and report freed memory.
+   *
+   * <p>Consumes the incoming object row stream and returns a single summary row with freed bytes,
+   * freed object count, freed percentage, and remaining retained size.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/com.example.LeakyCache | whatif()
+   * objects[retained &gt; 10MB] | whatif()
+   * gcroots/THREAD_OBJ | whatif() | select(freedBytes, freedPct)
+   * </pre>
+   */
+  public record WhatIfOp() implements PipelineOp {}
+
+  /**
+   * Analyze Map-based objects for cache-relevant statistics.
+   *
+   * <p>Adds five columns: {@code entryCount}, {@code maxSize}, {@code fillRatio}, {@code
+   * costPerEntry}, and {@code isLruMode}.
+   *
+   * <p>Supported types: HashMap, LinkedHashMap, WeakHashMap, and subclasses that expose {@code
+   * size} and {@code table} fields.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/java.util.LinkedHashMap | cacheStats()
+   * objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
+   * objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+   * </pre>
+   */
+  public record CacheStatsOp() implements PipelineOp {}
+
+  // === Built-in field names for objects ===
+
+  /** Standard field names available on heap objects. */
+  public static final class ObjectFields {
+    public static final String ID = "id";
+    public static final String CLASS = "class";
+    public static final String CLASS_NAME = "className";
+    public static final String SHALLOW = "shallow";
+    public static final String SHALLOW_SIZE = "shallowSize";
+    public static final String RETAINED = "retained";
+    public static final String RETAINED_SIZE = "retainedSize";
+    public static final String ARRAY_LENGTH = "arrayLength";
+    public static final String STRING_VALUE = "stringValue";
+
+    private ObjectFields() {}
+  }
+
+  /** Standard field names available on classes. */
+  public static final class ClassFields {
+    public static final String ID = "id";
+    public static final String NAME = "name";
+    public static final String SIMPLE_NAME = "simpleName";
+    public static final String INSTANCE_COUNT = "instanceCount";
+    public static final String INSTANCE_SIZE = "instanceSize";
+    public static final String SUPER_CLASS = "superClass";
+    public static final String IS_ARRAY = "isArray";
+
+    private ClassFields() {}
+  }
+
+  /** Standard field names available on GC roots. */
+  public static final class GcRootFields {
+    public static final String TYPE = "type";
+    public static final String OBJECT_ID = "objectId";
+    public static final String OBJECT = "object";
+    public static final String THREAD_SERIAL = "threadSerial";
+    public static final String FRAME_NUMBER = "frameNumber";
+    public static final String SHALLOW = "shallow";
+    public static final String SHALLOW_SIZE = "shallowSize";
+    public static final String RETAINED = "retained";
+    public static final String RETAINED_SIZE = "retainedSize";
+
+    private GcRootFields() {}
+  }
+
+  /** Standard field names available on leak clusters. */
+  public static final class ClusterFields {
+    public static final String ID = "id";
+    public static final String OBJECT_COUNT = "objectCount";
+    public static final String RETAINED_SIZE = "retainedSize";
+    public static final String ROOT_PATH_COUNT = "rootPathCount";
+    public static final String SCORE = "score";
+    public static final String DOMINANT_CLASS = "dominantClass";
+    public static final String ANCHOR_TYPE = "anchorType";
+    public static final String ANCHOR_OBJECT = "anchorObject";
+
+    private ClusterFields() {}
+  }
+
+  /** Standard field names available on duplicate subgraph groups. */
+  public static final class DuplicateFields {
+    /** 1-based group identifier. */
+    public static final String ID = "id";
+
+    /** Fully-qualified class name of the root object. */
+    public static final String ROOT_CLASS = "rootClass";
+
+    /** 16-character hex string of the 64-bit FNV-1a structural fingerprint. */
+    public static final String FINGERPRINT = "fingerprint";
+
+    /** Number of structurally-identical copies. */
+    public static final String COPIES = "copies";
+
+    /** Shallow size of one copy's root object in bytes. */
+    public static final String UNIQUE_SIZE = "uniqueSize";
+
+    /** {@code (copies - 1) * uniqueSize} — memory that could be saved by deduplication. */
+    public static final String WASTED_BYTES = "wastedBytes";
+
+    /** Fingerprint depth used for this group. */
+    public static final String DEPTH = "depth";
+
+    /** Number of objects visited in one copy's subtree during fingerprinting. */
+    public static final String NODE_COUNT = "nodeCount";
+
+    private DuplicateFields() {}
+  }
+
+  /** Standard field names produced by the {@code whatif()} operator. */
+  public static final class WhatIfFields {
+    /** The simulated action (always {@code "remove"}). */
+    public static final String ACTION = "action";
+
+    /** Number of objects in the input stream. */
+    public static final String TARGET_COUNT = "targetCount";
+
+    /** Sum of retained sizes of matched objects (approximate freed bytes). */
+    public static final String FREED_BYTES = "freedBytes";
+
+    /**
+     * Object count in the dominated subtrees of matched objects (exact when full dominator tree is
+     * available, otherwise equals {@code targetCount}).
+     */
+    public static final String FREED_OBJECTS = "freedObjects";
+
+    /** {@code freedBytes / totalHeapSize * 100}, rounded to one decimal place. */
+    public static final String FREED_PCT = "freedPct";
+
+    /** {@code totalHeapSize - freedBytes}. */
+    public static final String REMAINING_RETAINED = "remainingRetained";
+
+    private WhatIfFields() {}
+  }
+
+  /** Standard field names produced by the {@code ages} root and {@code estimateAge()} operator. */
+  public static final class AgeFields {
+    /** Age score 0–100. */
+    public static final String ESTIMATED_AGE = "estimatedAge";
+
+    /**
+     * Age bucket: {@code "ephemeral"}, {@code "medium"}, {@code "tenured"}, or {@code "permanent"}.
+     */
+    public static final String AGE_BUCKET = "ageBucket";
+
+    /** Debug string showing which signals contributed to the score. */
+    public static final String AGE_SIGNALS = "ageSignals";
+
+    private AgeFields() {}
+  }
+
+  /** Standard field names produced by the {@code cacheStats()} operator. */
+  public static final class CacheStatsFields {
+    /** Number of entries currently in the map. */
+    public static final String ENTRY_COUNT = "entryCount";
+
+    /** Internal table capacity; -1 if unknown or unbounded. */
+    public static final String MAX_SIZE = "maxSize";
+
+    /** {@code entryCount / capacity}; 0.0 if capacity is unknown. */
+    public static final String FILL_RATIO = "fillRatio";
+
+    /** {@code retainedSize / entryCount}; 0 if entryCount is zero. */
+    public static final String COST_PER_ENTRY = "costPerEntry";
+
+    /** {@code true} if this is a LinkedHashMap with {@code accessOrder=true} (LRU mode). */
+    public static final String IS_LRU_MODE = "isLruMode";
+
+    private CacheStatsFields() {}
+  }
+}

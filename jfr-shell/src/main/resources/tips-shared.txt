@@ -1,0 +1,54 @@
+# Lines starting with # are comments. Blank lines are ignored.
+# Tips shown regardless of session type.
+
+# ── Navigation & UI ──
+Press Tab for context-aware completion of commands, event types, and fields
+Press / to search and filter within results or detail view
+Use Ctrl+P in results to pin a tab and keep its output across commands
+Use Shift+Tab to cycle focus between input, results, and detail panes
+Use < and > in results view to sort by column; Alt+r to reverse sort order
+Press Ctrl+R to reverse-search command history
+Use Shift+Up/Down to navigate command history from any view
+Press Enter on a table row to open the detail pane with field breakdown
+Use Alt+1-9 to quickly switch between detail sub-tabs
+Use Home/End in results to jump to the first or last line
+Use PgUp/PgDn or Ctrl+Up/Down to scroll results by page
+Use Left/Right arrow keys to horizontally scroll wide result tables
+Press Esc in results to return focus to the command input
+Type any character while in results view to jump to input and start typing
+
+# ── Sessions & workflow ──
+'session' and 'use' are interchangeable for switching sessions
+Use 'open file --alias prod' to name your sessions for easy reference
+Use 'sessions' to list all open sessions; * marks the active one
+Use 'close --all' to close all open sessions at once
+Use --format json to get JSON output; also supports csv and tui formats
+Use 'set output json' to change the default format for the current session
+
+# ── Variables ──
+Variables can hold lazy queries: set x = events/jdk.FileRead[bytes>=1000]
+Lazy variables are evaluated on first access and the result is cached
+Use 'invalidate varname' to clear a cached lazy variable for re-evaluation
+Use --global with 'set' to store variables that persist across sessions
+echo ${var.field} substitutes variable values into output text
+Use ${var.size} to get the row count of a lazy query result
+Use ${var[0].field} to access a specific row in a lazy query result
+Press @ to pick a cell from the selected row and insert its value into the command
+Use merge(${map1}, ${map2}) to combine map variables
+Use 'vars' to list all variables; 'vars --info name' for detail on one
+
+# ── Conditionals ──
+Use if/elif/else/endif for conditional command execution
+Conditions support ==, !=, >, <, >=, <= and logical &&, ||, !
+Use exists(var) and empty(var) in conditions to test variable state
+
+# ── Scripting ──
+Use 'record start' to capture your commands as a reusable .jfrs script
+Use 'record stop' to finish recording; 'record status' to check state
+Use $1, $2 parameters in scripts for reusable parameterized analysis
+${1:-default} provides a fallback value when a script parameter is missing
+${1:?error message} makes a parameter required with a custom error
+Use $@ to pass all script arguments as a single string
+Place scripts in ~/.jfr-shell/scripts/ and run them with 'script run <name>'
+Use 'script list' to see available named scripts
+Use --continue-on-error when running scripts to skip failing commands

@@ -311,4 +311,56 @@ public final class SplicedMappedByteBuffer implements CustomByteBuffer {
     index = (int) ((position + sliceBase) / spliceSize);
     offset = (int) ((position + sliceBase) % spliceSize);
   }
+
+  /** {@inheritDoc} */
+  @Override
+  public long limit() {
+    return limit;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public byte get(long offset) {
+    long abs = sliceBase + offset;
+    int idx = (int) (abs / spliceSize);
+    int off = (int) (abs % spliceSize);
+    return splices[idx].get(off);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public int getInt(long offset) {
+    long abs = sliceBase + offset;
+    int idx = (int) (abs / spliceSize);
+    int off = (int) (abs % spliceSize);
+    if (spliceSize - off >= 4) {
+      return splices[idx].getInt(off);
+    }
+    numArray[0] = get(offset);
+    numArray[1] = get(offset + 1);
+    numArray[2] = get(offset + 2);
+    numArray[3] = get(offset + 3);
+    return ByteBuffer.wrap(numArray).order(splices[0].order()).getInt();
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public long getLong(long offset) {
+    long abs = sliceBase + offset;
+    int idx = (int) (abs / spliceSize);
+    int off = (int) (abs % spliceSize);
+    if (spliceSize - off >= 8) {
+      return splices[idx].getLong(off);
+    }
+    for (int i = 0; i < 8; i++) {
+      numArray[i] = get(offset + i);
+    }
+    return ByteBuffer.wrap(numArray).order(splices[0].order()).getLong();
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void close() throws IOException {
+    // MappedByteBuffers are unmapped by GC
+  }
 }

@@ -1,5 +1,6 @@
 package io.jafar.shell.cli.completion;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
@@ -16,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * keystroke.
  */
 public final class MetadataService {
-  private final SessionManager sessions;
+  private final SessionManager<JFRSession> sessions;
 
   /** Cache of type name -> metadata map */
   private final Map<String, Map<String, Object>> metadataCache = new ConcurrentHashMap<>();
@@ -24,7 +25,7 @@ public final class MetadataService {
   /** Cache key for recording path - invalidate cache when path changes */
   private Path cachedRecordingPath;
 
-  public MetadataService(SessionManager sessions) {
+  public MetadataService(SessionManager<JFRSession> sessions) {
     this.sessions = sessions;
   }
 

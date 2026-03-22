@@ -1,5 +1,6 @@
 package io.jafar.shell.tui;
 
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
@@ -40,7 +41,7 @@ public final class TuiKeyHandler {
   private final TuiBrowserController browser;
   private final TuiCommandExecutor executor;
   private final TuiDetailBuilder detailBuilder;
-  private final SessionManager sessions;
+  private final SessionManager<? extends Session> sessions;
 
   TuiKeyHandler(
       TuiContext ctx,
@@ -48,7 +49,7 @@ public final class TuiKeyHandler {
       TuiBrowserController browser,
       TuiCommandExecutor executor,
       TuiDetailBuilder detailBuilder,
-      SessionManager sessions) {
+      SessionManager<? extends Session> sessions) {
     this.ctx = ctx;
     this.backend = backend;
     this.browser = browser;
@@ -58,6 +59,26 @@ public final class TuiKeyHandler {
   }
 
   void handleKey(int key) throws IOException {
+    // Confirmation intercept for expensive operations
+    if (ctx.awaitingConfirmation) {
+      switch (key) {
+        case 'y', 'Y', '\r', '\n' -> {
+          String cmd = ctx.pendingConfirmCommand;
+          ctx.awaitingConfirmation = false;
+          ctx.pendingConfirmCommand = null;
+          ctx.confirmationMessage = null;
+          if (cmd != null) executor.submitConfirmedCommand(cmd);
+        }
+        case 'n', 'N', 27 -> { // 27 = Esc
+          ctx.awaitingConfirmation = false;
+          ctx.pendingConfirmCommand = null;
+          ctx.confirmationMessage = null;
+        }
+        default -> {} // Ignore other keys
+      }
+      return;
+    }
+
     // Popup intercepts
     if (ctx.sessionPickerVisible) {
       handleSessionPickerKey(key);
@@ -79,7 +100,9 @@ public final class TuiKeyHandler {
     // Global keys
     switch (key) {
       case 3: // Ctrl+C
-        if (ctx.focus == Focus.HISTORY_SEARCH) {
+        if (ctx.commandRunning) {
+          executor.cancelRunningCommand();
+        } else if (ctx.focus == Focus.HISTORY_SEARCH) {
           ctx.inputState.setText(ctx.historySearchSavedInput);
           ctx.focus = Focus.INPUT;
         } else if (ctx.focus == Focus.SEARCH) {
@@ -229,7 +252,8 @@ public final class TuiKeyHandler {
           ctx.browserNavPending = null;
           String name = browser.getSelectedSidebarName();
           if (!name.isEmpty()) browser.loadBrowserEntries(name, false);
-        } else if (ctx.metadataBrowserMode
+        } else if (ctx.activeBrowserDescriptor != null
+            && ctx.activeBrowserDescriptor.hasMetadataClasses()
             && ctx.metadataBrowserLineRefs != null
             && ctx.activeTab().selectedRow >= 0
             && ctx.activeTab().selectedRow < ctx.metadataBrowserLineRefs.size()) {
@@ -505,13 +529,7 @@ public final class TuiKeyHandler {
             ctx.sidebarSearchQuery = "";
             ctx.sidebarFilteredIndices = null;
           } else {
-            if (ctx.metadataBrowserMode) {
-              browser.exitMetadataBrowserMode();
-            } else if (ctx.eventBrowserMode) {
-              browser.exitEventBrowserMode();
-            } else {
-              browser.exitCpBrowserMode();
-            }
+            browser.exitBrowserMode();
             ctx.focus = Focus.INPUT;
           }
         }
@@ -539,13 +557,21 @@ public final class TuiKeyHandler {
       }
       return;
     }
-    // ESC b / ESC f — Option+Left/Right
-    if (next == 'b' && ctx.tabs.size() > 1) {
-      executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+    // ESC b / ESC f — Option+Left/Right (back/forward history, or tab switch)
+    if (next == 'b') {
+      if (browser.canNavigateBack()) {
+        browser.navigateBack();
+      } else if (ctx.tabs.size() > 1) {
+        executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+      }
       return;
     }
-    if (next == 'f' && ctx.tabs.size() > 1) {
-      executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+    if (next == 'f') {
+      if (browser.canNavigateForward()) {
+        browser.navigateForward();
+      } else if (ctx.tabs.size() > 1) {
+        executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+      }
       return;
     }
     // ESC r/d/c/s — Alt+R/D/C/S on Linux
@@ -641,14 +667,24 @@ public final class TuiKeyHandler {
       return;
     }
 
-    // Ctrl/Alt+Left/Right: tab switch
-    if ((modifier == MOD_CTRL || modifier == MOD_ALT)
-        && (direction == 'C' || direction == 'D')
-        && ctx.tabs.size() > 1) {
-      if (direction == 'D') {
-        executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
-      } else {
-        executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+    // Ctrl/Alt+Left/Right: back/forward history (Alt), or tab switch
+    if ((modifier == MOD_CTRL || modifier == MOD_ALT) && (direction == 'C' || direction == 'D')) {
+      if (modifier == MOD_ALT) {
+        if (direction == 'D' && browser.canNavigateBack()) {
+          browser.navigateBack();
+          return;
+        }
+        if (direction == 'C' && browser.canNavigateForward()) {
+          browser.navigateForward();
+          return;
+        }
+      }
+      if (ctx.tabs.size() > 1) {
+        if (direction == 'D') {
+          executor.switchTab((ctx.activeTabIndex - 1 + ctx.tabs.size()) % ctx.tabs.size());
+        } else {
+          executor.switchTab((ctx.activeTabIndex + 1) % ctx.tabs.size());
+        }
       }
       return;
     }
@@ -698,7 +734,9 @@ public final class TuiKeyHandler {
         case 'A':
           if (hasTable) {
             executor.moveSelectedRow(rt, -1);
-          } else if (ctx.metadataBrowserMode && rt.selectedRow >= 0) {
+          } else if (ctx.activeBrowserDescriptor != null
+              && ctx.activeBrowserDescriptor.hasMetadataClasses()
+              && rt.selectedRow >= 0) {
             detailBuilder.moveMetadataCursor(rt, -1);
           } else {
             executor.scrollResults(-1);
@@ -707,7 +745,9 @@ public final class TuiKeyHandler {
         case 'B':
           if (hasTable) {
             executor.moveSelectedRow(rt, 1);
-          } else if (ctx.metadataBrowserMode && rt.selectedRow >= 0) {
+          } else if (ctx.activeBrowserDescriptor != null
+              && ctx.activeBrowserDescriptor.hasMetadataClasses()
+              && rt.selectedRow >= 0) {
             detailBuilder.moveMetadataCursor(rt, 1);
           } else {
             executor.scrollResults(1);

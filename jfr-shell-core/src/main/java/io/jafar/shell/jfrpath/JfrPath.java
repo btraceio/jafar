@@ -288,6 +288,10 @@ public final class JfrPath {
           GroupByOp,
           SortByOp,
           TopOp,
+          HeadOp,
+          TailOp,
+          FilterOp,
+          DistinctOp,
           LenOp,
           UppercaseOp,
           LowercaseOp,
@@ -346,12 +350,13 @@ public final class JfrPath {
   public static final class GroupByOp implements PipelineOp {
     public final List<String> keyPath; // path to group by
     public final String aggFunc; // "count", "sum", "avg", "min", "max"
-    public final List<String> valuePath; // for sum/avg/min/max
+    public final List<String> valuePath; // for sum/avg/min/max (simple path)
+    public final Expr valueExpr; // for computed expressions (takes precedence over valuePath)
     public final String sortBy; // "key" or "value" (null = no sorting)
     public final boolean ascending; // sort order
 
     public GroupByOp(List<String> keyPath, String aggFunc, List<String> valuePath) {
-      this(keyPath, aggFunc, valuePath, null, false);
+      this(keyPath, aggFunc, valuePath, null, null, false);
     }
 
     public GroupByOp(
@@ -360,21 +365,42 @@ public final class JfrPath {
         List<String> valuePath,
         String sortBy,
         boolean ascending) {
+      this(keyPath, aggFunc, valuePath, null, sortBy, ascending);
+    }
+
+    public GroupByOp(
+        List<String> keyPath,
+        String aggFunc,
+        List<String> valuePath,
+        Expr valueExpr,
+        String sortBy,
+        boolean ascending) {
       this.keyPath = List.copyOf(keyPath);
       this.aggFunc = aggFunc == null ? "count" : aggFunc;
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
+      this.valueExpr = valueExpr;
       this.sortBy = sortBy;
       this.ascending = ascending;
     }
   }
 
-  public static final class SortByOp implements PipelineOp {
-    public final String field; // field name to sort by
-    public final boolean ascending; // sort order (default: false = descending)
+  /** A sort field with direction. */
+  public record SortField(String field, boolean descending) {
+    public SortField(String field) {
+      this(field, true); // default descending
+    }
+  }
 
+  public static final class SortByOp implements PipelineOp {
+    public final List<SortField> fields;
+
+    public SortByOp(List<SortField> fields) {
+      this.fields = List.copyOf(fields);
+    }
+
+    /** Convenience constructor for single-field sort. */
     public SortByOp(String field, boolean ascending) {
-      this.field = field;
-      this.ascending = ascending;
+      this(List.of(new SortField(field, !ascending)));
     }
   }
 
@@ -387,6 +413,38 @@ public final class JfrPath {
       this.n = n;
       this.byPath = byPath == null ? List.of("value") : List.copyOf(byPath);
       this.ascending = ascending;
+    }
+  }
+
+  public static final class HeadOp implements PipelineOp {
+    public final int n;
+
+    public HeadOp(int n) {
+      this.n = n;
+    }
+  }
+
+  public static final class TailOp implements PipelineOp {
+    public final int n;
+
+    public TailOp(int n) {
+      this.n = n;
+    }
+  }
+
+  public static final class FilterOp implements PipelineOp {
+    public final Predicate predicate;
+
+    public FilterOp(Predicate predicate) {
+      this.predicate = predicate;
+    }
+  }
+
+  public static final class DistinctOp implements PipelineOp {
+    public final String field;
+
+    public DistinctOp(String field) {
+      this.field = field;
     }
   }
 

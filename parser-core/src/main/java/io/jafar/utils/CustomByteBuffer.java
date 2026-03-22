@@ -163,6 +163,44 @@ public interface CustomByteBuffer {
   long getLong();
 
   /**
+   * Returns the total number of bytes in this buffer.
+   *
+   * @return the buffer limit
+   */
+  long limit();
+
+  /**
+   * Reads a single byte at the given absolute offset without changing the position.
+   *
+   * @param offset the absolute byte offset
+   * @return the byte value
+   */
+  byte get(long offset);
+
+  /**
+   * Reads an int value at the given absolute offset without changing the position.
+   *
+   * @param offset the absolute byte offset
+   * @return the int value
+   */
+  int getInt(long offset);
+
+  /**
+   * Reads a long value at the given absolute offset without changing the position.
+   *
+   * @param offset the absolute byte offset
+   * @return the long value
+   */
+  long getLong(long offset);
+
+  /**
+   * Releases any resources held by this buffer.
+   *
+   * @throws IOException if an I/O error occurs
+   */
+  void close() throws IOException;
+
+  /**
    * Wrapper implementation of CustomByteBuffer using MappedByteBuffer.
    *
    * <p>This class provides a concrete implementation that delegates to a MappedByteBuffer while
@@ -294,6 +332,31 @@ public interface CustomByteBuffer {
       //            if (mark > -1) {
       //                position = mark;
       //            }
+    }
+
+    @Override
+    public long limit() {
+      return delegate.limit();
+    }
+
+    @Override
+    public byte get(long offset) {
+      return delegate.get((int) offset);
+    }
+
+    @Override
+    public int getInt(long offset) {
+      return delegate.getInt((int) offset);
+    }
+
+    @Override
+    public long getLong(long offset) {
+      return delegate.getLong((int) offset);
+    }
+
+    @Override
+    public void close() throws IOException {
+      // MappedByteBuffers are unmapped by GC
     }
   }
 }

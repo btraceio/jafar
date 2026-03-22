@@ -1,0 +1,978 @@
+# HdumpPath Reference
+
+HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspired by OQL (Object Query Language), it provides a concise syntax for querying objects, classes, and GC roots with filtering, projection, and aggregation.
+
+## Grammar Overview
+
+```
+<query>     ::= <root> ("/" <type-spec>)? ("[" <predicates> "]")? ("|" <pipeline>)*
+<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")?  | "ages"
+<type-spec> ::= ("instanceof" "/")? <class-pattern>
+<predicates>::= <predicate> (("and" | "or") <predicate>)*
+<predicate> ::= <field-path> <op> <literal> | "not" <predicate> | "(" <predicates> ")"
+<pipeline>  ::= <operator> ("(" <args> ")")?
+```
+
+## Roots
+
+HdumpPath queries start with one of six roots:
+
+### `objects`
+
+Query heap object instances.
+
+```
+objects                                    # All objects
+objects/java.lang.String                   # String objects only
+objects/instanceof/java.util.Map           # Map implementations
+objects/java.util.*                        # Glob pattern matching
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | long | Object ID (heap address) |
+| `class` | String | Fully qualified class name |
+| `className` | String | Alias for `class` |
+| `shallow` | long | Shallow size in bytes |
+| `shallowSize` | long | Alias for `shallow` |
+| `retained` | long | Retained size in bytes (if computed) |
+| `retainedSize` | long | Alias for `retained` |
+| `arrayLength` | int | Length (arrays only) |
+| `stringValue` | String | String content (String objects only) |
+
+### `classes`
+
+Query class metadata.
+
+```
+classes                                    # All classes
+classes/java.util.HashMap                  # Specific class
+classes/java.util.*                        # Glob pattern
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | long | Class ID |
+| `name` | String | Fully qualified class name |
+| `simpleName` | String | Simple class name |
+| `instanceCount` | int | Number of instances |
+| `instanceSize` | long | Size of each instance |
+| `superClass` | String | Superclass name |
+| `isArray` | boolean | Whether class is an array type |
+
+### `gcroots`
+
+Query garbage collection roots.
+
+```
+gcroots                                    # All GC roots
+gcroots/THREAD_OBJ                         # Thread roots only
+gcroots/JNI_GLOBAL                         # JNI global references
+```
+
+**GC Root Types:**
+- `UNKNOWN` - Unknown root type
+- `JNI_GLOBAL` - JNI global reference
+- `JNI_LOCAL` - JNI local reference
+- `JAVA_FRAME` - Java stack frame
+- `NATIVE_STACK` - Native stack
+- `STICKY_CLASS` - System class
+- `THREAD_BLOCK` - Thread block
+- `MONITOR_USED` - Monitor in use
+- `THREAD_OBJ` - Thread object
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | String | GC root type name |
+| `objectId` | long | Referenced object ID |
+| `object` | String | Object description (class@id) |
+| `threadSerial` | int | Thread serial number |
+| `frameNumber` | int | Stack frame number |
+
+### `clusters`
+
+Query leak clusters detected by graph-based analysis. Identifies densely-connected subgraphs
+with high retained size but few GC root anchors. Results are cached after first computation.
+
+```
+clusters                                   # All detected clusters
+clusters | sortBy(score desc)              # Ranked by suspiciousness
+clusters | filter(retainedSize > 10MB)     # Large clusters only
+clusters[id = 3] | objects                 # Drill down to member objects
+clusters | filter(anchorType = "THREAD_OBJ")  # Filter by anchor type
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Cluster identifier |
+| `objectCount` | int | Number of objects in the cluster |
+| `retainedSize` | long | Total retained size of the cluster |
+| `rootPathCount` | int | Number of distinct GC root paths reaching the cluster |
+| `score` | double | Leak suspiciousness score (`retainedSize / rootPathCount`) |
+| `dominantClass` | String | Most common class in the cluster |
+| `anchorType` | String | GC root type of the primary anchor |
+| `anchorObject` | String | Description of the anchoring root object |
+
+**Pipeline operators:**
+- `objects` — expands cluster rows into member object rows (use after filtering by cluster id)
+
+### `duplicates`
+
+Detect structurally identical object subgraphs. Objects are grouped by a FNV-1a 64-bit
+fingerprint of their class, fields, and referenced subtrees. Groups are sorted by
+`wastedBytes` descending. Results are cached per depth after first computation.
+
+**Syntax:**
+```
+duplicates                                 # Default depth (3)
+duplicates(depth=N)                        # Custom fingerprint depth
+```
+
+**Examples:**
+```
+duplicates | sortBy(wastedBytes desc)
+duplicates(depth=1) | top(10)
+duplicates[rootClass = "com.example.Config"] | select(copies, wastedBytes)
+duplicates[copies > 5] | objects() | head(3)
+```
+
+**Available fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Group identifier (1-based) |
+| `rootClass` | String | Fully-qualified class name of the root object |
+| `fingerprint` | String | 16-char hex of the 64-bit structural fingerprint |
+| `copies` | int | Number of structurally-identical instances |
+| `uniqueSize` | long | Shallow size of one copy's root object in bytes |
+| `wastedBytes` | long | `(copies - 1) * uniqueSize` — deduplication savings |
+| `depth` | int | Fingerprint depth used for this group |
+| `nodeCount` | int | Objects visited in one copy's subtree |
+
+**Pipeline operators:**
+- `objects` — expands duplicate group rows into member object rows
+
+### `ages`
+
+Query all heap objects pre-enriched with estimated age data. Equivalent to `objects | estimateAge()` but more concise. Supports optional class-pattern filtering and predicates.
+
+```
+ages | groupBy(ageBucket, agg=count)
+ages | filter(ageBucket = "tenured") | top(10, retained)
+ages/com.example.Foo | select(id, estimatedAge, ageBucket)
+ages[estimatedAge > 50] | top(20, retained)
+```
+
+**Available fields** (all `objects` fields plus):
+| Field | Type | Description |
+|-------|------|-------------|
+| `estimatedAge` | int | Age score 0–100 |
+| `ageBucket` | String | `ephemeral` (0–25) / `medium` (26–50) / `tenured` (51–75) / `permanent` (76–100) |
+| `ageSignals` | String | Debug: `"root:STICKY_CLASS:+30,refs:4:+8,depth:2:+8"` |
+
+The age score is computed using three structural signals (no dominator tree required):
+1. **GC root type** — `STICKY_CLASS` → +30, `JNI_GLOBAL` → +25, `THREAD_OBJ` → +5, stack frames → +0
+2. **Inbound reference count** — `min(25, refCount × 2)`
+3. **BFS depth from a GC root** — `max(0, 10 − depth)` (shallower = older)
+
+## Type Specifications
+
+### Exact Match
+```
+objects/java.lang.String
+classes/java.util.HashMap
+```
+
+### Glob Patterns
+Use `*` for wildcard matching:
+```
+objects/java.util.*                        # All java.util classes
+objects/com.example.*Service               # Classes ending in Service
+classes/java.lang.reflect.*                # Reflection classes
+```
+
+### Instanceof (Subclass Matching)
+Include subclasses and implementations:
+```
+objects/instanceof/java.util.Map           # HashMap, TreeMap, ConcurrentHashMap, etc.
+objects/instanceof/java.io.Serializable    # All serializable objects
+```
+
+### Array Types
+Query array instances using Java notation or JVM descriptor format:
+
+**Java notation (recommended):**
+```
+objects/java.lang.Object[]               # Object arrays
+objects/java.lang.String[]               # String arrays
+objects/int[]                            # int arrays
+objects/byte[]                           # byte arrays
+objects/java.lang.Object[][]             # 2D Object arrays
+```
+
+**JVM descriptor format:**
+```
+objects/[Ljava.lang.Object;              # Object arrays
+objects/[I                               # int arrays
+objects/[B                               # byte arrays
+objects/[[Ljava.lang.String;             # 2D String arrays
+```
+
+Both notations can be combined with predicates and pipeline operations:
+```
+objects/java.lang.Object[][arrayLength > 1000] | top(10, shallow)
+objects/[Ljava.lang.Object;[retained > 100MB] | pathToRoot
+```
+
+**Primitive array type codes** (JVM format):
+| Java type | Code |
+|-----------|------|
+| `boolean` | `Z`  |
+| `char`    | `C`  |
+| `int`     | `I`  |
+| `long`    | `J`  |
+| `float`   | `F`  |
+| `double`  | `D`  |
+| `short`   | `S`  |
+| `byte`    | `B`  |
+
+## String Literals
+
+HdumpPath supports two quote styles with different semantics:
+
+- **Double quotes (`"..."`)** — escape sequences processed: `\n`, `\t`, `\\`, `\"`
+- **Single quotes (`'...'`)** — raw strings: backslashes are literal (only `\'` escapes)
+
+Use single quotes for regex patterns to avoid double-escaping:
+```
+objects[className ~ '.*\.HashMap']        # Raw: backslash preserved for regex
+objects[className ~ ".*\\.HashMap"]       # Escaped: need \\\\ for literal backslash
+```
+
+## Predicates (Filters)
+
+Predicates filter results using conditions in square brackets.
+
+### Basic Syntax
+```
+[field op value]
+```
+
+### Comparison Operators
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `=` or `==` | Equal | `[class = "java.lang.String"]` |
+| `!=` | Not equal | `[class != "java.lang.Object"]` |
+| `>` | Greater than | `[shallow > 1000]` |
+| `>=` | Greater or equal | `[instanceCount >= 100]` |
+| `<` | Less than | `[shallow < 100]` |
+| `<=` | Less or equal | `[instanceCount <= 10]` |
+| `~` | Regex match | `[name ~ ".*HashMap.*"]` |
+
+### Size Units
+Use convenient size suffixes for byte values:
+```
+[shallow > 1KB]                            # > 1024 bytes
+[shallow > 1MB]                            # > 1048576 bytes
+[shallow > 1GB]                            # > 1073741824 bytes
+```
+
+Supported: `K`, `KB`, `M`, `MB`, `G`, `GB` (case-insensitive)
+
+### Boolean Operators
+Combine conditions with `and`, `or`, `not`:
+```
+[shallow > 100 and shallow < 1000]
+[class = "java.lang.String" or class = "java.lang.StringBuilder"]
+[not isArray]
+[(shallow > 1MB) or (instanceCount > 1000)]
+```
+
+### Filter Functions
+Use function-style predicates for string matching and range checks:
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `contains(field, "str")` | Substring match | `[contains(className, "HashMap")]` |
+| `startsWith(field, "prefix")` | Prefix match | `[startsWith(className, "java/util")]` |
+| `endsWith(field, "suffix")` | Suffix match | `[endsWith(className, "Map")]` |
+| `matches(field, 'regex')` | Regex match | `[matches(className, '.*Cache.*')]` |
+| `between(field, min, max)` | Range check (inclusive) | `[between(shallow, 1KB, 1MB)]` |
+| `exists(field)` | Field is non-null | `[exists(stringValue)]` |
+| `empty(field)` | Field is null or empty | `[empty(stringValue)]` |
+
+Filter functions can be combined with boolean operators:
+```
+objects[contains(className, "Map") and shallow > 1KB]
+objects[startsWith(className, "java/util") or startsWith(className, "java/lang")]
+```
+
+### Examples
+```
+# Large strings
+objects/java.lang.String[shallow > 1KB]
+
+# Classes with many instances
+classes[instanceCount > 1000]
+
+# GC roots for specific threads
+gcroots/THREAD_OBJ[threadSerial > 0]
+
+# Complex filter
+objects[shallow > 100 and shallow < 10KB and class ~ "java.util.*"]
+```
+
+## Pipeline Operations
+
+Pipeline operators transform query results. Chain them with `|`:
+
+```
+objects/java.lang.String | top(10, shallow) | select(class, shallow)
+```
+
+### `select(field1, field2 as alias, ...)`
+Project specific fields with optional aliases.
+
+```
+objects | select(class, shallow)
+objects | select(id, shallow as size)
+classes | select(name, instanceCount as count)
+```
+
+### `top(n, by=field|field, [asc|desc])`
+Get top N results sorted by field. Default is descending. Accepts both named (`by=field, asc=true`) and positional (`field, asc`) styles.
+
+```
+objects | top(10, shallow)                 # Positional style
+objects | top(10, by=shallow)              # Named style (equivalent)
+objects | top(10, shallow, asc)            # Bottom 10 by shallow size
+objects | top(10, by=shallow, asc=true)    # Bottom 10 (named style)
+classes | top(5, instanceCount, desc)      # Top 5 by instance count
+```
+
+### `groupBy(field, agg=operation)`
+Group by field and aggregate. Default aggregation is `count`.
+
+```
+objects | groupBy(class)                   # Count by class
+objects | groupBy(class, agg=count)        # Explicit count
+objects | groupBy(class, agg=sum)          # Sum shallow sizes by class
+objects | groupBy(class, agg=avg)          # Average shallow size by class
+objects | groupBy(class, agg=min)          # Min shallow size by class
+objects | groupBy(class, agg=max)          # Max shallow size by class
+```
+
+**Parameters:**
+- `agg` - Aggregation function (default: `count`)
+- `value` - Value expression for sum/avg/min/max
+- `sortBy` (or `sort`) - Sort results by `key` (grouping key) or `value` (aggregated value)
+- `asc` - Sort ascending (default: `false`, descending)
+
+**Aggregation operations:**
+- `count` - Count items in group (default)
+- `sum` - Sum first numeric field
+- `avg` - Average of first numeric field
+- `min` - Minimum of first numeric field
+- `max` - Maximum of first numeric field
+
+### `count`
+Count total results.
+
+```
+objects/java.lang.String | count           # Count all strings
+objects[shallow > 1MB] | count             # Count large objects
+```
+
+### `sum(field)`
+Sum numeric field values.
+
+```
+objects/java.lang.String | sum(shallow)    # Total string memory
+objects | sum(shallow)                     # Total heap usage
+```
+
+### `stats(field)`
+Calculate statistics: count, sum, min, max, avg.
+
+```
+objects/java.lang.String | stats(shallow)
+```
+
+Output:
+```
+| count  | sum       | min | max    | avg    |
+|--------|-----------|-----|--------|--------|
+| 238750 | 9072500   | 38  | 38     | 38.0   |
+```
+
+### `sortBy(field [asc|desc], ...)`
+Sort results by one or more fields. Aliases: `sort`, `orderBy`, `order`.
+Accepts both bare keywords (`asc`/`desc`) and named param (`asc=true`/`asc=false`).
+
+```
+objects | sortBy(shallow desc)             # Sort by size descending
+objects | sortBy(shallow, asc=false)       # Same, named param style
+classes | sortBy(name asc)                 # Sort alphabetically
+objects | sortBy(class asc, shallow desc)  # Multi-field sort
+```
+
+### `head(n)`
+Take first N results.
+
+```
+objects | head(100)                        # First 100 objects
+classes | sortBy(name) | head(10)          # First 10 alphabetically
+```
+
+### `tail(n)`
+Take last N results.
+
+```
+objects | sortBy(shallow) | tail(10)       # 10 largest objects
+```
+
+### `filter(predicate)`
+Filter results mid-pipeline.
+
+```
+objects | groupBy(class, agg=count) | filter(count > 100)
+classes | filter(instanceCount > 1000 and name ~ "java.util.*")
+```
+
+### `distinct(field)`
+Get distinct values of a field.
+
+```
+objects | distinct(class)                  # Unique class names
+gcroots | distinct(type)                   # Unique root types
+```
+
+### `pathToRoot`
+Trace the path from each input object to its nearest GC root. Shows the reference chain
+that keeps the object alive.
+
+```
+# Why is this object alive?
+objects[id = 0x12345678] | pathToRoot
+
+# Trace the largest HashMap
+objects/java.util.HashMap | top(1, retained) | pathToRoot
+
+# Trace large Object arrays
+objects/java.lang.Object[][retained > 100MB] | pathToRoot
+```
+
+Aliases: `pathRoot`, `path`.
+
+### `checkLeaks([detector="name"] [, minSize=size] [, threshold=N])`
+Run built-in leak detectors against the heap dump. Without arguments, runs an interactive
+wizard that executes all detectors. With parameters, runs a specific detector.
+
+Can be used standalone (without a root) or as a pipeline operator:
+
+```
+# Interactive wizard — runs all detectors
+checkLeaks()
+
+# Run a specific detector
+checkLeaks(detector="threadlocal-leak")
+
+# Set thresholds
+checkLeaks(detector="growing-collections", minSize=10MB)
+checkLeaks(detector="duplicate-strings", threshold=100)
+
+# As pipeline operator
+objects | checkLeaks
+```
+
+**Available detectors:**
+
+| Detector | Description |
+|----------|-------------|
+| `threadlocal-leak` | ThreadLocal instances with large retained sizes |
+| `classloader-leak` | ClassLoader instances that should have been GC'd |
+| `duplicate-strings` | Identical string values with high instance counts |
+| `growing-collections` | Collections (HashMap, ArrayList, etc.) with large retained sizes |
+| `listener-leak` | Event listeners that may not have been deregistered |
+| `finalizer-queue` | Objects stuck in the finalizer queue |
+
+Aliases: `leaks`.
+
+### `retentionPaths()`
+Find all paths to GC root for each input object, then merge them at the class level.
+Individual object IDs are discarded; identical class-level paths are counted together.
+
+Output columns: `count`, `depth`, `retainedSize`, `path` (class names from GC root to target, joined with ` → `), sorted by `count` descending.
+
+```
+# Which class chains retain the most ConcurrentHashMap instances?
+objects/java.util.concurrent.ConcurrentHashMap | retentionPaths()
+
+# Top 5 retention paths for large strings
+objects/java.lang.String[retained > 1MB] | retentionPaths() | head(5)
+```
+
+Aliases: `classPaths()`, `classPathToRoot()`.
+
+### `retainedBreakdown([depth=N])`
+Recursively expands the dominator subtrees of input objects and aggregates the size breakdown at
+the class level. Depth 0 = direct dominatees; depth 1 = their dominatees; and so on.
+
+Accepts both **object rows** (`objects/…`) and **class rows** (`classes/…`). When fed class rows,
+all instances of those classes are found automatically and used as the starting points.
+
+Requires the dominator tree to have been computed (run `dominators()` first, or any query that
+triggers computation).
+
+Output columns: `depth`, `className`, `count`, `shallowSize`, `retainedSize`.
+Rows are sorted by depth ascending then retainedSize descending.
+An ASCII tree is also printed to stderr for quick visual inspection.
+
+```
+# What does a large HashMap actually retain, level by level?
+objects/java.util.HashMap[retained > 10MB] | retainedBreakdown()
+
+# Same starting from a class query — all HashMap instances
+classes/java.util.HashMap | retainedBreakdown()
+
+# Top 5 classes by retained size: drill into each one
+classes | top(5, instanceCount) | retainedBreakdown(depth=3)
+
+# Limit to 3 levels and filter significant classes at depth 2
+objects/java.util.HashMap[retained > 10MB] | retainedBreakdown(depth=3) | filter(depth = 2) | top(5, retainedSize)
+```
+
+Aliases: `breakdown()`, `expandDominators()`.
+
+### `dominators([mode] [, groupBy="class"|"package"] [, minRetained=size])`
+Analyse retained memory using the dominator tree.
+
+**Default (no arguments):** top-10 input objects sorted by retained size (≥ 1 MB).
+
+```
+objects | dominators()
+```
+
+**`groupBy="class"`:** heap-wide retained-size histogram by class, ignoring the input stream.
+
+```
+objects | dominators(groupBy="class")
+objects | dominators(groupBy="class", minRetained=5MB)
+```
+
+Output columns: `className`, `count`, `shallowSize`, `retainedSize`.
+
+**`groupBy="package"`:** same histogram grouped by package name.
+
+```
+objects | dominators(groupBy="package")
+objects | dominators(groupBy="package", minRetained=10MB)
+```
+
+Output columns: `package`, `count`, `shallowSize`, `retainedSize`.
+
+**`"objects"`:** list dominated objects for each input object (expand the tree).
+
+```
+objects[retained > 100MB] | dominators("objects")
+objects[retained > 100MB] | dominators("objects", minRetained=1MB)
+```
+
+**`"tree"`:** print ASCII dominator tree to stderr and return summary rows.
+
+```
+objects[retained > 500MB] | dominators("tree")
+objects[retained > 500MB] | dominators("tree", minRetained=10MB)
+```
+
+**`minRetained`** accepts size suffixes: `1KB`, `10MB`, `1GB`.
+
+### `waste()`
+
+Enrich collection objects with capacity and waste metrics. Reads internal fields of known JDK
+collection types to compute how much memory is wasted by over-allocation.
+
+Supported collections: `HashMap`, `LinkedHashMap`, `HashSet`, `LinkedHashSet`, `ArrayList`,
+`ConcurrentHashMap`, `ArrayDeque`.
+
+```
+# Analyze all HashMap instances for waste
+objects/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
+
+# Find worst offenders — large capacity, few entries
+objects/java.util.HashMap | waste() | filter(loadFactor < 0.1) | top(20)
+
+# ArrayList backing array waste
+objects/java.util.ArrayList | waste() | sortBy(wastedBytes desc)
+
+# Aggregate waste by class
+objects/java.util.HashMap | waste() | groupBy(class, agg=sum, value=wastedBytes)
+```
+
+**Output columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `capacity` | Integer | Backing array/table length |
+| `size` | Integer | Logical element count |
+| `loadFactor` | Double | `size / capacity` (0.0 to 1.0) |
+| `wastedBytes` | Long | `(capacity - size) * refSize` for unused slots |
+| `wasteType` | String | `"emptyDefault"`, `"overCapacity"`, `"normal"`, or null |
+
+Non-collection objects pass through with null waste columns.
+
+### `threadOwner()`
+
+Enrich object rows with thread ownership columns. For each object, walks the dominator tree to
+find the thread (THREAD_OBJ GC root) that exclusively dominates it. Objects not dominated by any
+single thread are labelled `"shared"`.
+
+Requires a full dominator tree (computed automatically on first use).
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `ownerThread` | String | Thread name, or `"shared"` |
+| `ownership` | String | `"exclusive"` or `"shared"` |
+
+```
+# Which thread owns the largest HashMaps?
+objects/java.util.HashMap[retained > 1MB] | threadOwner() | select(id, class, retained, ownerThread)
+
+# Find shared objects over 1 MB
+objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
+
+# Per-thread breakdown of large byte arrays
+objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(value desc)
+```
+
+### `dominatedSize()`
+
+Enrich THREAD_OBJ GC root rows with dominated memory statistics. For each row whose `objectId`
+matches a THREAD_OBJ root, adds thread name and the retained size and object count of the
+dominated subtree. Rows that do not correspond to a THREAD_OBJ root pass through unchanged.
+
+Requires a full dominator tree (computed automatically on first use).
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `threadName` | String | Thread name |
+| `dominated` | Long | Retained size of the thread object (bytes) |
+| `dominatedCount` | Integer | Objects in the dominated subtree |
+
+```
+# Per-thread dominated memory, sorted by size
+gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
+
+# Thread memory table
+gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)
+
+# Top 10 memory-hungry threads
+gcroots/THREAD_OBJ | dominatedSize() | top(10, dominated)
+```
+
+### `estimateAge()`
+
+Enrich object rows with estimated age data. Adds `estimatedAge`, `ageBucket`, and `ageSignals`
+columns to each row. Uses the same scoring algorithm as the `ages` root (see above). Result is
+cached in the session after the first call.
+
+```
+# Find the oldest large objects
+objects[retained > 10MB] | estimateAge() | sortBy(estimatedAge desc) | top(20)
+
+# Age distribution of HashMap instances
+objects/java.util.HashMap | estimateAge() | groupBy(ageBucket, agg=count)
+
+# Per-class average age
+objects | estimateAge() | groupBy(class, agg=avg, value=estimatedAge) | top(10, avg)
+
+# Suspiciously old short-lived types
+objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenured") | top(20)
+```
+
+### `whatif()`
+
+Simulate removing the input objects from the heap and report how much memory would be freed.
+Consumes the incoming object (or GC root) row stream and returns a single summary row.
+
+```
+# How much memory would freeing LeakyCache instances save?
+objects/com.example.LeakyCache | whatif()
+
+# Focus on the key metrics only
+objects[retained > 10MB] | whatif() | select(freedBytes, freedPct)
+
+# Simulate freeing thread-owned objects
+gcroots/THREAD_OBJ | whatif()
+
+# Combine with filtering before the simulation
+objects/com.example.Foo[retained > 1MB] | whatif()
+```
+
+**Output fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | String | Always `"remove"` |
+| `targetCount` | int | Number of objects in the input stream |
+| `freedBytes` | long | Sum of retained sizes (approximate freed memory) |
+| `freedObjects` | int | Objects in dominated subtrees (exact with full dominator tree, else `targetCount`) |
+| `freedPct` | double | `freedBytes / totalHeapSize * 100`, one decimal place |
+| `remainingRetained` | long | `totalHeapSize - freedBytes` |
+
+### `join(session=id|alias [, root="eventType", by=field])`
+Join with another session. Supports two modes:
+
+**Heap-to-heap diff** (no `root=`): Performs a left-join against another heap session,
+adding delta columns for numeric fields.
+
+**JFR correlation** (`root=` specified): Joins heap data with JFR allocation events,
+enriching class rows with allocation statistics from a JFR recording.
+
+The join key is auto-inferred from the query root type:
+- `classes` → `name`
+- `objects` → `className`
+- `gcroots` → `type`
+
+Override with `by=field` when needed.
+
+#### Heap diff mode
+
+**Output columns added:** for each numeric field `F`:
+- `baseline.F` — value from the baseline session (null if absent)
+- `FDelta` — `F - baseline.F`
+- `baseline.exists` — boolean, true if the row exists in the baseline
+
+```
+# Open two heap dumps
+open before.hprof
+open after.hprof
+
+# Basic class histogram diff (join by name, auto-inferred)
+classes | join(session=1) | sortBy(instanceCountDelta desc)
+
+# Using session alias
+classes | join(session="before.hprof") | sortBy(instanceCountDelta desc)
+
+# With explicit join key
+classes | join(session=1, by=name) | filter(instanceCountDelta > 0) | top(20, instanceCountDelta)
+
+# Object-level diff (joins by className)
+objects | groupBy(class, agg=count) | join(session=1) | sortBy(countDelta desc)
+
+# Find classes that only exist in the new dump
+classes | join(session=1) | filter(baseline.exists = false)
+
+# GC root type diff
+gcroots | groupBy(type, agg=count) | join(session=1)
+```
+
+#### JFR correlation mode
+
+When `root=` specifies a JFR event type (e.g. `jdk.ObjectAllocationSample`), the join
+queries the JFR session for those events and aggregates them by class name.
+
+**Enrichment columns added:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `allocCount` | Long | Number of allocation sample events for this class |
+| `allocWeight` | Long | Total sampled allocation weight (bytes) |
+| `allocRate` | Double | Allocations per second (null if timestamps unavailable) |
+| `topAllocSite` | String | Most frequent allocation stack frame |
+| `survivalRatio` | Double | `instanceCount / allocCount` (null if allocCount is 0 or absent) |
+
+```
+# Open JFR recording and heap dump
+open recording.jfr
+open dump.hprof
+
+# Enrich class histogram with JFR allocation data
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-alloc, low-retention classes (churn)
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000 and retained < 1MB)
+
+# Top classes by allocation weight
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(20)
+```
+
+## Complete Examples
+
+### Memory Analysis
+
+```
+# Top 10 classes by instance count
+classes | top(10, instanceCount)
+
+# Memory by class (sum of shallow sizes)
+objects | groupBy(class, agg=sum) | top(10, sum)
+
+# Large object analysis
+objects[shallow > 1MB] | groupBy(class, agg=count) | sortBy(count desc)
+
+# String memory statistics
+objects/java.lang.String | stats(shallow)
+```
+
+### Thread Memory Attribution
+
+```
+# Which threads own the most memory?
+gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
+
+# Per-thread summary
+gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)
+
+# Which thread owns this large object?
+objects/com.example.Cache[retained > 100MB] | threadOwner() | select(id, retained, ownerThread)
+
+# Find shared objects (not exclusively owned by any thread)
+objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
+```
+
+### GC Root Analysis
+
+```
+# GC root distribution
+gcroots | groupBy(type, agg=count) | sortBy(count desc)
+
+# Thread roots
+gcroots/THREAD_OBJ | select(type, object, threadSerial)
+
+# Count by type
+gcroots | groupBy(type) | top(10, count)
+```
+
+### Class Hierarchy
+
+```
+# Find Map implementations
+objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
+
+# Collection analysis
+objects/instanceof/java.util.Collection | groupBy(class, agg=sum) | top(10, sum)
+```
+
+### Heap Diff (Cross-Session Comparison)
+
+```
+# Open two dumps and diff class histograms
+open before.hprof
+open after.hprof
+classes | join(session=1) | sortBy(instanceCountDelta desc) | head(20)
+
+# Find classes with growing instance counts
+classes | join(session=1) | filter(instanceCountDelta > 0) | top(10, instanceCountDelta)
+
+# New classes not present in baseline
+classes | join(session=1) | filter(baseline.exists = false)
+```
+
+### JFR + Heap Dump Correlation
+
+```
+# Open both a JFR recording and a heap dump
+open recording.jfr
+open dump.hprof
+
+# Enrich class histogram with allocation data from JFR
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+
+# Find high-churn classes: many allocations but few survivors
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+
+# Top allocation weight classes
+classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
+```
+
+### Finding Specific Objects
+
+```
+# Large arrays (any type)
+objects[isArray and shallow > 1MB] | top(10, shallow)
+
+# Large Object arrays specifically
+objects/java.lang.Object[][arrayLength > 1000] | top(10, shallow)
+
+# Find what retains large Object arrays
+objects/java.lang.Object[][retained > 100MB] | top(5, retained) | pathToRoot
+
+# String contents (if looking for specific strings)
+objects/java.lang.String[stringValue ~ ".*ERROR.*"] | head(10)
+
+# Objects by size range
+objects[shallow > 1KB and shallow < 1MB] | groupBy(class) | top(10, count)
+```
+
+## Query Composition
+
+Build complex queries by combining features:
+
+```
+# Complete memory report
+objects
+  | groupBy(class, agg=count)
+  | filter(count > 100)
+  | sortBy(count desc)
+  | head(20)
+  | select(class, count)
+
+# Detailed class analysis
+classes[instanceCount > 1000]
+  | sortBy(instanceCount desc)
+  | head(10)
+  | select(name, instanceCount, instanceSize)
+```
+
+## Value Transform Functions
+
+Transform individual field values in the pipeline.
+
+### String Transforms
+- `| len(field)` — String length (or collection size). Alias: `length`.
+- `| uppercase(field)` — Convert to uppercase. Alias: `upper`.
+- `| lowercase(field)` — Convert to lowercase. Alias: `lower`.
+- `| trim(field)` — Trim whitespace.
+- `| replace(field, "old", "new")` — Replace occurrences.
+
+### Numeric Transforms
+- `| abs(field)` — Absolute value.
+- `| round(field)` — Round to nearest integer.
+- `| floor(field)` — Round down.
+- `| ceil(field)` — Round up.
+
+### Examples
+```
+objects/java.lang.String | len(stringValue)
+objects | select(class, shallow) | uppercase(class)
+objects | replace(className, "java/lang/", "j.l.")
+objects | select(class, shallow) | abs(shallow)
+```
+
+## Tips and Best Practices
+
+1. **Start broad, then filter**: Begin with `objects` or `classes`, then add predicates.
+
+2. **Use `instanceof` for polymorphism**: When analyzing interfaces or abstract classes.
+
+3. **Combine with `groupBy`**: Group results for meaningful aggregations.
+
+4. **Check `stats` first**: Get an overview before diving into specifics.
+
+5. **Use size units**: `1MB` is more readable than `1048576`.
+
+6. **Pipeline efficiently**: Apply filters early to reduce data volume.
+
+## See Also
+
+- [JfrPath Reference](jfrpath.md) — Query language for JFR event analysis (same shell, similar syntax)
+- [Heap Dump Quick Start](hdump-shell-quickstart.md) — Get started in 5 minutes
+- [Heap Dump Tutorial](cli/hdump-shell-tutorial.md) — Full analysis guide
+- [JFR Shell Tutorial](cli/Tutorial.md) — JFR analysis tutorial

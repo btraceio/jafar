@@ -65,14 +65,14 @@ class InvalidateCacheCommandTest {
   }
 
   private ParsingContext ctx;
-  private SessionManager sessions;
+  private SessionManager<JFRSession> sessions;
   private CommandDispatcher dispatcher;
   private BufferIO io;
 
   @BeforeEach
   void setUp() throws Exception {
     ctx = ParsingContext.create();
-    sessions = new SessionManager(ctx, (path, c) -> new JFRSession(path, c));
+    sessions = new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     io = new BufferIO();
     dispatcher = new CommandDispatcher(sessions, io, r -> {});
 
