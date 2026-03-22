@@ -78,6 +78,30 @@ public final class HdumpPathParser {
       skipWs();
     }
 
+    // For WHATIF root: parse optional action keyword and inner query string, then skip to pipeline
+    if (root == Root.WHATIF) {
+      skipWs();
+      // Parse optional action keyword ("remove" → rootParam=0; default 0)
+      if (matchKeyword("remove")) {
+        rootParam = 0;
+      }
+      skipWs();
+      String innerQuery = parseInnerQueryString();
+      skipWs();
+      List<PipelineOp> pipeline = new ArrayList<>();
+      while (peek() == '|') {
+        advance(); // consume '|'
+        skipWs();
+        pipeline.add(parsePipelineOp());
+        skipWs();
+      }
+      if (!isAtEnd()) {
+        throw new HdumpPathParseException(
+            "Unexpected input at position " + pos + ": " + remaining());
+      }
+      return new Query(root, innerQuery, false, List.of(), pipeline, rootParam);
+    }
+
     // Parse optional type specification
     String typePattern = null;
     boolean instanceof_ = false;
@@ -142,9 +166,11 @@ public final class HdumpPathParser {
       return Root.CLUSTERS;
     } else if (matchKeyword("duplicates")) {
       return Root.DUPLICATES;
+    } else if (matchKeyword("whatif")) {
+      return Root.WHATIF;
     } else {
       throw new HdumpPathParseException(
-          "Expected 'objects', 'classes', 'gcroots', 'clusters', or 'duplicates' at position "
+          "Expected 'objects', 'classes', 'gcroots', 'clusters', 'duplicates', or 'whatif' at position "
               + pos);
     }
   }
@@ -1198,6 +1224,27 @@ public final class HdumpPathParser {
     }
 
     return new JoinOp(sessionRef, byField, root);
+  }
+
+  /**
+   * Reads characters until a top-level {@code |} or end-of-input is reached. Bracket and
+   * parenthesis depth is tracked so that {@code |} characters inside {@code [...]} or {@code (...)}
+   * are not treated as pipeline separators.
+   */
+  private String parseInnerQueryString() {
+    StringBuilder sb = new StringBuilder();
+    int bracketDepth = 0;
+    int parenDepth = 0;
+    while (!isAtEnd()) {
+      char c = peek();
+      if (c == '[') bracketDepth++;
+      else if (c == ']') bracketDepth--;
+      else if (c == '(') parenDepth++;
+      else if (c == ')') parenDepth--;
+      else if (c == '|' && bracketDepth == 0 && parenDepth == 0) break;
+      sb.append(advance());
+    }
+    return sb.toString().trim();
   }
 
   private String parseStringOrIdentifier() {

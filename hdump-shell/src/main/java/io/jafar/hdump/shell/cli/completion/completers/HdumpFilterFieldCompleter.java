@@ -43,6 +43,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "classes" -> getClassFieldDescription(field);
       case "gcroots" -> getGcRootFieldDescription(field);
       case "duplicates" -> getDuplicateFieldDescription(field);
+      case "whatif" -> getWhatIfFieldDescription(field);
       default -> null;
     };
   }
@@ -93,6 +94,19 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "wastedBytes" -> "(copies - 1) * uniqueSize";
       case "depth" -> "fingerprint depth used";
       case "nodeCount" -> "objects in one copy's subtree";
+      default -> null;
+    };
+  }
+
+  private String getWhatIfFieldDescription(String field) {
+    return switch (field) {
+      case "action" -> "simulated action (always 'remove' in v1)";
+      case "targetQuery" -> "inner query whose matched objects are removed";
+      case "targetCount" -> "number of objects matched by the inner query";
+      case "freedBytes" -> "sum of retained sizes of matched objects (approximate)";
+      case "freedObjects" -> "object count in dominated subtrees of matched objects";
+      case "freedPct" -> "freedBytes / totalHeapSize * 100 (one decimal)";
+      case "remainingRetained" -> "totalHeapSize - freedBytes";
       default -> null;
     };
   }

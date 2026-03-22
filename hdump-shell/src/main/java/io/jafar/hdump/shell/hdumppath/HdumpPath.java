@@ -37,7 +37,9 @@ public final class HdumpPath {
     /** Query leak clusters detected by graph-based analysis. */
     CLUSTERS,
     /** Query structurally-identical duplicate object subgraphs. */
-    DUPLICATES
+    DUPLICATES,
+    /** Simulate the effect of removing a set of objects from the heap. */
+    WHATIF
   }
 
   /** Comparison operators. */
@@ -598,5 +600,34 @@ public final class HdumpPath {
     public static final String NODE_COUNT = "nodeCount";
 
     private DuplicateFields() {}
+  }
+
+  /** Standard field names produced by the {@code whatif} root. */
+  public static final class WhatIfFields {
+    /** The simulated action (always {@code "remove"} in v1). */
+    public static final String ACTION = "action";
+
+    /** The inner query string whose matched objects are simulated for removal. */
+    public static final String TARGET_QUERY = "targetQuery";
+
+    /** Number of objects matched by the inner query. */
+    public static final String TARGET_COUNT = "targetCount";
+
+    /** Sum of retained sizes of matched objects (approximate freed bytes). */
+    public static final String FREED_BYTES = "freedBytes";
+
+    /**
+     * Object count in the dominated subtrees of matched objects (exact when full dominator tree is
+     * available, otherwise equals {@code targetCount}).
+     */
+    public static final String FREED_OBJECTS = "freedObjects";
+
+    /** {@code freedBytes / totalHeapSize * 100}, rounded to one decimal place. */
+    public static final String FREED_PCT = "freedPct";
+
+    /** {@code totalHeapSize - freedBytes}. */
+    public static final String REMAINING_RETAINED = "remainingRetained";
+
+    private WhatIfFields() {}
   }
 }

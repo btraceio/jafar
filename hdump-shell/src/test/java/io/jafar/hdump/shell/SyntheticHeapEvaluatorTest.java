@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -209,6 +210,83 @@ class SyntheticHeapEvaluatorTest {
       assertTrue(row.containsKey("id"), "object row missing 'id'");
       assertTrue(row.containsKey("class"), "object row missing 'class'");
       assertEquals("com.example.Foo", row.get("class"));
+    }
+  }
+
+  /**
+   * Isolated tests for the {@code whatif} root. Uses a dedicated session so that retained-size
+   * computation triggered by whatif evaluation does not pollute the shared session used by the
+   * other tests.
+   */
+  @Nested
+  class WhatIfTests {
+
+    @TempDir Path whatifTempDir;
+
+    private HeapSession whatifSession() throws IOException {
+      Path hprof =
+          new MinimalHprofBuilder()
+              .addClass(200, "com/example/Foo")
+              .addClass(201, "com/example/Bar")
+              .addInstance(2000, 200)
+              .addInstance(2001, 200)
+              .addInstance(2002, 200)
+              .addInstance(2003, 201)
+              .addInstance(2004, 201)
+              .addGcRoot(2000)
+              .write(whatifTempDir);
+      return HeapSession.open(hprof);
+    }
+
+    @Test
+    void whatifRemoveFoo() throws IOException {
+      try (HeapSession s = whatifSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s, HdumpPathParser.parse("whatif remove objects/com.example.Foo"));
+        assertEquals(1, result.size());
+        Map<String, Object> row = result.get(0);
+        assertEquals("remove", row.get("action"));
+        assertEquals(3, ((Number) row.get("targetCount")).intValue());
+        assertTrue(((Number) row.get("freedBytes")).longValue() >= 0);
+        assertTrue(((Number) row.get("freedObjects")).intValue() >= 0);
+        assertTrue(row.containsKey("freedPct"));
+        assertTrue(row.containsKey("remainingRetained"));
+      }
+    }
+
+    @Test
+    void whatifRemoveNonexistent() throws IOException {
+      try (HeapSession s = whatifSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s, HdumpPathParser.parse("whatif remove objects/com.example.Nonexistent"));
+        assertEquals(1, result.size());
+        Map<String, Object> row = result.get(0);
+        assertEquals(0, ((Number) row.get("targetCount")).intValue());
+        assertEquals(0L, ((Number) row.get("freedBytes")).longValue());
+        assertEquals(0, ((Number) row.get("freedObjects")).intValue());
+      }
+    }
+
+    @Test
+    void whatifParserAcceptsAction() {
+      var query = HdumpPathParser.parse("whatif remove objects/com.example.Foo");
+      assertEquals(0, query.rootParam());
+      assertEquals("objects/com.example.Foo", query.typePattern());
+    }
+
+    @Test
+    void whatifWithPipeline() throws IOException {
+      try (HeapSession s = whatifSession()) {
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s,
+                HdumpPathParser.parse(
+                    "whatif remove objects/com.example.Foo | select(freedBytes)"));
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).containsKey("freedBytes"));
+      }
     }
   }
 }

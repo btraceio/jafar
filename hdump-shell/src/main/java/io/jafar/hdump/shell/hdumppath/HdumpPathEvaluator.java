@@ -226,6 +226,7 @@ public final class HdumpPathEvaluator {
           case GCROOTS -> evaluateGcRoots(dump, query);
           case CLUSTERS -> evaluateClusters(session, query);
           case DUPLICATES -> evaluateDuplicates(session, query);
+          case WHATIF -> evaluateWhatIf(session, query);
         };
 
     // Apply pipeline operations
@@ -1023,6 +1024,80 @@ public final class HdumpPathEvaluator {
     return rows;
   }
 
+  private static List<Map<String, Object>> evaluateWhatIf(HeapSession session, Query query) {
+    String innerQueryStr = query.typePattern();
+    if (innerQueryStr == null || innerQueryStr.isBlank()) {
+      throw new HdumpPathParseException("whatif requires an inner query string");
+    }
+
+    // Ensure retained sizes are available
+    HeapDump dump = session.getHeapDump();
+    if (!dump.hasDominators()) {
+      session.computeApproximateRetainedSizes();
+    }
+
+    // Evaluate the inner query to find target objects
+    Query innerQuery = HdumpPathParser.parse(innerQueryStr);
+    List<Map<String, Object>> targetRows = evaluate(session, innerQuery);
+    int targetCount = targetRows.size();
+
+    // Accumulate freed bytes (sum of retained sizes of matched objects)
+    long freedBytes = 0;
+    int freedObjects = 0;
+
+    if (session.hasFullDominatorTree() && dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
+      // Exact dominated-subtree count via BFS
+      Set<Long> visited = new java.util.HashSet<>();
+      Deque<HeapObject> queue = new java.util.ArrayDeque<>();
+
+      for (Map<String, Object> row : targetRows) {
+        Object idObj = row.get(ObjectFields.ID);
+        if (idObj == null) continue;
+        long id = ((Number) idObj).longValue();
+        HeapObject obj = dump.getObjectById(id).orElse(null);
+        if (obj == null || !visited.add(id)) continue;
+        freedBytes += Math.max(0, obj.getRetainedSizeIfAvailable());
+        queue.add(obj);
+      }
+
+      while (!queue.isEmpty()) {
+        HeapObject cur = queue.poll();
+        freedObjects++;
+        for (HeapObject child : impl.getDominatedObjects(cur)) {
+          if (visited.add(child.getId())) {
+            queue.add(child);
+          }
+        }
+      }
+    } else {
+      for (Map<String, Object> row : targetRows) {
+        Object idObj = row.get(ObjectFields.ID);
+        if (idObj == null) continue;
+        long id = ((Number) idObj).longValue();
+        HeapObject obj = dump.getObjectById(id).orElse(null);
+        if (obj == null) continue;
+        long retained = obj.getRetainedSizeIfAvailable();
+        freedBytes += Math.max(0, retained);
+      }
+      freedObjects = targetCount;
+    }
+
+    long totalHeapSize = dump.getTotalHeapSize();
+    double freedPct =
+        totalHeapSize > 0 ? Math.round((freedBytes * 1000.0 / totalHeapSize)) / 10.0 : 0.0;
+    long remainingRetained = totalHeapSize - freedBytes;
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put(HdumpPath.WhatIfFields.ACTION, "remove");
+    row.put(HdumpPath.WhatIfFields.TARGET_QUERY, innerQueryStr);
+    row.put(HdumpPath.WhatIfFields.TARGET_COUNT, targetCount);
+    row.put(HdumpPath.WhatIfFields.FREED_BYTES, freedBytes);
+    row.put(HdumpPath.WhatIfFields.FREED_OBJECTS, freedObjects);
+    row.put(HdumpPath.WhatIfFields.FREED_PCT, freedPct);
+    row.put(HdumpPath.WhatIfFields.REMAINING_RETAINED, remainingRetained);
+    return List.of(row);
+  }
+
   // === Object to Map conversions ===
 
   public static Map<String, Object> objectToRow(HeapObject obj) {
@@ -1676,6 +1751,7 @@ public final class HdumpPathEvaluator {
       case GCROOTS -> GcRootFields.TYPE;
       case CLUSTERS -> ClusterFields.ID;
       case DUPLICATES -> HdumpPath.DuplicateFields.ID;
+      case WHATIF -> HdumpPath.WhatIfFields.TARGET_QUERY;
     };
   }
 

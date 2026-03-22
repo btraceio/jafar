@@ -6,6 +6,7 @@ import io.jafar.hdump.shell.hdumppath.HdumpPath.ClusterFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.DuplicateFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.GcRootFields;
 import io.jafar.hdump.shell.hdumppath.HdumpPath.ObjectFields;
+import io.jafar.hdump.shell.hdumppath.HdumpPath.WhatIfFields;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.completion.MetadataService;
 import java.nio.file.Path;
@@ -20,7 +21,7 @@ import java.util.Set;
 public final class HdumpMetadataService implements MetadataService {
 
   private static final List<String> ROOT_TYPES =
-      List.of("objects", "classes", "gcroots", "clusters", "duplicates");
+      List.of("objects", "classes", "gcroots", "clusters", "duplicates", "whatif");
 
   private static final List<String> OPERATORS =
       List.of(
@@ -112,6 +113,17 @@ public final class HdumpMetadataService implements MetadataService {
           DuplicateFields.DEPTH,
           DuplicateFields.NODE_COUNT);
 
+  /** Field names for whatif root type */
+  private static final List<String> WHATIF_FIELDS =
+      List.of(
+          WhatIfFields.ACTION,
+          WhatIfFields.TARGET_QUERY,
+          WhatIfFields.TARGET_COUNT,
+          WhatIfFields.FREED_BYTES,
+          WhatIfFields.FREED_OBJECTS,
+          WhatIfFields.FREED_PCT,
+          WhatIfFields.REMAINING_RETAINED);
+
   private final SessionManager<HeapSession> sessions;
 
   public HdumpMetadataService(SessionManager<HeapSession> sessions) {
@@ -158,6 +170,7 @@ public final class HdumpMetadataService implements MetadataService {
       case "gcroots" -> GC_ROOT_FIELDS;
       case "clusters" -> CLUSTER_FIELDS;
       case "duplicates" -> DUPLICATE_FIELDS;
+      case "whatif" -> WHATIF_FIELDS;
       default -> Collections.emptyList();
     };
   }
