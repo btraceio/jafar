@@ -4,15 +4,12 @@ import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapObject;
-import io.jafar.hdump.api.PathStep;
 import io.jafar.hdump.util.ClassNameUtil;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Detects leak clusters by identifying densely-connected subgraphs with high retained size but few
@@ -245,38 +242,37 @@ public final class ClusterDetector {
         }
       }
 
-      // Sample GC root paths (up to 10 objects)
+      // Determine anchor type and root path count using the pre-built gcRootTypes map.
+      // This avoids O(N) findPathToGcRoot calls per cluster (which caused O(clusters×N) total).
       int rootPathCount = 0;
-      Set<Long> seenRootIds = new HashSet<>();
       String anchorType = "UNKNOWN";
       String anchorObject = "unknown";
-      int sampled = 0;
       for (int memberIdx : members) {
-        if (sampled >= 10) break;
         long objId = idIndex[memberIdx];
-        HeapObject obj = dump.getObjectById(objId).orElse(null);
-        if (obj == null) continue;
-
-        List<PathStep> path = dump.findPathToGcRoot(obj);
-        if (!path.isEmpty()) {
-          HeapObject rootObj = path.get(0).object();
-          if (rootObj != null && seenRootIds.add(rootObj.getId())) {
-            rootPathCount++;
-          }
-          if (sampled == 0 && rootObj != null) {
-            anchorObject = rootObj.getDescription();
-            // O(1) anchor type lookup via pre-built map
-            GcRoot.Type type = gcRootTypes.get(rootObj.getId());
-            if (type != null) {
-              anchorType = type.name();
-            }
+        GcRoot.Type rootType = gcRootTypes.get(objId);
+        if (rootType != null) {
+          rootPathCount++;
+          if ("UNKNOWN".equals(anchorType)) {
+            anchorType = rootType.name();
+            String cls = classNames[memberIdx];
+            anchorObject = (cls != null ? cls : "unknown") + "@" + Long.toHexString(objId);
           }
         }
-        sampled++;
       }
-      // Prevent division by zero; clusters without sampled root paths are scored as if anchored
-      // once
-      if (rootPathCount == 0) rootPathCount = 1;
+      // Fall back to label node if no direct GC root found in cluster members
+      if (rootPathCount == 0) {
+        int labelIdx = entry.getKey();
+        if (labelIdx < actualCount) {
+          long labelId = idIndex[labelIdx];
+          GcRoot.Type labelRootType = gcRootTypes.get(labelId);
+          if (labelRootType != null) {
+            anchorType = labelRootType.name();
+            String cls = classNames[labelIdx];
+            anchorObject = (cls != null ? cls : "unknown") + "@" + Long.toHexString(labelId);
+          }
+        }
+        rootPathCount = 1; // prevent division by zero
+      }
 
       double score = (double) retainedSize / rootPathCount;
 
