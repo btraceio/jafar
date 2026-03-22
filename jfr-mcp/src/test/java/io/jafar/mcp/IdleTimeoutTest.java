@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,6 +17,14 @@ class IdleTimeoutTest {
   @BeforeEach
   void setUp() {
     server = new JafarMcpServer();
+  }
+
+  @AfterEach
+  void tearDown() {
+    // Interrupt any watchdog threads started by tests so they cannot fire System.exit(0)
+    Thread.getAllStackTraces().keySet().stream()
+        .filter(t -> t.getName().equals("mcp-idle-watchdog"))
+        .forEach(Thread::interrupt);
   }
 
   @Test
@@ -41,10 +50,6 @@ class IdleTimeoutTest {
 
     // Set lastActivityNanos to a very old value
     field.set(server, 0L);
-
-    // Call a wrapped tool (jfr_help has no session requirement)
-    Method handleHelp = JafarMcpServer.class.getDeclaredMethod("handleJfrHelp", Map.class);
-    handleHelp.setAccessible(true);
 
     Method wrap =
         JafarMcpServer.class.getDeclaredMethod(
@@ -87,21 +92,21 @@ class IdleTimeoutTest {
   void idleWatchdogStartsWithPositiveTimeout() throws Exception {
     System.setProperty("mcp.idle.timeout.minutes", "10");
     try {
-      long threadsBefore =
-          Thread.getAllStackTraces().keySet().stream()
-              .filter(t -> t.getName().equals("mcp-idle-watchdog"))
-              .count();
-
       Method start = JafarMcpServer.class.getDeclaredMethod("startIdleWatchdog");
       start.setAccessible(true);
       start.invoke(server);
 
-      long threadsAfter =
-          Thread.getAllStackTraces().keySet().stream()
-              .filter(t -> t.getName().equals("mcp-idle-watchdog"))
-              .count();
-
-      assertTrue(threadsAfter > threadsBefore, "Watchdog thread should have been started");
+      // Thread.start() is async — spin-wait until the watchdog thread appears or 2s pass
+      long deadline = System.currentTimeMillis() + 2_000;
+      boolean found = false;
+      while (System.currentTimeMillis() < deadline) {
+        found =
+            Thread.getAllStackTraces().keySet().stream()
+                .anyMatch(t -> t.getName().equals("mcp-idle-watchdog"));
+        if (found) break;
+        Thread.sleep(10);
+      }
+      assertTrue(found, "Watchdog thread should have been started within 2 seconds");
     } finally {
       System.clearProperty("mcp.idle.timeout.minutes");
     }
