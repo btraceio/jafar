@@ -104,14 +104,11 @@ public final class HdumpShellCompleter implements Completer {
     }
   }
 
-  private static boolean isRootType(String word) {
-    return "objects".equals(word)
-        || "classes".equals(word)
-        || "gcroots".equals(word)
-        || "clusters".equals(word);
+  private boolean isRootType(String word) {
+    return metadata.getRootTypes().contains(word);
   }
 
-  private static boolean startsWithRoot(String word) {
+  private boolean startsWithRoot(String word) {
     int slash = word.indexOf('/');
     return slash > 0 && isRootType(word.substring(0, slash));
   }
