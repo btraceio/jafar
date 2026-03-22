@@ -1344,7 +1344,6 @@ public final class TuiCommandExecutor {
         String progress = currentLine.toString().trim();
         if (!progress.isEmpty()) {
           ctx.asyncProgressMessage = progress;
-          ctx.asyncProgressMessageTime = System.nanoTime();
         }
         currentLine.setLength(0);
       } else if (c == '\n') {
@@ -1352,7 +1351,6 @@ public final class TuiCommandExecutor {
         String line = currentLine.toString().trim();
         if (!line.isEmpty() && !LOGBACK_LINE.matcher(line).matches()) {
           ctx.asyncProgressMessage = line;
-          ctx.asyncProgressMessageTime = System.nanoTime();
         }
         currentLine.setLength(0);
       } else {

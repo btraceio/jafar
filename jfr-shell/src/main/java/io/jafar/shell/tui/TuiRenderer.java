@@ -297,12 +297,6 @@ public final class TuiRenderer {
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
       String progressMsg = ctx.asyncProgressMessage;
-      if (progressMsg != null
-          && System.nanoTime() - ctx.asyncProgressMessageTime
-              >= TuiContext.PROGRESS_MESSAGE_EXPIRY_NS) {
-        ctx.asyncProgressMessage = null;
-        progressMsg = null;
-      }
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
       String elapsed =
           elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
