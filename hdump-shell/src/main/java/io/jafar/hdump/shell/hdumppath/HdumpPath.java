@@ -167,7 +167,8 @@ public final class HdumpPath {
           ThreadOwnerOp,
           DominatedSizeOp,
           EstimateAgeOp,
-          WhatIfOp {}
+          WhatIfOp,
+          CacheStatsOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -549,6 +550,25 @@ public final class HdumpPath {
    */
   public record WhatIfOp() implements PipelineOp {}
 
+  /**
+   * Analyze Map-based objects for cache-relevant statistics.
+   *
+   * <p>Adds five columns: {@code entryCount}, {@code maxSize}, {@code fillRatio}, {@code
+   * costPerEntry}, and {@code isLruMode}.
+   *
+   * <p>Supported types: HashMap, LinkedHashMap, WeakHashMap, and subclasses that expose {@code
+   * size} and {@code table} fields.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/java.util.LinkedHashMap | cacheStats()
+   * objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
+   * objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+   * </pre>
+   */
+  public record CacheStatsOp() implements PipelineOp {}
+
   // === Built-in field names for objects ===
 
   /** Standard field names available on heap objects. */
@@ -677,5 +697,25 @@ public final class HdumpPath {
     public static final String AGE_SIGNALS = "ageSignals";
 
     private AgeFields() {}
+  }
+
+  /** Standard field names produced by the {@code cacheStats()} operator. */
+  public static final class CacheStatsFields {
+    /** Number of entries currently in the map. */
+    public static final String ENTRY_COUNT = "entryCount";
+
+    /** Internal table capacity; -1 if unknown or unbounded. */
+    public static final String MAX_SIZE = "maxSize";
+
+    /** {@code entryCount / capacity}; 0.0 if capacity is unknown. */
+    public static final String FILL_RATIO = "fillRatio";
+
+    /** {@code retainedSize / entryCount}; 0 if entryCount is zero. */
+    public static final String COST_PER_ENTRY = "costPerEntry";
+
+    /** {@code true} if this is a LinkedHashMap with {@code accessOrder=true} (LRU mode). */
+    public static final String IS_LRU_MODE = "isLruMode";
+
+    private CacheStatsFields() {}
   }
 }

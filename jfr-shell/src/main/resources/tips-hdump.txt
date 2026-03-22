@@ -65,6 +65,17 @@ objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenure
 Age buckets: ephemeral (0-25), medium (26-50), tenured (51-75), permanent (76-100)
 estimateAge() requires no dominator tree — it runs two O(n+edges) passes and caches the result
 
+# ── Cache profiling ──
+objects/java.util.LinkedHashMap | cacheStats() shows entry count, fill ratio, cost-per-entry, and LRU mode
+objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true) finds LRU caches
+objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry) ranks caches by per-entry cost
+cacheStats() adds: entryCount, maxSize, fillRatio, costPerEntry, isLruMode
+
+# ── Auto report ──
+report generates a ranked heap health report (CRITICAL / WARNING / INFO)
+report --format=markdown outputs the report in Markdown format
+report --focus=duplicates,waste limits analysis to specific areas
+
 # ── Query syntax ──
 Filter predicates go in brackets: objects[shallow > 1024 and class ~ ".*Cache.*"]
 Combine predicates with 'and', 'or', 'not' and parentheses

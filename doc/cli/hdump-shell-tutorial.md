@@ -14,8 +14,10 @@ This tutorial teaches you how to use JAFAR's heap dump analysis capabilities for
 8. [Memory Leak Detection](#memory-leak-detection)
 9. [What-If Simulation](#what-if-simulation) — `objects/Foo | whatif()`
 10. [Object Age Estimation](#object-age-estimation)
-11. [Common Analysis Patterns](#common-analysis-patterns)
-12. [Tips and Best Practices](#tips-and-best-practices)
+11. [Cache Profiling](#cache-profiling) — `objects/LinkedHashMap | cacheStats()`
+12. [Heap Health Report](#heap-health-report) — `report`
+13. [Common Analysis Patterns](#common-analysis-patterns)
+14. [Tips and Best Practices](#tips-and-best-practices)
 
 ## Prerequisites
 
@@ -493,6 +495,107 @@ hdump> objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = 
 > **Note:** Age scores are heuristic estimates based on structural signals, not GC generation
 > metadata. Objects not reachable from any GC root default to score 20 (`ephemeral`). The first
 > `ages` or `estimateAge()` call triggers a two-pass scan; subsequent calls use the cached result.
+
+## Cache Profiling
+
+The `cacheStats()` operator enriches Map-based object rows with five additional columns:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entryCount` | int | Number of entries currently in the map |
+| `maxSize` | int | Internal table capacity; -1 if unknown |
+| `fillRatio` | double | `entryCount / capacity`; 0.0 if unknown |
+| `costPerEntry` | long | `retainedSize / entryCount`; 0 if empty |
+| `isLruMode` | boolean | `true` if LinkedHashMap with `accessOrder=true` |
+
+### Basic Usage
+
+```bash
+# Analyze all LinkedHashMap instances
+hdump> objects/java.util.LinkedHashMap | cacheStats()
+
+# Find LRU caches (LinkedHashMap with accessOrder=true)
+hdump> objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
+
+# Top 10 most expensive caches by retained bytes per entry
+hdump> objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+
+# Find under-utilized maps (< 10% fill)
+hdump> objects/java.util.HashMap | cacheStats() | filter(fillRatio < 0.1) | sortBy(entryCount desc)
+```
+
+### Supported Types
+
+`cacheStats()` recognizes `HashMap`, `LinkedHashMap`, and `WeakHashMap` directly. It also attempts
+to analyze any object that exposes `size` and `table` fields, covering most Map subclasses. Rows
+for unrecognized types receive `null` values in all cache columns.
+
+## Heap Health Report
+
+The `report` command runs a set of non-destructive analyses and produces a severity-ranked
+narrative. It is the quickest way to get an overview of a heap dump.
+
+### Usage
+
+```bash
+# Plain-text report
+hdump> report
+
+# Markdown format
+hdump> report --format=markdown
+
+# Restrict to specific areas
+hdump> report --focus=duplicates,waste
+```
+
+### Report Structure
+
+```
+=== Heap Health Report ===
+Heap: myapp.hprof (158 MB, 1,923,456 objects, 16,831 classes)
+
+--- WARNING ---
+
+[W1] Duplicate subgraphs: 48 groups, ~3.2 MB reclaimable
+     Most wasteful: com.example.Config (12 copies)
+     Action: Run: duplicates | sortBy(wastedBytes desc)
+     Query: duplicates | sortBy(wastedBytes desc)
+
+--- INFO ---
+
+[I1] Heap summary: 1,923,456 objects, 16,831 classes, 158 MB total shallow
+[I2] Top class by instance count: java.util.HashMap$Node (249,734 instances, 1.9 MB shallow)
+[I3] GC roots: 3 STICKY_CLASS, 1 THREAD_OBJ
+```
+
+### Severity Thresholds
+
+- **CRITICAL**: retained size > 100 MB
+- **WARNING**: retained size > 10 MB, or duplicate waste > 1 MB
+- **INFO**: all other findings
+
+### Analysis Contributors
+
+`report` always runs all contributors, triggering expensive computations as needed. Progress is
+shown in the console for long-running steps.
+
+| Contributor | Notes |
+|-------------|-------|
+| Heap overview | O(1) |
+| Class histogram | O(classes) |
+| GC root summary | O(roots) |
+| Approximate retained sizes | computed if not already done |
+| Leak detectors (6 built-in) | uses retained sizes |
+| Collection waste estimate | uses retained sizes |
+| Duplicate subgraphs (depth 3) | computed if not already done |
+
+Use `--focus=` to restrict which contributors run:
+
+| Focus value | Contributors |
+|-------------|-------------|
+| `leaks` | retained sizes + all leak detectors |
+| `waste` | retained sizes + collection waste |
+| `duplicates` | duplicate subgraph fingerprinting |
 
 ## Common Analysis Patterns
 

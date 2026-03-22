@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
@@ -210,6 +211,128 @@ class SyntheticHeapEvaluatorTest {
       assertTrue(row.containsKey("id"), "object row missing 'id'");
       assertTrue(row.containsKey("class"), "object row missing 'class'");
       assertEquals("com.example.Foo", row.get("class"));
+    }
+  }
+
+  /**
+   * Isolated cacheStats() tests. Use a dedicated session so that retained-size computation does not
+   * pollute the shared session.
+   */
+  @Nested
+  class CacheStatsTests {
+
+    @TempDir Path cacheStatsTempDir;
+
+    private HeapSession cacheStatsSession() throws IOException {
+      Path hprof =
+          new MinimalHprofBuilder()
+              .addClass(600, "com/example/Foo")
+              .addInstance(6000, 600)
+              .addInstance(6001, 600)
+              .addInstance(6002, 600)
+              .addGcRoot(6000)
+              .write(cacheStatsTempDir);
+      return HeapSession.open(hprof);
+    }
+
+    @Test
+    void cacheStatsOnNonMapObjectProducesNullColumns() throws IOException {
+      try (HeapSession s = cacheStatsSession()) {
+        // com.example.Foo has no "size" or "table" fields, so cacheStats() must add null columns
+        List<Map<String, Object>> result =
+            HdumpPathEvaluator.evaluate(
+                s, HdumpPathParser.parse("objects/com.example.Foo | cacheStats() | head(3)"));
+        assertFalse(result.isEmpty());
+        for (Map<String, Object> row : result) {
+          assertTrue(row.containsKey("entryCount"), "cacheStats() must add entryCount column");
+          assertTrue(row.containsKey("maxSize"), "cacheStats() must add maxSize column");
+          assertTrue(row.containsKey("fillRatio"), "cacheStats() must add fillRatio column");
+          assertTrue(row.containsKey("costPerEntry"), "cacheStats() must add costPerEntry column");
+          assertTrue(row.containsKey("isLruMode"), "cacheStats() must add isLruMode column");
+          // All should be null since Foo is not a recognized Map type
+          assertNull(row.get("entryCount"), "entryCount should be null for non-map");
+        }
+      }
+    }
+  }
+
+  /**
+   * Isolated report tests. Use a dedicated session so that retained-size computation triggered by
+   * {@code HeapReportGenerator.generate()} does not pollute the shared session used by other tests.
+   */
+  @Nested
+  class ReportTests {
+
+    @TempDir Path reportTempDir;
+
+    private HeapSession reportSession() throws IOException {
+      Path hprof =
+          new MinimalHprofBuilder()
+              .addClass(500, "com/example/Foo")
+              .addClass(501, "com/example/Bar")
+              .addInstance(5000, 500)
+              .addInstance(5001, 500)
+              .addInstance(5002, 500)
+              .addInstance(5003, 501)
+              .addInstance(5004, 501)
+              .addGcRoot(5000)
+              .write(reportTempDir);
+      return HeapSession.open(hprof);
+    }
+
+    @Test
+    void reportGeneratesFindings() throws IOException {
+      try (HeapSession s = reportSession()) {
+        List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
+        assertFalse(findings.isEmpty(), "report must return at least one finding");
+      }
+    }
+
+    @Test
+    void reportContainsHistogramInfo() throws IOException {
+      try (HeapSession s = reportSession()) {
+        List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
+        boolean hasInfo =
+            findings.stream().anyMatch(f -> f.severity() == HeapReportGenerator.Severity.INFO);
+        assertTrue(hasInfo, "report must include at least one INFO finding");
+      }
+    }
+
+    @Test
+    void reportTextContainsHeapHeader() throws IOException {
+      try (HeapSession s = reportSession()) {
+        List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
+        String text = HeapReportGenerator.formatText(findings, s);
+        assertTrue(text.contains("=== Heap Health Report ==="), "text report must contain header");
+        assertTrue(text.contains("objects"), "text report must mention object count");
+      }
+    }
+
+    @Test
+    void reportMarkdownContainsHeader() throws IOException {
+      try (HeapSession s = reportSession()) {
+        List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
+        String md = HeapReportGenerator.formatMarkdown(findings, s);
+        assertTrue(
+            md.startsWith("# Heap Health Report"), "markdown report must start with H1 header");
+      }
+    }
+
+    @Test
+    void reportFocusRunsOnlyRequestedContributors() throws IOException {
+      try (HeapSession s = reportSession()) {
+        List<HeapReportGenerator.Finding> findings =
+            HeapReportGenerator.generate(s, Set.of("duplicates"));
+        assertFalse(findings.isEmpty(), "focused report must return findings");
+        // Non-INFO findings must be in the duplicates category
+        findings.stream()
+            .filter(f -> f.severity() != HeapReportGenerator.Severity.INFO)
+            .forEach(
+                f ->
+                    assertTrue(
+                        f.category().startsWith("duplicates"),
+                        "non-INFO finding outside focus: " + f.category()));
+      }
     }
   }
 

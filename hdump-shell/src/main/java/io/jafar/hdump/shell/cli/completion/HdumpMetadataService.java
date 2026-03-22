@@ -56,7 +56,8 @@ public final class HdumpMetadataService implements MetadataService {
           "threadOwner",
           "dominatedSize",
           "whatif",
-          "estimateAge");
+          "estimateAge",
+          "cacheStats");
 
   /** Field names for objects root type */
   private static final List<String> OBJECT_FIELDS =

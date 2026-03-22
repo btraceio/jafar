@@ -44,6 +44,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "gcroots" -> getGcRootFieldDescription(field);
       case "duplicates" -> getDuplicateFieldDescription(field);
       case "ages" -> getAgeFieldDescription(field);
+      case "cachestats" -> getCacheStatsFieldDescription(field);
       default -> null;
     };
   }
@@ -107,6 +108,17 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "estimatedAge" -> "age score 0-100";
       case "ageBucket" -> "ephemeral / medium / tenured / permanent";
       case "ageSignals" -> "debug: signal breakdown";
+      default -> null;
+    };
+  }
+
+  private String getCacheStatsFieldDescription(String field) {
+    return switch (field) {
+      case "entryCount" -> "number of entries in the map";
+      case "maxSize" -> "internal table capacity (-1 if unknown)";
+      case "fillRatio" -> "entryCount / capacity (0.0 if unknown)";
+      case "costPerEntry" -> "retainedSize / entryCount in bytes";
+      case "isLruMode" -> "true if LinkedHashMap with accessOrder=true";
       default -> null;
     };
   }

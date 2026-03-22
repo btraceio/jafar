@@ -80,6 +80,11 @@ public final class HdumpShellCompleter implements Completer {
 
     String cmd = words.get(0).toLowerCase();
 
+    // report command has no further completion
+    if ("report".equals(cmd)) {
+      return;
+    }
+
     // For show command or short syntax (objects/classes/gcroots/clusters), use completion framework
     if ("show".equals(cmd) || isRootType(cmd) || startsWithRoot(cmd)) {
       completeWithFramework(line, candidates);

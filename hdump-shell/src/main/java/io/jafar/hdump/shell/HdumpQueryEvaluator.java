@@ -49,7 +49,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
           "floor",
           "ceil",
           "waste",
-          "objects");
+          "objects",
+          "cacheStats");
 
   @Override
   public Object parse(String queryString) throws QueryParseException {
@@ -138,6 +139,8 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
       case "ages" -> "ages[/class] — query objects with estimated age score";
       case "estimateage", "age" ->
           "estimateAge() — enrich object rows with estimatedAge, ageBucket, ageSignals";
+      case "cachestats", "cache" ->
+          "cacheStats() — enrich Map rows with entryCount, maxSize, fillRatio, costPerEntry, isLruMode";
       default -> null;
     };
   }

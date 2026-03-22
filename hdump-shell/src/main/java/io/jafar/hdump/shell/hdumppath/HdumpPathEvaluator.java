@@ -1579,6 +1579,13 @@ public final class HdumpPathEvaluator {
         }
         yield applyWhatIf(session, results);
       }
+      case CacheStatsOp c -> {
+        if (session == null) {
+          throw new IllegalStateException(
+              "cacheStats() requires heap session context (not available after streaming aggregation)");
+        }
+        yield applyCacheStats(session, results);
+      }
       case JoinOp j ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
@@ -2068,6 +2075,11 @@ public final class HdumpPathEvaluator {
       case GroupByOp g ->
           g.groupFields().stream().anyMatch(HdumpPathEvaluator::isRetainedField)
               || (g.valueExpr() != null && valueExprReferencesRetained(g.valueExpr()));
+      // Ops that always produce or consume retained sizes
+      case PathToRootOp p -> true;
+      case RetentionPathsOp r -> true;
+      case CheckLeaksOp c -> true;
+      case CacheStatsOp c -> true;
       default -> false;
     };
   }
@@ -2409,6 +2421,45 @@ public final class HdumpPathEvaluator {
       Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
       if (!CollectionWasteAnalyzer.analyze(obj, enrichedRow, refSize)) {
         CollectionWasteAnalyzer.addNullWasteColumns(enrichedRow);
+      }
+      enriched.add(enrichedRow);
+    }
+
+    return enriched;
+  }
+
+  private static List<Map<String, Object>> applyCacheStats(
+      HeapSession session, List<Map<String, Object>> results) {
+    HeapDump dump = session.getHeapDump();
+    List<Map<String, Object>> enriched = new ArrayList<>(results.size());
+
+    for (Map<String, Object> row : results) {
+      Object idObj = row.get("id");
+      if (idObj == null) {
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        CacheStatsAnalyzer.addNullColumns(copy);
+        enriched.add(copy);
+        continue;
+      }
+
+      long id =
+          idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
+      HeapObject obj = dump.getObjectById(id).orElse(null);
+      if (obj == null) {
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        CacheStatsAnalyzer.addNullColumns(copy);
+        enriched.add(copy);
+        continue;
+      }
+
+      Object retainedObj = row.get(ObjectFields.RETAINED_SIZE);
+      if (retainedObj == null) retainedObj = row.get("retained");
+      long retainedSize =
+          retainedObj instanceof Number n ? n.longValue() : obj.getRetainedSizeIfAvailable();
+
+      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      if (!CacheStatsAnalyzer.analyze(obj, enrichedRow, retainedSize)) {
+        CacheStatsAnalyzer.addNullColumns(enrichedRow);
       }
       enriched.add(enrichedRow);
     }

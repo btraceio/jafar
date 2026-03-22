@@ -37,9 +37,43 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
   @Override
   public void dispatch(String command, CommandIO io) throws Exception {
+    String trimmed = command.trim();
+    if (trimmed.startsWith("report")) {
+      cmdReport(trimmed, io);
+      return;
+    }
     // Most queries are now handled by CommandDispatcher via module root-type aliases
     // and the show/cmdShowModule path. This fallback handles any remaining edge cases.
-    io.error("Unknown command: " + command.trim());
+    io.error("Unknown command: " + trimmed);
+  }
+
+  private void cmdReport(String command, CommandIO io) {
+    HeapSession session =
+        sessions.getCurrent().map(entry -> (HeapSession) entry.session).orElse(null);
+    if (session == null) {
+      io.error("No heap dump open. Use 'open <file.hprof>' first.");
+      return;
+    }
+
+    boolean markdown =
+        command.contains("--format=markdown") || command.contains("--format markdown");
+
+    Set<String> focus = null;
+    int focusIdx = command.indexOf("--focus=");
+    if (focusIdx >= 0) {
+      String focusStr = command.substring(focusIdx + 8).split("\\s")[0];
+      focus = Set.of(focusStr.split(","));
+    }
+
+    List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(session, focus);
+    String report =
+        markdown
+            ? HeapReportGenerator.formatMarkdown(findings, session)
+            : HeapReportGenerator.formatText(findings, session);
+
+    for (String line : report.split("\n", -1)) {
+      io.println(line);
+    }
   }
 
   @Override

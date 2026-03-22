@@ -30,7 +30,8 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
     "vars",
     "unset",
     "checkLeaks",
-    "ages"
+    "ages",
+    "report"
   };
 
   @Override
@@ -73,6 +74,7 @@ public final class HdumpCommandCompleter implements ContextCompleter<HdumpMetada
       case "unset" -> "remove a variable";
       case "checkLeaks" -> "run interactive leak detection wizard";
       case "ages" -> "query objects with estimated age score";
+      case "report" -> "generate heap health report";
       default -> null;
     };
   }

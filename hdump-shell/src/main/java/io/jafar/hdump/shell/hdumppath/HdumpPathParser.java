@@ -580,6 +580,10 @@ public final class HdumpPathParser {
         consumeOptionalEmptyParens();
         yield new WhatIfOp();
       }
+      case "cachestats", "cache" -> {
+        consumeOptionalEmptyParens();
+        yield new CacheStatsOp();
+      }
       default -> throw new HdumpPathParseException("Unknown pipeline operation: " + opName);
     };
   }
