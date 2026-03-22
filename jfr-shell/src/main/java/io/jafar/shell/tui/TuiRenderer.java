@@ -357,11 +357,8 @@ public final class TuiRenderer {
     int maxHScroll = Math.max(0, maxWidth - visibleWidth);
     activeTab.hScrollOffset = Math.min(activeTab.hScrollOffset, maxHScroll);
 
-    // Sticky header
-    boolean hasTable =
-        activeTab.tableData != null
-            && activeTab.dataStartLine >= 1
-            && activeTab.filteredIndices == null;
+    // Sticky header — shown whenever there is table data, including during filtered search
+    boolean hasTable = activeTab.tableData != null && activeTab.dataStartLine >= 1;
     int headerLine = hasTable ? activeTab.dataStartLine - 1 : -1;
     Rect headerArea = null;
     if (hasTable && headerLine >= 0 && headerLine < lineCount) {
