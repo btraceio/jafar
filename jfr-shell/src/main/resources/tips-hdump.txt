@@ -1,0 +1,72 @@
+# Lines starting with # are comments. Blank lines are ignored.
+# Tips shown when a heap dump (HPROF) session is active.
+
+# ── Basics ──
+Open a heap dump with 'open file.hprof' — all HdumpPath queries work immediately
+Use 'info' to see object count, class count, total heap size, and whether retained sizes are computed
+Use 'classes | top(10, instanceCount)' to find the most-instantiated classes
+objects/com.example.Foo lists all instances of a specific class
+objects/instanceof/java.util.Map finds instances of Map and all its subclasses
+Use glob patterns: objects/com.example.* matches all classes in a package
+
+# ── Object queries ──
+Filter objects by field: objects[retained > 10MB] | top(10, retained)
+Use groupBy(class, agg=sum) to compute total shallow size per class
+objects | groupBy(class) | sortBy(count desc) ranks classes by instance count
+select(id, class, shallow, retained) projects the most-used object fields
+objects/java.lang.String | groupBy(stringValue) | filter(count > 100) finds duplicate strings
+Use objects/byte[] | top(10, shallow) to find the largest byte arrays
+
+# ── GC roots ──
+gcroots lists all GC roots; gcroots/THREAD_OBJ filters by root type
+gcroots | groupBy(type) shows the distribution of root types
+gcroots/STICKY_CLASS highlights system classes kept alive by the bootstrap loader
+
+# ── Retention analysis ──
+objects[retained > 100MB] | pathToRoot() traces the reference chain keeping them alive
+objects | retentionPaths() shows the most common class-level retention paths
+objects/com.example.Cache | dominators() lists the top retainers in the cache subtree
+objects[retained > 1MB] | threadOwner() shows which thread owns each large object
+gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc) ranks threads by memory footprint
+gcroots/THREAD_OBJ | dominatedSize() | select(threadName, dominated, dominatedCount)
+
+# ── Collections & waste ──
+objects/java.util.HashMap | waste() identifies over-allocated collections
+objects/instanceof/java.util.Map | waste() | filter(wastedBytes > 1MB) | top(10, wastedBytes)
+waste() adds capacity, size, fillRatio, wastedBytes, and wasteType columns
+
+# ── Leak detection ──
+clusters detects memory leak clusters ranked by retained size and leak score
+clusters | top(5, score) shows the 5 most suspicious leak candidates
+clusters | select(dominantClass, objectCount, retainedSize, anchorType)
+checkLeaks(detector="threadlocal-leak") scans for leaked ThreadLocals
+checkLeaks(detector="growing-collections", minSize=10MB) finds oversized collections
+Run the interactive leak wizard with 'checkLeaks()' (no arguments)
+
+# ── Duplicate subgraphs ──
+duplicates finds structurally-identical object subgraphs wasting memory
+duplicates | select(rootClass, copies, wastedBytes) | sortBy(wastedBytes desc)
+duplicates(depth=5) uses deeper fingerprinting for more precise grouping
+duplicates[rootClass = "com.example.Config"] | select(copies, wastedBytes)
+duplicates[id=3] | objects() drills into member objects of a specific group
+
+# ── What-if simulation ──
+whatif objects/com.example.LeakyCache simulates removing those objects and reports freed bytes
+whatif objects/com.example.Foo | select(freedBytes, freedPct) focuses on the key metrics
+whatif gcroots/THREAD_OBJ[type = "THREAD_OBJ"] simulates freeing thread-owned memory
+whatif objects[id = 12345] targets a specific object by ID
+
+# ── Object age estimation ──
+ages | groupBy(ageBucket, agg=count) shows how objects distribute across age buckets
+ages | filter(ageBucket = "tenured") | top(10, retained) finds old, large objects
+ages/com.example.Foo | select(id, estimatedAge, ageBucket) inspects age per instance
+objects/java.util.HashMap | estimateAge() | sortBy(estimatedAge desc) ranks by age score
+objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenured") spots suspicious refs
+Age buckets: ephemeral (0-25), medium (26-50), tenured (51-75), permanent (76-100)
+estimateAge() requires no dominator tree — it runs two O(n+edges) passes and caches the result
+
+# ── Query syntax ──
+Filter predicates go in brackets: objects[shallow > 1024 and class ~ ".*Cache.*"]
+Combine predicates with 'and', 'or', 'not' and parentheses
+Pipeline stages are chained with |: objects/Foo | select(id, retained) | top(10)
+Use sortBy(field desc) to reverse sort; add head(N) to limit output

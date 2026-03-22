@@ -11,7 +11,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +37,9 @@ public final class TuiContext {
   static final int COMPLETION_MAX_WIDTH = 50;
   static final int COMPLETION_MAX_HEIGHT = 12;
   static final int TIP_ROTATE_TICKS = 300; // ~30s at 100ms per tick
-  static final String[] TIPS = loadTips();
+  static final String[] TIPS_JFR = loadTips("/tips-shared.txt", "/tips-jfr.txt");
+  static final String[] TIPS_HDUMP = loadTips("/tips-shared.txt", "/tips-hdump.txt");
+  static final String[] TIPS_DEFAULT = loadTips("/tips-shared.txt");
   static final String[] SPINNER = {
     "\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807",
     "\u280F"
@@ -321,20 +322,23 @@ public final class TuiContext {
 
   // ---- tips loader ----
 
-  private static String[] loadTips() {
-    try (var in = TuiContext.class.getResourceAsStream("/tips.txt")) {
-      if (in == null) return new String[] {"Type 'help' for available commands"};
-      String[] tips =
-          new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
-              .lines()
-              .map(String::trim)
-              .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-              .map(l -> "Tip: " + l)
-              .toArray(String[]::new);
-      Collections.shuffle(Arrays.asList(tips));
-      return tips;
-    } catch (IOException e) {
-      return new String[] {"Type 'help' for available commands"};
+  private static String[] loadTips(String... resources) {
+    List<String> lines = new ArrayList<>();
+    for (String resource : resources) {
+      try (var in = TuiContext.class.getResourceAsStream(resource)) {
+        if (in == null) continue;
+        new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
+            .lines()
+            .map(String::trim)
+            .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+            .map(l -> "Tip: " + l)
+            .forEach(lines::add);
+      } catch (IOException e) {
+        // skip missing resource
+      }
     }
+    if (lines.isEmpty()) return new String[] {"Type 'help' for available commands"};
+    Collections.shuffle(lines);
+    return lines.toArray(String[]::new);
   }
 }

@@ -771,8 +771,15 @@ public final class TuiRenderer {
   }
 
   private void renderTipLine(Frame frame, Rect area) {
-    int tipIndex = (int) ((ctx.renderTick / TuiContext.TIP_ROTATE_TICKS) % TuiContext.TIPS.length);
-    String tip = TuiContext.TIPS[tipIndex];
+    String sessionType = sessions.current().map(r -> r.session.getType()).orElse("");
+    String[] tips =
+        switch (sessionType) {
+          case "jfr" -> TuiContext.TIPS_JFR;
+          case "hdump" -> TuiContext.TIPS_HDUMP;
+          default -> TuiContext.TIPS_DEFAULT;
+        };
+    int tipIndex = (int) ((ctx.renderTick / TuiContext.TIP_ROTATE_TICKS) % tips.length);
+    String tip = tips[tipIndex];
     Paragraph bar =
         Paragraph.builder()
             .text(Text.from(Line.from(Span.styled(tip, Style.create().fg(Color.DARK_GRAY)))))

@@ -1,0 +1,63 @@
+# Lines starting with # are comments. Blank lines are ignored.
+# Tips shown when a JFR session is active.
+
+# ── Queries & JfrPath ──
+Use --limit N to cap output rows and speed up exploration
+Use 'events/<type> | count()' to quickly count events of a type
+sketch() gives you min/max/avg/stddev + p50/p90/p99 in one call
+stats() computes min, max, avg, stddev, and count for a numeric field
+quantiles(0.5, 0.9, 0.99) computes percentile values for numeric fields
+sum() computes the total of a numeric field across all matching events
+Use groupBy(field) to aggregate events by a field value
+Chain groupBy() | top(10, by=count) to find the most frequent values
+sortBy(field) orders results; add asc=true for ascending order
+top(N) returns the first N rows — combine with by=field for top-N analysis
+Use select(f1, f2) to project only the fields you need
+select() supports aliases: select(bytes/1024 as kb)
+select() supports arithmetic: select(a + b as total, x * 100 as pct)
+select() supports string templates: select("${path} (${bytes}B)" as info)
+Use if(cond, trueVal, falseVal) inside select for conditional fields
+coalesce(a, b, c) returns the first non-null value — useful in select
+upper(), lower(), substring(), length() are available in select expressions
+toMap(keyField, valueField) converts tabular results to a key-value map
+timerange() shows min/max timestamps with wall-clock conversion
+
+# ── Filters ──
+Filter events with predicates in brackets: events/jdk.FileRead[bytes>1024]
+Combine filter predicates with 'and', 'or', 'not' and parentheses
+Use ~ or =~ for regex matching in filters: [name~".*Pool.*"]
+contains(field, "str") checks for substring matches in filters
+startsWith() and endsWith() filter by string prefix or suffix
+matches(field, "regex", "i") does case-insensitive regex filtering
+exists(field) checks that a field is non-null; empty(field) checks for null
+between(field, low, high) filters by inclusive numeric range
+len(field) returns array or string length for use in filter comparisons
+Use [any:field=val] to match if any array element matches (the default)
+Use [all:field=val] to require all array elements match the filter
+Use [none:field=val] to exclude events where any element matches
+Override list matching globally with --list-match any|all|none
+
+# ── Event decoration (correlation) ──
+decorateByTime() correlates events from different types by timestamp overlap
+decorateByKey() joins events by matching a correlation key field
+Access decorated fields with $decorator.fieldName in subsequent pipeline stages
+
+# ── Metadata & Inspection ──
+Use 'metadata' to list all event types in a recording
+metadata --search 'jdk.GC*' filters types by glob pattern
+metadata --regex filters types by regular expression
+metadata class <name> shows detailed field info for a specific type
+metadata class <name> --tree shows hierarchical type structure
+metadata --events-only shows only event types; --non-events-only for the rest
+Use 'chunks' to list all chunks in the recording
+chunks --summary shows aggregate stats: count, total/avg/min/max size
+chunk <index> show displays detailed info about a specific chunk
+Use 'constants' to browse constant pool entries; 'constants <type>' for a specific type
+Use --tree --depth N to explore nested metadata structures
+Use 'info' to see recording path, event count, uptime, and backend info
+Use 'backend list' to see all available JFR parsing backends
+
+# ── Query syntax ──
+Field paths use / or . as separators: thread/name and thread.name are equivalent
+Query multiple event types at once: events/(jdk.FileRead|jdk.FileWrite)
+Pipeline stages are chained with |: events/Type | select(f) | top(10)
