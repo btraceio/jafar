@@ -59,7 +59,11 @@ public final class TuiEventLoop {
           ctx.running = false;
           continue;
         }
-        if (ctx.commandRunning) continue;
+        if (ctx.commandRunning) {
+          // Allow Ctrl+C to cancel a running command even while input is otherwise blocked
+          if (key == 3) keyHandler.handleKey(key);
+          continue;
+        }
         keyHandler.handleKey(key);
       }
     } finally {

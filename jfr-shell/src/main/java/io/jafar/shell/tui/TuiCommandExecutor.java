@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.jline.reader.Candidate;
 
@@ -377,6 +378,20 @@ public final class TuiCommandExecutor {
                 ctx.commandRunning = false;
               }
             });
+  }
+
+  /** Cancels the currently running command, interrupting its thread, and resets TUI state. */
+  void cancelRunningCommand() {
+    Future<?> future = ctx.commandFuture;
+    if (future != null) {
+      future.cancel(true);
+      ctx.commandFuture = null;
+    }
+    ctx.commandRunning = false;
+    ctx.asyncProgressMessage = null;
+    ctx.asyncOutputBuffer = null;
+    ctx.focus = Focus.INPUT;
+    ctx.showHintMessage("Cancelled");
   }
 
   void finishAsyncCommand() {

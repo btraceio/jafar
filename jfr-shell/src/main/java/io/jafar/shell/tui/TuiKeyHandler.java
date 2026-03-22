@@ -100,7 +100,9 @@ public final class TuiKeyHandler {
     // Global keys
     switch (key) {
       case 3: // Ctrl+C
-        if (ctx.focus == Focus.HISTORY_SEARCH) {
+        if (ctx.commandRunning) {
+          executor.cancelRunningCommand();
+        } else if (ctx.focus == Focus.HISTORY_SEARCH) {
           ctx.inputState.setText(ctx.historySearchSavedInput);
           ctx.focus = Focus.INPUT;
         } else if (ctx.focus == Focus.SEARCH) {
