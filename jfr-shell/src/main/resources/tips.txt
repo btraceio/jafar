@@ -1,4 +1,0 @@
-# This file is no longer used. Tips are loaded from:
-#   tips-shared.txt  — navigation, UI, sessions, variables, scripting
-#   tips-jfr.txt     — JFR-specific tips (shown in JFR sessions)
-#   tips-hdump.txt   — heap dump tips (shown in HPROF sessions)
