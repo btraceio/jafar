@@ -317,6 +317,16 @@ public class CommandDispatcher {
           cmdBackend(args);
           return true;
         default:
+          // Last resort: try the module evaluator for shorthands not covered by root types
+          // (e.g. checkLeaks(...)).  The evaluator's own evaluate() will reject incompatible
+          // session types; that exception is caught and shown as an error by the caller.
+          if (moduleEvaluator != null) {
+            List<String> showArgs = new ArrayList<>(args.size() + 1);
+            showArgs.add(parts[0]);
+            showArgs.addAll(args);
+            cmdShowModule(showArgs, "show " + line.trim(), moduleEvaluator);
+            return true;
+          }
           return false;
       }
     } catch (Exception e) {

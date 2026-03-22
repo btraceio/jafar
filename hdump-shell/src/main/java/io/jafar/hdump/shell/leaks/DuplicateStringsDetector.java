@@ -11,38 +11,45 @@ import java.util.*;
  * string values and reports cases where many instances share the same content.
  *
  * <p>Threshold parameter: Minimum number of duplicate instances to report (default: 100)
+ *
+ * <p>Memory model: string values are hashed with FNV-1a 64-bit and only the hash (8 bytes) is
+ * stored as the map key. The full string content is never retained, keeping peak memory at {@code
+ * O(unique_string_count * constant)} regardless of string lengths.
  */
 public final class DuplicateStringsDetector implements LeakDetector {
+
+  private static final long FNV_OFFSET = 0xcbf29ce484222325L;
+  private static final long FNV_PRIME = 0x00000100000001b3L;
 
   @Override
   public List<Map<String, Object>> detect(HeapDump dump, Integer threshold, Integer minSize) {
     int minDuplicates = threshold != null ? threshold : 100;
 
-    // Group strings by value - store only metrics to avoid OOME
-    Map<String, StringGroupMetrics> stringsByValue = new HashMap<>();
+    // Key: FNV-1a 64-bit hash of the string value.
+    // Storing the hash (long) instead of the String object keeps peak memory at 8 bytes per unique
+    // string rather than the full string content, which can be hundreds of MB on large heaps.
+    Map<Long, StringGroupMetrics> stringsByHash = new HashMap<>();
 
     dump.getObjectsOfClass("java/lang/String")
         .forEach(
             obj -> {
               String value = obj.getStringValue();
               if (value != null) {
-                stringsByValue
-                    .computeIfAbsent(value, k -> new StringGroupMetrics())
+                long hash = fnv1a(value);
+                stringsByHash
+                    .computeIfAbsent(hash, k -> new StringGroupMetrics(truncate(value, 100)))
                     .addInstance(obj);
               }
             });
 
-    // Find duplicates above threshold
     List<Map<String, Object>> results = new ArrayList<>();
-    for (Map.Entry<String, StringGroupMetrics> entry : stringsByValue.entrySet()) {
-      StringGroupMetrics metrics = entry.getValue();
+    for (StringGroupMetrics metrics : stringsByHash.values()) {
       if (metrics.count >= minDuplicates) {
-        String value = entry.getKey();
         long wastedBytes = metrics.totalShallow - metrics.exampleShallow;
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("count", metrics.count);
-        result.put("value", truncate(value, 100));
+        result.put("value", metrics.sampleValue);
         result.put("shallow", metrics.totalShallow);
         result.put("retained", metrics.totalRetained);
         result.put("wastedBytes", wastedBytes);
@@ -55,9 +62,7 @@ public final class DuplicateStringsDetector implements LeakDetector {
       }
     }
 
-    // Sort by wasted bytes descending
     results.sort((a, b) -> Long.compare((Long) b.get("wastedBytes"), (Long) a.get("wastedBytes")));
-
     return results;
   }
 
@@ -69,6 +74,15 @@ public final class DuplicateStringsDetector implements LeakDetector {
   @Override
   public String getDescription() {
     return "Find identical string values with high instance counts";
+  }
+
+  private static long fnv1a(String s) {
+    long h = FNV_OFFSET;
+    for (int i = 0; i < s.length(); i++) {
+      h ^= s.charAt(i);
+      h *= FNV_PRIME;
+    }
+    return h;
   }
 
   private String truncate(String s, int maxLen) {
@@ -83,27 +97,26 @@ public final class DuplicateStringsDetector implements LeakDetector {
     return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
   }
 
-  /**
-   * Lightweight metrics tracker for string groups. Avoids storing full HeapObject references to
-   * prevent OOME.
-   */
   private static class StringGroupMetrics {
+    /** First-seen value, already truncated to 100 chars. */
+    final String sampleValue;
+
     int count = 0;
     long totalShallow = 0;
     long totalRetained = 0;
-    long exampleShallow = 0; // Shallow size of one instance (for waste calculation)
+    long exampleShallow = 0;
+
+    StringGroupMetrics(String sampleValue) {
+      this.sampleValue = sampleValue;
+    }
 
     void addInstance(HeapObject obj) {
       count++;
       long shallow = obj.getShallowSize();
-      long retained = obj.getRetainedSize();
+      long retained = obj.getRetainedSizeIfAvailable();
       totalShallow += shallow;
-      totalRetained += retained;
-
-      // Keep first instance's shallow size as example
-      if (count == 1) {
-        exampleShallow = shallow;
-      }
+      if (retained >= 0) totalRetained += retained;
+      if (count == 1) exampleShallow = shallow;
     }
   }
 }

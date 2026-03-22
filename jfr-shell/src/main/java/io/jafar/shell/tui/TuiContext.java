@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import org.jline.reader.Candidate;
@@ -261,6 +262,10 @@ public final class TuiContext {
 
   // Async command execution state
   volatile String asyncProgressMessage; // latest progress status from stderr, shown in spinner
+
+  /** Ephemeral progress lines from stderr — shown live during execution, discarded after. */
+  final CopyOnWriteArrayList<String> asyncProgressLines = new CopyOnWriteArrayList<>();
+
   volatile boolean commandRunning;
   long commandStartTick;
   volatile long commandStartTimeMs;

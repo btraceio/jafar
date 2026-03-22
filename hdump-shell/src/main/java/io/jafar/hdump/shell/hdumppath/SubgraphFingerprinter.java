@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,15 +17,23 @@ import java.util.Map;
 /**
  * Detects structurally identical object subgraphs using FNV-1a 64-bit fingerprinting.
  *
- * <p>Algorithm:
+ * <p>Algorithm (two-pass, allocation-bounded):
  *
  * <ol>
- *   <li>Group objects by {@code (className, shallowSize)} — a necessary cheap pre-filter.
- *   <li>Drop pre-groups with fewer than 2 members.
- *   <li>Within each surviving pre-group, compute a structural fingerprint for every member.
- *   <li>Group by fingerprint; identical fingerprint means identical subtree.
- *   <li>Drop singleton fingerprint groups; sort survivors by {@code wastedBytes} descending.
+ *   <li><strong>Pass 1</strong> — stream all objects once and count how many objects share the same
+ *       {@code (className, shallowSize)} key. Only the counts are stored ({@code Map<String,
+ *       Integer>}). No {@code HeapObject} references are retained.
+ *   <li><strong>Pass 2</strong> — stream all objects again. Skip objects whose {@code (className,
+ *       shallowSize)} group has fewer than 2 members. For each candidate, compute the structural
+ *       fingerprint on the fly and record only the object <em>ID</em> ({@code long}) in the
+ *       fingerprint group. No {@code HeapObject} references are retained beyond the current stream
+ *       element.
+ *   <li>Drop singleton fingerprint groups; sort by {@code wastedBytes} descending; build result
+ *       rows.
  * </ol>
+ *
+ * <p>Peak memory is {@code O(candidate_objects)} longs rather than {@code O(all_objects)} {@code
+ * HeapObject} references, which avoids OOM on large heaps.
  */
 public final class SubgraphFingerprinter {
 
@@ -47,36 +56,51 @@ public final class SubgraphFingerprinter {
    * @return result containing duplicate group rows and member ID index
    */
   public static Result compute(HeapDump dump, int depth) {
-    // Step 1: group by (className, shallowSize) as a cheap pre-filter
-    Map<String, List<HeapObject>> byClassAndSize = new LinkedHashMap<>();
+    // Pass 1: count objects per (className#shallowSize) group.
+    // Stores only String keys + int counts — no HeapObject references.
+    Map<String, Integer> groupCounts = new HashMap<>();
     dump.getObjects()
         .forEach(
             obj -> {
               HeapClass cls = obj.getHeapClass();
               if (cls == null) return;
               String key = cls.getName() + "#" + obj.getShallowSize();
-              byClassAndSize.computeIfAbsent(key, k -> new ArrayList<>()).add(obj);
+              groupCounts.merge(key, 1, Integer::sum);
             });
 
-    // Step 2+3: drop pre-groups with <2 members, then fingerprint survivors
-    Map<Long, List<HeapObject>> byFingerprint = new LinkedHashMap<>();
-    for (List<HeapObject> group : byClassAndSize.values()) {
-      if (group.size() < 2) continue;
-      for (HeapObject obj : group) {
-        int[] nodeCount = {0};
-        long fp = computeFingerprint(obj, depth, new ArrayDeque<>(), nodeCount);
-        byFingerprint.computeIfAbsent(fp, k -> new ArrayList<>()).add(obj);
-      }
-    }
+    // Pass 2: for candidate groups only, compute fingerprint on the fly and store object IDs.
+    // FingerprintGroup stores scalars + List<Long> IDs — no HeapObject references.
+    Map<Long, FingerprintGroup> byFingerprint = new HashMap<>();
+    dump.getObjects()
+        .forEach(
+            obj -> {
+              HeapClass cls = obj.getHeapClass();
+              if (cls == null) return;
+              String key = cls.getName() + "#" + obj.getShallowSize();
+              if (groupCounts.getOrDefault(key, 0) < 2) return;
 
-    // Step 4+5: drop singletons, sort by wastedBytes desc, build rows
-    List<Map.Entry<Long, List<HeapObject>>> survivors =
+              int[] nodeCount = {0};
+              long fp = computeFingerprint(obj, depth, new ArrayDeque<>(), nodeCount);
+
+              long shallowSize = obj.getShallowSize();
+              String humanName =
+                  cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
+              int nc = nodeCount[0];
+
+              byFingerprint
+                  .computeIfAbsent(fp, k -> new FingerprintGroup(shallowSize, humanName, nc))
+                  .ids
+                  .add(obj.getId());
+            });
+
+    // Drop singletons, sort by wastedBytes desc, build rows
+    List<Map.Entry<Long, FingerprintGroup>> survivors =
         byFingerprint.entrySet().stream()
-            .filter(e -> e.getValue().size() >= 2)
+            .filter(e -> e.getValue().ids.size() >= 2)
             .sorted(
                 (a, b) -> {
-                  long wa = (long) (a.getValue().size() - 1) * a.getValue().get(0).getShallowSize();
-                  long wb = (long) (b.getValue().size() - 1) * b.getValue().get(0).getShallowSize();
+                  long wa = (long) (a.getValue().ids.size() - 1) * a.getValue().shallowSize;
+                  long wb = (long) (b.getValue().ids.size() - 1) * b.getValue().shallowSize;
                   return Long.compare(wb, wa);
                 })
             .toList();
@@ -85,35 +109,23 @@ public final class SubgraphFingerprinter {
     Map<Integer, long[]> memberIds = new LinkedHashMap<>(survivors.size() * 2);
     int groupId = 1;
 
-    for (Map.Entry<Long, List<HeapObject>> entry : survivors) {
-      List<HeapObject> members = entry.getValue();
-      HeapObject first = members.get(0);
-      int copies = members.size();
-      long uniqueSize = first.getShallowSize();
-      long wastedBytes = (long) (copies - 1) * uniqueSize;
-
-      // Recompute nodeCount for one representative member
-      int[] nodeCount = {0};
-      computeFingerprint(first, depth, new ArrayDeque<>(), nodeCount);
-
-      HeapClass cls = first.getHeapClass();
-      String className = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : "unknown";
+    for (Map.Entry<Long, FingerprintGroup> entry : survivors) {
+      FingerprintGroup group = entry.getValue();
+      int copies = group.ids.size();
+      long wastedBytes = (long) (copies - 1) * group.shallowSize;
 
       Map<String, Object> row = new LinkedHashMap<>();
       row.put(HdumpPath.DuplicateFields.ID, groupId);
-      row.put(HdumpPath.DuplicateFields.ROOT_CLASS, className);
+      row.put(HdumpPath.DuplicateFields.ROOT_CLASS, group.className);
       row.put(HdumpPath.DuplicateFields.FINGERPRINT, String.format("%016x", entry.getKey()));
       row.put(HdumpPath.DuplicateFields.COPIES, copies);
-      row.put(HdumpPath.DuplicateFields.UNIQUE_SIZE, uniqueSize);
+      row.put(HdumpPath.DuplicateFields.UNIQUE_SIZE, group.shallowSize);
       row.put(HdumpPath.DuplicateFields.WASTED_BYTES, wastedBytes);
       row.put(HdumpPath.DuplicateFields.DEPTH, depth);
-      row.put(HdumpPath.DuplicateFields.NODE_COUNT, nodeCount[0]);
+      row.put(HdumpPath.DuplicateFields.NODE_COUNT, group.nodeCount);
       rows.add(row);
 
-      long[] ids = new long[copies];
-      for (int i = 0; i < copies; i++) {
-        ids[i] = members.get(i).getId();
-      }
+      long[] ids = group.ids.stream().mapToLong(Long::longValue).toArray();
       memberIds.put(groupId, ids);
       groupId++;
     }
@@ -134,7 +146,6 @@ public final class SubgraphFingerprinter {
       HeapObject obj, int depth, ArrayDeque<Long> path, int[] nodeCount) {
     long id = obj.getId();
 
-    // Cycle guard: if this object is already on the current path, return sentinel
     if (path.contains(id)) {
       return BACK_EDGE_SENTINEL;
     }
@@ -142,7 +153,6 @@ public final class SubgraphFingerprinter {
     nodeCount[0]++;
 
     if (depth == 0) {
-      // Structural skeleton only: hash class name
       HeapClass cls = obj.getHeapClass();
       return fnv1a(cls != null ? cls.getName() : "");
     }
@@ -171,7 +181,6 @@ public final class SubgraphFingerprinter {
       int[] nodeCount) {
     long h = fnv1a(className);
 
-    // Special case: java.lang.String — mix in the string value
     String strVal = obj.getStringValue();
     if (strVal != null) {
       h = mix(h, fnv1a(strVal));
@@ -179,7 +188,6 @@ public final class SubgraphFingerprinter {
 
     if (cls == null) return h;
 
-    // Sort fields by name for a deterministic traversal order
     List<HeapField> fields = new ArrayList<>(cls.getAllInstanceFields());
     fields.sort(Comparator.comparing(HeapField::getName));
 
@@ -213,7 +221,6 @@ public final class SubgraphFingerprinter {
         h = mix(h, hashElement(elem, depth, path, nodeCount));
       }
     } else {
-      // For large arrays hash only the first 10 and last 10 elements
       for (int i = 0; i < 10; i++) {
         h = mix(h, hashElement(elements[i], depth, path, nodeCount));
       }
@@ -259,5 +266,19 @@ public final class SubgraphFingerprinter {
       case Double d -> Double.doubleToRawLongBits(d);
       default -> fnv1a(v.toString());
     };
+  }
+
+  /** Holds the metadata and member IDs for one fingerprint group. No HeapObject references. */
+  private static final class FingerprintGroup {
+    final long shallowSize;
+    final String className;
+    final int nodeCount;
+    final List<Long> ids = new ArrayList<>();
+
+    FingerprintGroup(long shallowSize, String className, int nodeCount) {
+      this.shallowSize = shallowSize;
+      this.className = className;
+      this.nodeCount = nodeCount;
+    }
   }
 }

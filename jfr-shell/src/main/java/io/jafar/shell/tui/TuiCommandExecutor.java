@@ -321,6 +321,7 @@ public final class TuiCommandExecutor {
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
     ctx.asyncMaxLineWidth = 0;
+    ctx.asyncProgressLines.clear();
     ctx.commandRunning = true;
     ctx.commandStartTick = ctx.renderTick;
     ctx.commandStartTimeMs = System.currentTimeMillis();
@@ -392,6 +393,7 @@ public final class TuiCommandExecutor {
     ctx.commandRunning = false;
     ctx.asyncProgressMessage = null;
     ctx.asyncOutputBuffer = null;
+    ctx.asyncProgressLines.clear();
     ctx.focus = Focus.INPUT;
     ctx.showHintMessage("Cancelled");
   }
@@ -406,6 +408,7 @@ public final class TuiCommandExecutor {
       ctx.asyncMetadataClasses = null;
       ctx.asyncOutputBuffer = null;
       ctx.asyncMaxLineWidth = 0;
+      ctx.asyncProgressLines.clear();
       ctx.commandFuture = null;
 
       if (summary != null && !summary.isEmpty()) {
@@ -428,6 +431,7 @@ public final class TuiCommandExecutor {
     activeTab.maxLineWidth = Math.max(activeTab.maxLineWidth, ctx.asyncMaxLineWidth);
     ctx.asyncOutputBuffer = null;
     ctx.asyncMaxLineWidth = 0;
+    ctx.asyncProgressLines.clear();
     ctx.commandFuture = null;
 
     activeTab.tableData = ctx.asyncTableData;
@@ -1308,9 +1312,15 @@ public final class TuiCommandExecutor {
   }
 
   /**
-   * A PrintStream that routes stderr output to the TUI spinner for progress updates. Lines
-   * containing {@code \r} are treated as progress updates and shown in the spinner status area.
-   * Complete {@code \n}-terminated lines are collected for display after the command finishes.
+   * A PrintStream that routes stderr output to the TUI spinner and the ephemeral live-progress area
+   * ({@code ctx.asyncProgressLines}). Progress lines are separate from {@code asyncOutputBuffer} so
+   * they are shown live during execution but discarded after the command finishes, keeping the
+   * final results area clean.
+   *
+   * <ul>
+   *   <li>{@code \r}-terminated lines (in-place progress bar) replace the last live-progress line.
+   *   <li>{@code \n}-terminated milestone lines are appended as permanent live-progress lines.
+   * </ul>
    */
   private static final class ProgressCapturingStream extends PrintStream {
     // Matches logback pattern: "HH:mm:ss.SSS [thread] LEVEL ..."
@@ -1319,7 +1329,7 @@ public final class TuiCommandExecutor {
 
     private final TuiContext ctx;
     private final StringBuilder currentLine = new StringBuilder();
-    private final List<String> outputLines = new ArrayList<>();
+    private boolean lastWasInPlace = false;
 
     ProgressCapturingStream(TuiContext ctx) {
       super(new ByteArrayOutputStream(0)); // dummy backing stream
@@ -1341,22 +1351,35 @@ public final class TuiCommandExecutor {
 
     private void handleChar(char c) {
       if (c == '\r') {
-        // Progress update — show in spinner, reset current line
         String progress = currentLine.toString().trim();
         if (!progress.isEmpty()) {
           ctx.asyncProgressMessage = progress;
+          String line = "  " + progress + elapsedSuffix();
+          if (lastWasInPlace && !ctx.asyncProgressLines.isEmpty()) {
+            ctx.asyncProgressLines.set(ctx.asyncProgressLines.size() - 1, line);
+          } else {
+            ctx.asyncProgressLines.add(line);
+          }
+          lastWasInPlace = true;
         }
         currentLine.setLength(0);
       } else if (c == '\n') {
-        // Complete line — show in spinner but don't add to final output
         String line = currentLine.toString().trim();
         if (!line.isEmpty() && !LOGBACK_LINE.matcher(line).matches()) {
           ctx.asyncProgressMessage = line;
+          ctx.asyncProgressLines.add("  " + line);
+          lastWasInPlace = false;
         }
         currentLine.setLength(0);
       } else {
         currentLine.append(c);
       }
+    }
+
+    private String elapsedSuffix() {
+      long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
+      if (elapsedSec <= 0) return "";
+      return String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60);
     }
 
     @Override
@@ -1366,7 +1389,7 @@ public final class TuiCommandExecutor {
 
     List<String> getOutputLines() {
       currentLine.setLength(0);
-      return outputLines;
+      return List.of(); // progress lines are in ctx.asyncProgressLines, not here
     }
   }
 }

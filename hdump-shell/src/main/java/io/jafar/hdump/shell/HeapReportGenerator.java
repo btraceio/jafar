@@ -25,8 +25,11 @@ public final class HeapReportGenerator {
   private static final long WARNING_RETAINED_BYTES = 10L * 1024 * 1024;
   private static final long WARNING_DUPLICATE_WASTE_BYTES = 1L * 1024 * 1024;
 
-  /** Fingerprint depth used when computing duplicates for the report. */
-  private static final int DUPLICATE_DEPTH = 3;
+  /**
+   * Fingerprint depth used when computing duplicates for the report. Depth 1 is cheaper than the
+   * interactive default (3) while still catching the most common structural duplicates.
+   */
+  private static final int DUPLICATE_DEPTH = 1;
 
   /** Report finding severity. */
   public enum Severity {
@@ -85,20 +88,22 @@ public final class HeapReportGenerator {
       session.computeApproximateRetainedSizes();
     }
 
-    // --- Leak detectors ---
+    // --- Leak detectors (skip duplicate-strings — O(unique-strings) memory risk) ---
     if (runAll || focus.contains("leaks")) {
+      System.err.println("Running leak detectors...");
       findings.addAll(analyzeLeaks(dump));
+      System.err.println("Leak detection complete.");
     }
 
     // --- Waste analysis ---
     if (runAll || focus.contains("waste")) {
+      System.err.println("Analyzing collection waste...");
       findings.addAll(analyzeWaste(dump));
     }
 
     // --- Duplicate subgraphs ---
     if (runAll || focus.contains("duplicates")) {
-      SubgraphFingerprinter.Result dupResult = session.getOrComputeDuplicates(DUPLICATE_DEPTH);
-      findings.addAll(analyzeDuplicates(dupResult));
+      findings.addAll(analyzeDuplicates(session));
     }
 
     // Sort: CRITICAL first, then WARNING, then INFO; within same severity keep insertion order
@@ -124,7 +129,7 @@ public final class HeapReportGenerator {
         String.format(
             "Heap: %s (%s, %,d objects, %,d classes)%n",
             fileName,
-            formatSize(dump.getTotalHeapSize()),
+            formatSize(totalHeapSize(dump)),
             dump.getObjectCount(),
             dump.getClassCount()));
     sb.append("\n");
@@ -170,7 +175,7 @@ public final class HeapReportGenerator {
         String.format(
             "**Heap:** %s | **Size:** %s | **Objects:** %,d | **Classes:** %,d%n%n",
             fileName,
-            formatSize(dump.getTotalHeapSize()),
+            formatSize(totalHeapSize(dump)),
             dump.getObjectCount(),
             dump.getClassCount()));
 
@@ -201,7 +206,7 @@ public final class HeapReportGenerator {
   private static List<Finding> analyzeHistogram(HeapDump dump) {
     List<Finding> findings = new ArrayList<>();
 
-    long totalShallow = dump.getTotalHeapSize();
+    long totalShallow = totalHeapSize(dump);
     findings.add(
         new Finding(
             Severity.INFO,
@@ -315,7 +320,23 @@ public final class HeapReportGenerator {
     return findings;
   }
 
-  private static List<Finding> analyzeDuplicates(SubgraphFingerprinter.Result result) {
+  private static List<Finding> analyzeDuplicates(HeapSession session) {
+    // Use cached result if the user already ran 'duplicates' interactively (any depth).
+    // Otherwise trigger a fresh computation at the report depth.
+    Map<Integer, SubgraphFingerprinter.Result> cached = session.getAllCachedDuplicates();
+    SubgraphFingerprinter.Result result;
+    if (!cached.isEmpty()) {
+      result =
+          cached.values().stream()
+              .max(
+                  Comparator.comparingInt(
+                      r -> r.rows().isEmpty() ? 0 : (int) r.rows().get(0).getOrDefault("depth", 0)))
+              .orElse(null);
+    } else {
+      System.err.println("Computing duplicate subgraph fingerprints...");
+      result = session.getOrComputeDuplicates(DUPLICATE_DEPTH);
+    }
+
     if (result == null || result.rows().isEmpty()) return List.of();
 
     long totalWaste = 0;
@@ -394,6 +415,19 @@ public final class HeapReportGenerator {
   }
 
   // ---- Utilities ----
+
+  /**
+   * Returns the total shallow heap size. Falls back to summing {@code instanceCount * instanceSize}
+   * from the class histogram when the indexed parser leaves {@code getTotalHeapSize()} at zero
+   * (large heap dumps use lazy loading and don't accumulate the total during parsing).
+   */
+  private static long totalHeapSize(HeapDump dump) {
+    long size = dump.getTotalHeapSize();
+    if (size > 0) return size;
+    return dump.getClasses().stream()
+        .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
+        .sum();
+  }
 
   private static String formatSize(long bytes) {
     if (bytes < 0) return "?";

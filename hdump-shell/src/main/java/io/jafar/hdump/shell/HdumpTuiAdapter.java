@@ -205,6 +205,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     boolean isExpensive =
         lower.startsWith("clusters")
             || lower.startsWith("ages")
+            || lower.startsWith("report")
             || lower.contains("| dominators")
             || lower.contains("| estimateage")
             || lower.contains("| age(")
@@ -213,7 +214,8 @@ public final class HdumpTuiAdapter implements TuiAdapter {
             || lower.contains("| pathtoroot")
             || lower.contains("| retentionpaths")
             || lower.contains("| retainedbreakdown")
-            || lower.contains("| checkleaks");
+            || lower.contains("| checkleaks")
+            || lower.contains("| cachestats");
 
     if (!isExpensive) return null;
 

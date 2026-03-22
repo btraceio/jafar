@@ -56,21 +56,37 @@ public final class SessionManager<S extends Session> {
     this.factoryContext = factoryContext;
   }
 
-  public synchronized SessionRef<S> open(Path path, String alias) throws Exception {
-    int id = nextId.getAndIncrement();
-    if (alias != null) {
-      if (byAlias.containsKey(alias)) {
+  public SessionRef<S> open(Path path, String alias) throws Exception {
+    // Reserve the ID and validate alias without holding the lock during session creation.
+    // factory.create() can be very slow (e.g. parsing a large heap dump) and the lock must
+    // not be held during that time because other threads (e.g. the TUI render loop) need
+    // synchronized access to sessions.current() / sessions.list().
+    int id;
+    synchronized (this) {
+      if (alias != null && byAlias.containsKey(alias)) {
         throw new IllegalArgumentException("Alias already in use: " + alias);
       }
+      id = nextId.getAndIncrement();
     }
+
+    // Slow part — no lock held
     S session = factory.create(path, factoryContext);
-    SessionRef<S> ref = new SessionRef<>(id, alias, session);
-    byId.put(id, ref);
-    if (alias != null) {
-      byAlias.put(alias, id);
+
+    // Register with lock held briefly
+    synchronized (this) {
+      if (alias != null && byAlias.containsKey(alias)) {
+        // Alias was claimed concurrently while we were creating the session
+        session.close();
+        throw new IllegalArgumentException("Alias already in use: " + alias);
+      }
+      SessionRef<S> ref = new SessionRef<>(id, alias, session);
+      byId.put(id, ref);
+      if (alias != null) {
+        byAlias.put(alias, id);
+      }
+      currentId = id;
+      return ref;
     }
-    currentId = id;
-    return ref;
   }
 
   public synchronized List<SessionRef<S>> list() {

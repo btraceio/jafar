@@ -293,7 +293,7 @@ public final class TuiRenderer {
       return;
     }
 
-    // Spinner while command running
+    // Spinner + live progress output while command running
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
       String progressMsg = ctx.asyncProgressMessage;
@@ -301,9 +301,34 @@ public final class TuiRenderer {
       String elapsed =
           elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
       String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
-      Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " " + status);
-      frame.renderWidget(spinner, inner);
+
+      // Split: one line for the spinner, the rest for live progress lines
+      List<Rect> spinnerSplit =
+          Layout.vertical().constraints(Constraint.length(1), Constraint.fill()).split(inner);
+      Paragraph spinner =
+          Paragraph.builder()
+              .text(Text.raw("  " + TuiContext.SPINNER[spinIdx] + " " + status))
+              .style(Style.create().fg(Color.CYAN))
+              .build();
+      frame.renderWidget(spinner, spinnerSplit.get(0));
       ctx.resultsAreaHeight = inner.height();
+
+      // Render the last N live-progress lines below the spinner.
+      // Snapshot the CopyOnWriteArrayList to avoid concurrent modification during iteration.
+      List<String> progressSnap = new ArrayList<>(ctx.asyncProgressLines);
+      if (!progressSnap.isEmpty()) {
+        Rect progressArea = spinnerSplit.get(1);
+        int visHeight = progressArea.height();
+        if (visHeight > 0) {
+          int startIdx = Math.max(0, progressSnap.size() - visHeight);
+          List<Line> progressLines = new ArrayList<>();
+          for (int i = startIdx; i < progressSnap.size(); i++) {
+            progressLines.add(Line.from(progressSnap.get(i)));
+          }
+          Paragraph progressPara = Paragraph.builder().text(new Text(progressLines, null)).build();
+          frame.renderWidget(progressPara, progressArea);
+        }
+      }
       return;
     }
 

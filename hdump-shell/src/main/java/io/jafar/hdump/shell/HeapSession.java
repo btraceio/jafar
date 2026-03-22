@@ -408,7 +408,14 @@ public final class HeapSession implements Session {
     stats.put("classes", dump.getClassCount());
     stats.put("objects", dump.getObjectCount());
     stats.put("gcRoots", dump.getGcRootCount());
-    stats.put("totalHeapSize", formatSize(dump.getTotalHeapSize()));
+    long totalSize = dump.getTotalHeapSize();
+    if (totalSize == 0) {
+      totalSize =
+          dump.getClasses().stream()
+              .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
+              .sum();
+    }
+    stats.put("totalHeapSize", formatSize(totalSize));
     stats.put("dominatorsComputed", dump.hasDominators());
     return stats;
   }
