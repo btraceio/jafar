@@ -229,6 +229,32 @@ public final class TuiCommandExecutor {
     activeTab.cpRenderedCount = 0;
     browser.clearNavHistory();
 
+    // Pre-execution check for expensive operations
+    if (tuiAdapter != null) {
+      Session preCheckSession = sessions.current().map(ref -> ref.session).orElse(null);
+      String warning = tuiAdapter.getExpensiveOperationWarning(command, preCheckSession);
+      if (warning != null) {
+        ctx.awaitingConfirmation = true;
+        ctx.pendingConfirmCommand = command;
+        ctx.confirmationMessage = warning;
+        return;
+      }
+    }
+
+    dispatchCommand(command);
+  }
+
+  /**
+   * Executes a command that has already passed the expensive-operation confirmation check. Called
+   * from the key handler when the user confirms a previously intercepted expensive command.
+   */
+  void submitConfirmedCommand(String command) {
+    dispatchCommand(command);
+  }
+
+  private void dispatchCommand(String command) {
+    ResultTab activeTab = ctx.activeTab();
+
     // Browser mode detection via TuiAdapter
     if (tuiAdapter != null) {
       String category = tuiAdapter.detectBrowserCommand(command);
@@ -246,6 +272,7 @@ public final class TuiCommandExecutor {
             ctx.asyncMaxLineWidth = 0;
             ctx.commandRunning = true;
             ctx.commandStartTick = ctx.renderTick;
+            ctx.commandStartTimeMs = System.currentTimeMillis();
             ctx.focus = Focus.RESULTS;
 
             ctx.commandFuture =

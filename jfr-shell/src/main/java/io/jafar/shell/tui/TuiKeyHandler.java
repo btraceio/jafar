@@ -59,6 +59,26 @@ public final class TuiKeyHandler {
   }
 
   void handleKey(int key) throws IOException {
+    // Confirmation intercept for expensive operations
+    if (ctx.awaitingConfirmation) {
+      switch (key) {
+        case 'y', 'Y', '\r', '\n' -> {
+          String cmd = ctx.pendingConfirmCommand;
+          ctx.awaitingConfirmation = false;
+          ctx.pendingConfirmCommand = null;
+          ctx.confirmationMessage = null;
+          if (cmd != null) executor.submitConfirmedCommand(cmd);
+        }
+        case 'n', 'N', 27 -> { // 27 = Esc
+          ctx.awaitingConfirmation = false;
+          ctx.pendingConfirmCommand = null;
+          ctx.confirmationMessage = null;
+        }
+        default -> {} // Ignore other keys
+      }
+      return;
+    }
+
     // Popup intercepts
     if (ctx.sessionPickerVisible) {
       handleSessionPickerKey(key);

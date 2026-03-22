@@ -265,6 +265,11 @@ public final class TuiContext {
   volatile long asyncProgressMessageTime; // nanoTime when asyncProgressMessage was last set
   volatile boolean commandRunning;
   long commandStartTick;
+  volatile long commandStartTimeMs;
+  // Confirmation state for expensive operations
+  boolean awaitingConfirmation;
+  String pendingConfirmCommand;
+  String confirmationMessage;
   Future<?> commandFuture;
   List<String> asyncOutputBuffer;
   int asyncMaxLineWidth;

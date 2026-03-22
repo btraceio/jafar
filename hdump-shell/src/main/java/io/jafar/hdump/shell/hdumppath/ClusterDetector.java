@@ -67,7 +67,8 @@ public final class ClusterDetector {
       HeapObject obj = objectIter.next();
       idIndex[idx] = obj.getId();
       idToSeq.put(obj.getId(), idx);
-      retainedSizes[idx] = obj.getRetainedSize();
+      long retained = obj.getRetainedSizeIfAvailable();
+      retainedSizes[idx] = retained >= 0 ? retained : obj.getShallowSize();
       HeapClass cls = obj.getHeapClass();
       classNames[idx] = cls != null ? ClassNameUtil.toHumanReadable(cls.getName()) : null;
       idx++;
@@ -141,35 +142,56 @@ public final class ClusterDetector {
       edgeCounts = null;
     }
 
-    // Label propagation: adopt majority label among neighbors
-    // Reuse a single map across all nodes to avoid per-node allocation
+    // Label propagation: adopt majority label among neighbors.
+    // Uses an allocation-free voting scheme: labels are node indices in [0, actualCount), so
+    // votes[label] directly counts occurrences. `touched` tracks which entries to zero out
+    // after each node to avoid a full O(N) clear per node.
     if (useLabelPropagation) {
-      Map<Integer, int[]> labelCounts = new HashMap<>();
+      int[] votes = new int[actualCount]; // indexed by label value; all-zero initially
+      int[] touched = new int[64]; // labels seen for current node; grown as needed
       for (int iter = 0; iter < maxIterations; iter++) {
         int changedCount = 0;
         for (int i = 0; i < actualCount; i++) {
           int[] refs = adjacency[i];
           if (refs.length == 0) continue;
 
-          labelCounts.clear();
-          labelCounts.computeIfAbsent(labels[i], k -> new int[1])[0] = 1;
-          for (int refIdx : refs) {
-            int[] cnt = labelCounts.get(labels[refIdx]);
-            if (cnt == null) {
-              cnt = new int[1];
-              labelCounts.put(labels[refIdx], cnt);
-            }
-            cnt[0]++;
+          // Ensure touched buffer is large enough (degree + 1 for self)
+          int needed = refs.length + 1;
+          if (touched.length < needed) {
+            touched = new int[needed * 2];
           }
 
-          int bestLabel = labels[i];
-          int bestCount = 0;
-          for (var e : labelCounts.entrySet()) {
-            if (e.getValue()[0] > bestCount) {
-              bestCount = e.getValue()[0];
-              bestLabel = e.getKey();
+          // Tally votes: self label counts as 1
+          int touchedCount = 0;
+          int selfLabel = labels[i];
+          votes[selfLabel] = 1;
+          touched[touchedCount++] = selfLabel;
+
+          for (int refIdx : refs) {
+            int lbl = labels[refIdx];
+            if (votes[lbl] == 0) {
+              touched[touchedCount++] = lbl;
+            }
+            votes[lbl]++;
+          }
+
+          // Find the label with the most votes; break ties by preferring the smaller label
+          // for deterministic convergence
+          int bestLabel = selfLabel;
+          int bestCount = votes[selfLabel];
+          for (int t = 0; t < touchedCount; t++) {
+            int lbl = touched[t];
+            if (votes[lbl] > bestCount || (votes[lbl] == bestCount && lbl < bestLabel)) {
+              bestCount = votes[lbl];
+              bestLabel = lbl;
             }
           }
+
+          // Reset only the touched entries (avoids full O(N) clear)
+          for (int t = 0; t < touchedCount; t++) {
+            votes[touched[t]] = 0;
+          }
+
           if (bestLabel != labels[i]) {
             labels[i] = bestLabel;
             changedCount++;

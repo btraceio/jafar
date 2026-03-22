@@ -149,6 +149,7 @@ class ClusterDetectorTest {
     when(obj.getHeapClass()).thenReturn(cls);
     when(obj.getShallowSize()).thenReturn(shallow);
     when(obj.getRetainedSize()).thenReturn(retained);
+    when(obj.getRetainedSizeIfAvailable()).thenReturn(retained);
     when(obj.getDescription()).thenReturn(className + "@" + Long.toHexString(id));
     return obj;
   }

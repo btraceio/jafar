@@ -284,6 +284,15 @@ public final class TuiRenderer {
       frame.renderWidget(cpEntriesBlock, hSplit.get(1));
     }
 
+    // Confirmation prompt for expensive operations
+    if (ctx.awaitingConfirmation && ctx.confirmationMessage != null) {
+      Paragraph prompt =
+          Paragraph.from("  " + ctx.confirmationMessage + "  [y] confirm  [n/Esc] cancel");
+      frame.renderWidget(prompt, inner);
+      ctx.resultsAreaHeight = inner.height();
+      return;
+    }
+
     // Spinner while command running
     if (ctx.commandRunning && ctx.renderTick - ctx.commandStartTick > 1) {
       int spinIdx = (int) (ctx.renderTick % TuiContext.SPINNER.length);
@@ -294,7 +303,9 @@ public final class TuiRenderer {
         ctx.asyncProgressMessage = null;
         progressMsg = null;
       }
-      String status = progressMsg != null ? progressMsg : "Running...";
+      long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
+      String elapsed = elapsedSec > 0 ? " (" + elapsedSec + "s)" : "";
+      String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
       Paragraph spinner = Paragraph.from("  " + TuiContext.SPINNER[spinIdx] + " " + status);
       frame.renderWidget(spinner, inner);
       ctx.resultsAreaHeight = inner.height();

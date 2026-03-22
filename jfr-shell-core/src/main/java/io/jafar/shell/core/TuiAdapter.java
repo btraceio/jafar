@@ -134,4 +134,19 @@ public interface TuiAdapter {
   default Map<String, Object> loadObjectById(Session session, String hexId) throws Exception {
     return null;
   }
+
+  /**
+   * Returns a confirmation warning if the command would trigger an expensive computation that has
+   * not been performed yet, or {@code null} if the command can run immediately without a prompt.
+   *
+   * <p>The TUI will pause and ask the user to confirm before executing the command if a non-null
+   * value is returned.
+   *
+   * @param command the raw command string
+   * @param session the active session, or null if none
+   * @return a human-readable warning string, or null if no confirmation is needed
+   */
+  default String getExpensiveOperationWarning(String command, Session session) {
+    return null;
+  }
 }

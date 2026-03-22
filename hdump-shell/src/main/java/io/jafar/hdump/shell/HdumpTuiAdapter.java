@@ -151,6 +151,37 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     return heap.getHeapDump().getObjectById(id).map(HdumpPathEvaluator::objectToRow).orElse(null);
   }
 
+  @Override
+  public String getExpensiveOperationWarning(String command, Session session) {
+    if (!(session instanceof HeapSession heap)) return null;
+    // If retained sizes are already computed, all operations are fast
+    if (heap.getHeapDump().hasDominators()) return null;
+
+    String lower = command.toLowerCase().trim();
+    // Strip leading "show " prefix
+    if (lower.startsWith("show ")) lower = lower.substring(5).trim();
+
+    boolean isExpensive =
+        lower.startsWith("clusters")
+            || lower.startsWith("ages")
+            || lower.contains("| dominators")
+            || lower.contains("| estimateage")
+            || lower.contains("| age(")
+            || lower.contains("| threadowner")
+            || lower.contains("| dominatedsize")
+            || lower.contains("| pathtoroot")
+            || lower.contains("| retentionpaths")
+            || lower.contains("| retainedbreakdown")
+            || lower.contains("| checkleaks");
+
+    if (!isExpensive) return null;
+
+    long objectCount = heap.getHeapDump().getObjectCount();
+    return String.format(
+        "Requires computing retained sizes for %,d objects — may take several minutes.",
+        objectCount);
+  }
+
   // ---- retention paths browser helpers ----
 
   @SuppressWarnings("unchecked")
