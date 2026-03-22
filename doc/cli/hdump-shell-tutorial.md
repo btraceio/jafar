@@ -12,7 +12,7 @@ This tutorial teaches you how to use JAFAR's heap dump analysis capabilities for
 6. [Class Analysis](#class-analysis)
 7. [GC Root Analysis](#gc-root-analysis)
 8. [Memory Leak Detection](#memory-leak-detection)
-9. [What-If Simulation](#what-if-simulation)
+9. [What-If Simulation](#what-if-simulation) — `objects/Foo | whatif()`
 10. [Object Age Estimation](#object-age-estimation)
 11. [Common Analysis Patterns](#common-analysis-patterns)
 12. [Tips and Best Practices](#tips-and-best-practices)
@@ -434,47 +434,32 @@ hdump> classes/*Cache* | select(name, instanceCount)
 
 ## What-If Simulation
 
-The `whatif` root answers prioritisation questions like "if I fix this leak, how much memory would be freed?" It evaluates an inner HdumpPath query, sums the retained sizes of matched objects, and reports the result in a single row.
+The `whatif()` pipeline operator answers prioritisation questions like "if I fix this leak, how much memory would be freed?" Pipe any object or GC root query into `whatif()` to get a simulation result.
 
-The keyword `remove` is optional — both forms below are equivalent:
-
-```bash
-# Short form
-hdump> whatif objects/com.example.LeakyCache
-
-# Explicit form
-hdump> whatif remove objects/com.example.LeakyCache
-```
-
-**Output columns:** `action`, `targetQuery`, `targetCount`, `freedBytes`, `freedObjects`, `freedPct`, `remainingRetained`.
-
-### Common use cases
+**Output columns:** `action`, `targetCount`, `freedBytes`, `freedObjects`, `freedPct`, `remainingRetained`.
 
 ```bash
-# How much memory would be freed by removing all ThreadLocal-related objects?
-hdump> whatif objects/java.lang.ThreadLocal
+# How much memory would be freed by fixing LeakyCache?
+hdump> objects/com.example.LeakyCache | whatif()
 
-# Would fixing the LeakyCache make a meaningful dent?
-hdump> whatif objects/com.example.LeakyCache | select(freedBytes, freedPct)
+# Focus on the key metrics
+hdump> objects/com.example.LeakyCache | whatif() | select(freedBytes, freedPct)
+
+# Simulate freeing thread-owned objects
+hdump> gcroots/THREAD_OBJ | whatif()
 
 # Compare impact of multiple candidates
-hdump> whatif objects/com.example.LeakyCache
-hdump> whatif objects/com.example.SessionStore
+hdump> objects/com.example.LeakyCache | whatif()
+hdump> objects/com.example.SessionStore | whatif()
 
-# Simulate removing GC roots of a specific type
-hdump> whatif gcroots/THREAD_OBJ[type = "THREAD_OBJ"]
+# Filter before simulating — only large instances
+hdump> objects/com.example.Foo[retained > 1MB] | whatif()
+
+# Target a specific object by ID
+hdump> objects[id = 12345] | whatif()
 ```
 
-> **Note:** `freedBytes` is the sum of retained sizes of the directly matched objects. When a full dominator tree has been computed, `freedObjects` reflects the total dominated subtree; otherwise it equals `targetCount`.
-
-### Targeting a specific object by ID
-
-Use the `id` filter to simulate removing a single known instance:
-
-```bash
-hdump> whatif objects[id = 12345]
-hdump> whatif objects[id = 12345] | select(freedBytes, freedPct)
-```
+> **Note:** `freedBytes` is the sum of retained sizes of the input objects. When a full dominator tree has been computed, `freedObjects` reflects the total dominated subtree; otherwise it equals `targetCount`.
 
 ## Object Age Estimation
 

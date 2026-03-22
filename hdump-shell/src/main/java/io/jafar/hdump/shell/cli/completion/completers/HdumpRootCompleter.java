@@ -18,7 +18,7 @@ public final class HdumpRootCompleter implements ContextCompleter<HdumpMetadataS
 
   /** Roots that do not use a {@code /type-pattern} suffix. */
   private static final java.util.Set<String> PARAM_ROOTS =
-      java.util.Set.of("duplicates", "clusters", "whatif");
+      java.util.Set.of("duplicates", "clusters");
 
   @Override
   public boolean canHandle(CompletionContext ctx) {

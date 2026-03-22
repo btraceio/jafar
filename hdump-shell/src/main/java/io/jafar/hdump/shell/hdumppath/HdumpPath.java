@@ -38,8 +38,6 @@ public final class HdumpPath {
     CLUSTERS,
     /** Query structurally-identical duplicate object subgraphs. */
     DUPLICATES,
-    /** Simulate the effect of removing a set of objects from the heap. */
-    WHATIF,
     /** Query heap objects enriched with estimated age scores. */
     AGES
   }
@@ -168,7 +166,8 @@ public final class HdumpPath {
           ObjectsOp,
           ThreadOwnerOp,
           DominatedSizeOp,
-          EstimateAgeOp {}
+          EstimateAgeOp,
+          WhatIfOp {}
 
   /** Select specific fields/expressions. */
   public record SelectOp(List<SelectField> fields) implements PipelineOp {
@@ -534,6 +533,22 @@ public final class HdumpPath {
    */
   public record EstimateAgeOp() implements PipelineOp {}
 
+  /**
+   * Simulate removing the input objects from the heap and report freed memory.
+   *
+   * <p>Consumes the incoming object row stream and returns a single summary row with freed bytes,
+   * freed object count, freed percentage, and remaining retained size.
+   *
+   * <p>Example:
+   *
+   * <pre>
+   * objects/com.example.LeakyCache | whatif()
+   * objects[retained &gt; 10MB] | whatif()
+   * gcroots/THREAD_OBJ | whatif() | select(freedBytes, freedPct)
+   * </pre>
+   */
+  public record WhatIfOp() implements PipelineOp {}
+
   // === Built-in field names for objects ===
 
   /** Standard field names available on heap objects. */
@@ -622,15 +637,12 @@ public final class HdumpPath {
     private DuplicateFields() {}
   }
 
-  /** Standard field names produced by the {@code whatif} root. */
+  /** Standard field names produced by the {@code whatif()} operator. */
   public static final class WhatIfFields {
-    /** The simulated action (always {@code "remove"} in v1). */
+    /** The simulated action (always {@code "remove"}). */
     public static final String ACTION = "action";
 
-    /** The inner query string whose matched objects are simulated for removal. */
-    public static final String TARGET_QUERY = "targetQuery";
-
-    /** Number of objects matched by the inner query. */
+    /** Number of objects in the input stream. */
     public static final String TARGET_COUNT = "targetCount";
 
     /** Sum of retained sizes of matched objects (approximate freed bytes). */

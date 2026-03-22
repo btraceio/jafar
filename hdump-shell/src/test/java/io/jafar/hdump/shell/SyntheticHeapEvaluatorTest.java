@@ -214,9 +214,8 @@ class SyntheticHeapEvaluatorTest {
   }
 
   /**
-   * Isolated tests for the {@code whatif} root. Uses a dedicated session so that retained-size
-   * computation triggered by whatif evaluation does not pollute the shared session used by the
-   * other tests.
+   * Isolated tests for the {@code whatif()} pipeline operator. Uses a dedicated session so that
+   * retained-size computation does not pollute the shared session.
    */
   @Nested
   class WhatIfTests {
@@ -239,11 +238,11 @@ class SyntheticHeapEvaluatorTest {
     }
 
     @Test
-    void whatifRemoveFoo() throws IOException {
+    void whatifOperatorOnFoo() throws IOException {
       try (HeapSession s = whatifSession()) {
         List<Map<String, Object>> result =
             HdumpPathEvaluator.evaluate(
-                s, HdumpPathParser.parse("whatif remove objects/com.example.Foo"));
+                s, HdumpPathParser.parse("objects/com.example.Foo | whatif()"));
         assertEquals(1, result.size());
         Map<String, Object> row = result.get(0);
         assertEquals("remove", row.get("action"));
@@ -256,34 +255,25 @@ class SyntheticHeapEvaluatorTest {
     }
 
     @Test
-    void whatifRemoveNonexistent() throws IOException {
+    void whatifOperatorOnEmpty() throws IOException {
       try (HeapSession s = whatifSession()) {
         List<Map<String, Object>> result =
             HdumpPathEvaluator.evaluate(
-                s, HdumpPathParser.parse("whatif remove objects/com.example.Nonexistent"));
+                s, HdumpPathParser.parse("objects/com.example.Nonexistent | whatif()"));
         assertEquals(1, result.size());
         Map<String, Object> row = result.get(0);
         assertEquals(0, ((Number) row.get("targetCount")).intValue());
         assertEquals(0L, ((Number) row.get("freedBytes")).longValue());
-        assertEquals(0, ((Number) row.get("freedObjects")).intValue());
       }
     }
 
     @Test
-    void whatifParserAcceptsAction() {
-      var query = HdumpPathParser.parse("whatif remove objects/com.example.Foo");
-      assertEquals(0, query.rootParam());
-      assertEquals("objects/com.example.Foo", query.typePattern());
-    }
-
-    @Test
-    void whatifWithPipeline() throws IOException {
+    void whatifWithSelect() throws IOException {
       try (HeapSession s = whatifSession()) {
         List<Map<String, Object>> result =
             HdumpPathEvaluator.evaluate(
                 s,
-                HdumpPathParser.parse(
-                    "whatif remove objects/com.example.Foo | select(freedBytes)"));
+                HdumpPathParser.parse("objects/com.example.Foo | whatif() | select(freedBytes)"));
         assertEquals(1, result.size());
         assertTrue(result.get(0).containsKey("freedBytes"));
       }

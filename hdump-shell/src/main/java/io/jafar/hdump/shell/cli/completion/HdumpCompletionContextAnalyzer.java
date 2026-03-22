@@ -70,7 +70,6 @@ public final class HdumpCompletionContextAnalyzer {
         || "gcroots".equals(word)
         || "clusters".equals(word)
         || "duplicates".equals(word)
-        || "whatif".equals(word)
         || "ages".equals(word);
   }
 
@@ -314,7 +313,6 @@ public final class HdumpCompletionContextAnalyzer {
         || lower.startsWith("gcroots")
         || lower.startsWith("clusters")
         || lower.startsWith("duplicates")
-        || lower.startsWith("whatif")
         || lower.startsWith("ages")) {
       return trimmed;
     }

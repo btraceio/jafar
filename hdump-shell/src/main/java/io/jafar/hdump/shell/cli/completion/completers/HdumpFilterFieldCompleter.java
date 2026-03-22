@@ -43,7 +43,6 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "classes" -> getClassFieldDescription(field);
       case "gcroots" -> getGcRootFieldDescription(field);
       case "duplicates" -> getDuplicateFieldDescription(field);
-      case "whatif" -> getWhatIfFieldDescription(field);
       case "ages" -> getAgeFieldDescription(field);
       default -> null;
     };
@@ -108,19 +107,6 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
       case "estimatedAge" -> "age score 0-100";
       case "ageBucket" -> "ephemeral / medium / tenured / permanent";
       case "ageSignals" -> "debug: signal breakdown";
-      default -> null;
-    };
-  }
-
-  private String getWhatIfFieldDescription(String field) {
-    return switch (field) {
-      case "action" -> "simulated action (always 'remove' in v1)";
-      case "targetQuery" -> "inner query whose matched objects are removed";
-      case "targetCount" -> "number of objects matched by the inner query";
-      case "freedBytes" -> "sum of retained sizes of matched objects (approximate)";
-      case "freedObjects" -> "object count in dominated subtrees of matched objects";
-      case "freedPct" -> "freedBytes / totalHeapSize * 100 (one decimal)";
-      case "remainingRetained" -> "totalHeapSize - freedBytes";
       default -> null;
     };
   }

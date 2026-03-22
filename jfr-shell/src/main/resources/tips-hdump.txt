@@ -51,10 +51,10 @@ duplicates[rootClass = "com.example.Config"] | select(copies, wastedBytes)
 duplicates[id=3] | objects() drills into member objects of a specific group
 
 # ── What-if simulation ──
-whatif objects/com.example.LeakyCache simulates removing those objects and reports freed bytes
-whatif objects/com.example.Foo | select(freedBytes, freedPct) focuses on the key metrics
-whatif gcroots/THREAD_OBJ[type = "THREAD_OBJ"] simulates freeing thread-owned memory
-whatif objects[id = 12345] targets a specific object by ID
+objects/com.example.LeakyCache | whatif() simulates removing those objects and reports freed bytes
+objects/com.example.Foo | whatif() | select(freedBytes, freedPct) focuses on the key metrics
+gcroots/THREAD_OBJ | whatif() simulates freeing thread-owned memory
+objects[id = 12345] | whatif() targets a specific object by ID
 
 # ── Object age estimation ──
 ages | groupBy(ageBucket, agg=count) shows how objects distribute across age buckets

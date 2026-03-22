@@ -6,7 +6,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ```
 <query>     ::= <root> ("/" <type-spec>)? ("[" <predicates> "]")? ("|" <pipeline>)*
-<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")? | "whatif" ["remove"] <query> | "ages"
+<root>      ::= "objects" | "classes" | "gcroots" | "clusters" | "duplicates" ("(" "depth=" N ")")?  | "ages"
 <type-spec> ::= ("instanceof" "/")? <class-pattern>
 <predicates>::= <predicate> (("and" | "or") <predicate>)*
 <predicate> ::= <field-path> <op> <literal> | "not" <predicate> | "(" <predicates> ")"
@@ -15,7 +15,7 @@ HdumpPath is a query language for analyzing Java heap dumps (HPROF files). Inspi
 
 ## Roots
 
-HdumpPath queries start with one of seven roots:
+HdumpPath queries start with one of six roots:
 
 ### `objects`
 
@@ -154,39 +154,6 @@ duplicates[copies > 5] | objects() | head(3)
 
 **Pipeline operators:**
 - `objects` — expands duplicate group rows into member object rows
-
-### `whatif`
-
-Simulate the effect of removing a set of objects from the heap and report how much memory would be freed. The inner query identifies the objects to remove; their retained sizes are summed to approximate freed memory.
-
-```
-# Short form — 'remove' is optional
-whatif objects/com.example.LeakyCache
-whatif objects/com.example.LeakyCache | select(freedBytes, freedPct)
-
-# Long form — explicit 'remove' keyword (equivalent)
-whatif remove objects/com.example.LeakyCache
-whatif remove gcroots/THREAD_OBJ[type = "THREAD_OBJ"]
-```
-
-**Syntax:**
-```
-whatif <inner-query>
-whatif remove <inner-query>
-```
-
-`remove` is optional and currently the only supported action. Both forms are equivalent. The inner query is any valid HdumpPath query (including its own pipe operators, which are evaluated first).
-
-**Available fields:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `action` | String | Simulated action (`"remove"`) |
-| `targetQuery` | String | The inner query string |
-| `targetCount` | int | Objects matched by the inner query |
-| `freedBytes` | long | Sum of matched objects' retained sizes (approximate) |
-| `freedObjects` | int | Objects in dominated subtrees (exact with full dominator tree, else `targetCount`) |
-| `freedPct` | double | `freedBytes / totalHeapSize * 100`, one decimal place |
-| `remainingRetained` | long | `totalHeapSize - freedBytes` |
 
 ### `ages`
 
@@ -729,6 +696,35 @@ objects | estimateAge() | groupBy(class, agg=avg, value=estimatedAge) | top(10, 
 # Suspiciously old short-lived types
 objects/java.lang.ref.WeakReference | estimateAge() | filter(ageBucket = "tenured") | top(20)
 ```
+
+### `whatif()`
+
+Simulate removing the input objects from the heap and report how much memory would be freed.
+Consumes the incoming object (or GC root) row stream and returns a single summary row.
+
+```
+# How much memory would freeing LeakyCache instances save?
+objects/com.example.LeakyCache | whatif()
+
+# Focus on the key metrics only
+objects[retained > 10MB] | whatif() | select(freedBytes, freedPct)
+
+# Simulate freeing thread-owned objects
+gcroots/THREAD_OBJ | whatif()
+
+# Combine with filtering before the simulation
+objects/com.example.Foo[retained > 1MB] | whatif()
+```
+
+**Output fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | String | Always `"remove"` |
+| `targetCount` | int | Number of objects in the input stream |
+| `freedBytes` | long | Sum of retained sizes (approximate freed memory) |
+| `freedObjects` | int | Objects in dominated subtrees (exact with full dominator tree, else `targetCount`) |
+| `freedPct` | double | `freedBytes / totalHeapSize * 100`, one decimal place |
+| `remainingRetained` | long | `totalHeapSize - freedBytes` |
 
 ### `join(session=id|alias [, root="eventType", by=field])`
 Join with another session. Supports two modes:
