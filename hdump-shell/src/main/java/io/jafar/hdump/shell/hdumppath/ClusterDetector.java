@@ -120,6 +120,35 @@ public final class ClusterDetector {
       idx++;
     }
 
+    // BFS from all GC roots through outbound references to assign a root type to every reachable
+    // object. O(N+E) total, no allocations. Done before tempRefs is freed so we can reuse it.
+    // For non-label-propagation heaps (tempRefs == null) we fall back to direct-member lookup.
+    GcRoot.Type[] rootTypeBySeq = new GcRoot.Type[actualCount];
+    {
+      int[] bfsQueue = new int[actualCount];
+      int head = 0, tail = 0;
+      for (Map.Entry<Long, GcRoot.Type> e : gcRootTypes.entrySet()) {
+        Integer seqIdx = idToSeq.get(e.getKey());
+        if (seqIdx != null && rootTypeBySeq[seqIdx] == null) {
+          rootTypeBySeq[seqIdx] = e.getValue();
+          bfsQueue[tail++] = seqIdx;
+        }
+      }
+      while (head < tail) {
+        int cur = bfsQueue[head++];
+        GcRoot.Type type = rootTypeBySeq[cur];
+        int[] refs = tempRefs != null ? tempRefs[cur] : null;
+        if (refs != null) {
+          for (int ref : refs) {
+            if (rootTypeBySeq[ref] == null) {
+              rootTypeBySeq[ref] = type;
+              bfsQueue[tail++] = ref;
+            }
+          }
+        }
+      }
+    }
+
     // Build compact bidirectional adjacency arrays from edge counts and tempRefs
     int[][] adjacency = null;
     if (useLabelPropagation) {
@@ -242,37 +271,25 @@ public final class ClusterDetector {
         }
       }
 
-      // Determine anchor type and root path count using the pre-built gcRootTypes map.
-      // This avoids O(N) findPathToGcRoot calls per cluster (which caused O(clusters×N) total).
+      // Determine anchor type and root path count using the BFS-propagated root type map.
+      // rootTypeBySeq[i] holds the GC root type of the root that can reach object i via outbound
+      // references, so this is non-null for any reachable object even if it is not a root itself.
       int rootPathCount = 0;
       String anchorType = "UNKNOWN";
       String anchorObject = "unknown";
       for (int memberIdx : members) {
-        long objId = idIndex[memberIdx];
-        GcRoot.Type rootType = gcRootTypes.get(objId);
+        GcRoot.Type rootType = rootTypeBySeq[memberIdx];
         if (rootType != null) {
           rootPathCount++;
           if ("UNKNOWN".equals(anchorType)) {
             anchorType = rootType.name();
+            long objId = idIndex[memberIdx];
             String cls = classNames[memberIdx];
             anchorObject = (cls != null ? cls : "unknown") + "@" + Long.toHexString(objId);
           }
         }
       }
-      // Fall back to label node if no direct GC root found in cluster members
-      if (rootPathCount == 0) {
-        int labelIdx = entry.getKey();
-        if (labelIdx < actualCount) {
-          long labelId = idIndex[labelIdx];
-          GcRoot.Type labelRootType = gcRootTypes.get(labelId);
-          if (labelRootType != null) {
-            anchorType = labelRootType.name();
-            String cls = classNames[labelIdx];
-            anchorObject = (cls != null ? cls : "unknown") + "@" + Long.toHexString(labelId);
-          }
-        }
-        rootPathCount = 1; // prevent division by zero
-      }
+      if (rootPathCount == 0) rootPathCount = 1; // prevent division by zero
 
       double score = (double) retainedSize / rootPathCount;
 

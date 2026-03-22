@@ -220,6 +220,7 @@ public final class TuiCommandExecutor {
     activeTab.filteredMaxLineWidth = 0;
     activeTab.tableData = null;
     activeTab.tableHeaders = null;
+    activeTab.dataStartLine = -1;
     activeTab.selectedRow = -1;
     activeTab.metadataClassCache = null;
     activeTab.sortColumn = -1;

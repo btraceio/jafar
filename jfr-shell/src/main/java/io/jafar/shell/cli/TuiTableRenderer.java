@@ -207,8 +207,10 @@ public final class TuiTableRenderer {
         totalPrinted++;
       }
     }
-    // Preamble = total printed lines minus the data rows actually printed
-    return Math.max(0, totalPrinted - dataRowCount);
+    // Preamble = total printed lines minus the data rows actually printed.
+    // Always at least 1: the table widget always produces a header row, and blank rows (e.g. from
+    // wide ANSI-escaped cells) must not cause the count to undercount the preamble.
+    return Math.max(1, totalPrinted - dataRowCount);
   }
 
   public static int[] computeMaxWidths(List<String> headers, List<Map<String, Object>> rows) {
