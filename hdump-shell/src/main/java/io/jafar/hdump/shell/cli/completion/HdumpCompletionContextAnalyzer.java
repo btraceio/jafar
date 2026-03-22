@@ -159,11 +159,11 @@ public final class HdumpCompletionContextAnalyzer {
     // Extract root type and remaining path
     int slashPos = expression.indexOf('/');
     if (slashPos < 0) {
-      // No slash yet - completing root type
+      // No slash yet - completing root type; trim trailing whitespace so "ages " still matches
       return CompletionContext.builder()
           .type(CompletionContextType.ROOT)
           .command("show")
-          .partialInput(expression)
+          .partialInput(expression.trim())
           .fullLine(fullLine)
           .cursor(cursor)
           .build();
@@ -321,8 +321,18 @@ public final class HdumpCompletionContextAnalyzer {
 
   private String extractRootType(String expression) {
     int slash = expression.indexOf('/');
-    if (slash < 0) return null;
-    return expression.substring(0, slash);
+    if (slash >= 0) return expression.substring(0, slash);
+    // No slash — root may be followed by space, |, [, or ( (e.g. "ages | filter(")
+    int end = expression.length();
+    for (int i = 0; i < expression.length(); i++) {
+      char c = expression.charAt(i);
+      if (c == ' ' || c == '|' || c == '[' || c == '(') {
+        end = i;
+        break;
+      }
+    }
+    String candidate = expression.substring(0, end).trim();
+    return isRootType(candidate) ? candidate : null;
   }
 
   private int findVariableStart(String line, int cursor) {
