@@ -18,7 +18,7 @@ import java.util.Map;
 public final class HdumpQueryEvaluator implements QueryEvaluator {
 
   private static final List<String> ROOT_TYPES =
-      List.of("objects", "classes", "gcroots", "clusters", "ages");
+      List.of("objects", "classes", "gcroots", "clusters", "duplicates", "ages");
 
   private static final List<String> OPERATORS =
       List.of(
