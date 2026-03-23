@@ -184,7 +184,7 @@ public final class FunctionRegistry {
             .build());
 
     // flamegraph([direction=bottom-up|top-down])
-    // Render an ANSI flamegraph from events with stack traces
+    // Generate an interactive HTML flamegraph from events with stack traces
     register(
         FunctionSpec.builder("flamegraph")
             .pipeline()
