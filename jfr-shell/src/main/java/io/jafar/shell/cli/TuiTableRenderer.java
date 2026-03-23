@@ -101,7 +101,7 @@ public final class TuiTableRenderer {
     // tableData must stay consistent with the rendered text lines.
     int totalRows = rows.size();
     List<Map<String, Object>> renderRows =
-        totalRows > MAX_RENDERED_ROWS ? rows.subList(0, MAX_RENDERED_ROWS) : rows;
+        totalRows > MAX_RENDERED_ROWS ? new ArrayList<>(rows.subList(0, MAX_RENDERED_ROWS)) : rows;
 
     // Store structured data for detail pane consumption
     LAST_TABLE_HEADERS.set(headers);

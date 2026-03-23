@@ -76,10 +76,14 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
     Object query = evaluator.parse(command);
     Object result = evaluator.evaluate(session, query);
+    CommandDescriptor descriptor = COMMANDS.get(command.trim().split("\\s+")[0].toLowerCase());
     if (result instanceof List<?> rows && !rows.isEmpty() && rows.get(0) instanceof Map<?, ?>) {
       @SuppressWarnings("unchecked")
       List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
       io.renderTable(tableRows);
+    } else if (result instanceof List<?> rows && descriptor == CommandDescriptor.TABULAR) {
+      // Empty tabular result — still route through renderTable for consistent "(no rows)" output
+      io.renderTable(List.of());
     } else if (result instanceof List<?> rows) {
       rows.forEach(r -> io.println(r != null ? r.toString() : ""));
     } else if (result != null) {
