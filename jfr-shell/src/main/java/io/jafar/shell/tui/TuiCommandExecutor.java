@@ -295,6 +295,10 @@ public final class TuiCommandExecutor {
                       } finally {
                         System.setErr(origErr);
                         ctx.asyncProgressMessage = null;
+                        ctx.asyncProgressLines.clear();
+                        for (String errLine : progressStream.getOutputLines()) {
+                          addOutputLine("  " + errLine);
+                        }
                         ctx.commandRunning = false;
                       }
                     });
@@ -1466,6 +1470,22 @@ public final class TuiCommandExecutor {
       String partial = currentLine.toString().trim();
       if (!partial.isEmpty()) {
         ctx.asyncProgressMessage = partial;
+      }
+    }
+
+    @Override
+    public void print(char c) {
+      handleChar(c);
+    }
+
+    @Override
+    public void print(char[] s) {
+      if (s != null) {
+        for (char c : s) handleChar(c);
+        String partial = currentLine.toString().trim();
+        if (!partial.isEmpty()) {
+          ctx.asyncProgressMessage = partial;
+        }
       }
     }
 

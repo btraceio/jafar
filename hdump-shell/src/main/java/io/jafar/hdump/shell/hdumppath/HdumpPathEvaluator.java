@@ -389,8 +389,6 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    // Print progress message
-
     // Use bounded accumulation with priority queue
     int bufferSize = Math.max(topOp.n() * 5, 1000); // Keep 5x top N (min 1000)
     BoundedGroupAccumulator accumulator =
