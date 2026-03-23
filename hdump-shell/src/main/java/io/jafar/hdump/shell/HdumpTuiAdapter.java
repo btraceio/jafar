@@ -4,6 +4,7 @@ import io.jafar.hdump.shell.cli.HdumpShellCompleter;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
+import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -35,16 +36,59 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     this.completer = new HdumpShellCompleter(sessions);
   }
 
+  private static final Map<String, CommandDescriptor> COMMANDS =
+      Map.ofEntries(
+          Map.entry("report", CommandDescriptor.TEXT),
+          Map.entry("ages", CommandDescriptor.TABULAR),
+          Map.entry("clusters", CommandDescriptor.TABULAR),
+          Map.entry("duplicates", CommandDescriptor.TABULAR),
+          Map.entry("gcroots", CommandDescriptor.TABULAR),
+          Map.entry("objects", CommandDescriptor.TABULAR),
+          Map.entry("classes", CommandDescriptor.TABULAR));
+
+  @Override
+  public CommandDescriptor describeCommand(String cmdWord) {
+    return COMMANDS.get(cmdWord);
+  }
+
   @Override
   public void dispatch(String command, CommandIO io) throws Exception {
     String trimmed = command.trim();
-    if (trimmed.startsWith("report")) {
+    String cmdWord = trimmed.split("\\s+")[0].toLowerCase();
+    if (cmdWord.equals("report")) {
       cmdReport(trimmed, io);
       return;
     }
-    // Most queries are now handled by CommandDispatcher via module root-type aliases
-    // and the show/cmdShowModule path. This fallback handles any remaining edge cases.
+    if (COMMANDS.containsKey(cmdWord)) {
+      cmdQuery(trimmed, io);
+      return;
+    }
     io.error("Unknown command: " + trimmed);
+  }
+
+  private void cmdQuery(String command, CommandIO io) throws Exception {
+    HeapSession session =
+        sessions.getCurrent().map(entry -> (HeapSession) entry.session).orElse(null);
+    if (session == null) {
+      io.error("No heap dump open. Use 'open <file.hprof>' first.");
+      return;
+    }
+    HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
+    Object query = evaluator.parse(command);
+    Object result = evaluator.evaluate(session, query);
+    CommandDescriptor descriptor = COMMANDS.get(command.trim().split("\\s+")[0].toLowerCase());
+    if (result instanceof List<?> rows && !rows.isEmpty() && rows.get(0) instanceof Map<?, ?>) {
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
+      io.renderTable(tableRows);
+    } else if (result instanceof List<?> rows && descriptor == CommandDescriptor.TABULAR) {
+      // Empty tabular result — still route through renderTable for consistent "(no rows)" output
+      io.renderTable(List.of());
+    } else if (result instanceof List<?> rows) {
+      rows.forEach(r -> io.println(r != null ? r.toString() : ""));
+    } else if (result != null) {
+      io.println(result.toString());
+    }
   }
 
   private void cmdReport(String command, CommandIO io) {

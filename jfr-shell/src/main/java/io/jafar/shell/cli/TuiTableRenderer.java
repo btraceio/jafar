@@ -31,6 +31,9 @@ public final class TuiTableRenderer {
   public static final int MAX_CELL_WIDTH = 40;
   private static final Style HEADER_STYLE = Style.EMPTY.bold().fg(Color.CYAN);
 
+  /** Maximum rows rendered to text lines. Prevents OOM on huge result sets. */
+  private static final int MAX_RENDERED_ROWS = 2000;
+
   private static final ThreadLocal<List<Map<String, Object>>> LAST_TABLE_DATA = new ThreadLocal<>();
   private static final ThreadLocal<List<String>> LAST_TABLE_HEADERS = new ThreadLocal<>();
   private static final ThreadLocal<List<Map<String, Object>>> LAST_METADATA_CLASSES =
@@ -94,12 +97,27 @@ public final class TuiTableRenderer {
         });
     List<String> headers = new ArrayList<>(cols);
 
+    // Cap rows to prevent OOM when allocating the TamboUI render buffer.
+    // tableData must stay consistent with the rendered text lines.
+    int totalRows = rows.size();
+    List<Map<String, Object>> renderRows =
+        totalRows > MAX_RENDERED_ROWS ? new ArrayList<>(rows.subList(0, MAX_RENDERED_ROWS)) : rows;
+
     // Store structured data for detail pane consumption
     LAST_TABLE_HEADERS.set(headers);
-    LAST_TABLE_DATA.set(rows);
+    LAST_TABLE_DATA.set(renderRows);
 
     // Print legend for stackprofile output
     int preambleLines = 0;
+    if (totalRows > MAX_RENDERED_ROWS) {
+      pager.println(
+          "  \u26a0 Showing top "
+              + MAX_RENDERED_ROWS
+              + " of "
+              + totalRows
+              + " results. Use | top(N) or | filter(...) to narrow down.");
+      preambleLines++;
+    }
     if (headers.contains("timeBuckets") && headers.contains("method")) {
       pager.println(
           "\u25c6 hotspot (>1% self)  \u25c6\u25c6 steady hotspot (N+1 candidate)"
@@ -117,8 +135,8 @@ public final class TuiTableRenderer {
     Row headerRow = Row.from(headerCells);
 
     // Build data rows
-    List<Row> dataRows = new ArrayList<>(rows.size());
-    for (Map<String, Object> row : rows) {
+    List<Row> dataRows = new ArrayList<>(renderRows.size());
+    for (Map<String, Object> row : renderRows) {
       Cell[] cells = new Cell[headers.size()];
       // Detect steady hotspot: marker column contains ◆◆
       Object markerVal = row.get(" ");
@@ -135,7 +153,7 @@ public final class TuiTableRenderer {
     }
 
     // Column width constraints based on content length
-    int[] maxWidths = computeMaxWidths(headers, rows);
+    int[] maxWidths = computeMaxWidths(headers, renderRows);
     Constraint[] widths = computeWidths(headers, maxWidths);
 
     // Buffer width: sum of column widths + column spacing
@@ -154,7 +172,7 @@ public final class TuiTableRenderer {
             .highlightSymbol("")
             .build();
 
-    preambleLines += renderAndPrint(table, rows.size(), pager, bufferWidth);
+    preambleLines += renderAndPrint(table, renderRows.size(), pager, bufferWidth);
     LAST_PREAMBLE_LINES.set(preambleLines);
   }
 

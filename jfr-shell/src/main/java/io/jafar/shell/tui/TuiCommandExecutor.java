@@ -5,6 +5,7 @@ import io.jafar.parser.api.ComplexType;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
+import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -257,7 +258,8 @@ public final class TuiCommandExecutor {
   private void dispatchCommand(String command) {
     ResultTab activeTab = ctx.activeTab();
 
-    // Browser mode detection via TuiAdapter
+    // Browser mode detection via TuiAdapter (must run before ownsCommand so bare "classes"
+    // / "objects" enter browser mode rather than being routed to the adapter as queries)
     if (tuiAdapter != null) {
       String category = tuiAdapter.detectBrowserCommand(command);
       if (category != null) {
@@ -293,6 +295,10 @@ public final class TuiCommandExecutor {
                       } finally {
                         System.setErr(origErr);
                         ctx.asyncProgressMessage = null;
+                        ctx.asyncProgressLines.clear();
+                        for (String errLine : progressStream.getOutputLines()) {
+                          addOutputLine("  " + errLine);
+                        }
                         ctx.commandRunning = false;
                       }
                     });
@@ -313,6 +319,14 @@ public final class TuiCommandExecutor {
           }
         }
       }
+    }
+
+    // If the adapter exclusively owns this command, route directly to it
+    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
+    CommandDescriptor desc = tuiAdapter != null ? tuiAdapter.describeCommand(cmdWord) : null;
+    if (desc != null) {
+      submitAdapterCommand(command, desc);
+      return;
     }
 
     // Echo command
@@ -370,6 +384,98 @@ public final class TuiCommandExecutor {
               } finally {
                 System.setErr(origErr);
                 ctx.asyncProgressMessage = null;
+                ctx.asyncProgressLines.clear();
+                for (String errLine : progressStream.getOutputLines()) {
+                  addOutputLine("  " + errLine);
+                }
+                ctx.asyncTableData = TuiTableRenderer.getLastTableData();
+                ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
+                ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
+                ctx.asyncPreambleLines = TuiTableRenderer.getLastPreambleLines();
+                TuiTableRenderer.clearLastData();
+                ctx.commandRunning = false;
+              }
+            });
+  }
+
+  /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
+  private void submitAdapterCommand(String command, CommandDescriptor desc) {
+    ResultTab activeTab = ctx.activeTab();
+    activeTab.lines.add("> " + command);
+    ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
+    ctx.asyncOutputBuffer = new ArrayList<>();
+    ctx.asyncMaxLineWidth = 0;
+    ctx.asyncProgressLines.clear();
+    ctx.commandRunning = true;
+    ctx.commandStartTick = ctx.renderTick;
+    ctx.commandStartTimeMs = System.currentTimeMillis();
+    ctx.focus = Focus.RESULTS;
+
+    ctx.commandFuture =
+        commandExecutor.submit(
+            () -> {
+              TuiTableRenderer.clearLastData();
+              PrintStream origErr = System.err;
+              ProgressCapturingStream progressStream = new ProgressCapturingStream(ctx);
+              System.setErr(progressStream);
+              try {
+                tuiAdapter.dispatch(
+                    command,
+                    new TuiAdapter.CommandIO() {
+                      @Override
+                      public void println(String s) {
+                        addOutputLine(s);
+                      }
+
+                      @Override
+                      public void printf(String fmt, Object... args) {
+                        addOutputLine(String.format(fmt, args));
+                      }
+
+                      @Override
+                      public void error(String s) {
+                        addOutputLine("ERROR: " + s);
+                      }
+
+                      @Override
+                      public void renderTable(List<Map<String, Object>> rows) {
+                        switch (desc.outputMode()) {
+                          case TABULAR, MASTER_DETAIL ->
+                              TuiTableRenderer.render(
+                                  rows,
+                                  new CommandDispatcher.IO() {
+                                    @Override
+                                    public void println(String s) {
+                                      addOutputLine(s);
+                                    }
+
+                                    @Override
+                                    public void printf(String fmt, Object... args) {
+                                      addOutputLine(String.format(fmt, args));
+                                    }
+
+                                    @Override
+                                    public void error(String s) {
+                                      addOutputLine("ERROR: " + s);
+                                    }
+                                  });
+                          // TODO: MASTER_DETAIL — auto-open detail pane after completion
+                          case TEXT -> {
+                            if (rows == null || rows.isEmpty()) {
+                              addOutputLine("(no rows)");
+                            } else {
+                              rows.forEach(row -> addOutputLine(row.toString()));
+                            }
+                          }
+                        }
+                      }
+                    });
+              } catch (Exception e) {
+                ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
+              } finally {
+                System.setErr(origErr);
+                ctx.asyncProgressMessage = null;
+                ctx.asyncProgressLines.clear();
                 for (String errLine : progressStream.getOutputLines()) {
                   addOutputLine("  " + errLine);
                 }
@@ -1346,6 +1452,56 @@ public final class TuiCommandExecutor {
       String decoded = new String(buf, off, len, StandardCharsets.UTF_8);
       for (int i = 0; i < decoded.length(); i++) {
         handleChar(decoded.charAt(i));
+      }
+      String partial = currentLine.toString().trim();
+      if (!partial.isEmpty()) {
+        ctx.asyncProgressMessage = partial;
+      }
+    }
+
+    // Override print/println to bypass PrintStream's internal textOut/charOut pipeline,
+    // which may not route through write(byte[]) on all JDK versions.
+    @Override
+    public void print(String s) {
+      handleString(s != null ? s : "null");
+      // After each print(), flush whatever is still in currentLine as the live progress
+      // message. This handles the \r-at-start protocol where the new content is written
+      // AFTER \r, so it only becomes visible on the next \r otherwise.
+      String partial = currentLine.toString().trim();
+      if (!partial.isEmpty()) {
+        ctx.asyncProgressMessage = partial;
+      }
+    }
+
+    @Override
+    public void print(char c) {
+      handleChar(c);
+    }
+
+    @Override
+    public void print(char[] s) {
+      if (s != null) {
+        for (char c : s) handleChar(c);
+        String partial = currentLine.toString().trim();
+        if (!partial.isEmpty()) {
+          ctx.asyncProgressMessage = partial;
+        }
+      }
+    }
+
+    @Override
+    public void println(String s) {
+      handleString((s != null ? s : "null") + "\n");
+    }
+
+    @Override
+    public void println() {
+      handleChar('\n');
+    }
+
+    private void handleString(String s) {
+      for (int i = 0; i < s.length(); i++) {
+        handleChar(s.charAt(i));
       }
     }
 

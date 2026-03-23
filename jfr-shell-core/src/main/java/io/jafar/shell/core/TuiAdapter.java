@@ -22,6 +22,20 @@ public interface TuiAdapter {
     void printf(String fmt, Object... args);
 
     void error(String s);
+
+    /**
+     * Renders a list of rows as a tabular result. The TUI will display this as a sortable,
+     * scrollable table. Falls back to plain-text output if the runtime does not support tables.
+     *
+     * @param rows result rows, each a map of column name to value
+     */
+    default void renderTable(List<Map<String, Object>> rows) {
+      if (rows == null || rows.isEmpty()) {
+        println("(no rows)");
+        return;
+      }
+      rows.forEach(row -> println(row.toString()));
+    }
   }
 
   // ---- Command dispatch ----
@@ -147,6 +161,19 @@ public interface TuiAdapter {
    * @return a human-readable warning string, or null if no confirmation is needed
    */
   default String getExpensiveOperationWarning(String command, Session session) {
+    return null;
+  }
+
+  /**
+   * Returns a {@link CommandDescriptor} for the given command word if this adapter exclusively owns
+   * it, or {@code null} if the command should be routed through {@link
+   * io.jafar.shell.cli.CommandDispatcher} instead. When non-null, the TUI calls {@link #dispatch}
+   * directly and uses the descriptor's {@link CommandDescriptor.OutputMode} to select the renderer.
+   *
+   * @param cmdWord the first token of the command, lowercased
+   * @return descriptor, or null if not owned by this adapter
+   */
+  default CommandDescriptor describeCommand(String cmdWord) {
     return null;
   }
 }

@@ -20,6 +20,8 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Evaluates HdumpPath queries against a HeapSession.
@@ -28,6 +30,8 @@ import java.util.stream.Stream;
  * transformations to produce result sets.
  */
 public final class HdumpPathEvaluator {
+
+  private static final Logger LOG = LoggerFactory.getLogger(HdumpPathEvaluator.class);
 
   /** Maps short alias field names to their canonical counterparts. */
   private static final Map<String, String> FIELD_ALIASES =
@@ -118,12 +122,9 @@ public final class HdumpPathEvaluator {
 
       // If no pipeline, default to top(100) to prevent OOME
       if (query.pipeline().isEmpty()) {
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) - defaulting to first 100 results.%n",
+        LOG.warn(
+            "Large heap ({} objects): no pipeline, capping at 100. Use '| top(N)' to specify limit.",
             dump.getObjectCount());
-        System.err.println("Use '| top(N)' to specify limit, or '| groupBy(...)' to aggregate.");
-        System.err.println();
 
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
@@ -152,12 +153,9 @@ public final class HdumpPathEvaluator {
 
       if (streamingPipeline.isEmpty()) {
         // Only filters remain — need a limit
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) - defaulting to first 100 results.%n",
+        LOG.warn(
+            "Large heap ({} objects): only filters remain, capping at 100. Use '| top(N)' to specify limit.",
             dump.getObjectCount());
-        System.err.println("Use '| top(N)' to specify limit, or '| groupBy(...)' to aggregate.");
-        System.err.println();
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(
             dump, session, streamingQuery, defaultTop, List.of());
@@ -198,12 +196,9 @@ public final class HdumpPathEvaluator {
 
       } else {
         // Other operations - default to top(100) to prevent OOME
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) with non-aggregating pipeline - defaulting to first 100 results.%n",
+        LOG.warn(
+            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
             dump.getObjectCount());
-        System.err.println("Use '| top(N)' as first operation to specify limit explicitly.");
-        System.err.println();
 
         TopOp defaultTop = new TopOp(100, null, false);
         List<Map<String, Object>> results =
@@ -270,22 +265,7 @@ public final class HdumpPathEvaluator {
           }
 
           counter[0]++;
-          // Report progress every 500ms
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rScanning objects: %.1f%% (%,d/%,d)", progress, counter[0], totalObjects);
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.print("\033[A");
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.flush();
 
     // Convert priority queue to list in correct order
     List<Map<String, Object>> results = new ArrayList<>(topN);
@@ -318,23 +298,7 @@ public final class HdumpPathEvaluator {
           acc.accumulate(map, op);
 
           counter[0]++;
-          // Report progress every 500ms
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rScanning objects: %.1f%% (%,d/%,d, %,d groups)",
-                progress, counter[0], totalObjects, groups.size());
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines (current line + "Streaming through..." line above)
-    System.err.print("\r" + " ".repeat(120) + "\r"); // Clear current line
-    System.err.print("\033[A"); // Move up one line
-    System.err.print("\r" + " ".repeat(120) + "\r"); // Clear "Streaming through..." line
-    System.err.flush();
 
     // Convert groups to result maps
     List<Map<String, Object>> results =
@@ -425,13 +389,6 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    // Print progress message
-    System.err.println();
-    System.err.printf(
-        "Streaming through %,d objects%s (grouping by %s, keeping top %d)...%n",
-        totalObjects, filterDesc, String.join(", ", groupByOp.groupFields()), topOp.n());
-    System.err.flush();
-
     // Use bounded accumulation with priority queue
     int bufferSize = Math.max(topOp.n() * 5, 1000); // Keep 5x top N (min 1000)
     BoundedGroupAccumulator accumulator =
@@ -446,22 +403,7 @@ public final class HdumpPathEvaluator {
           accumulator.accumulate(map, groupByOp);
 
           counter[0]++;
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rScanning objects: %.1f%% (%,d/%,d, %,d groups tracked)",
-                progress, counter[0], totalObjects, accumulator.size());
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.print("\033[A");
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.flush();
 
     // Get final top N results
     List<Map<String, Object>> results = accumulator.getTopN(topOp.n());
@@ -495,22 +437,7 @@ public final class HdumpPathEvaluator {
     stream.forEach(
         obj -> {
           counter[0]++;
-          // Report progress every 500ms
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rCounting objects: %.1f%% (%,d/%,d)", progress, counter[0], totalObjects);
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.print("\033[A");
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.flush();
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("count", counter[0]);
@@ -533,22 +460,7 @@ public final class HdumpPathEvaluator {
           }
 
           counter[0]++;
-          // Report progress every 500ms
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rSumming %s: %.1f%% (%,d/%,d)", op.field(), progress, counter[0], totalObjects);
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.print("\033[A");
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.flush();
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("sum", sum[0]);
@@ -578,23 +490,7 @@ public final class HdumpPathEvaluator {
           }
 
           counter[0]++;
-          // Report progress every 500ms
-          long now = System.currentTimeMillis();
-          if (now - lastReport[0] >= 500) {
-            double progress = (double) counter[0] / totalObjects * 100.0;
-            System.err.printf(
-                "\rComputing stats for %s: %.1f%% (%,d/%,d)",
-                op.field(), progress, counter[0], totalObjects);
-            System.err.flush();
-            lastReport[0] = now;
-          }
         });
-
-    // Clear progress lines
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.print("\033[A");
-    System.err.print("\r" + " ".repeat(120) + "\r");
-    System.err.flush();
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("count", count[0]);
@@ -836,29 +732,6 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    // Print progress message based on operation type
-    System.err.println();
-    if (firstOp instanceof TopOp topOp) {
-      System.err.printf(
-          "Streaming through %,d objects%s (top %d)...%n", totalObjects, filterDesc, topOp.n());
-    } else if (firstOp instanceof GroupByOp groupByOp) {
-      System.err.printf(
-          "Streaming through %,d objects%s (grouping by %s)...%n",
-          totalObjects, filterDesc, String.join(", ", groupByOp.groupFields()));
-    } else if (firstOp instanceof CountOp) {
-      System.err.printf(
-          "Streaming through %,d objects%s (counting)...%n", totalObjects, filterDesc);
-    } else if (firstOp instanceof SumOp sumOp) {
-      System.err.printf(
-          "Streaming through %,d objects%s (sum of %s)...%n",
-          totalObjects, filterDesc, sumOp.field());
-    } else if (firstOp instanceof StatsOp statsOp) {
-      System.err.printf(
-          "Streaming through %,d objects%s (stats for %s)...%n",
-          totalObjects, filterDesc, statsOp.field());
-    }
-    System.err.flush();
-
     // Delegate to specialized streaming method based on operation type
     List<Map<String, Object>> results;
     if (firstOp instanceof TopOp topOp) {
@@ -928,12 +801,9 @@ public final class HdumpPathEvaluator {
     // Warn about memory usage for large unfiltered queries
     long totalObjects = dump.getObjectCount();
     if (totalObjects > 10_000_000 && query.typePattern() == null && query.predicates().isEmpty()) {
-      System.err.println();
-      System.err.printf(
-          "WARNING: Loading all %,d objects may cause out-of-memory errors.%n", totalObjects);
-      System.err.println("Consider filtering by type: show objects<ClassName>");
-      System.err.println("Or viewing classes instead: show classes | top(10, instanceCount)");
-      System.err.println();
+      LOG.warn(
+          "Loading all {} objects may cause OOM. Consider filtering by type or using 'classes'.",
+          totalObjects);
     }
 
     return stream.map(HdumpPathEvaluator::objectToMap).collect(Collectors.toList());
@@ -2625,10 +2495,8 @@ public final class HdumpPathEvaluator {
         if (name instanceof String s) classNames.add(normalizeClassName(s));
       }
       if (!classNames.isEmpty()) {
-        System.err.println();
-        System.err.printf(
-            "Scanning instances of %d class(es) for retained breakdown...%n", classNames.size());
-        System.err.flush();
+        LOG.debug(
+            "Scanning instances of {} class(es) for retained breakdown...", classNames.size());
         dump.getObjects()
             .filter(
                 obj -> {
@@ -2707,28 +2575,26 @@ public final class HdumpPathEvaluator {
 
   /** Prints a depth-indented ASCII summary of the breakdown to stderr. */
   private static void printRetainedBreakdownTree(List<Map<String, Object>> rows, int maxDepth) {
-    System.err.println();
-    System.err.println("=== Retained Breakdown ===");
-
-    // Group rows by depth for display
+    if (!LOG.isDebugEnabled()) return;
+    StringBuilder sb = new StringBuilder("\n=== Retained Breakdown ===\n");
     int prevDepth = -1;
     for (Map<String, Object> row : rows) {
       int depth = (int) row.get("depth");
-      if (depth > prevDepth + 1) continue; // skip orphaned deep entries (shouldn't happen)
+      if (depth > prevDepth + 1) continue;
       prevDepth = depth;
-
       String indent = "    ".repeat(depth);
       String connector = depth == 0 ? "├── " : "└── ";
-      String className = (String) row.get("className");
-      long count = (long) row.get("count");
-      long retained = (long) row.get("retainedSize");
-      long shallow = (long) row.get("shallowSize");
-
-      System.err.printf(
-          "%s%s%s  ×%,d  shallow=%s  retained=%s%n",
-          indent, connector, className, count, formatBytes(shallow), formatBytes(retained));
+      sb.append(
+          String.format(
+              "%s%s%s  ×%,d  shallow=%s  retained=%s%n",
+              indent,
+              connector,
+              row.get("className"),
+              row.get("count"),
+              formatBytes((long) row.get("shallowSize")),
+              formatBytes((long) row.get("retainedSize"))));
     }
-    System.err.println();
+    LOG.debug("{}", sb);
   }
 
   private static String formatBytes(long bytes) {
@@ -3030,10 +2896,7 @@ public final class HdumpPathEvaluator {
 
         int totalDominated = countDominatedObjects(root);
 
-        System.err.println();
-        System.err.println("=== Dominator Tree ===");
-        System.err.print(tree.toString());
-        System.err.println();
+        LOG.debug("=== Dominator Tree ===\n{}", tree);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("dominator", dominator.getId());
