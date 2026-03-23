@@ -36,6 +36,11 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   }
 
   @Override
+  public boolean ownsCommand(String command) {
+    return command.equals("report");
+  }
+
+  @Override
   public void dispatch(String command, CommandIO io) throws Exception {
     String trimmed = command.trim();
     if (trimmed.startsWith("report")) {

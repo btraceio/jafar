@@ -149,4 +149,16 @@ public interface TuiAdapter {
   default String getExpensiveOperationWarning(String command, Session session) {
     return null;
   }
+
+  /**
+   * Returns true if this adapter exclusively owns the given command and it must not be routed
+   * through {@link io.jafar.shell.cli.CommandDispatcher} first. The TUI will call {@link #dispatch}
+   * directly when this returns true.
+   *
+   * @param command the raw command string (first token, lowercased)
+   * @return true if this adapter handles the command
+   */
+  default boolean ownsCommand(String command) {
+    return false;
+  }
 }

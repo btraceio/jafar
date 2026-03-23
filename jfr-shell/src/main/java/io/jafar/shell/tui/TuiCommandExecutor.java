@@ -257,6 +257,13 @@ public final class TuiCommandExecutor {
   private void dispatchCommand(String command) {
     ResultTab activeTab = ctx.activeTab();
 
+    // If the adapter exclusively owns this command, skip the dispatcher entirely
+    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
+    if (tuiAdapter != null && tuiAdapter.ownsCommand(cmdWord)) {
+      submitAdapterCommand(command);
+      return;
+    }
+
     // Browser mode detection via TuiAdapter
     if (tuiAdapter != null) {
       String category = tuiAdapter.detectBrowserCommand(command);
@@ -370,9 +377,65 @@ public final class TuiCommandExecutor {
               } finally {
                 System.setErr(origErr);
                 ctx.asyncProgressMessage = null;
+                ctx.asyncProgressLines.clear();
                 for (String errLine : progressStream.getOutputLines()) {
                   addOutputLine("  " + errLine);
                 }
+                ctx.asyncTableData = TuiTableRenderer.getLastTableData();
+                ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
+                ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
+                ctx.asyncPreambleLines = TuiTableRenderer.getLastPreambleLines();
+                TuiTableRenderer.clearLastData();
+                ctx.commandRunning = false;
+              }
+            });
+  }
+
+  /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
+  private void submitAdapterCommand(String command) {
+    ResultTab activeTab = ctx.activeTab();
+    activeTab.lines.add("> " + command);
+    ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
+    ctx.asyncOutputBuffer = new ArrayList<>();
+    ctx.asyncMaxLineWidth = 0;
+    ctx.asyncProgressLines.clear();
+    ctx.commandRunning = true;
+    ctx.commandStartTick = ctx.renderTick;
+    ctx.commandStartTimeMs = System.currentTimeMillis();
+    ctx.focus = Focus.RESULTS;
+
+    ctx.commandFuture =
+        commandExecutor.submit(
+            () -> {
+              TuiTableRenderer.clearLastData();
+              PrintStream origErr = System.err;
+              ProgressCapturingStream progressStream = new ProgressCapturingStream(ctx);
+              System.setErr(progressStream);
+              try {
+                tuiAdapter.dispatch(
+                    command,
+                    new TuiAdapter.CommandIO() {
+                      @Override
+                      public void println(String s) {
+                        addOutputLine(s);
+                      }
+
+                      @Override
+                      public void printf(String fmt, Object... args) {
+                        addOutputLine(String.format(fmt, args));
+                      }
+
+                      @Override
+                      public void error(String s) {
+                        addOutputLine("ERROR: " + s);
+                      }
+                    });
+              } catch (Exception e) {
+                ctx.asyncOutputBuffer.add("  Error: " + e.getMessage());
+              } finally {
+                System.setErr(origErr);
+                ctx.asyncProgressMessage = null;
+                ctx.asyncProgressLines.clear();
                 ctx.asyncTableData = TuiTableRenderer.getLastTableData();
                 ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
                 ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();
@@ -1346,6 +1409,40 @@ public final class TuiCommandExecutor {
       String decoded = new String(buf, off, len, StandardCharsets.UTF_8);
       for (int i = 0; i < decoded.length(); i++) {
         handleChar(decoded.charAt(i));
+      }
+      String partial = currentLine.toString().trim();
+      if (!partial.isEmpty()) {
+        ctx.asyncProgressMessage = partial;
+      }
+    }
+
+    // Override print/println to bypass PrintStream's internal textOut/charOut pipeline,
+    // which may not route through write(byte[]) on all JDK versions.
+    @Override
+    public void print(String s) {
+      handleString(s != null ? s : "null");
+      // After each print(), flush whatever is still in currentLine as the live progress
+      // message. This handles the \r-at-start protocol where the new content is written
+      // AFTER \r, so it only becomes visible on the next \r otherwise.
+      String partial = currentLine.toString().trim();
+      if (!partial.isEmpty()) {
+        ctx.asyncProgressMessage = partial;
+      }
+    }
+
+    @Override
+    public void println(String s) {
+      handleString((s != null ? s : "null") + "\n");
+    }
+
+    @Override
+    public void println() {
+      handleChar('\n');
+    }
+
+    private void handleString(String s) {
+      for (int i = 0; i < s.length(); i++) {
+        handleChar(s.charAt(i));
       }
     }
 
