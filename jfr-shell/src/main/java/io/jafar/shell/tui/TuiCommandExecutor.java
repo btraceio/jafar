@@ -472,6 +472,9 @@ public final class TuiCommandExecutor {
                 System.setErr(origErr);
                 ctx.asyncProgressMessage = null;
                 ctx.asyncProgressLines.clear();
+                for (String errLine : progressStream.getOutputLines()) {
+                  addOutputLine("  " + errLine);
+                }
                 ctx.asyncTableData = TuiTableRenderer.getLastTableData();
                 ctx.asyncTableHeaders = TuiTableRenderer.getLastTableHeaders();
                 ctx.asyncMetadataClasses = TuiTableRenderer.getLastMetadataClasses();

@@ -37,14 +37,14 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   }
 
   private static final Map<String, CommandDescriptor> COMMANDS =
-      Map.of(
-          "report", CommandDescriptor.TEXT,
-          "ages", CommandDescriptor.TABULAR,
-          "clusters", CommandDescriptor.TABULAR,
-          "duplicates", CommandDescriptor.TABULAR,
-          "gcroots", CommandDescriptor.TABULAR,
-          "objects", CommandDescriptor.TABULAR,
-          "classes", CommandDescriptor.TABULAR);
+      Map.ofEntries(
+          Map.entry("report", CommandDescriptor.TEXT),
+          Map.entry("ages", CommandDescriptor.TABULAR),
+          Map.entry("clusters", CommandDescriptor.TABULAR),
+          Map.entry("duplicates", CommandDescriptor.TABULAR),
+          Map.entry("gcroots", CommandDescriptor.TABULAR),
+          Map.entry("objects", CommandDescriptor.TABULAR),
+          Map.entry("classes", CommandDescriptor.TABULAR));
 
   @Override
   public CommandDescriptor describeCommand(String cmdWord) {
@@ -76,10 +76,12 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
     Object query = evaluator.parse(command);
     Object result = evaluator.evaluate(session, query);
-    if (result instanceof List<?> rows) {
+    if (result instanceof List<?> rows && !rows.isEmpty() && rows.get(0) instanceof Map<?, ?>) {
       @SuppressWarnings("unchecked")
       List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
       io.renderTable(tableRows);
+    } else if (result instanceof List<?> rows) {
+      rows.forEach(r -> io.println(r != null ? r.toString() : ""));
     } else if (result != null) {
       io.println(result.toString());
     }

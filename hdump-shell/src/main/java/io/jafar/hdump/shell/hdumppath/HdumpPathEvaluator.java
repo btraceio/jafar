@@ -124,7 +124,7 @@ public final class HdumpPathEvaluator {
       if (query.pipeline().isEmpty()) {
         LOG.warn(
             "Large heap ({} objects): no pipeline, capping at 100. Use '| top(N)' to specify limit.",
-            String.format("%,d", dump.getObjectCount()));
+            dump.getObjectCount());
 
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
@@ -155,7 +155,7 @@ public final class HdumpPathEvaluator {
         // Only filters remain — need a limit
         LOG.warn(
             "Large heap ({} objects): only filters remain, capping at 100. Use '| top(N)' to specify limit.",
-            String.format("%,d", dump.getObjectCount()));
+            dump.getObjectCount());
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(
             dump, session, streamingQuery, defaultTop, List.of());
@@ -198,7 +198,7 @@ public final class HdumpPathEvaluator {
         // Other operations - default to top(100) to prevent OOME
         LOG.warn(
             "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
-            String.format("%,d", dump.getObjectCount()));
+            dump.getObjectCount());
 
         TopOp defaultTop = new TopOp(100, null, false);
         List<Map<String, Object>> results =
@@ -805,7 +805,7 @@ public final class HdumpPathEvaluator {
     if (totalObjects > 10_000_000 && query.typePattern() == null && query.predicates().isEmpty()) {
       LOG.warn(
           "Loading all {} objects may cause OOM. Consider filtering by type or using 'classes'.",
-          String.format("%,d", totalObjects));
+          totalObjects);
     }
 
     return stream.map(HdumpPathEvaluator::objectToMap).collect(Collectors.toList());
