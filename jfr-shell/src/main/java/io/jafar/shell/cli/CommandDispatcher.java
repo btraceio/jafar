@@ -4,6 +4,7 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.backend.BackendCapability;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
+import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
@@ -610,7 +611,9 @@ public class CommandDispatcher {
               var eval = new JfrPathEvaluator(listMatchMode);
               rows = eval.applyToRows(rows, dummyQuery.pipeline);
               if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
-              if ("json".equalsIgnoreCase(format)) {
+              if (isFlameGraph(rows)) {
+                FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+              } else if ("json".equalsIgnoreCase(format)) {
                 printJson(rows, io);
               } else if ("csv".equalsIgnoreCase(format)) {
                 CsvRenderer.render(rows, io);
@@ -639,7 +642,9 @@ public class CommandDispatcher {
     if (selector != null && cur.get().session instanceof JFRSession jfrSession) {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
-      if ("json".equalsIgnoreCase(format)) {
+      if (isFlameGraph(rows)) {
+        FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+      } else if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(rows, io);
@@ -656,7 +661,9 @@ public class CommandDispatcher {
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
-      if ("json".equalsIgnoreCase(format)) {
+      if (isFlameGraph(rows)) {
+        FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+      } else if ("json".equalsIgnoreCase(format)) {
         printJson(rows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(rows, io);
@@ -1321,6 +1328,10 @@ public class CommandDispatcher {
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
+  }
+
+  private static boolean isFlameGraph(List<Map<String, Object>> rows) {
+    return rows.size() == 1 && rows.get(0).containsKey("__flamegraph");
   }
 
   // Very small JSON pretty-printer for Maps/Lists/values

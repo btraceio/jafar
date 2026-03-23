@@ -9,6 +9,7 @@ import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
+import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
@@ -711,6 +712,7 @@ public final class JfrPathEvaluator {
           }
           case JfrPath.StackProfileOp sp ->
               aggregateStackProfile(session, query, sp.direction, sp.buckets, sp.minPct, progress);
+          case JfrPath.FlameGraphOp fg -> aggregateFlameGraph(session, query, fg.direction);
           case JfrPath.AsDateTimeOp ft ->
               aggregateAsDateTime(session, query, ft.valuePath, ft.format);
         };
@@ -3051,6 +3053,7 @@ public final class JfrPathEvaluator {
       case JfrPath.TimeRangeOp tr -> applyTimeRange(rows, tr.valuePath, tr.durationPath);
       case JfrPath.StackProfileOp sp ->
           applyStackProfile(rows, sp.direction, sp.buckets, sp.minPct);
+      case JfrPath.FlameGraphOp fg -> applyFlameGraph(rows, fg.direction);
       case JfrPath.AsDateTimeOp ft -> applyAsDateTime(rows, ft.valuePath, ft.format);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
@@ -3535,6 +3538,58 @@ public final class JfrPathEvaluator {
           "Time conversion unavailable for cached rows; use timerange() directly on events");
     }
 
+    return List.of(result);
+  }
+
+  // === Flamegraph ===
+
+  private List<Map<String, Object>> aggregateFlameGraph(
+      JFRSession session, Query query, String direction) throws Exception {
+    if (query.root != Root.EVENTS || query.eventTypes.isEmpty()) {
+      throw new IllegalArgumentException("flamegraph requires an event type");
+    }
+    validateEventTypes(session, query.eventTypes);
+
+    FlameNode root = new FlameNode("root");
+    if (query.isMultiType) {
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!typeSet.contains(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            List<String> frames = extractFramesForProfile(map, direction);
+            if (!frames.isEmpty()) root.addPath(frames);
+          });
+    } else {
+      String eventType = query.eventTypes.get(0);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!eventType.equals(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (!matchesAll(map, query.predicates)) return;
+            List<String> frames = extractFramesForProfile(map, direction);
+            if (!frames.isEmpty()) root.addPath(frames);
+          });
+    }
+    if (root.value == 0) return List.of();
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("__flamegraph", root);
+    return List.of(result);
+  }
+
+  private List<Map<String, Object>> applyFlameGraph(
+      List<Map<String, Object>> rows, String direction) {
+    FlameNode root = new FlameNode("root");
+    for (Map<String, Object> row : rows) {
+      List<String> frames = extractFramesForProfile(row, direction);
+      if (!frames.isEmpty()) root.addPath(frames);
+    }
+    if (root.value == 0) return List.of();
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("__flamegraph", root);
     return List.of(result);
   }
 

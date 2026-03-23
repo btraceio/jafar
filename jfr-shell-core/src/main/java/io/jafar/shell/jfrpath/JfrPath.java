@@ -309,7 +309,8 @@ public final class JfrPath {
           ToMapOp,
           TimeRangeOp,
           StackProfileOp,
-          AsDateTimeOp {}
+          AsDateTimeOp,
+          FlameGraphOp {}
 
   public static final class CountOp implements PipelineOp {}
 
@@ -750,6 +751,18 @@ public final class JfrPath {
       this.direction = direction == null ? "top-down" : direction;
       this.buckets = buckets <= 0 ? 10 : buckets;
       this.minPct = minPct < 0 ? 1.0 : minPct;
+    }
+  }
+
+  /**
+   * flamegraph([direction=bottom-up|top-down]) - Aggregate stacktrace data into a flamegraph tree.
+   * Returns a single sentinel result consumed by FlameGraphRenderer.
+   */
+  public static final class FlameGraphOp implements PipelineOp {
+    public final String direction;
+
+    public FlameGraphOp(String direction) {
+      this.direction = (direction == null || direction.isBlank()) ? "bottom-up" : direction;
     }
   }
 
