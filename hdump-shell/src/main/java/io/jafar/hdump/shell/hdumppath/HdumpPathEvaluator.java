@@ -20,6 +20,8 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Evaluates HdumpPath queries against a HeapSession.
@@ -28,6 +30,8 @@ import java.util.stream.Stream;
  * transformations to produce result sets.
  */
 public final class HdumpPathEvaluator {
+
+  private static final Logger LOG = LoggerFactory.getLogger(HdumpPathEvaluator.class);
 
   /** Maps short alias field names to their canonical counterparts. */
   private static final Map<String, String> FIELD_ALIASES =
@@ -118,12 +122,9 @@ public final class HdumpPathEvaluator {
 
       // If no pipeline, default to top(100) to prevent OOME
       if (query.pipeline().isEmpty()) {
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) - defaulting to first 100 results.%n",
-            dump.getObjectCount());
-        System.err.println("Use '| top(N)' to specify limit, or '| groupBy(...)' to aggregate.");
-        System.err.println();
+        LOG.warn(
+            "Large heap ({} objects): no pipeline, capping at 100. Use '| top(N)' to specify limit.",
+            String.format("%,d", dump.getObjectCount()));
 
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
@@ -152,12 +153,9 @@ public final class HdumpPathEvaluator {
 
       if (streamingPipeline.isEmpty()) {
         // Only filters remain — need a limit
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) - defaulting to first 100 results.%n",
-            dump.getObjectCount());
-        System.err.println("Use '| top(N)' to specify limit, or '| groupBy(...)' to aggregate.");
-        System.err.println();
+        LOG.warn(
+            "Large heap ({} objects): only filters remain, capping at 100. Use '| top(N)' to specify limit.",
+            String.format("%,d", dump.getObjectCount()));
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(
             dump, session, streamingQuery, defaultTop, List.of());
@@ -198,12 +196,9 @@ public final class HdumpPathEvaluator {
 
       } else {
         // Other operations - default to top(100) to prevent OOME
-        System.err.println();
-        System.err.printf(
-            "WARNING: Large heap (%,d objects) with non-aggregating pipeline - defaulting to first 100 results.%n",
-            dump.getObjectCount());
-        System.err.println("Use '| top(N)' as first operation to specify limit explicitly.");
-        System.err.println();
+        LOG.warn(
+            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
+            String.format("%,d", dump.getObjectCount()));
 
         TopOp defaultTop = new TopOp(100, null, false);
         List<Map<String, Object>> results =
