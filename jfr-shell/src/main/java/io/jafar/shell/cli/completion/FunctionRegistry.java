@@ -183,6 +183,21 @@ public final class FunctionRegistry {
             .requiresTime()
             .build());
 
+    // flamegraph([direction=bottom-up|top-down])
+    // Render an ANSI flamegraph from events with stack traces
+    register(
+        FunctionSpec.builder("flamegraph")
+            .pipeline()
+            .description(
+                "Generate an interactive HTML flamegraph from events with stack traces. Opens in browser; file path printed to output.")
+            .template("flamegraph()")
+            .enumKeyword(
+                "direction",
+                List.of("bottom-up", "top-down"),
+                "Stack traversal direction (default: bottom-up)")
+            .requiresAny()
+            .build());
+
     // stackprofile([direction=top-down|bottom-up], [buckets=N], [minPct=D])
     // Aggregate stacktrace data into a weighted call tree
     register(
