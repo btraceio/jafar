@@ -4,6 +4,7 @@ import io.jafar.hdump.shell.cli.HdumpShellCompleter;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
+import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -35,12 +36,19 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     this.completer = new HdumpShellCompleter(sessions);
   }
 
-  private static final Set<String> OWNED_COMMANDS =
-      Set.of("report", "ages", "clusters", "duplicates", "gcroots", "objects", "classes");
+  private static final Map<String, CommandDescriptor> COMMANDS =
+      Map.of(
+          "report", CommandDescriptor.TEXT,
+          "ages", CommandDescriptor.TABULAR,
+          "clusters", CommandDescriptor.TABULAR,
+          "duplicates", CommandDescriptor.TABULAR,
+          "gcroots", CommandDescriptor.TABULAR,
+          "objects", CommandDescriptor.TABULAR,
+          "classes", CommandDescriptor.TABULAR);
 
   @Override
-  public boolean ownsCommand(String command) {
-    return OWNED_COMMANDS.contains(command);
+  public CommandDescriptor describeCommand(String cmdWord) {
+    return COMMANDS.get(cmdWord);
   }
 
   @Override
@@ -51,7 +59,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
       cmdReport(trimmed, io);
       return;
     }
-    if (OWNED_COMMANDS.contains(cmdWord)) {
+    if (COMMANDS.containsKey(cmdWord)) {
       cmdQuery(trimmed, io);
       return;
     }

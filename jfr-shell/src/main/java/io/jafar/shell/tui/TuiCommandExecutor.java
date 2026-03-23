@@ -5,6 +5,7 @@ import io.jafar.parser.api.ComplexType;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
+import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -318,8 +319,9 @@ public final class TuiCommandExecutor {
 
     // If the adapter exclusively owns this command, route directly to it
     String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
-    if (tuiAdapter != null && tuiAdapter.ownsCommand(cmdWord)) {
-      submitAdapterCommand(command);
+    CommandDescriptor desc = tuiAdapter != null ? tuiAdapter.describeCommand(cmdWord) : null;
+    if (desc != null) {
+      submitAdapterCommand(command, desc);
       return;
     }
 
@@ -393,7 +395,7 @@ public final class TuiCommandExecutor {
   }
 
   /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
-  private void submitAdapterCommand(String command) {
+  private void submitAdapterCommand(String command, CommandDescriptor desc) {
     ResultTab activeTab = ctx.activeTab();
     activeTab.lines.add("> " + command);
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
@@ -433,24 +435,35 @@ public final class TuiCommandExecutor {
 
                       @Override
                       public void renderTable(List<Map<String, Object>> rows) {
-                        TuiTableRenderer.render(
-                            rows,
-                            new CommandDispatcher.IO() {
-                              @Override
-                              public void println(String s) {
-                                addOutputLine(s);
-                              }
+                        switch (desc.outputMode()) {
+                          case TABULAR, MASTER_DETAIL ->
+                              TuiTableRenderer.render(
+                                  rows,
+                                  new CommandDispatcher.IO() {
+                                    @Override
+                                    public void println(String s) {
+                                      addOutputLine(s);
+                                    }
 
-                              @Override
-                              public void printf(String fmt, Object... args) {
-                                addOutputLine(String.format(fmt, args));
-                              }
+                                    @Override
+                                    public void printf(String fmt, Object... args) {
+                                      addOutputLine(String.format(fmt, args));
+                                    }
 
-                              @Override
-                              public void error(String s) {
-                                addOutputLine("ERROR: " + s);
-                              }
-                            });
+                                    @Override
+                                    public void error(String s) {
+                                      addOutputLine("ERROR: " + s);
+                                    }
+                                  });
+                          // TODO: MASTER_DETAIL — auto-open detail pane after completion
+                          case TEXT -> {
+                            if (rows == null || rows.isEmpty()) {
+                              addOutputLine("(no rows)");
+                            } else {
+                              rows.forEach(row -> addOutputLine(row.toString()));
+                            }
+                          }
+                        }
                       }
                     });
               } catch (Exception e) {

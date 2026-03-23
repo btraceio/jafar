@@ -165,14 +165,15 @@ public interface TuiAdapter {
   }
 
   /**
-   * Returns true if this adapter exclusively owns the given command and it must not be routed
-   * through {@link io.jafar.shell.cli.CommandDispatcher} first. The TUI will call {@link #dispatch}
-   * directly when this returns true.
+   * Returns a {@link CommandDescriptor} for the given command word if this adapter exclusively owns
+   * it, or {@code null} if the command should be routed through {@link
+   * io.jafar.shell.cli.CommandDispatcher} instead. When non-null, the TUI calls {@link #dispatch}
+   * directly and uses the descriptor's {@link CommandDescriptor.OutputMode} to select the renderer.
    *
-   * @param command the raw command string (first token, lowercased)
-   * @return true if this adapter handles the command
+   * @param cmdWord the first token of the command, lowercased
+   * @return descriptor, or null if not owned by this adapter
    */
-  default boolean ownsCommand(String command) {
-    return false;
+  default CommandDescriptor describeCommand(String cmdWord) {
+    return null;
   }
 }
