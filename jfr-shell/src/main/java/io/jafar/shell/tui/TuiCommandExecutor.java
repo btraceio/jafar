@@ -257,14 +257,8 @@ public final class TuiCommandExecutor {
   private void dispatchCommand(String command) {
     ResultTab activeTab = ctx.activeTab();
 
-    // If the adapter exclusively owns this command, skip the dispatcher entirely
-    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
-    if (tuiAdapter != null && tuiAdapter.ownsCommand(cmdWord)) {
-      submitAdapterCommand(command);
-      return;
-    }
-
-    // Browser mode detection via TuiAdapter
+    // Browser mode detection via TuiAdapter (must run before ownsCommand so bare "classes"
+    // / "objects" enter browser mode rather than being routed to the adapter as queries)
     if (tuiAdapter != null) {
       String category = tuiAdapter.detectBrowserCommand(command);
       if (category != null) {
@@ -320,6 +314,13 @@ public final class TuiCommandExecutor {
           }
         }
       }
+    }
+
+    // If the adapter exclusively owns this command, route directly to it
+    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
+    if (tuiAdapter != null && tuiAdapter.ownsCommand(cmdWord)) {
+      submitAdapterCommand(command);
+      return;
     }
 
     // Echo command
@@ -428,6 +429,28 @@ public final class TuiCommandExecutor {
                       @Override
                       public void error(String s) {
                         addOutputLine("ERROR: " + s);
+                      }
+
+                      @Override
+                      public void renderTable(List<Map<String, Object>> rows) {
+                        TuiTableRenderer.render(
+                            rows,
+                            new CommandDispatcher.IO() {
+                              @Override
+                              public void println(String s) {
+                                addOutputLine(s);
+                              }
+
+                              @Override
+                              public void printf(String fmt, Object... args) {
+                                addOutputLine(String.format(fmt, args));
+                              }
+
+                              @Override
+                              public void error(String s) {
+                                addOutputLine("ERROR: " + s);
+                              }
+                            });
                       }
                     });
               } catch (Exception e) {

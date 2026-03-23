@@ -35,21 +35,46 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     this.completer = new HdumpShellCompleter(sessions);
   }
 
+  private static final Set<String> OWNED_COMMANDS =
+      Set.of("report", "ages", "clusters", "duplicates", "gcroots", "objects", "classes");
+
   @Override
   public boolean ownsCommand(String command) {
-    return command.equals("report");
+    return OWNED_COMMANDS.contains(command);
   }
 
   @Override
   public void dispatch(String command, CommandIO io) throws Exception {
     String trimmed = command.trim();
-    if (trimmed.startsWith("report")) {
+    String cmdWord = trimmed.split("\\s+")[0].toLowerCase();
+    if (cmdWord.equals("report")) {
       cmdReport(trimmed, io);
       return;
     }
-    // Most queries are now handled by CommandDispatcher via module root-type aliases
-    // and the show/cmdShowModule path. This fallback handles any remaining edge cases.
+    if (OWNED_COMMANDS.contains(cmdWord)) {
+      cmdQuery(trimmed, io);
+      return;
+    }
     io.error("Unknown command: " + trimmed);
+  }
+
+  private void cmdQuery(String command, CommandIO io) throws Exception {
+    HeapSession session =
+        sessions.getCurrent().map(entry -> (HeapSession) entry.session).orElse(null);
+    if (session == null) {
+      io.error("No heap dump open. Use 'open <file.hprof>' first.");
+      return;
+    }
+    HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
+    Object query = evaluator.parse(command);
+    Object result = evaluator.evaluate(session, query);
+    if (result instanceof List<?> rows) {
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
+      io.renderTable(tableRows);
+    } else if (result != null) {
+      io.println(result.toString());
+    }
   }
 
   private void cmdReport(String command, CommandIO io) {

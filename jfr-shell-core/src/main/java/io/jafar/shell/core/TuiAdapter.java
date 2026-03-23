@@ -22,6 +22,20 @@ public interface TuiAdapter {
     void printf(String fmt, Object... args);
 
     void error(String s);
+
+    /**
+     * Renders a list of rows as a tabular result. The TUI will display this as a sortable,
+     * scrollable table. Falls back to plain-text output if the runtime does not support tables.
+     *
+     * @param rows result rows, each a map of column name to value
+     */
+    default void renderTable(List<Map<String, Object>> rows) {
+      if (rows == null || rows.isEmpty()) {
+        println("(no rows)");
+        return;
+      }
+      rows.forEach(row -> println(row.toString()));
+    }
   }
 
   // ---- Command dispatch ----
