@@ -6,6 +6,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 /** Generates a self-contained interactive HTML flamegraph file and opens it in the browser. */
 public final class FlameGraphHtmlRenderer {
@@ -24,21 +26,33 @@ public final class FlameGraphHtmlRenderer {
     return sb.toString();
   }
 
-  private static void appendNode(StringBuilder sb, FlameNode node) {
-    long childSum = 0;
-    for (FlameNode child : node.children.values()) childSum += child.value;
-    long selfValue = node.value - childSum;
-    sb.append("{\"name\":\"");
-    appendEscaped(sb, node.name);
-    sb.append("\",\"value\":").append(selfValue);
-    sb.append(",\"children\":[");
-    boolean first = true;
-    for (FlameNode child : node.children.values()) {
-      if (!first) sb.append(',');
-      appendNode(sb, child);
-      first = false;
+  private static void appendNode(StringBuilder sb, FlameNode root) {
+    // Iterative DFS to avoid stack overflow on deep call trees.
+    // Stack items: FlameNode (open a node) or String (literal to append).
+    Deque<Object> stack = new ArrayDeque<>();
+    stack.push(root);
+    while (!stack.isEmpty()) {
+      Object item = stack.pop();
+      if (item instanceof String s) {
+        sb.append(s);
+      } else {
+        FlameNode node = (FlameNode) item;
+        long childSum = 0;
+        for (FlameNode child : node.children.values()) childSum += child.value;
+        sb.append("{\"name\":\"");
+        appendEscaped(sb, node.name);
+        sb.append("\",\"value\":").append(node.value - childSum);
+        sb.append(",\"children\":[");
+        // Push close marker first (processed last)
+        stack.push("]}");
+        // Push children in reverse so first child is processed first; commas go between them
+        FlameNode[] children = node.children.values().toArray(new FlameNode[0]);
+        for (int i = children.length - 1; i >= 0; i--) {
+          stack.push(children[i]);
+          if (i > 0) stack.push(",");
+        }
+      }
     }
-    sb.append("]}");
   }
 
   private static void appendEscaped(StringBuilder sb, String s) {
@@ -61,11 +75,28 @@ public final class FlameGraphHtmlRenderer {
     }
   }
 
+  /** Loaded once at class-init time; these are static bundled assets that never change. */
+  private static final class Resources {
+    static final String D3JS;
+    static final String FGJS;
+    static final String FGCSS;
+
+    static {
+      try {
+        D3JS = loadResource("d3.min.js");
+        FGJS = loadResource("d3-flamegraph.min.js");
+        FGCSS = loadResource("d3-flamegraph.css");
+      } catch (IOException e) {
+        throw new ExceptionInInitializerError(e);
+      }
+    }
+  }
+
   static String buildHtml(FlameNode root) throws IOException {
     String json = toJson(root);
-    String d3js = loadResource("d3.min.js");
-    String fgjs = loadResource("d3-flamegraph.min.js");
-    String fgcss = loadResource("d3-flamegraph.css");
+    String d3js = Resources.D3JS;
+    String fgjs = Resources.FGJS;
+    String fgcss = Resources.FGCSS;
     return "<!DOCTYPE html>\n"
         + "<html lang=\"en\">\n"
         + "<head>\n"

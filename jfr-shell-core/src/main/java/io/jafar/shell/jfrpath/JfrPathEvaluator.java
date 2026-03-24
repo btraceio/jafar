@@ -3551,6 +3551,7 @@ public final class JfrPathEvaluator {
     validateEventTypes(session, query.eventTypes);
 
     FlameNode root = new FlameNode("root");
+    Map<String, String> interner = new HashMap<>();
     if (query.isMultiType) {
       Set<String> typeSet = new HashSet<>(query.eventTypes);
       source.streamEvents(
@@ -3560,7 +3561,10 @@ public final class JfrPathEvaluator {
             Map<String, Object> map = ev.value();
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
-            if (!frames.isEmpty()) root.addPath(frames);
+            if (!frames.isEmpty()) {
+              frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
+              root.addPath(frames);
+            }
           });
     } else {
       String eventType = query.eventTypes.get(0);
@@ -3571,7 +3575,10 @@ public final class JfrPathEvaluator {
             Map<String, Object> map = ev.value();
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
-            if (!frames.isEmpty()) root.addPath(frames);
+            if (!frames.isEmpty()) {
+              frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
+              root.addPath(frames);
+            }
           });
     }
     if (root.value == 0) return List.of();
@@ -3583,9 +3590,13 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> applyFlameGraph(
       List<Map<String, Object>> rows, String direction) {
     FlameNode root = new FlameNode("root");
+    Map<String, String> interner = new HashMap<>();
     for (Map<String, Object> row : rows) {
       List<String> frames = extractFramesForProfile(row, direction);
-      if (!frames.isEmpty()) root.addPath(frames);
+      if (!frames.isEmpty()) {
+        frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
+        root.addPath(frames);
+      }
     }
     if (root.value == 0) return List.of();
     Map<String, Object> result = new LinkedHashMap<>();

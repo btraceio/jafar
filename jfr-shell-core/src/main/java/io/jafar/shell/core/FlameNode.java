@@ -15,15 +15,15 @@ public final class FlameNode {
   }
 
   /**
-   * Add a call path rooted at this node. Each call increments {@code value} and recurses into the
-   * appropriate child.
+   * Add a call path rooted at this node. Each call increments {@code value} for this node and every
+   * child along the path. Iterative to avoid stack overflow on deep call stacks.
    */
   public void addPath(List<String> frames) {
-    value++;
-    if (!frames.isEmpty()) {
-      children
-          .computeIfAbsent(frames.get(0), FlameNode::new)
-          .addPath(frames.subList(1, frames.size()));
+    FlameNode current = this;
+    current.value++;
+    for (String frame : frames) {
+      current = current.children.computeIfAbsent(frame, FlameNode::new);
+      current.value++;
     }
   }
 }
