@@ -189,7 +189,7 @@ public final class FunctionRegistry {
         FunctionSpec.builder("flamegraph")
             .pipeline()
             .description(
-                "Generate an interactive HTML flamegraph from events with stack traces. Opens in browser; file path printed to output.")
+                "Generate an interactive HTML flamegraph from events with stack traces. Prints the generated file:// URL to output for manual opening in a browser.")
             .template("flamegraph()")
             .enumKeyword(
                 "direction",
