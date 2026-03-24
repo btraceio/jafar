@@ -929,6 +929,8 @@ public final class JfrPathParser {
       return parseTimeRange();
     } else if ("stackprofile".equals(name)) {
       return parseStackProfile();
+    } else if ("flamegraph".equals(name)) {
+      return parseFlameGraph();
     } else if ("asdatetime".equals(name)) {
       return parseAsDateTime(valuePath);
     } else {
@@ -1226,6 +1228,33 @@ public final class JfrPathParser {
     expect(')');
 
     return new JfrPath.StackProfileOp(direction, buckets, minPct);
+  }
+
+  private JfrPath.FlameGraphOp parseFlameGraph() {
+    String direction = null;
+
+    expect('(');
+    skipWs();
+
+    while (peek() != ')' && !eof()) {
+      skipWs();
+      if (startsWithIgnoreCase("direction=")) {
+        pos += 10;
+        skipWs();
+        direction = readIdent();
+        if (direction.isEmpty()) throw error("Expected direction value");
+      } else if (peek() != ')' && peek() != ',') {
+        throw error("flamegraph() expects direction= parameter");
+      }
+      skipWs();
+      if (peek() == ',') {
+        pos++;
+        skipWs();
+      }
+    }
+    expect(')');
+
+    return new JfrPath.FlameGraphOp(direction);
   }
 
   private JfrPath.SelectItem parseSelectItem() {

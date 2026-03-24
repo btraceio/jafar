@@ -4,56 +4,29 @@ import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.FunctionRegistry;
+import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
+import io.jafar.shell.cli.completion.ParamSpec;
 import java.util.List;
 import org.jline.reader.Candidate;
 
 /**
- * Completer for function parameters inside sum(), groupBy(), select(), top(). Suggests field names
- * from the event type.
+ * Completer for function parameters inside pipeline operators such as sum(), groupBy(), select(),
+ * top(), flamegraph(), stackprofile(), etc.
+ *
+ * <p>Keyword completion (e.g. {@code agg=}, {@code direction=}) is driven entirely by the {@link
+ * FunctionSpec} and {@link ParamSpec} registered in {@link FunctionRegistry} — no per-function
+ * hardcoding. Positional parameters fall through to field-name completion as before.
  */
 public final class FunctionParamCompleter implements ContextCompleter {
   private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
-  // Keyword parameters for groupBy: agg=count|sum|avg|min|max, value=path, sortBy=key|value,
-  // asc=true|false
-  private static final String[] GROUPBY_KEYWORDS = {"agg=", "value=", "sortBy=", "asc="};
-  private static final String[] GROUPBY_AGG_VALUES = {"count", "sum", "avg", "min", "max"};
-  private static final String[] GROUPBY_SORTBY_VALUES = {"key", "value"};
   private static final String[] BOOLEAN_VALUES = {"true", "false"};
-
-  // Keyword parameters for top: by=path, asc=true|false
-  private static final String[] TOP_KEYWORDS = {"by=", "asc="};
 
   @Override
   public boolean canHandle(CompletionContext ctx) {
-    // Handle both regular function params and select expressions (which get field completion)
     return ctx.type() == CompletionContextType.FUNCTION_PARAM
         || ctx.type() == CompletionContextType.SELECT_EXPRESSION;
-  }
-
-  /**
-   * Handle keyword parameters for functions like groupBy and top. Returns a KeywordResult
-   * indicating how to proceed.
-   */
-  private KeywordResult handleKeywordParameters(
-      CompletionContext ctx,
-      String functionName,
-      int paramIndex,
-      String partial,
-      List<Candidate> candidates) {
-
-    // groupBy: first param is field, subsequent are agg= or value=
-    if ("groupBy".equals(functionName) && paramIndex > 0) {
-      return completeGroupByKeywords(ctx, partial, candidates);
-    }
-
-    // top: first param is number (handled elsewhere as UNKNOWN), subsequent are by= or asc=
-    if ("top".equals(functionName) && paramIndex > 0) {
-      return completeTopKeywords(ctx, partial, candidates);
-    }
-
-    return KeywordResult.NOT_KEYWORD; // Not a keyword context, continue with field completion
   }
 
   /** Result of keyword parameter handling */
@@ -66,101 +39,110 @@ public final class FunctionParamCompleter implements ContextCompleter {
   /** Info for completing field names after a keyword like value= or by= */
   private record FieldAfterKeyword(String keywordPrefix, String fieldPartial) {}
 
-  /** Check if partial starts with a keyword that takes a field path */
-  private FieldAfterKeyword extractFieldAfterKeyword(String partial) {
-    String lowerPartial = partial.toLowerCase();
-    if (lowerPartial.startsWith("value=")) {
-      return new FieldAfterKeyword("value=", partial.substring(6));
+  /**
+   * Determines whether the current parameter position should be completed as a keyword rather than
+   * a positional field. Uses the registered {@link FunctionSpec} to decide.
+   */
+  private KeywordResult handleKeywordParameters(
+      CompletionContext ctx,
+      String functionName,
+      int paramIndex,
+      String partial,
+      List<Candidate> candidates) {
+
+    if (functionName == null) return KeywordResult.NOT_KEYWORD;
+
+    FunctionSpec spec = FunctionRegistry.getPipelineOperator(functionName);
+    if (spec == null || spec.keywordParams().isEmpty()) return KeywordResult.NOT_KEYWORD;
+
+    // If there is a positional parameter defined at this index and the partial doesn't already
+    // look like a keyword assignment, let field completion handle it.
+    if (spec.getPositionalParam(paramIndex) != null && !looksLikeKeyword(spec, partial)) {
+      return KeywordResult.NOT_KEYWORD;
     }
-    if (lowerPartial.startsWith("by=")) {
-      return new FieldAfterKeyword("by=", partial.substring(3));
+
+    return completeKeywordsFromSpec(ctx, spec, partial, candidates);
+  }
+
+  /** Returns true if partial begins with a known keyword name followed by '='. */
+  private boolean looksLikeKeyword(FunctionSpec spec, String partial) {
+    String lowerPartial = partial.toLowerCase();
+    return spec.keywordParams().stream()
+        .anyMatch(kw -> lowerPartial.startsWith(kw.name().toLowerCase() + "="));
+  }
+
+  /**
+   * Generic keyword completion driven by {@link FunctionSpec} metadata. Handles ENUM, BOOLEAN,
+   * FIELD_PATH, NUMBER, STRING, and EVENT_TYPE keyword params uniformly.
+   */
+  private KeywordResult completeKeywordsFromSpec(
+      CompletionContext ctx, FunctionSpec spec, String partial, List<Candidate> candidates) {
+
+    String lowerPartial = partial.toLowerCase();
+    String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
+
+    // Check if partial starts with a known keyword prefix (e.g. "direction=")
+    for (ParamSpec kw : spec.keywordParams()) {
+      String kwPrefix = kw.name() + "=";
+      if (lowerPartial.startsWith(kwPrefix.toLowerCase())) {
+        String afterEq = partial.substring(kwPrefix.length());
+        switch (kw.type()) {
+          case ENUM -> {
+            for (String val : kw.enumValues()) {
+              if (val.startsWith(afterEq.toLowerCase())) {
+                candidates.add(noSpace(prefix + kwPrefix + val));
+              }
+            }
+            return KeywordResult.HANDLED;
+          }
+          case BOOLEAN -> {
+            for (String val : BOOLEAN_VALUES) {
+              if (val.startsWith(afterEq.toLowerCase())) {
+                candidates.add(noSpace(prefix + kwPrefix + val));
+              }
+            }
+            return KeywordResult.HANDLED;
+          }
+          case FIELD_PATH -> {
+            return KeywordResult.FIELD_AFTER_KEYWORD;
+          }
+          default -> {
+            // NUMBER, STRING, EVENT_TYPE, EXPRESSION — no value completion
+            return KeywordResult.HANDLED;
+          }
+        }
+      }
+    }
+
+    // Partial doesn't match any keyword= prefix → suggest matching keyword names
+    for (ParamSpec kw : spec.keywordParams()) {
+      String kwName = kw.name() + "=";
+      if (kwName.toLowerCase().startsWith(lowerPartial)) {
+        candidates.add(noSpace(prefix + kwName));
+      }
+    }
+    return KeywordResult.HANDLED;
+  }
+
+  /**
+   * Extracts the keyword prefix and field partial from a partial like {@code "value=someField"}.
+   * Checks all FIELD_PATH keyword params from the function spec so no per-function hardcoding is
+   * needed.
+   */
+  private FieldAfterKeyword extractFieldAfterKeyword(String partial, String functionName) {
+    if (functionName == null) return null;
+    FunctionSpec spec = FunctionRegistry.getPipelineOperator(functionName);
+    if (spec == null) return null;
+    for (ParamSpec kw : spec.keywordParams()) {
+      if (kw.type() == ParamSpec.ParamType.FIELD_PATH) {
+        String kwPrefix = kw.name() + "=";
+        if (partial.toLowerCase().startsWith(kwPrefix.toLowerCase())) {
+          return new FieldAfterKeyword(
+              partial.substring(0, kwPrefix.length()), partial.substring(kwPrefix.length()));
+        }
+      }
     }
     return null;
-  }
-
-  private KeywordResult completeGroupByKeywords(
-      CompletionContext ctx, String partial, List<Candidate> candidates) {
-    String jlineWord = ctx.jlineWord();
-    String lowerPartial = partial.toLowerCase();
-    String prefix = calculateJlinePrefix(jlineWord, partial);
-
-    // Check if we're completing after "agg=" (suggest aggregation functions)
-    if (lowerPartial.startsWith("agg=")) {
-      String afterEq = partial.substring(4);
-      for (String aggValue : GROUPBY_AGG_VALUES) {
-        if (aggValue.startsWith(afterEq.toLowerCase())) {
-          candidates.add(noSpace(prefix + "agg=" + aggValue));
-        }
-      }
-      return KeywordResult.HANDLED;
-    }
-
-    // Check if we're completing after "sortBy=" (suggest key or value)
-    if (lowerPartial.startsWith("sortby=")) {
-      String afterEq = partial.substring(7);
-      for (String sortValue : GROUPBY_SORTBY_VALUES) {
-        if (sortValue.startsWith(afterEq.toLowerCase())) {
-          candidates.add(noSpace(prefix + "sortBy=" + sortValue));
-        }
-      }
-      return KeywordResult.HANDLED;
-    }
-
-    // Check if we're completing after "asc=" (suggest true/false)
-    if (lowerPartial.startsWith("asc=")) {
-      String afterEq = partial.substring(4);
-      for (String boolValue : BOOLEAN_VALUES) {
-        if (boolValue.startsWith(afterEq.toLowerCase())) {
-          candidates.add(noSpace(prefix + "asc=" + boolValue));
-        }
-      }
-      return KeywordResult.HANDLED;
-    }
-
-    // Check if we're completing after "value=" (suggest field names)
-    if (lowerPartial.startsWith("value=")) {
-      return KeywordResult.FIELD_AFTER_KEYWORD;
-    }
-
-    // Otherwise suggest keyword names (agg=, value=, sortBy=, asc=)
-    for (String keyword : GROUPBY_KEYWORDS) {
-      if (keyword.toLowerCase().startsWith(lowerPartial)) {
-        candidates.add(noSpace(prefix + keyword));
-      }
-    }
-    return KeywordResult.HANDLED;
-  }
-
-  private KeywordResult completeTopKeywords(
-      CompletionContext ctx, String partial, List<Candidate> candidates) {
-    String jlineWord = ctx.jlineWord();
-
-    // Check if we're completing after "asc=" (suggest true/false)
-    if (partial.toLowerCase().startsWith("asc=")) {
-      String afterEq = partial.substring(4);
-      String prefix = calculateJlinePrefix(jlineWord, partial);
-      for (String val : BOOLEAN_VALUES) {
-        if (val.startsWith(afterEq.toLowerCase())) {
-          candidates.add(noSpace(prefix + "asc=" + val));
-        }
-      }
-      return KeywordResult.HANDLED;
-    }
-
-    // Check if we're completing after "by=" (suggest field names)
-    if (partial.toLowerCase().startsWith("by=")) {
-      return KeywordResult.FIELD_AFTER_KEYWORD;
-    }
-
-    // Otherwise suggest keyword names (by=, asc=)
-    String lowerPartial = partial.toLowerCase();
-    String prefix = calculateJlinePrefix(jlineWord, partial);
-    for (String keyword : TOP_KEYWORDS) {
-      if (keyword.toLowerCase().startsWith(lowerPartial)) {
-        candidates.add(noSpace(prefix + keyword));
-      }
-    }
-    return KeywordResult.HANDLED;
   }
 
   @Override
@@ -183,17 +165,17 @@ public final class FunctionParamCompleter implements ContextCompleter {
               + paramIndex);
     }
 
-    // Handle function-specific keyword parameters (not field names)
+    // Handle keyword parameters generically via FunctionSpec
     KeywordResult keywordResult =
         handleKeywordParameters(ctx, functionName, paramIndex, partial, candidates);
     if (keywordResult == KeywordResult.HANDLED) {
       return;
     }
 
-    // If we're completing field after a keyword (value=, by=), adjust the partial
+    // If completing a field path after a keyword (e.g. value=), adjust the partial
     String keywordPrefix = "";
     if (keywordResult == KeywordResult.FIELD_AFTER_KEYWORD) {
-      FieldAfterKeyword fak = extractFieldAfterKeyword(partial);
+      FieldAfterKeyword fak = extractFieldAfterKeyword(partial, functionName);
       if (fak != null) {
         keywordPrefix = fak.keywordPrefix();
         partial = fak.fieldPartial();
@@ -218,21 +200,15 @@ public final class FunctionParamCompleter implements ContextCompleter {
     List<String> pathSegments = new java.util.ArrayList<>();
     String lastSegment = partial;
 
-    // Parse the path: "name/value" or "name.value" -> ["name"], partial="value"
     if (partial.contains("/") || partial.contains(".")) {
-      // Split on both separators
       String[] parts = partial.split("[/.]");
       if (parts.length > 0) {
-        // All but the last are complete path segments
         for (int i = 0; i < parts.length - 1; i++) {
           if (!parts[i].isEmpty()) {
             pathSegments.add(parts[i]);
           }
         }
-        // Last part is what we're completing (could be empty after trailing separator)
         lastSegment = parts[parts.length - 1];
-
-        // If partial ends with separator, the last segment is complete too
         if (partial.endsWith("/") || partial.endsWith(".")) {
           if (!lastSegment.isEmpty()) {
             pathSegments.add(lastSegment);
@@ -242,7 +218,6 @@ public final class FunctionParamCompleter implements ContextCompleter {
       }
     }
 
-    // Get field names at the appropriate nesting level
     List<String> fieldNames =
         pathSegments.isEmpty()
             ? metadata.getFieldNames(eventType)
@@ -257,18 +232,12 @@ public final class FunctionParamCompleter implements ContextCompleter {
               + "'");
     }
 
-    // Build completion prefix from the path segments (for nested fields)
     String nestedPrefix = "";
     if (!pathSegments.isEmpty()) {
-      // Use the same separator that was used in the original input
       char separator = partial.contains("/") ? '/' : '.';
       nestedPrefix = String.join(String.valueOf(separator), pathSegments) + separator;
     }
 
-    // Calculate the JLine word prefix to prepend to candidates
-    // JLine filters candidates that don't start with line.word()
-    // Formula: jlineWordPrefix = jlineWord with partial removed from end
-    // Note: Use ORIGINAL partial from context when calculating, not adjusted partial
     String jlineWord = ctx.jlineWord();
     String jlineWordPrefix = "";
     if (jlineWord != null && !jlineWord.isEmpty()) {
@@ -278,8 +247,6 @@ public final class FunctionParamCompleter implements ContextCompleter {
       } else if (jlineWord.length() > originalPartial.length()) {
         jlineWordPrefix = jlineWord.substring(0, jlineWord.length() - originalPartial.length());
       }
-      // When we have a keywordPrefix, it's already accounted for in jlineWord,
-      // so we set jlineWordPrefix to not include it (just the leading part before keyword)
     }
 
     if (TRACE) {
@@ -294,8 +261,6 @@ public final class FunctionParamCompleter implements ContextCompleter {
     String lowerLastSegment = lastSegment.toLowerCase();
     int added = 0;
 
-    // In select() expressions at top level, also suggest select functions (e.g., asDateTime,
-    // truncate)
     if (ctx.type() == CompletionContextType.SELECT_EXPRESSION && pathSegments.isEmpty()) {
       for (var spec : FunctionRegistry.getSelectFunctions()) {
         if (spec.name().toLowerCase().startsWith(lowerLastSegment)) {
@@ -307,9 +272,6 @@ public final class FunctionParamCompleter implements ContextCompleter {
 
     for (String fieldName : fieldNames) {
       if (fieldName.toLowerCase().startsWith(lowerLastSegment)) {
-        // Use noSpace to not add trailing space after field name
-        // This allows typing comma for multiple fields in select()
-        // Include keywordPrefix (like "value=") if completing after a keyword
         String value = jlineWordPrefix + keywordPrefix + nestedPrefix + fieldName;
         candidates.add(noSpace(value));
         added++;

@@ -274,6 +274,22 @@ Together they provide a powerful interactive environment for JFR analysis:
 - **Multiple Output Formats**: Table (default) and JSON
 - **Example Scripts**: Pre-built analysis examples in `jfr-shell/src/main/resources/examples/`
 
+**JfrPath Query Syntax** — queries use path-based addressing, not SQL-like syntax:
+```
+# List events of a type
+show events/jdk.ExecutionSample
+
+# Filter
+show events/jdk.ExecutionSample[sampledThread.javaName == "main"]
+
+# Pipeline operators
+show events/jdk.ExecutionSample | count()
+show events/jdk.ExecutionSample | groupBy(sampledThread.javaName, agg=count, sortBy=value)
+show events/jdk.ExecutionSample | flamegraph()
+show events/jdk.ExecutionSample | flamegraph(direction=top-down)
+```
+Note: the event path is always `events/<EventTypeName>`, not `show <EventTypeName>`.
+
 **Event Decoration**
 - `decorateByTime()`: Join events that overlap temporally on same thread (e.g., samples during lock waits)
 - `decorateByKey()`: Join events with matching correlation keys (e.g., request tracing by thread ID)
