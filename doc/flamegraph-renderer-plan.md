@@ -2,19 +2,19 @@
 
 ## Goal
 
-Add a `| flamegraph()` JfrPath pipeline operator that renders a terminal flamegraph
-from any JFR event type that carries a `stackTrace` field. Output is ANSI-colored
-filled cells rendered via the TamboUI `Buffer` API — identical rendering path to
-`TuiTableRenderer`, works in both plain CLI and `--tui` mode.
+Add a `| flamegraph()` JfrPath pipeline operator that generates an interactive HTML
+flamegraph from any JFR event type that carries a `stackTrace` field. Output is a
+browser-viewable HTML artifact (including any required JavaScript/CSS) rather than
+ANSI-colored terminal cells or TamboUI-based rendering.
 
 ## Design Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Rendering API | `Buffer` direct (`setString` + `Style.bg(Color.rgb(...))`) | Canvas `Rectangle` only draws outlines; Buffer cell painting is exact fit |
+| Rendering API | HTML + JavaScript interactive flamegraph renderer | Matches the current implementation, which produces interactive HTML instead of TUI output |
 | Orientation | Root at bottom (classic Brendan Gregg style) | Leaves (hot methods) at top, entry points at bottom |
-| Output format | ANSI inline (same as TuiTableRenderer) | Works in both `--tui` and plain CLI; no special-casing needed |
-| JSON output | Not implemented | No meaningful use case for flamegraph tree in JSON form here |
+| Output format | Standalone HTML (or embeddable HTML snippet) | Can be opened in a browser; aligns with interactive flamegraph UX |
+| JSON output | Not implemented | No meaningful use case for the flamegraph tree in JSON form here |
 | `direction` param | `top-down` / `bottom-up` | Controls whether stack is read leaf-first or root-first |
 
 ## Files to Create / Modify
