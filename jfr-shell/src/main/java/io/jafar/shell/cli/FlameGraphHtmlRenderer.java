@@ -9,7 +9,9 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-/** Generates a self-contained interactive HTML flamegraph file and opens it in the browser. */
+/**
+ * Generates a self-contained interactive HTML flamegraph file and prints its {@code file://} URL.
+ */
 public final class FlameGraphHtmlRenderer {
 
   private FlameGraphHtmlRenderer() {}
@@ -17,7 +19,7 @@ public final class FlameGraphHtmlRenderer {
   public static void render(FlameNode root, CommandDispatcher.IO io) throws IOException {
     String html = buildHtml(root);
     Path tmp = writeTempFile(html);
-    io.println("Flamegraph: file://" + tmp.toAbsolutePath());
+    io.println("Flamegraph: " + tmp.toUri().toString());
   }
 
   static String toJson(FlameNode node) {

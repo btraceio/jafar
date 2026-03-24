@@ -3581,7 +3581,6 @@ public final class JfrPathEvaluator {
             }
           });
     }
-    if (root.value == 0) return List.of();
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("__flamegraph", root);
     return List.of(result);
@@ -3598,7 +3597,6 @@ public final class JfrPathEvaluator {
         root.addPath(frames);
       }
     }
-    if (root.value == 0) return List.of();
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("__flamegraph", root);
     return List.of(result);
