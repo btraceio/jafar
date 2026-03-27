@@ -1,8 +1,15 @@
 package io.jafar.parser;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -10,6 +17,8 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -249,12 +258,41 @@ public class MetadataSettingStringClassTest {
 
     // Before fix: MetadataSetting.onAttribute threw NumberFormatException for the
     // non-numeric "class" attribute ("datadog.WallClockSamplingEpoch").
-    // After fix: parsing completes normally; getType() resolves by name or returns null.
+    // After fix: parsing completes normally; the setting is created and getType() returns null
+    // (since "datadog.WallClockSamplingEpoch" is not a registered metadata class).
+    AtomicBoolean metadataSeen = new AtomicBoolean(false);
+
     assertDoesNotThrow(
         () -> {
-          try (UntypedJafarParser parser = UntypedJafarParser.open(jfrFile)) {
+          try (UntypedJafarParser parser =
+              UntypedJafarParser.open(jfrFile)
+                  .withParserListener(
+                      new ChunkParserListener() {
+                        @Override
+                        public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+                          MetadataClass fakeEvent =
+                              context.getMetadataLookup().getClass("test.FakeEvent");
+                          assertNotNull(fakeEvent, "test.FakeEvent should be registered");
+
+                          Map<String, Map<String, Object>> settings = fakeEvent.getSettingsByName();
+                          assertTrue(settings.containsKey("period"), "period setting should exist");
+
+                          // "type" is null when getType() returned null, which happens because
+                          // "datadog.WallClockSamplingEpoch" is not a registered metadata class.
+                          // Without the fix we would never reach this point (NFE thrown earlier).
+                          Map<String, Object> periodSetting = settings.get("period");
+                          assertNull(
+                              periodSetting.get("type"),
+                              "setting type should be null for unresolvable class name");
+
+                          metadataSeen.set(true);
+                          return true;
+                        }
+                      })) {
             parser.run();
           }
         });
+
+    assertTrue(metadataSeen.get(), "onMetadata callback must have been invoked");
   }
 }
