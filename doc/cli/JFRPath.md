@@ -316,6 +316,94 @@ events/jdk.FileRead/bytes | sketch()
 events/jdk.FileRead | sketch(bytes)
 ```
 
+### Head
+```
+| head(n)
+```
+
+Return only the first N rows from the result set.
+
+**Examples**:
+```
+events/jdk.FileRead | head(10)
+events/jdk.ExecutionSample | groupBy(thread/name) | head(5)
+```
+
+### Tail
+```
+| tail(n)
+```
+
+Return only the last N rows from the result set.
+
+**Examples**:
+```
+events/jdk.FileRead | tail(10)
+events/jdk.FileRead | sortBy(bytes) | tail(5)
+```
+
+### Filter
+```
+| filter([predicate])
+```
+
+Filter rows in the pipeline using the same predicate syntax as path filters.
+
+**Examples**:
+```
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | filter([sum>1048576])
+events/jdk.ExecutionSample | groupBy(thread/name) | filter([count>100])
+```
+
+### Distinct
+```
+| distinct([field])
+```
+
+Return only distinct rows by the specified field, or deduplicate the entire row if no field is given.
+
+**Examples**:
+```
+events/jdk.FileRead | distinct(path)
+events/jdk.ExecutionSample | distinct(sampledThread/javaName)
+```
+
+### Stack Profile
+```
+| stackprofile([direction=top-down|bottom-up][, buckets=N][, minPct=D])
+```
+
+Aggregate stack trace data into a weighted call tree with temporal bucketing. Intended for CPU profiling event types with a `stackTrace` field (e.g., `jdk.ExecutionSample`).
+
+**Parameters**:
+- `direction` - `top-down` (default) or `bottom-up`
+- `buckets` - number of time buckets (default: 10)
+- `minPct` - minimum percentage threshold to include a frame (default: 1.0)
+
+**Examples**:
+```
+events/jdk.ExecutionSample | stackprofile()
+events/jdk.ExecutionSample | stackprofile(direction=bottom-up, buckets=20)
+events/jdk.ExecutionSample[sampledThread/javaName="main"] | stackprofile(minPct=0.5)
+```
+
+### Flame Graph
+```
+| flamegraph([direction=bottom-up|top-down])
+```
+
+Aggregate stack trace data into a flame graph. Intended for event types with a `stackTrace` field (e.g., `jdk.ExecutionSample`). Renders an interactive HTML flame graph in the terminal (inline ANSI in plain mode, scrollable pane in `--tui` mode).
+
+**Parameters**:
+- `direction` - `bottom-up` (default, classic flame graph) or `top-down` (icicle graph)
+
+**Examples**:
+```
+events/jdk.ExecutionSample | flamegraph()
+events/jdk.ExecutionSample | flamegraph(direction=top-down)
+events/jdk.ExecutionSample[sampledThread/javaName="main"] | flamegraph()
+```
+
 ### Group By
 ```
 | groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
@@ -930,11 +1018,19 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
-## Operator Limitations
+## Operator Chaining
 
-- Pipeline operators are **not chainable**: `| count() | sum()` is not supported
-- Each query can have at most one pipeline operator
-- For multi-step analytics, use interactive commands or scripting
+Many operators are chainable in a pipeline. For example:
+
+```
+events/jdk.FileRead | select(path, bytes) | sortBy(bytes) | top(10)
+events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count) | head(5)
+events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass) | select(startTime, $decorator.monitorClass) | top(10)
+```
+
+**Terminal aggregation operators** (`count()`, `sum()`, `stats()`, `quantiles()`, `sketch()`, `timerange()`, `flamegraph()`, `stackprofile()`) consume the stream and produce a summary result — they cannot be chained with each other.
+
+**Transform and filter operators** (`select()`, `sortBy()`, `top()`, `head()`, `tail()`, `filter()`, `distinct()`, `groupBy()`, `decorateByTime()`, `decorateByKey()`, value transforms) can be combined freely.
 
 ## Design Principles
 
@@ -978,6 +1074,15 @@ events/jdk.ExecutionSample | decorateByKey(RequestStart,
 # GC impact: allocations during GC phases
 events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name)
   | groupBy($decorator.name, agg=sum, value=allocationSize)
+
+# Flame graph from execution samples
+events/jdk.ExecutionSample | flamegraph()
+
+# Icicle graph (top-down)
+events/jdk.ExecutionSample | flamegraph(direction=top-down)
+
+# Weighted call tree with temporal bucketing
+events/jdk.ExecutionSample | stackprofile()
 
 # Recording time span
 events/jdk.ExecutionSample | timerange()

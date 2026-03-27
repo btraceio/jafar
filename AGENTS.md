@@ -29,14 +29,19 @@ The project is organized as a multi-module Gradle build with the following struc
 - **parser/**: Aggregate module re-exporting parser-core and parser-codegen
 - **parser-core/**: Core parsing engine with typed and untyped APIs
 - **parser-codegen/**: ASM-based code generation for typed deserialization
-- **demo/**: Demonstration application comparing different JFR parsers
+- **jafar-processor/**: Annotation processor for build-time typed handler generation (eliminates runtime bytecode generation)
 - **tools/**: Utilities including JFR file scrubbing functionality
-- **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces
+- **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces (separate included build)
 - **jfr-shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions)
 - **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
+- **jfr-shell-jafar/**: Jafar-parser backend plugin for jfr-shell (high priority, full-featured)
+- **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
+- **jfr-shell-tck/**: Technology Compatibility Kit for validating backend plugin implementations
+- **jfr-mcp/**: MCP (Model Context Protocol) server enabling AI agents to analyze JFR recordings
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes)
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump) via ServiceLoader
+- **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 
 Key architectural components:
 - `JafarParser`: Main entry point supporting both typed and untyped parsing
@@ -262,9 +267,12 @@ includeBuild('..') {
 - After changing settings.gradle, run `./gradlew --stop` and `rm -rf demo/.gradle/` to clear caches
 
 ### JFR Shell (Interactive Analysis Tool)
-The jfr-shell system is split into two modules:
+The jfr-shell system spans several modules:
 - **jfr-shell-core/**: Query engine, backend SPI, plugin framework, and session management (no TUI/CLI dependencies)
 - **jfr-shell/**: Interactive CLI/TUI shell, command system, and renderers (depends on `jfr-shell-core`)
+- **jfr-shell-jafar/**: Backend plugin using the Jafar parser (high priority, full capabilities)
+- **jfr-shell-jdk/**: Backend plugin using the JDK `jdk.jfr.consumer` API (lower priority, limited capabilities)
+- **jfr-shell-tck/**: Technology Compatibility Kit for validating backend implementations
 
 Together they provide a powerful interactive environment for JFR analysis:
 - **Session-based**: Open JFR files and maintain analysis state
@@ -280,11 +288,11 @@ Together they provide a powerful interactive environment for JFR analysis:
 show events/jdk.ExecutionSample
 
 # Filter
-show events/jdk.ExecutionSample[sampledThread.javaName == "main"]
+show events/jdk.ExecutionSample[sampledThread/javaName == "main"]
 
 # Pipeline operators
 show events/jdk.ExecutionSample | count()
-show events/jdk.ExecutionSample | groupBy(sampledThread.javaName, agg=count, sortBy=value)
+show events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count, sortBy=value)
 show events/jdk.ExecutionSample | flamegraph()
 show events/jdk.ExecutionSample | flamegraph(direction=top-down)
 ```
@@ -303,16 +311,26 @@ Note: the event path is always `events/<EventTypeName>`, not `show <EventTypeNam
 ./gradlew :jfr-shell:run --console=plain
 
 # Example session:
-jfr> open("/path/to/recording.jfr")
-jfr> def threadStats = [:]
-jfr> handle(JFRExecutionSample) { event, ctl ->
-       def threadId = event.sampledThread().javaThreadId()
-       threadStats[threadId] = (threadStats[threadId] ?: 0) + 1
-     }
-jfr> run()
-jfr> threadStats.sort { -it.value }.take(5)
-jfr> export(threadStats, "results.json")
+jfr> open /path/to/recording.jfr
+jfr> events/jdk.ExecutionSample | count()
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count, sortBy=value) | top(10)
+jfr> events/jdk.FileRead | stats(bytes)
+jfr> events/jdk.ExecutionSample | flamegraph()
+jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+jfr> echo "Top thread: ${hot[0].key}"
 ```
+
+### MCP Server (`jfr-mcp`)
+The `jfr-mcp` module exposes JFR analysis capabilities as an MCP (Model Context Protocol) server, allowing AI agents (Claude, etc.) to analyze JFR recordings. It provides tools: `jfr_open`, `jfr_close`, `jfr_list_types`, `jfr_query`, `jfr_help`, `jfr_summary`, `jfr_diagnose`, `jfr_flamegraph`, `jfr_callgraph`, `jfr_hotmethods`, `jfr_exceptions`, `jfr_use`, `jfr_tsa`.
+
+Run the MCP server:
+```bash
+./gradlew :jfr-mcp:shadowJar
+java -jar jfr-mcp/build/libs/jfr-mcp-*-all.jar --stdio   # STDIO mode
+java -jar jfr-mcp/build/libs/jfr-mcp-*-all.jar           # HTTP mode (port 3000)
+```
+
+See [jfr-mcp/README.md](jfr-mcp/README.md) and [doc/mcp/Tutorial.md](doc/mcp/Tutorial.md) for full documentation.
 
 ### Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)

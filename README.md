@@ -11,7 +11,8 @@ JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for par
 
 ## Build
 1) Fetch binary resources: `./get_resources.sh`
-2) Build all modules: `./gradlew shadowJar`
+2) Build all modules: `./gradlew build`
+3) Build shadow JARs (optional): `./gradlew shadowJar`
 
 ## Quick start (typed API)
 Define a Java interface per JFR type and annotate with `@JfrType`. Methods correspond to event fields; use `@JfrField` to map differing names and `@JfrIgnore` to skip fields.
@@ -453,11 +454,13 @@ JAFAR includes `jfr-shell`, an interactive CLI for exploring and analyzing JFR f
 
 - **Interactive REPL** with intelligent tab completion
 - **JfrPath query language** for filtering, projection, and aggregation
-- **Scripting support**: record, save, and replay analysis workflows with variable substitution ⭐ NEW
+- **Flame graphs**: interactive HTML flame graphs from stack trace events
+- **Scripting support**: record, save, and replay analysis workflows with variable substitution
 - **Event decoration** for correlating and joining events (time-based and key-based)
 - **Multiple output formats**: table and JSON
 - **Multi-session support**: work with multiple recordings simultaneously
 - **Non-interactive mode**: execute queries from command line for scripting/CI
+- **Pluggable backends**: Jafar parser (full-featured) and JDK JFR API (limited, broadly compatible)
 
 ### Quick Example
 
@@ -470,6 +473,7 @@ jfr-shell recording.jfr
 
 jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 jfr> events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.ExecutionSample | flamegraph()
 
 # Event decoration: correlate samples with lock waits
 jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)

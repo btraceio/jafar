@@ -85,6 +85,9 @@ jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 | GC Thread#0      | 4521  |
 ...
 
+jfr> events/jdk.ExecutionSample | flamegraph()
+[Opens interactive flame graph in terminal]
+
 jfr> events/jdk.FileRead | top(10, by=bytes)
 | path                    | bytes    |
 +-------------------------+----------+
@@ -550,8 +553,14 @@ List matching:
 - `| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])` - Group and aggregate with optional sorting
 - `| sortBy(field[, asc=false])` - Sort rows by field (works after any multi-row operator)
 - `| top(n[, by=path, asc=false])` - Sort and take top N
+- `| head(n)` - Take first N rows
+- `| tail(n)` - Take last N rows
+- `| filter([predicate])` - Filter rows in pipeline
+- `| distinct([field])` - Remove duplicate rows by field
 - `| quantiles(0.5,0.9,0.99[,path=])` - Percentiles
 - `| sketch([path])` - Stats + p50, p90, p99
+- `| stackprofile([direction=top-down|bottom-up][, buckets=N][, minPct=D])` - Weighted call tree with temporal bucketing
+- `| flamegraph([direction=bottom-up|top-down])` - Interactive flame graph from stack traces
 
 ### Field Projection with Expressions
 
