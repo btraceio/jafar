@@ -306,11 +306,20 @@ final class CodeGenerator {
       boolean isArray,
       Class<?> fldType,
       String fieldName,
-      String methodName) {
+      String methodName,
+      Class<?> expectedReturnType) {
     if (fldType == null) {
       // field is never accessed directly, can skip the rest
       return;
     }
+
+    // Determine the return type for the generated accessor.
+    // When the interface declares a wider primitive type (e.g. long for a JFR int/uint field),
+    // use that type in the method descriptor and insert a widening conversion instruction.
+    Class<?> returnType =
+        (expectedReturnType != null && isPrimitiveWidening(fldType, expectedReturnType))
+            ? expectedReturnType
+            : fldType;
 
     String fldDescriptor = (isArray ? "[" : "") + Type.getDescriptor(fldType);
     cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
@@ -319,7 +328,7 @@ final class CodeGenerator {
         cv.visitMethod(
             Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
             methodName,
-            "()" + (isArray ? "[" : "") + Type.getDescriptor(fldType),
+            "()" + (isArray ? "[" : "") + Type.getDescriptor(returnType),
             null,
             null);
     mv.visitCode();
@@ -329,10 +338,81 @@ final class CodeGenerator {
     if (isArray) {
       mv.visitInsn(Opcodes.ARETURN);
     } else {
-      mv.visitInsn(Type.getType(fldType).getOpcode(Opcodes.IRETURN));
+      addWideningConversion(mv, fldType, returnType);
+      mv.visitInsn(Type.getType(returnType).getOpcode(Opcodes.IRETURN));
     }
     mv.visitMaxs(0, 0);
     mv.visitEnd();
+  }
+
+  /**
+   * Returns true if {@code from} can be widened to {@code to} via a JLS 5.1.2 primitive widening
+   * conversion. Only numeric primitives are considered; reference types and boolean always return
+   * false.
+   */
+  private static boolean isPrimitiveWidening(Class<?> from, Class<?> to) {
+    if (from == to || !from.isPrimitive() || !to.isPrimitive()) {
+      return false;
+    }
+    // JLS 5.1.2 widening primitive conversions (boolean is intentionally excluded)
+    if (to == short.class) {
+      return from == byte.class;
+    }
+    if (to == int.class) {
+      return from == byte.class || from == short.class || from == char.class;
+    }
+    if (to == long.class) {
+      return from == byte.class || from == short.class || from == char.class || from == int.class;
+    }
+    if (to == float.class) {
+      return from == byte.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == long.class;
+    }
+    if (to == double.class) {
+      return from == byte.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == long.class
+          || from == float.class;
+    }
+    return false;
+  }
+
+  /** Emits a JLS 5.1.2 widening conversion instruction from {@code from} to {@code to}. */
+  private static void addWideningConversion(MethodVisitor mv, Class<?> from, Class<?> to) {
+    if (from == to) {
+      return;
+    }
+    if (to == short.class || to == int.class) {
+      // byte/short/char GETFIELD already sign/zero-extends to int on the JVM stack;
+      // no explicit conversion instruction is needed. The method descriptor uses the
+      // target type (e.g. ()I or ()S) and IRETURN handles all sub-int returns.
+      return;
+    }
+    if (to == long.class) {
+      // byte/short/char/int are all represented as int on the JVM stack after GETFIELD
+      mv.visitInsn(Opcodes.I2L);
+    } else if (to == double.class) {
+      if (from == float.class) {
+        mv.visitInsn(Opcodes.F2D);
+      } else if (from == long.class) {
+        mv.visitInsn(Opcodes.L2D);
+      } else {
+        // byte/short/char/int -> double
+        mv.visitInsn(Opcodes.I2D);
+      }
+    } else if (to == float.class) {
+      if (from == long.class) {
+        mv.visitInsn(Opcodes.L2F);
+      } else {
+        // byte/short/char/int -> float
+        mv.visitInsn(Opcodes.I2F);
+      }
+    }
   }
 
   static void addFieldSkipper(
@@ -1586,7 +1666,13 @@ final class CodeGenerator {
                 throw new RuntimeException("Field " + fieldName + " is not a constant pool entry");
               }
               handleField(
-                  cw, clzName, field.getDimension() > 0, fldClz, fieldName, mapping.method());
+                  cw,
+                  clzName,
+                  field.getDimension() > 0,
+                  fldClz,
+                  fieldName,
+                  mapping.method(),
+                  mapping.expectedReturnType());
             }
             generatedMethods.add(mapping.method());
           }
@@ -1681,11 +1767,13 @@ final class CodeGenerator {
                       name = fieldAnnotation.value();
                       fieldToMethodMap
                           .computeIfAbsent(name, k -> new HashSet<>())
-                          .add(new FieldMapping(m.getName(), fieldAnnotation.raw()));
+                          .add(
+                              new FieldMapping(
+                                  m.getName(), fieldAnnotation.raw(), m.getReturnType()));
                     } else {
                       fieldToMethodMap
                           .computeIfAbsent(name, k -> new HashSet<>())
-                          .add(new FieldMapping(m.getName(), false));
+                          .add(new FieldMapping(m.getName(), false, m.getReturnType()));
                     }
                     return name;
                   })
