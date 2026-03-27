@@ -592,6 +592,18 @@ public class JfrPrimitiveTypesTest {
     double value(); // JFR field is long, interface declares double
   }
 
+  @JfrType("test.ShortAsIntEvent")
+  public interface ShortAsIntEvent {
+    @JfrField("value")
+    int value(); // JFR field is short, interface declares int
+  }
+
+  @JfrType("test.ByteAsIntEvent")
+  public interface ByteAsIntEvent {
+    @JfrField("value")
+    int value(); // JFR field is byte, interface declares int
+  }
+
   @Test
   void parsesIntFieldAsLong_typed() throws Exception {
     Path jfrFile = tempDir.resolve("int-as-long.jfr");
@@ -732,6 +744,62 @@ public class JfrPrimitiveTypesTest {
     }
 
     assertEquals(2, index.get());
+  }
+
+  @Test
+  void parsesShortFieldAsInt_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("short-as-int.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.ShortAsIntEvent")
+        .shortField("value")
+        .event((short) 500)
+        .event(Short.MAX_VALUE)
+        .event((short) -1)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    int[] expected = {500, Short.MAX_VALUE, -1};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          ShortAsIntEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(expected[i], event.value(), "Widened short-as-int at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(3, index.get());
+  }
+
+  @Test
+  void parsesByteFieldAsInt_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("byte-as-int.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.ByteAsIntEvent")
+        .byteField("value")
+        .event((byte) 42)
+        .event(Byte.MAX_VALUE)
+        .event((byte) -1)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    int[] expected = {42, Byte.MAX_VALUE, -1};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          ByteAsIntEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(expected[i], event.value(), "Widened byte-as-int at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(3, index.get());
   }
 
   @Test

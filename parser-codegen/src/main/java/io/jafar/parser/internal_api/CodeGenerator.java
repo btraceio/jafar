@@ -355,8 +355,21 @@ final class CodeGenerator {
       return false;
     }
     // JLS 5.1.2 widening primitive conversions (boolean is intentionally excluded)
+    if (to == short.class) {
+      return from == byte.class;
+    }
+    if (to == int.class) {
+      return from == byte.class || from == short.class || from == char.class;
+    }
     if (to == long.class) {
       return from == byte.class || from == short.class || from == char.class || from == int.class;
+    }
+    if (to == float.class) {
+      return from == byte.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == long.class;
     }
     if (to == double.class) {
       return from == byte.class
@@ -366,13 +379,6 @@ final class CodeGenerator {
           || from == long.class
           || from == float.class;
     }
-    if (to == float.class) {
-      return from == byte.class
-          || from == short.class
-          || from == char.class
-          || from == int.class
-          || from == long.class;
-    }
     return false;
   }
 
@@ -381,8 +387,14 @@ final class CodeGenerator {
     if (from == to) {
       return;
     }
+    if (to == short.class || to == int.class) {
+      // byte/short/char GETFIELD already sign/zero-extends to int on the JVM stack;
+      // no explicit conversion instruction is needed. The method descriptor uses the
+      // target type (e.g. ()I or ()S) and IRETURN handles all sub-int returns.
+      return;
+    }
     if (to == long.class) {
-      // byte/short/char/int are all represented as int on the JVM stack
+      // byte/short/char/int are all represented as int on the JVM stack after GETFIELD
       mv.visitInsn(Opcodes.I2L);
     } else if (to == double.class) {
       if (from == float.class) {
