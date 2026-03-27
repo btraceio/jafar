@@ -346,24 +346,20 @@ final class CodeGenerator {
   }
 
   /**
-   * Returns true if {@code from} can be widened to {@code to} via a JVM primitive widening
-   * conversion. Only numeric primitives are considered; reference types always return false.
+   * Returns true if {@code from} can be widened to {@code to} via a JLS 5.1.2 primitive widening
+   * conversion. Only numeric primitives are considered; reference types and boolean always return
+   * false.
    */
   private static boolean isPrimitiveWidening(Class<?> from, Class<?> to) {
     if (from == to || !from.isPrimitive() || !to.isPrimitive()) {
       return false;
     }
+    // JLS 5.1.2 widening primitive conversions (boolean is intentionally excluded)
     if (to == long.class) {
-      return from == byte.class
-          || from == boolean.class
-          || from == short.class
-          || from == char.class
-          || from == int.class
-          || from == float.class;
+      return from == byte.class || from == short.class || from == char.class || from == int.class;
     }
     if (to == double.class) {
       return from == byte.class
-          || from == boolean.class
           || from == short.class
           || from == char.class
           || from == int.class
@@ -372,7 +368,6 @@ final class CodeGenerator {
     }
     if (to == float.class) {
       return from == byte.class
-          || from == boolean.class
           || from == short.class
           || from == char.class
           || from == int.class
@@ -381,43 +376,28 @@ final class CodeGenerator {
     return false;
   }
 
-  /** Emits a widening conversion instruction from {@code from} to {@code to} if needed. */
+  /** Emits a JLS 5.1.2 widening conversion instruction from {@code from} to {@code to}. */
   private static void addWideningConversion(MethodVisitor mv, Class<?> from, Class<?> to) {
     if (from == to) {
       return;
     }
     if (to == long.class) {
-      if (from == byte.class
-          || from == boolean.class
-          || from == short.class
-          || from == char.class
-          || from == int.class) {
-        mv.visitInsn(Opcodes.I2L);
-      } else if (from == float.class) {
-        mv.visitInsn(Opcodes.F2L);
-      } else if (from == double.class) {
-        mv.visitInsn(Opcodes.D2L);
-      }
+      // byte/short/char/int are all represented as int on the JVM stack
+      mv.visitInsn(Opcodes.I2L);
     } else if (to == double.class) {
       if (from == float.class) {
         mv.visitInsn(Opcodes.F2D);
       } else if (from == long.class) {
         mv.visitInsn(Opcodes.L2D);
-      } else if (from == byte.class
-          || from == boolean.class
-          || from == short.class
-          || from == char.class
-          || from == int.class) {
+      } else {
+        // byte/short/char/int -> double
         mv.visitInsn(Opcodes.I2D);
       }
     } else if (to == float.class) {
       if (from == long.class) {
         mv.visitInsn(Opcodes.L2F);
-      } else if (from == byte.class
-          || from == boolean.class
-          || from == short.class
-          || from == char.class
-          || from == int.class) {
+      } else {
+        // byte/short/char/int -> float
         mv.visitInsn(Opcodes.I2F);
       }
     }

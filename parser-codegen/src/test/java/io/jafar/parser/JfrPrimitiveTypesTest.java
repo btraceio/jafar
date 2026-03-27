@@ -580,6 +580,18 @@ public class JfrPrimitiveTypesTest {
     double value(); // JFR field is float, interface declares double
   }
 
+  @JfrType("test.ShortAsLongEvent")
+  public interface ShortAsLongEvent {
+    @JfrField("value")
+    long value(); // JFR field is short, interface declares long
+  }
+
+  @JfrType("test.LongAsDoubleEvent")
+  public interface LongAsDoubleEvent {
+    @JfrField("value")
+    double value(); // JFR field is long, interface declares double
+  }
+
   @Test
   void parsesIntFieldAsLong_typed() throws Exception {
     Path jfrFile = tempDir.resolve("int-as-long.jfr");
@@ -659,6 +671,62 @@ public class JfrPrimitiveTypesTest {
                 event.value(),
                 0.001,
                 "Widened float-as-double at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(2, index.get());
+  }
+
+  @Test
+  void parsesShortFieldAsLong_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("short-as-long.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.ShortAsLongEvent")
+        .shortField("value")
+        .event((short) 1000)
+        .event(Short.MAX_VALUE)
+        .event((short) -1)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    long[] expected = {1000L, Short.MAX_VALUE, -1L};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          ShortAsLongEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(expected[i], event.value(), "Widened short-as-long at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(3, index.get());
+  }
+
+  @Test
+  void parsesLongFieldAsDouble_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("long-as-double.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.LongAsDoubleEvent")
+        .longField("value")
+        .event(123456789L)
+        .event(0L)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    long[] src = {123456789L, 0L};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          LongAsDoubleEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(
+                (double) src[i], event.value(), 0.001, "Widened long-as-double at index " + i);
           });
       parser.run();
     }

@@ -4,8 +4,12 @@ import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class MetadataSetting extends AbstractMetadataElement {
+  private static final Logger log = LoggerFactory.getLogger(MetadataSetting.class);
+
   private boolean hasHashCode = false;
   private int hashCode;
 
@@ -45,7 +49,15 @@ final class MetadataSetting extends AbstractMetadataElement {
     if (typeId >= 0) {
       return metadataLookup.getClass(typeId);
     }
-    return typeName != null ? metadataLookup.getClass(typeName) : null;
+    if (typeName != null) {
+      MetadataClass resolved = metadataLookup.getClass(typeName);
+      if (resolved == null) {
+        log.debug(
+            "Setting '{}': class name '{}' could not be resolved in metadata", getName(), typeName);
+      }
+      return resolved;
+    }
+    return null;
   }
 
   @Override
