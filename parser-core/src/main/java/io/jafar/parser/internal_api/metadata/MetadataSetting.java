@@ -10,7 +10,8 @@ final class MetadataSetting extends AbstractMetadataElement {
   private int hashCode;
 
   private String value;
-  private long typeId;
+  private long typeId = -1;
+  private String typeName = null;
 
   public MetadataSetting(RecordingStream stream, MetadataEvent event) throws IOException {
     super(stream, MetadataElementKind.SETTING);
@@ -24,7 +25,14 @@ final class MetadataSetting extends AbstractMetadataElement {
         this.value = value;
         break;
       case "class":
-        typeId = ParsingUtils.parseLongSWAR(value);
+        try {
+          typeId = ParsingUtils.parseLongSWAR(value);
+        } catch (NumberFormatException e) {
+          // Some custom JFR producers (e.g. dd-trace-java) write the class name
+          // as a string instead of a numeric type ID. Store the name for a
+          // deferred name-based lookup in getType().
+          typeName = value;
+        }
         break;
     }
   }
@@ -34,7 +42,10 @@ final class MetadataSetting extends AbstractMetadataElement {
   }
 
   public MetadataClass getType() {
-    return metadataLookup.getClass(typeId);
+    if (typeId >= 0) {
+      return metadataLookup.getClass(typeId);
+    }
+    return typeName != null ? metadataLookup.getClass(typeName) : null;
   }
 
   @Override
@@ -50,9 +61,16 @@ final class MetadataSetting extends AbstractMetadataElement {
 
   @Override
   public String toString() {
+    String typeStr;
+    if (typeId >= 0) {
+      MetadataClass t = getType();
+      typeStr = t != null ? t.getName() : String.valueOf(typeId);
+    } else {
+      typeStr = typeName != null ? typeName : "unknown";
+    }
     return "MetadataSetting{"
         + "type='"
-        + (getType() != null ? getType().getName() : typeId)
+        + typeStr
         + "'"
         + ", name='"
         + getName()
@@ -68,13 +86,16 @@ final class MetadataSetting extends AbstractMetadataElement {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
     MetadataSetting that = (MetadataSetting) o;
-    return typeId == that.typeId && Objects.equals(value, that.value);
+    return typeId == that.typeId
+        && Objects.equals(typeName, that.typeName)
+        && Objects.equals(value, that.value);
   }
 
   @Override
   public int hashCode() {
     if (!hasHashCode) {
       long mixed = typeId * 0x9E3779B97F4A7C15L + Objects.hashCode(value) * 0xC6BC279692B5C323L;
+      mixed ^= Objects.hashCode(typeName) * 0xBF58476D1CE4E5B9L;
       hashCode = Long.hashCode(mixed);
       hasHashCode = true;
     }

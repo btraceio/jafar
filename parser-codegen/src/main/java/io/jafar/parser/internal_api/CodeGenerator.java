@@ -306,11 +306,20 @@ final class CodeGenerator {
       boolean isArray,
       Class<?> fldType,
       String fieldName,
-      String methodName) {
+      String methodName,
+      Class<?> expectedReturnType) {
     if (fldType == null) {
       // field is never accessed directly, can skip the rest
       return;
     }
+
+    // Determine the return type for the generated accessor.
+    // When the interface declares a wider primitive type (e.g. long for a JFR int/uint field),
+    // use that type in the method descriptor and insert a widening conversion instruction.
+    Class<?> returnType =
+        (expectedReturnType != null && isPrimitiveWidening(fldType, expectedReturnType))
+            ? expectedReturnType
+            : fldType;
 
     String fldDescriptor = (isArray ? "[" : "") + Type.getDescriptor(fldType);
     cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
@@ -319,7 +328,7 @@ final class CodeGenerator {
         cv.visitMethod(
             Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
             methodName,
-            "()" + (isArray ? "[" : "") + Type.getDescriptor(fldType),
+            "()" + (isArray ? "[" : "") + Type.getDescriptor(returnType),
             null,
             null);
     mv.visitCode();
@@ -329,10 +338,89 @@ final class CodeGenerator {
     if (isArray) {
       mv.visitInsn(Opcodes.ARETURN);
     } else {
-      mv.visitInsn(Type.getType(fldType).getOpcode(Opcodes.IRETURN));
+      addWideningConversion(mv, fldType, returnType);
+      mv.visitInsn(Type.getType(returnType).getOpcode(Opcodes.IRETURN));
     }
     mv.visitMaxs(0, 0);
     mv.visitEnd();
+  }
+
+  /**
+   * Returns true if {@code from} can be widened to {@code to} via a JVM primitive widening
+   * conversion. Only numeric primitives are considered; reference types always return false.
+   */
+  private static boolean isPrimitiveWidening(Class<?> from, Class<?> to) {
+    if (from == to || !from.isPrimitive() || !to.isPrimitive()) {
+      return false;
+    }
+    if (to == long.class) {
+      return from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == float.class;
+    }
+    if (to == double.class) {
+      return from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == long.class
+          || from == float.class;
+    }
+    if (to == float.class) {
+      return from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class
+          || from == long.class;
+    }
+    return false;
+  }
+
+  /** Emits a widening conversion instruction from {@code from} to {@code to} if needed. */
+  private static void addWideningConversion(MethodVisitor mv, Class<?> from, Class<?> to) {
+    if (from == to) {
+      return;
+    }
+    if (to == long.class) {
+      if (from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class) {
+        mv.visitInsn(Opcodes.I2L);
+      } else if (from == float.class) {
+        mv.visitInsn(Opcodes.F2L);
+      } else if (from == double.class) {
+        mv.visitInsn(Opcodes.D2L);
+      }
+    } else if (to == double.class) {
+      if (from == float.class) {
+        mv.visitInsn(Opcodes.F2D);
+      } else if (from == long.class) {
+        mv.visitInsn(Opcodes.L2D);
+      } else if (from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class) {
+        mv.visitInsn(Opcodes.I2D);
+      }
+    } else if (to == float.class) {
+      if (from == long.class) {
+        mv.visitInsn(Opcodes.L2F);
+      } else if (from == byte.class
+          || from == boolean.class
+          || from == short.class
+          || from == char.class
+          || from == int.class) {
+        mv.visitInsn(Opcodes.I2F);
+      }
+    }
   }
 
   static void addFieldSkipper(
@@ -1586,7 +1674,13 @@ final class CodeGenerator {
                 throw new RuntimeException("Field " + fieldName + " is not a constant pool entry");
               }
               handleField(
-                  cw, clzName, field.getDimension() > 0, fldClz, fieldName, mapping.method());
+                  cw,
+                  clzName,
+                  field.getDimension() > 0,
+                  fldClz,
+                  fieldName,
+                  mapping.method(),
+                  mapping.expectedReturnType());
             }
             generatedMethods.add(mapping.method());
           }
@@ -1681,11 +1775,13 @@ final class CodeGenerator {
                       name = fieldAnnotation.value();
                       fieldToMethodMap
                           .computeIfAbsent(name, k -> new HashSet<>())
-                          .add(new FieldMapping(m.getName(), fieldAnnotation.raw()));
+                          .add(
+                              new FieldMapping(
+                                  m.getName(), fieldAnnotation.raw(), m.getReturnType()));
                     } else {
                       fieldToMethodMap
                           .computeIfAbsent(name, k -> new HashSet<>())
-                          .add(new FieldMapping(m.getName(), false));
+                          .add(new FieldMapping(m.getName(), false, m.getReturnType()));
                     }
                     return name;
                   })

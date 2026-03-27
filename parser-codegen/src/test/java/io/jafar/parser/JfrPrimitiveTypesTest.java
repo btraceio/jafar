@@ -560,6 +560,112 @@ public class JfrPrimitiveTypesTest {
     assertEquals(1, eventCount.get());
   }
 
+  // WIDENING TESTS (Bug regression: VerifyError when interface declares wider type than JFR field)
+
+  @JfrType("test.IntAsLongEvent")
+  public interface IntAsLongEvent {
+    @JfrField("value")
+    long value(); // JFR field is int, interface declares long — widening required
+  }
+
+  @JfrType("test.IntAsDoubleEvent")
+  public interface IntAsDoubleEvent {
+    @JfrField("value")
+    double value(); // JFR field is int, interface declares double
+  }
+
+  @JfrType("test.FloatAsDoubleEvent")
+  public interface FloatAsDoubleEvent {
+    @JfrField("value")
+    double value(); // JFR field is float, interface declares double
+  }
+
+  @Test
+  void parsesIntFieldAsLong_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("int-as-long.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.IntAsLongEvent")
+        .intField("value")
+        .event(42)
+        .event(Integer.MAX_VALUE)
+        .event(0)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    long[] expected = {42L, Integer.MAX_VALUE, 0L};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          IntAsLongEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(expected[i], event.value(), "Widened int-as-long at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(3, index.get());
+  }
+
+  @Test
+  void parsesIntFieldAsDouble_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("int-as-double.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.IntAsDoubleEvent")
+        .intField("value")
+        .event(100)
+        .event(-1)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    double[] expected = {100.0, -1.0};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          IntAsDoubleEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(expected[i], event.value(), 0.001, "Widened int-as-double at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(2, index.get());
+  }
+
+  @Test
+  void parsesFloatFieldAsDouble_typed() throws Exception {
+    Path jfrFile = tempDir.resolve("float-as-double.jfr");
+
+    JfrTestHelper.create(jfrFile)
+        .eventType("test.FloatAsDoubleEvent")
+        .floatField("value")
+        .event(3.14f)
+        .event(-1.5f)
+        .build();
+
+    AtomicInteger index = new AtomicInteger(0);
+    float[] expected = {3.14f, -1.5f};
+
+    try (TypedJafarParser parser = TypedJafarParser.open(jfrFile.toString())) {
+      parser.handle(
+          FloatAsDoubleEvent.class,
+          (event, ctl) -> {
+            int i = index.getAndIncrement();
+            assertEquals(
+                (double) expected[i],
+                event.value(),
+                0.001,
+                "Widened float-as-double at index " + i);
+          });
+      parser.run();
+    }
+
+    assertEquals(2, index.get());
+  }
+
   @Test
   void parsesAllPrimitivesInOneEvent_untyped() throws Exception {
     Path jfrFile = tempDir.resolve("all-primitives-untyped.jfr");
