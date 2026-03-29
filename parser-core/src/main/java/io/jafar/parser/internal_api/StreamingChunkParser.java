@@ -4,6 +4,7 @@ import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -117,9 +118,32 @@ public final class StreamingChunkParser implements AutoCloseable {
             while (chunkStream.position() < chunkHeader.size) {
               long eventStartPos = chunkStream.position();
               chunkStream.mark(); // max 2 varints ahead
-              int eventSize = (int) chunkStream.readVarint();
+              int eventSize;
+              try {
+                eventSize = (int) chunkStream.readVarint();
+              } catch (BufferUnderflowException e) {
+                log.warn(
+                    "Buffer underflow reading event size at position {}, stopping chunk",
+                    eventStartPos);
+                break;
+              }
               if (eventSize > 0) {
-                long eventType = chunkStream.readVarint();
+                if (eventStartPos + eventSize > chunkHeader.size) {
+                  log.warn(
+                      "Event size {} at position {} exceeds chunk boundary, stopping",
+                      eventSize,
+                      eventStartPos);
+                  break;
+                }
+                long eventType;
+                try {
+                  eventType = chunkStream.readVarint();
+                } catch (BufferUnderflowException e) {
+                  log.warn(
+                      "Buffer underflow reading event type at position {}, stopping chunk",
+                      chunkStream.position());
+                  break;
+                }
                 if (eventType > 1) { // skip metadata and checkpoint events
                   long currentPos = chunkStream.position();
                   if (!listener.onEvent(

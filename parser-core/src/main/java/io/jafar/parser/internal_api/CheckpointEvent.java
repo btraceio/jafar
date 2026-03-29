@@ -5,6 +5,8 @@ import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Represents a checkpoint event in JFR recordings.
@@ -13,6 +15,8 @@ import java.io.IOException;
  * about constant pools and other metadata that may be referenced by subsequent events.
  */
 public final class CheckpointEvent extends AbstractEvent {
+  private static final Logger log = LoggerFactory.getLogger(CheckpointEvent.class);
+
   /** The start time of the checkpoint in nanoseconds. */
   public final long startTime;
 
@@ -78,8 +82,10 @@ public final class CheckpointEvent extends AbstractEvent {
       try {
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
         if (clz == null) {
-          // Unknown type - throw exception early
-          throw new IOException("Constant pool references unknown type ID: " + typeId);
+          log.warn(
+              "Unknown type ID {} in constant pool; remaining CP entries in this checkpoint are abandoned",
+              typeId);
+          return;
         }
         boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
 

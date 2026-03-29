@@ -22,6 +22,8 @@ bin/
 *.jfr
 # Exception: TCK test recording needed for CI
 !jfr-shell-tck/src/main/resources/tck-test.jfr
+# Exception: small stripped regression fixtures committed directly
+!parser-core/src/test/resources/dd-trace-java-stripped/*.jfr
 **/.DS_Store
 
 harness*

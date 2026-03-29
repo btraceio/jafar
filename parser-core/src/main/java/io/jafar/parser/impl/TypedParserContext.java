@@ -196,7 +196,7 @@ public final class TypedParserContext extends ParserContext {
    * @return the target handler class, or null if not found
    */
   public Class<?> getClassTargetType(String name) {
-    return classTargetTypeMap.get(name);
+    return name != null ? classTargetTypeMap.get(name) : null;
   }
 
   /** Binds deserializers for all metadata classes in this context. */

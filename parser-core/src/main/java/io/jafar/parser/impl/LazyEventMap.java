@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -58,7 +59,7 @@ public final class LazyEventMap extends AbstractMap<String, Object> {
 
     // Linear search for sparse access (fast for small field counts)
     for (int i = 0; i < size; i++) {
-      if (keys[i].equals(key)) {
+      if (Objects.equals(keys[i], key)) {
         return values[i];
       }
     }
@@ -74,7 +75,7 @@ public final class LazyEventMap extends AbstractMap<String, Object> {
     ensureArrays();
 
     for (int i = 0; i < size; i++) {
-      if (keys[i].equals(key)) {
+      if (Objects.equals(keys[i], key)) {
         return true;
       }
     }

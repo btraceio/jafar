@@ -9,6 +9,8 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * JFR Chunk metadata
@@ -16,6 +18,8 @@ import java.util.Objects;
  * <p>It contains the chunk specific type specifications
  */
 public final class MetadataEvent extends AbstractEvent {
+  private static final Logger log = LoggerFactory.getLogger(MetadataEvent.class);
+
   private boolean hasHashCode = false;
   private int hashCode;
 
@@ -131,14 +135,15 @@ public final class MetadataEvent extends AbstractEvent {
           }
         default:
           {
-            throw new IOException("Unsupported metadata type: " + typeId);
+            log.warn("Unknown metadata element type '{}', skipping", typeId);
+            element = new UnknownMetadataElement(stream, this);
+            break;
           }
       }
-      ;
 
       return element;
     } catch (Throwable t) {
-      t.printStackTrace();
+      log.error("Failed to read metadata element", t);
       throw t;
     }
   }

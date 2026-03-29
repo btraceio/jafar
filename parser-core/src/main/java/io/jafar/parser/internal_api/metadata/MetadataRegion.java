@@ -4,6 +4,8 @@ import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Represents a metadata region element in JFR recordings.
@@ -12,6 +14,8 @@ import java.util.Objects;
  * JFR recording.
  */
 public final class MetadataRegion extends AbstractMetadataElement {
+  private static final Logger log = LoggerFactory.getLogger(MetadataRegion.class);
+
   /** Flag indicating whether the hash code has been computed. */
   private boolean hasHashCode = false;
 
@@ -49,10 +53,20 @@ public final class MetadataRegion extends AbstractMetadataElement {
   protected void onAttribute(String key, String value) {
     switch (key) {
       case "dst":
-        dst = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
+        try {
+          dst = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
+        } catch (NumberFormatException e) {
+          log.debug("Failed to parse '{}' as long for 'dst', defaulting to 0", value);
+          dst = 0L;
+        }
         break;
       case "gmtOffset":
-        gmtOffset = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
+        try {
+          gmtOffset = value != null ? ParsingUtils.parseLongSWAR(value) : 0L;
+        } catch (NumberFormatException e) {
+          log.debug("Failed to parse '{}' as long for 'gmtOffset', defaulting to 0", value);
+          gmtOffset = 0L;
+        }
         break;
       case "locale":
         locale = value != null ? value : "en_US";

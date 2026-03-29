@@ -115,9 +115,9 @@ public final class MetadataClass extends AbstractMetadataElement {
    */
   @Override
   protected void onAttribute(String key, String value) {
-    if (key.equals("superType")) {
+    if ("superType".equals(key)) {
       superType = value;
-    } else if (key.equals("simpleType")) {
+    } else if ("simpleType".equals(key)) {
       simpleTypeVal = value;
     }
   }
@@ -436,7 +436,7 @@ public final class MetadataClass extends AbstractMetadataElement {
     if (!hasHashCode) {
       long mixed =
           getId() * 0x9E3779B97F4A7C15L
-              + getName().hashCode() * 0xC6BC279692B5C323L
+              + Objects.hashCode(getName()) * 0xC6BC279692B5C323L
               + Objects.hashCode(superType) * 0xD8163841FDE6A8F9L
               + Objects.hashCode(fields) * 0xA3B195354A39B70DL;
       hashCode = Long.hashCode(mixed);

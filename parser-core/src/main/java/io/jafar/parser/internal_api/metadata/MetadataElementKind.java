@@ -26,5 +26,8 @@ public enum MetadataElementKind {
   SETTING,
 
   /** Meta metadata element containing additional metadata information. */
-  META
+  META,
+
+  /** Unknown metadata element type; used to gracefully skip unrecognised elements. */
+  UNKNOWN
 }

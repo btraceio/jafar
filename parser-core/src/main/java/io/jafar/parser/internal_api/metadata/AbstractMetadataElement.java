@@ -46,7 +46,10 @@ public abstract class AbstractMetadataElement {
     // now inspect all the enclosed elements
     int elemCount = (int) stream.readVarint();
     for (int i = 0; i < elemCount; i++) {
-      onSubelement(elemCount, event.readElement(stream));
+      AbstractMetadataElement el = event.readElement(stream);
+      if (el.getKind() != MetadataElementKind.UNKNOWN) {
+        onSubelement(elemCount, el);
+      }
     }
   }
 
@@ -120,6 +123,9 @@ public abstract class AbstractMetadataElement {
    */
   public String getSimpleName() {
     if (simpleName == null) {
+      if (name == null) {
+        return null;
+      }
       int idx = name.lastIndexOf('.');
       simpleName = idx == -1 ? name : name.substring(idx + 1);
     }
