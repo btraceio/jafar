@@ -22,6 +22,13 @@ public final class RecordingStream implements AutoCloseable {
   private long mark = -1;
 
   /**
+   * Thread-local cache of reader slices for constant pool resolution. Lazy-initialized to avoid
+   * allocating a ThreadLocal on short-lived wrapper instances (e.g. those created per CP resolution
+   * with register=false) that never call {@link #threadLocalReaderSlice()}.
+   */
+  private volatile ThreadLocal<RecordingStreamReader> threadLocalSlice;
+
+  /**
    * Constructs a new RecordingStream from a file path.
    *
    * @param path the path to the JFR recording file
@@ -51,9 +58,67 @@ public final class RecordingStream implements AutoCloseable {
    * @param context the parser context to use
    */
   public RecordingStream(RecordingStreamReader reader, ParserContext context) {
+    this(reader, context, true);
+  }
+
+  /**
+   * Constructs a new RecordingStream with optional context registration.
+   *
+   * <p>When {@code register} is {@code false}, the stream is not registered in the context. This is
+   * used for creating temporary streams for thread-safe constant pool resolution.
+   *
+   * @param reader the reader for the recording data
+   * @param context the parser context to use
+   * @param register whether to register this stream in the context
+   */
+  public RecordingStream(RecordingStreamReader reader, ParserContext context, boolean register) {
     this.reader = reader;
     this.context = context;
-    this.context.put(RecordingStream.class, this);
+    if (register) {
+      this.context.put(RecordingStream.class, this);
+    }
+  }
+
+  /**
+   * Creates a new {@link RecordingStreamReader} that shares the same underlying memory-mapped
+   * buffer but has independent position tracking.
+   *
+   * <p>This is used for thread-safe lazy constant pool resolution: each resolver gets its own
+   * position tracker so it can seek and read without interfering with the main parsing stream.
+   *
+   * @return a new reader slice with independent position
+   */
+  public RecordingStreamReader readerSlice() {
+    return reader.slice(0, reader.length());
+  }
+
+  /**
+   * Returns a thread-local {@link RecordingStreamReader} slice, creating one lazily per thread.
+   *
+   * <p>This avoids allocating a new slice for every constant pool resolution. The slice shares the
+   * same underlying memory-mapped buffer and has independent position tracking. Since position is
+   * always set explicitly before each use, reuse across calls on the same thread is safe as long as
+   * accesses are not re-entrant.
+   *
+   * @return a reusable reader slice for the current thread
+   */
+  public RecordingStreamReader threadLocalReaderSlice() {
+    ThreadLocal<RecordingStreamReader> tl = threadLocalSlice;
+    if (tl == null) {
+      synchronized (this) {
+        tl = threadLocalSlice;
+        if (tl == null) {
+          tl = new ThreadLocal<>();
+          threadLocalSlice = tl;
+        }
+      }
+    }
+    RecordingStreamReader slice = tl.get();
+    if (slice == null) {
+      slice = reader.slice(0, reader.length());
+      tl.set(slice);
+    }
+    return slice;
   }
 
   /**

@@ -74,11 +74,11 @@ public class UntypedParserContext extends ParserContext {
   /**
    * Called when constant pools are ready for processing.
    *
-   * <p>This implementation does nothing as untyped parsing doesn't require active constant pool
-   * management.
+   * <p>Sets the ready flag so that subsequent checkpoint events skip re-processing constant pools
+   * that are already loaded. This prevents unnecessary re-reads in multi-chunk recordings.
    */
   @Override
   public void onConstantPoolsReady() {
-    // do nothing
+    constantPools.setReady();
   }
 }

@@ -4,8 +4,10 @@ import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.internal_api.collections.LongLongHashMap;
-import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataField;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Mutable implementation of ConstantPool that allows adding offsets and lazy-loading entries.
@@ -18,8 +20,11 @@ public final class MutableConstantPool implements ConstantPool {
   /** Map of constant pool entry IDs to their file offsets. */
   private final LongLongHashMap offsets;
 
-  /** Map of constant pool entry IDs to their deserialized objects. */
-  private final LongObjectHashMap<Object> entries;
+  /** Map of constant pool entry IDs to their deserialized objects (typed path). */
+  private final ConcurrentHashMap<Long, Object> entries;
+
+  /** Map of constant pool entry IDs to their Map representations (generic/map path). */
+  private final ConcurrentHashMap<Long, Map<String, Object>> mapEntries;
 
   /** The recording stream for reading constant pool data. */
   private final RecordingStream stream;
@@ -36,7 +41,8 @@ public final class MutableConstantPool implements ConstantPool {
    */
   public MutableConstantPool(RecordingStream chunkStream, long typeId, int count) {
     this.offsets = new LongLongHashMap(count);
-    this.entries = new LongObjectHashMap<>(count);
+    this.entries = new ConcurrentHashMap<>(count);
+    this.mapEntries = new ConcurrentHashMap<>(count);
     this.stream = chunkStream;
     ParserContext context = chunkStream.getContext();
     clazz = context.getMetadataLookup().getClass(typeId);
@@ -44,6 +50,12 @@ public final class MutableConstantPool implements ConstantPool {
 
   /**
    * Gets a constant pool entry by its ID, lazily deserializing if necessary.
+   *
+   * <p>This method is lock-free: each thread uses its own thread-local reader slice (cached per
+   * thread, sharing the underlying memory-mapped buffer with independent position tracking), and
+   * deserialized entries are stored in a {@link ConcurrentHashMap}. Position save/restore around
+   * deserialization handles re-entrancy when reading a CP entry triggers resolution of another CP
+   * type (e.g., string pool lookup).
    *
    * @param id the ID of the constant pool entry
    * @return the deserialized object, or {@code null} if not found
@@ -53,38 +65,117 @@ public final class MutableConstantPool implements ConstantPool {
     if (offset > 0) {
       Object o = entries.get(id);
       if (o == null) {
-        long pos = stream.position();
+        // Thread-local slice: one per thread, reused across calls (no per-call allocation).
+        // Save/restore position for re-entrancy (e.g., reading a CP entry triggers string
+        // pool lookup which re-enters get() on a different pool sharing the same slice).
+        RecordingStreamReader slice = stream.threadLocalReaderSlice();
+        long savedPos = slice.position();
         try {
-          stream.position(offsets.get(id));
-          // Prefer typed deserialization if available; otherwise fall back to generic map building
-          Object typed = clazz.read(stream);
-          if (typed != null) {
-            o = typed;
-          } else {
-            GenericValueReader r = stream.getContext().get(GenericValueReader.class);
-            if (r != null) {
-              MapValueBuilder builder = (MapValueBuilder) r.getProcessor();
+          RecordingStream cpStream = new RecordingStream(slice, stream.getContext(), false);
+          cpStream.position(offset);
+          o = clazz.read(cpStream);
+          if (o == null) {
+            // For String constant pool entries, read the string directly.
+            // Using the generic MapValueBuilder path would wrap the string in a Map,
+            // breaking ParsingUtils.readUTF8() which expects stringPool.get() to return
+            // a String (checked via instanceof String).
+            if (clazz.isPrimitive() && "java.lang.String".equals(clazz.getName())) {
+              try {
+                o = cpStream.readUTF8();
+              } catch (java.io.IOException ioe) {
+                throw new RuntimeException(ioe);
+              }
+            } else {
+              MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+              GenericValueReader r = new GenericValueReader(builder);
               builder.onComplexValueStart(null, null, clazz);
               try {
-                r.readValue(stream, clazz);
+                r.readValue(cpStream, clazz);
               } catch (java.io.IOException ioe) {
                 throw new RuntimeException(ioe);
               }
               builder.onComplexValueEnd(null, null, clazz);
               o = builder.getRoot();
             }
-            // If GenericValueReader is not available, o remains null
           }
           if (o != null) {
-            entries.put(id, o);
+            entries.putIfAbsent(id, o);
+            o = entries.get(id);
           }
         } finally {
-          stream.position(pos);
+          slice.position(savedPos);
         }
       }
       return o;
     }
     return null;
+  }
+
+  /**
+   * Gets a constant pool entry as a {@code Map<String, Object>} representation, using a pool-level
+   * cache so that each entry is deserialized at most once regardless of how many events reference
+   * it.
+   *
+   * <p>This is the primary method for generic (map-based) constant pool resolution. Unlike per-
+   * accessor deserialization, the result is shared across all accessors pointing to the same entry,
+   * eliminating O(events) redundant deserializations.
+   *
+   * @param id the ID of the constant pool entry
+   * @return the map representation, or {@code null} if not found
+   */
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> getAsMap(long id) {
+    long offset = offsets.get(id);
+    if (offset <= 0) return null;
+
+    Map<String, Object> v = mapEntries.get(id);
+    if (v != null) return v;
+
+    RecordingStreamReader slice = stream.threadLocalReaderSlice();
+    long savedPos = slice.position();
+    try {
+      RecordingStream cpStream = new RecordingStream(slice, stream.getContext(), false);
+      cpStream.position(offset);
+
+      // For simple types (e.g. String CP), the pool stores the unwrapped field value directly.
+      // Read it and wrap in a single-entry map keyed by the field name.
+      if (clazz.isSimpleType() && clazz.getFields().size() == 1) {
+        MetadataField singleField = clazz.getFields().get(0);
+        MetadataClass fieldType = singleField.getType();
+        while (fieldType.isSimpleType() && fieldType.getFields().size() == 1) {
+          fieldType = fieldType.getFields().get(0).getType();
+        }
+        MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+        GenericValueReader r = new GenericValueReader(builder);
+        builder.onComplexValueStart(null, null, clazz);
+        try {
+          r.readSingleValue(cpStream, clazz, fieldType, singleField.getName());
+        } catch (java.io.IOException ioe) {
+          throw new RuntimeException(ioe);
+        }
+        builder.onComplexValueEnd(null, null, clazz);
+        v = builder.getRoot();
+      } else {
+        // Complex type: full object deserialization
+        MapValueBuilder builder = new MapValueBuilder(stream.getContext());
+        GenericValueReader r = new GenericValueReader(builder);
+        builder.onComplexValueStart(null, null, clazz);
+        try {
+          r.readValue(cpStream, clazz);
+        } catch (java.io.IOException ioe) {
+          throw new RuntimeException(ioe);
+        }
+        builder.onComplexValueEnd(null, null, clazz);
+        v = builder.getRoot();
+      }
+      if (v != null) {
+        mapEntries.putIfAbsent(id, v);
+        v = mapEntries.get(id);
+      }
+      return v;
+    } finally {
+      slice.position(savedPos);
+    }
   }
 
   @Override
