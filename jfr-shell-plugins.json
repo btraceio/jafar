@@ -3,7 +3,7 @@
     "jdk": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jdk",
-      "latestVersion": "0.16.0",
+      "latestVersion": "0.19.0",
       "repository": "maven-central",
       "depends": [],
       "recommends": [],
@@ -12,7 +12,7 @@
     "jafar": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jafar",
-      "latestVersion": "0.16.0",
+      "latestVersion": "0.19.0",
       "repository": "maven-central",
       "depends": [],
       "recommends": [],
