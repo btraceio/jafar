@@ -118,6 +118,29 @@ public class ParsingContextReuseTest {
   }
 
   @Test
+  void sharedContextAcrossTwoDifferentRecordings() throws Exception {
+    // Regression: per-chunk metadata/constant-pool maps were never cleared between recordings.
+    // Chunk index N from recording 1 would return stale MetadataClass objects when recording 2
+    // reached chunk N, causing TypeSkipper to mis-skip data and throw BufferUnderflowException.
+    ClassLoader cl = TypedJafarParserTest.class.getClassLoader();
+    URI uri1 = cl.getResource("test-ap.jfr").toURI();
+    URI uri2 = cl.getResource("test-jfr.jfr").toURI();
+    ParsingContext ctx = ParsingContext.create();
+    LongAdder cntr = new LongAdder();
+    try (TypedJafarParser p = ctx.newTypedParser(Path.of(new File(uri1).getAbsolutePath()))) {
+      p.handle(JFRExecutionSample.class, (e, c) -> cntr.increment());
+      assertDoesNotThrow(p::run);
+    }
+    long after1 = cntr.sum();
+    try (TypedJafarParser p = ctx.newTypedParser(Path.of(new File(uri2).getAbsolutePath()))) {
+      p.handle(JFRExecutionSample.class, (e, c) -> cntr.increment());
+      assertDoesNotThrow(
+          p::run, "shared context must not carry stale metadata from prior recording");
+    }
+    assertTrue(cntr.sum() > after1, "second recording should have yielded ExecutionSample events");
+  }
+
+  @Test
   void reuseWithDifferentTypeHandled() throws Exception {
     ClassLoader cl = TypedJafarParserTest.class.getClassLoader();
     URI uri = cl.getResource("test-jfr.jfr").toURI();

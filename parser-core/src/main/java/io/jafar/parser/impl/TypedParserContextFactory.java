@@ -58,6 +58,11 @@ public final class TypedParserContextFactory implements ParserContextFactory {
   @Override
   public ParserContext newContext(ParserContext parent, int chunkIndex) {
     if (parent == null) {
+      // New recording starting — discard per-chunk state from any previous recording so that
+      // stale metadata/constant-pool entries from prior parsings never bleed into this one.
+      chunkMetadataLookup.clear();
+      chunkConstantPools.clear();
+      chunkFingerprints.clear();
       // Root context - cache will be resolved after metadata load
       TypedParserContext root = new TypedParserContext(null);
       if (deserializerFactory != null) {
@@ -103,7 +108,7 @@ public final class TypedParserContextFactory implements ParserContextFactory {
    * @param metadata the metadata lookup for this chunk
    * @param context the context to set the cache on
    */
-  public void resolveDeserializerCache(
+  private void resolveDeserializerCache(
       int chunkIndex, MutableMetadataLookup metadata, TypedParserContext context) {
     // Compute fingerprint for reachable types
     Set<String> eventTypes = context.getTargetEventTypes();
@@ -116,15 +121,5 @@ public final class TypedParserContextFactory implements ParserContextFactory {
     // Get or create cache from global registry
     DeserializerCache cache = GlobalHandlerCache.getInstance().getOrCreateCache(fingerprint);
     context.setDeserializerCache(cache);
-  }
-
-  /**
-   * Gets the metadata fingerprint for the specified chunk.
-   *
-   * @param chunkIndex the chunk index
-   * @return the fingerprint, or null if not yet computed
-   */
-  public MetadataFingerprint getFingerprint(int chunkIndex) {
-    return chunkFingerprints.get(chunkIndex);
   }
 }
