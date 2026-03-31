@@ -254,8 +254,8 @@ public final class TypeSkipper {
           continue;
         }
         int savedIndex = i;
-        instruction = instructions[i];
         for (int j = 0; j < cnt; ) {
+          instruction = instructions[i];
           skip(instruction, stream);
           if (endIndex == i++) {
             i = savedIndex;

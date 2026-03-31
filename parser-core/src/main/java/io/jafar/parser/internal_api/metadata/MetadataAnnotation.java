@@ -89,7 +89,12 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
       if (classIdVal == null) {
         return 0L;
       }
-      classId = ParsingUtils.parseLongSWAR(classIdVal);
+      try {
+        classId = ParsingUtils.parseLongSWAR(classIdVal);
+      } catch (NumberFormatException e) {
+        // Some JFR producers write a name instead of a numeric class ID; treat as unknown.
+        classId = 0L;
+      }
     }
     return classId;
   }

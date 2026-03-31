@@ -5,6 +5,7 @@ import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Represents a metadata field in JFR recordings.
@@ -27,6 +28,9 @@ public final class MetadataField extends AbstractMetadataElement {
 
   /** Raw class ID string value. */
   private String classIdVal;
+
+  /** Class type name for name-based fallback when class ID is not numeric. */
+  private String classTypeName;
 
   /** Cached constant pool flag. */
   private Boolean hasConstantPool;
@@ -88,7 +92,11 @@ public final class MetadataField extends AbstractMetadataElement {
     // thread
     // therefore, we are not risiking data race here
     if (type == null) {
-      type = metadataLookup.getClass(getTypeId());
+      if (classTypeName != null) {
+        type = metadataLookup.getClass(classTypeName);
+      } else {
+        type = metadataLookup.getClass(getTypeId());
+      }
     }
     return type;
   }
@@ -96,11 +104,17 @@ public final class MetadataField extends AbstractMetadataElement {
   /**
    * Gets the type ID for this field.
    *
-   * @return the type ID as a long value
+   * @return the type ID as a long value, or -1 if the class attribute is not a numeric ID
    */
   public long getTypeId() {
     if (classId == null) {
-      classId = ParsingUtils.parseLongSWAR(classIdVal);
+      try {
+        classId = ParsingUtils.parseLongSWAR(classIdVal);
+      } catch (NumberFormatException e) {
+        // Some JFR producers write the class name instead of a numeric type ID.
+        classTypeName = classIdVal;
+        classId = -1L;
+      }
     }
     return classId;
   }
@@ -198,7 +212,8 @@ public final class MetadataField extends AbstractMetadataElement {
     MetadataField that = (MetadataField) o;
     return getTypeId() == that.getTypeId()
         && hasConstantPool() == that.hasConstantPool()
-        && getDimension() == that.getDimension();
+        && getDimension() == that.getDimension()
+        && Objects.equals(classTypeName, that.classTypeName);
   }
 
   @Override
@@ -207,7 +222,8 @@ public final class MetadataField extends AbstractMetadataElement {
       long mixed =
           getTypeId() * 0x9E3779B97F4A7C15L
               + (hasConstantPool() ? 1 : 0) * 0xC6BC279692B5C323L
-              + getDimension() * 0xD8163841FDE6A8F9L;
+              + getDimension() * 0xD8163841FDE6A8F9L
+              + Objects.hashCode(classTypeName) * 0xA3E09AD7D7352315L;
       hashCode = Long.hashCode(mixed);
       hasHashCode = true;
     }

@@ -2,6 +2,7 @@ package io.jafar.parser.api;
 
 import io.jafar.parser.internal_api.MutableConstantPools;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.utils.CachedStringParser;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -157,9 +158,11 @@ public abstract class ParserContext {
 
   /** Called when metadata is fully available for the current chunk. */
   public void onMetadataReady() {
-    stringTypeId = metadataLookup.getClass("java.lang.String").getId();
+    MetadataClass stringClass = metadataLookup.getClass("java.lang.String");
+    if (stringClass != null) {
+      stringTypeId = stringClass.getId();
+    }
   }
-  ;
 
   /** Called when constant pools are fully available for the current chunk. */
   public abstract void onConstantPoolsReady();

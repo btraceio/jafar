@@ -12,6 +12,9 @@ import io.jafar.parser.internal_api.collections.IntObjectArrayMap;
 import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
 import java.util.Set;
 
+// NOTE: this factory is shared across concurrent recordings; all per-recording state
+// must live in RecordingState (stored on the root context) — NOT in instance fields.
+
 /**
  * Factory for creating typed parser contexts.
  *
@@ -33,17 +36,14 @@ public final class TypedParserContextFactory implements ParserContextFactory {
     this.deserializerFactory = deserializerFactory;
   }
 
-  /** Map of chunk index to metadata lookup instances. */
-  private final IntObjectArrayMap<MutableMetadataLookup> chunkMetadataLookup =
-      new IntObjectArrayMap<>();
-
-  /** Map of chunk index to constant pools instances. */
-  private final IntObjectArrayMap<MutableConstantPools> chunkConstantPools =
-      new IntObjectArrayMap<>();
-
-  /** Map of chunk index to metadata fingerprints. */
-  private final IntObjectArrayMap<MetadataFingerprint> chunkFingerprints =
-      new IntObjectArrayMap<>();
+  /**
+   * Per-recording state: chunk-indexed maps for metadata and constant pools. Stored on the root
+   * context so each concurrent recording has its own isolated copy.
+   */
+  private static final class RecordingState {
+    final IntObjectArrayMap<MutableMetadataLookup> chunkMetadataLookup = new IntObjectArrayMap<>();
+    final IntObjectArrayMap<MutableConstantPools> chunkConstantPools = new IntObjectArrayMap<>();
+  }
 
   /**
    * Creates a new parser context for the specified chunk.
@@ -58,25 +58,28 @@ public final class TypedParserContextFactory implements ParserContextFactory {
   @Override
   public ParserContext newContext(ParserContext parent, int chunkIndex) {
     if (parent == null) {
-      // New recording starting — discard per-chunk state from any previous recording so that
-      // stale metadata/constant-pool entries from prior parsings never bleed into this one.
-      chunkMetadataLookup.clear();
-      chunkConstantPools.clear();
-      chunkFingerprints.clear();
-      // Root context - cache will be resolved after metadata load
+      // New recording — create a fresh per-recording state and attach it to the root context.
+      // Each concurrent recording gets its own RecordingState so chunk-indexed maps never collide.
       TypedParserContext root = new TypedParserContext(null);
+      root.put(RecordingState.class, new RecordingState());
       if (deserializerFactory != null) {
         root.put(DeserializerFactory.class, deserializerFactory);
       }
       return root;
     }
-    MutableMetadataLookup metadataLookup =
-        chunkMetadataLookup.computeIfAbsent(chunkIndex, k -> new MutableMetadataLookup());
-    MutableConstantPools constantPools =
-        chunkConstantPools.computeIfAbsent(chunkIndex, k -> new MutableConstantPools());
 
     assert parent instanceof TypedParserContext;
     TypedParserContext lazyParent = (TypedParserContext) parent;
+
+    RecordingState state = lazyParent.get(RecordingState.class);
+    if (state == null) {
+      throw new IllegalStateException(
+          "RecordingState missing on parent context — context was not created via this factory");
+    }
+    MutableMetadataLookup metadataLookup =
+        state.chunkMetadataLookup.computeIfAbsent(chunkIndex, k -> new MutableMetadataLookup());
+    MutableConstantPools constantPools =
+        state.chunkConstantPools.computeIfAbsent(chunkIndex, k -> new MutableConstantPools());
 
     // Cache will be resolved after metadata load
     TypedParserContext ctx =
@@ -85,6 +88,8 @@ public final class TypedParserContextFactory implements ParserContextFactory {
     if (deserializerFactory != null) {
       ctx.put(DeserializerFactory.class, deserializerFactory);
     }
+    // Propagate the per-recording state so resolveDeserializerCache can reach it
+    ctx.put(RecordingState.class, state);
     return ctx;
   }
 
@@ -114,9 +119,6 @@ public final class TypedParserContextFactory implements ParserContextFactory {
     Set<String> eventTypes = context.getTargetEventTypes();
     Set<Long> reachableTypes = MetadataFingerprint.computeReachableTypes(metadata, eventTypes);
     MetadataFingerprint fingerprint = MetadataFingerprint.compute(metadata, reachableTypes);
-
-    // Store fingerprint
-    chunkFingerprints.put(chunkIndex, fingerprint);
 
     // Get or create cache from global registry
     DeserializerCache cache = GlobalHandlerCache.getInstance().getOrCreateCache(fingerprint);

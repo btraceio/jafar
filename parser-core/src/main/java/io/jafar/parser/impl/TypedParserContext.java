@@ -56,7 +56,11 @@ public final class TypedParserContext extends ParserContext {
       this.superType = clz.getSuperType();
       this.fieldNames = new ArrayList<>(clz.getFields().size());
       for (MetadataField field : clz.getFields()) {
-        this.fieldNames.add(field.getType().getName() + ":" + field.getName());
+        MetadataClass ft = field.getType();
+        this.fieldNames.add(
+            (ft != null ? ft.getName() : "<unknown:" + field.getTypeId() + ">")
+                + ":"
+                + field.getName());
       }
       this.targetClass = targetClass;
     }

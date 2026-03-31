@@ -64,8 +64,12 @@ public final class MetadataFingerprint {
         buffer.putInt(clz.getFields().size());
 
         for (MetadataField field : clz.getFields()) {
+          MetadataClass fieldType = field.getType();
+          if (fieldType == null) {
+            continue;
+          }
           buffer = ensureCapacity(buffer, 256); // Ensure space for field data
-          buffer.putLong(field.getType().getId());
+          buffer.putLong(fieldType.getId());
           writeString(buffer, field.getName());
           buffer.put((byte) (field.hasConstantPool() ? 1 : 0));
           buffer.putInt(field.getDimension());
@@ -111,7 +115,11 @@ public final class MetadataFingerprint {
       }
 
       for (MetadataField field : clz.getFields()) {
-        long fieldTypeId = field.getType().getId();
+        MetadataClass fieldType = field.getType();
+        if (fieldType == null) {
+          continue;
+        }
+        long fieldTypeId = fieldType.getId();
         if (reachable.add(fieldTypeId)) {
           queue.add(fieldTypeId);
         }
