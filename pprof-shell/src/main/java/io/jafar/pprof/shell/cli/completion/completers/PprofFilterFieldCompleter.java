@@ -35,6 +35,7 @@ public final class PprofFilterFieldCompleter implements ContextCompleter<PprofMe
 
   private String getDescription(String field) {
     return switch (field) {
+      case "sampleType" -> "comma-separated value type names (e.g. cpu,alloc_space)";
       case "stackTrace" -> "stack frames (leaf-first list)";
       case "stackTrace/0/name" -> "leaf frame function name";
       case "stackTrace/0/filename" -> "leaf frame source file";

@@ -34,6 +34,7 @@ public final class PprofMetadataService implements MetadataService {
    */
   private static final List<String> STATIC_FIELDS =
       List.of(
+          "sampleType",
           "stackTrace",
           "stackTrace/0/name",
           "stackTrace/0/filename",

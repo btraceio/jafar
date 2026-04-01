@@ -42,6 +42,11 @@ public final class PprofPathEvaluator {
         indexById(profile.functions(), PprofProfile.Function::id);
 
     List<PprofProfile.ValueType> sampleTypes = profile.sampleTypes();
+    // Comma-separated list of all value type names in this profile, e.g. "cpu,alloc_space"
+    String sampleTypeNames =
+        sampleTypes.stream()
+            .map(PprofProfile.ValueType::type)
+            .collect(java.util.stream.Collectors.joining(","));
     List<Map<String, Object>> rows = new ArrayList<>(profile.samples().size());
 
     for (PprofProfile.Sample sample : profile.samples()) {
@@ -52,6 +57,9 @@ public final class PprofPathEvaluator {
       for (int i = 0; i < values.size() && i < sampleTypes.size(); i++) {
         row.put(sampleTypes.get(i).type(), values.get(i));
       }
+
+      // sampleType: comma-separated list of value type names present in this profile
+      row.put("sampleType", sampleTypeNames);
 
       // Stack trace
       List<Map<String, Object>> stack =
