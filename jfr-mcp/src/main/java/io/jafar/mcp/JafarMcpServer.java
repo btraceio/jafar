@@ -5842,12 +5842,16 @@ public final class JafarMcpServer {
         }
       }
 
+      if (effectiveValue == null) {
+        return errorResult("No sample types found in profile");
+      }
+
       // Build query: samples[<filter>] | stackprofile(<valueField>)
       String queryStr =
           "samples"
               + (filter != null && !filter.isBlank() ? "[" + filter + "]" : "")
               + " | stackprofile("
-              + (effectiveValue != null ? effectiveValue : "")
+              + effectiveValue
               + ")";
 
       var query = PprofPathParser.parse(queryStr);

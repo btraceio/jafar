@@ -185,7 +185,7 @@ public final class PprofSessionRegistry {
   }
 
   /** Shuts down the registry, closing all sessions. */
-  public void shutdown() {
+  public synchronized void shutdown() {
     LOG.info("Shutting down PprofSessionRegistry, closing {} sessions", size());
     closeAll();
   }

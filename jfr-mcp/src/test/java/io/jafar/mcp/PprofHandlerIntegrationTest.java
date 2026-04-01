@@ -91,8 +91,9 @@ class PprofHandlerIntegrationTest {
     var result = invoke("handlePprofOpen", Map.of("path", profilePath.toString()));
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("sessionId") || content.contains("\"id\""));
-    assertTrue(content.contains("sampleCount") || content.contains("4"));
+    assertTrue(content.contains("id"), "Response should include session id");
+    // getStatistics() uses key "samples" for the sample count
+    assertTrue(content.contains("samples"), "Response should include samples count");
   }
 
   @Test
@@ -128,7 +129,8 @@ class PprofHandlerIntegrationTest {
         invoke("handlePprofQuery", Map.of("query", "samples | groupBy(stackTrace/0/name)"));
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("doWork") || content.contains("park") || content.contains("alloc"));
+    // Profile has doWork (2 samples), allocBuffer (1), park (1) as leaf frames
+    assertTrue(content.contains("doWork"), "Response should contain doWork as a leaf function");
   }
 
   @Test
@@ -156,8 +158,10 @@ class PprofHandlerIntegrationTest {
     var result = invoke("handlePprofSummary", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("cpu") || content.contains("sampleTypes"));
-    assertTrue(content.contains("sampleCount") || content.contains("4"));
+    assertTrue(content.contains("sampleTypes"), "Response should contain sampleTypes field");
+    // getStatistics() uses key "samples" for the sample count
+    assertTrue(content.contains("samples"), "Response should contain samples count field");
+    assertTrue(content.contains("cpu"), "Response should list cpu sample type from the profile");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -170,7 +174,9 @@ class PprofHandlerIntegrationTest {
     var result = invoke("handlePprofFlamegraph", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("rows") || content.contains("stack"));
+    assertTrue(content.contains("rows"), "Response should contain rows field");
+    assertTrue(content.contains("valueField"), "Response should contain valueField");
+    assertTrue(content.contains("cpu"), "Default valueField should be cpu");
   }
 
   @Test
@@ -178,6 +184,8 @@ class PprofHandlerIntegrationTest {
     invoke("handlePprofOpen", Map.of("path", profilePath.toString()));
     var result = invoke("handlePprofFlamegraph", Map.of("valueField", "alloc_space"));
     assertSuccess(result);
+    String content = result.content().get(0).toString();
+    assertTrue(content.contains("alloc_space"), "Response should reflect requested valueField");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -190,7 +198,9 @@ class PprofHandlerIntegrationTest {
     var result = invokeWithExchange("handlePprofUse", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("USE") || content.contains("cpu") || content.contains("resources"));
+    assertTrue(content.contains("USE"), "Response should identify as USE method report");
+    assertTrue(content.contains("resources"), "Response should contain resources breakdown");
+    assertTrue(content.contains("cpu"), "Report should include cpu resource");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +213,9 @@ class PprofHandlerIntegrationTest {
     var result = invoke("handlePprofHotmethods", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("topMethods") || content.contains("doWork"));
+    assertTrue(content.contains("topMethods"), "Response should contain topMethods field");
+    // doWork is the leaf function in 2 of 4 samples — it must appear as a hot method
+    assertTrue(content.contains("doWork"), "doWork should appear in top methods");
   }
 
   @Test
@@ -211,6 +223,12 @@ class PprofHandlerIntegrationTest {
     invoke("handlePprofOpen", Map.of("path", profilePath.toString()));
     var result = invoke("handlePprofHotmethods", Map.of("topN", 1));
     assertSuccess(result);
+    String content = result.content().get(0).toString();
+    // With topN=1, only the hottest method should appear; doWork has most samples
+    assertTrue(
+        content.contains("doWork"), "With topN=1 the single hottest method (doWork) should appear");
+    // The other leaf functions should be absent
+    assertFalse(content.contains("allocBuffer"), "allocBuffer should be excluded with topN=1");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -223,8 +241,14 @@ class PprofHandlerIntegrationTest {
     var result = invokeWithExchange("handlePprofTsa", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
+    assertTrue(content.contains("TSA"), "Response should identify as TSA method report");
     assertTrue(
-        content.contains("TSA") || content.contains("thread") || content.contains("RUNNING"));
+        content.contains("threadDistribution"), "Response should contain threadDistribution");
+    assertTrue(
+        content.contains("inferredStateDistribution"),
+        "Response should contain state distribution");
+    // Profile has 3 distinct threads: workerA, workerB, main
+    assertTrue(content.contains("workerA"), "Thread workerA should appear in distribution");
   }
 
   @Test
@@ -233,7 +257,8 @@ class PprofHandlerIntegrationTest {
     var result = invokeWithExchange("handlePprofTsa", Map.of());
     assertSuccess(result);
     String content = result.content().get(0).toString();
-    assertTrue(content.contains("WAITING") || content.contains("park"));
+    // park() is a WAITING keyword — the WAITING state must be present in distribution
+    assertTrue(content.contains("WAITING"), "park() leaf frame should be classified as WAITING");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
