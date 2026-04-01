@@ -435,7 +435,7 @@ the dataset efficiently:
 pprof> show samples[thread='main'] | groupBy(stackTrace/0/name, sum(cpu)) | head(10)
 
 # Less efficient: groupBy everything, then discard
-pprof> show samples | groupBy(thread, sum(cpu)) | filter(thread = main) | head(10)
+pprof> show samples | groupBy(thread, sum(cpu)) | filter(thread = 'main') | head(10)
 ```
 
 ### Tab completion
