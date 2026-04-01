@@ -513,22 +513,31 @@ public final class PprofReader {
   // ---- Varint helpers ----
 
   /** Reads a varint (up to 64 bits) from {@code buf[pos]}. */
-  static long readVarint(byte[] buf, int pos) {
+  static long readVarint(byte[] buf, int pos) throws IOException {
     long result = 0;
     int shift = 0;
     while (true) {
+      if (pos >= buf.length)
+        throw new IOException("Truncated protobuf: varint extends past buffer end");
       byte b = buf[pos++];
       result |= (long) (b & 0x7F) << shift;
       if ((b & 0x80) == 0) break;
       shift += 7;
+      if (shift > 63) throw new IOException("Malformed protobuf: varint exceeds 64 bits");
     }
     return result;
   }
 
   /** Returns the byte length of the varint at {@code buf[pos]}. */
-  static int varintLen(byte[] buf, int pos) {
+  static int varintLen(byte[] buf, int pos) throws IOException {
     int len = 1;
-    while ((buf[pos++] & 0x80) != 0) len++;
+    while (true) {
+      if (pos >= buf.length)
+        throw new IOException("Truncated protobuf: varint extends past buffer end");
+      if ((buf[pos++] & 0x80) == 0) break;
+      len++;
+      if (len > 10) throw new IOException("Malformed protobuf: varint exceeds 64 bits");
+    }
     return len;
   }
 
@@ -538,12 +547,21 @@ public final class PprofReader {
   private static int skipField(byte[] buf, int pos, int wireType) throws IOException {
     return switch (wireType) {
       case WIRE_VARINT -> pos + varintLen(buf, pos);
-      case WIRE_I64 -> pos + 8;
-      case WIRE_LEN -> {
-        int len = (int) readVarint(buf, pos);
-        yield pos + varintLen(buf, pos) + len;
+      case WIRE_I64 -> {
+        if (pos + 8 > buf.length)
+          throw new IOException("Truncated protobuf: fixed64 extends past buffer end");
+        yield pos + 8;
       }
-      case WIRE_I32 -> pos + 4;
+      case WIRE_LEN -> {
+        int lenBytes = varintLen(buf, pos);
+        int len = (int) readVarint(buf, pos);
+        yield pos + lenBytes + len;
+      }
+      case WIRE_I32 -> {
+        if (pos + 4 > buf.length)
+          throw new IOException("Truncated protobuf: fixed32 extends past buffer end");
+        yield pos + 4;
+      }
       default -> throw new IOException("Cannot skip unknown wire type " + wireType);
     };
   }

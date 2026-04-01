@@ -11,8 +11,12 @@ import io.jafar.mcp.query.DefaultQueryParser;
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.OtelpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.otelp.shell.otelppath.OtelpPathEvaluator;
+import io.jafar.otelp.shell.otelppath.OtelpPathParseException;
+import io.jafar.otelp.shell.otelppath.OtelpPathParser;
 import io.jafar.parser.api.Values;
 import io.jafar.pprof.shell.PprofProfile;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
@@ -100,6 +104,18 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code pprof_tsa} - Thread State Analysis (TSA Method) with inferred thread states
  *   <li>{@code pprof_help} - PprofPath query language documentation
  * </ul>
+ *
+ * <p>OpenTelemetry profiling tools ({@code otelp_*}):
+ *
+ * <ul>
+ *   <li>{@code otelp_open} - Open an OTLP profiles file (.otlp)
+ *   <li>{@code otelp_close} - Close an otelp session
+ *   <li>{@code otelp_query} - Execute OtelpPath queries
+ *   <li>{@code otelp_summary} - Quick OTLP profile overview
+ *   <li>{@code otelp_flamegraph} - Stack profile data for flame graph visualization
+ *   <li>{@code otelp_use} - USE Method resource analysis (Utilization, Saturation, Errors)
+ *   <li>{@code otelp_help} - OtelpPath query language documentation
+ * </ul>
  */
 public final class JafarMcpServer {
 
@@ -112,6 +128,7 @@ public final class JafarMcpServer {
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
   private final PprofSessionRegistry pprofSessionRegistry;
+  private final OtelpSessionRegistry otelpSessionRegistry;
   private final QueryEvaluator evaluator;
   private final QueryParser queryParser;
 
@@ -124,6 +141,7 @@ public final class JafarMcpServer {
         new SessionRegistry(),
         new HeapSessionRegistry(),
         new PprofSessionRegistry(),
+        new OtelpSessionRegistry(),
         new DefaultQueryEvaluator(),
         new DefaultQueryParser());
   }
@@ -134,6 +152,7 @@ public final class JafarMcpServer {
    * @param sessionRegistry the JFR session registry
    * @param heapSessionRegistry the heap dump session registry
    * @param pprofSessionRegistry the pprof session registry
+   * @param otelpSessionRegistry the otelp session registry
    * @param evaluator the query evaluator
    * @param queryParser the query parser
    */
@@ -141,11 +160,13 @@ public final class JafarMcpServer {
       SessionRegistry sessionRegistry,
       HeapSessionRegistry heapSessionRegistry,
       PprofSessionRegistry pprofSessionRegistry,
+      OtelpSessionRegistry otelpSessionRegistry,
       QueryEvaluator evaluator,
       QueryParser queryParser) {
     this.sessionRegistry = sessionRegistry;
     this.heapSessionRegistry = heapSessionRegistry;
     this.pprofSessionRegistry = pprofSessionRegistry;
+    this.otelpSessionRegistry = otelpSessionRegistry;
     this.evaluator = evaluator;
     this.queryParser = queryParser;
   }
@@ -198,6 +219,7 @@ public final class JafarMcpServer {
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
                     pprofSessionRegistry.shutdown();
+                    otelpSessionRegistry.shutdown();
                     mcpServer.close();
                   }));
 
@@ -263,6 +285,7 @@ public final class JafarMcpServer {
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
                     pprofSessionRegistry.shutdown();
+                    otelpSessionRegistry.shutdown();
                     mcpServer.close();
                     try {
                       jettyServer.stop();
@@ -408,6 +431,13 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(createPprofHotmethodsTool()));
     tools.add(withActivityTracking(createPprofTsaTool()));
     tools.add(withActivityTracking(createPprofHelpTool()));
+    tools.add(withActivityTracking(createOtelpOpenTool()));
+    tools.add(withActivityTracking(createOtelpCloseTool()));
+    tools.add(withActivityTracking(createOtelpQueryTool()));
+    tools.add(withActivityTracking(createOtelpSummaryTool()));
+    tools.add(withActivityTracking(createOtelpFlamegraphTool()));
+    tools.add(withActivityTracking(createOtelpUseTool()));
+    tools.add(withActivityTracking(createOtelpHelpTool()));
     return tools;
   }
 
@@ -5846,6 +5876,10 @@ public final class JafarMcpServer {
         return errorResult("No sample types found in profile");
       }
 
+      if (filter != null && filter.contains("]")) {
+        return errorResult("Invalid filter: unexpected ']' in filter expression");
+      }
+
       // Build query: samples[<filter>] | stackprofile(<valueField>)
       String queryStr =
           "samples"
@@ -6537,14 +6571,17 @@ public final class JafarMcpServer {
   }
 
   private String inferStateFromFunctionName(String fnNameLower) {
-    for (String kw : WAITING_KEYWORDS) {
-      if (fnNameLower.contains(kw)) return "WAITING";
+    // Split on '.' and '_' separators to avoid substring false-positives
+    // e.g. "clock" must not match "lock", "readConfig" must not match "read"
+    String[] segments = fnNameLower.split("[._]");
+    for (String seg : segments) {
+      if (WAITING_KEYWORDS.contains(seg)) return "WAITING";
     }
-    for (String kw : IO_KEYWORDS) {
-      if (fnNameLower.contains(kw)) return "IO_BLOCKED";
+    for (String seg : segments) {
+      if (IO_KEYWORDS.contains(seg)) return "IO_BLOCKED";
     }
-    for (String kw : LOCK_KEYWORDS) {
-      if (fnNameLower.contains(kw)) return "LOCK_BLOCKED";
+    for (String seg : segments) {
+      if (LOCK_KEYWORDS.contains(seg)) return "LOCK_BLOCKED";
     }
     return "RUNNING";
   }
@@ -6684,6 +6721,706 @@ public final class JafarMcpServer {
         6. pprof_hotmethods — direct cost breakdown
         7. pprof_tsa — thread state analysis
         8. pprof_close — release resources
+        """;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_open
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpOpenTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path to the OTLP profiles file (.otlp)"
+            },
+            "alias": {
+              "type": "string",
+              "description": "Optional alias for the session"
+            }
+          },
+          "required": ["path"]
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_open",
+            "Opens an OpenTelemetry profiling file (.otlp) for analysis. "
+                + "Returns a session ID and profile metadata (sample type, duration, counts). "
+                + "Use the returned session ID with other otelp_* tools.",
+            schema),
+        (exchange, args) -> handleOtelpOpen(args));
+  }
+
+  private CallToolResult handleOtelpOpen(Map<String, Object> args) {
+    String path = (String) args.get("path");
+    String alias = (String) args.get("alias");
+
+    if (path == null || path.isBlank()) {
+      return errorResult("path is required");
+    }
+
+    try {
+      Path profilePath = Path.of(path);
+
+      if (!Files.exists(profilePath)) {
+        return errorResult("File not found: " + path);
+      }
+      if (!Files.isRegularFile(profilePath)) {
+        return errorResult("Not a file: " + path);
+      }
+      if (!Files.isReadable(profilePath)) {
+        return errorResult("File not readable: " + path);
+      }
+
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.open(profilePath, alias);
+      LOG.info("Opened OTLP profile {} as session {}", path, info.id());
+
+      Map<String, Object> result = info.toMap();
+      result.put("message", "OTLP profile opened successfully");
+      return successResult(result);
+
+    } catch (Exception e) {
+      LOG.error("Failed to open OTLP profile: {}", e.getMessage(), e);
+      return errorResult("Failed to open OTLP profile: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_close
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpCloseTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias to close. Omit to close the current session."
+            }
+          }
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool("otelp_close", "Closes an otelp session and releases its resources.", schema),
+        (exchange, args) -> handleOtelpClose(args));
+  }
+
+  private CallToolResult handleOtelpClose(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+
+    try {
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      otelpSessionRegistry.close(String.valueOf(info.id()));
+
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("closed", info.id());
+      result.put("path", info.path().toString());
+      result.put("message", "Session closed");
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to close otelp session: {}", e.getMessage(), e);
+      return errorResult("Failed to close session: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_query
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpQueryTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "OtelpPath query string, e.g. 'samples | top(10, cpu)'"
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias. Omit to use the current session."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of results to return (default: 100)"
+            }
+          },
+          "required": ["query"]
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_query",
+            "Executes an OtelpPath query against an open OTLP profile. "
+                + "Query syntax: 'samples[predicate] | operator(args)'. "
+                + "Examples: 'samples | count()', 'samples | top(10, cpu)', "
+                + "'samples | groupBy(thread, sum(cpu))', 'samples[thread=\\'main\\'] | head(5)'. "
+                + "Use otelp_help for full query language reference.",
+            schema),
+        (exchange, args) -> handleOtelpQuery(args));
+  }
+
+  private CallToolResult handleOtelpQuery(Map<String, Object> args) {
+    String queryStr = (String) args.get("query");
+    String sessionId = (String) args.get("sessionId");
+    int limit = args.get("limit") instanceof Number n ? n.intValue() : 100;
+
+    if (queryStr == null || queryStr.isBlank()) {
+      return errorResult("query is required");
+    }
+    if (limit <= 0) {
+      return errorResult("limit must be positive");
+    }
+
+    try {
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var query = OtelpPathParser.parse(queryStr);
+      List<Map<String, Object>> rows = OtelpPathEvaluator.evaluate(info.session(), query);
+
+      boolean truncated = rows.size() > limit;
+      if (truncated) {
+        rows = rows.subList(0, limit);
+      }
+
+      Map<String, Object> response = new LinkedHashMap<>();
+      response.put("query", queryStr);
+      response.put("sessionId", info.id());
+      response.put("resultCount", rows.size());
+      response.put("results", rows);
+      if (truncated) {
+        response.put("truncated", true);
+        response.put(
+            "message", "Results truncated to " + limit + ". Use 'limit' parameter for more.");
+      }
+      return successResult(response);
+
+    } catch (OtelpPathParseException e) {
+      LOG.warn("OtelpPath query parse error: {}", e.getMessage());
+      return errorResult("Query parse error: " + e.getMessage());
+    } catch (IllegalArgumentException e) {
+      LOG.warn("OtelpPath query error: {}", e.getMessage());
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to execute otelp query: {}", e.getMessage(), e);
+      return errorResult("Failed to execute query: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_summary
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpSummaryTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias. Omit to use the current session."
+            }
+          }
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_summary",
+            "Returns a quick overview of an OTLP profile: sample type, counts, duration, "
+                + "and top functions by the primary value type.",
+            schema),
+        (exchange, args) -> handleOtelpSummary(args));
+  }
+
+  private CallToolResult handleOtelpSummary(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+
+    try {
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var data = info.session().getData();
+
+      Map<String, Object> response = new LinkedHashMap<>();
+      response.put("sessionId", info.id());
+      response.put("path", info.path().toString());
+      response.putAll(info.session().getStatistics());
+
+      // Top functions by first profile's sample type
+      if (!data.profiles().isEmpty()) {
+        var firstProfile = data.profiles().get(0);
+        var sampleType = firstProfile.sampleType();
+        if (sampleType != null && !sampleType.type().isEmpty()) {
+          try {
+            var query = OtelpPathParser.parse("samples | top(10, " + sampleType.type() + ")");
+            List<Map<String, Object>> topFns = OtelpPathEvaluator.evaluate(info.session(), query);
+            response.put("topFunctions", topFns);
+          } catch (Exception e) {
+            LOG.debug("Could not compute top functions: {}", e.getMessage());
+          }
+        }
+      }
+
+      return successResult(response);
+
+    } catch (IllegalArgumentException e) {
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to get otelp summary: {}", e.getMessage(), e);
+      return errorResult("Failed to get summary: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_flamegraph
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpFlamegraphTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias. Omit to use the current session."
+            },
+            "valueField": {
+              "type": "string",
+              "description": "Value type to aggregate (e.g. 'cpu'). Defaults to first sample type."
+            },
+            "filter": {
+              "type": "string",
+              "description": "Optional filter predicate, e.g. \\"thread='main'\\""
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of stack entries to return (default: 50)"
+            }
+          }
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_flamegraph",
+            "Produces folded stack profile data suitable for flame graph visualization. "
+                + "Returns rows of {stack: 'root;parent;leaf', <valueField>: N} sorted by value descending. "
+                + "Stack frames are separated by ';' with root frame first.",
+            schema),
+        (exchange, args) -> handleOtelpFlamegraph(args));
+  }
+
+  private CallToolResult handleOtelpFlamegraph(Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+    String valueField = (String) args.get("valueField");
+    String filter = (String) args.get("filter");
+    int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
+
+    try {
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+
+      // Resolve default value field from first profile's sample type
+      String effectiveValue = valueField;
+      if (effectiveValue == null || effectiveValue.isBlank()) {
+        var data = info.session().getData();
+        if (!data.profiles().isEmpty()) {
+          var st = data.profiles().get(0).sampleType();
+          if (st != null && !st.type().isEmpty()) {
+            effectiveValue = st.type();
+          }
+        }
+      }
+
+      if (effectiveValue == null) {
+        return errorResult("No sample types found in profile");
+      }
+
+      if (filter != null && filter.contains("]")) {
+        return errorResult("Invalid filter: unexpected ']' in filter expression");
+      }
+
+      String queryStr =
+          "samples"
+              + (filter != null && !filter.isBlank() ? "[" + filter + "]" : "")
+              + " | stackprofile("
+              + effectiveValue
+              + ")";
+
+      var query = OtelpPathParser.parse(queryStr);
+      List<Map<String, Object>> rows = OtelpPathEvaluator.evaluate(info.session(), query);
+
+      boolean truncated = rows.size() > limit;
+      if (truncated) {
+        rows = rows.subList(0, limit);
+      }
+
+      final String finalValue = effectiveValue;
+      long total =
+          rows.stream()
+              .mapToLong(r -> r.get(finalValue) instanceof Number n ? n.longValue() : 0L)
+              .sum();
+
+      Map<String, Object> response = new LinkedHashMap<>();
+      response.put("sessionId", info.id());
+      response.put("valueField", effectiveValue);
+      response.put("total", total);
+      response.put("rowCount", rows.size());
+      response.put("rows", rows);
+      if (truncated) {
+        response.put("truncated", true);
+      }
+      return successResult(response);
+
+    } catch (OtelpPathParseException e) {
+      return errorResult("Query parse error: " + e.getMessage());
+    } catch (IllegalArgumentException e) {
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to generate otelp flamegraph: {}", e.getMessage(), e);
+      return errorResult("Failed to generate flamegraph: " + e.getMessage());
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_use - USE Method Analysis (Utilization, Saturation, Errors)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpUseTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "Session ID or alias. Omit to use the current session."
+            },
+            "resources": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["cpu", "threads", "errors"] },
+              "description": "Resources to analyze. Defaults to all: cpu, threads, errors."
+            }
+          }
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_use",
+            "Analyzes an OTLP profile using Brendan Gregg's USE Method (Utilization, Saturation, Errors). "
+                + "CPU: utilization stats and top consuming functions. "
+                + "Threads: distribution across threads to identify serial bottlenecks. "
+                + "Errors: heuristic scan of hot function names for error-related patterns.",
+            schema),
+        (exchange, args) -> handleOtelpUse(exchange, args));
+  }
+
+  @SuppressWarnings("unchecked")
+  private CallToolResult handleOtelpUse(McpSyncServerExchange exchange, Map<String, Object> args) {
+    String sessionId = (String) args.get("sessionId");
+    List<String> resourcesList =
+        args.get("resources") instanceof List<?> l ? (List<String>) l : List.of("all");
+    Set<String> resources =
+        resourcesList.contains("all")
+            ? Set.of("cpu", "threads", "errors")
+            : Set.copyOf(resourcesList);
+
+    try {
+      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var data = info.session().getData();
+      String defaultType =
+          (!data.profiles().isEmpty() && data.profiles().get(0).sampleType() != null)
+              ? data.profiles().get(0).sampleType().type()
+              : null;
+
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("method", "USE");
+      result.put("profilePath", info.path().toString());
+
+      Map<String, Object> resourceMetrics = new LinkedHashMap<>();
+      int step = 0;
+      int totalSteps = resources.size() + 1;
+
+      if (resources.contains("cpu")) {
+        sendProgress(exchange, "otelp_use", step++, totalSteps, "Analyzing CPU...");
+        resourceMetrics.put("cpu", analyzeOtelpCpu(info, defaultType));
+      }
+
+      if (resources.contains("threads")) {
+        sendProgress(exchange, "otelp_use", step++, totalSteps, "Analyzing threads...");
+        Map<String, Object> threadMetrics = analyzeOtelpThreads(info);
+        if (!threadMetrics.isEmpty()) {
+          resourceMetrics.put("threads", threadMetrics);
+        }
+      }
+
+      if (resources.contains("errors")) {
+        sendProgress(exchange, "otelp_use", step++, totalSteps, "Scanning for errors...");
+        resourceMetrics.put("errors", analyzeOtelpErrors(info));
+      }
+
+      result.put("resources", resourceMetrics);
+
+      sendProgress(exchange, "otelp_use", step, totalSteps, "Generating insights...");
+      result.put("insights", generateOtelpUseInsights(resourceMetrics));
+
+      sendProgress(exchange, "otelp_use", totalSteps, totalSteps, "Done");
+      return successResult(result);
+
+    } catch (IllegalArgumentException e) {
+      return errorResult(e.getMessage());
+    } catch (Exception e) {
+      LOG.error("Failed to perform otelp USE analysis: {}", e.getMessage(), e);
+      return errorResult("Failed to perform USE analysis: " + e.getMessage());
+    }
+  }
+
+  private Map<String, Object> analyzeOtelpCpu(
+      OtelpSessionRegistry.SessionInfo info, String defaultType) {
+    Map<String, Object> cpu = new LinkedHashMap<>();
+
+    if (defaultType == null) {
+      cpu.put("note", "No sample type found");
+      return cpu;
+    }
+
+    cpu.put("sampleType", defaultType);
+    try {
+      var statsQuery = OtelpPathParser.parse("samples | stats(" + defaultType + ")");
+      List<Map<String, Object>> statsRows = OtelpPathEvaluator.evaluate(info.session(), statsQuery);
+      if (!statsRows.isEmpty()) {
+        cpu.put("utilization", Map.of("stats", statsRows.get(0)));
+      }
+
+      var topQuery = OtelpPathParser.parse("samples | top(10, " + defaultType + ")");
+      List<Map<String, Object>> topRows = OtelpPathEvaluator.evaluate(info.session(), topQuery);
+      cpu.put("topFunctions", topRows);
+    } catch (Exception e) {
+      LOG.debug("Error in otelp CPU analysis: {}", e.getMessage());
+    }
+    return cpu;
+  }
+
+  private Map<String, Object> analyzeOtelpThreads(OtelpSessionRegistry.SessionInfo info) {
+    Map<String, Object> threads = new LinkedHashMap<>();
+
+    try {
+      var threadQuery = OtelpPathParser.parse("samples | groupBy(thread)");
+      List<Map<String, Object>> threadRows =
+          OtelpPathEvaluator.evaluate(info.session(), threadQuery);
+
+      if (threadRows.isEmpty()
+          || (threadRows.size() == 1 && "<null>".equals(threadRows.get(0).get("thread")))) {
+        threads.put("note", "No thread attribute found in this profile");
+        return threads;
+      }
+
+      threads.put("threadCount", threadRows.size());
+      threads.put("distribution", threadRows);
+
+      long totalSamples =
+          threadRows.stream()
+              .mapToLong(r -> r.get("count") instanceof Number n ? n.longValue() : 0L)
+              .sum();
+      if (!threadRows.isEmpty() && totalSamples > 0) {
+        long topCount = threadRows.get(0).get("count") instanceof Number n ? n.longValue() : 0L;
+        double topPct = 100.0 * topCount / totalSamples;
+        Map<String, Object> saturation = new LinkedHashMap<>();
+        saturation.put("dominantThread", threadRows.get(0).get("thread"));
+        saturation.put("dominantThreadPct", Math.round(topPct * 10) / 10.0);
+        if (topPct > 90) {
+          saturation.put(
+              "finding", "Single-threaded: one thread holds >" + (int) topPct + "% of all samples");
+        }
+        threads.put("saturation", saturation);
+      }
+    } catch (Exception e) {
+      LOG.debug("Error in otelp thread analysis: {}", e.getMessage());
+    }
+    return threads;
+  }
+
+  private Map<String, Object> analyzeOtelpErrors(OtelpSessionRegistry.SessionInfo info) {
+    Map<String, Object> errors = new LinkedHashMap<>();
+    Set<String> errorKeywords =
+        Set.of("exception", "error", "panic", "throw", "fail", "fatal", "abort", "crash");
+
+    try {
+      var topFnQuery = OtelpPathParser.parse("samples | groupBy(stackTrace/0/name) | head(30)");
+      List<Map<String, Object>> topFns = OtelpPathEvaluator.evaluate(info.session(), topFnQuery);
+
+      List<Map<String, Object>> suspects = new ArrayList<>();
+      for (Map<String, Object> row : topFns) {
+        String name = row.get("stackTrace/0/name") instanceof String s ? s : "";
+        String nameLower = name.toLowerCase();
+        for (String kw : errorKeywords) {
+          if (nameLower.contains(kw)) {
+            suspects.add(row);
+            break;
+          }
+        }
+      }
+
+      errors.put("suspectFunctions", suspects);
+      errors.put(
+          "note",
+          "Error detection is heuristic: scans hot leaf functions for error-related keywords");
+    } catch (Exception e) {
+      LOG.debug("Error in otelp error analysis: {}", e.getMessage());
+    }
+    return errors;
+  }
+
+  private List<String> generateOtelpUseInsights(Map<String, Object> resourceMetrics) {
+    List<String> insights = new ArrayList<>();
+
+    if (resourceMetrics.containsKey("cpu")) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> cpu = (Map<String, Object>) resourceMetrics.get("cpu");
+      if (cpu.containsKey("utilization")) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> util = (Map<String, Object>) cpu.get("utilization");
+        if (util.containsKey("stats")) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> stats = (Map<String, Object>) util.get("stats");
+          Object count = stats.get("count");
+          if (count instanceof Number n && n.longValue() > 0) {
+            insights.add(
+                "Profile contains "
+                    + n.longValue()
+                    + " samples. Use otelp_flamegraph for visual breakdown.");
+          }
+        }
+      }
+    }
+
+    if (resourceMetrics.containsKey("threads")) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> threads = (Map<String, Object>) resourceMetrics.get("threads");
+      if (threads.containsKey("saturation")) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sat = (Map<String, Object>) threads.get("saturation");
+        if (sat.containsKey("finding")) {
+          insights.add(sat.get("finding").toString() + " — consider parallelizing the workload");
+        }
+      }
+    }
+
+    if (resourceMetrics.containsKey("errors")) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> errMap = (Map<String, Object>) resourceMetrics.get("errors");
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> suspects =
+          errMap.get("suspectFunctions") instanceof List<?> l
+              ? (List<Map<String, Object>>) l
+              : List.of();
+      if (!suspects.isEmpty()) {
+        insights.add(
+            "Found "
+                + suspects.size()
+                + " error-related function(s) in hot paths — review for exception overhead.");
+      }
+    }
+
+    if (insights.isEmpty()) {
+      insights.add("No significant issues detected. Use otelp_flamegraph for detailed analysis.");
+    }
+    return insights;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // otelp_help
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private McpServerFeatures.SyncToolSpecification createOtelpHelpTool() {
+    String schema =
+        """
+        {
+          "type": "object",
+          "properties": {}
+        }
+        """;
+    return new McpServerFeatures.SyncToolSpecification(
+        new Tool(
+            "otelp_help", "Returns OtelpPath query language documentation and examples.", schema),
+        (exchange, args) -> {
+          Map<String, Object> result = new LinkedHashMap<>();
+          result.put("language", "OtelpPath");
+          result.put("documentation", getOtelpHelpText());
+          return successResult(result);
+        });
+  }
+
+  private String getOtelpHelpText() {
+    return """
+        ## OtelpPath Query Language
+
+        ### Syntax
+        ```
+        samples[predicate] | operator(args)
+        ```
+
+        ### Root
+        - `samples` — all profiling samples in the OTLP profile
+
+        ### Predicates (filter before pipeline)
+        ```
+        samples[thread='main']                    string equality
+        samples[cpu > 1000000]                    numeric comparison (>, >=, <, <=, !=)
+        samples[thread ~ 'Worker.*']              regex match
+        samples[thread='main' and cpu > 500000]   AND
+        samples[cpu < 100 or cpu > 900]           OR
+        samples[stackTrace/0/name ~ 'HashMap.*']  nested path
+        ```
+
+        ### Pipeline Operators
+        | Operator | Description |
+        |----------|-------------|
+        | `count()` | Total number of samples |
+        | `top(n, field, [asc])` | Top N by field (default descending) |
+        | `head(n)` / `tail(n)` | First/last N rows |
+        | `groupBy(field)` | Group and count by field |
+        | `groupBy(field, sum(f))` | Group by field, sum another |
+        | `stats(field)` | Min/max/avg/sum/count for field |
+        | `filter(pred)` | Additional filtering in pipeline |
+        | `select(f1, f2, ...)` | Project to subset of fields |
+        | `sortBy(field, [asc])` | Sort by field (default descending) |
+        | `stackprofile([field])` | Folded stacks for flame graphs |
+        | `distinct(field)` | Unique values of field |
+
+        ### Row Fields
+        Each sample row contains:
+        - Value type field named after the profile's sample type (e.g. `cpu`, `wall`)
+        - `stackTrace` — list of frames, each with `name`, `filename`, `line`
+        - Attribute fields from the sample's attribute table (e.g. `thread`)
+
+        ### Examples
+        ```
+        samples | count()
+        samples | top(10, cpu)
+        samples | groupBy(thread, sum(cpu))
+        samples[thread='main'] | top(5, cpu)
+        samples | stats(cpu)
+        samples | stackprofile(cpu)
+        samples | groupBy(stackTrace/0/name, sum(cpu)) | head(20)
+        samples[thread ~ 'Worker.*'] | groupBy(thread) | sortBy(count)
+        ```
+
+        ### Workflow
+        1. otelp_open     — open the file
+        2. otelp_summary  — get an overview
+        3. otelp_query    — run targeted queries
+        4. otelp_flamegraph — visualize hot stacks
+        5. otelp_use      — USE method analysis
+        6. otelp_close    — release resources
         """;
   }
 

@@ -1,9 +1,9 @@
-package io.jafar.pprof.shell;
+package io.jafar.otelp.shell;
 
-import io.jafar.pprof.shell.pprofpath.PprofPath;
-import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
-import io.jafar.pprof.shell.pprofpath.PprofPathParseException;
-import io.jafar.pprof.shell.pprofpath.PprofPathParser;
+import io.jafar.otelp.shell.otelppath.OtelpPath;
+import io.jafar.otelp.shell.otelppath.OtelpPathEvaluator;
+import io.jafar.otelp.shell.otelppath.OtelpPathParseException;
+import io.jafar.otelp.shell.otelppath.OtelpPathParser;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.VariableStore;
@@ -11,10 +11,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@link QueryEvaluator} implementation for the pprof query language. Bridges the shell
- * infrastructure with the pprof query system.
+ * {@link QueryEvaluator} implementation for the OtelpPath query language. Bridges the shell
+ * infrastructure with the OTLP profiling query system.
  */
-public final class PprofQueryEvaluator implements QueryEvaluator {
+public final class OtelpQueryEvaluator implements QueryEvaluator {
 
   private static final List<String> ROOT_TYPES = List.of("samples");
 
@@ -35,17 +35,17 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
   @Override
   public Object parse(String queryString) throws QueryParseException {
     try {
-      return PprofPathParser.parse(queryString);
-    } catch (PprofPathParseException e) {
+      return OtelpPathParser.parse(queryString);
+    } catch (OtelpPathParseException e) {
       throw new QueryParseException(e.getMessage(), queryString, -1, e);
     }
   }
 
   @Override
   public Object evaluate(Session session, Object query) throws Exception {
-    PprofSession pprofSession = requirePprofSession(session);
-    PprofPath.Query pprofQuery = toQuery(query);
-    return PprofPathEvaluator.evaluate(pprofSession, pprofQuery);
+    OtelpSession otelpSession = requireOtelpSession(session);
+    OtelpPath.Query otelpQuery = toQuery(query);
+    return OtelpPathEvaluator.evaluate(otelpSession, otelpQuery);
   }
 
   @Override
@@ -81,36 +81,36 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
   @Override
   public VariableStore.LazyValue createLazyValue(
       Session session, Object query, String queryString) {
-    PprofSession pprofSession = requirePprofSession(session);
-    PprofPath.Query pprofQuery = toQuery(query);
-    return new LazyPprofValue(pprofSession, pprofQuery, queryString);
+    OtelpSession otelpSession = requireOtelpSession(session);
+    OtelpPath.Query otelpQuery = toQuery(query);
+    return new LazyOtelpValue(otelpSession, otelpQuery, queryString);
   }
 
-  private PprofSession requirePprofSession(Session session) {
-    if (!(session instanceof PprofSession ps)) {
+  private OtelpSession requireOtelpSession(Session session) {
+    if (!(session instanceof OtelpSession os)) {
       throw new IllegalArgumentException(
-          "PprofQueryEvaluator requires a PprofSession, got: "
+          "OtelpQueryEvaluator requires an OtelpSession, got: "
               + session.getClass().getSimpleName());
     }
-    return ps;
+    return os;
   }
 
-  private PprofPath.Query toQuery(Object query) {
-    if (query instanceof PprofPath.Query q) return q;
-    if (query instanceof String s) return (PprofPath.Query) parse(s);
+  private OtelpPath.Query toQuery(Object query) {
+    if (query instanceof OtelpPath.Query q) return q;
+    if (query instanceof String s) return (OtelpPath.Query) parse(s);
     throw new IllegalArgumentException(
-        "Expected PprofPath.Query or String, got: " + query.getClass());
+        "Expected OtelpPath.Query or String, got: " + query.getClass());
   }
 
-  /** Lazy value that evaluates a pprof query on demand. */
-  private static final class LazyPprofValue implements VariableStore.LazyValue {
-    private final PprofSession session;
-    private final PprofPath.Query query;
+  /** Lazy value that evaluates an OtelpPath query on demand. */
+  private static final class LazyOtelpValue implements VariableStore.LazyValue {
+    private final OtelpSession session;
+    private final OtelpPath.Query query;
     private final String queryString;
     private List<Map<String, Object>> cached;
     private boolean evaluated;
 
-    LazyPprofValue(PprofSession session, PprofPath.Query query, String queryString) {
+    LazyOtelpValue(OtelpSession session, OtelpPath.Query query, String queryString) {
       this.session = session;
       this.query = query;
       this.queryString = queryString;
@@ -119,7 +119,7 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
     @Override
     public synchronized Object get() throws Exception {
       if (!evaluated) {
-        cached = PprofPathEvaluator.evaluate(session, query);
+        cached = OtelpPathEvaluator.evaluate(session, query);
         evaluated = true;
       }
       return cached;
@@ -127,7 +127,7 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
 
     @Override
     public String describe() {
-      return "pprof query: " + queryString;
+      return "otelp query: " + queryString;
     }
 
     @Override

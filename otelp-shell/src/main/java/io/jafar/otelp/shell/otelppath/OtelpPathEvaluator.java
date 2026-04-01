@@ -1,10 +1,10 @@
-package io.jafar.pprof.shell.pprofpath;
+package io.jafar.otelp.shell.otelppath;
 
-import io.jafar.pprof.shell.PprofProfile;
-import io.jafar.pprof.shell.PprofSession;
+import io.jafar.otelp.shell.OtelpProfile;
+import io.jafar.otelp.shell.OtelpSession;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -14,19 +14,19 @@ import java.util.WeakHashMap;
 import java.util.regex.Pattern;
 
 /**
- * Evaluates {@link PprofPath.Query} objects against a {@link PprofSession}.
+ * Evaluates {@link OtelpPath.Query} objects against an {@link OtelpSession}.
  *
- * <p>Each pprof sample is converted to a row map with the following fields:
+ * <p>Each OTLP sample is converted to a row map with the following fields:
  *
  * <ul>
- *   <li>One field per value type (e.g. {@code cpu}, {@code alloc_objects}), holding the raw sample
- *       value.
+ *   <li>One field named after the profile's {@code sampleType.type()} holding the first sample
+ *       value (or 0 if {@code values} is empty).
  *   <li>{@code stackTrace}: list of frame maps with {@code name}, {@code filename}, and {@code
- *       line} keys, ordered from leaf to root.
- *   <li>One field per label (string labels → String value; numeric labels → Long value).
+ *       line} keys, ordered from leaf to root, resolved through the shared dictionary.
+ *   <li>One field per sample attribute, keyed by the attribute's key string.
  * </ul>
  */
-public final class PprofPathEvaluator {
+public final class OtelpPathEvaluator {
 
   // Striped weak cache: 16 independent WeakHashMap buckets, each with its own lock.
   // Entries are collected when the Query holding the pattern string is GC'd.
@@ -48,106 +48,113 @@ public final class PprofPathEvaluator {
     }
   }
 
-  public static List<Map<String, Object>> evaluate(PprofSession session, PprofPath.Query query) {
-    List<Map<String, Object>> rows = buildRows(session.getProfile());
+  public static List<Map<String, Object>> evaluate(OtelpSession session, OtelpPath.Query query) {
+    OtelpProfile.ProfilesData data = session.getData();
+    List<Map<String, Object>> rows = buildRows(data);
     rows = applyPredicates(rows, query.predicates());
-    return applyPipeline(rows, query.pipeline(), session.getProfile());
+    String defaultValueField = defaultValueField(data);
+    return applyPipeline(rows, query.pipeline(), defaultValueField);
   }
 
   // ---- Row construction ----
 
-  private static List<Map<String, Object>> buildRows(PprofProfile.Profile profile) {
-    Map<Long, PprofProfile.Location> locationById =
-        indexById(profile.locations(), PprofProfile.Location::id);
-    Map<Long, PprofProfile.Function> functionById =
-        indexById(profile.functions(), PprofProfile.Function::id);
+  private static List<Map<String, Object>> buildRows(OtelpProfile.ProfilesData data) {
+    OtelpProfile.Dictionary dict = data.dictionary();
+    List<OtelpProfile.Stack> stackTable = dict.stackTable();
+    List<OtelpProfile.Location> locationTable = dict.locationTable();
+    List<OtelpProfile.Function> functionTable = dict.functionTable();
+    List<OtelpProfile.Attribute> attributeTable = dict.attributeTable();
 
-    List<PprofProfile.ValueType> sampleTypes = profile.sampleTypes();
-    // Comma-separated list of all value type names in this profile, e.g. "cpu,alloc_space"
-    String sampleTypeNames =
-        sampleTypes.stream()
-            .map(PprofProfile.ValueType::type)
-            .collect(java.util.stream.Collectors.joining(","));
-    List<Map<String, Object>> rows = new ArrayList<>(profile.samples().size());
+    List<Map<String, Object>> rows = new ArrayList<>();
 
-    for (PprofProfile.Sample sample : profile.samples()) {
-      Map<String, Object> row = new LinkedHashMap<>();
+    for (OtelpProfile.Profile profile : data.profiles()) {
+      String valueTypeName = profile.sampleType() != null ? profile.sampleType().type() : "";
 
-      // Value type fields
-      List<Long> values = sample.values();
-      for (int i = 0; i < values.size() && i < sampleTypes.size(); i++) {
-        row.put(sampleTypes.get(i).type(), values.get(i));
-      }
+      for (OtelpProfile.Sample sample : profile.samples()) {
+        Map<String, Object> row = new LinkedHashMap<>();
 
-      // sampleType: comma-separated list of value type names present in this profile
-      row.put("sampleType", sampleTypeNames);
-
-      // Stack trace
-      List<Map<String, Object>> stack =
-          buildStack(sample.locationIds(), locationById, functionById);
-      row.put("stackTrace", stack);
-
-      // Labels
-      for (PprofProfile.Label label : sample.labels()) {
-        if (label.str() != null && !label.str().isEmpty()) {
-          row.put(label.key(), label.str());
-        } else if (label.num() != 0) {
-          row.put(label.key(), label.num());
+        // Value field + sampleType meta-field for explicit filtering
+        long value = sample.values().isEmpty() ? 0L : sample.values().get(0);
+        if (!valueTypeName.isEmpty()) {
+          row.put(valueTypeName, value);
+          row.put("sampleType", valueTypeName);
         }
-      }
 
-      rows.add(row);
+        // Stack trace
+        List<Map<String, Object>> stack =
+            buildStack(sample.stackIndex(), stackTable, locationTable, functionTable);
+        row.put("stackTrace", stack);
+
+        // Attribute fields (attrIdx is 1-based; index 0 = null sentinel)
+        for (int attrIdx : sample.attributeIndices()) {
+          if (attrIdx > 0 && attrIdx <= attributeTable.size()) {
+            OtelpProfile.Attribute attr = attributeTable.get(attrIdx - 1);
+            if (attr.key() != null && !attr.key().isEmpty()) {
+              row.put(attr.key(), attr.value() != null ? attr.value() : "");
+            }
+          }
+        }
+
+        rows.add(row);
+      }
     }
     return rows;
   }
 
   private static List<Map<String, Object>> buildStack(
-      List<Long> locationIds,
-      Map<Long, PprofProfile.Location> locationById,
-      Map<Long, PprofProfile.Function> functionById) {
-    List<Map<String, Object>> stack = new ArrayList<>();
-    for (Long locId : locationIds) {
-      PprofProfile.Location loc = locationById.get(locId);
-      if (loc == null) continue;
-      for (PprofProfile.Line line : loc.lines()) {
-        PprofProfile.Function fn = functionById.get(line.functionId());
-        if (fn == null) continue;
+      int stackIndex,
+      List<OtelpProfile.Stack> stackTable,
+      List<OtelpProfile.Location> locationTable,
+      List<OtelpProfile.Function> functionTable) {
+    // All table indices are 1-based; index 0 = null sentinel
+    if (stackIndex <= 0 || stackIndex > stackTable.size()) {
+      return Collections.emptyList();
+    }
+    OtelpProfile.Stack stack = stackTable.get(stackIndex - 1);
+    List<Map<String, Object>> frames = new ArrayList<>();
+    for (int locIdx : stack.locationIndices()) {
+      if (locIdx <= 0 || locIdx > locationTable.size()) continue;
+      OtelpProfile.Location loc = locationTable.get(locIdx - 1);
+      for (OtelpProfile.Line line : loc.lines()) {
+        int fnIdx = line.functionIndex();
+        if (fnIdx <= 0 || fnIdx > functionTable.size()) continue;
+        OtelpProfile.Function fn = functionTable.get(fnIdx - 1);
         Map<String, Object> frame = new LinkedHashMap<>();
         frame.put("name", fn.name().isEmpty() ? fn.systemName() : fn.name());
         frame.put("filename", fn.filename());
-        frame.put("line", line.lineNumber());
-        stack.add(frame);
+        frame.put("line", line.line());
+        frames.add(frame);
       }
     }
-    return stack;
+    return frames;
   }
 
   // ---- Predicate evaluation ----
 
   private static List<Map<String, Object>> applyPredicates(
-      List<Map<String, Object>> rows, List<PprofPath.Predicate> predicates) {
+      List<Map<String, Object>> rows, List<OtelpPath.Predicate> predicates) {
     if (predicates.isEmpty()) return rows;
     return rows.stream()
         .filter(row -> predicates.stream().allMatch(p -> matchPredicate(row, p)))
         .toList();
   }
 
-  private static boolean matchPredicate(Map<String, Object> row, PprofPath.Predicate predicate) {
+  private static boolean matchPredicate(Map<String, Object> row, OtelpPath.Predicate predicate) {
     return switch (predicate) {
-      case PprofPath.FieldPredicate fp -> matchField(row, fp);
-      case PprofPath.LogicalPredicate lp ->
+      case OtelpPath.FieldPredicate fp -> matchField(row, fp);
+      case OtelpPath.LogicalPredicate lp ->
           lp.and()
               ? matchPredicate(row, lp.left()) && matchPredicate(row, lp.right())
               : matchPredicate(row, lp.left()) || matchPredicate(row, lp.right());
     };
   }
 
-  private static boolean matchField(Map<String, Object> row, PprofPath.FieldPredicate fp) {
+  private static boolean matchField(Map<String, Object> row, OtelpPath.FieldPredicate fp) {
     Object value = resolveField(row, fp.field());
     if (value == null) return false;
     Object literal = fp.literal();
 
-    if (fp.op() == PprofPath.Op.REGEX) {
+    if (fp.op() == OtelpPath.Op.REGEX) {
       String sv = value.toString();
       String pattern = literal.toString();
       return cachedPattern(pattern).matcher(sv).find();
@@ -208,37 +215,35 @@ public final class PprofPathEvaluator {
 
   private static List<Map<String, Object>> applyPipeline(
       List<Map<String, Object>> rows,
-      List<PprofPath.PipelineOp> pipeline,
-      PprofProfile.Profile profile) {
-    for (PprofPath.PipelineOp op : pipeline) {
-      rows = applyOp(rows, op, profile);
+      List<OtelpPath.PipelineOp> pipeline,
+      String defaultValueField) {
+    for (OtelpPath.PipelineOp op : pipeline) {
+      rows = applyOp(rows, op, defaultValueField);
     }
     return rows;
   }
 
   private static List<Map<String, Object>> applyOp(
-      List<Map<String, Object>> rows, PprofPath.PipelineOp op, PprofProfile.Profile profile) {
+      List<Map<String, Object>> rows, OtelpPath.PipelineOp op, String defaultValueField) {
     return switch (op) {
-      case PprofPath.CountOp c -> List.of(Map.of("count", rows.size()));
-      case PprofPath.TopOp top -> applyTop(rows, top, profile);
-      case PprofPath.GroupByOp gb -> applyGroupBy(rows, gb);
-      case PprofPath.StatsOp s -> applyStats(rows, s.valueField());
-      case PprofPath.HeadOp h -> rows.subList(0, Math.min(h.n(), rows.size()));
-      case PprofPath.TailOp t -> rows.subList(Math.max(0, rows.size() - t.n()), rows.size());
-      case PprofPath.FilterOp f -> applyPredicates(rows, f.predicates());
-      case PprofPath.SelectOp s -> applySelect(rows, s.fields());
-      case PprofPath.SortByOp s -> applySort(rows, s.field(), s.ascending());
-      case PprofPath.StackProfileOp sp -> applyStackProfile(rows, sp.valueField(), profile);
-      case PprofPath.DistinctOp d -> applyDistinct(rows, d.field());
+      case OtelpPath.CountOp c -> List.of(Map.of("count", rows.size()));
+      case OtelpPath.TopOp top -> applyTop(rows, top, defaultValueField);
+      case OtelpPath.GroupByOp gb -> applyGroupBy(rows, gb);
+      case OtelpPath.StatsOp s -> applyStats(rows, s.valueField());
+      case OtelpPath.HeadOp h -> rows.subList(0, Math.min(h.n(), rows.size()));
+      case OtelpPath.TailOp t -> rows.subList(Math.max(0, rows.size() - t.n()), rows.size());
+      case OtelpPath.FilterOp f -> applyPredicates(rows, f.predicates());
+      case OtelpPath.SelectOp s -> applySelect(rows, s.fields());
+      case OtelpPath.SortByOp s -> applySort(rows, s.field(), s.ascending());
+      case OtelpPath.StackProfileOp sp ->
+          applyStackProfile(rows, sp.valueField(), defaultValueField);
+      case OtelpPath.DistinctOp d -> applyDistinct(rows, d.field());
     };
   }
 
   private static List<Map<String, Object>> applyTop(
-      List<Map<String, Object>> rows, PprofPath.TopOp top, PprofProfile.Profile profile) {
-    String field = top.byField();
-    if (field == null && !profile.sampleTypes().isEmpty()) {
-      field = profile.sampleTypes().get(0).type();
-    }
+      List<Map<String, Object>> rows, OtelpPath.TopOp top, String defaultValueField) {
+    String field = top.byField() != null ? top.byField() : defaultValueField;
     List<Map<String, Object>> sorted = applySort(rows, field, top.ascending());
     return sorted.subList(0, Math.min(top.n(), sorted.size()));
   }
@@ -255,7 +260,7 @@ public final class PprofPathEvaluator {
   }
 
   private static List<Map<String, Object>> applyGroupBy(
-      List<Map<String, Object>> rows, PprofPath.GroupByOp gb) {
+      List<Map<String, Object>> rows, OtelpPath.GroupByOp gb) {
     Map<String, Long> groups = new LinkedHashMap<>();
     for (Map<String, Object> row : rows) {
       Object key = resolveField(row, gb.keyField());
@@ -330,11 +335,8 @@ public final class PprofPathEvaluator {
 
   @SuppressWarnings("unchecked")
   private static List<Map<String, Object>> applyStackProfile(
-      List<Map<String, Object>> rows, String valueField, PprofProfile.Profile profile) {
-    String vf = valueField;
-    if (vf == null && !profile.sampleTypes().isEmpty()) {
-      vf = profile.sampleTypes().get(0).type();
-    }
+      List<Map<String, Object>> rows, String valueField, String defaultValueField) {
+    String vf = valueField != null ? valueField : defaultValueField;
     final String effectiveField = vf;
 
     Map<String, Long> stackCounts = new LinkedHashMap<>();
@@ -396,11 +398,14 @@ public final class PprofPathEvaluator {
 
   // ---- Utilities ----
 
-  private static <T> Map<Long, T> indexById(
-      List<T> items, java.util.function.ToLongFunction<T> idFn) {
-    Map<Long, T> map = new HashMap<>(items.size() * 2);
-    for (T item : items) map.put(idFn.applyAsLong(item), item);
-    return map;
+  /** Returns the value type name of the first profile, or null if none. */
+  private static String defaultValueField(OtelpProfile.ProfilesData data) {
+    for (OtelpProfile.Profile profile : data.profiles()) {
+      if (profile.sampleType() != null && !profile.sampleType().type().isEmpty()) {
+        return profile.sampleType().type();
+      }
+    }
+    return null;
   }
 
   private static double toDouble(Object v) {
