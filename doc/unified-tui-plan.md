@@ -44,9 +44,9 @@ adapter interface** that modules implement to provide TUI-specific capabilities.
 core TUI framework stays in `jfr-shell` (it depends on TamboUI which is already there),
 but is parameterized over `Session` instead of `JFRSession`.
 
-### Phase 1: Extract TUI session adapter interface (into `jfr-shell-core`)
+### Phase 1: Extract TUI session adapter interface (into `shell-core`)
 
-Create `io.jafar.shell.core.TuiAdapter` in `jfr-shell-core`:
+Create `io.jafar.shell.core.TuiAdapter` in `shell-core`:
 
 ```java
 public interface TuiAdapter {
@@ -191,8 +191,8 @@ Add `--tui` to `jafar-shell` `Main.java`, launching `UnifiedTuiShell`.
 
 | Action | Module | File |
 |--------|--------|------|
-| **Create** | `jfr-shell-core` | `io.jafar.shell.core.TuiAdapter` |
-| **Modify** | `jfr-shell-core` | `ShellModule.java` — add `createTuiAdapter()` default method |
+| **Create** | `shell-core` | `io.jafar.shell.core.TuiAdapter` |
+| **Modify** | `shell-core` | `ShellModule.java` — add `createTuiAdapter()` default method |
 | **Modify** | `jfr-shell` | `TuiWiring.java` — accept `TuiAdapter` + `SessionManager<? extends Session>` |
 | **Modify** | `jfr-shell` | `TuiCommandExecutor.java` — route through `TuiAdapter` |
 | **Modify** | `jfr-shell` | `TuiBrowserController.java` — route through `TuiAdapter` |
@@ -239,4 +239,4 @@ Phases 5-7 are independent of each other.
 
 - Generalizing `CommandDispatcher` itself (too large, JFR-specific commands have no generic equivalent)
 - Generalizing `ShellCompleter` (completion is inherently module-specific)
-- Making TamboUI a dependency of `jfr-shell-core` (TamboUI stays in `jfr-shell`)
+- Making TamboUI a dependency of `shell-core` (TamboUI stays in `jfr-shell`)

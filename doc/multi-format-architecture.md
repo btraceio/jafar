@@ -16,7 +16,7 @@ via Java's `ServiceLoader`. Modules provide:
 
 ## Key Interfaces
 
-### ShellModule (`jfr-shell-core`)
+### ShellModule (`shell-core`)
 
 The main plugin interface. Each module declares:
 
@@ -27,7 +27,7 @@ The main plugin interface. Each module declares:
 - `getCompleter(SessionManager, Object)` — JLine completer
 - `createTuiAdapter(SessionManager, Object)` — TUI adapter (optional)
 
-### QueryEvaluator (`jfr-shell-core`)
+### QueryEvaluator (`shell-core`)
 
 Bridges the shell's `show` command to format-specific query languages:
 
@@ -35,7 +35,7 @@ Bridges the shell's `show` command to format-specific query languages:
 - `evaluate(Session, Object)` — evaluate parsed query against session
 - `getRootTypes()` / `getOperators()` — discovery for help and completion
 
-### TuiAdapter (`jfr-shell-core`)
+### TuiAdapter (`shell-core`)
 
 Adapts format-specific capabilities for the full-screen TUI:
 

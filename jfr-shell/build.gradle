@@ -49,7 +49,7 @@ java {
 }
 
 dependencies {
-    api project(':jfr-shell-core')
+    api project(':shell-core')
 
     // Backend plugins available for testing (discovered via ServiceLoader)
     testRuntimeOnly project(':jfr-shell-jafar')
@@ -290,7 +290,7 @@ afterEvaluate {
                     def deps = asNode().get('dependencies')
                     if (deps) {
                         def removable = [
-                            'io.btrace',        // internal project modules (jfr-shell-core, parser, tools)
+                            'io.btrace',        // internal project modules (shell-core, parser, tools)
                             'dev.tamboui',       // relocated into shadow JAR
                             'com.google.code.gson', // relocated into shadow JAR
                             'org.apache.maven',  // relocated into shadow JAR

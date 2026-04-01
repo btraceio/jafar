@@ -26,7 +26,7 @@ dependencies {
     implementation 'io.modelcontextprotocol.sdk:mcp'
 
     // Jafar dependencies
-    implementation project(':jfr-shell-core')
+    implementation project(':shell-core')
     implementation project(':parser')
     implementation project(':hdump-shell')
     implementation project(':pprof-shell')

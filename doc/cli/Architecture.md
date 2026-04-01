@@ -9,7 +9,7 @@ JFR Shell is organized into five modules with distinct responsibilities:
 ```mermaid
 graph TB
     subgraph "JFR Shell System"
-        CORE[jfr-shell-core<br/>Query Engine & Backend SPI]
+        CORE[shell-core<br/>Query Engine & Backend SPI]
         CLI[jfr-shell<br/>Interactive CLI & TUI]
         JAFAR[jfr-shell-jafar<br/>Jafar Backend Plugin]
         JDK[jfr-shell-jdk<br/>JDK API Backend Plugin]
@@ -35,8 +35,8 @@ graph TB
 
 | Module | Purpose |
 |--------|---------|
-| `jfr-shell-core` | JfrPath query engine, backend SPI, plugin framework, session management |
-| `jfr-shell` | Interactive CLI/TUI shell, command system, renderers (depends on `jfr-shell-core`) |
+| `shell-core` | JfrPath query engine, backend SPI, plugin framework, session management |
+| `jfr-shell` | Interactive CLI/TUI shell, command system, renderers (depends on `shell-core`) |
 | `jfr-shell-jafar` | Backend using Jafar parser (full capabilities, priority 100) |
 | `jfr-shell-jdk` | Backend using JDK API (limited capabilities, priority 50) |
 | `jfr-shell-tck` | Technology Compatibility Kit for validating backends |
@@ -588,7 +588,7 @@ flowchart TB
 ## Package Structure
 
 ```
-jfr-shell-core/src/main/java/io/jafar/shell/
+shell-core/src/main/java/io/jafar/shell/
 ├── JFRSession.java              # Single recording session
 ├── TypeDiscovery.java           # Metadata utilities
 ├── jfrpath/

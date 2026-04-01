@@ -19,7 +19,7 @@ java {
 
 dependencies {
     // Shell infrastructure
-    api project(':jfr-shell-core')
+    api project(':shell-core')
 
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.5'
