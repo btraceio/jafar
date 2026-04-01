@@ -31,7 +31,7 @@ The branch versions of these files (before merge) had these implementations.
 
 ### 2. Shell-core abstractions (for hdump-shell and jafar-shell)
 
-The branch had a `shell-core` module (renamed to `jfr-shell-core` on main) with shared interfaces:
+The branch had a `shell-core` module (renamed to `shell-core` on main) with shared interfaces:
 - `io.jafar.shell.core.Session` — generic session interface (JFR and hdump sessions)
 - `io.jafar.shell.core.SessionManager` — multi-session management
 - `io.jafar.shell.core.ShellModule` — plugin interface for shell modules (JFR, hdump)
@@ -46,7 +46,7 @@ On main, `SessionManager` and `VariableStore` live in `jfr-shell/src/main/java/i
 but without the multi-format abstraction layer. The other interfaces don't exist on main.
 
 These need to either:
-- Be added to `jfr-shell-core` as shared interfaces, or
+- Be added to `shell-core` as shared interfaces, or
 - Be reintroduced as a separate module
 
 ### 3. JFRSession changes

@@ -20,7 +20,7 @@ Specific outputs:
 A cross-session left-join operator in HdumpPath. Works with all three root types (`classes`, `objects`, `gcroots`).
 
 **Infrastructure added:**
-- `SessionResolver` functional interface in `jfr-shell-core` — resolves session refs by ID or alias
+- `SessionResolver` functional interface in `shell-core` — resolves session refs by ID or alias
 - `QueryEvaluator.evaluate(Session, Object, SessionResolver)` default method — threading resolver to evaluators
 - `CommandDispatcher` passes a `SessionResolver` wrapping `sessions.get()` to query evaluation
 - `HdumpPathParser` parses `join(session=..., by=...)` syntax

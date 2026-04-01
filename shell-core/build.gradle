@@ -3,7 +3,7 @@ plugins {
     id 'me.champeau.gradle.japicmp' version '0.4.3'
 }
 
-def libraryName = "jfr-shell-core"
+def libraryName = "shell-core"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
 repositories {

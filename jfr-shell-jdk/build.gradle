@@ -19,8 +19,8 @@ java {
 }
 
 dependencies {
-    // Only depends on jfr-shell-core for the SPI interfaces
-    compileOnly project(':jfr-shell-core')
+    // Only depends on shell-core for the SPI interfaces
+    compileOnly project(':shell-core')
 }
 
 jar {

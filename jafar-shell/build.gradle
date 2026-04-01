@@ -26,9 +26,10 @@ java {
 }
 
 dependencies {
-    implementation project(':jfr-shell-core')
+    implementation project(':shell-core')
     implementation project(':jfr-shell')
     implementation project(':hdump-shell')
+    implementation project(':pprof-shell')
 
     // JFR backend implementations (discovered via ServiceLoader)
     runtimeOnly project(':jfr-shell-jafar')

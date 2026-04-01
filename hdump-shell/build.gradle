@@ -18,7 +18,7 @@ java {
 
 dependencies {
     // Shell infrastructure
-    api project(':jfr-shell-core')
+    api project(':shell-core')
 
     // HPROF parser
     api project(':hdump-parser')

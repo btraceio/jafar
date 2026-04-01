@@ -33,9 +33,9 @@ Documentation for Jafar's typed and untyped parsing APIs.
 
 ---
 
-## 🖥️ CLI / JFR Shell (`cli/`)
+## 🖥️ CLI / Interactive Shell (`cli/`)
 
-Documentation for the interactive JFR Shell command-line interface.
+Documentation for the interactive shell command-line interface (JFR, pprof, heap dump).
 
 | Document | Description |
 |----------|-------------|
@@ -48,11 +48,15 @@ Documentation for the interactive JFR Shell command-line interface.
 | [BackendQuickstart.md](cli/BackendQuickstart.md) | Build a custom backend in 10 minutes |
 | [CommandRecording.md](cli/CommandRecording.md) | Recording and replaying command workflows |
 | [ScriptExecution.md](cli/ScriptExecution.md) | Executing scripts for batch analysis |
+| [pprof-shell-tutorial.md](cli/pprof-shell-tutorial.md) | Tutorial for pprof profile analysis |
+| [hdump-shell-tutorial.md](cli/hdump-shell-tutorial.md) | Tutorial for heap dump analysis |
 
 **Start here if you want to:**
 - Analyze JFR files interactively
-- Learn the JfrPath query language
-- Automate JFR analysis with scripts
+- Analyze pprof profiles (async-profiler, Go, Rust)
+- Analyze Java heap dumps
+- Learn the query languages
+- Automate analysis with scripts
 - Build custom backend plugins
 
 ---
@@ -124,13 +128,22 @@ Work-in-progress documentation and implementation notes.
 **Analyze JFR files interactively:**
 → Start with [cli/Tutorial.md](cli/Tutorial.md)
 
+**Analyze pprof profiles (async-profiler, Go, Rust):**
+→ Start with [cli/pprof-shell-tutorial.md](cli/pprof-shell-tutorial.md)
+
+**Learn the pprof query language:**
+→ See [pprof-path-reference.md](pprof-path-reference.md)
+
+**Analyze Java heap dumps:**
+→ Start with [cli/hdump-shell-tutorial.md](cli/hdump-shell-tutorial.md)
+
 **Use AI to analyze JFR files:**
 → Start with [mcp/Tutorial.md](mcp/Tutorial.md)
 
 **Install via JBang (easiest):**
 → Start with [jbang/JFRShellUsage.md](jbang/JFRShellUsage.md) or [mcp/JBANGUsage.md](mcp/JBANGUsage.md)
 
-**Learn the query language:**
+**Learn the JFR query language:**
 → Start with [cli/JFRPath.md](cli/JFRPath.md)
 
 **Automate JFR analysis:**
