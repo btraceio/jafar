@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
@@ -136,6 +137,34 @@ class PprofHandlerTest {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // requireSafeFieldName (injection guard)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @Test
+  void requireSafeFieldNameRejectsInjectionChars() throws Exception {
+    Method m =
+        JafarMcpServer.class.getDeclaredMethod("requireSafeFieldName", String.class, String.class);
+    m.setAccessible(true);
+    for (String bad : new String[] {"cpu]|inject", "alloc space", "field;drop", "x\nnewline"}) {
+      String badName = bad;
+      assertThrows(
+          InvocationTargetException.class,
+          () -> m.invoke(server, badName, "field"),
+          "Expected rejection for: " + bad);
+    }
+  }
+
+  @Test
+  void requireSafeFieldNameAcceptsValidNames() throws Exception {
+    Method m =
+        JafarMcpServer.class.getDeclaredMethod("requireSafeFieldName", String.class, String.class);
+    m.setAccessible(true);
+    for (String good : new String[] {"cpu", "alloc_space", "cpu.rate", "field-1", "ns:count"}) {
+      m.invoke(server, good, "field"); // must not throw
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // pprof_help
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -144,8 +173,12 @@ class PprofHandlerTest {
     Method method = JafarMcpServer.class.getDeclaredMethod("getPprofHelpText");
     method.setAccessible(true);
     String content = (String) method.invoke(server);
-    assertTrue(content.contains("samples"));
-    assertTrue(content.contains("pprof_open"));
+    assertTrue(content.contains("samples[predicate] | operator(args)"), "syntax line missing");
+    assertTrue(content.contains("count()"), "count operator missing");
+    assertTrue(content.contains("groupBy(field, sum(f))"), "groupBy sum variant missing");
+    assertTrue(content.contains("stackprofile([field])"), "stackprofile operator missing");
+    assertTrue(content.contains("pprof_open"), "workflow step missing");
+    assertTrue(content.contains("stackTrace"), "stackTrace field missing");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -1,12 +1,12 @@
 package io.jafar.otelp.shell;
 
-import io.jafar.otelp.shell.otelppath.OtelpPath;
 import io.jafar.otelp.shell.otelppath.OtelpPathEvaluator;
 import io.jafar.otelp.shell.otelppath.OtelpPathParseException;
 import io.jafar.otelp.shell.otelppath.OtelpPathParser;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.List;
 import java.util.Map;
 
@@ -44,7 +44,7 @@ public final class OtelpQueryEvaluator implements QueryEvaluator {
   @Override
   public Object evaluate(Session session, Object query) throws Exception {
     OtelpSession otelpSession = requireOtelpSession(session);
-    OtelpPath.Query otelpQuery = toQuery(query);
+    SamplesPath.Query otelpQuery = toQuery(query);
     return OtelpPathEvaluator.evaluate(otelpSession, otelpQuery);
   }
 
@@ -82,7 +82,7 @@ public final class OtelpQueryEvaluator implements QueryEvaluator {
   public VariableStore.LazyValue createLazyValue(
       Session session, Object query, String queryString) {
     OtelpSession otelpSession = requireOtelpSession(session);
-    OtelpPath.Query otelpQuery = toQuery(query);
+    SamplesPath.Query otelpQuery = toQuery(query);
     return new LazyOtelpValue(otelpSession, otelpQuery, queryString);
   }
 
@@ -95,22 +95,22 @@ public final class OtelpQueryEvaluator implements QueryEvaluator {
     return os;
   }
 
-  private OtelpPath.Query toQuery(Object query) {
-    if (query instanceof OtelpPath.Query q) return q;
-    if (query instanceof String s) return (OtelpPath.Query) parse(s);
+  private SamplesPath.Query toQuery(Object query) {
+    if (query instanceof SamplesPath.Query q) return q;
+    if (query instanceof String s) return (SamplesPath.Query) parse(s);
     throw new IllegalArgumentException(
-        "Expected OtelpPath.Query or String, got: " + query.getClass());
+        "Expected SamplesPath.Query or String, got: " + query.getClass());
   }
 
   /** Lazy value that evaluates an OtelpPath query on demand. */
   private static final class LazyOtelpValue implements VariableStore.LazyValue {
     private final OtelpSession session;
-    private final OtelpPath.Query query;
+    private final SamplesPath.Query query;
     private final String queryString;
     private List<Map<String, Object>> cached;
     private boolean evaluated;
 
-    LazyOtelpValue(OtelpSession session, OtelpPath.Query query, String queryString) {
+    LazyOtelpValue(OtelpSession session, SamplesPath.Query query, String queryString) {
       this.session = session;
       this.query = query;
       this.queryString = queryString;

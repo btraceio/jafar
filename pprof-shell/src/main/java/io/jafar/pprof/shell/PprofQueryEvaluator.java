@@ -1,12 +1,12 @@
 package io.jafar.pprof.shell;
 
-import io.jafar.pprof.shell.pprofpath.PprofPath;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
 import io.jafar.pprof.shell.pprofpath.PprofPathParseException;
 import io.jafar.pprof.shell.pprofpath.PprofPathParser;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.List;
 import java.util.Map;
 
@@ -44,7 +44,7 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
   @Override
   public Object evaluate(Session session, Object query) throws Exception {
     PprofSession pprofSession = requirePprofSession(session);
-    PprofPath.Query pprofQuery = toQuery(query);
+    SamplesPath.Query pprofQuery = toQuery(query);
     return PprofPathEvaluator.evaluate(pprofSession, pprofQuery);
   }
 
@@ -82,7 +82,7 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
   public VariableStore.LazyValue createLazyValue(
       Session session, Object query, String queryString) {
     PprofSession pprofSession = requirePprofSession(session);
-    PprofPath.Query pprofQuery = toQuery(query);
+    SamplesPath.Query pprofQuery = toQuery(query);
     return new LazyPprofValue(pprofSession, pprofQuery, queryString);
   }
 
@@ -95,22 +95,22 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
     return ps;
   }
 
-  private PprofPath.Query toQuery(Object query) {
-    if (query instanceof PprofPath.Query q) return q;
-    if (query instanceof String s) return (PprofPath.Query) parse(s);
+  private SamplesPath.Query toQuery(Object query) {
+    if (query instanceof SamplesPath.Query q) return q;
+    if (query instanceof String s) return (SamplesPath.Query) parse(s);
     throw new IllegalArgumentException(
-        "Expected PprofPath.Query or String, got: " + query.getClass());
+        "Expected SamplesPath.Query or String, got: " + query.getClass());
   }
 
   /** Lazy value that evaluates a pprof query on demand. */
   private static final class LazyPprofValue implements VariableStore.LazyValue {
     private final PprofSession session;
-    private final PprofPath.Query query;
+    private final SamplesPath.Query query;
     private final String queryString;
     private List<Map<String, Object>> cached;
     private boolean evaluated;
 
-    LazyPprofValue(PprofSession session, PprofPath.Query query, String queryString) {
+    LazyPprofValue(PprofSession session, SamplesPath.Query query, String queryString) {
       this.session = session;
       this.query = query;
       this.queryString = queryString;

@@ -14,14 +14,17 @@ import io.jafar.mcp.session.HeapSessionRegistry;
 import io.jafar.mcp.session.OtelpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.otelp.shell.OtelpSession;
 import io.jafar.otelp.shell.otelppath.OtelpPathEvaluator;
 import io.jafar.otelp.shell.otelppath.OtelpPathParseException;
 import io.jafar.otelp.shell.otelppath.OtelpPathParser;
 import io.jafar.parser.api.Values;
 import io.jafar.pprof.shell.PprofProfile;
+import io.jafar.pprof.shell.PprofSession;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
 import io.jafar.pprof.shell.pprofpath.PprofPathParseException;
 import io.jafar.pprof.shell.pprofpath.PprofPathParser;
+import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.modelcontextprotocol.server.McpServer;
@@ -389,7 +392,8 @@ public final class JafarMcpServer {
   }
 
   /**
-   * Creates all tool specifications: 14 JFR tools, 6 heap dump tools, and 9 pprof tools.
+   * Creates all tool specifications: 14 JFR tools, 6 heap dump tools, 9 pprof tools, and 7 otelp
+   * tools.
    *
    * <p>JFR tools: jfr_open, jfr_query, jfr_list_types, jfr_close, jfr_help, jfr_flamegraph,
    * jfr_callgraph, jfr_exceptions, jfr_summary, jfr_hotmethods, jfr_use, jfr_tsa, jfr_diagnose,
@@ -5619,7 +5623,7 @@ public final class JafarMcpServer {
         return errorResult("File not readable: " + path);
       }
 
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.open(profilePath, alias);
+      var info = pprofSessionRegistry.open(profilePath, alias);
       LOG.info("Opened pprof profile {} as session {}", path, info.id());
 
       Map<String, Object> result = info.toMap();
@@ -5658,7 +5662,7 @@ public final class JafarMcpServer {
     String sessionId = (String) args.get("sessionId");
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       pprofSessionRegistry.close(String.valueOf(info.id()));
 
       Map<String, Object> result = new LinkedHashMap<>();
@@ -5726,7 +5730,7 @@ public final class JafarMcpServer {
     }
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       var query = PprofPathParser.parse(queryStr);
       List<Map<String, Object>> rows = PprofPathEvaluator.evaluate(info.session(), query);
 
@@ -5789,7 +5793,7 @@ public final class JafarMcpServer {
     String sessionId = (String) args.get("sessionId");
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       var profile = info.session().getProfile();
 
       Map<String, Object> response = new LinkedHashMap<>();
@@ -5865,7 +5869,7 @@ public final class JafarMcpServer {
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
 
       // Resolve default value field
       String effectiveValue = valueField;
@@ -5974,7 +5978,7 @@ public final class JafarMcpServer {
             : Set.copyOf(resourcesList);
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       var profile = info.session().getProfile();
 
       Map<String, Object> result = new LinkedHashMap<>();
@@ -6028,7 +6032,7 @@ public final class JafarMcpServer {
   }
 
   private Map<String, Object> analyzePprofCpu(
-      PprofSessionRegistry.SessionInfo info, PprofProfile.Profile profile) {
+      SamplingSessionRegistry.SessionInfo<PprofSession> info, PprofProfile.Profile profile) {
     Map<String, Object> cpu = new LinkedHashMap<>();
 
     // Find the first cpu-like sample type
@@ -6072,7 +6076,7 @@ public final class JafarMcpServer {
   }
 
   private Map<String, Object> analyzePprofMemory(
-      PprofSessionRegistry.SessionInfo info, PprofProfile.Profile profile) {
+      SamplingSessionRegistry.SessionInfo<PprofSession> info, PprofProfile.Profile profile) {
     Map<String, Object> mem = new LinkedHashMap<>();
 
     // Look for allocation or in-use memory sample types
@@ -6122,7 +6126,7 @@ public final class JafarMcpServer {
   }
 
   private Map<String, Object> analyzePprofThreads(
-      PprofSessionRegistry.SessionInfo info, PprofProfile.Profile profile) {
+      SamplingSessionRegistry.SessionInfo<PprofSession> info, PprofProfile.Profile profile) {
     Map<String, Object> threads = new LinkedHashMap<>();
 
     // Check if thread label is present by attempting groupBy
@@ -6163,7 +6167,8 @@ public final class JafarMcpServer {
     return threads;
   }
 
-  private Map<String, Object> analyzePprofErrors(PprofSessionRegistry.SessionInfo info) {
+  private Map<String, Object> analyzePprofErrors(
+      SamplingSessionRegistry.SessionInfo<PprofSession> info) {
     Map<String, Object> errors = new LinkedHashMap<>();
     Set<String> errorKeywords =
         Set.of("exception", "error", "panic", "throw", "fail", "fatal", "abort", "crash");
@@ -6309,7 +6314,7 @@ public final class JafarMcpServer {
     String valueField = (String) args.get("valueField");
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       var profile = info.session().getProfile();
 
       // Resolve value field
@@ -6450,7 +6455,7 @@ public final class JafarMcpServer {
     boolean includeInsights = !(args.get("includeInsights") instanceof Boolean b) || b;
 
     try {
-      PprofSessionRegistry.SessionInfo info = pprofSessionRegistry.getOrCurrent(sessionId);
+      var info = pprofSessionRegistry.getOrCurrent(sessionId);
       var profile = info.session().getProfile();
 
       String valueField =
@@ -6788,7 +6793,7 @@ public final class JafarMcpServer {
         return errorResult("File not readable: " + path);
       }
 
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.open(profilePath, alias);
+      var info = otelpSessionRegistry.open(profilePath, alias);
       LOG.info("Opened OTLP profile {} as session {}", path, info.id());
 
       Map<String, Object> result = info.toMap();
@@ -6827,7 +6832,7 @@ public final class JafarMcpServer {
     String sessionId = (String) args.get("sessionId");
 
     try {
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var info = otelpSessionRegistry.getOrCurrent(sessionId);
       otelpSessionRegistry.close(String.valueOf(info.id()));
 
       Map<String, Object> result = new LinkedHashMap<>();
@@ -6895,7 +6900,7 @@ public final class JafarMcpServer {
     }
 
     try {
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var info = otelpSessionRegistry.getOrCurrent(sessionId);
       var query = OtelpPathParser.parse(queryStr);
       List<Map<String, Object>> rows = OtelpPathEvaluator.evaluate(info.session(), query);
 
@@ -6958,7 +6963,7 @@ public final class JafarMcpServer {
     String sessionId = (String) args.get("sessionId");
 
     try {
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var info = otelpSessionRegistry.getOrCurrent(sessionId);
       var data = info.session().getData();
 
       Map<String, Object> response = new LinkedHashMap<>();
@@ -7038,7 +7043,7 @@ public final class JafarMcpServer {
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
 
     try {
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var info = otelpSessionRegistry.getOrCurrent(sessionId);
 
       // Resolve default value field from first profile's sample type
       String effectiveValue = valueField;
@@ -7148,7 +7153,7 @@ public final class JafarMcpServer {
             : Set.copyOf(resourcesList);
 
     try {
-      OtelpSessionRegistry.SessionInfo info = otelpSessionRegistry.getOrCurrent(sessionId);
+      var info = otelpSessionRegistry.getOrCurrent(sessionId);
       var data = info.session().getData();
       String defaultType =
           (!data.profiles().isEmpty() && data.profiles().get(0).sampleType() != null)
@@ -7198,7 +7203,7 @@ public final class JafarMcpServer {
   }
 
   private Map<String, Object> analyzeOtelpCpu(
-      OtelpSessionRegistry.SessionInfo info, String defaultType) {
+      SamplingSessionRegistry.SessionInfo<OtelpSession> info, String defaultType) {
     Map<String, Object> cpu = new LinkedHashMap<>();
 
     if (defaultType == null) {
@@ -7224,7 +7229,8 @@ public final class JafarMcpServer {
     return cpu;
   }
 
-  private Map<String, Object> analyzeOtelpThreads(OtelpSessionRegistry.SessionInfo info) {
+  private Map<String, Object> analyzeOtelpThreads(
+      SamplingSessionRegistry.SessionInfo<OtelpSession> info) {
     Map<String, Object> threads = new LinkedHashMap<>();
 
     try {
@@ -7263,7 +7269,8 @@ public final class JafarMcpServer {
     return threads;
   }
 
-  private Map<String, Object> analyzeOtelpErrors(OtelpSessionRegistry.SessionInfo info) {
+  private Map<String, Object> analyzeOtelpErrors(
+      SamplingSessionRegistry.SessionInfo<OtelpSession> info) {
     Map<String, Object> errors = new LinkedHashMap<>();
     Set<String> errorKeywords =
         Set.of("exception", "error", "panic", "throw", "fail", "fatal", "abort", "crash");

@@ -188,6 +188,16 @@ class PprofHandlerIntegrationTest {
     assertTrue(content.contains("alloc_space"), "Response should reflect requested valueField");
   }
 
+  @Test
+  void flamegraphRejectsFilterWithClosingBracket() throws Exception {
+    invoke("handlePprofOpen", Map.of("path", profilePath.toString()));
+    var result = invoke("handlePprofFlamegraph", Map.of("filter", "cpu > 0] | top(5)"));
+    assertTrue(result.isError(), "Filter containing ']' must be rejected");
+    assertTrue(
+        result.content().get(0).toString().contains("]"),
+        "Error should mention the offending character");
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // pprof_use
   // ─────────────────────────────────────────────────────────────────────────────

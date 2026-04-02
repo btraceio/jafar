@@ -1,5 +1,6 @@
 package io.jafar.otelp.shell;
 
+import io.jafar.shell.core.proto.ProtoUtil;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,12 +19,6 @@ import java.util.List;
  * wrapper).
  */
 public final class OtelpReader {
-
-  // Protobuf wire types
-  private static final int WIRE_VARINT = 0;
-  private static final int WIRE_I64 = 1;
-  private static final int WIRE_LEN = 2;
-  private static final int WIRE_I32 = 5;
 
   // ProfilesData field numbers
   private static final int PROFILES_DATA_RESOURCE_PROFILES = 1;
@@ -92,8 +87,10 @@ public final class OtelpReader {
   private static final int KVU_VALUE = 2;
   private static final int KVU_UNIT_STRINDEX = 3;
 
-  // AnyValue field numbers (oneof — we only read string_value for MVP)
+  // AnyValue field numbers (oneof)
   private static final int ANY_VALUE_STRING_VALUE = 1;
+  // int_value = 2, double_value = 3 (ProtoUtil.WIRE_I64), bool_value = 4
+  private static final int ANY_VALUE_BOOL_VALUE = 4;
 
   private OtelpReader() {}
 
@@ -178,14 +175,14 @@ public final class OtelpReader {
 
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
-      if (wireType == WIRE_LEN) {
-        int len = readSafeLen(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_LEN) {
+        int len = ProtoUtil.readSafeLen(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         int msgEnd = pos + len;
         switch (fieldNumber) {
           case PROFILES_DATA_RESOURCE_PROFILES ->
@@ -195,7 +192,7 @@ public final class OtelpReader {
         }
         pos = msgEnd;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
 
@@ -206,21 +203,21 @@ public final class OtelpReader {
       byte[] buf, int start, int end, List<RawProfile> profiles) throws IOException {
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
-      if (wireType == WIRE_LEN) {
-        int len = readSafeLen(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_LEN) {
+        int len = ProtoUtil.readSafeLen(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         int msgEnd = pos + len;
         if (fieldNumber == RESOURCE_PROFILES_SCOPE_PROFILES) {
           parseScopeProfiles(buf, pos, msgEnd, profiles);
         }
         pos = msgEnd;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
   }
@@ -229,21 +226,21 @@ public final class OtelpReader {
       throws IOException {
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
-      if (wireType == WIRE_LEN) {
-        int len = readSafeLen(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_LEN) {
+        int len = ProtoUtil.readSafeLen(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         int msgEnd = pos + len;
         if (fieldNumber == SCOPE_PROFILES_PROFILES) {
           profiles.add(parseProfile(buf, pos, msgEnd));
         }
         pos = msgEnd;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
   }
@@ -252,15 +249,15 @@ public final class OtelpReader {
     RawProfile profile = new RawProfile();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       switch (wireType) {
-        case WIRE_LEN -> {
-          int len = readSafeLen(buf, pos);
-          pos += varintLen(buf, pos);
+        case ProtoUtil.WIRE_LEN -> {
+          int len = ProtoUtil.readSafeLen(buf, pos);
+          pos += ProtoUtil.varintLen(buf, pos);
           int msgEnd = pos + len;
           switch (fieldNumber) {
             case PROFILE_SAMPLE_TYPE -> profile.sampleType = parseValueType(buf, pos, msgEnd);
@@ -270,23 +267,23 @@ public final class OtelpReader {
           }
           pos = msgEnd;
         }
-        case WIRE_VARINT -> {
-          long value = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+        case ProtoUtil.WIRE_VARINT -> {
+          long value = ProtoUtil.readVarint(buf, pos);
+          pos += ProtoUtil.varintLen(buf, pos);
           switch (fieldNumber) {
             case PROFILE_DURATION_NANO -> profile.durationNano = value;
             case PROFILE_PERIOD -> profile.period = value;
             default -> {} // skip
           }
         }
-        case WIRE_I64 -> {
-          long value = readFixed64(buf, pos);
+        case ProtoUtil.WIRE_I64 -> {
+          long value = ProtoUtil.readFixed64(buf, pos);
           pos += 8;
           if (fieldNumber == PROFILE_TIME_UNIX_NANO) {
             profile.timeUnixNano = value;
           }
         }
-        case WIRE_I32 -> pos += 4;
+        case ProtoUtil.WIRE_I32 -> pos += 4;
         default ->
             throw new IOException("Unknown wire type " + wireType + " at offset " + (pos - 1));
       }
@@ -299,17 +296,17 @@ public final class OtelpReader {
     int unitStrindex = 0;
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         if (fieldNumber == VALUE_TYPE_TYPE_STRINDEX) typeStrindex = (int) value;
         else if (fieldNumber == VALUE_TYPE_UNIT_STRINDEX) unitStrindex = (int) value;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return new RawValueType(typeStrindex, unitStrindex);
@@ -319,72 +316,72 @@ public final class OtelpReader {
     RawSample sample = new RawSample();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       switch (fieldNumber) {
         case SAMPLE_STACK_INDEX -> {
-          if (wireType == WIRE_VARINT) {
-            sample.stackIndex = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            sample.stackIndex = (int) ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case SAMPLE_ATTRIBUTE_INDICES -> {
-          if (wireType == WIRE_VARINT) {
-            sample.attributeIndices.add((int) readVarint(buf, pos));
-            pos += varintLen(buf, pos);
-          } else if (wireType == WIRE_LEN) {
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            sample.attributeIndices.add((int) ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
             // packed int32
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              sample.attributeIndices.add((int) readVarint(buf, pos));
-              pos += varintLen(buf, pos);
+              sample.attributeIndices.add((int) ProtoUtil.readVarint(buf, pos));
+              pos += ProtoUtil.varintLen(buf, pos);
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case SAMPLE_VALUES -> {
-          if (wireType == WIRE_VARINT) {
-            sample.values.add(readVarint(buf, pos));
-            pos += varintLen(buf, pos);
-          } else if (wireType == WIRE_LEN) {
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            sample.values.add(ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
             // packed int64
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              sample.values.add(readVarint(buf, pos));
-              pos += varintLen(buf, pos);
+              sample.values.add(ProtoUtil.readVarint(buf, pos));
+              pos += ProtoUtil.varintLen(buf, pos);
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case SAMPLE_TIMESTAMPS_UNIX_NANO -> {
-          if (wireType == WIRE_I64) {
-            sample.timestampsUnixNano.add(readFixed64(buf, pos));
+          if (wireType == ProtoUtil.WIRE_I64) {
+            sample.timestampsUnixNano.add(ProtoUtil.readFixed64(buf, pos));
             pos += 8;
-          } else if (wireType == WIRE_LEN) {
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
             // packed fixed64
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              sample.timestampsUnixNano.add(readFixed64(buf, pos));
+              sample.timestampsUnixNano.add(ProtoUtil.readFixed64(buf, pos));
               pos += 8;
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
-        default -> pos = skipField(buf, pos, wireType);
+        default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return sample;
@@ -394,14 +391,14 @@ public final class OtelpReader {
       throws IOException {
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
-      if (wireType == WIRE_LEN) {
-        int len = readSafeLen(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_LEN) {
+        int len = ProtoUtil.readSafeLen(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         int msgEnd = pos + len;
         switch (fieldNumber) {
           case DICT_MAPPING_TABLE -> dict.mappingTable.add(parseMapping(buf, pos, msgEnd));
@@ -416,7 +413,7 @@ public final class OtelpReader {
         }
         pos = msgEnd;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
   }
@@ -425,29 +422,29 @@ public final class OtelpReader {
     List<Integer> locationIndices = new ArrayList<>();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       if (fieldNumber == STACK_LOCATION_INDICES) {
-        if (wireType == WIRE_VARINT) {
-          locationIndices.add((int) readVarint(buf, pos));
-          pos += varintLen(buf, pos);
-        } else if (wireType == WIRE_LEN) {
+        if (wireType == ProtoUtil.WIRE_VARINT) {
+          locationIndices.add((int) ProtoUtil.readVarint(buf, pos));
+          pos += ProtoUtil.varintLen(buf, pos);
+        } else if (wireType == ProtoUtil.WIRE_LEN) {
           // packed int32
-          int len = readSafeLen(buf, pos);
-          pos += varintLen(buf, pos);
+          int len = ProtoUtil.readSafeLen(buf, pos);
+          pos += ProtoUtil.varintLen(buf, pos);
           int packEnd = pos + len;
           while (pos < packEnd) {
-            locationIndices.add((int) readVarint(buf, pos));
-            pos += varintLen(buf, pos);
+            locationIndices.add((int) ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
           }
         } else {
-          pos = skipField(buf, pos, wireType);
+          pos = ProtoUtil.skipField(buf, pos, wireType);
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return new RawStack(locationIndices);
@@ -457,55 +454,55 @@ public final class OtelpReader {
     RawLocation loc = new RawLocation();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       switch (fieldNumber) {
         case LOCATION_MAPPING_INDEX -> {
-          if (wireType == WIRE_VARINT) {
-            loc.mappingIndex = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.mappingIndex = (int) ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case LOCATION_ADDRESS -> {
-          if (wireType == WIRE_VARINT) {
-            loc.address = readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.address = ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case LOCATION_LINES -> {
-          if (wireType == WIRE_LEN) {
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             loc.lines.add(parseLine(buf, pos, pos + len));
             pos += len;
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case LOCATION_ATTRIBUTE_INDICES -> {
-          if (wireType == WIRE_VARINT) {
-            loc.attributeIndices.add((int) readVarint(buf, pos));
-            pos += varintLen(buf, pos);
-          } else if (wireType == WIRE_LEN) {
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.attributeIndices.add((int) ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              loc.attributeIndices.add((int) readVarint(buf, pos));
-              pos += varintLen(buf, pos);
+              loc.attributeIndices.add((int) ProtoUtil.readVarint(buf, pos));
+              pos += ProtoUtil.varintLen(buf, pos);
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
-        default -> pos = skipField(buf, pos, wireType);
+        default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return loc;
@@ -517,13 +514,13 @@ public final class OtelpReader {
     long column = 0;
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case LINE_FUNCTION_INDEX -> functionIndex = (int) value;
           case LINE_LINE -> line = value;
@@ -531,7 +528,7 @@ public final class OtelpReader {
           default -> {} // skip
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return new RawLine(functionIndex, line, column);
@@ -541,13 +538,13 @@ public final class OtelpReader {
     RawFunction fn = new RawFunction();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case FUNCTION_NAME_STRINDEX -> fn.nameStrindex = (int) value;
           case FUNCTION_SYSTEM_NAME_STRINDEX -> fn.systemNameStrindex = (int) value;
@@ -556,7 +553,7 @@ public final class OtelpReader {
           default -> {} // skip
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return fn;
@@ -566,13 +563,13 @@ public final class OtelpReader {
     RawMapping m = new RawMapping();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case MAPPING_MEMORY_START -> m.memoryStart = value;
           case MAPPING_MEMORY_LIMIT -> m.memoryLimit = value;
@@ -581,7 +578,7 @@ public final class OtelpReader {
           default -> {} // skip
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return m;
@@ -592,40 +589,40 @@ public final class OtelpReader {
     RawAttribute attr = new RawAttribute();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       switch (fieldNumber) {
         case KVU_KEY_STRINDEX -> {
-          if (wireType == WIRE_VARINT) {
-            attr.keyStrindex = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            attr.keyStrindex = (int) ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case KVU_VALUE -> {
-          if (wireType == WIRE_LEN) {
-            int len = readSafeLen(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             // AnyValue — extract string_value if present (field 1 of AnyValue)
             attr.value = parseAnyValueAsString(buf, pos, pos + len);
             pos += len;
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case KVU_UNIT_STRINDEX -> {
-          if (wireType == WIRE_VARINT) {
-            attr.unitStrindex = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            attr.unitStrindex = (int) ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
-        default -> pos = skipField(buf, pos, wireType);
+        default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return attr;
@@ -634,25 +631,34 @@ public final class OtelpReader {
   private static String parseAnyValueAsString(byte[] buf, int start, int end) throws IOException {
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
-      if (wireType == WIRE_LEN) {
-        int len = readSafeLen(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_LEN) {
+        int len = ProtoUtil.readSafeLen(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         if (fieldNumber == ANY_VALUE_STRING_VALUE) {
           return new String(buf, pos, len, StandardCharsets.UTF_8);
         }
         pos += len;
-      } else if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
-        // bool_value (field 4), int_value (field 2), etc. — convert to string
+      } else if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
+        if (fieldNumber == ANY_VALUE_BOOL_VALUE) {
+          // bool_value: map to boolean string
+          return value != 0 ? "true" : "false";
+        }
+        // int_value (field 2) or any other varint field
         return String.valueOf(value);
+      } else if (wireType == ProtoUtil.WIRE_I64) {
+        // double_value (field 3): encoded as fixed64 IEEE 754
+        long bits = ProtoUtil.readFixed64(buf, pos);
+        pos += 8;
+        return String.valueOf(Double.longBitsToDouble(bits));
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return "";
@@ -753,80 +759,6 @@ public final class OtelpReader {
     }
 
     return new OtelpProfile.ProfilesData(List.copyOf(profiles), dictionary);
-  }
-
-  // ---- Varint and fixed helpers ----
-
-  /** Reads a varint (up to 64 bits) from {@code buf[pos]}. */
-  static long readVarint(byte[] buf, int pos) throws IOException {
-    long result = 0;
-    int shift = 0;
-    while (true) {
-      if (pos >= buf.length)
-        throw new IOException("Truncated protobuf: varint extends past buffer end");
-      byte b = buf[pos++];
-      result |= (long) (b & 0x7F) << shift;
-      if ((b & 0x80) == 0) break;
-      shift += 7;
-      if (shift > 63) throw new IOException("Malformed protobuf: varint exceeds 64 bits");
-    }
-    return result;
-  }
-
-  /** Reads a varint length field and validates it fits in a non-negative {@code int}. */
-  private static int readSafeLen(byte[] buf, int pos) throws IOException {
-    long raw = readVarint(buf, pos);
-    if (raw < 0 || raw > Integer.MAX_VALUE) {
-      throw new IOException("Protobuf field length out of range: " + raw);
-    }
-    return (int) raw;
-  }
-
-  /** Returns the byte length of the varint at {@code buf[pos]}. */
-  static int varintLen(byte[] buf, int pos) throws IOException {
-    int len = 1;
-    while (true) {
-      if (pos >= buf.length)
-        throw new IOException("Truncated protobuf: varint extends past buffer end");
-      if ((buf[pos++] & 0x80) == 0) break;
-      len++;
-      if (len > 10) throw new IOException("Malformed protobuf: varint exceeds 64 bits");
-    }
-    return len;
-  }
-
-  /** Reads a little-endian 64-bit fixed value from {@code buf[pos]}. */
-  static long readFixed64(byte[] buf, int pos) throws IOException {
-    if (pos + 8 > buf.length)
-      throw new IOException("Truncated protobuf: fixed64 extends past buffer end");
-    long result = 0;
-    for (int i = 0; i < 8; i++) {
-      result |= (long) (buf[pos + i] & 0xFF) << (8 * i);
-    }
-    return result;
-  }
-
-  /** Skips a field of the given wire type; returns the new position after the field. */
-  private static int skipField(byte[] buf, int pos, int wireType) throws IOException {
-    return switch (wireType) {
-      case WIRE_VARINT -> pos + varintLen(buf, pos);
-      case WIRE_I64 -> {
-        if (pos + 8 > buf.length)
-          throw new IOException("Truncated protobuf: fixed64 extends past buffer end");
-        yield pos + 8;
-      }
-      case WIRE_LEN -> {
-        int lenBytes = varintLen(buf, pos);
-        int len = readSafeLen(buf, pos);
-        yield pos + lenBytes + len;
-      }
-      case WIRE_I32 -> {
-        if (pos + 4 > buf.length)
-          throw new IOException("Truncated protobuf: fixed32 extends past buffer end");
-        yield pos + 4;
-      }
-      default -> throw new IOException("Cannot skip unknown wire type " + wireType);
-    };
   }
 
   /** Resolves a string table index (0 = empty string). */

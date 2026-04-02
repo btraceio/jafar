@@ -2,6 +2,7 @@ package io.jafar.otelp.shell.otelppath;
 
 import io.jafar.otelp.shell.OtelpProfile;
 import io.jafar.otelp.shell.OtelpSession;
+import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -14,7 +15,7 @@ import java.util.WeakHashMap;
 import java.util.regex.Pattern;
 
 /**
- * Evaluates {@link OtelpPath.Query} objects against an {@link OtelpSession}.
+ * Evaluates {@link SamplesPath.Query} objects against an {@link OtelpSession}.
  *
  * <p>Each OTLP sample is converted to a row map with the following fields:
  *
@@ -29,7 +30,7 @@ import java.util.regex.Pattern;
 public final class OtelpPathEvaluator {
 
   // Striped weak cache: 16 independent WeakHashMap buckets, each with its own lock.
-  // Entries are collected when the Query holding the pattern string is GC'd.
+  // Entries are collected when the pattern string key becomes only weakly reachable.
   private static final int STRIPE_COUNT = 16;
 
   @SuppressWarnings("unchecked")
@@ -48,7 +49,7 @@ public final class OtelpPathEvaluator {
     }
   }
 
-  public static List<Map<String, Object>> evaluate(OtelpSession session, OtelpPath.Query query) {
+  public static List<Map<String, Object>> evaluate(OtelpSession session, SamplesPath.Query query) {
     OtelpProfile.ProfilesData data = session.getData();
     List<Map<String, Object>> rows = buildRows(data);
     rows = applyPredicates(rows, query.predicates());
@@ -132,29 +133,29 @@ public final class OtelpPathEvaluator {
   // ---- Predicate evaluation ----
 
   private static List<Map<String, Object>> applyPredicates(
-      List<Map<String, Object>> rows, List<OtelpPath.Predicate> predicates) {
+      List<Map<String, Object>> rows, List<SamplesPath.Predicate> predicates) {
     if (predicates.isEmpty()) return rows;
     return rows.stream()
         .filter(row -> predicates.stream().allMatch(p -> matchPredicate(row, p)))
         .toList();
   }
 
-  private static boolean matchPredicate(Map<String, Object> row, OtelpPath.Predicate predicate) {
+  private static boolean matchPredicate(Map<String, Object> row, SamplesPath.Predicate predicate) {
     return switch (predicate) {
-      case OtelpPath.FieldPredicate fp -> matchField(row, fp);
-      case OtelpPath.LogicalPredicate lp ->
+      case SamplesPath.FieldPredicate fp -> matchField(row, fp);
+      case SamplesPath.LogicalPredicate lp ->
           lp.and()
               ? matchPredicate(row, lp.left()) && matchPredicate(row, lp.right())
               : matchPredicate(row, lp.left()) || matchPredicate(row, lp.right());
     };
   }
 
-  private static boolean matchField(Map<String, Object> row, OtelpPath.FieldPredicate fp) {
+  private static boolean matchField(Map<String, Object> row, SamplesPath.FieldPredicate fp) {
     Object value = resolveField(row, fp.field());
     if (value == null) return false;
     Object literal = fp.literal();
 
-    if (fp.op() == OtelpPath.Op.REGEX) {
+    if (fp.op() == SamplesPath.Op.REGEX) {
       String sv = value.toString();
       String pattern = literal.toString();
       return cachedPattern(pattern).matcher(sv).find();
@@ -228,34 +229,34 @@ public final class OtelpPathEvaluator {
 
   private static List<Map<String, Object>> applyPipeline(
       List<Map<String, Object>> rows,
-      List<OtelpPath.PipelineOp> pipeline,
+      List<SamplesPath.PipelineOp> pipeline,
       String defaultValueField) {
-    for (OtelpPath.PipelineOp op : pipeline) {
+    for (SamplesPath.PipelineOp op : pipeline) {
       rows = applyOp(rows, op, defaultValueField);
     }
     return rows;
   }
 
   private static List<Map<String, Object>> applyOp(
-      List<Map<String, Object>> rows, OtelpPath.PipelineOp op, String defaultValueField) {
+      List<Map<String, Object>> rows, SamplesPath.PipelineOp op, String defaultValueField) {
     return switch (op) {
-      case OtelpPath.CountOp c -> List.of(Map.of("count", rows.size()));
-      case OtelpPath.TopOp top -> applyTop(rows, top, defaultValueField);
-      case OtelpPath.GroupByOp gb -> applyGroupBy(rows, gb);
-      case OtelpPath.StatsOp s -> applyStats(rows, s.valueField());
-      case OtelpPath.HeadOp h -> rows.subList(0, Math.min(h.n(), rows.size()));
-      case OtelpPath.TailOp t -> rows.subList(Math.max(0, rows.size() - t.n()), rows.size());
-      case OtelpPath.FilterOp f -> applyPredicates(rows, f.predicates());
-      case OtelpPath.SelectOp s -> applySelect(rows, s.fields());
-      case OtelpPath.SortByOp s -> applySort(rows, s.field(), s.ascending());
-      case OtelpPath.StackProfileOp sp ->
+      case SamplesPath.CountOp c -> List.of(Map.of("count", rows.size()));
+      case SamplesPath.TopOp top -> applyTop(rows, top, defaultValueField);
+      case SamplesPath.GroupByOp gb -> applyGroupBy(rows, gb);
+      case SamplesPath.StatsOp s -> applyStats(rows, s.valueField());
+      case SamplesPath.HeadOp h -> rows.subList(0, Math.min(h.n(), rows.size()));
+      case SamplesPath.TailOp t -> rows.subList(Math.max(0, rows.size() - t.n()), rows.size());
+      case SamplesPath.FilterOp f -> applyPredicates(rows, f.predicates());
+      case SamplesPath.SelectOp s -> applySelect(rows, s.fields());
+      case SamplesPath.SortByOp s -> applySort(rows, s.field(), s.ascending());
+      case SamplesPath.StackProfileOp sp ->
           applyStackProfile(rows, sp.valueField(), defaultValueField);
-      case OtelpPath.DistinctOp d -> applyDistinct(rows, d.field());
+      case SamplesPath.DistinctOp d -> applyDistinct(rows, d.field());
     };
   }
 
   private static List<Map<String, Object>> applyTop(
-      List<Map<String, Object>> rows, OtelpPath.TopOp top, String defaultValueField) {
+      List<Map<String, Object>> rows, SamplesPath.TopOp top, String defaultValueField) {
     String field = top.byField() != null ? top.byField() : defaultValueField;
     List<Map<String, Object>> sorted = applySort(rows, field, top.ascending());
     return sorted.subList(0, Math.min(top.n(), sorted.size()));
@@ -273,7 +274,7 @@ public final class OtelpPathEvaluator {
   }
 
   private static List<Map<String, Object>> applyGroupBy(
-      List<Map<String, Object>> rows, OtelpPath.GroupByOp gb) {
+      List<Map<String, Object>> rows, SamplesPath.GroupByOp gb) {
     Map<String, Long> groups = new LinkedHashMap<>();
     for (Map<String, Object> row : rows) {
       Object key = resolveField(row, gb.keyField());
@@ -393,10 +394,10 @@ public final class OtelpPathEvaluator {
       r.put(effectiveField != null ? effectiveField : "count", entry.getValue());
       result.add(r);
     }
+    String sortKey = effectiveField != null ? effectiveField : "count";
     result.sort(
         Comparator.comparingLong(
-                (Map<String, Object> r) ->
-                    (Long) r.get(effectiveField != null ? effectiveField : "count"))
+                (Map<String, Object> r) -> r.get(sortKey) instanceof Number n ? n.longValue() : 0L)
             .reversed());
     return result;
   }
