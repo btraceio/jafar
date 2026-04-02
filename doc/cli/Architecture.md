@@ -380,7 +380,7 @@ classDiagram
         EVENTS
         METADATA
         CHUNKS
-        CP
+        CONSTANTS
     }
 
     class Predicate {

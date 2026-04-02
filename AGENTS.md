@@ -40,7 +40,9 @@ The project is organized as a multi-module Gradle build with the following struc
 - **jfr-mcp/**: MCP (Model Context Protocol) server enabling AI agents to analyze JFR recordings
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes)
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
-- **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump) via ServiceLoader
+- **pprof-shell/**: pprof profile analysis CLI with PprofPath query language and tab completion
+- **otelp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtelpPath query language and tab completion
+- **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otelp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 
 Key architectural components:
@@ -53,7 +55,8 @@ Key architectural components:
 ## Build Commands
 
 ### Prerequisites
-- Java 21+
+- Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otelp-shell`)
+- Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
 - Git LFS (for test recordings): `git lfs pull`
 
 ### Essential Commands
@@ -186,7 +189,7 @@ GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationTo
 ## Development Notes
 
 ### Coding Style & Naming Conventions
-- Language: Java 21 (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
+- Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
 - Keep public API minimal; prefer package-private for internals. Use meaningful names and final where sensible.
 
@@ -321,7 +324,13 @@ jfr> echo "Top thread: ${hot[0].key}"
 ```
 
 ### MCP Server (`jfr-mcp`)
-The `jfr-mcp` module exposes JFR analysis capabilities as an MCP (Model Context Protocol) server, allowing AI agents (Claude, etc.) to analyze JFR recordings. It provides tools: `jfr_open`, `jfr_close`, `jfr_list_types`, `jfr_query`, `jfr_help`, `jfr_summary`, `jfr_diagnose`, `jfr_flamegraph`, `jfr_callgraph`, `jfr_hotmethods`, `jfr_exceptions`, `jfr_use`, `jfr_tsa`.
+The `jfr-mcp` module exposes analysis capabilities as an MCP (Model Context Protocol) server, allowing AI agents (Claude, etc.) to analyze JFR recordings, pprof profiles, and OTLP profiles.
+
+JFR tools: `jfr_open`, `jfr_close`, `jfr_list_types`, `jfr_query`, `jfr_help`, `jfr_summary`, `jfr_diagnose`, `jfr_flamegraph`, `jfr_callgraph`, `jfr_hotmethods`, `jfr_exceptions`, `jfr_use`, `jfr_tsa`, `jfr_stackprofile`.
+
+pprof tools: `pprof_open`, `pprof_close`, `pprof_query`, `pprof_summary`, `pprof_flamegraph`, `pprof_use`, `pprof_hotmethods`, `pprof_tsa`, `pprof_help`.
+
+OTLP profiling tools: `otelp_open`, `otelp_close`, `otelp_query`, `otelp_summary`, `otelp_flamegraph`, `otelp_use`, `otelp_help`.
 
 Run the MCP server:
 ```bash
