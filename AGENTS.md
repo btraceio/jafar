@@ -41,8 +41,8 @@ The project is organized as a multi-module Gradle build with the following struc
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes)
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **pprof-shell/**: pprof profile analysis CLI with PprofPath query language and tab completion
-- **otelp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtelpPath query language and tab completion
-- **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otelp) via ServiceLoader
+- **otlp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtlpPath query language and tab completion
+- **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 
 Key architectural components:
@@ -55,7 +55,7 @@ Key architectural components:
 ## Build Commands
 
 ### Prerequisites
-- Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otelp-shell`)
+- Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otlp-shell`)
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
 - Git LFS (for test recordings): `git lfs pull`
 
@@ -330,7 +330,7 @@ JFR tools: `jfr_open`, `jfr_close`, `jfr_list_types`, `jfr_query`, `jfr_help`, `
 
 pprof tools: `pprof_open`, `pprof_close`, `pprof_query`, `pprof_summary`, `pprof_flamegraph`, `pprof_use`, `pprof_hotmethods`, `pprof_tsa`, `pprof_help`.
 
-OTLP profiling tools: `otelp_open`, `otelp_close`, `otelp_query`, `otelp_summary`, `otelp_flamegraph`, `otelp_use`, `otelp_help`.
+OTLP profiling tools: `otlp_open`, `otlp_close`, `otlp_query`, `otlp_summary`, `otlp_flamegraph`, `otlp_use`, `otlp_help`.
 
 Run the MCP server:
 ```bash

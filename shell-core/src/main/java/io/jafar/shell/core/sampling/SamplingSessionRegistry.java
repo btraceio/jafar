@@ -57,7 +57,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
   protected abstract S openSession(Path path) throws IOException;
 
   /**
-   * Returns the human-readable format name used in log and error messages (e.g. "pprof", "otelp").
+   * Returns the human-readable format name used in log and error messages (e.g. "pprof", "otlp").
    */
   protected abstract String formatName();
 
