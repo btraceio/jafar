@@ -49,6 +49,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.server.Server;
@@ -399,6 +400,9 @@ public final class JafarMcpServer {
    *
    * <p>pprof tools: pprof_open, pprof_close, pprof_query, pprof_summary, pprof_flamegraph,
    * pprof_use, pprof_hotmethods, pprof_tsa, pprof_help.
+   *
+   * <p>otelp tools: otelp_open, otelp_close, otelp_query, otelp_summary, otelp_flamegraph,
+   * otelp_use, otelp_help.
    */
   private List<McpServerFeatures.SyncToolSpecification> createToolSpecifications() {
     List<McpServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
@@ -5795,7 +5799,7 @@ public final class JafarMcpServer {
 
       // Top functions by first value type
       if (!profile.sampleTypes().isEmpty()) {
-        String firstType = profile.sampleTypes().get(0).type();
+        String firstType = requireSafeFieldName(profile.sampleTypes().get(0).type(), "sampleType");
         try {
           var query = PprofPathParser.parse("samples | top(10, " + firstType + ")");
           List<Map<String, Object>> topFns = PprofPathEvaluator.evaluate(info.session(), query);
@@ -5875,6 +5879,8 @@ public final class JafarMcpServer {
       if (effectiveValue == null) {
         return errorResult("No sample types found in profile");
       }
+
+      requireSafeFieldName(effectiveValue, "valueField");
 
       if (filter != null && filter.contains("]")) {
         return errorResult("Invalid filter: unexpected ']' in filter expression");
@@ -6038,6 +6044,7 @@ public final class JafarMcpServer {
       return cpu;
     }
 
+    requireSafeFieldName(cpuType, "sampleType");
     cpu.put("sampleType", cpuType);
     try {
       var statsQuery = PprofPathParser.parse("samples | stats(" + cpuType + ")");
@@ -6087,6 +6094,7 @@ public final class JafarMcpServer {
     for (String memType : memTypes) {
       Map<String, Object> typeMetrics = new LinkedHashMap<>();
       try {
+        requireSafeFieldName(memType, "sampleType");
         var statsQuery = PprofPathParser.parse("samples | stats(" + memType + ")");
         List<Map<String, Object>> statsRows =
             PprofPathEvaluator.evaluate(info.session(), statsQuery);
@@ -6314,6 +6322,8 @@ public final class JafarMcpServer {
         return errorResult("No sample types found in profile");
       }
 
+      requireSafeFieldName(effectiveField, "valueField");
+
       Map<String, Object> response = new LinkedHashMap<>();
       response.put("sessionId", info.id());
       response.put("valueField", effectiveField);
@@ -6536,7 +6546,8 @@ public final class JafarMcpServer {
 
           // Top functions for this thread
           try {
-            String escapedThread = threadName.replace("'", "\\'");
+            String escapedThread = threadName.replace("\\", "\\\\").replace("'", "\\'");
+            requireSafeFieldName(valueField, "valueField");
             var tfq =
                 PprofPathParser.parse(
                     "samples[thread='" + escapedThread + "'] | top(5, " + valueField + ")");
@@ -6961,7 +6972,8 @@ public final class JafarMcpServer {
         var sampleType = firstProfile.sampleType();
         if (sampleType != null && !sampleType.type().isEmpty()) {
           try {
-            var query = OtelpPathParser.parse("samples | top(10, " + sampleType.type() + ")");
+            String stType = requireSafeFieldName(sampleType.type(), "sampleType");
+            var query = OtelpPathParser.parse("samples | top(10, " + stType + ")");
             List<Map<String, Object>> topFns = OtelpPathEvaluator.evaluate(info.session(), query);
             response.put("topFunctions", topFns);
           } catch (Exception e) {
@@ -7043,6 +7055,8 @@ public final class JafarMcpServer {
       if (effectiveValue == null) {
         return errorResult("No sample types found in profile");
       }
+
+      requireSafeFieldName(effectiveValue, "valueField");
 
       if (filter != null && filter.contains("]")) {
         return errorResult("Invalid filter: unexpected ']' in filter expression");
@@ -7192,6 +7206,7 @@ public final class JafarMcpServer {
       return cpu;
     }
 
+    requireSafeFieldName(defaultType, "sampleType");
     cpu.put("sampleType", defaultType);
     try {
       var statsQuery = OtelpPathParser.parse("samples | stats(" + defaultType + ")");
@@ -7427,6 +7442,19 @@ public final class JafarMcpServer {
   // ─────────────────────────────────────────────────────────────────────────────
   // Utility methods
   // ─────────────────────────────────────────────────────────────────────────────
+
+  private static final Pattern SAFE_FIELD_NAME = Pattern.compile("^[a-zA-Z0-9_.:-]+$");
+
+  /** Validates that a field name is safe to interpolate into a query string. */
+  private static String requireSafeFieldName(String name, String paramName) {
+    if (name == null || name.isBlank()) {
+      throw new IllegalArgumentException(paramName + " must not be blank");
+    }
+    if (!SAFE_FIELD_NAME.matcher(name).matches()) {
+      throw new IllegalArgumentException("Invalid " + paramName + ": '" + name + "'");
+    }
+    return name;
+  }
 
   private CallToolResult successResult(Map<String, Object> data) {
     try {

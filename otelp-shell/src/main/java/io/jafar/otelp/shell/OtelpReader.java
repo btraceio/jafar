@@ -184,7 +184,7 @@ public final class OtelpReader {
       int wireType = (int) (tag & 7);
 
       if (wireType == WIRE_LEN) {
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         pos += varintLen(buf, pos);
         int msgEnd = pos + len;
         switch (fieldNumber) {
@@ -212,7 +212,7 @@ public final class OtelpReader {
       int wireType = (int) (tag & 7);
 
       if (wireType == WIRE_LEN) {
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         pos += varintLen(buf, pos);
         int msgEnd = pos + len;
         if (fieldNumber == RESOURCE_PROFILES_SCOPE_PROFILES) {
@@ -235,7 +235,7 @@ public final class OtelpReader {
       int wireType = (int) (tag & 7);
 
       if (wireType == WIRE_LEN) {
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         pos += varintLen(buf, pos);
         int msgEnd = pos + len;
         if (fieldNumber == SCOPE_PROFILES_PROFILES) {
@@ -259,7 +259,7 @@ public final class OtelpReader {
 
       switch (wireType) {
         case WIRE_LEN -> {
-          int len = (int) readVarint(buf, pos);
+          int len = readSafeLen(buf, pos);
           pos += varintLen(buf, pos);
           int msgEnd = pos + len;
           switch (fieldNumber) {
@@ -339,7 +339,7 @@ public final class OtelpReader {
             pos += varintLen(buf, pos);
           } else if (wireType == WIRE_LEN) {
             // packed int32
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -356,7 +356,7 @@ public final class OtelpReader {
             pos += varintLen(buf, pos);
           } else if (wireType == WIRE_LEN) {
             // packed int64
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -373,7 +373,7 @@ public final class OtelpReader {
             pos += 8;
           } else if (wireType == WIRE_LEN) {
             // packed fixed64
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -400,7 +400,7 @@ public final class OtelpReader {
       int wireType = (int) (tag & 7);
 
       if (wireType == WIRE_LEN) {
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         pos += varintLen(buf, pos);
         int msgEnd = pos + len;
         switch (fieldNumber) {
@@ -436,7 +436,7 @@ public final class OtelpReader {
           pos += varintLen(buf, pos);
         } else if (wireType == WIRE_LEN) {
           // packed int32
-          int len = (int) readVarint(buf, pos);
+          int len = readSafeLen(buf, pos);
           pos += varintLen(buf, pos);
           int packEnd = pos + len;
           while (pos < packEnd) {
@@ -481,7 +481,7 @@ public final class OtelpReader {
         }
         case LOCATION_LINES -> {
           if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             loc.lines.add(parseLine(buf, pos, pos + len));
             pos += len;
@@ -494,7 +494,7 @@ public final class OtelpReader {
             loc.attributeIndices.add((int) readVarint(buf, pos));
             pos += varintLen(buf, pos);
           } else if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -608,7 +608,7 @@ public final class OtelpReader {
         }
         case KVU_VALUE -> {
           if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             // AnyValue — extract string_value if present (field 1 of AnyValue)
             attr.value = parseAnyValueAsString(buf, pos, pos + len);
@@ -640,7 +640,7 @@ public final class OtelpReader {
       int wireType = (int) (tag & 7);
 
       if (wireType == WIRE_LEN) {
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         pos += varintLen(buf, pos);
         if (fieldNumber == ANY_VALUE_STRING_VALUE) {
           return new String(buf, pos, len, StandardCharsets.UTF_8);
@@ -773,6 +773,15 @@ public final class OtelpReader {
     return result;
   }
 
+  /** Reads a varint length field and validates it fits in a non-negative {@code int}. */
+  private static int readSafeLen(byte[] buf, int pos) throws IOException {
+    long raw = readVarint(buf, pos);
+    if (raw < 0 || raw > Integer.MAX_VALUE) {
+      throw new IOException("Protobuf field length out of range: " + raw);
+    }
+    return (int) raw;
+  }
+
   /** Returns the byte length of the varint at {@code buf[pos]}. */
   static int varintLen(byte[] buf, int pos) throws IOException {
     int len = 1;
@@ -808,7 +817,7 @@ public final class OtelpReader {
       }
       case WIRE_LEN -> {
         int lenBytes = varintLen(buf, pos);
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         yield pos + lenBytes + len;
       }
       case WIRE_I32 -> {

@@ -155,6 +155,19 @@ public final class PprofPathEvaluator {
 
     // Numeric comparison
     if (value instanceof Number nv && literal instanceof Number nl) {
+      if (nv instanceof Long && nl instanceof Long) {
+        long lv = nv.longValue();
+        long rv = nl.longValue();
+        return switch (fp.op()) {
+          case EQ -> lv == rv;
+          case NE -> lv != rv;
+          case GT -> lv > rv;
+          case GE -> lv >= rv;
+          case LT -> lv < rv;
+          case LE -> lv <= rv;
+          default -> false;
+        };
+      }
       double lv = nv.doubleValue();
       double rv = nl.doubleValue();
       return switch (fp.op()) {
@@ -283,23 +296,28 @@ public final class PprofPathEvaluator {
       result.add(row);
     }
     result.sort(
-        Comparator.comparingLong((Map<String, Object> r) -> (Long) r.get(aggLabel)).reversed());
+        Comparator.comparingLong(
+                (Map<String, Object> r) -> {
+                  Object v = r.get(aggLabel);
+                  return v instanceof Number n ? n.longValue() : 0L;
+                })
+            .reversed());
     return result;
   }
 
   private static List<Map<String, Object>> applyStats(
       List<Map<String, Object>> rows, String field) {
     long count = 0;
-    double sum = 0;
-    double min = Double.MAX_VALUE;
-    double max = -Double.MAX_VALUE;
+    long sum = 0;
+    long min = Long.MAX_VALUE;
+    long max = Long.MIN_VALUE;
     for (Map<String, Object> row : rows) {
       Object v = resolveField(row, field);
       if (v instanceof Number n) {
-        double d = n.doubleValue();
-        sum += d;
-        if (d < min) min = d;
-        if (d > max) max = d;
+        long lv = n.longValue();
+        sum += lv;
+        if (lv < min) min = lv;
+        if (lv > max) max = lv;
         count++;
       }
     }
@@ -307,10 +325,10 @@ public final class PprofPathEvaluator {
     Map<String, Object> stats = new LinkedHashMap<>();
     stats.put("field", field);
     stats.put("count", count);
-    stats.put("sum", (long) sum);
-    stats.put("min", (long) min);
-    stats.put("max", (long) max);
-    stats.put("avg", (long) (sum / count));
+    stats.put("sum", sum);
+    stats.put("min", min);
+    stats.put("max", max);
+    stats.put("avg", Math.round((double) sum / count));
     return List.of(stats);
   }
 

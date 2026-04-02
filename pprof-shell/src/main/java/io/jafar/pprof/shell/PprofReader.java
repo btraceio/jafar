@@ -155,7 +155,7 @@ public final class PprofReader {
 
       switch (wireType) {
         case WIRE_LEN -> {
-          int len = (int) readVarint(buf, pos);
+          int len = readSafeLen(buf, pos);
           pos += varintLen(buf, pos);
           int msgEnd = pos + len;
           switch (fieldNumber) {
@@ -331,7 +331,7 @@ public final class PprofReader {
             sample.locationIds.add(readVarint(buf, pos));
             pos += varintLen(buf, pos);
           } else if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -347,7 +347,7 @@ public final class PprofReader {
             sample.values.add(readVarint(buf, pos));
             pos += varintLen(buf, pos);
           } else if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
@@ -360,7 +360,7 @@ public final class PprofReader {
         }
         case SAMPLE_LABEL -> {
           if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             sample.labels.add(parseLabel(buf, pos, pos + len));
             pos += len;
@@ -408,20 +408,32 @@ public final class PprofReader {
       int wireType = (int) (tag & 7);
       switch (fieldNumber) {
         case LOCATION_ID -> {
-          loc.id = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == WIRE_VARINT) {
+            loc.id = readVarint(buf, pos);
+            pos += varintLen(buf, pos);
+          } else {
+            pos = skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_MAPPING_ID -> {
-          loc.mappingId = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == WIRE_VARINT) {
+            loc.mappingId = readVarint(buf, pos);
+            pos += varintLen(buf, pos);
+          } else {
+            pos = skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_ADDRESS -> {
-          loc.address = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == WIRE_VARINT) {
+            loc.address = readVarint(buf, pos);
+            pos += varintLen(buf, pos);
+          } else {
+            pos = skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_LINE -> {
           if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
+            int len = readSafeLen(buf, pos);
             pos += varintLen(buf, pos);
             loc.lines.add(parseLine(buf, pos, pos + len));
             pos += len;
@@ -430,8 +442,12 @@ public final class PprofReader {
           }
         }
         case LOCATION_IS_FOLDED -> {
-          loc.isFolded = readVarint(buf, pos) != 0;
-          pos += varintLen(buf, pos);
+          if (wireType == WIRE_VARINT) {
+            loc.isFolded = readVarint(buf, pos) != 0;
+            pos += varintLen(buf, pos);
+          } else {
+            pos = skipField(buf, pos, wireType);
+          }
         }
         default -> pos = skipField(buf, pos, wireType);
       }
@@ -528,6 +544,15 @@ public final class PprofReader {
     return result;
   }
 
+  /** Reads a varint length field and validates it fits in a non-negative {@code int}. */
+  private static int readSafeLen(byte[] buf, int pos) throws IOException {
+    long raw = readVarint(buf, pos);
+    if (raw < 0 || raw > Integer.MAX_VALUE) {
+      throw new IOException("Protobuf field length out of range: " + raw);
+    }
+    return (int) raw;
+  }
+
   /** Returns the byte length of the varint at {@code buf[pos]}. */
   static int varintLen(byte[] buf, int pos) throws IOException {
     int len = 1;
@@ -554,7 +579,7 @@ public final class PprofReader {
       }
       case WIRE_LEN -> {
         int lenBytes = varintLen(buf, pos);
-        int len = (int) readVarint(buf, pos);
+        int len = readSafeLen(buf, pos);
         yield pos + lenBytes + len;
       }
       case WIRE_I32 -> {

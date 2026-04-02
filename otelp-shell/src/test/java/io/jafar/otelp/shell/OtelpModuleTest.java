@@ -66,6 +66,13 @@ class OtelpModuleTest {
   }
 
   @Test
+  void cannotHandleOtlpExtensionWithWrongContent() throws Exception {
+    Path file = tempDir.resolve("truncated.otlp");
+    Files.write(file, new byte[] {0x00, 0x01, 0x02, 0x03, 0x04});
+    assertFalse(module.canHandle(file), "should reject .otlp file with wrong proto header");
+  }
+
+  @Test
   void cannotHandleEmptyFile() throws Exception {
     Path file = tempDir.resolve("empty.otlp");
     Files.write(file, new byte[0]);

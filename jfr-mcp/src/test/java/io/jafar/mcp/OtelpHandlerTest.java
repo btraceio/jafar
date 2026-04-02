@@ -126,8 +126,12 @@ class OtelpHandlerTest {
     Method method = JafarMcpServer.class.getDeclaredMethod("getOtelpHelpText");
     method.setAccessible(true);
     String content = (String) method.invoke(server);
-    assertTrue(content.contains("samples"));
-    assertTrue(content.contains("otelp_open"));
+    assertTrue(content.contains("samples[predicate] | operator(args)"), "syntax line missing");
+    assertTrue(content.contains("count()"), "count operator missing");
+    assertTrue(content.contains("groupBy(field, sum(f))"), "groupBy sum variant missing");
+    assertTrue(content.contains("stackprofile([field])"), "stackprofile operator missing");
+    assertTrue(content.contains("otelp_open"), "workflow step missing");
+    assertTrue(content.contains("stackTrace"), "stackTrace field missing");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

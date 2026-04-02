@@ -73,7 +73,7 @@ public final class OtelpModule implements ShellModule {
       buf.flip();
       byte firstByte = buf.get(0);
       boolean validProto = firstByte == PROTO_FIELD1_LEN || firstByte == PROTO_FIELD2_LEN;
-      return extMatch || validProto;
+      return extMatch && validProto;
     } catch (IOException e) {
       LOG.debug("Failed to check content for {}: {}", path, e.getMessage());
       return extMatch;
