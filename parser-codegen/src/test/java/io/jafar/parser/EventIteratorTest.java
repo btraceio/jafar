@@ -316,6 +316,43 @@ public class EventIteratorTest {
     }
   }
 
+  /**
+   * Regression test for: EventIterator returning null for constant-pool-backed fields.
+   *
+   * <p>Before the fix, fields like {@code eventThread} and {@code stackTrace} appeared as raw
+   * {@code Long} CP pointers (or null) in the event value map instead of resolved Maps. The fix
+   * makes the untyped codegen emit a lazy {@link ComplexType} for CP-typed fields that resolves on
+   * demand via a pool-level cache.
+   */
+  @Test
+  void testCpBackedFieldsAreNotNull() throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
+      assertTrue(it.hasNext());
+      JafarRecordedEvent event = it.next();
+      Map<String, Object> value = event.value();
+
+      // eventThread is a CP-backed field — must be a ComplexType, never null or raw Long
+      Object eventThread = value.get("eventThread");
+      assertNotNull(eventThread, "eventThread must not be null (CP-backed field regression)");
+      assertInstanceOf(
+          ComplexType.class, eventThread, "eventThread must be a ComplexType, not a raw pointer");
+      Map<String, Object> threadMap = ((ComplexType) eventThread).getValue();
+      assertNotNull(threadMap, "eventThread CP entry must resolve to a non-null map");
+      assertNotNull(threadMap.get("javaName"), "eventThread must have javaName field");
+
+      // stackTrace is a CP-backed field — must resolve the same way
+      Object stackTrace = value.get("stackTrace");
+      assertNotNull(stackTrace, "stackTrace must not be null (CP-backed field regression)");
+      assertInstanceOf(
+          ComplexType.class, stackTrace, "stackTrace must be a ComplexType, not a raw pointer");
+      Map<String, Object> stackTraceMap = ((ComplexType) stackTrace).getValue();
+      assertNotNull(stackTraceMap, "stackTrace CP entry must resolve to a non-null map");
+      assertNotNull(stackTraceMap.get("frames"), "stackTrace must have frames field");
+    }
+  }
+
   @Test
   void testIteratorConstantPoolFieldsAreResolvable() throws Exception {
     ParsingContext ctx = ParsingContext.create();
