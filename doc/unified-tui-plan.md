@@ -12,18 +12,18 @@ both JFR and heap dump modules (and future modules). Today the TUI lives entirel
 
 | File | Lines | JFR coupling |
 |------|------:|:------------:|
-| `TuiShell.java` | 80 | **Heavy** — creates `SessionManager<JFRSession>`, `ParsingContext` |
-| `TuiWiring.java` | 98 | **Heavy** — wires JFR `CommandDispatcher`, `ShellCompleter`, hardcodes `"jfr>"` prompt |
-| `TuiCommandExecutor.java` | 1288 | **Heavy** — calls `getRecordingPath()`, `getNonPrimitiveMetadataTypes()`, `getMetadataTypeIds()`, `MetadataProvider`, `ConstantPoolProvider`, `ParsingContext` |
-| `TuiBrowserController.java` | 728 | **Heavy** — calls `JfrPathParser.parse()`, `JfrPathEvaluator`, `ConstantPoolProvider.loadEntries()` |
-| `TuiKeyHandler.java` | 1006 | **Light** — only `SessionManager<JFRSession>` type parameter, sets `outputFormat` |
-| `TuiRenderer.java` | 1230 | **Light** — only `SessionManager<JFRSession>` type parameter, calls `getRecordingPath()` |
-| `TuiContext.java` | 337 | **Light** — hardcoded `".jfr-shell"` history path |
-| `TuiDetailBuilder.java` | 423 | **None** |
-| `TuiEventLoop.java` | 74 | **None** |
+| `TuiShell.java` | 145 | **Heavy** — creates `SessionManager<JFRSession>`, `ParsingContext` |
+| `TuiWiring.java` | 141 | **Heavy** — wires JFR `CommandDispatcher`, `ShellCompleter`, hardcodes `"jfr>"` prompt |
+| `TuiCommandExecutor.java` | 1552 | **Heavy** — calls `getRecordingPath()`, `getNonPrimitiveMetadataTypes()`, `getMetadataTypeIds()`, `MetadataProvider`, `ConstantPoolProvider`, `ParsingContext` |
+| `TuiBrowserController.java` | 768 | **Heavy** — calls `JfrPathParser.parse()`, `JfrPathEvaluator`, `ConstantPoolProvider.loadEntries()` |
+| `TuiKeyHandler.java` | 1045 | **Light** — only `SessionManager<JFRSession>` type parameter, sets `outputFormat` |
+| `TuiRenderer.java` | 1299 | **Light** — only `SessionManager<JFRSession>` type parameter, calls `getRecordingPath()` |
+| `TuiContext.java` | 352 | **Light** — hardcoded `".jfr-shell"` history path |
+| `TuiDetailBuilder.java` | 523 | **None** |
+| `TuiEventLoop.java` | 75 | **None** |
 
 External JFR-coupled dependencies:
-- `CommandDispatcher` (2747 lines) — hardcoded to `JFRSession`, uses JFR parsers/providers directly
+- `CommandDispatcher` (2921 lines) — hardcoded to `JFRSession`, uses JFR parsers/providers directly
 - `ShellCompleter` (860 lines) — hardcoded to `JFRSession`
 
 ### Key observation
@@ -230,7 +230,7 @@ Phases 5-7 are independent of each other.
   (metadata listing, CP listing, event type listing). These are TUI-specific browsing
   features that don't exist in the readline shell. The adapter must expose these as
   structured data rather than formatted strings.
-- **CommandDispatcher** (2747 lines) stays JFR-specific — it's not generalized, just
+- **CommandDispatcher** (2921 lines) stays JFR-specific — it's not generalized, just
   wrapped by `JfrTuiAdapter`. This is intentional: the dispatcher handles JFR-specific
   commands like `types`, `chunks`, `cp`, `metadata` that have no hdump equivalents.
   The adapter abstracts over this difference.

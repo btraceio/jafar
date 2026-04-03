@@ -1,5 +1,6 @@
 package io.jafar.pprof.shell;
 
+import io.jafar.shell.core.proto.ProtoUtil;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -18,12 +19,6 @@ import java.util.zip.GZIPInputStream;
  * <p>Both packed and unpacked repeated fields are handled correctly.
  */
 public final class PprofReader {
-
-  // Protobuf wire types
-  private static final int WIRE_VARINT = 0;
-  private static final int WIRE_LEN = 2;
-  private static final int WIRE_I64 = 1;
-  private static final int WIRE_I32 = 5;
 
   // Profile field numbers (profile.proto)
   private static final int PROFILE_SAMPLE_TYPE = 1;
@@ -148,15 +143,15 @@ public final class PprofReader {
 
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
 
       switch (wireType) {
-        case WIRE_LEN -> {
-          int len = (int) readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+        case ProtoUtil.WIRE_LEN -> {
+          int len = ProtoUtil.readSafeLen(buf, pos);
+          pos += ProtoUtil.varintLen(buf, pos);
           int msgEnd = pos + len;
           switch (fieldNumber) {
             case PROFILE_SAMPLE_TYPE -> rawSampleTypes.add(parseValueType(buf, pos, msgEnd));
@@ -173,9 +168,9 @@ public final class PprofReader {
           }
           pos = msgEnd;
         }
-        case WIRE_VARINT -> {
-          long value = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+        case ProtoUtil.WIRE_VARINT -> {
+          long value = ProtoUtil.readVarint(buf, pos);
+          pos += ProtoUtil.varintLen(buf, pos);
           switch (fieldNumber) {
             case PROFILE_TIME_NANOS -> timeNanos = value;
             case PROFILE_DURATION_NANOS -> durationNanos = value;
@@ -185,8 +180,8 @@ public final class PprofReader {
             }
           }
         }
-        case WIRE_I64 -> pos += 8;
-        case WIRE_I32 -> pos += 4;
+        case ProtoUtil.WIRE_I64 -> pos += 8;
+        case ProtoUtil.WIRE_I32 -> pos += 4;
         default ->
             throw new IOException("Unknown wire type " + wireType + " at offset " + (pos - 1));
       }
@@ -301,17 +296,17 @@ public final class PprofReader {
     long unit = 0;
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         if (fieldNumber == VALUE_TYPE_TYPE) type = value;
         else if (fieldNumber == VALUE_TYPE_UNIT) unit = value;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return new RawValueType(type, unit);
@@ -321,54 +316,54 @@ public final class PprofReader {
     RawSample sample = new RawSample();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
       switch (fieldNumber) {
         case SAMPLE_LOCATION_ID -> {
-          if (wireType == WIRE_VARINT) {
-            sample.locationIds.add(readVarint(buf, pos));
-            pos += varintLen(buf, pos);
-          } else if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            sample.locationIds.add(ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              sample.locationIds.add(readVarint(buf, pos));
-              pos += varintLen(buf, pos);
+              sample.locationIds.add(ProtoUtil.readVarint(buf, pos));
+              pos += ProtoUtil.varintLen(buf, pos);
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case SAMPLE_VALUE -> {
-          if (wireType == WIRE_VARINT) {
-            sample.values.add(readVarint(buf, pos));
-            pos += varintLen(buf, pos);
-          } else if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            sample.values.add(ProtoUtil.readVarint(buf, pos));
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             int packEnd = pos + len;
             while (pos < packEnd) {
-              sample.values.add(readVarint(buf, pos));
-              pos += varintLen(buf, pos);
+              sample.values.add(ProtoUtil.readVarint(buf, pos));
+              pos += ProtoUtil.varintLen(buf, pos);
             }
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case SAMPLE_LABEL -> {
-          if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             sample.labels.add(parseLabel(buf, pos, pos + len));
             pos += len;
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
-        default -> pos = skipField(buf, pos, wireType);
+        default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return sample;
@@ -378,13 +373,13 @@ public final class PprofReader {
     long[] label = new long[4]; // [key, str, num, numUnit]
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case LABEL_KEY -> label[0] = value;
           case LABEL_STR -> label[1] = value;
@@ -392,7 +387,7 @@ public final class PprofReader {
           case LABEL_NUM_UNIT -> label[3] = value;
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return label;
@@ -402,38 +397,54 @@ public final class PprofReader {
     RawLocation loc = new RawLocation();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
       switch (fieldNumber) {
         case LOCATION_ID -> {
-          loc.id = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.id = ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else {
+            pos = ProtoUtil.skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_MAPPING_ID -> {
-          loc.mappingId = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.mappingId = ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else {
+            pos = ProtoUtil.skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_ADDRESS -> {
-          loc.address = readVarint(buf, pos);
-          pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.address = ProtoUtil.readVarint(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else {
+            pos = ProtoUtil.skipField(buf, pos, wireType);
+          }
         }
         case LOCATION_LINE -> {
-          if (wireType == WIRE_LEN) {
-            int len = (int) readVarint(buf, pos);
-            pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_LEN) {
+            int len = ProtoUtil.readSafeLen(buf, pos);
+            pos += ProtoUtil.varintLen(buf, pos);
             loc.lines.add(parseLine(buf, pos, pos + len));
             pos += len;
           } else {
-            pos = skipField(buf, pos, wireType);
+            pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
         case LOCATION_IS_FOLDED -> {
-          loc.isFolded = readVarint(buf, pos) != 0;
-          pos += varintLen(buf, pos);
+          if (wireType == ProtoUtil.WIRE_VARINT) {
+            loc.isFolded = ProtoUtil.readVarint(buf, pos) != 0;
+            pos += ProtoUtil.varintLen(buf, pos);
+          } else {
+            pos = ProtoUtil.skipField(buf, pos, wireType);
+          }
         }
-        default -> pos = skipField(buf, pos, wireType);
+        default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return loc;
@@ -443,17 +454,17 @@ public final class PprofReader {
     long[] line = new long[2]; // [functionId, lineNumber]
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         if (fieldNumber == LINE_FUNCTION_ID) line[0] = value;
         else if (fieldNumber == LINE_LINE) line[1] = value;
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return line;
@@ -463,13 +474,13 @@ public final class PprofReader {
     RawFunction fn = new RawFunction();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case FUNCTION_ID -> fn.id = value;
           case FUNCTION_NAME -> fn.name = value;
@@ -478,7 +489,7 @@ public final class PprofReader {
           case FUNCTION_START_LINE -> fn.startLine = value;
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return fn;
@@ -488,13 +499,13 @@ public final class PprofReader {
     RawMapping m = new RawMapping();
     int pos = start;
     while (pos < end) {
-      long tag = readVarint(buf, pos);
-      pos += varintLen(buf, pos);
+      long tag = ProtoUtil.readVarint(buf, pos);
+      pos += ProtoUtil.varintLen(buf, pos);
       int fieldNumber = (int) (tag >>> 3);
       int wireType = (int) (tag & 7);
-      if (wireType == WIRE_VARINT) {
-        long value = readVarint(buf, pos);
-        pos += varintLen(buf, pos);
+      if (wireType == ProtoUtil.WIRE_VARINT) {
+        long value = ProtoUtil.readVarint(buf, pos);
+        pos += ProtoUtil.varintLen(buf, pos);
         switch (fieldNumber) {
           case MAPPING_ID -> m.id = value;
           case MAPPING_MEMORY_START -> m.memoryStart = value;
@@ -504,48 +515,10 @@ public final class PprofReader {
           case MAPPING_HAS_FUNCTIONS -> m.hasFunctions = value != 0;
         }
       } else {
-        pos = skipField(buf, pos, wireType);
+        pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return m;
-  }
-
-  // ---- Varint helpers ----
-
-  /** Reads a varint (up to 64 bits) from {@code buf[pos]}. */
-  static long readVarint(byte[] buf, int pos) {
-    long result = 0;
-    int shift = 0;
-    while (true) {
-      byte b = buf[pos++];
-      result |= (long) (b & 0x7F) << shift;
-      if ((b & 0x80) == 0) break;
-      shift += 7;
-    }
-    return result;
-  }
-
-  /** Returns the byte length of the varint at {@code buf[pos]}. */
-  static int varintLen(byte[] buf, int pos) {
-    int len = 1;
-    while ((buf[pos++] & 0x80) != 0) len++;
-    return len;
-  }
-
-  /**
-   * Skips a field of the given wire type; returns the new position after the field's length prefix.
-   */
-  private static int skipField(byte[] buf, int pos, int wireType) throws IOException {
-    return switch (wireType) {
-      case WIRE_VARINT -> pos + varintLen(buf, pos);
-      case WIRE_I64 -> pos + 8;
-      case WIRE_LEN -> {
-        int len = (int) readVarint(buf, pos);
-        yield pos + varintLen(buf, pos) + len;
-      }
-      case WIRE_I32 -> pos + 4;
-      default -> throw new IOException("Cannot skip unknown wire type " + wireType);
-    };
   }
 
   /** Resolves a string table index (0 = empty string). */

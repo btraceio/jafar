@@ -1,9 +1,9 @@
-package io.jafar.pprof.shell.pprofpath;
+package io.jafar.shell.core.sampling.path;
 
 import java.util.List;
 
 /**
- * AST model for the pprof query language.
+ * AST model for the samples query language shared by pprof and OTLP profiling shells.
  *
  * <p>Query syntax examples:
  *
@@ -25,11 +25,11 @@ import java.util.List;
  * samples[thread='main'] | top(10, cpu)
  * </pre>
  */
-public final class PprofPath {
+public final class SamplesPath {
 
-  private PprofPath() {}
+  private SamplesPath() {}
 
-  /** Root types supported by the pprof query language. */
+  /** Root types supported by the samples query language. */
   public enum Root {
     /** Query individual profiling samples. */
     SAMPLES
@@ -48,7 +48,7 @@ public final class PprofPath {
 
   // ---- Query structure ----
 
-  /** A complete pprof query. */
+  /** A complete samples query. */
   public record Query(Root root, List<Predicate> predicates, List<PipelineOp> pipeline) {
     public Query {
       predicates = predicates == null ? List.of() : List.copyOf(predicates);

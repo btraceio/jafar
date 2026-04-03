@@ -31,6 +31,8 @@ dependencies {
     implementation project(':hdump-shell')
     implementation project(':pprof-shell')
     testImplementation(testFixtures(project(':pprof-shell')))
+    implementation project(':otlp-shell')
+    testImplementation(testFixtures(project(':otlp-shell')))
 
     // Backend plugins (discovered via ServiceLoader)
     runtimeOnly project(':jfr-shell-jafar')

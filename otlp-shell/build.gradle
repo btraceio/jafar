@@ -1,0 +1,39 @@
+plugins {
+    id 'java-library'
+    id 'java-test-fixtures'
+}
+
+def libraryName = "otlp-shell"
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // Shell infrastructure
+    api project(':shell-core')
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'org.slf4j:slf4j-simple:2.0.5'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'OpenTelemetry Profiling analysis module for Jafar Shell'

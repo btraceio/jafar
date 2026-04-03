@@ -30,6 +30,7 @@ dependencies {
     implementation project(':jfr-shell')
     implementation project(':hdump-shell')
     implementation project(':pprof-shell')
+    implementation project(':otlp-shell')
 
     // JFR backend implementations (discovered via ServiceLoader)
     runtimeOnly project(':jfr-shell-jafar')

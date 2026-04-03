@@ -217,8 +217,8 @@ class PprofPathEvaluatorTest {
       assertEquals(3_500_000L, ((Number) row.get("sum")).longValue());
       assertEquals(500_000L, ((Number) row.get("min")).longValue());
       assertEquals(2_000_000L, ((Number) row.get("max")).longValue());
-      // avg = 3_500_000 / 3 = 1_166_666 (integer truncation)
-      assertEquals(1_166_666L, ((Number) row.get("avg")).longValue());
+      // avg = round(3_500_000 / 3.0) = round(1_166_666.67) = 1_166_667
+      assertEquals(1_166_667L, ((Number) row.get("avg")).longValue());
     }
 
     @Test
