@@ -16,8 +16,13 @@ public final class MutableConstantPools implements ConstantPools {
   /** Map of type IDs to their corresponding constant pool instances. */
   private final LongObjectHashMap<MutableConstantPool> poolMap = new LongObjectHashMap<>();
 
-  /** Flag indicating whether all constant pools are ready for use. */
-  private boolean ready = false;
+  /**
+   * Flag indicating whether all constant pools are ready for use.
+   *
+   * <p>Written by the producer thread (via {@link #setReady()}) and read by both the producer and
+   * the consumer thread; must be volatile to ensure visibility across threads.
+   */
+  private volatile boolean ready = false;
 
   /** Constructs a new MutableConstantPools instance. */
   public MutableConstantPools() {}

@@ -70,7 +70,8 @@ public final class Values {
 
   private static Object resolveDeepValue(Object v) {
     if (v instanceof ComplexType c) {
-      return resolvedDeep(c.getValue());
+      Map<String, Object> inner = c.getValue();
+      return inner != null ? resolvedDeep(inner) : null;
     }
     Object array = unwrapArray(v);
     if (array != null && array.getClass().isArray()) {
