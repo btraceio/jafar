@@ -490,25 +490,39 @@ public final class UntypedCodeGenerator {
       return;
     }
 
-    // Handle constant pool references - store as Long
+    // Handle constant pool references - wrap in ConstantPoolAccessor for lazy resolution
     if (field.hasConstantPool()) {
+      String cpAccessorName = Type.getInternalName(io.jafar.parser.impl.ConstantPoolAccessor.class);
+      long fieldTypeId = fieldType.getId();
       // Stack: [...]
+      mv.visitTypeInsn(Opcodes.NEW, cpAccessorName);
+      // Stack: [..., ConstantPoolAccessor]
+      mv.visitInsn(Opcodes.DUP);
+      // Stack: [..., ConstantPoolAccessor, ConstantPoolAccessor]
+      mv.visitVarInsn(Opcodes.ALOAD, contextVar); // ParserContext
+      // Stack: [..., ConstantPoolAccessor, ConstantPoolAccessor, ParserContext]
+      mv.visitLdcInsn(fieldTypeId); // type ID (compile-time constant)
+      // Stack: [..., ConstantPoolAccessor, ConstantPoolAccessor, ParserContext, long]
       mv.visitVarInsn(Opcodes.ALOAD, streamVar); // Load stream
-      // Stack: [..., RecordingStream]
+      // Stack: [..., ConstantPoolAccessor, ConstantPoolAccessor, ParserContext, long, Stream]
       mv.visitMethodInsn(
           Opcodes.INVOKEVIRTUAL,
           Type.getInternalName(RecordingStream.class),
           "readVarint",
           Type.getMethodDescriptor(Type.LONG_TYPE),
           false);
-      // Stack: [..., long]
+      // Stack: [..., ConstantPoolAccessor, ConstantPoolAccessor, ParserContext, long, long]
       mv.visitMethodInsn(
-          Opcodes.INVOKESTATIC,
-          Type.getInternalName(Long.class),
-          "valueOf",
-          Type.getMethodDescriptor(Type.getType(Long.class), Type.LONG_TYPE),
+          Opcodes.INVOKESPECIAL,
+          cpAccessorName,
+          "<init>",
+          Type.getMethodDescriptor(
+              Type.VOID_TYPE,
+              Type.getType(io.jafar.parser.api.ParserContext.class),
+              Type.LONG_TYPE,
+              Type.LONG_TYPE),
           false);
-      // Stack: [..., Long]
+      // Stack: [..., ConstantPoolAccessor]
       return;
     }
 

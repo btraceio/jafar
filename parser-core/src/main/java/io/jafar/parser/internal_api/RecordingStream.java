@@ -22,6 +22,20 @@ public final class RecordingStream implements AutoCloseable {
   private long mark = -1;
 
   /**
+   * Thread-local cache of {@link RecordingStream} slices for constant pool resolution.
+   *
+   * <p>Each entry wraps a {@link RecordingStreamReader} that shares the same underlying
+   * memory-mapped buffer but has independent position tracking. Lazy-initialized to avoid
+   * allocating a ThreadLocal on short-lived wrapper instances that never call {@link
+   * #threadLocalStreamSlice()}.
+   *
+   * <p><b>Lifecycle:</b> each participating thread's entry is removed when {@link #close()} is
+   * called from that thread. Entries for other threads are removed when those threads exit. In
+   * practice, {@link RecordingStream} instances are chunk-scoped, so exposure is bounded.
+   */
+  private volatile ThreadLocal<RecordingStream> threadLocalStreamCache;
+
+  /**
    * Constructs a new RecordingStream from a file path.
    *
    * @param path the path to the JFR recording file
@@ -51,9 +65,56 @@ public final class RecordingStream implements AutoCloseable {
    * @param context the parser context to use
    */
   public RecordingStream(RecordingStreamReader reader, ParserContext context) {
+    this(reader, context, true);
+  }
+
+  /**
+   * Constructs a new RecordingStream with optional context registration.
+   *
+   * <p>When {@code register} is {@code false}, the stream is not registered in the context. This is
+   * used for creating temporary streams for thread-safe constant pool resolution.
+   *
+   * @param reader the reader for the recording data
+   * @param context the parser context to use
+   * @param register whether to register this stream in the context
+   */
+  public RecordingStream(RecordingStreamReader reader, ParserContext context, boolean register) {
     this.reader = reader;
     this.context = context;
-    this.context.put(RecordingStream.class, this);
+    if (register) {
+      this.context.put(RecordingStream.class, this);
+    }
+  }
+
+  /**
+   * Returns a thread-local {@link RecordingStream} slice, creating one lazily per thread.
+   *
+   * <p>Each slice shares the same underlying memory-mapped buffer but has independent position
+   * tracking. Position save/restore can be performed on the returned stream directly. Eliminates
+   * per-resolution wrapper allocation compared to {@code new RecordingStream(slice, ...)}.
+   *
+   * <p>Re-entrancy (e.g. reading a CP entry that triggers a string pool lookup) is handled by the
+   * caller via explicit position save/restore before and after each use.
+   *
+   * @return a reusable stream slice for the current thread
+   */
+  public RecordingStream threadLocalStreamSlice() {
+    ThreadLocal<RecordingStream> tl = threadLocalStreamCache;
+    if (tl == null) {
+      synchronized (this) {
+        tl = threadLocalStreamCache;
+        if (tl == null) {
+          tl = new ThreadLocal<>();
+          threadLocalStreamCache = tl;
+        }
+      }
+    }
+    RecordingStream s = tl.get();
+    if (s == null) {
+      s = new RecordingStream(reader.slice(0, reader.length()), context, false);
+      tl.set(s);
+    }
+    return s;
   }
 
   /**
@@ -206,6 +267,12 @@ public final class RecordingStream implements AutoCloseable {
 
   @Override
   public void close() {
+    // Remove the current thread's slice from the cache to avoid retaining references after close.
+    // Entries for other threads are not removable cross-thread; they are cleared when those
+    // threads exit or when the GC processes their ThreadLocalMap entries.
+    if (threadLocalStreamCache != null) {
+      threadLocalStreamCache.remove();
+    }
     try {
       reader.close();
     } catch (IOException ignored) {

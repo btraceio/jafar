@@ -1,30 +1,90 @@
 package io.jafar.parser;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.TestJfrRecorder;
+import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.EventIterator;
 import io.jafar.parser.api.JafarRecordedEvent;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
-import java.io.File;
-import java.net.URI;
-import java.nio.file.Paths;
+import io.jafar.parser.api.Values;
+import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicInteger;
+import jdk.jfr.Event;
+import jdk.jfr.Name;
+import jdk.jfr.StackTrace;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.openjdk.jmc.flightrecorder.writer.api.Recording;
+import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
 
 public class EventIteratorTest {
 
+  @Name("io.jafar.test.IteratorTestEvent")
+  @StackTrace(true)
+  static class TestEvent extends Event {
+    int id;
+
+    TestEvent(int id) {
+      this.id = id;
+    }
+  }
+
+  private static Path syntheticJfr;
+  private static Path multiChunkJfr;
+
+  @BeforeAll
+  static void createTestJfrFiles() throws Exception {
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    try (Recording recording = Recordings.newRecording(bos)) {
+      TestJfrRecorder rec = new TestJfrRecorder(recording);
+      rec.registerEventType(TestEvent.class);
+      for (int i = 0; i < 100; i++) {
+        rec.writeEvent(new TestEvent(i));
+      }
+    }
+    syntheticJfr = Files.createTempFile("jafar-iterator-test", ".jfr");
+    Files.write(syntheticJfr, bos.toByteArray());
+
+    // Two-chunk recording: concatenate two independent single-chunk recordings.
+    // JFR format is a sequence of self-contained chunks, so this produces a valid two-chunk file.
+    bos = new ByteArrayOutputStream();
+    try (Recording r = Recordings.newRecording(bos)) {
+      TestJfrRecorder rec = new TestJfrRecorder(r);
+      rec.registerEventType(TestEvent.class);
+      for (int i = 0; i < 20; i++) rec.writeEvent(new TestEvent(i));
+    }
+    try (Recording r = Recordings.newRecording(bos)) {
+      TestJfrRecorder rec = new TestJfrRecorder(r);
+      rec.registerEventType(TestEvent.class);
+      for (int i = 20; i < 40; i++) rec.writeEvent(new TestEvent(i));
+    }
+    multiChunkJfr = Files.createTempFile("jafar-multi-chunk-test", ".jfr");
+    Files.write(multiChunkJfr, bos.toByteArray());
+  }
+
+  @AfterAll
+  static void deleteTestJfrFiles() throws Exception {
+    if (syntheticJfr != null) Files.deleteIfExists(syntheticJfr);
+    if (multiChunkJfr != null) Files.deleteIfExists(multiChunkJfr);
+  }
+
   @Test
   void testIteratorConsumesAllEvents() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
     // Count events using iterator
     int iteratorCount = 0;
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       while (it.hasNext()) {
         JafarRecordedEvent event = it.next();
         assertNotNull(event);
@@ -36,7 +96,7 @@ public class EventIteratorTest {
 
     // Count events using callback for comparison
     AtomicInteger callbackCount = new AtomicInteger();
-    try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
+    try (UntypedJafarParser p = ctx.newUntypedParser(syntheticJfr)) {
       p.handle((t, v, ctl) -> callbackCount.incrementAndGet());
       p.run();
     }
@@ -51,13 +111,12 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorEarlyTermination() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
     int limit = 10;
     int count = 0;
 
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       while (it.hasNext() && count < limit) {
         JafarRecordedEvent event = it.next();
         assertNotNull(event);
@@ -70,14 +129,13 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorAllowsMutableVariables() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
     // Plain variables - no AtomicInteger needed!
     int counter = 0;
     List<String> eventTypes = new ArrayList<>();
 
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       while (it.hasNext()) {
         JafarRecordedEvent event = it.next();
         counter++; // Can mutate directly
@@ -95,10 +153,9 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorEventDataIntegrity() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       if (it.hasNext()) {
         JafarRecordedEvent event = it.next();
 
@@ -124,10 +181,9 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorContractCompliance() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       // hasNext() should be idempotent
       if (it.hasNext()) {
         assertTrue(it.hasNext(), "Multiple hasNext() calls should return same result");
@@ -160,61 +216,54 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorWithCustomBufferSize() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
-    // Small buffer
+    // Small buffer — all 100 events must arrive regardless of buffer size
     int count = 0;
-    try (EventIterator it =
-        EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx, 10)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx, 10)) {
       while (it.hasNext()) {
         it.next();
         count++;
-        if (count > 20) break;
       }
     }
 
-    assertTrue(count > 0, "Should process events with small buffer");
+    assertEquals(100, count, "Should deliver all events with small buffer");
 
     // Large buffer
     count = 0;
-    try (EventIterator it =
-        EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx, 5000)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx, 5000)) {
       while (it.hasNext()) {
         it.next();
         count++;
-        if (count > 20) break;
       }
     }
 
-    assertTrue(count > 0, "Should process events with large buffer");
+    assertEquals(100, count, "Should deliver all events with large buffer");
   }
 
   @Test
   void testIteratorInvalidBufferSize() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
     assertThrows(
         IllegalArgumentException.class,
         () -> {
-          EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx, 0);
+          EventIterator.open(syntheticJfr, ctx, 0);
         });
 
     assertThrows(
         IllegalArgumentException.class,
         () -> {
-          EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx, -1);
+          EventIterator.open(syntheticJfr, ctx, -1);
         });
   }
 
   @Test
   void testIteratorCloseWithoutConsumption() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
     // Open and close without consuming
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       // Don't consume any events
     }
 
@@ -223,10 +272,9 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorMultipleClose() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
-    EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx);
+    EventIterator it = EventIterator.open(syntheticJfr, ctx);
 
     // First close
     it.close();
@@ -240,27 +288,23 @@ public class EventIteratorTest {
 
   @Test
   void testIteratorDefaultBufferSize() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
-
-    // Should use default buffer size (1000)
+    // Should use default buffer size (1000) and deliver all 100 events
     int count = 0;
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()))) {
+    try (EventIterator it = EventIterator.open(syntheticJfr)) {
       while (it.hasNext()) {
         it.next();
         count++;
-        if (count > 100) break;
       }
     }
 
-    assertTrue(count > 0, "Should process events with default buffer");
+    assertEquals(100, count, "Should deliver all events with default buffer");
   }
 
   @Test
   void testIteratorChunkInfoAvailable() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
 
-    try (EventIterator it = EventIterator.open(Paths.get(new File(uri).getAbsolutePath()), ctx)) {
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
       if (it.hasNext()) {
         JafarRecordedEvent event = it.next();
 
@@ -270,5 +314,137 @@ public class EventIteratorTest {
         assertTrue(event.chunkInfo().size() >= 0, "ChunkInfo should have valid size");
       }
     }
+  }
+
+  /**
+   * Regression test for: EventIterator returning null for constant-pool-backed fields.
+   *
+   * <p>Before the fix, fields like {@code eventThread} and {@code stackTrace} appeared as raw
+   * {@code Long} CP pointers (or null) in the event value map instead of resolved Maps. The fix
+   * makes the untyped codegen emit a lazy {@link ComplexType} for CP-typed fields that resolves on
+   * demand via a pool-level cache.
+   */
+  @Test
+  void testCpBackedFieldsAreNotNull() throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
+      assertTrue(it.hasNext());
+      JafarRecordedEvent event = it.next();
+      Map<String, Object> value = event.value();
+
+      // eventThread is a CP-backed field — must be a ComplexType, never null or raw Long
+      Object eventThread = value.get("eventThread");
+      assertNotNull(eventThread, "eventThread must not be null (CP-backed field regression)");
+      assertInstanceOf(
+          ComplexType.class, eventThread, "eventThread must be a ComplexType, not a raw pointer");
+      Map<String, Object> threadMap = ((ComplexType) eventThread).getValue();
+      assertNotNull(threadMap, "eventThread CP entry must resolve to a non-null map");
+      assertNotNull(threadMap.get("javaName"), "eventThread must have javaName field");
+
+      // stackTrace is a CP-backed field — must resolve the same way
+      Object stackTrace = value.get("stackTrace");
+      assertNotNull(stackTrace, "stackTrace must not be null (CP-backed field regression)");
+      assertInstanceOf(
+          ComplexType.class, stackTrace, "stackTrace must be a ComplexType, not a raw pointer");
+      Map<String, Object> stackTraceMap = ((ComplexType) stackTrace).getValue();
+      assertNotNull(stackTraceMap, "stackTrace CP entry must resolve to a non-null map");
+      assertNotNull(stackTraceMap.get("frames"), "stackTrace must have frames field");
+    }
+  }
+
+  @Test
+  void testIteratorConstantPoolFieldsAreResolvable() throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+
+    int cpFieldsResolved = 0;
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
+      while (it.hasNext()) {
+        JafarRecordedEvent event = it.next();
+        for (Map.Entry<String, Object> entry : event.value().entrySet()) {
+          Object value = entry.getValue();
+          if (value instanceof ComplexType) {
+            // Lazy CP reference — resolve it
+            Map<String, Object> resolved = ((ComplexType) value).getValue();
+            assertNotNull(
+                resolved,
+                "ComplexType field '"
+                    + entry.getKey()
+                    + "' in event "
+                    + event.typeName()
+                    + " should resolve to a non-null map");
+            assertFalse(
+                resolved.isEmpty(),
+                "Resolved CP field '" + entry.getKey() + "' should have at least one key");
+            cpFieldsResolved++;
+          }
+        }
+      }
+    }
+    assertTrue(cpFieldsResolved > 0, "Expected at least one CP-backed field to be resolved");
+  }
+
+  @Test
+  void testIteratorFieldValuesMatchCallback() throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+
+    // Collect field values via callback-based parser
+    List<Map<String, Object>> callbackValues = new ArrayList<>();
+    try (UntypedJafarParser p = ctx.newUntypedParser(syntheticJfr)) {
+      p.handle((type, value, ctl) -> callbackValues.add(Values.resolvedDeep(value)));
+      p.run();
+    }
+
+    // Collect the same events via EventIterator
+    List<Map<String, Object>> iteratorValues = new ArrayList<>();
+    try (EventIterator it = EventIterator.open(syntheticJfr, ctx)) {
+      while (it.hasNext()) {
+        JafarRecordedEvent event = it.next();
+        iteratorValues.add(Values.resolvedDeep(event.value()));
+      }
+    }
+
+    assertEquals(
+        callbackValues.size(),
+        iteratorValues.size(),
+        "Iterator and callback should produce the same number of events");
+    // Use recursive comparison so that Object[] values (e.g. stackTrace frames) are compared by
+    // content, not by reference identity.
+    for (int i = 0; i < callbackValues.size(); i++) {
+      assertThat(iteratorValues.get(i))
+          .as("Event %d field values should match between callback and iterator", i)
+          .usingRecursiveComparison()
+          .isEqualTo(callbackValues.get(i));
+    }
+  }
+
+  @Test
+  void testIteratorMultiChunkCpResolution() throws Exception {
+    ParsingContext ctx = ParsingContext.create();
+
+    int totalEvents = 0;
+    int cpFieldsResolved = 0;
+    try (EventIterator it = EventIterator.open(multiChunkJfr, ctx)) {
+      while (it.hasNext()) {
+        JafarRecordedEvent event = it.next();
+        totalEvents++;
+        for (Map.Entry<String, Object> entry : event.value().entrySet()) {
+          Object value = entry.getValue();
+          if (value instanceof ComplexType) {
+            Map<String, Object> resolved = ((ComplexType) value).getValue();
+            assertNotNull(
+                resolved,
+                "CP field '"
+                    + entry.getKey()
+                    + "' in event "
+                    + event.typeName()
+                    + " should resolve across chunk boundary");
+            cpFieldsResolved++;
+          }
+        }
+      }
+    }
+    assertEquals(40, totalEvents, "Should see events from both chunks");
+    assertTrue(cpFieldsResolved > 0, "CP-backed fields should resolve in a multi-chunk recording");
   }
 }
