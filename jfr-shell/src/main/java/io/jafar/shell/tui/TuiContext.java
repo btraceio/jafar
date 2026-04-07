@@ -86,6 +86,10 @@ public final class TuiContext {
     int hScrollOffset;
     int maxLineWidth;
     boolean pinned;
+    // Pinned tabs: the session bound to this tab.
+    // Unpinned tab: the session of the last executed command (restored on tab switch).
+    // null when no session has been associated yet.
+    Integer pinnedSessionId;
     String searchQuery = "";
     String detailSearchQuery = "";
     List<Integer> filteredIndices; // null = no filter

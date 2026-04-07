@@ -156,6 +156,7 @@ public final class TuiCommandExecutor {
           tab.marqueeTick0 = ctx.renderTick;
         }
         tab.pinned = true;
+        tab.pinnedSessionId = currentSessionId();
       }
       return;
     }
@@ -202,6 +203,13 @@ public final class TuiCommandExecutor {
     ctx.commandHistory.add(command);
     ctx.lastCommand = command;
 
+    // If executing from a pinned tab, activate that tab's session so the command
+    // runs in the right context. Output is routed to the unpinned tab (created if none exists).
+    ResultTab sourceTab = ctx.activeTab();
+    if (sourceTab.pinned && sourceTab.pinnedSessionId != null && sessions != null) {
+      sessions.use(String.valueOf(sourceTab.pinnedSessionId));
+    }
+
     int currentIdx = findUnpinnedTab();
     if (currentIdx < 0) {
       ctx.tabs.add(new ResultTab(command));
@@ -209,6 +217,8 @@ public final class TuiCommandExecutor {
     }
     ctx.activeTabIndex = currentIdx;
     ResultTab activeTab = ctx.activeTab();
+    // Record the current session on the unpinned tab so switching back to it restores it.
+    activeTab.pinnedSessionId = currentSessionId();
     activeTab.name = command;
     activeTab.marqueeTick0 = ctx.renderTick;
     activeTab.lines.clear();
@@ -710,6 +720,9 @@ public final class TuiCommandExecutor {
     }
     ctx.activeTabIndex = newIndex;
     ResultTab newTab = ctx.tabs.get(newIndex);
+    if (newTab.pinnedSessionId != null && sessions != null) {
+      sessions.use(String.valueOf(newTab.pinnedSessionId));
+    }
     if (newTab.sidebarIndex >= 0 && newTab.browserTypes != null) {
       ctx.browserMode = true;
       ctx.activeBrowserDescriptor = newTab.browserDescriptor;
@@ -742,7 +755,12 @@ public final class TuiCommandExecutor {
       tab.marqueeTick0 = ctx.renderTick;
     } else {
       tab.pinned = true;
+      tab.pinnedSessionId = currentSessionId();
     }
+  }
+
+  private Integer currentSessionId() {
+    return sessions != null ? sessions.current().map(r -> r.id).orElse(null) : null;
   }
 
   int findUnpinnedTab() {
