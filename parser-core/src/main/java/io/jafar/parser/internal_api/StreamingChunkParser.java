@@ -67,6 +67,17 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (closed) {
       throw new IOException("Parser is closed");
     }
+    CompressionDetector.Format fmt = CompressionDetector.detect(path);
+    if (fmt != CompressionDetector.Format.NONE) {
+      throw new IOException(
+          "JFR file is "
+              + fmt.label
+              + "-compressed and cannot be parsed directly. "
+              + fmt.hint
+              + " (file: "
+              + path
+              + ")");
+    }
     try (RecordingStream stream = new RecordingStream(path, contextFactory.newContext())) {
       parse(stream, listener);
     }
