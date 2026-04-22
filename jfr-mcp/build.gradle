@@ -25,10 +25,6 @@ dependencies {
     implementation platform('io.modelcontextprotocol.sdk:mcp-bom:1.1.1')
     implementation 'io.modelcontextprotocol.sdk:mcp'
 
-    // Jackson 2 (kept explicitly: MCP SDK 1.x defaults to Jackson 3 internally,
-    // but our own handler code still uses Jackson 2 ObjectMapper for tool responses).
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
-
     // Jafar dependencies
     implementation project(':shell-core')
     implementation project(':parser')

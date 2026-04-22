@@ -1,6 +1,5 @@
 package io.jafar.mcp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jafar.hdump.shell.HeapReportGenerator;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath;
@@ -59,6 +58,7 @@ import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.server.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * MCP Server for JFR and heap dump analysis.

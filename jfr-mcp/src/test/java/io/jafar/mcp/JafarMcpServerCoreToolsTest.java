@@ -2,8 +2,6 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
@@ -12,6 +10,8 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /** Tests for core MCP tools: jfr_open, jfr_query, jfr_list_types, jfr_close, jfr_help. */
 class JafarMcpServerCoreToolsTest extends BaseJfrTest {

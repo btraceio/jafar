@@ -2,8 +2,6 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
@@ -15,6 +13,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tests for jfr_use and jfr_tsa MCP tools.
@@ -213,7 +213,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
       // If there are schedulers, verify their structure
       if (byScheduler.size() > 0) {
-        JsonNode firstScheduler = byScheduler.elements().next();
+        JsonNode firstScheduler = byScheduler.iterator().next();
         assertTrue(firstScheduler.has("queueType"), "Scheduler missing queueType");
         assertTrue(firstScheduler.has("count"), "Scheduler missing count");
         assertTrue(firstScheduler.has("totalTimeMs"), "Scheduler missing totalTimeMs");
@@ -424,7 +424,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
 
         // If there are queue correlations, verify structure
         if (queuedOn.size() > 0) {
-          JsonNode firstQueue = queuedOn.elements().next();
+          JsonNode firstQueue = queuedOn.iterator().next();
           assertTrue(firstQueue.has("queueType"), "Queue missing queueType");
           assertTrue(firstQueue.has("samples"), "Queue missing samples");
           assertTrue(firstQueue.has("threads"), "Queue missing threads count");
