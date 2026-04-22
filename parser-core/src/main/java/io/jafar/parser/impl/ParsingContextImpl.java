@@ -26,18 +26,17 @@ public final class ParsingContextImpl implements ParsingContext {
   /** The start timestamp for tracking uptime. */
   private final long startTs = System.nanoTime();
 
-  /** The DeserializerFactory discovered via ServiceLoader, or null if none available. */
-  private final DeserializerFactory deserializerFactory;
+  // DeserializerFactory is classpath-static: discovered once and reused across all contexts.
+  private static final DeserializerFactory DESERIALIZER_FACTORY = discoverDeserializerFactory();
+
+  private static DeserializerFactory discoverDeserializerFactory() {
+    Iterator<DeserializerFactory> it = ServiceLoader.load(DeserializerFactory.class).iterator();
+    return it.hasNext() ? it.next() : null;
+  }
 
   /** Constructs a new ParsingContextImpl. */
   public ParsingContextImpl() {
-    DeserializerFactory factory = null;
-    Iterator<DeserializerFactory> it = ServiceLoader.load(DeserializerFactory.class).iterator();
-    if (it.hasNext()) {
-      factory = it.next();
-    }
-    this.deserializerFactory = factory;
-    this.typedFactory = new TypedParserContextFactory(deserializerFactory);
+    this.typedFactory = new TypedParserContextFactory(DESERIALIZER_FACTORY);
   }
 
   /**

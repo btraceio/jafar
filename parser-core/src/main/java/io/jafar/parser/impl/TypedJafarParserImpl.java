@@ -26,8 +26,10 @@ import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
@@ -333,22 +335,26 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     }
   }
 
-  /**
-   * Auto-discovers and registers build-time generated factories via ServiceLoader.
-   *
-   * <p>This method loads all implementations of {@link HandlerFactory} found on the classpath via
-   * ServiceLoader and registers them automatically. If no factories are found, the parser will fall
-   * back to runtime bytecode generation for handlers.
-   */
-  private void discoverFactories() {
+  // Factories are classpath-static: discovered once and reused across all parser instances.
+  @SuppressWarnings("rawtypes")
+  private static final List<HandlerFactory> DISCOVERED_FACTORIES = discoverFactoriesOnce();
+
+  @SuppressWarnings("rawtypes")
+  private static List<HandlerFactory> discoverFactoriesOnce() {
+    List<HandlerFactory> result = new ArrayList<>();
     try {
-      ServiceLoader<HandlerFactory> loader = ServiceLoader.load(HandlerFactory.class);
-      for (HandlerFactory<?> factory : loader) {
-        registerFactory(factory);
+      for (HandlerFactory<?> factory : ServiceLoader.load(HandlerFactory.class)) {
+        result.add(factory);
       }
     } catch (Exception e) {
-      // If ServiceLoader fails (e.g., no factories available), fall back to runtime generation
-      // This is expected behavior when build-time generation is not configured
+      // No factories available; fall back to runtime bytecode generation
+    }
+    return result;
+  }
+
+  private void discoverFactories() {
+    for (HandlerFactory<?> factory : DISCOVERED_FACTORIES) {
+      registerFactory(factory);
     }
   }
 
