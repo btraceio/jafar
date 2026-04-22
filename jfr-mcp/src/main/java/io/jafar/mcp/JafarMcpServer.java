@@ -27,6 +27,7 @@ import io.jafar.pprof.shell.pprofpath.PprofPathParser;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -126,6 +127,18 @@ public final class JafarMcpServer {
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /**
+   * Builds an MCP {@link Tool} from a name, description, and raw JSON input schema. Uses {@link
+   * McpJsonDefaults#getMapper()} to parse the schema string.
+   */
+  private static Tool buildTool(String name, String description, String schema) {
+    return Tool.builder()
+        .name(name)
+        .description(description)
+        .inputSchema(McpJsonDefaults.getMapper(), schema)
+        .build();
+  }
+
   /** Default idle timeout in minutes before the server exits. */
   private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 10;
 
@@ -200,7 +213,7 @@ public final class JafarMcpServer {
 
     try {
       // Create stdio transport
-      var transportProvider = new StdioServerTransportProvider(MAPPER);
+      var transportProvider = new StdioServerTransportProvider(McpJsonDefaults.getMapper());
 
       // Build MCP server
       // Note: The SDK's StdioServerTransportProvider starts reading from stdin
@@ -259,7 +272,7 @@ public final class JafarMcpServer {
       // Create HTTP SSE transport
       var transportProvider =
           HttpServletSseServerTransportProvider.builder()
-              .objectMapper(MAPPER)
+              .jsonMapper(McpJsonDefaults.getMapper())
               .messageEndpoint("/mcp/message")
               .build();
 
@@ -372,7 +385,7 @@ public final class JafarMcpServer {
         spec.tool(),
         (exchange, args) -> {
           touchActivity();
-          return spec.call().apply(exchange, args);
+          return spec.callHandler().apply(exchange, args);
         });
   }
 
@@ -473,13 +486,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_open",
             "Opens a JFR (Java Flight Recording) file for analysis. "
                 + "Returns a session ID that can be used with other jfr_* tools. "
                 + "If no session ID is provided to other tools, they use the most recently opened session.",
             schema),
-        (exchange, args) -> handleJfrOpen(args));
+        (exchange, args) -> handleJfrOpen(args.arguments()));
   }
 
   private CallToolResult handleJfrOpen(Map<String, Object> args) {
@@ -544,7 +557,7 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_query",
             "Executes a JfrPath query against a JFR recording. "
                 + "JfrPath forms: events/<eventType>, events/<eventType>[filter], events/<eventType> | pipeline. "
@@ -552,7 +565,7 @@ public final class JafarMcpServer {
                 + "Pipeline ops: count(), groupBy(field), top(n), select(f1,f2), stats(field). "
                 + "Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10)",
             schema),
-        (exchange, args) -> handleJfrQuery(args));
+        (exchange, args) -> handleJfrQuery(args.arguments()));
   }
 
   private CallToolResult handleJfrQuery(Map<String, Object> args) {
@@ -632,14 +645,14 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_list_types",
             "Lists all event types available in a JFR recording. "
                 + "By default returns type names from metadata (fast). "
                 + "Use scan=true to get actual event counts (scans the entire recording). "
                 + "Categories: jdk.* (JDK events), jdk.jfr.* (JFR infrastructure), custom app events.",
             schema),
-        (exchange, args) -> handleJfrListTypes(args));
+        (exchange, args) -> handleJfrListTypes(args.arguments()));
   }
 
   private CallToolResult handleJfrListTypes(Map<String, Object> args) {
@@ -757,13 +770,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_close",
             "Closes a JFR recording session and releases resources. "
                 + "Options: provide sessionId for specific session, closeAll=true for all sessions, "
                 + "or neither to close the current session.",
             schema),
-        (exchange, args) -> handleJfrClose(args));
+        (exchange, args) -> handleJfrClose(args.arguments()));
   }
 
   private CallToolResult handleJfrClose(Map<String, Object> args) {
@@ -834,13 +847,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_help",
             "Returns JfrPath query language documentation. "
                 + "Call without arguments for overview, or specify a topic for detailed help. "
                 + "Topics: overview, filters, pipeline, functions, examples, event_types, tools.",
             schema),
-        (exchange, args) -> handleJfrHelp(args));
+        (exchange, args) -> handleJfrHelp(args.arguments()));
   }
 
   private CallToolResult handleJfrHelp(Map<String, Object> args) {
@@ -864,7 +877,7 @@ public final class JafarMcpServer {
                   + ". Available: overview, filters, pipeline, functions, examples, event_types, tools";
         };
 
-    return new CallToolResult(List.of(new TextContent(content)), false);
+    return new CallToolResult(List.of(new TextContent(content)), false, null, null);
   }
 
   private String getOverviewHelp() {
@@ -1366,7 +1379,7 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_flamegraph",
             "Generates aggregated stack trace data for flamegraph-style analysis. "
                 + "Returns stack paths with sample counts in folded or tree format. "
@@ -1374,7 +1387,7 @@ public final class JafarMcpServer {
                 + "or direction=top-down to see call paths from entry points. "
                 + "Folded format is semicolon-separated paths compatible with standard flamegraph tools.",
             schema),
-        (exchange, args) -> handleJfrFlamegraph(exchange, args));
+        (exchange, args) -> handleJfrFlamegraph(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrFlamegraph(
@@ -1684,14 +1697,14 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_callgraph",
             "Generates a call graph showing caller-callee relationships from stack traces. "
                 + "Unlike flamegraph (which preserves full paths), this shows which methods call which, "
                 + "revealing convergence points where multiple callers invoke the same method. "
                 + "DOT format can be visualized with graphviz. JSON format includes node and edge data.",
             schema),
-        (exchange, args) -> handleJfrCallgraph(exchange, args));
+        (exchange, args) -> handleJfrCallgraph(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrCallgraph(
@@ -1908,14 +1921,14 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_exceptions",
             "Analyzes exception events in a JFR recording. Extracts exception types from stack traces, "
                 + "groups by exception class, and identifies throw sites. Works with both JDK exception events "
                 + "(jdk.JavaExceptionThrow) and profiler exception samples (datadog.ExceptionSample). "
                 + "Returns exception type counts, throw site locations, and patterns.",
             schema),
-        (exchange, args) -> handleJfrExceptions(exchange, args));
+        (exchange, args) -> handleJfrExceptions(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrExceptions(
@@ -2206,13 +2219,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_summary",
             "Provides a quick overview of a JFR recording including duration, event counts, "
                 + "and key highlights like GC statistics, exception rates, and top CPU consumers. "
                 + "Useful for getting oriented with a new recording before deeper analysis.",
             schema),
-        (exchange, args) -> handleJfrSummary(exchange, args));
+        (exchange, args) -> handleJfrSummary(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrSummary(
@@ -2478,13 +2491,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_hotmethods",
             "Returns the hottest methods (leaf frames) from CPU profiling samples. "
                 + "Simpler and more compact than full flamegraph - just shows which methods are consuming CPU. "
                 + "Useful for quick CPU hotspot identification.",
             schema),
-        (exchange, args) -> handleJfrHotmethods(exchange, args));
+        (exchange, args) -> handleJfrHotmethods(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrHotmethods(
@@ -2703,13 +2716,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_use",
             "Analyzes JFR recording using Brendan Gregg's USE Method (Utilization, Saturation, Errors). "
                 + "Examines CPU, Memory, Threads/Locks, and I/O resources to identify bottlenecks. "
                 + "Returns metrics for utilization (how busy), saturation (queued work), and errors for each resource.",
             schema),
-        (exchange, args) -> handleJfrUse(exchange, args));
+        (exchange, args) -> handleJfrUse(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrUse(McpSyncServerExchange exchange, Map<String, Object> args) {
@@ -3616,13 +3629,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_tsa",
             "Analyzes JFR recording using Thread State Analysis (TSA) methodology. "
                 + "Shows how threads spend their time across different states (RUNNABLE, WAITING, BLOCKED, etc.). "
                 + "Identifies problematic threads and correlates blocking states with contended locks/monitors.",
             schema),
-        (exchange, args) -> handleJfrTsa(exchange, args));
+        (exchange, args) -> handleJfrTsa(exchange, args.arguments()));
   }
 
   private CallToolResult handleJfrTsa(McpSyncServerExchange exchange, Map<String, Object> args) {
@@ -4276,14 +4289,14 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_diagnose",
             "Intelligently diagnoses performance issues in a JFR recording by automatically "
                 + "running appropriate analysis tools based on recording characteristics. "
                 + "Analyzes exception rates, GC pressure, CPU patterns, and suggests next steps. "
                 + "Use this as a first step when exploring an unfamiliar recording.",
             schema),
-        (exchange, args) -> handleJfrDiagnose(exchange, args));
+        (exchange, args) -> handleJfrDiagnose(exchange, args.arguments()));
   }
 
   @SuppressWarnings("unchecked")
@@ -4494,7 +4507,7 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "jfr_stackprofile",
             "Returns structured stack profiling data with time-series distribution and per-thread "
                 + "breakdown for each frame. Unlike jfr_flamegraph (which returns aggregated stack paths "
@@ -4506,7 +4519,7 @@ public final class JafarMcpServer {
                 + "analyze CPU behavior over time or across threads. Choose jfr_flamegraph when you need "
                 + "aggregated call-path data for visualization or simple hotspot listing.",
             schema),
-        (exchange, args) -> handleJfrStackprofile(exchange, args));
+        (exchange, args) -> handleJfrStackprofile(exchange, args.arguments()));
   }
 
   @SuppressWarnings("unchecked")
@@ -4690,13 +4703,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "hdump_open",
             "Opens an HPROF heap dump file for analysis. "
                 + "Returns a session ID used by other hdump_* tools. "
                 + "If no sessionId is supplied to other tools, the most recently opened session is used.",
             schema),
-        (exchange, args) -> handleHdumpOpen(args));
+        (exchange, args) -> handleHdumpOpen(args.arguments()));
   }
 
   private CallToolResult handleHdumpOpen(Map<String, Object> args) {
@@ -4756,8 +4769,8 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool("hdump_close", "Closes one or all open heap dump sessions.", schema),
-        (exchange, args) -> handleHdumpClose(args));
+        buildTool("hdump_close", "Closes one or all open heap dump sessions.", schema),
+        (exchange, args) -> handleHdumpClose(args.arguments()));
   }
 
   private CallToolResult handleHdumpClose(Map<String, Object> args) {
@@ -4882,7 +4895,8 @@ public final class JafarMcpServer {
             + "  Retention paths:         objects[retained > 100MB] | retentionPaths()";
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool("hdump_query", description, schema), (exchange, args) -> handleHdumpQuery(args));
+        buildTool("hdump_query", description, schema),
+        (exchange, args) -> handleHdumpQuery(args.arguments()));
   }
 
   private CallToolResult handleHdumpQuery(Map<String, Object> args) {
@@ -4948,12 +4962,12 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "hdump_summary",
             "Quick overview of an open heap dump. Does NOT trigger retained-size computation. "
                 + "Returns object/class counts, heap size, top classes by instance count, and GC root types.",
             schema),
-        (exchange, args) -> handleHdumpSummary(args));
+        (exchange, args) -> handleHdumpSummary(args.arguments()));
   }
 
   private CallToolResult handleHdumpSummary(Map<String, Object> args) {
@@ -5019,14 +5033,14 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "hdump_report",
             "Full heap health report. Triggers retained-size computation, leak detection, and "
                 + "duplicate subgraph analysis. May take several minutes on large heaps. "
                 + "Returns severity-ranked findings (CRITICAL > WARNING > INFO) with suggested queries. "
                 + "Use 'focus' to limit analyses: leaks, waste, duplicates, histogram.",
             schema),
-        (exchange, args) -> handleHdumpReport(args));
+        (exchange, args) -> handleHdumpReport(args.arguments()));
   }
 
   private CallToolResult handleHdumpReport(Map<String, Object> args) {
@@ -5105,13 +5119,13 @@ public final class JafarMcpServer {
         """;
 
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "hdump_help",
             "HdumpPath query language documentation. "
                 + "Topics: overview, roots, filters, operators, examples, patterns, tools. "
                 + "Call hdump_help(topic=\"tools\") to see all hdump_* MCP tools.",
             schema),
-        (exchange, args) -> handleHdumpHelp(args));
+        (exchange, args) -> handleHdumpHelp(args.arguments()));
   }
 
   private CallToolResult handleHdumpHelp(Map<String, Object> args) {
@@ -5135,7 +5149,7 @@ public final class JafarMcpServer {
                   + ". Valid topics: overview, roots, filters, operators, examples, patterns, tools";
         };
 
-    return new CallToolResult(List.of(new TextContent(content)), false);
+    return new CallToolResult(List.of(new TextContent(content)), false, null, null);
   }
 
   private String getHdumpOverviewHelp() {
@@ -5593,13 +5607,13 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_open",
             "Opens a pprof profile file (.pb.gz or .pprof) for analysis. "
                 + "Returns a session ID and profile metadata (sample types, duration, counts). "
                 + "Use the returned session ID with other pprof_* tools.",
             schema),
-        (exchange, args) -> handlePprofOpen(args));
+        (exchange, args) -> handlePprofOpen(args.arguments()));
   }
 
   private CallToolResult handlePprofOpen(Map<String, Object> args) {
@@ -5654,8 +5668,8 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool("pprof_close", "Closes a pprof session and releases its resources.", schema),
-        (exchange, args) -> handlePprofClose(args));
+        buildTool("pprof_close", "Closes a pprof session and releases its resources.", schema),
+        (exchange, args) -> handlePprofClose(args.arguments()));
   }
 
   private CallToolResult handlePprofClose(Map<String, Object> args) {
@@ -5706,7 +5720,7 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_query",
             "Executes a PprofPath query against an open pprof profile. "
                 + "Query syntax: 'samples[predicate] | operator(args)'. "
@@ -5714,7 +5728,7 @@ public final class JafarMcpServer {
                 + "'samples | groupBy(thread, sum(cpu))', 'samples[thread=\\'main\\'] | head(5)'. "
                 + "Use pprof_help for full query language reference.",
             schema),
-        (exchange, args) -> handlePprofQuery(args));
+        (exchange, args) -> handlePprofQuery(args.arguments()));
   }
 
   private CallToolResult handlePprofQuery(Map<String, Object> args) {
@@ -5781,12 +5795,12 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_summary",
             "Returns a quick overview of a pprof profile: sample types, counts, duration, "
                 + "and top functions by the primary value type.",
             schema),
-        (exchange, args) -> handlePprofSummary(args));
+        (exchange, args) -> handlePprofSummary(args.arguments()));
   }
 
   private CallToolResult handlePprofSummary(Map<String, Object> args) {
@@ -5853,13 +5867,13 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_flamegraph",
             "Produces folded stack profile data suitable for flame graph visualization. "
                 + "Returns rows of {stack: 'root;parent;leaf', <valueField>: N} sorted by value descending. "
                 + "Stack frames are separated by ';' with root frame first.",
             schema),
-        (exchange, args) -> handlePprofFlamegraph(args));
+        (exchange, args) -> handlePprofFlamegraph(args.arguments()));
   }
 
   private CallToolResult handlePprofFlamegraph(Map<String, Object> args) {
@@ -5956,7 +5970,7 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_use",
             "Analyzes a pprof profile using Brendan Gregg's USE Method (Utilization, Saturation, Errors). "
                 + "CPU: utilization stats and top consuming functions. "
@@ -5964,7 +5978,7 @@ public final class JafarMcpServer {
                 + "Threads: distribution across threads to identify serial bottlenecks. "
                 + "Errors: heuristic scan of hot function names for error-related patterns.",
             schema),
-        (exchange, args) -> handlePprofUse(exchange, args));
+        (exchange, args) -> handlePprofUse(exchange, args.arguments()));
   }
 
   @SuppressWarnings("unchecked")
@@ -6298,14 +6312,14 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_hotmethods",
             "Identifies the hottest methods by direct (leaf-frame) cost. "
                 + "Groups samples by the leaf function name and sums the chosen value type. "
                 + "Shows what each function is directly responsible for (not including callees). "
                 + "Use pprof_flamegraph for inclusive (total) cost breakdown.",
             schema),
-        (exchange, args) -> handlePprofHotmethods(args));
+        (exchange, args) -> handlePprofHotmethods(args.arguments()));
   }
 
   private CallToolResult handlePprofHotmethods(Map<String, Object> args) {
@@ -6418,7 +6432,7 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_tsa",
             "Thread State Analysis for pprof profiles. Shows how threads distribute their samples "
                 + "and infers thread states (RUNNING, WAITING, IO_BLOCKED, LOCK_BLOCKED) from "
@@ -6426,7 +6440,7 @@ public final class JafarMcpServer {
                 + "and I/O-heavy threads. Note: state inference is heuristic since pprof does not "
                 + "record explicit thread states.",
             schema),
-        (exchange, args) -> handlePprofTsa(exchange, args));
+        (exchange, args) -> handlePprofTsa(exchange, args.arguments()));
   }
 
   // Keywords used to infer thread state from leaf function names
@@ -6663,9 +6677,9 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "pprof_help", "Returns PprofPath query language documentation and examples.", schema),
-        (exchange, args) -> {
+        (_, _) -> {
           Map<String, Object> result = new LinkedHashMap<>();
           result.put("language", "PprofPath");
           result.put("documentation", getPprofHelpText());
@@ -6763,13 +6777,13 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_open",
             "Opens an OpenTelemetry profiling file (.otlp) for analysis. "
                 + "Returns a session ID and profile metadata (sample type, duration, counts). "
                 + "Use the returned session ID with other otlp_* tools.",
             schema),
-        (exchange, args) -> handleOtlpOpen(args));
+        (exchange, args) -> handleOtlpOpen(args.arguments()));
   }
 
   private CallToolResult handleOtlpOpen(Map<String, Object> args) {
@@ -6824,8 +6838,8 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool("otlp_close", "Closes an otlp session and releases its resources.", schema),
-        (exchange, args) -> handleOtlpClose(args));
+        buildTool("otlp_close", "Closes an otlp session and releases its resources.", schema),
+        (exchange, args) -> handleOtlpClose(args.arguments()));
   }
 
   private CallToolResult handleOtlpClose(Map<String, Object> args) {
@@ -6876,7 +6890,7 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_query",
             "Executes an OtlpPath query against an open OTLP profile. "
                 + "Query syntax: 'samples[predicate] | operator(args)'. "
@@ -6884,7 +6898,7 @@ public final class JafarMcpServer {
                 + "'samples | groupBy(thread, sum(cpu))', 'samples[thread=\\'main\\'] | head(5)'. "
                 + "Use otlp_help for full query language reference.",
             schema),
-        (exchange, args) -> handleOtlpQuery(args));
+        (exchange, args) -> handleOtlpQuery(args.arguments()));
   }
 
   private CallToolResult handleOtlpQuery(Map<String, Object> args) {
@@ -6951,12 +6965,12 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_summary",
             "Returns a quick overview of an OTLP profile: sample type, counts, duration, "
                 + "and top functions by the primary value type.",
             schema),
-        (exchange, args) -> handleOtlpSummary(args));
+        (exchange, args) -> handleOtlpSummary(args.arguments()));
   }
 
   private CallToolResult handleOtlpSummary(Map<String, Object> args) {
@@ -7027,13 +7041,13 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_flamegraph",
             "Produces folded stack profile data suitable for flame graph visualization. "
                 + "Returns rows of {stack: 'root;parent;leaf', <valueField>: N} sorted by value descending. "
                 + "Stack frames are separated by ';' with root frame first.",
             schema),
-        (exchange, args) -> handleOtlpFlamegraph(args));
+        (exchange, args) -> handleOtlpFlamegraph(args.arguments()));
   }
 
   private CallToolResult handleOtlpFlamegraph(Map<String, Object> args) {
@@ -7132,14 +7146,14 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_use",
             "Analyzes an OTLP profile using Brendan Gregg's USE Method (Utilization, Saturation, Errors). "
                 + "CPU: utilization stats and top consuming functions. "
                 + "Threads: distribution across threads to identify serial bottlenecks. "
                 + "Errors: heuristic scan of hot function names for error-related patterns.",
             schema),
-        (exchange, args) -> handleOtlpUse(exchange, args));
+        (exchange, args) -> handleOtlpUse(exchange, args.arguments()));
   }
 
   @SuppressWarnings("unchecked")
@@ -7371,9 +7385,9 @@ public final class JafarMcpServer {
         }
         """;
     return new McpServerFeatures.SyncToolSpecification(
-        new Tool(
+        buildTool(
             "otlp_help", "Returns OtlpPath query language documentation and examples.", schema),
-        (exchange, args) -> {
+        (_, _) -> {
           Map<String, Object> result = new LinkedHashMap<>();
           result.put("language", "OtlpPath");
           result.put("documentation", getOtlpHelpText());
@@ -7466,9 +7480,9 @@ public final class JafarMcpServer {
   private CallToolResult successResult(Map<String, Object> data) {
     try {
       String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data);
-      return new CallToolResult(List.of(new TextContent(json)), false);
+      return new CallToolResult(List.of(new TextContent(json)), false, null, null);
     } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(data.toString())), false);
+      return new CallToolResult(List.of(new TextContent(data.toString())), false, null, null);
     }
   }
 
@@ -7487,9 +7501,9 @@ public final class JafarMcpServer {
     Map<String, Object> error = Map.of("error", message, "success", false);
     try {
       String json = MAPPER.writeValueAsString(error);
-      return new CallToolResult(List.of(new TextContent(json)), true);
+      return new CallToolResult(List.of(new TextContent(json)), true, null, null);
     } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(message)), true);
+      return new CallToolResult(List.of(new TextContent(message)), true, null, null);
     }
   }
 }

@@ -2,6 +2,8 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -52,22 +54,16 @@ class IdleTimeoutTest {
     field.set(server, 0L);
 
     Method wrap =
-        JafarMcpServer.class.getDeclaredMethod(
-            "withActivityTracking",
-            io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification.class);
+        JafarMcpServer.class.getDeclaredMethod("withActivityTracking", SyncToolSpecification.class);
     wrap.setAccessible(true);
 
     Method createHelp = JafarMcpServer.class.getDeclaredMethod("createJfrHelpTool");
     createHelp.setAccessible(true);
-    var spec =
-        (io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification)
-            createHelp.invoke(server);
-    var wrapped =
-        (io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification)
-            wrap.invoke(server, spec);
+    var spec = (SyncToolSpecification) createHelp.invoke(server);
+    var wrapped = (SyncToolSpecification) wrap.invoke(server, spec);
 
     long before = System.nanoTime();
-    wrapped.call().apply(null, Map.of("topic", "overview"));
+    wrapped.callHandler().apply(null, new CallToolRequest("jfr_help", Map.of("topic", "overview")));
     long after = System.nanoTime();
 
     long recorded = (long) field.get(server);
