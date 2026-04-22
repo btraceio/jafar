@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Guards against malformed tool input-schema JSON. Every schema string embedded in {@link
  * JafarMcpServer} must parse successfully at registration time; otherwise the server fails to start
- * at runtime (regression seen in 0.21.0 where an unescaped quote in {@code pprof_flamegraph}'s
+ * at runtime (regression seen in 0.21.1 where an unescaped quote in {@code pprof_flamegraph}'s
  * filter description broke startup).
  *
  * <p>Exercises {@code createToolSpecifications()} end-to-end so every schema is parsed by the same
