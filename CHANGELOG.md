@@ -7,21 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-### Changed
-- **Backend plugin versioning** - Plugins now follow main project version
-  - `jfr-shell-jdk` and `jfr-shell-jafar` sync with main project version
-  - API compatibility enforced via japicmp for breaking change detection
+## [0.21.2] - 2026-04-22
 
 ### Fixed
-- **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
-  - Added mavenPublishing configuration to publish fat JAR as main artifact
-  - jfr-mcp now includes all dependencies and proper Main-Class manifest
-- **JBang catalog update** - Fixed workflow to preserve dev/snapshot entries
-  - Changed from sed global replacement to jq precise JSON updates
-  - `jfr-mcp` alias updated to releases, `jfr-mcp-dev` stays on SNAPSHOT
-  - `jafar-shell-latest` alias updated to releases, `jafar-shell` stays on java file
+- **jfr-mcp stdio transport** - Fixed two upstream SDK bugs in `StdioServerTransportProvider`
+  - Protocol version negotiation now advertises all four MCP versions (was hardcoded to `2024-11-05` only)
+  - Shutdown race condition: in-flight tool responses no longer crash the Reactor pipeline when the outbound sink closes during shutdown
 
 ## [0.10.0] - 2026-02-14
 
