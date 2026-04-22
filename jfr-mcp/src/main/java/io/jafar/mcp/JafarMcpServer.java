@@ -32,7 +32,6 @@ import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
-import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
@@ -213,11 +212,10 @@ public final class JafarMcpServer {
 
     try {
       // Create stdio transport
-      var transportProvider = new StdioServerTransportProvider(McpJsonDefaults.getMapper());
+      var transportProvider = new FixedStdioServerTransportProvider(McpJsonDefaults.getMapper());
 
       // Build MCP server
-      // Note: The SDK's StdioServerTransportProvider starts reading from stdin
-      // automatically when the server is built
+      // Note: transport starts reading from stdin automatically when the server is built
       McpSyncServer mcpServer =
           McpServer.sync(transportProvider)
               .serverInfo("jafar-mcp", "0.10.0")
