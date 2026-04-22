@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.21.2] - 2026-04-22
+## [0.21.3] - 2026-04-22
 
 ### Fixed
 - **jfr-mcp stdio transport** - Fixed two upstream SDK bugs in `StdioServerTransportProvider`
