@@ -7480,9 +7480,9 @@ public final class JafarMcpServer {
   private CallToolResult successResult(Map<String, Object> data) {
     try {
       String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data);
-      return new CallToolResult(List.of(new TextContent(json)), false, null, null);
+      return new CallToolResult(List.of(new TextContent(json)), false, data, null);
     } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(data.toString())), false, null, null);
+      return new CallToolResult(List.of(new TextContent(data.toString())), false, data, null);
     }
   }
 
@@ -7501,9 +7501,9 @@ public final class JafarMcpServer {
     Map<String, Object> error = Map.of("error", message, "success", false);
     try {
       String json = MAPPER.writeValueAsString(error);
-      return new CallToolResult(List.of(new TextContent(json)), true, null, null);
+      return new CallToolResult(List.of(new TextContent(json)), true, error, null);
     } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(message)), true, null, null);
+      return new CallToolResult(List.of(new TextContent(message)), true, error, null);
     }
   }
 }
