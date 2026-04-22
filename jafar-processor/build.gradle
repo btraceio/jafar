@@ -18,7 +18,7 @@ dependencies {
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'com.google.testing.compile:compile-testing:0.21.1'
+    testImplementation 'com.google.testing.compile:compile-testing:0.21.2-SNAPSHOT'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
