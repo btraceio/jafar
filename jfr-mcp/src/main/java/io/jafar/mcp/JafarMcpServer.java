@@ -5857,7 +5857,7 @@ public final class JafarMcpServer {
             },
             "filter": {
               "type": "string",
-              "description": "Optional filter predicate, e.g. \"thread='main'\""
+              "description": "Optional filter predicate, e.g. \\"thread='main'\\""
             },
             "limit": {
               "type": "integer",
