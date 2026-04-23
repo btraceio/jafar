@@ -5,6 +5,7 @@ import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Default implementation of QueryEvaluator using JfrPathEvaluator.
@@ -35,5 +36,12 @@ public final class DefaultQueryEvaluator implements QueryEvaluator {
   @Override
   public Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
     return evaluator.countAllEventTypes(session);
+  }
+
+  @Override
+  public void consume(
+      JFRSession session, JfrPath.Query query, Consumer<Map<String, Object>> consumer)
+      throws Exception {
+    evaluator.consume(session, query, consumer);
   }
 }

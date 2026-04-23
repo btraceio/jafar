@@ -93,6 +93,72 @@ public final class JfrPathEvaluator {
     return counts;
   }
 
+  /**
+   * Streams matching events to {@code consumer} without materialising them into a list. Use this
+   * instead of {@link #evaluate} for large event sets to avoid OOM.
+   *
+   * <p><strong>Thread safety:</strong> the consumer may be invoked concurrently from multiple
+   * chunk-worker threads (StreamingChunkParser uses a fixed thread pool). Provide a thread-safe
+   * consumer — prefer {@link java.util.concurrent.ConcurrentHashMap#merge}, {@link
+   * java.util.concurrent.atomic.LongAdder}, or {@link java.util.concurrent.atomic.AtomicLong} for
+   * accumulation state. No internal locking is applied; lock-free concurrent structures give better
+   * throughput than a synchronized wrapper.
+   *
+   * <p>If the consumer throws a {@link RuntimeException}, the stream is aborted (subsequent events
+   * are skipped) and the exception propagates to the caller.
+   */
+  public void consume(JFRSession session, Query query, Consumer<Map<String, Object>> consumer)
+      throws Exception {
+    if (query.root != Root.EVENTS) {
+      throw new UnsupportedOperationException("consume() only supports 'events/' queries");
+    }
+    if (query.eventTypes.isEmpty()) {
+      throw new IllegalArgumentException("Expected event type segment after 'events/'");
+    }
+    validateEventTypes(session, query.eventTypes);
+
+    java.util.concurrent.atomic.AtomicBoolean aborted =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    Consumer<Map<String, Object>> guarded =
+        map -> {
+          if (aborted.get()) return;
+          try {
+            consumer.accept(map);
+          } catch (RuntimeException e) {
+            aborted.set(true);
+            throw e;
+          }
+        };
+    streamMatching(session, query, guarded);
+  }
+
+  private void streamMatching(
+      JFRSession session, Query query, Consumer<Map<String, Object>> consumer) throws Exception {
+    if (query.isMultiType) {
+      Set<String> typeSet = new HashSet<>(query.eventTypes);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!typeSet.contains(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (matchesAll(map, query.predicates)) {
+              consumer.accept(Values.resolvedShallow(map));
+            }
+          });
+    } else {
+      String eventType = query.eventTypes.get(0);
+      source.streamEvents(
+          session.getRecordingPath(),
+          ev -> {
+            if (!eventType.equals(ev.typeName())) return;
+            Map<String, Object> map = ev.value();
+            if (matchesAll(map, query.predicates)) {
+              consumer.accept(Values.resolvedShallow(map));
+            }
+          });
+    }
+  }
+
   public List<Map<String, Object>> evaluate(JFRSession session, Query query) throws Exception {
     return evaluate(session, query, null);
   }
@@ -111,32 +177,7 @@ public final class JfrPathEvaluator {
       validateEventTypes(session, query.eventTypes);
 
       List<Map<String, Object>> out = new ArrayList<>();
-
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        source.streamEvents(
-            session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName)) return;
-              Map<String, Object> map = ev.value;
-              if (matchesAll(map, query.predicates)) {
-                out.add(Values.resolvedShallow(map));
-              }
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        source.streamEvents(
-            session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName)) return;
-              Map<String, Object> map = ev.value;
-              if (matchesAll(map, query.predicates)) {
-                out.add(Values.resolvedShallow(map));
-              }
-            });
-      }
+      streamMatching(session, query, out::add);
       return out;
     } else if (query.root == Root.METADATA) {
       // Handle metadata queries: metadata/Type or metadata/[filter] or metadata

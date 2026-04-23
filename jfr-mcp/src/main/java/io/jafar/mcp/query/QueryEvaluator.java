@@ -6,6 +6,7 @@ import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Interface for evaluating JfrPath queries against JFR sessions.
@@ -47,5 +48,23 @@ public interface QueryEvaluator {
    */
   default Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
     return Collections.emptyMap();
+  }
+
+  /**
+   * Streams matching events to {@code consumer} without materialising them into a list. Use this
+   * instead of {@link #evaluate} when the full event list would be too large to hold in memory
+   * (e.g. execution samples).
+   *
+   * <p><strong>WARNING — default implementation is O(N) memory and test-only.</strong> The default
+   * falls back to {@link #evaluate}, which materialises the full event list. This defeats OOM
+   * prevention and must not be used in production paths. Override this method in all production
+   * implementations (see {@link io.jafar.mcp.query.DefaultQueryEvaluator}).
+   */
+  default void consume(
+      JFRSession session, JfrPath.Query query, Consumer<Map<String, Object>> consumer)
+      throws Exception {
+    for (Map<String, Object> event : evaluate(session, query)) {
+      consumer.accept(event);
+    }
   }
 }
