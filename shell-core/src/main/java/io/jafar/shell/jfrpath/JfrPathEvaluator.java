@@ -79,6 +79,20 @@ public final class JfrPathEvaluator {
     this(new DefaultEventSource(), defaultListMatchMode);
   }
 
+  /**
+   * Count all events by type in a single pass. Equivalent to running {@code events/T | count()} for
+   * every type T, but O(file_size) instead of O(N × file_size).
+   */
+  public Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
+    // ConcurrentHashMap: StreamingChunkParser processes chunks in parallel, so the consumer
+    // lambda is called from multiple threads concurrently.
+    java.util.concurrent.ConcurrentHashMap<String, Long> counts =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    source.streamEvents(
+        session.getRecordingPath(), ev -> counts.merge(ev.typeName(), 1L, Long::sum));
+    return counts;
+  }
+
   public List<Map<String, Object>> evaluate(JFRSession session, Query query) throws Exception {
     return evaluate(session, query, null);
   }
