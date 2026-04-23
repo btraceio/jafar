@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.4] - 2026-04-23
+
+### Fixed
+- **jfr-mcp stdio transport** - Shutdown and reliability improvements
+  - `doFinally` replaces `doOnTerminate` so shutdown signal fires on cancellation too
+  - Inbound message errors no longer terminate the pipeline (`onErrorResume`)
+  - `CountDownLatch` replaced with bounded `awaitShutdown().timeout(5min).block()`
+  - `ShutdownAwaitable` interface decouples `JafarMcpServer` from transport implementation
+- **jfr-mcp MCP transport** - Added integration test suite covering JFR, hdump, pprof, and OTLP tools
+
 ## [0.21.3] - 2026-04-22
 
 ### Fixed
