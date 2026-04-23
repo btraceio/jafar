@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.5] - 2026-04-23
+
+### Fixed
+- **jfr-mcp stdio transport** - Drop `notifications/cancelled` silently to suppress SDK warnings
+- **jfr-mcp server** - Remove 5-minute timeout from `awaitShutdown()` that caused mid-session crash
+- **jfr-mcp performance** - Eliminate O(N×file_size) patterns: single-pass `countAllEventTypes()` replaces per-type loops in `jfr_summary`, `jfr_list_types`, all event-type detection, and `computeGcStats`; `analyzeIoResource` uses a single multi-type query
+
 ## [0.21.4] - 2026-04-23
 
 ### Fixed
