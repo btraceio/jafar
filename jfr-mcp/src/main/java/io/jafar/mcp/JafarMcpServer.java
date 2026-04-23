@@ -51,7 +51,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
@@ -126,6 +130,8 @@ public final class JafarMcpServer {
 
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final Set<String> BLOCKING_STATES =
+      Set.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING");
 
   /**
    * Builds an MCP {@link Tool} from a name, description, and raw JSON input schema. Uses {@link
@@ -1412,27 +1418,28 @@ public final class JafarMcpServer {
 
       // Query all events with non-empty stack traces
       sendProgress(exchange, "flamegraph", 0, 2, "Querying events...");
-      String query = "events/" + eventType;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType);
 
       // Build aggregation tree
       sendProgress(exchange, "flamegraph", 1, 2, "Building flamegraph tree...");
       FlameNode root = new FlameNode("root");
-      int processedEvents = 0;
+      LongAdder processedEvents = new LongAdder();
 
-      for (Map<String, Object> event : events) {
-        List<String> frames = extractFrames(event, direction, maxDepth);
-        if (!frames.isEmpty()) {
-          root.addPath(frames);
-          processedEvents++;
-        }
-      }
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            List<String> frames = extractFrames(event, direction, maxDepth);
+            if (!frames.isEmpty()) {
+              root.addPath(frames);
+              processedEvents.increment();
+            }
+          });
 
       // Format output
       sendProgress(exchange, "flamegraph", 2, 2, "Done");
       if ("tree".equals(format)) {
-        return formatFlamegraphTree(root, direction, processedEvents, minSamples);
+        return formatFlamegraphTree(root, direction, (int) processedEvents.sum(), minSamples);
       } else {
         return formatFlamegraphFolded(root, minSamples);
       }
@@ -1586,7 +1593,7 @@ public final class JafarMcpServer {
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("format", "folded");
-    result.put("totalSamples", root.value);
+    result.put("totalSamples", root.value.sum());
     result.put("data", sb.toString());
     return successResult(result);
   }
@@ -1595,8 +1602,8 @@ public final class JafarMcpServer {
       FlameNode node, List<String> path, StringBuilder sb, int minSamples) {
     if (node.children.isEmpty()) {
       // Leaf node - output the path
-      if (node.value >= minSamples && !path.isEmpty()) {
-        sb.append(String.join(";", path)).append(" ").append(node.value).append("\n");
+      if (node.value.sum() >= minSamples && !path.isEmpty()) {
+        sb.append(String.join(";", path)).append(" ").append(node.value.sum()).append("\n");
       }
     } else {
       for (Map.Entry<String, FlameNode> entry : node.children.entrySet()) {
@@ -1620,12 +1627,12 @@ public final class JafarMcpServer {
   private Map<String, Object> nodeToMap(FlameNode node, int minSamples) {
     Map<String, Object> map = new LinkedHashMap<>();
     map.put("name", node.name);
-    map.put("value", node.value);
+    map.put("value", node.value.sum());
 
     if (!node.children.isEmpty()) {
       List<Map<String, Object>> children = new ArrayList<>();
       for (FlameNode child : node.children.values()) {
-        if (child.value >= minSamples) {
+        if (child.value.sum() >= minSamples) {
           children.add(nodeToMap(child, minSamples));
         }
       }
@@ -1639,15 +1646,15 @@ public final class JafarMcpServer {
   /** Tree node for flamegraph aggregation. */
   private static class FlameNode {
     final String name;
-    long value;
-    final Map<String, FlameNode> children = new LinkedHashMap<>();
+    final LongAdder value = new LongAdder();
+    final Map<String, FlameNode> children = new ConcurrentHashMap<>();
 
     FlameNode(String name) {
       this.name = name;
     }
 
     void addPath(List<String> frames) {
-      value++;
+      value.increment();
       if (!frames.isEmpty()) {
         String head = frames.get(0);
         children.computeIfAbsent(head, FlameNode::new).addPath(frames.subList(1, frames.size()));
@@ -1721,23 +1728,24 @@ public final class JafarMcpServer {
 
       // Query all events
       sendProgress(exchange, "callgraph", 0, 2, "Querying events...");
-      String query = "events/" + eventType;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType);
 
       // Build call graph
       sendProgress(exchange, "callgraph", 1, 2, "Building call graph...");
       CallGraph graph = new CallGraph();
-      int processedEvents = 0;
+      LongAdder processedEvents = new LongAdder();
 
-      for (Map<String, Object> event : events) {
-        List<String> frames =
-            extractFrames(event, "top-down", null); // top-down for caller->callee order
-        if (!frames.isEmpty()) {
-          graph.addStack(frames);
-          processedEvents++;
-        }
-      }
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            List<String> frames =
+                extractFrames(event, "top-down", null); // top-down for caller->callee order
+            if (!frames.isEmpty()) {
+              graph.addStack(frames);
+              processedEvents.increment();
+            }
+          });
 
       // Compute inDegree for convergence point detection
       graph.computeInDegree();
@@ -1745,7 +1753,7 @@ public final class JafarMcpServer {
       // Format output
       sendProgress(exchange, "callgraph", 2, 2, "Done");
       if ("json".equals(format)) {
-        return formatCallgraphJson(graph, processedEvents, minWeight);
+        return formatCallgraphJson(graph, (int) processedEvents.sum(), minWeight);
       } else {
         return formatCallgraphDot(graph, minWeight);
       }
@@ -1789,7 +1797,7 @@ public final class JafarMcpServer {
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("format", "dot");
-    result.put("totalSamples", graph.totalSamples);
+    result.put("totalSamples", graph.totalSamples.sum());
     result.put("nodeCount", graph.nodeSamples.size());
     result.put("edgeCount", graph.edges.size());
     result.put("data", sb.toString());
@@ -1844,13 +1852,13 @@ public final class JafarMcpServer {
 
   /** Graph structure for caller-callee relationship aggregation. */
   private static class CallGraph {
-    final Map<String, Long> nodeSamples = new LinkedHashMap<>();
-    final Map<String, Long> edges = new LinkedHashMap<>();
+    final Map<String, Long> nodeSamples = new ConcurrentHashMap<>();
+    final Map<String, Long> edges = new ConcurrentHashMap<>();
     final Map<String, Integer> inDegree = new HashMap<>();
-    long totalSamples = 0;
+    final LongAdder totalSamples = new LongAdder();
 
     void addStack(List<String> frames) {
-      totalSamples++;
+      totalSamples.increment();
 
       // Process caller->callee pairs
       for (int i = 0; i < frames.size() - 1; i++) {
@@ -1943,13 +1951,37 @@ public final class JafarMcpServer {
         }
       }
 
-      // Query exception events
+      // Query and stream exception events, accumulating analysis without materialising the list
       sendProgress(exchange, "exceptions", 0, 2, "Querying exception events...");
-      String query = "events/" + eventType;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType);
+      ExceptionAnalysis analysis = new ExceptionAnalysis();
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            analysis.totalEvents.increment();
+            ExceptionInfo info = extractExceptionInfo(event);
+            if (info.exceptionType != null) {
+              analysis.totalExceptions.increment();
+              analysis.exceptionTypes.merge(info.exceptionType, 1L, Long::sum);
+              if (info.throwSite != null) {
+                analysis.throwSites.merge(info.throwSite, 1L, Long::sum);
+                analysis
+                    .throwSitesByType
+                    .computeIfAbsent(info.exceptionType, k -> new ConcurrentHashMap<>())
+                    .merge(info.throwSite, 1L, Long::sum);
+              }
+            }
+          });
+      // Compute top throw site per exception type
+      for (Map.Entry<String, Map<String, Long>> entry : analysis.throwSitesByType.entrySet()) {
+        entry.getValue().entrySet().stream()
+            .max(Comparator.comparingLong(Map.Entry::getValue))
+            .ifPresent(e -> analysis.topThrowSiteByType.put(entry.getKey(), e.getKey()));
+      }
 
-      if (events.isEmpty()) {
+      long totalEvents = analysis.totalEvents.sum();
+      if (totalEvents == 0) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("eventType", eventType);
         result.put("totalExceptions", 0);
@@ -1957,14 +1989,12 @@ public final class JafarMcpServer {
         return successResult(result);
       }
 
-      // Analyze exceptions
       sendProgress(exchange, "exceptions", 1, 2, "Analyzing exception patterns...");
-      ExceptionAnalysis analysis = analyzeExceptions(events);
 
       // Build result
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("eventType", eventType);
-      result.put("totalExceptions", events.size());
+      result.put("totalExceptions", analysis.totalExceptions.sum());
 
       // Exception types by frequency
       List<Map<String, Object>> byType = new ArrayList<>();
@@ -1979,7 +2009,7 @@ public final class JafarMcpServer {
                 entry.put("type", extractSimpleName(fullName));
                 entry.put("fullType", fullName);
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
                 // Add top throw site for this exception type
                 String topSite = analysis.topThrowSiteByType.get(fullName);
                 if (topSite != null) {
@@ -2000,7 +2030,7 @@ public final class JafarMcpServer {
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("site", e.getKey());
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
                 throwSites.add(entry);
               });
       result.put("topThrowSites", throwSites);
@@ -2043,37 +2073,6 @@ public final class JafarMcpServer {
     } catch (Exception ignored) {
     }
     return null;
-  }
-
-  @SuppressWarnings("unchecked")
-  private ExceptionAnalysis analyzeExceptions(List<Map<String, Object>> events) {
-    ExceptionAnalysis analysis = new ExceptionAnalysis();
-
-    for (Map<String, Object> event : events) {
-      ExceptionInfo info = extractExceptionInfo(event);
-      if (info.exceptionType != null) {
-        analysis.exceptionTypes.merge(info.exceptionType, 1L, Long::sum);
-
-        if (info.throwSite != null) {
-          analysis.throwSites.merge(info.throwSite, 1L, Long::sum);
-
-          // Track top throw site per exception type
-          analysis
-              .throwSitesByType
-              .computeIfAbsent(info.exceptionType, k -> new HashMap<>())
-              .merge(info.throwSite, 1L, Long::sum);
-        }
-      }
-    }
-
-    // Compute top throw site for each exception type
-    for (Map.Entry<String, Map<String, Long>> entry : analysis.throwSitesByType.entrySet()) {
-      entry.getValue().entrySet().stream()
-          .max(Comparator.comparingLong(Map.Entry::getValue))
-          .ifPresent(e -> analysis.topThrowSiteByType.put(entry.getKey(), e.getKey()));
-    }
-
-    return analysis;
   }
 
   @SuppressWarnings("unchecked")
@@ -2171,10 +2170,12 @@ public final class JafarMcpServer {
   }
 
   private static class ExceptionAnalysis {
-    final Map<String, Long> exceptionTypes = new LinkedHashMap<>();
-    final Map<String, Long> throwSites = new LinkedHashMap<>();
-    final Map<String, Map<String, Long>> throwSitesByType = new HashMap<>();
-    final Map<String, String> topThrowSiteByType = new HashMap<>();
+    final LongAdder totalEvents = new LongAdder();
+    final LongAdder totalExceptions = new LongAdder();
+    final Map<String, Long> exceptionTypes = new ConcurrentHashMap<>();
+    final Map<String, Long> throwSites = new ConcurrentHashMap<>();
+    final Map<String, Map<String, Long>> throwSitesByType = new ConcurrentHashMap<>();
+    final Map<String, String> topThrowSiteByType = new ConcurrentHashMap<>();
   }
 
   private static class ExceptionInfo {
@@ -2382,35 +2383,30 @@ public final class JafarMcpServer {
       return null;
     }
 
-    // Query and extract top frame
+    // Stream events and count leaf methods without materialising all events into a list
     try {
-      String query = "events/" + eventType;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType);
+      Map<String, Long> methodCounts = new ConcurrentHashMap<>();
+      LongAdder total = new LongAdder();
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            total.increment();
+            List<String> frames = extractFrames(event, "bottom-up", 1);
+            if (!frames.isEmpty()) {
+              methodCounts.merge(frames.get(0), 1L, Long::sum);
+            }
+          });
 
-      if (events.isEmpty()) {
+      if (methodCounts.isEmpty()) {
         return null;
       }
 
-      // Count leaf methods
-      Map<String, Long> methodCounts = new HashMap<>();
-      for (Map<String, Object> event : events) {
-        List<String> frames = extractFrames(event, "bottom-up", 1);
-        if (!frames.isEmpty()) {
-          String method = frames.get(0);
-          methodCounts.merge(method, 1L, Long::sum);
-        }
-      }
-
-      // Return top method
+      final long totalSamples = total.sum();
       return methodCounts.entrySet().stream()
           .max(Comparator.comparingLong(Map.Entry::getValue))
-          .map(
-              e -> {
-                long count = e.getValue();
-                double pct = count * 100.0 / events.size();
-                return String.format("%s (%.1f%%)", e.getKey(), pct);
-              })
+          .map(e -> String.format("%s (%.1f%%)", e.getKey(), e.getValue() * 100.0 / totalSamples))
           .orElse(null);
 
     } catch (Exception e) {
@@ -2480,11 +2476,21 @@ public final class JafarMcpServer {
 
       // Query execution events
       sendProgress(exchange, "hotmethods", 0, 2, "Querying execution samples...");
-      String query = "events/" + eventType;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType);
+      Map<String, Long> methodCounts = new ConcurrentHashMap<>();
+      LongAdder totalSamples = new LongAdder();
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            totalSamples.increment();
+            List<String> frames = extractFrames(event, "bottom-up", 1);
+            if (!frames.isEmpty()) {
+              methodCounts.merge(frames.get(0), 1L, Long::sum);
+            }
+          });
 
-      if (events.isEmpty()) {
+      if (totalSamples.sum() == 0) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("eventType", eventType);
         result.put("totalSamples", 0);
@@ -2492,21 +2498,11 @@ public final class JafarMcpServer {
         return successResult(result);
       }
 
-      // Count leaf methods
-      sendProgress(exchange, "hotmethods", 1, 2, "Identifying hot methods...");
-      Map<String, Long> methodCounts = new HashMap<>();
-      for (Map<String, Object> event : events) {
-        List<String> frames = extractFrames(event, "bottom-up", 1);
-        if (!frames.isEmpty()) {
-          String method = frames.get(0);
-          methodCounts.merge(method, 1L, Long::sum);
-        }
-      }
-
       // Build result
+      sendProgress(exchange, "hotmethods", 1, 2, "Identifying hot methods...");
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("eventType", eventType);
-      result.put("totalSamples", events.size());
+      result.put("totalSamples", totalSamples.sum());
       result.put("uniqueMethods", methodCounts.size());
 
       // Top methods
@@ -2521,7 +2517,8 @@ public final class JafarMcpServer {
                 String methodName = e.getKey();
                 entry.put("method", methodName);
                 entry.put("samples", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / events.size()));
+                entry.put(
+                    "pct", String.format("%.1f%%", e.getValue() * 100.0 / totalSamples.sum()));
                 entry.put("type", isNativeMethod(methodName) ? "native" : "java");
                 methods.add(entry);
               });
@@ -2890,28 +2887,29 @@ public final class JafarMcpServer {
           return cpu;
         }
 
-        String query = "events/" + eventType + timeFilter;
-        JfrPath.Query stateParsed = queryParser.parse(query);
-        List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), stateParsed);
+        JfrPath.Query stateParsed = queryParser.parse("events/" + eventType + timeFilter);
+        AtomicLongArray counters = new AtomicLongArray(3); // [total, runnable, saturated]
+        evaluator.consume(
+            sessionInfo.session(),
+            stateParsed,
+            event -> {
+              counters.incrementAndGet(0);
+              String state = extractState(event);
+              if ("RUNNABLE".equals(state)) {
+                counters.incrementAndGet(1);
+              } else if (BLOCKING_STATES.contains(state)) {
+                counters.incrementAndGet(2);
+              }
+            });
 
-        if (samples.isEmpty()) {
+        if (counters.get(0) == 0) {
           cpu.put("message", "No execution samples in time window");
           return cpu;
         }
 
-        long runnableCount = 0;
-        long saturatedCount = 0;
-
-        for (Map<String, Object> event : samples) {
-          String state = extractState(event);
-          if ("RUNNABLE".equals(state)) {
-            runnableCount++;
-          } else if (Set.of("WAITING", "BLOCKED", "PARKED", "TIMED_WAITING").contains(state)) {
-            saturatedCount++;
-          }
-        }
-
-        long totalSamples = samples.size();
+        long runnableCount = counters.get(1);
+        long saturatedCount = counters.get(2);
+        long totalSamples = counters.get(0);
         double threadStatePct = (runnableCount * 100.0) / totalSamples;
 
         Map<String, Object> utilization = new LinkedHashMap<>();
@@ -3023,23 +3021,25 @@ public final class JafarMcpServer {
       memory.put("saturation", saturation);
 
       // Get top allocators
-      String allocQuery = "events/jdk.ObjectAllocationSample" + timeFilter;
       try {
-        parsed = queryParser.parse(allocQuery);
-        List<Map<String, Object>> allocEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+        JfrPath.Query allocParsed =
+            queryParser.parse("events/jdk.ObjectAllocationSample" + timeFilter);
+        Map<String, Long> allocByClass = new ConcurrentHashMap<>();
+        evaluator.consume(
+            sessionInfo.session(),
+            allocParsed,
+            event -> {
+              Object classObj = Values.get(event, "objectClass", "name");
+              if (classObj == null) {
+                classObj = Values.get(event, "objectClass");
+              }
+              String className = classObj != null ? String.valueOf(classObj) : "unknown";
+              Object weightObj = Values.get(event, "weight");
+              long weight = weightObj instanceof Number ? ((Number) weightObj).longValue() : 1;
+              allocByClass.merge(className, weight, Long::sum);
+            });
 
-        if (!allocEvents.isEmpty()) {
-          Map<String, Long> allocByClass = new HashMap<>();
-          for (Map<String, Object> event : allocEvents) {
-            Object classObj = Values.get(event, "objectClass", "name");
-            if (classObj == null) {
-              classObj = Values.get(event, "objectClass");
-            }
-            String className = classObj != null ? String.valueOf(classObj) : "unknown";
-            Object weightObj = Values.get(event, "weight");
-            long weight = weightObj instanceof Number ? ((Number) weightObj).longValue() : 1;
-            allocByClass.merge(className, weight, Long::sum);
-          }
+        if (!allocByClass.isEmpty()) {
 
           List<Map<String, Object>> topAllocators = new ArrayList<>();
           allocByClass.entrySet().stream()
@@ -3086,14 +3086,10 @@ public final class JafarMcpServer {
       // Get unique thread count from execution samples
       String eventType = detectExecutionEventType(sessionInfo);
       if (eventType != null) {
-        String query = "events/" + eventType + timeFilter;
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
-
-        Set<String> uniqueThreads = new HashSet<>();
-        for (Map<String, Object> event : samples) {
-          uniqueThreads.add(extractThreadId(event));
-        }
+        JfrPath.Query parsed = queryParser.parse("events/" + eventType + timeFilter);
+        Set<String> uniqueThreads = ConcurrentHashMap.newKeySet();
+        evaluator.consume(
+            sessionInfo.session(), parsed, event -> uniqueThreads.add(extractThreadId(event)));
 
         Map<String, Object> utilization = new LinkedHashMap<>();
         utilization.put("value", uniqueThreads.size());
@@ -3103,49 +3099,45 @@ public final class JafarMcpServer {
       }
 
       // Get monitor contention
-      String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
       try {
-        JfrPath.Query parsed = queryParser.parse(monitorQuery);
-        List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+        JfrPath.Query parsed = queryParser.parse("events/jdk.JavaMonitorEnter" + timeFilter);
+        AtomicLongArray monitorCounters = new AtomicLongArray(3); // [count, totalNs, maxNs]
+        Map<String, Long> contentionByClass = new ConcurrentHashMap<>();
+        evaluator.consume(
+            sessionInfo.session(),
+            parsed,
+            event -> {
+              monitorCounters.incrementAndGet(0);
+              Object durationObj = Values.get(event, "duration");
+              if (durationObj instanceof Number) {
+                long durationNs = ((Number) durationObj).longValue();
+                monitorCounters.addAndGet(1, durationNs);
+                monitorCounters.accumulateAndGet(2, durationNs, Math::max);
+              }
+              Object classObj = Values.get(event, "monitorClass", "name");
+              if (classObj == null) classObj = Values.get(event, "monitorClass");
+              String className = classObj != null ? String.valueOf(classObj) : "unknown";
+              contentionByClass.merge(className, 1L, Long::sum);
+            });
 
         Map<String, Object> saturation = new LinkedHashMap<>();
-        if (!monitorEvents.isEmpty()) {
-          long totalContentionNs = 0;
-          long maxContentionNs = 0;
-          Map<String, Long> contentionByClass = new HashMap<>();
+        if (monitorCounters.get(0) > 0) {
+          double totalContentionMs = monitorCounters.get(1) / 1_000_000.0;
+          double avgContentionMs = totalContentionMs / monitorCounters.get(0);
+          double maxContentionMs = monitorCounters.get(2) / 1_000_000.0;
 
-          for (Map<String, Object> event : monitorEvents) {
-            Object durationObj = Values.get(event, "duration");
-            if (durationObj instanceof Number) {
-              long durationNs = ((Number) durationObj).longValue();
-              totalContentionNs += durationNs;
-              maxContentionNs = Math.max(maxContentionNs, durationNs);
-            }
-
-            Object classObj = Values.get(event, "monitorClass", "name");
-            if (classObj == null) {
-              classObj = Values.get(event, "monitorClass");
-            }
-            String className = classObj != null ? String.valueOf(classObj) : "unknown";
-            contentionByClass.merge(className, 1L, Long::sum);
-          }
-
-          double totalContentionMs = totalContentionNs / 1_000_000.0;
-          double avgContentionMs = totalContentionMs / monitorEvents.size();
-          double maxContentionMs = maxContentionNs / 1_000_000.0;
-
-          saturation.put("contentionEvents", monitorEvents.size());
+          saturation.put("contentionEvents", monitorCounters.get(0));
           saturation.put("totalContentionMs", Math.round(totalContentionMs * 10) / 10.0);
           saturation.put("avgContentionMs", Math.round(avgContentionMs * 10) / 10.0);
           saturation.put("maxContentionMs", Math.round(maxContentionMs * 10) / 10.0);
 
-          // Find top contended class
           contentionByClass.entrySet().stream()
               .max(Map.Entry.comparingByValue())
               .ifPresent(e -> saturation.put("topContendedClass", e.getKey()));
 
           saturation.put(
-              "assessment", monitorEvents.size() < 100 ? "LOW_CONTENTION" : "MODERATE_CONTENTION");
+              "assessment",
+              monitorCounters.get(0) < 100 ? "LOW_CONTENTION" : "MODERATE_CONTENTION");
         } else {
           saturation.put("message", "No monitor contention detected");
           saturation.put("assessment", "NO_CONTENTION");
@@ -3161,48 +3153,41 @@ public final class JafarMcpServer {
       String queueEventType = detectQueueTimeEventType(sessionInfo);
       if (queueEventType != null) {
         try {
-          String queueQuery = "events/" + queueEventType + timeFilter;
-          JfrPath.Query parsed = queryParser.parse(queueQuery);
-          List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+          JfrPath.Query parsed = queryParser.parse("events/" + queueEventType + timeFilter);
+          Map<String, QueueCorrelation> queueMetrics = new ConcurrentHashMap<>();
+          AtomicLongArray queueTotals = new AtomicLongArray(2); // [totalNs, totalItems]
+          evaluator.consume(
+              sessionInfo.session(),
+              parsed,
+              event -> {
+                Object durationObj = Values.get(event, "duration");
+                if (!(durationObj instanceof Number)) return;
+                long durationNs = ((Number) durationObj).longValue();
+                queueTotals.addAndGet(0, durationNs);
+                queueTotals.incrementAndGet(1);
 
-          if (!queueEvents.isEmpty()) {
-            Map<String, QueueCorrelation> queueMetrics = new HashMap<>();
-            long totalQueueTimeNs = 0;
-            int totalQueuedItems = 0;
+                Object schedulerObj = Values.get(event, "scheduler", "name");
+                if (schedulerObj == null) schedulerObj = Values.get(event, "scheduler");
+                String scheduler =
+                    extractSimpleClassName(
+                        schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
 
-            for (Map<String, Object> event : queueEvents) {
-              Object durationObj = Values.get(event, "duration");
-              if (!(durationObj instanceof Number)) continue;
+                Object queueTypeObj = Values.get(event, "queueType", "name");
+                if (queueTypeObj == null) queueTypeObj = Values.get(event, "queueType");
+                String queueType =
+                    extractSimpleClassName(
+                        queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
 
-              long durationNs = ((Number) durationObj).longValue();
-              totalQueueTimeNs += durationNs;
-              totalQueuedItems++;
+                String threadId = extractThreadId(event);
+                String key = scheduler + "|" + queueType;
+                queueMetrics
+                    .computeIfAbsent(key, k -> new QueueCorrelation(scheduler, queueType))
+                    .addSample(durationNs, threadId);
+              });
 
-              // Extract scheduler and queue type (use simple names)
-              Object schedulerObj = Values.get(event, "scheduler", "name");
-              if (schedulerObj == null) {
-                schedulerObj = Values.get(event, "scheduler");
-              }
-              String scheduler =
-                  extractSimpleClassName(
-                      schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
-
-              Object queueTypeObj = Values.get(event, "queueType", "name");
-              if (queueTypeObj == null) {
-                queueTypeObj = Values.get(event, "queueType");
-              }
-              String queueType =
-                  extractSimpleClassName(
-                      queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
-
-              String threadId = extractThreadId(event);
-              String key = scheduler + "|" + queueType;
-
-              QueueCorrelation corr =
-                  queueMetrics.computeIfAbsent(
-                      key, k -> new QueueCorrelation(scheduler, queueType));
-              corr.addSample(durationNs, threadId);
-            }
+          if (!queueMetrics.isEmpty()) {
+            long totalQueueTimeNs = queueTotals.get(0);
+            long totalQueuedItems = queueTotals.get(1);
 
             // Build queue saturation output
             Map<String, Object> queueSaturation = new LinkedHashMap<>();
@@ -3218,40 +3203,37 @@ public final class JafarMcpServer {
 
             // Find max queue time
             long maxQueueNs =
-                queueMetrics.values().stream().mapToLong(c -> c.maxDurationNs).max().orElse(0);
+                queueMetrics.values().stream()
+                    .mapToLong(c -> c.maxDurationNs.get())
+                    .max()
+                    .orElse(0);
             queueSaturation.put("maxQueueTimeMs", Math.round(maxQueueNs / 1_000_000.0 * 10) / 10.0);
 
             // Group by scheduler
             Map<String, Object> byScheduler = new LinkedHashMap<>();
             queueMetrics.entrySet().stream()
-                .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+                .sorted(
+                    (a, b) -> Long.compare(b.getValue().samples.sum(), a.getValue().samples.sum()))
                 .limit(10)
                 .forEach(
                     e -> {
                       QueueCorrelation corr = e.getValue();
                       Map<String, Object> schedulerInfo = new LinkedHashMap<>();
                       schedulerInfo.put("queueType", corr.queueType);
-                      schedulerInfo.put("count", corr.samples);
+                      schedulerInfo.put("count", corr.samples.sum());
                       schedulerInfo.put(
                           "totalTimeMs",
-                          Math.round(corr.totalDurationNs / 1_000_000.0 * 10) / 10.0);
+                          Math.round(corr.totalDurationNs.sum() / 1_000_000.0 * 10) / 10.0);
                       schedulerInfo.put(
                           "avgTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
                       schedulerInfo.put(
-                          "maxTimeMs", Math.round(corr.maxDurationNs / 1_000_000.0 * 10) / 10.0);
-                      schedulerInfo.put("p95Ms", Math.round(corr.getP95DurationMs() * 10) / 10.0);
-                      schedulerInfo.put("p99Ms", Math.round(corr.getP99DurationMs() * 10) / 10.0);
+                          "maxTimeMs",
+                          Math.round(corr.maxDurationNs.get() / 1_000_000.0 * 10) / 10.0);
                       byScheduler.put(corr.scheduler, schedulerInfo);
                     });
             queueSaturation.put("byScheduler", byScheduler);
 
-            // Calculate p95 for assessment
-            double globalP95 =
-                queueMetrics.values().stream()
-                    .mapToDouble(QueueCorrelation::getP95DurationMs)
-                    .average()
-                    .orElse(0.0);
-            queueSaturation.put("assessment", assessQueueSaturation(avgQueueMs, globalP95));
+            queueSaturation.put("assessment", assessQueueSaturation(avgQueueMs));
 
             // Merge with existing saturation (lock contention)
             if (threads.containsKey("saturation")) {
@@ -3305,48 +3287,43 @@ public final class JafarMcpServer {
     Map<String, Object> io = new LinkedHashMap<>();
 
     try {
-      long totalOps = 0;
-      long totalDurationNs = 0;
-      List<Long> durations = new ArrayList<>();
+      LongAdder ioOps = new LongAdder();
+      LongAdder ioTotalNs = new LongAdder();
+      AtomicLong ioMaxNs = new AtomicLong(0L);
+      LongAdder ioSlowCount = new LongAdder();
 
       // Single-pass over all four I/O types
-      String ioQuery =
-          "events/(jdk.FileRead|jdk.FileWrite|jdk.SocketRead|jdk.SocketWrite)" + timeFilter;
-      JfrPath.Query ioParsed = queryParser.parse(ioQuery);
-      List<Map<String, Object>> ioEvents = evaluator.evaluate(sessionInfo.session(), ioParsed);
-      for (Map<String, Object> event : ioEvents) {
-        totalOps++;
-        Object durationObj = Values.get(event, "duration");
-        if (durationObj instanceof Number) {
-          long durationNs = ((Number) durationObj).longValue();
-          totalDurationNs += durationNs;
-          durations.add(durationNs);
-        }
-      }
+      JfrPath.Query ioParsed =
+          queryParser.parse(
+              "events/(jdk.FileRead|jdk.FileWrite|jdk.SocketRead|jdk.SocketWrite)" + timeFilter);
+      evaluator.consume(
+          sessionInfo.session(),
+          ioParsed,
+          event -> {
+            ioOps.increment();
+            Object durationObj = Values.get(event, "duration");
+            if (durationObj instanceof Number) {
+              long durationNs = ((Number) durationObj).longValue();
+              ioTotalNs.add(durationNs);
+              ioMaxNs.accumulateAndGet(durationNs, Math::max);
+              if (durationNs > 10_000_000) {
+                ioSlowCount.increment();
+              }
+            }
+          });
+      long totalOps = ioOps.longValue();
 
       if (totalOps > 0) {
         Map<String, Object> utilization = new LinkedHashMap<>();
         utilization.put("totalOperations", totalOps);
-        utilization.put("totalTimeMs", Math.round(totalDurationNs / 1_000_000.0 * 10) / 10.0);
+        utilization.put("totalTimeMs", Math.round(ioTotalNs.longValue() / 1_000_000.0 * 10) / 10.0);
         io.put("utilization", utilization);
 
-        // Calculate percentiles
-        if (!durations.isEmpty()) {
-          durations.sort(Long::compareTo);
-          int p95Idx = (int) (durations.size() * 0.95);
-          int p99Idx = (int) (durations.size() * 0.99);
-          long p95Ns = durations.get(Math.min(p95Idx, durations.size() - 1));
-          long p99Ns = durations.get(Math.min(p99Idx, durations.size() - 1));
-
-          Map<String, Object> saturation = new LinkedHashMap<>();
-          saturation.put("p95DurationMs", Math.round(p95Ns / 1_000_000.0 * 10) / 10.0);
-          saturation.put("p99DurationMs", Math.round(p99Ns / 1_000_000.0 * 10) / 10.0);
-
-          long slowCount = durations.stream().filter(d -> d > 10_000_000).count(); // >10ms
-          saturation.put("slowOperations", slowCount);
-          saturation.put("slowThreshold", "10ms");
-          io.put("saturation", saturation);
-        }
+        Map<String, Object> saturation = new LinkedHashMap<>();
+        saturation.put("maxDurationMs", Math.round(ioMaxNs.longValue() / 1_000_000.0 * 10) / 10.0);
+        saturation.put("slowOperations", ioSlowCount.longValue());
+        saturation.put("slowThreshold", "10ms");
+        io.put("saturation", saturation);
 
         io.put("assessment", totalOps < 1000 ? "LOW_IO" : "MODERATE_IO");
       } else {
@@ -3579,38 +3556,38 @@ public final class JafarMcpServer {
 
       // Get all execution samples
       sendProgress(exchange, "tsa", 0, 3, "Querying execution samples...");
-      String query = "events/" + eventType + timeFilter;
-      JfrPath.Query parsed = queryParser.parse(query);
-      List<Map<String, Object>> samples = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + eventType + timeFilter);
+      Map<String, ThreadStateMetrics> threadMetrics = new ConcurrentHashMap<>();
+      Map<String, Long> globalStateCount = new ConcurrentHashMap<>();
+      LongAdder totalSamplesArr = new LongAdder();
 
-      if (samples.isEmpty()) {
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            totalSamplesArr.increment();
+            String threadId = extractThreadId(event);
+            String threadName = extractThreadName(event);
+            String state = extractState(event);
+            ThreadStateMetrics metrics =
+                threadMetrics.computeIfAbsent(
+                    threadId, k -> new ThreadStateMetrics(threadId, threadName));
+            metrics.totalSamples.increment();
+            metrics.stateCount.merge(state, 1L, Long::sum);
+            globalStateCount.merge(state, 1L, Long::sum);
+          });
+
+      if (totalSamplesArr.sum() == 0) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("method", "TSA");
         result.put("message", "No execution samples in time window");
         return successResult(result);
       }
 
-      // Collect thread state metrics
-      Map<String, ThreadStateMetrics> threadMetrics = new HashMap<>();
-      Map<String, Long> globalStateCount = new HashMap<>();
-
-      for (Map<String, Object> event : samples) {
-        String threadId = extractThreadId(event);
-        String threadName = extractThreadName(event);
-        String state = extractState(event);
-
-        ThreadStateMetrics metrics =
-            threadMetrics.computeIfAbsent(
-                threadId, k -> new ThreadStateMetrics(threadId, threadName));
-        metrics.totalSamples++;
-        metrics.stateCount.merge(state, 1L, Long::sum);
-        globalStateCount.merge(state, 1L, Long::sum);
-      }
-
       // Filter by minSamples
-      threadMetrics.values().removeIf(m -> m.totalSamples < minSamples);
+      threadMetrics.values().removeIf(m -> m.totalSamples.sum() < minSamples);
 
-      long totalSamples = samples.size();
+      long totalSamples = totalSamplesArr.sum();
 
       // Correlate with blocking events if requested
       sendProgress(exchange, "tsa", 1, 3, "Analyzing thread states...");
@@ -3689,34 +3666,28 @@ public final class JafarMcpServer {
 
   private Map<String, MonitorCorrelation> correlateWithBlockingEvents(
       SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
-    Map<String, MonitorCorrelation> correlations = new HashMap<>();
+    Map<String, MonitorCorrelation> correlations = new ConcurrentHashMap<>();
 
     try {
-      String monitorQuery = "events/jdk.JavaMonitorEnter" + timeFilter;
-      JfrPath.Query parsed = queryParser.parse(monitorQuery);
-      List<Map<String, Object>> monitorEvents = evaluator.evaluate(sessionInfo.session(), parsed);
-
-      for (Map<String, Object> event : monitorEvents) {
-        Object classObj = Values.get(event, "monitorClass", "name");
-        if (classObj == null) {
-          classObj = Values.get(event, "monitorClass");
-        }
-        String monitorClass = classObj != null ? String.valueOf(classObj) : "unknown";
-
-        MonitorCorrelation corr =
-            correlations.computeIfAbsent(monitorClass, MonitorCorrelation::new);
-        corr.samples++;
-
-        Object durationObj = Values.get(event, "duration");
-        if (durationObj instanceof Number) {
-          long durationNs = ((Number) durationObj).longValue();
-          corr.totalDurationNs += durationNs;
-        }
-
-        String threadId = extractThreadId(event);
-        corr.threads.add(threadId);
-      }
-
+      JfrPath.Query parsed = queryParser.parse("events/jdk.JavaMonitorEnter" + timeFilter);
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            Object classObj = Values.get(event, "monitorClass", "name");
+            if (classObj == null) {
+              classObj = Values.get(event, "monitorClass");
+            }
+            String monitorClass = classObj != null ? String.valueOf(classObj) : "unknown";
+            MonitorCorrelation corr =
+                correlations.computeIfAbsent(monitorClass, MonitorCorrelation::new);
+            corr.samples.increment();
+            Object durationObj = Values.get(event, "duration");
+            if (durationObj instanceof Number) {
+              corr.totalDurationNs.add(((Number) durationObj).longValue());
+            }
+            corr.threads.add(extractThreadId(event));
+          });
     } catch (Exception e) {
       LOG.debug("Failed to correlate blocking events: {}", e.getMessage());
     }
@@ -3726,49 +3697,42 @@ public final class JafarMcpServer {
 
   private Map<String, QueueCorrelation> correlateWithQueueEvents(
       SessionRegistry.SessionInfo sessionInfo, String timeFilter) {
-    Map<String, QueueCorrelation> correlations = new HashMap<>();
+    Map<String, QueueCorrelation> correlations = new ConcurrentHashMap<>();
 
     try {
       String queueEventType = detectQueueTimeEventType(sessionInfo);
       if (queueEventType == null) return correlations;
 
-      String queueQuery = "events/" + queueEventType + timeFilter;
-      JfrPath.Query parsed = queryParser.parse(queueQuery);
-      List<Map<String, Object>> queueEvents = evaluator.evaluate(sessionInfo.session(), parsed);
+      JfrPath.Query parsed = queryParser.parse("events/" + queueEventType + timeFilter);
+      evaluator.consume(
+          sessionInfo.session(),
+          parsed,
+          event -> {
+            Object schedulerObj = Values.get(event, "scheduler", "name");
+            if (schedulerObj == null) schedulerObj = Values.get(event, "scheduler");
+            String scheduler =
+                extractSimpleClassName(
+                    schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
 
-      for (Map<String, Object> event : queueEvents) {
-        // Extract scheduler (use simple name)
-        Object schedulerObj = Values.get(event, "scheduler", "name");
-        if (schedulerObj == null) {
-          schedulerObj = Values.get(event, "scheduler");
-        }
-        String scheduler =
-            extractSimpleClassName(schedulerObj != null ? String.valueOf(schedulerObj) : "unknown");
+            Object queueTypeObj = Values.get(event, "queueType", "name");
+            if (queueTypeObj == null) queueTypeObj = Values.get(event, "queueType");
+            String queueType =
+                extractSimpleClassName(
+                    queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
 
-        // Extract queue type (use simple name)
-        Object queueTypeObj = Values.get(event, "queueType", "name");
-        if (queueTypeObj == null) {
-          queueTypeObj = Values.get(event, "queueType");
-        }
-        String queueType =
-            extractSimpleClassName(queueTypeObj != null ? String.valueOf(queueTypeObj) : "unknown");
+            String threadId = extractThreadId(event);
+            QueueCorrelation corr =
+                correlations.computeIfAbsent(
+                    scheduler, k -> new QueueCorrelation(scheduler, queueType));
 
-        // Use eventThread (thread that dequeued and executed)
-        String threadId = extractThreadId(event);
-        String key = scheduler;
-
-        QueueCorrelation corr =
-            correlations.computeIfAbsent(key, k -> new QueueCorrelation(scheduler, queueType));
-
-        Object durationObj = Values.get(event, "duration");
-        if (durationObj instanceof Number) {
-          long durationNs = ((Number) durationObj).longValue();
-          corr.addSample(durationNs, threadId);
-        } else {
-          corr.samples++;
-          corr.threads.add(threadId);
-        }
-      }
+            Object durationObj = Values.get(event, "duration");
+            if (durationObj instanceof Number) {
+              corr.addSample(((Number) durationObj).longValue(), threadId);
+            } else {
+              corr.samples.increment();
+              corr.threads.add(threadId);
+            }
+          });
 
     } catch (Exception e) {
       LOG.debug("Failed to correlate queue events: {}", e.getMessage());
@@ -3803,7 +3767,7 @@ public final class JafarMcpServer {
                         Math.round(stateSamples * 1000.0 / globalStateCount.get(state)) / 10.0);
                     thread.put(
                         "percentOfTotal",
-                        Math.round(stateSamples * 1000.0 / m.totalSamples) / 10.0);
+                        Math.round(stateSamples * 1000.0 / m.totalSamples.sum()) / 10.0);
                     return thread;
                   })
               .toList();
@@ -3822,29 +3786,31 @@ public final class JafarMcpServer {
       Map<String, MonitorCorrelation> correlations,
       Map<String, QueueCorrelation> queueCorrelations) {
     return threadMetrics.values().stream()
-        .sorted((a, b) -> Long.compare(b.totalSamples, a.totalSamples))
+        .sorted((a, b) -> Long.compare(b.totalSamples.sum(), a.totalSamples.sum()))
         .limit(20) // Top 20 threads by sample count
         .map(
             m -> {
               Map<String, Object> profile = new LinkedHashMap<>();
               profile.put("threadId", m.threadId);
               profile.put("threadName", m.threadName);
-              profile.put("totalSamples", m.totalSamples);
+              profile.put("totalSamples", m.totalSamples.sum());
               profile.put(
-                  "percentOfRecording", Math.round(m.totalSamples * 1000.0 / totalSamples) / 10.0);
+                  "percentOfRecording",
+                  Math.round(m.totalSamples.sum() * 1000.0 / totalSamples) / 10.0);
 
               // State breakdown
               Map<String, Object> stateBreakdown = new LinkedHashMap<>();
               for (Map.Entry<String, Long> entry : m.stateCount.entrySet()) {
                 Map<String, Object> stateInfo = new LinkedHashMap<>();
                 stateInfo.put("samples", entry.getValue());
-                stateInfo.put("pct", Math.round(entry.getValue() * 1000.0 / m.totalSamples) / 10.0);
+                stateInfo.put(
+                    "pct", Math.round(entry.getValue() * 1000.0 / m.totalSamples.sum()) / 10.0);
                 stateBreakdown.put(entry.getKey(), stateInfo);
               }
               profile.put("stateBreakdown", stateBreakdown);
 
               // Assessment
-              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples));
+              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples.sum()));
 
               // Add queue correlation info if available
               if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
@@ -3869,16 +3835,17 @@ public final class JafarMcpServer {
 
     Map<String, Object> blockedOn = new LinkedHashMap<>();
     correlations.entrySet().stream()
-        .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+        .sorted((a, b) -> Long.compare(b.getValue().samples.sum(), a.getValue().samples.sum()))
         .limit(10)
         .forEach(
             e -> {
               MonitorCorrelation corr = e.getValue();
               Map<String, Object> info = new LinkedHashMap<>();
-              info.put("samples", corr.samples);
+              info.put("samples", corr.samples.sum());
               info.put("threads", corr.threads.size());
-              if (corr.totalDurationNs > 0) {
-                double avgMs = (corr.totalDurationNs / corr.samples) / 1_000_000.0;
+              if (corr.totalDurationNs.sum() > 0) {
+                double avgMs =
+                    (corr.totalDurationNs.sum() / (double) corr.samples.sum()) / 1_000_000.0;
                 info.put("avgBlockTimeMs", Math.round(avgMs * 10) / 10.0);
               }
               info.put("monitorClass", e.getKey());
@@ -3898,19 +3865,20 @@ public final class JafarMcpServer {
 
     Map<String, Object> queuedOn = new LinkedHashMap<>();
     queueCorrelations.entrySet().stream()
-        .sorted((a, b) -> Long.compare(b.getValue().samples, a.getValue().samples))
+        .sorted((a, b) -> Long.compare(b.getValue().samples.sum(), a.getValue().samples.sum()))
         .limit(10)
         .forEach(
             e -> {
               QueueCorrelation corr = e.getValue();
               Map<String, Object> info = new LinkedHashMap<>();
               info.put("queueType", corr.queueType);
-              info.put("samples", corr.samples);
+              info.put("samples", corr.samples.sum());
               info.put("threads", corr.threads.size());
-              if (corr.totalDurationNs > 0 && corr.samples > 0) {
+              if (corr.totalDurationNs.sum() > 0 && corr.samples.sum() > 0) {
                 info.put("avgQueueTimeMs", Math.round(corr.getAvgDurationMs() * 10) / 10.0);
                 info.put(
-                    "maxQueueTimeMs", Math.round(corr.maxDurationNs / 1_000_000.0 * 10) / 10.0);
+                    "maxQueueTimeMs",
+                    Math.round(corr.maxDurationNs.get() / 1_000_000.0 * 10) / 10.0);
               }
               queuedOn.put(e.getKey(), info);
             });
@@ -3964,12 +3932,12 @@ public final class JafarMcpServer {
 
     // Find problematic threads
     for (ThreadStateMetrics m : threadMetrics.values()) {
-      String assessment = assessThreadBehavior(m.stateCount, m.totalSamples);
+      String assessment = assessThreadBehavior(m.stateCount, m.totalSamples.sum());
       if ("LOCK_CONTENTION".equals(assessment)) {
         Map<String, Object> problem = new LinkedHashMap<>();
         problem.put("thread", m.threadName);
         long blockedSamples = m.stateCount.getOrDefault("BLOCKED", 0L);
-        double blockedPct = (blockedSamples * 100.0) / m.totalSamples;
+        double blockedPct = (blockedSamples * 100.0) / m.totalSamples.sum();
         problem.put("issue", String.format("%.1f%% of time spent BLOCKED on locks", blockedPct));
         problem.put("recommendation", "Review synchronization strategy for this thread");
         problematicThreads.add(problem);
@@ -3979,12 +3947,14 @@ public final class JafarMcpServer {
     // Analyze correlations
     if (!correlations.isEmpty()) {
       MonitorCorrelation topContention =
-          correlations.values().stream().max(Comparator.comparingLong(c -> c.samples)).orElse(null);
-      if (topContention != null && topContention.samples > 50) {
+          correlations.values().stream()
+              .max(Comparator.comparingLong(c -> c.samples.sum()))
+              .orElse(null);
+      if (topContention != null && topContention.samples.sum() > 50) {
         recommendations.add(
             String.format(
                 "Monitor class '%s' has high contention (%d events) - consider lock-free alternatives",
-                topContention.monitorClass, topContention.samples));
+                topContention.monitorClass, topContention.samples.sum()));
       }
     }
 
@@ -3998,8 +3968,8 @@ public final class JafarMcpServer {
       if (maxQueue != null && maxQueue.getAvgDurationMs() > 50) {
         patterns.add(
             String.format(
-                "High executor queue times on %s (avg: %.1f ms, p95: %.1f ms)",
-                maxQueue.scheduler, maxQueue.getAvgDurationMs(), maxQueue.getP95DurationMs()));
+                "High executor queue times on %s (avg: %.1f ms)",
+                maxQueue.scheduler, maxQueue.getAvgDurationMs()));
         recommendations.add(
             String.format(
                 "Consider increasing thread pool size for %s or optimizing task submission rate",
@@ -4027,8 +3997,8 @@ public final class JafarMcpServer {
   private static class ThreadStateMetrics {
     final String threadId;
     final String threadName;
-    long totalSamples = 0;
-    final Map<String, Long> stateCount = new HashMap<>();
+    final LongAdder totalSamples = new LongAdder();
+    final Map<String, Long> stateCount = new ConcurrentHashMap<>();
 
     ThreadStateMetrics(String threadId, String threadName) {
       this.threadId = threadId;
@@ -4039,9 +4009,9 @@ public final class JafarMcpServer {
   /** Helper class to track monitor correlation data. */
   private static class MonitorCorrelation {
     final String monitorClass;
-    long samples = 0;
-    long totalDurationNs = 0;
-    final Set<String> threads = new HashSet<>();
+    final LongAdder samples = new LongAdder();
+    final LongAdder totalDurationNs = new LongAdder();
+    final Set<String> threads = ConcurrentHashMap.newKeySet();
 
     MonitorCorrelation(String monitorClass) {
       this.monitorClass = monitorClass;
@@ -4052,11 +4022,10 @@ public final class JafarMcpServer {
   private static class QueueCorrelation {
     final String scheduler;
     final String queueType;
-    long samples = 0;
-    long totalDurationNs = 0;
-    long maxDurationNs = 0;
-    final List<Long> durations = new ArrayList<>();
-    final Set<String> threads = new HashSet<>();
+    final LongAdder samples = new LongAdder();
+    final LongAdder totalDurationNs = new LongAdder();
+    final AtomicLong maxDurationNs = new AtomicLong(0L);
+    final Set<String> threads = ConcurrentHashMap.newKeySet();
 
     QueueCorrelation(String scheduler, String queueType) {
       this.scheduler = scheduler;
@@ -4064,31 +4033,15 @@ public final class JafarMcpServer {
     }
 
     void addSample(long durationNs, String threadId) {
-      samples++;
-      totalDurationNs += durationNs;
-      maxDurationNs = Math.max(maxDurationNs, durationNs);
-      durations.add(durationNs);
+      samples.increment();
+      totalDurationNs.add(durationNs);
+      maxDurationNs.accumulateAndGet(durationNs, Math::max);
       threads.add(threadId);
     }
 
     double getAvgDurationMs() {
-      return samples > 0 ? (totalDurationNs / (double) samples) / 1_000_000.0 : 0.0;
-    }
-
-    double getP95DurationMs() {
-      if (durations.isEmpty()) return 0.0;
-      List<Long> sorted = new ArrayList<>(durations);
-      sorted.sort(Long::compareTo);
-      int idx = (int) (sorted.size() * 0.95);
-      return sorted.get(Math.min(idx, sorted.size() - 1)) / 1_000_000.0;
-    }
-
-    double getP99DurationMs() {
-      if (durations.isEmpty()) return 0.0;
-      List<Long> sorted = new ArrayList<>(durations);
-      sorted.sort(Long::compareTo);
-      int idx = (int) (sorted.size() * 0.99);
-      return sorted.get(Math.min(idx, sorted.size() - 1)) / 1_000_000.0;
+      long s = samples.sum();
+      return s > 0 ? (totalDurationNs.sum() / (double) s) / 1_000_000.0 : 0.0;
     }
   }
 
@@ -4175,10 +4128,10 @@ public final class JafarMcpServer {
     return "BALANCED";
   }
 
-  /** Assess queue saturation level based on average and p95 queue times. */
-  private String assessQueueSaturation(double avgQueueMs, double p95QueueMs) {
-    if (avgQueueMs > 100 || p95QueueMs > 250) return "HIGH_QUEUE_SATURATION";
-    if (avgQueueMs > 20 || p95QueueMs > 100) return "MODERATE_QUEUE_SATURATION";
+  /** Assess queue saturation level based on average queue time. */
+  private String assessQueueSaturation(double avgQueueMs) {
+    if (avgQueueMs > 100) return "HIGH_QUEUE_SATURATION";
+    if (avgQueueMs > 20) return "MODERATE_QUEUE_SATURATION";
     return "LOW_QUEUE_SATURATION";
   }
 
