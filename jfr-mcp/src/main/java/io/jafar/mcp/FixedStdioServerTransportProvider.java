@@ -39,7 +39,7 @@ import reactor.core.scheduler.Schedulers;
  *
  * <p>Source copied from SDK 1.1.1 {@code StdioServerTransportProvider} and modified.
  */
-class FixedStdioServerTransportProvider implements McpServerTransportProvider {
+class FixedStdioServerTransportProvider implements McpServerTransportProvider, ShutdownAwaitable {
 
   private static final Logger logger =
       LoggerFactory.getLogger(FixedStdioServerTransportProvider.class);
@@ -57,6 +57,8 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider {
   private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
   private final Sinks.One<Void> inboundReady = Sinks.one();
+
+  private final Sinks.One<Void> shutdownSignal = Sinks.one();
 
   FixedStdioServerTransportProvider(McpJsonMapper jsonMapper) {
     this(jsonMapper, System.in, System.out);
@@ -124,6 +126,16 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider {
       return Mono.empty();
     }
     return this.session.closeGracefully();
+  }
+
+  /**
+   * Returns a {@link Mono} that completes when the inbound processing loop ends (stdin EOF or
+   * graceful close). Callers can {@code .block()} on this to park the main thread until the
+   * transport shuts itself down, instead of waiting on an unbounded latch.
+   */
+  @Override
+  public Mono<Void> awaitShutdown() {
+    return shutdownSignal.asMono();
   }
 
   private class StdioMcpSessionTransport implements McpServerTransport {
@@ -199,11 +211,19 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider {
     private void handleIncomingMessages() {
       this.inboundSink
           .asFlux()
-          .flatMap(message -> session.handle(message))
-          .doOnTerminate(
-              () -> {
+          .flatMap(
+              message ->
+                  session
+                      .handle(message)
+                      .doOnError(e -> logger.error("Error handling inbound message", e))
+                      .onErrorResume(e -> Mono.empty()))
+          .doFinally(
+              signalType -> {
                 this.outboundSink.tryEmitComplete();
                 this.inboundScheduler.dispose();
+                if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
+                  logger.warn("Shutdown signal emission failed");
+                }
               })
           .subscribe();
     }

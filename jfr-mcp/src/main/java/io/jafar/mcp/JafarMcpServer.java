@@ -43,6 +43,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -240,14 +241,12 @@ public final class JafarMcpServer {
 
       startIdleWatchdog();
 
-      // Keep the main thread alive - use a latch that never counts down
-      // The server will exit when stdin closes (EOF) or on SIGTERM
-      var latch = new java.util.concurrent.CountDownLatch(1);
-      latch.await();
+      // Park the main thread until stdin closes (EOF) or the session is shut down.
+      // awaitShutdown() completes when the inbound processing loop ends, so the
+      // process exits naturally instead of requiring the idle watchdog to kill it.
+      ShutdownAwaitable awaitable = transportProvider;
+      awaitable.awaitShutdown().timeout(Duration.ofMinutes(5)).block();
 
-    } catch (InterruptedException e) {
-      LOG.info("Server interrupted, shutting down");
-      Thread.currentThread().interrupt();
     } catch (Exception e) {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
       System.exit(1);
@@ -419,7 +418,7 @@ public final class JafarMcpServer {
    * <p>otlp tools: otlp_open, otlp_close, otlp_query, otlp_summary, otlp_flamegraph, otlp_use,
    * otlp_help.
    */
-  private List<McpServerFeatures.SyncToolSpecification> createToolSpecifications() {
+  List<McpServerFeatures.SyncToolSpecification> createToolSpecifications() {
     List<McpServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
     tools.add(withActivityTracking(createJfrOpenTool()));
     tools.add(withActivityTracking(createJfrQueryTool()));
