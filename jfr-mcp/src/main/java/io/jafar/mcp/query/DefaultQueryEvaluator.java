@@ -31,4 +31,9 @@ public final class DefaultQueryEvaluator implements QueryEvaluator {
       throws Exception {
     return evaluator.evaluate(session, query, progress);
   }
+
+  @Override
+  public Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
+    return evaluator.countAllEventTypes(session);
+  }
 }

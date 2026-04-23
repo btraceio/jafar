@@ -211,6 +211,15 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
     private void handleIncomingMessages() {
       this.inboundSink
           .asFlux()
+          .filter(
+              message -> {
+                if (message instanceof McpSchema.JSONRPCNotification n
+                    && "notifications/cancelled".equals(n.method())) {
+                  logger.debug("Received cancellation notification: {}", message);
+                  return false;
+                }
+                return true;
+              })
           .flatMap(
               message ->
                   session

@@ -43,7 +43,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -241,11 +240,8 @@ public final class JafarMcpServer {
 
       startIdleWatchdog();
 
-      // Park the main thread until stdin closes (EOF) or the session is shut down.
-      // awaitShutdown() completes when the inbound processing loop ends, so the
-      // process exits naturally instead of requiring the idle watchdog to kill it.
       ShutdownAwaitable awaitable = transportProvider;
-      awaitable.awaitShutdown().timeout(Duration.ofMinutes(5)).block();
+      awaitable.awaitShutdown().block();
 
     } catch (Exception e) {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
@@ -676,26 +672,15 @@ public final class JafarMcpServer {
       long totalEvents = 0;
 
       if (scan) {
-        // Scan recording to get actual counts for each type
+        // Single-pass count of all types — O(file_size) instead of O(N × file_size)
         LOG.info("Scanning {} types for event counts...", filteredTypes.size());
         long scanStart = System.currentTimeMillis();
 
+        Map<String, Long> allCounts = evaluator.countAllEventTypes(sessionInfo.session());
         for (String eventType : filteredTypes) {
-          try {
-            String query = "events/" + eventType + " | count()";
-            JfrPath.Query parsed = queryParser.parse(query);
-            List<Map<String, Object>> results = evaluator.evaluate(sessionInfo.session(), parsed);
-
-            if (!results.isEmpty() && results.get(0).containsKey("count")) {
-              Object countVal = results.get(0).get("count");
-              long count = countVal instanceof Number n ? n.longValue() : 0L;
-              counts.put(eventType, count);
-              totalEvents += count;
-            }
-          } catch (Exception e) {
-            LOG.debug("Could not count {}: {}", eventType, e.getMessage());
-            counts.put(eventType, 0L);
-          }
+          long count = allCounts.getOrDefault(eventType, 0L);
+          counts.put(eventType, count);
+          totalEvents += count;
         }
 
         long scanDuration = System.currentTimeMillis() - scanStart;
@@ -2037,25 +2022,15 @@ public final class JafarMcpServer {
   }
 
   private String detectExceptionEventType(SessionRegistry.SessionInfo sessionInfo) {
-    // Check for common exception event types
     String[] candidateTypes = {
       "jdk.JavaExceptionThrow", "datadog.ExceptionSample", "jdk.ExceptionStatistics"
     };
-
-    for (String type : candidateTypes) {
-      try {
-        String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
-        if (!result.isEmpty()) {
-          Object countObj = result.get(0).get("count");
-          if (countObj instanceof Number n && n.longValue() > 0) {
-            return type;
-          }
-        }
-      } catch (Exception ignored) {
-        // Try next type
+    try {
+      Map<String, Long> counts = evaluator.countAllEventTypes(sessionInfo.session());
+      for (String type : candidateTypes) {
+        if (counts.getOrDefault(type, 0L) > 0) return type;
       }
+    } catch (Exception ignored) {
     }
     return null;
   }
@@ -2238,42 +2213,19 @@ public final class JafarMcpServer {
       result.put("recordingPath", sessionInfo.recordingPath().toString());
       result.put("sessionId", sessionInfo.id());
 
-      // Get all event types and counts
+      // Single-pass count of all event types — O(file_size) instead of O(N × file_size)
+      sendProgress(exchange, "summary", 0, 2, "Counting events...");
+      Map<String, Long> rawCounts = evaluator.countAllEventTypes(sessionInfo.session());
+      sendProgress(exchange, "summary", 1, 2, "Aggregating...");
+
       Map<String, Long> eventCounts = new LinkedHashMap<>();
       long totalEvents = 0;
-
-      // Query for event type counts
       Set<String> types = sessionInfo.session().getAvailableTypes();
-      int typeIdx = 0;
-      int typeTotal = types.size();
-      sendProgress(
-          exchange, "summary", 0, typeTotal + 1, "Scanning " + typeTotal + " event types...");
       for (String type : types) {
-        typeIdx++;
-        try {
-          String query = "events/" + type + " | count()";
-          JfrPath.Query parsed = queryParser.parse(query);
-          List<Map<String, Object>> countResult = evaluator.evaluate(sessionInfo.session(), parsed);
-          if (!countResult.isEmpty()) {
-            Object countObj = countResult.get(0).get("count");
-            if (countObj instanceof Number n) {
-              long count = n.longValue();
-              if (count > 0) {
-                eventCounts.put(type, count);
-                totalEvents += count;
-              }
-            }
-          }
-        } catch (Exception ignored) {
-          // Skip types that fail to query
-        }
-        if (typeIdx % 10 == 0) {
-          sendProgress(
-              exchange,
-              "summary",
-              typeIdx,
-              typeTotal + 1,
-              "Counting events: " + typeIdx + "/" + typeTotal + " types");
+        long count = rawCounts.getOrDefault(type, 0L);
+        if (count > 0) {
+          eventCounts.put(type, count);
+          totalEvents += count;
         }
       }
 
@@ -2347,7 +2299,7 @@ public final class JafarMcpServer {
 
       result.put("highlights", highlights);
 
-      sendProgress(exchange, "summary", typeTotal + 1, typeTotal + 1, "Done");
+      sendProgress(exchange, "summary", 2, 2, "Done");
       return successResult(result);
 
     } catch (Exception e) {
@@ -2360,7 +2312,6 @@ public final class JafarMcpServer {
   private Map<String, Object> computeGcStats(SessionRegistry.SessionInfo sessionInfo) {
     Map<String, Object> stats = new LinkedHashMap<>();
 
-    // Try different GC event types
     String[] gcTypes = {
       "jdk.GarbageCollection",
       "jdk.YoungGarbageCollection",
@@ -2368,40 +2319,40 @@ public final class JafarMcpServer {
       "jdk.G1GarbageCollection"
     };
 
-    long totalGCs = 0;
-    long totalPauseNs = 0;
-    String gcType = null;
-
+    Set<String> availableTypes = sessionInfo.session().getAvailableTypes();
+    List<String> presentGcTypes = new ArrayList<>();
     for (String type : gcTypes) {
-      try {
-        String query = "events/" + type;
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
-
-        if (!events.isEmpty()) {
-          gcType = type;
-          totalGCs += events.size();
-
-          // Sum pause times (duration field in nanoseconds)
-          for (Map<String, Object> event : events) {
-            Object duration = event.get("duration");
-            if (duration instanceof Number n) {
-              totalPauseNs += n.longValue();
-            }
-          }
-        }
-      } catch (Exception ignored) {
-        // Try next type
+      if (availableTypes.contains(type)) {
+        presentGcTypes.add(type);
       }
     }
+    if (presentGcTypes.isEmpty()) {
+      return stats;
+    }
 
-    if (totalGCs > 0) {
-      stats.put("totalCollections", totalGCs);
-      stats.put("totalPauseMs", totalPauseNs / 1_000_000);
-      stats.put("avgPauseMs", (totalPauseNs / totalGCs) / 1_000_000);
-      if (gcType != null) {
-        stats.put("primaryType", gcType);
+    String typeExpr =
+        presentGcTypes.size() == 1
+            ? presentGcTypes.get(0)
+            : "(" + String.join("|", presentGcTypes) + ")";
+
+    try {
+      JfrPath.Query parsed = queryParser.parse("events/" + typeExpr);
+      List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
+      if (!events.isEmpty()) {
+        long totalPauseNs = 0;
+        for (Map<String, Object> event : events) {
+          Object duration = event.get("duration");
+          if (duration instanceof Number n) {
+            totalPauseNs += n.longValue();
+          }
+        }
+        long totalGCs = events.size();
+        stats.put("totalCollections", totalGCs);
+        stats.put("totalPauseMs", totalPauseNs / 1_000_000);
+        stats.put("avgPauseMs", (totalPauseNs / totalGCs) / 1_000_000);
+        stats.put("primaryType", presentGcTypes.get(0));
       }
+    } catch (Exception ignored) {
     }
 
     return stats;
@@ -2597,69 +2548,38 @@ public final class JafarMcpServer {
     String[] candidateTypes = {
       "jdk.ExecutionSample", "datadog.ExecutionSample", "jdk.NativeMethodSample"
     };
-
-    for (String type : candidateTypes) {
-      try {
-        String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
-        if (!result.isEmpty()) {
-          Object countObj = result.get(0).get("count");
-          if (countObj instanceof Number n && n.longValue() > 0) {
-            return type;
-          }
-        }
-      } catch (Exception ignored) {
-        // Try next type
+    try {
+      Map<String, Long> counts = evaluator.countAllEventTypes(sessionInfo.session());
+      for (String type : candidateTypes) {
+        if (counts.getOrDefault(type, 0L) > 0) return type;
       }
+    } catch (Exception ignored) {
     }
     return null;
   }
 
   private String detectQueueTimeEventType(SessionRegistry.SessionInfo sessionInfo) {
-    String[] candidateTypes = {"datadog.QueueTime"};
-
-    for (String type : candidateTypes) {
-      try {
-        String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
-        if (!result.isEmpty()) {
-          Object countObj = result.get(0).get("count");
-          if (countObj instanceof Number n && n.longValue() > 0) {
-            return type;
-          }
-        }
-      } catch (Exception ignored) {
-        // Try next type
-      }
+    try {
+      Map<String, Long> counts = evaluator.countAllEventTypes(sessionInfo.session());
+      return counts.getOrDefault("datadog.QueueTime", 0L) > 0 ? "datadog.QueueTime" : null;
+    } catch (Exception ignored) {
+      return null;
     }
-    return null;
   }
 
   private String detectAllocationEventType(SessionRegistry.SessionInfo sessionInfo) {
-    // Check for Datadog allocation profiling first, then JDK native allocation events
     String[] candidateTypes = {
       "datadog.ObjectSample",
       "jdk.ObjectAllocationSample",
       "jdk.ObjectAllocationInNewTLAB",
       "jdk.ObjectAllocationOutsideTLAB"
     };
-
-    for (String type : candidateTypes) {
-      try {
-        String query = "events/" + type + " | count()";
-        JfrPath.Query parsed = queryParser.parse(query);
-        List<Map<String, Object>> result = evaluator.evaluate(sessionInfo.session(), parsed);
-        if (!result.isEmpty()) {
-          Object countObj = result.get(0).get("count");
-          if (countObj instanceof Number n && n.longValue() > 0) {
-            return type;
-          }
-        }
-      } catch (Exception ignored) {
-        // Try next type
+    try {
+      Map<String, Long> counts = evaluator.countAllEventTypes(sessionInfo.session());
+      for (String type : candidateTypes) {
+        if (counts.getOrDefault(type, 0L) > 0) return type;
       }
+    } catch (Exception ignored) {
     }
     return null;
   }
@@ -3379,25 +3299,18 @@ public final class JafarMcpServer {
       long totalDurationNs = 0;
       List<Long> durations = new ArrayList<>();
 
-      // Aggregate file and socket I/O
-      for (String eventType :
-          List.of("jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")) {
-        try {
-          String query = "events/" + eventType + timeFilter;
-          JfrPath.Query parsed = queryParser.parse(query);
-          List<Map<String, Object>> events = evaluator.evaluate(sessionInfo.session(), parsed);
-
-          for (Map<String, Object> event : events) {
-            totalOps++;
-            Object durationObj = Values.get(event, "duration");
-            if (durationObj instanceof Number) {
-              long durationNs = ((Number) durationObj).longValue();
-              totalDurationNs += durationNs;
-              durations.add(durationNs);
-            }
-          }
-        } catch (Exception ignored) {
-          // Event type not available
+      // Single-pass over all four I/O types
+      String ioQuery =
+          "events/(jdk.FileRead|jdk.FileWrite|jdk.SocketRead|jdk.SocketWrite)" + timeFilter;
+      JfrPath.Query ioParsed = queryParser.parse(ioQuery);
+      List<Map<String, Object>> ioEvents = evaluator.evaluate(sessionInfo.session(), ioParsed);
+      for (Map<String, Object> event : ioEvents) {
+        totalOps++;
+        Object durationObj = Values.get(event, "duration");
+        if (durationObj instanceof Number) {
+          long durationNs = ((Number) durationObj).longValue();
+          totalDurationNs += durationNs;
+          durations.add(durationNs);
         }
       }
 
