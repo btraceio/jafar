@@ -51,6 +51,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
@@ -150,6 +151,9 @@ public final class JafarMcpServer {
 
   /** Timestamp of the last tool invocation, in nanoseconds. Updated on every tool call. */
   private volatile long lastActivityNanos = System.nanoTime();
+
+  /** Number of tool calls currently in progress. Idle watchdog skips shutdown while non-zero. */
+  private final AtomicInteger activeRequests = new AtomicInteger(0);
 
   /** Creates a server with default dependencies for production use. */
   public JafarMcpServer() {
@@ -354,7 +358,7 @@ public final class JafarMcpServer {
                   return;
                 }
                 long idleNanos = System.nanoTime() - lastActivityNanos;
-                if (idleNanos >= timeoutNanos) {
+                if (idleNanos >= timeoutNanos && activeRequests.get() == 0) {
                   LOG.info(
                       "Idle timeout reached ({}m), shutting down", idleNanos / 60_000_000_000L);
                   System.exit(0);
@@ -378,7 +382,13 @@ public final class JafarMcpServer {
         spec.tool(),
         (exchange, args) -> {
           touchActivity();
-          return spec.callHandler().apply(exchange, args);
+          activeRequests.incrementAndGet();
+          try {
+            return spec.callHandler().apply(exchange, args);
+          } finally {
+            activeRequests.decrementAndGet();
+            touchActivity();
+          }
         });
   }
 

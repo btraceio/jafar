@@ -7,6 +7,7 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,6 +70,43 @@ class IdleTimeoutTest {
     long recorded = (long) field.get(server);
     assertTrue(recorded >= before, "lastActivityNanos should be updated after wrapped call");
     assertTrue(recorded <= after);
+  }
+
+  @Test
+  void activeRequestsCounterIsZeroAfterWrappedCallCompletes() throws Exception {
+    Field activeField = JafarMcpServer.class.getDeclaredField("activeRequests");
+    activeField.setAccessible(true);
+
+    Method wrap =
+        JafarMcpServer.class.getDeclaredMethod("withActivityTracking", SyncToolSpecification.class);
+    wrap.setAccessible(true);
+
+    Method createHelp = JafarMcpServer.class.getDeclaredMethod("createJfrHelpTool");
+    createHelp.setAccessible(true);
+    var spec = (SyncToolSpecification) createHelp.invoke(server);
+
+    // Capture activeRequests value seen during the call
+    AtomicInteger duringCall = new AtomicInteger(-1);
+    SyncToolSpecification spied =
+        new SyncToolSpecification(
+            spec.tool(),
+            (exchange, args) -> {
+              try {
+                duringCall.set(((AtomicInteger) activeField.get(server)).get());
+              } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+              }
+              return spec.callHandler().apply(exchange, args);
+            });
+
+    var wrapped = (SyncToolSpecification) wrap.invoke(server, spied);
+    wrapped.callHandler().apply(null, new CallToolRequest("jfr_help", Map.of("topic", "overview")));
+
+    assertEquals(1, duringCall.get(), "activeRequests should be 1 while the call is running");
+    assertEquals(
+        0,
+        ((AtomicInteger) activeField.get(server)).get(),
+        "activeRequests should be 0 after the call");
   }
 
   @Test
