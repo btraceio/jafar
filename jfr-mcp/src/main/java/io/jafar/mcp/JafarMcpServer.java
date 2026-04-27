@@ -4187,7 +4187,7 @@ public final class JafarMcpServer {
 
       // Step 1: Get summary data
       sendProgress(exchange, "diagnose", 0, 4, "Running summary...");
-      CallToolResult summaryResult = handleJfrSummary(exchange, args);
+      CallToolResult summaryResult = handleJfrSummary(null, args);
       if (summaryResult.isError()) {
         return summaryResult;
       }
@@ -4215,7 +4215,7 @@ public final class JafarMcpServer {
               String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
 
           // Run exception analysis
-          CallToolResult exceptionsResult = handleJfrExceptions(exchange, args);
+          CallToolResult exceptionsResult = handleJfrExceptions(null, args);
           if (!exceptionsResult.isError() && includeAnalysis) {
             String exceptionsJson = ((TextContent) exceptionsResult.content().get(0)).text();
             analyses.put("exceptions", MAPPER.readValue(exceptionsJson, Map.class));
@@ -4280,7 +4280,7 @@ public final class JafarMcpServer {
           findings.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
-          CallToolResult hotmethodsResult = handleJfrHotmethods(exchange, args);
+          CallToolResult hotmethodsResult = handleJfrHotmethods(null, args);
           if (!hotmethodsResult.isError() && includeAnalysis) {
             String hotmethodsJson = ((TextContent) hotmethodsResult.content().get(0)).text();
             analyses.put("hotmethods", MAPPER.readValue(hotmethodsJson, Map.class));
