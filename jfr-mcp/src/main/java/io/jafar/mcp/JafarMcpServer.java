@@ -2359,8 +2359,8 @@ public final class JafarMcpServer {
         }
         long totalGCs = events.size();
         stats.put("totalCollections", totalGCs);
-        stats.put("totalPauseMs", totalPauseNs / 1_000_000);
-        stats.put("avgPauseMs", (totalPauseNs / totalGCs) / 1_000_000);
+        stats.put("totalPauseMs", totalPauseNs / 1_000_000.0);
+        stats.put("avgPauseMs", totalPauseNs / (totalGCs * 1_000_000.0));
         stats.put("primaryType", presentGcTypes.get(0));
       }
     } catch (Exception ignored) {
