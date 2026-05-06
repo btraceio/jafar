@@ -24,12 +24,18 @@ public final class BufferedRecordingStreamReader
    * @param data the payload to read from; the reader does not copy this array
    */
   public BufferedRecordingStreamReader(byte[] data) {
+    // ByteBuffer.wrap returns a BIG_ENDIAN buffer by default — the same order FileChannel.map()
+    // produces — which is what the base class's reverse-on-read logic assumes for JFR payloads.
     this(new CustomByteBuffer.ByteBufferWrapper(ByteBuffer.wrap(data)), data.length, 0);
   }
 
   /**
    * Wraps the given {@link ByteBuffer}. The buffer's current position is treated as offset {@code
    * 0} of the reader; its remaining length becomes the reader's {@link #length()}.
+   *
+   * <p>The reader takes a {@link ByteBuffer#slice() slice} of the buffer, snapshotting its
+   * position, limit, and byte order, but the underlying bytes remain shared with the caller.
+   * Mutating the buffer's data after construction will be visible through the reader.
    *
    * @param buffer the source buffer
    */
