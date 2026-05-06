@@ -33,7 +33,7 @@ class BufferedRecordingStreamReaderTest {
   }
 
   @Test
-  void readsVarintsAcrossAllBoundaryWidths() {
+  void readsVarintsAcrossBoundaryWidths() {
     // Encodes: 0x7F (1-byte), 0x80 (2-byte), 0x3FFF (2-byte), 0x4000 (3-byte), 0xFFFFFFFFL (5-byte)
     byte[] payload =
         new byte[] {
