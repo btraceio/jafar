@@ -21,38 +21,21 @@ public abstract class RecordingStreamReader {
   protected RecordingStreamReader() {}
 
   /**
-   * Implementation of RecordingStreamReader that uses memory-mapped files.
+   * Package-private base class for buffer-backed readers.
    *
-   * <p>This class provides efficient reading of JFR recording data by mapping the file into memory
-   * and using optimized byte operations.
+   * <p>Owns position tracking, varint decoding, byte-order awareness, and slicing. Concrete
+   * subclasses differ only in how they obtain the underlying {@link CustomByteBuffer} and what type
+   * their {@link #slice(long, long)} returns.
    */
-  public static final class MappedRecordingStreamReader extends RecordingStreamReader {
-    private final CustomByteBuffer buffer;
-    private final long length;
-    private final boolean nativeOrder;
-    private final int alignementOffset;
+  abstract static class BufferBackedRecordingStreamReader extends RecordingStreamReader {
+    protected final CustomByteBuffer buffer;
+    protected final long length;
+    protected final boolean nativeOrder;
+    protected final int alignementOffset;
 
-    private long remaining;
+    protected long remaining;
 
-    /**
-     * Constructs a new MappedRecordingStreamReader for the specified file path.
-     *
-     * @param path the path to the JFR recording file
-     * @throws IOException if an I/O error occurs during file mapping
-     */
-    public MappedRecordingStreamReader(Path path) throws IOException {
-      this(CustomByteBuffer.map(path, Integer.MAX_VALUE), Files.size(path), 0);
-    }
-
-    /**
-     * Constructs a new MappedRecordingStreamReader with the specified buffer and parameters.
-     *
-     * @param buffer the custom byte buffer to use for reading
-     * @param length the total length of the data
-     * @param alignementOffset the alignment offset for proper byte ordering
-     */
-    private MappedRecordingStreamReader(
-        CustomByteBuffer buffer, long length, int alignementOffset) {
+    BufferBackedRecordingStreamReader(CustomByteBuffer buffer, long length, int alignementOffset) {
       this.buffer = buffer;
       this.length = length;
       this.nativeOrder = buffer.isNativeOrder();
@@ -60,75 +43,51 @@ public abstract class RecordingStreamReader {
       this.remaining = length;
     }
 
-    /** {@inheritDoc} */
-    @Override
-    public RecordingStreamReader slice() {
-      long sliceLength = buffer.remaining();
-      return new MappedRecordingStreamReader(
-          buffer.slice(), sliceLength, (int) (alignementOffset + buffer.position()) % 8);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public RecordingStreamReader slice(long pos, long size) {
-      return new MappedRecordingStreamReader(
-          buffer.slice(pos, size), size, (int) (alignementOffset + pos) % 8);
-    }
-
-    /** {@inheritDoc} */
     @Override
     public long length() {
       return length;
     }
 
-    /** {@inheritDoc} */
     @Override
     public long remaining() {
       return remaining;
     }
 
-    /** {@inheritDoc} */
     @Override
     public long position() {
       return buffer.position();
     }
 
-    /** {@inheritDoc} */
     @Override
     public void position(long newPosition) {
       remaining = length - newPosition;
       buffer.position(newPosition);
     }
 
-    /** {@inheritDoc} */
     @Override
     public void skip(long n) {
       remaining -= n;
       buffer.position(buffer.position() + n);
     }
 
-    /** {@inheritDoc} */
     @Override
     public byte read() {
       remaining--;
       return buffer.get();
     }
 
-    /** {@inheritDoc} */
     @Override
     public void read(byte[] b, int off, int len) {
       remaining -= len;
       buffer.get(b, off, len);
     }
 
-    /** {@inheritDoc} */
     @Override
     public boolean readBoolean() {
       remaining--;
       return buffer.get() != 0;
     }
 
-    /** {@inheritDoc} */
     @Override
     public short readShort() {
       remaining -= 2;
@@ -136,7 +95,6 @@ public abstract class RecordingStreamReader {
       return nativeOrder ? s : Short.reverseBytes(s);
     }
 
-    /** {@inheritDoc} */
     @Override
     public int readInt() {
       remaining -= 4;
@@ -144,7 +102,6 @@ public abstract class RecordingStreamReader {
       return nativeOrder ? i : Integer.reverseBytes(i);
     }
 
-    /** {@inheritDoc} */
     @Override
     public long readLong() {
       remaining -= 8;
@@ -152,29 +109,16 @@ public abstract class RecordingStreamReader {
       return nativeOrder ? l : Long.reverseBytes(l);
     }
 
-    /**
-     * Reverses the byte order of a float value.
-     *
-     * @param f the float value to reverse
-     * @return the float value with reversed byte order
-     */
     private static float reverseBytes(float f) {
       int i = Float.floatToRawIntBits(f);
       return Float.intBitsToFloat(Integer.reverseBytes(i));
     }
 
-    /**
-     * Reverses the byte order of a double value.
-     *
-     * @param d the double value to reverse
-     * @return the double value with reversed byte order
-     */
     private static double reverseBytes(double d) {
       long l = Double.doubleToRawLongBits(d);
       return Double.longBitsToDouble(Long.reverseBytes(l));
     }
 
-    /** {@inheritDoc} */
     @Override
     public float readFloat() {
       remaining -= 4;
@@ -182,7 +126,6 @@ public abstract class RecordingStreamReader {
       return nativeOrder ? f : reverseBytes(f);
     }
 
-    /** {@inheritDoc} */
     @Override
     public double readDouble() {
       remaining -= 8;
@@ -190,28 +133,6 @@ public abstract class RecordingStreamReader {
       return nativeOrder ? d : reverseBytes(d);
     }
 
-    /**
-     * Finds the first byte position where the 8th bit is unset.
-     *
-     * @param value the 64-bit value to check
-     * @return the position of the first unset 8th bit
-     */
-    private static int findFirstUnset8thBit(long value) {
-      // Step 1: Mask out the 8th bits of each byte
-      long mask = 0x8080808080808080L;
-      long eighthBits = value & mask;
-
-      // Step 2: Identify which bytes have the 8th bit unset
-      long unsetBits = (~eighthBits) & mask;
-
-      // Step 3: Collapse each byte to a single bit
-      long collapsed = unsetBits * 0x0101010101010101L;
-
-      // Step 4: Find the first unset byte
-      return Long.numberOfTrailingZeros(collapsed) / 8;
-    }
-
-    /** {@inheritDoc} */
     @Override
     public long readVarint() {
       return readVarintSeq();
@@ -266,14 +187,49 @@ public abstract class RecordingStreamReader {
       if (b7 >= 0) {
         return ret;
       }
-      int b8 = buffer.get(); // read last byte raw
+      int b8 = buffer.get();
       remaining--;
       return ret + (((long) (b8 & 0XFF)) << 56);
     }
 
-    /** {@inheritDoc} */
     @Override
     public void close() throws IOException {}
+  }
+
+  /**
+   * Implementation of {@link RecordingStreamReader} that uses memory-mapped files.
+   *
+   * <p>Construction maps the file at {@code path} via {@link CustomByteBuffer#map(Path, int)}; all
+   * read logic is inherited from {@link BufferBackedRecordingStreamReader}.
+   */
+  public static final class MappedRecordingStreamReader extends BufferBackedRecordingStreamReader {
+
+    /**
+     * Constructs a new MappedRecordingStreamReader for the specified file path.
+     *
+     * @param path the path to the JFR recording file
+     * @throws IOException if an I/O error occurs during file mapping
+     */
+    public MappedRecordingStreamReader(Path path) throws IOException {
+      this(CustomByteBuffer.map(path, Integer.MAX_VALUE), Files.size(path), 0);
+    }
+
+    MappedRecordingStreamReader(CustomByteBuffer buffer, long length, int alignementOffset) {
+      super(buffer, length, alignementOffset);
+    }
+
+    @Override
+    public RecordingStreamReader slice() {
+      long sliceLength = buffer.remaining();
+      return new MappedRecordingStreamReader(
+          buffer.slice(), sliceLength, (int) (alignementOffset + buffer.position()) % 8);
+    }
+
+    @Override
+    public RecordingStreamReader slice(long pos, long size) {
+      return new MappedRecordingStreamReader(
+          buffer.slice(pos, size), size, (int) (alignementOffset + pos) % 8);
+    }
   }
 
   /**
