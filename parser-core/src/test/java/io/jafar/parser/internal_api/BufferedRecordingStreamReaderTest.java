@@ -3,8 +3,11 @@ package io.jafar.parser.internal_api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 class BufferedRecordingStreamReaderTest {
@@ -84,5 +87,26 @@ class BufferedRecordingStreamReaderTest {
 
     // parent position untouched
     assertEquals(0L, root.position());
+  }
+
+  @Test
+  void parityWithMappedReaderOnSamePayload() throws IOException {
+    byte[] payload = new byte[256];
+    for (int i = 0; i < payload.length; i++) {
+      payload[i] = (byte) ((i * 31 + 7) & 0xFF);
+    }
+    Path tmp = Files.createTempFile("jafar-buf-parity-", ".bin");
+    tmp.toFile().deleteOnExit();
+    Files.write(tmp, payload);
+
+    RecordingStreamReader mapped = RecordingStreamReader.mapped(tmp);
+    BufferedRecordingStreamReader buffered = new BufferedRecordingStreamReader(payload);
+
+    assertEquals(mapped.length(), buffered.length());
+    for (int i = 0; i < payload.length / 4; i++) {
+      assertEquals(mapped.readInt(), buffered.readInt(), "mismatch at int #" + i);
+    }
+    assertEquals(mapped.remaining(), buffered.remaining());
+    mapped.close();
   }
 }
