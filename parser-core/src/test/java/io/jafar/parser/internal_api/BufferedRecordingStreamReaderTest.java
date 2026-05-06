@@ -31,4 +31,34 @@ class BufferedRecordingStreamReaderTest {
     assertEquals(0x0102030405060708L, reader.readLong());
     assertEquals(0L, reader.remaining());
   }
+
+  @Test
+  void readsVarintsAcrossAllBoundaryWidths() {
+    // Encodes: 0x7F (1-byte), 0x80 (2-byte), 0x3FFF (2-byte), 0x4000 (3-byte), 0xFFFFFFFFL (5-byte)
+    byte[] payload =
+        new byte[] {
+          0x7F,
+          (byte) 0x80,
+          0x01,
+          (byte) 0xFF,
+          0x7F,
+          (byte) 0x80,
+          (byte) 0x80,
+          0x01,
+          (byte) 0xFF,
+          (byte) 0xFF,
+          (byte) 0xFF,
+          (byte) 0xFF,
+          0x0F
+        };
+
+    BufferedRecordingStreamReader reader = new BufferedRecordingStreamReader(payload);
+
+    assertEquals(0x7FL, reader.readVarint());
+    assertEquals(0x80L, reader.readVarint());
+    assertEquals(0x3FFFL, reader.readVarint());
+    assertEquals(0x4000L, reader.readVarint());
+    assertEquals(0xFFFFFFFFL, reader.readVarint());
+    assertEquals(0L, reader.remaining());
+  }
 }
