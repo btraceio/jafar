@@ -2,7 +2,6 @@ package io.jafar.parser.internal_api;
 
 import io.jafar.utils.CustomByteBuffer;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 /**
  * In-memory, buffer-backed {@link RecordingStreamReader}.
@@ -25,11 +24,7 @@ public final class BufferedRecordingStreamReader
    * @param data the payload to read from; the reader does not copy this array
    */
   public BufferedRecordingStreamReader(byte[] data) {
-    this(
-        new CustomByteBuffer.ByteBufferWrapper(
-            ByteBuffer.wrap(data).order(ByteOrder.nativeOrder())),
-        data.length,
-        0);
+    this(new CustomByteBuffer.ByteBufferWrapper(ByteBuffer.wrap(data)), data.length, 0);
   }
 
   /**

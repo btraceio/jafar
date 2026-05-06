@@ -9,8 +9,10 @@ import org.junit.jupiter.api.Test;
 class BufferedRecordingStreamReaderTest {
 
   @Test
-  void readsPrimitivesFromByteArrayInNativeOrder() {
-    ByteBuffer src = ByteBuffer.allocate(15).order(ByteOrder.nativeOrder());
+  void readsPrimitivesFromBigEndianPayload() {
+    // JFR data is big-endian on disk; the reader must interpret payload bytes the same way
+    // MappedRecordingStreamReader does (via FileChannel.map(), which is BE-default).
+    ByteBuffer src = ByteBuffer.allocate(15).order(ByteOrder.BIG_ENDIAN);
     src.put((byte) 0x42);
     src.putShort((short) 0x1234);
     src.putInt(0xDEADBEEF);
