@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -60,5 +61,28 @@ class BufferedRecordingStreamReaderTest {
     assertEquals(0x4000L, reader.readVarint());
     assertEquals(0xFFFFFFFFL, reader.readVarint());
     assertEquals(0L, reader.remaining());
+  }
+
+  @Test
+  void sliceReturnsBufferedReaderWithIndependentPosition() {
+    byte[] payload = new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    BufferedRecordingStreamReader root = new BufferedRecordingStreamReader(payload);
+
+    RecordingStreamReader slice = root.slice(3, 4);
+
+    // slice type identity
+    assertInstanceOf(BufferedRecordingStreamReader.class, slice);
+
+    // slice sees its own length and starts at position 0
+    assertEquals(4L, slice.length());
+    assertEquals(4L, slice.remaining());
+    assertEquals(0L, slice.position());
+
+    // slice contents start at byte 3 of the parent
+    assertEquals((byte) 3, slice.read());
+    assertEquals((byte) 4, slice.read());
+
+    // parent position untouched
+    assertEquals(0L, root.position());
   }
 }
