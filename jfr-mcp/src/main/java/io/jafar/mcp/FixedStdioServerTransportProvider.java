@@ -302,8 +302,24 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                         break;
                       }
                     } catch (Exception e) {
+                      // A single malformed JSON-RPC line must not wedge the
+                      // inbound pipeline for the whole session. Per JSON-RPC
+                      // 2.0, emit a Parse error response (id=null) and keep
+                      // reading subsequent lines.
                       logIfNotClosing("Error processing inbound message", e);
-                      break;
+                      try {
+                        McpSchema.JSONRPCResponse.JSONRPCError parseErr =
+                            new McpSchema.JSONRPCResponse.JSONRPCError(
+                                McpSchema.ErrorCodes.PARSE_ERROR, "Parse error", null);
+                        McpSchema.JSONRPCResponse parseResp =
+                            new McpSchema.JSONRPCResponse(
+                                McpSchema.JSONRPC_VERSION, null, null, parseErr);
+                        outboundSink.tryEmitNext(parseResp);
+                      } catch (Exception ignored) {
+                        // Best-effort: a failed emit (e.g. closed pipe) must
+                        // not propagate or break the read loop.
+                      }
+                      continue;
                     }
                   } catch (IOException e) {
                     logIfNotClosing("Error reading from stdin", e);
