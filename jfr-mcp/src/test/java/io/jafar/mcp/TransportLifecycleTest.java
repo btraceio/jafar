@@ -54,8 +54,7 @@ class TransportLifecycleTest {
 
   @Test
   void closeGracefullyTerminatesInboundExecutorEvenWhileReaderIsParked() throws Exception {
-    PipedInputStream serverIn = new PipedInputStream(1 << 16);
-    PipedOutputStream clientOut = new PipedOutputStream(serverIn);
+    UninterruptibleBlockingInputStream serverIn = new UninterruptibleBlockingInputStream();
     PipedInputStream clientIn = new PipedInputStream(1 << 16);
     PipedOutputStream serverOut = new PipedOutputStream(clientIn);
 
@@ -67,8 +66,8 @@ class TransportLifecycleTest {
         .capabilities(ServerCapabilities.builder().tools(true).build())
         .build();
 
-    // Reader thread is now parked on readLine() — no bytes have been written to stdin.
-    // Ask the transport to close gracefully. The reader MUST be released.
+    // Reader thread is parked inside UninterruptibleBlockingInputStream.read() and ignores
+    // interrupts. closeGracefully() MUST close the InputStream to release the reader.
     transport.closeGracefully().timeout(Duration.ofSeconds(3)).block();
     transport.awaitShutdown().timeout(Duration.ofSeconds(3)).block();
 
@@ -79,14 +78,39 @@ class TransportLifecycleTest {
     inboundExecField.setAccessible(true);
     ExecutorService inbound = (ExecutorService) inboundExecField.get(stdio);
 
-    // Without the fix, the parked reader thread never exits and awaitTermination times out.
     assertTrue(
         inbound.awaitTermination(2, TimeUnit.SECONDS),
-        "inbound executor must terminate after closeGracefully() — reader thread is parked otherwise");
+        "inbound executor must terminate after closeGracefully() — interrupts alone do not release the parked reader");
 
-    // Tidy.
-    clientOut.close();
     clientIn.close();
     serverOut.close();
+  }
+
+  /**
+   * Test-only InputStream that blocks forever on read() and ignores Thread.interrupt(). Released
+   * only by close().
+   */
+  private static final class UninterruptibleBlockingInputStream extends java.io.InputStream {
+    private final java.util.concurrent.CountDownLatch released =
+        new java.util.concurrent.CountDownLatch(1);
+    private volatile boolean closed = false;
+
+    @Override
+    public int read() {
+      while (!closed) {
+        try {
+          if (released.await(1, TimeUnit.SECONDS)) break;
+        } catch (InterruptedException ignored) {
+          // intentionally swallow — simulate a native, non-interruptible read
+        }
+      }
+      return -1; // EOF on close
+    }
+
+    @Override
+    public void close() {
+      closed = true;
+      released.countDown();
+    }
   }
 }
