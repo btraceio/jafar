@@ -59,6 +59,9 @@ test {
     // Allocate sufficient heap for tests that load real JFR files
     jvmArgs '-Xmx2g', '-Xms512m'
 
+    // Stress tests are a separate concept from integration tests; always exclude from default `test`.
+    exclude '**/JafarMcpStressTest.class'
+
     // Exclude integration tests by default (require large JFR files)
     // Run with -DenableIntegrationTests=true to include them
     if (System.getProperty('enableIntegrationTests') != 'true') {
@@ -94,6 +97,34 @@ tasks.register('integrationTest', Test) {
 
     // Integration tests need more heap for processing JFR files
     jvmArgs '-Xmx4g', '-Xms512m'
+
+    shouldRunAfter test
+}
+
+// Stress tests — exercise the full stdio pipeline under load. Exclude from default `test`.
+tasks.register('stressTest', Test) {
+    description = 'Runs reliability stress tests over the in-process stdio harness'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform {
+        includeTags 'stress'
+    }
+
+    jvmArgs '-Xmx512m', '-Xms256m'
+
+    // Mockito agent + java.base opens (mirror the existing `test` task setup):
+    doFirst {
+        def mockitoAgent = configurations.testRuntimeClasspath.files.find { it.name.contains('mockito-core') }
+        if (mockitoAgent) {
+            jvmArgs "-javaagent:${mockitoAgent}"
+        }
+    }
+    jvmArgs '--add-opens', 'java.base/java.lang=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.util=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
 
     shouldRunAfter test
 }
