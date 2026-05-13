@@ -161,6 +161,12 @@ public final class JafarMcpServer {
   /** Number of tool calls currently in progress. Idle watchdog skips shutdown while non-zero. */
   private final AtomicInteger activeRequests = new AtomicInteger(0);
 
+  /** Test hook: replaceable for unit tests so the watchdog does not actually kill the JVM. */
+  Runnable exitHook = () -> System.exit(0);
+
+  /** Sentinel for the watchdog CAS: 0 = idle window open, -1 = shutting down. */
+  private final AtomicInteger shutdownState = new AtomicInteger(0);
+
   /** Creates a server with default dependencies for production use. */
   public JafarMcpServer() {
     this(
@@ -364,16 +370,35 @@ public final class JafarMcpServer {
                   return;
                 }
                 long idleNanos = System.nanoTime() - lastActivityNanos;
-                if (idleNanos >= timeoutNanos && activeRequests.get() == 0) {
+                if (idleNanos >= timeoutNanos && watchdogShouldExit()) {
                   LOG.info(
                       "Idle timeout reached ({}m), shutting down", idleNanos / 60_000_000_000L);
-                  System.exit(0);
+                  exitHook.run();
+                  return;
                 }
               }
             },
             "mcp-idle-watchdog");
     watchdog.setDaemon(true);
     watchdog.start();
+  }
+
+  /**
+   * Returns true iff the watchdog won the right to terminate the process. Wins only when
+   * activeRequests is zero AND no request grabs it via {@link #beginRequest()} concurrently.
+   */
+  boolean watchdogShouldExit() {
+    if (activeRequests.get() != 0) {
+      return false;
+    }
+    if (!shutdownState.compareAndSet(0, -1)) {
+      return false;
+    }
+    if (activeRequests.get() != 0) {
+      shutdownState.set(0); // release latch — a request slipped through
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -387,15 +412,31 @@ public final class JafarMcpServer {
     return new McpServerFeatures.SyncToolSpecification(
         spec.tool(),
         (exchange, args) -> {
-          touchActivity();
-          activeRequests.incrementAndGet();
+          if (!beginRequest()) {
+            return errorResult("Server is shutting down");
+          }
           try {
+            touchActivity();
             return spec.callHandler().apply(exchange, args);
           } finally {
-            activeRequests.decrementAndGet();
+            endRequest();
             touchActivity();
           }
         });
+  }
+
+  /** Returns false iff the watchdog has latched a shutdown intent. */
+  private boolean beginRequest() {
+    activeRequests.incrementAndGet();
+    if (shutdownState.get() == -1) {
+      activeRequests.decrementAndGet();
+      return false;
+    }
+    return true;
+  }
+
+  private void endRequest() {
+    activeRequests.decrementAndGet();
   }
 
   /**

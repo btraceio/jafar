@@ -7,6 +7,7 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -143,6 +144,30 @@ class IdleTimeoutTest {
       assertTrue(found, "Watchdog thread should have been started within 2 seconds");
     } finally {
       System.clearProperty("mcp.idle.timeout.minutes");
+    }
+  }
+
+  @Test
+  void watchdogCannotShutdownWhileRequestArrivesConcurrently() throws Exception {
+    AtomicBoolean exited = new AtomicBoolean(false);
+    Field exitHookField = JafarMcpServer.class.getDeclaredField("exitHook");
+    exitHookField.setAccessible(true);
+    exitHookField.set(server, (Runnable) () -> exited.set(true));
+
+    Field activeField = JafarMcpServer.class.getDeclaredField("activeRequests");
+    activeField.setAccessible(true);
+    AtomicInteger active = (AtomicInteger) activeField.get(server);
+
+    Method shouldExit = JafarMcpServer.class.getDeclaredMethod("watchdogShouldExit");
+    shouldExit.setAccessible(true);
+
+    active.incrementAndGet();
+    try {
+      assertFalse(
+          (boolean) shouldExit.invoke(server),
+          "watchdog must not signal exit while activeRequests > 0");
+    } finally {
+      active.decrementAndGet();
     }
   }
 }
