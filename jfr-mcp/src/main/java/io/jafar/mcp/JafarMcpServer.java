@@ -238,8 +238,19 @@ public final class JafarMcpServer {
     }
   }
 
+  /**
+   * Redirects {@link System#out} to {@link System#err} so accidental stdout writes from any
+   * library, helper, or future regression cannot corrupt the JSON-RPC framing on stdio.
+   *
+   * <p>Must be called before the stdio transport is constructed.
+   */
+  private static void lockStdout() {
+    System.setOut(System.err);
+  }
+
   /** Run server with stdio transport (for Claude Code integration). */
   public void runStdio() {
+    lockStdout();
     LOG.info("Starting Jafar MCP Server with stdio transport");
 
     try {
