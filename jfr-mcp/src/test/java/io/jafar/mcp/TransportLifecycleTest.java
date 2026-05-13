@@ -1,19 +1,34 @@
 package io.jafar.mcp;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
+import io.modelcontextprotocol.spec.McpServerSession;
+import io.modelcontextprotocol.spec.McpServerTransport;
+import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 class TransportLifecycleTest {
 
@@ -116,6 +131,106 @@ class TransportLifecycleTest {
         serverOut.close();
       } catch (Exception ignored) {
       }
+    }
+  }
+
+  @Test
+  void handlerErrorYieldsJsonRpcErrorAndPipelineContinues() throws Exception {
+    PipedInputStream serverIn = new PipedInputStream(1 << 16);
+    PipedOutputStream clientOut = new PipedOutputStream(serverIn);
+    PipedInputStream clientIn = new PipedInputStream(1 << 16);
+    PipedOutputStream serverOut = new PipedOutputStream(clientIn);
+
+    FixedStdioServerTransportProvider transport =
+        new FixedStdioServerTransportProvider(McpJsonDefaults.getMapper(), serverIn, serverOut);
+
+    BlockingQueue<JsonNode> received = new LinkedBlockingQueue<>();
+    Thread reader =
+        new Thread(
+            () -> {
+              ObjectMapper mapper = new ObjectMapper();
+              try (BufferedReader br =
+                  new BufferedReader(new InputStreamReader(clientIn, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                  if (line.isBlank()) continue;
+                  received.put(mapper.readTree(line));
+                }
+              } catch (Exception ignored) {
+              }
+            },
+            "test-reader");
+    reader.setDaemon(true);
+    reader.start();
+
+    try {
+      transport.setSessionFactory(
+          (McpServerTransport sessionTransport) ->
+              new McpServerSession(
+                  "test-session",
+                  Duration.ofSeconds(5),
+                  sessionTransport,
+                  initReq -> Mono.empty(),
+                  Collections.emptyMap(),
+                  Collections.emptyMap()) {
+                @Override
+                public Mono<Void> handle(McpSchema.JSONRPCMessage message) {
+                  if (message instanceof McpSchema.JSONRPCRequest req) {
+                    if (Integer.valueOf(1).equals(req.id())) {
+                      return Mono.error(new RuntimeException("boom"));
+                    }
+                    McpSchema.JSONRPCResponse ok =
+                        new McpSchema.JSONRPCResponse("2.0", req.id(), "ok", null);
+                    return sessionTransport.sendMessage(ok);
+                  }
+                  return Mono.empty();
+                }
+              });
+
+      clientOut.write(
+          "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\"}\n".getBytes(StandardCharsets.UTF_8));
+      clientOut.write(
+          "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"x\"}\n".getBytes(StandardCharsets.UTF_8));
+      clientOut.flush();
+
+      JsonNode first = received.poll(5, TimeUnit.SECONDS);
+      JsonNode second = received.poll(5, TimeUnit.SECONDS);
+
+      assertNotNull(first, "expected JSON-RPC error response for id=1");
+      assertNotNull(second, "expected JSON-RPC success response for id=2");
+
+      // Order is not strictly guaranteed by flatMap; identify by id.
+      JsonNode errResp = first.get("id").asInt() == 1 ? first : second;
+      JsonNode okResp = first.get("id").asInt() == 2 ? first : second;
+
+      assertEquals(1, errResp.get("id").asInt());
+      assertTrue(errResp.has("error"), "id=1 response must carry an 'error' member");
+      assertFalse(errResp.has("result"), "id=1 response must not carry a 'result' member");
+
+      assertEquals(2, okResp.get("id").asInt());
+      assertTrue(okResp.has("result"), "id=2 response must carry a 'result' member");
+    } finally {
+      try {
+        clientOut.close();
+      } catch (Exception ignored) {
+      }
+      try {
+        transport.awaitShutdown().timeout(Duration.ofSeconds(5)).block();
+      } catch (Exception ignored) {
+      }
+      try {
+        serverIn.close();
+      } catch (Exception ignored) {
+      }
+      try {
+        clientIn.close();
+      } catch (Exception ignored) {
+      }
+      try {
+        serverOut.close();
+      } catch (Exception ignored) {
+      }
+      reader.interrupt();
     }
   }
 

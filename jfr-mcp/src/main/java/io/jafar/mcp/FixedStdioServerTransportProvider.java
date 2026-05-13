@@ -252,8 +252,25 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
               message ->
                   session
                       .handle(message)
-                      .doOnError(e -> logger.error("Error handling inbound message", e))
-                      .onErrorResume(e -> Mono.empty()))
+                      .onErrorResume(
+                          e -> {
+                            logger.error("Error handling inbound message", e);
+                            if (message instanceof McpSchema.JSONRPCRequest req
+                                && req.id() != null) {
+                              McpSchema.JSONRPCResponse.JSONRPCError err =
+                                  new McpSchema.JSONRPCResponse.JSONRPCError(
+                                      McpSchema.ErrorCodes.INTERNAL_ERROR,
+                                      e.getMessage() == null
+                                          ? e.getClass().getName()
+                                          : e.getMessage(),
+                                      null);
+                              McpSchema.JSONRPCResponse errResp =
+                                  new McpSchema.JSONRPCResponse(
+                                      McpSchema.JSONRPC_VERSION, req.id(), null, err);
+                              return sendMessage(errResp).onErrorResume(x -> Mono.empty());
+                            }
+                            return Mono.empty();
+                          }))
           .doFinally(
               signalType -> {
                 this.outboundSink.tryEmitComplete();
