@@ -10,6 +10,7 @@ import java.io.PipedOutputStream;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class TransportLifecycleTest {
@@ -33,17 +34,21 @@ class TransportLifecycleTest {
     clientOut.close();
     transport.awaitShutdown().timeout(Duration.ofSeconds(5)).block();
 
-    Field inboundExecField = transport.getClass().getDeclaredField("inboundExecutor");
+    Field stdioField = transport.getClass().getDeclaredField("stdioTransport");
+    stdioField.setAccessible(true);
+    Object stdio = stdioField.get(transport);
+
+    Field inboundExecField = stdio.getClass().getDeclaredField("inboundExecutor");
     inboundExecField.setAccessible(true);
-    Field outboundExecField = transport.getClass().getDeclaredField("outboundExecutor");
+    Field outboundExecField = stdio.getClass().getDeclaredField("outboundExecutor");
     outboundExecField.setAccessible(true);
 
-    ExecutorService inbound = (ExecutorService) inboundExecField.get(transport);
-    ExecutorService outbound = (ExecutorService) outboundExecField.get(transport);
+    ExecutorService inbound = (ExecutorService) inboundExecField.get(stdio);
+    ExecutorService outbound = (ExecutorService) outboundExecField.get(stdio);
 
     assertTrue(inbound.isShutdown(), "inbound executor must be shut down");
     assertTrue(outbound.isShutdown(), "outbound executor must be shut down");
-    assertTrue(inbound.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS));
-    assertTrue(outbound.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS));
+    assertTrue(inbound.awaitTermination(2, TimeUnit.SECONDS));
+    assertTrue(outbound.awaitTermination(2, TimeUnit.SECONDS));
   }
 }

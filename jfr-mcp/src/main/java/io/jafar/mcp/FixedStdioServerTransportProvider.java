@@ -54,8 +54,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   private final OutputStream outputStream;
 
   private McpServerSession session;
-  ExecutorService inboundExecutor; // package-private for test visibility
-  ExecutorService outboundExecutor; // package-private for test visibility
+  StdioMcpSessionTransport stdioTransport;
 
   private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
@@ -90,8 +89,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   @Override
   public void setSessionFactory(McpServerSession.Factory sessionFactory) {
     var transport = new StdioMcpSessionTransport();
-    this.inboundExecutor = transport.inboundExecutor;
-    this.outboundExecutor = transport.outboundExecutor;
+    this.stdioTransport = transport;
     this.session = sessionFactory.create(transport);
     transport.initProcessing();
   }
