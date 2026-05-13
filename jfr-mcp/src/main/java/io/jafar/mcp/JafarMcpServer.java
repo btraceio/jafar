@@ -148,6 +148,21 @@ public final class JafarMcpServer {
   /** Default idle timeout in minutes before the server exits. */
   private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 10;
 
+  /** Cap on rows returned by jfr_query. Configurable via {@code mcp.jfr.query.max-rows}. */
+  static final int MAX_QUERY_ROWS = Integer.getInteger("mcp.jfr.query.max-rows", 50_000);
+
+  /**
+   * Cap on flamegraph nodes/paths returned. Configurable via {@code mcp.jfr.flamegraph.max-nodes}.
+   */
+  static final int MAX_FLAMEGRAPH_NODES =
+      Integer.getInteger("mcp.jfr.flamegraph.max-nodes", 100_000);
+
+  /** Cap on callgraph nodes returned. Configurable via {@code mcp.jfr.callgraph.max-nodes}. */
+  static final int MAX_CALLGRAPH_NODES = Integer.getInteger("mcp.jfr.callgraph.max-nodes", 100_000);
+
+  /** Cap on hdump_report findings. Configurable via {@code mcp.hdump.report.max-findings}. */
+  static final int MAX_HDUMP_FINDINGS = Integer.getInteger("mcp.hdump.report.max-findings", 5_000);
+
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
   private final PprofSessionRegistry pprofSessionRegistry;
@@ -654,8 +669,6 @@ public final class JafarMcpServer {
       Map<String, Object> response = new LinkedHashMap<>();
       response.put("query", query);
       response.put("sessionId", sessionInfo.id());
-      response.put("resultCount", results.size());
-      response.put("results", results);
 
       if (results.size() == resultLimit) {
         response.put("truncated", true);
@@ -663,6 +676,15 @@ public final class JafarMcpServer {
             "message",
             "Results truncated to " + resultLimit + " items. Use 'limit' parameter for more.");
       }
+
+      int dropped = truncate(results, MAX_QUERY_ROWS);
+      if (dropped > 0) {
+        LOG.warn("jfr_query truncated {} rows beyond cap {}", dropped, MAX_QUERY_ROWS);
+        response.put("truncated", true);
+        response.put("droppedRows", dropped);
+      }
+      response.put("resultCount", results.size());
+      response.put("results", results);
 
       return successResult(response);
 
@@ -1635,28 +1657,40 @@ public final class JafarMcpServer {
   }
 
   private CallToolResult formatFlamegraphFolded(FlameNode root, int minSamples) {
-    StringBuilder sb = new StringBuilder();
+    List<String> lines = new ArrayList<>();
     List<String> path = new ArrayList<>();
-    collectFoldedPaths(root, path, sb, minSamples);
+    collectFoldedPaths(root, path, lines, minSamples);
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("format", "folded");
     result.put("totalSamples", root.value.sum());
+
+    int dropped = truncate(lines, MAX_FLAMEGRAPH_NODES);
+    if (dropped > 0) {
+      LOG.warn("jfr_flamegraph truncated {} paths beyond cap {}", dropped, MAX_FLAMEGRAPH_NODES);
+      result.put("truncated", true);
+      result.put("droppedRows", dropped);
+    }
+
+    StringBuilder sb = new StringBuilder();
+    for (String line : lines) {
+      sb.append(line).append("\n");
+    }
     result.put("data", sb.toString());
     return successResult(result);
   }
 
   private void collectFoldedPaths(
-      FlameNode node, List<String> path, StringBuilder sb, int minSamples) {
+      FlameNode node, List<String> path, List<String> lines, int minSamples) {
     if (node.children.isEmpty()) {
       // Leaf node - output the path
       if (node.value.sum() >= minSamples && !path.isEmpty()) {
-        sb.append(String.join(";", path)).append(" ").append(node.value.sum()).append("\n");
+        lines.add(String.join(";", path) + " " + node.value.sum());
       }
     } else {
       for (Map.Entry<String, FlameNode> entry : node.children.entrySet()) {
         path.add(entry.getKey());
-        collectFoldedPaths(entry.getValue(), path, sb, minSamples);
+        collectFoldedPaths(entry.getValue(), path, lines, minSamples);
         path.remove(path.size() - 1);
       }
     }
@@ -1893,6 +1927,13 @@ public final class JafarMcpServer {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("format", "json");
     result.put("totalSamples", processedEvents);
+
+    int dropped = truncate(nodes, MAX_CALLGRAPH_NODES);
+    if (dropped > 0) {
+      LOG.warn("jfr_callgraph truncated {} nodes beyond cap {}", dropped, MAX_CALLGRAPH_NODES);
+      result.put("truncated", true);
+      result.put("droppedRows", dropped);
+    }
     result.put("nodes", nodes);
     result.put("edges", edges);
     return successResult(result);
@@ -4985,6 +5026,8 @@ public final class JafarMcpServer {
       List<HeapReportGenerator.Finding> findings =
           HeapReportGenerator.generate(info.session(), focus);
 
+      int dropped = truncate(findings, MAX_HDUMP_FINDINGS);
+
       String reportText =
           "markdown".equalsIgnoreCase(format)
               ? HeapReportGenerator.formatMarkdown(findings, info.session())
@@ -5008,6 +5051,11 @@ public final class JafarMcpServer {
       Map<String, Object> response = new LinkedHashMap<>();
       response.put("sessionId", info.id());
       response.put("findingCount", findings.size());
+      if (dropped > 0) {
+        LOG.warn("hdump_report truncated {} findings beyond cap {}", dropped, MAX_HDUMP_FINDINGS);
+        response.put("truncated", true);
+        response.put("droppedRows", dropped);
+      }
       response.put("findings", findingMaps);
       response.put("report", reportText);
       return successResult(response);
@@ -7426,5 +7474,17 @@ public final class JafarMcpServer {
     } catch (Exception e) {
       return new CallToolResult(List.of(new TextContent(message)), true, error, null);
     }
+  }
+
+  /**
+   * Caps {@code list} at {@code max} elements in place. If truncated, returns the number of removed
+   * rows; the caller surfaces a truncation marker in the response.
+   */
+  static int truncate(List<?> list, int max) {
+    int size = list.size();
+    if (size <= max) return 0;
+    int removed = size - max;
+    list.subList(max, size).clear();
+    return removed;
   }
 }

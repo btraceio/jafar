@@ -7,7 +7,9 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -405,4 +407,26 @@ class HandlerLogicTest {
   }
 
   // helpWithTopic test removed - help content validation doesn't need deep JFR processing
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // truncate helper tests
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+
+  @Test
+  void truncateLeavesListAtMostMax() {
+    List<Integer> xs = new ArrayList<>();
+    for (int i = 0; i < 100; i++) xs.add(i);
+    int removed = JafarMcpServer.truncate(xs, 10);
+    assertEquals(90, removed);
+    assertEquals(10, xs.size());
+    assertEquals(0, (int) xs.get(0));
+    assertEquals(9, (int) xs.get(9));
+  }
+
+  @Test
+  void truncateNoopBelowMax() {
+    List<Integer> xs = new ArrayList<>(List.of(1, 2, 3));
+    assertEquals(0, JafarMcpServer.truncate(xs, 10));
+    assertEquals(3, xs.size());
+  }
 }
