@@ -43,6 +43,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -1753,11 +1754,18 @@ public final class JafarMcpServer {
     }
   }
 
-  /** Recursively counts {@code node} plus all of its descendants. */
-  private static int countNodes(FlameNode node) {
-    int count = 1;
-    for (FlameNode child : node.children.values()) {
-      count += countNodes(child);
+  /** Counts {@code n} plus all of its descendants via an iterative walk. */
+  private static int countNodes(FlameNode n) {
+    if (n == null) return 0;
+    int count = 0;
+    ArrayDeque<FlameNode> stack = new ArrayDeque<>();
+    stack.push(n);
+    while (!stack.isEmpty()) {
+      FlameNode current = stack.pop();
+      count++;
+      for (FlameNode child : current.children.values()) {
+        stack.push(child);
+      }
     }
     return count;
   }
