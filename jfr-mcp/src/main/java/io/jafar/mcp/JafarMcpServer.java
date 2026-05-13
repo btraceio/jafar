@@ -1506,6 +1506,15 @@ public final class JafarMcpServer {
             }
           });
 
+      // Pre-format structural cap: refuse oversized trees uniformly across formats.
+      int totalNodes = countNodes(root);
+      if (totalNodes > MAX_FLAMEGRAPH_NODES) {
+        return errorResult(
+            "flamegraph would exceed "
+                + MAX_FLAMEGRAPH_NODES
+                + " nodes; tighten the query or raise mcp.jfr.flamegraph.max-nodes");
+      }
+
       // Format output
       sendProgress(exchange, "flamegraph", 2, 2, "Done");
       if ("tree".equals(format)) {
@@ -1744,6 +1753,15 @@ public final class JafarMcpServer {
     }
   }
 
+  /** Recursively counts {@code node} plus all of its descendants. */
+  private static int countNodes(FlameNode node) {
+    int count = 1;
+    for (FlameNode child : node.children.values()) {
+      count += countNodes(child);
+    }
+    return count;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // jfr_callgraph
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1831,6 +1849,15 @@ public final class JafarMcpServer {
 
       // Compute inDegree for convergence point detection
       graph.computeInDegree();
+
+      // Pre-format structural cap: refuse oversized graphs uniformly across formats.
+      int totalNodes = graph.nodeSamples.size();
+      if (totalNodes > MAX_CALLGRAPH_NODES) {
+        return errorResult(
+            "callgraph would exceed "
+                + MAX_CALLGRAPH_NODES
+                + " nodes; tighten the query or raise mcp.jfr.callgraph.max-nodes");
+      }
 
       // Format output
       sendProgress(exchange, "callgraph", 2, 2, "Done");
