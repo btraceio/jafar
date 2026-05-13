@@ -7,6 +7,7 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -40,5 +41,8 @@ class HandlerCrashSafetyTest {
 
     assertNotNull(result);
     assertTrue(result.isError(), "wrapper must return a structured error result");
+    String text = ((TextContent) result.content().get(0)).text();
+    assertTrue(
+        text.contains("boom"), "error result must include the failing tool name; was: " + text);
   }
 }

@@ -419,6 +419,9 @@ public final class JafarMcpServer {
             touchActivity();
             return spec.callHandler().apply(exchange, args);
           } catch (Throwable t) {
+            if (t instanceof VirtualMachineError vme) {
+              throw vme;
+            }
             LOG.error("Uncaught exception in tool handler '{}'", spec.tool().name(), t);
             return errorResult(
                 "Internal error in " + spec.tool().name() + ": " + t.getClass().getSimpleName());
