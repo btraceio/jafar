@@ -39,6 +39,7 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import jakarta.servlet.Servlet;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
@@ -240,22 +241,27 @@ public final class JafarMcpServer {
 
   /**
    * Redirects {@link System#out} to {@link System#err} so accidental stdout writes from any
-   * library, helper, or future regression cannot corrupt the JSON-RPC framing on stdio.
+   * library, helper, or future regression cannot corrupt the JSON-RPC framing on stdio. Returns the
+   * original {@link PrintStream} so the transport can still write the protocol on fd 1.
    *
    * <p>Must be called before the stdio transport is constructed.
    */
-  private static void lockStdout() {
+  private static PrintStream lockStdout() {
+    PrintStream realStdout = System.out;
     System.setOut(System.err);
+    return realStdout;
   }
 
   /** Run server with stdio transport (for Claude Code integration). */
   public void runStdio() {
-    lockStdout();
+    PrintStream protocolOut = lockStdout();
     LOG.info("Starting Jafar MCP Server with stdio transport");
 
     try {
-      // Create stdio transport
-      var transportProvider = new FixedStdioServerTransportProvider(McpJsonDefaults.getMapper());
+      // Create stdio transport — use the captured original stdout, not the redirected one
+      var transportProvider =
+          new FixedStdioServerTransportProvider(
+              McpJsonDefaults.getMapper(), System.in, protocolOut);
 
       // Build MCP server
       // Note: transport starts reading from stdin automatically when the server is built
