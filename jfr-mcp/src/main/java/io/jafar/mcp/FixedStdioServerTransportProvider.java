@@ -16,6 +16,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
@@ -53,6 +54,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   private final OutputStream outputStream;
 
   private McpServerSession session;
+  StdioMcpSessionTransport stdioTransport;
 
   private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
@@ -87,6 +89,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   @Override
   public void setSessionFactory(McpServerSession.Factory sessionFactory) {
     var transport = new StdioMcpSessionTransport();
+    this.stdioTransport = transport;
     this.session = sessionFactory.create(transport);
     transport.initProcessing();
   }
@@ -122,10 +125,16 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
   @Override
   public Mono<Void> closeGracefully() {
-    if (this.session == null) {
-      return Mono.empty();
-    }
-    return this.session.closeGracefully();
+    return Mono.fromRunnable(
+            () -> {
+              isClosing.set(true);
+              try {
+                inputStream.close(); // unblock readLine() in the inbound reader
+              } catch (IOException ignored) {
+                // best effort — inbound loop already exiting
+              }
+            })
+        .then(Mono.defer(() -> session == null ? Mono.empty() : session.closeGracefully()));
   }
 
   /**
@@ -146,20 +155,39 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
     private final AtomicBoolean isStarted = new AtomicBoolean(false);
 
-    private Scheduler inboundScheduler;
-
-    private Scheduler outboundScheduler;
+    private final ExecutorService inboundExecutor;
+    private final ExecutorService outboundExecutor;
+    private final Scheduler inboundScheduler;
+    private final Scheduler outboundScheduler;
 
     private final Sinks.One<Void> outboundReady = Sinks.one();
 
     StdioMcpSessionTransport() {
       this.inboundSink = Sinks.many().unicast().onBackpressureBuffer();
       this.outboundSink = Sinks.many().unicast().onBackpressureBuffer();
+      this.inboundExecutor =
+          Executors.newSingleThreadExecutor(
+              r -> {
+                Thread t = new Thread(r, "stdio-inbound");
+                t.setDaemon(true);
+                return t;
+              });
+      this.outboundExecutor =
+          Executors.newSingleThreadExecutor(
+              r -> {
+                Thread t = new Thread(r, "stdio-outbound");
+                t.setDaemon(true);
+                return t;
+              });
+      this.inboundScheduler = Schedulers.fromExecutorService(inboundExecutor, "stdio-inbound");
+      this.outboundScheduler = Schedulers.fromExecutorService(outboundExecutor, "stdio-outbound");
+    }
 
-      this.inboundScheduler =
-          Schedulers.fromExecutorService(Executors.newSingleThreadExecutor(), "stdio-inbound");
-      this.outboundScheduler =
-          Schedulers.fromExecutorService(Executors.newSingleThreadExecutor(), "stdio-outbound");
+    private void disposeStdio() {
+      inboundScheduler.dispose();
+      outboundScheduler.dispose();
+      inboundExecutor.shutdown();
+      outboundExecutor.shutdown();
     }
 
     @Override
@@ -224,12 +252,27 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
               message ->
                   session
                       .handle(message)
-                      .doOnError(e -> logger.error("Error handling inbound message", e))
-                      .onErrorResume(e -> Mono.empty()))
+                      .onErrorResume(
+                          e -> {
+                            logger.error("Error handling inbound message", e);
+                            if (message instanceof McpSchema.JSONRPCRequest req
+                                && req.id() != null) {
+                              McpSchema.JSONRPCResponse.JSONRPCError err =
+                                  new McpSchema.JSONRPCResponse.JSONRPCError(
+                                      McpSchema.ErrorCodes.INTERNAL_ERROR,
+                                      "Internal server error",
+                                      null);
+                              McpSchema.JSONRPCResponse errResp =
+                                  new McpSchema.JSONRPCResponse(
+                                      McpSchema.JSONRPC_VERSION, req.id(), null, err);
+                              return sendMessage(errResp).onErrorResume(x -> Mono.empty());
+                            }
+                            return Mono.empty();
+                          }))
           .doFinally(
               signalType -> {
                 this.outboundSink.tryEmitComplete();
-                this.inboundScheduler.dispose();
+                disposeStdio();
                 if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
                   logger.warn("Shutdown signal emission failed");
                 }
@@ -259,8 +302,24 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                         break;
                       }
                     } catch (Exception e) {
+                      // A single malformed JSON-RPC line must not wedge the
+                      // inbound pipeline for the whole session. Per JSON-RPC
+                      // 2.0, emit a Parse error response (id=null) and keep
+                      // reading subsequent lines.
                       logIfNotClosing("Error processing inbound message", e);
-                      break;
+                      try {
+                        McpSchema.JSONRPCResponse.JSONRPCError parseErr =
+                            new McpSchema.JSONRPCResponse.JSONRPCError(
+                                McpSchema.ErrorCodes.PARSE_ERROR, "Parse error", null);
+                        McpSchema.JSONRPCResponse parseResp =
+                            new McpSchema.JSONRPCResponse(
+                                McpSchema.JSONRPC_VERSION, null, null, parseErr);
+                        outboundSink.tryEmitNext(parseResp);
+                      } catch (Exception ignored) {
+                        // Best-effort: a failed emit (e.g. closed pipe) must
+                        // not propagate or break the read loop.
+                      }
+                      continue;
                     }
                   } catch (IOException e) {
                     logIfNotClosing("Error reading from stdin", e);
@@ -318,7 +377,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           .doOnComplete(
               () -> {
                 isClosing.set(true);
-                outboundScheduler.dispose();
+                disposeStdio();
               })
           .doOnError(
               e -> {
@@ -326,7 +385,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                   logger.error("Error in outbound processing", e);
                   isClosing.set(true);
                 }
-                outboundScheduler.dispose();
+                disposeStdio();
               })
           .subscribe();
     }
