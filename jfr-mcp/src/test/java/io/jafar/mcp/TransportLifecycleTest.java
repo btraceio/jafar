@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
@@ -28,7 +29,6 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 class TransportLifecycleTest {
 
@@ -148,13 +148,13 @@ class TransportLifecycleTest {
     Thread reader =
         new Thread(
             () -> {
-              ObjectMapper mapper = new ObjectMapper();
+              McpJsonMapper mapper = McpJsonDefaults.getMapper();
               try (BufferedReader br =
                   new BufferedReader(new InputStreamReader(clientIn, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                   if (line.isBlank()) continue;
-                  received.put(mapper.readTree(line));
+                  received.put(mapper.readValue(line, JsonNode.class));
                 }
               } catch (Exception ignored) {
               }
@@ -180,7 +180,8 @@ class TransportLifecycleTest {
                       return Mono.error(new RuntimeException("boom"));
                     }
                     McpSchema.JSONRPCResponse ok =
-                        new McpSchema.JSONRPCResponse("2.0", req.id(), "ok", null);
+                        new McpSchema.JSONRPCResponse(
+                            McpSchema.JSONRPC_VERSION, req.id(), "ok", null);
                     return sessionTransport.sendMessage(ok);
                   }
                   return Mono.empty();
@@ -188,9 +189,11 @@ class TransportLifecycleTest {
               });
 
       clientOut.write(
-          "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\"}\n".getBytes(StandardCharsets.UTF_8));
+          ("{\"jsonrpc\":\"" + McpSchema.JSONRPC_VERSION + "\",\"id\":1,\"method\":\"x\"}\n")
+              .getBytes(StandardCharsets.UTF_8));
       clientOut.write(
-          "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"x\"}\n".getBytes(StandardCharsets.UTF_8));
+          ("{\"jsonrpc\":\"" + McpSchema.JSONRPC_VERSION + "\",\"id\":2,\"method\":\"x\"}\n")
+              .getBytes(StandardCharsets.UTF_8));
       clientOut.flush();
 
       JsonNode first = received.poll(5, TimeUnit.SECONDS);

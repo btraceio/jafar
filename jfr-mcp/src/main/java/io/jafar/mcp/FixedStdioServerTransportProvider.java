@@ -260,9 +260,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                               McpSchema.JSONRPCResponse.JSONRPCError err =
                                   new McpSchema.JSONRPCResponse.JSONRPCError(
                                       McpSchema.ErrorCodes.INTERNAL_ERROR,
-                                      e.getMessage() == null
-                                          ? e.getClass().getName()
-                                          : e.getMessage(),
+                                      "Internal server error",
                                       null);
                               McpSchema.JSONRPCResponse errResp =
                                   new McpSchema.JSONRPCResponse(
