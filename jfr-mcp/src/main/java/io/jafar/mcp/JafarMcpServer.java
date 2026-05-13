@@ -162,7 +162,7 @@ public final class JafarMcpServer {
   private final AtomicInteger activeRequests = new AtomicInteger(0);
 
   /** Test hook: replaceable for unit tests so the watchdog does not actually kill the JVM. */
-  Runnable exitHook = () -> System.exit(0);
+  volatile Runnable exitHook = () -> System.exit(0);
 
   /** Sentinel for the watchdog CAS: 0 = idle window open, -1 = shutting down. */
   private final AtomicInteger shutdownState = new AtomicInteger(0);
