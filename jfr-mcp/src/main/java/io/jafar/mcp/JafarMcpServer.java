@@ -418,6 +418,10 @@ public final class JafarMcpServer {
           try {
             touchActivity();
             return spec.callHandler().apply(exchange, args);
+          } catch (Throwable t) {
+            LOG.error("Uncaught exception in tool handler '{}'", spec.tool().name(), t);
+            return errorResult(
+                "Internal error in " + spec.tool().name() + ": " + t.getClass().getSimpleName());
           } finally {
             endRequest();
             touchActivity();
