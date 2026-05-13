@@ -125,10 +125,16 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
   @Override
   public Mono<Void> closeGracefully() {
-    if (this.session == null) {
-      return Mono.empty();
-    }
-    return this.session.closeGracefully();
+    return Mono.fromRunnable(
+            () -> {
+              isClosing.set(true);
+              try {
+                inputStream.close(); // unblock readLine() in the inbound reader
+              } catch (IOException ignored) {
+                // best effort — inbound loop already exiting
+              }
+            })
+        .then(Mono.defer(() -> session == null ? Mono.empty() : session.closeGracefully()));
   }
 
   /**
