@@ -164,6 +164,16 @@ jobs:
         run: |
           VERSION="${{ steps.process.outputs.version }}"
 
+          # Read the next snapshot version from main branch build.gradle so the
+          # -latest wrappers track the current development version. Same approach
+          # as the release workflow's update-jbang-catalog step.
+          NEXT_SNAPSHOT=$(curl -sf "https://raw.githubusercontent.com/${{ github.repository }}/main/build.gradle" | grep "^project.version=" | cut -d'"' -f2)
+          if [ -z "$NEXT_SNAPSHOT" ] || [[ "$NEXT_SNAPSHOT" != *-SNAPSHOT ]]; then
+            echo "ERROR: Could not determine next snapshot version from main branch (got: '$NEXT_SNAPSHOT')"
+            exit 1
+          fi
+          echo "Released: $VERSION, next snapshot: $NEXT_SNAPSHOT"
+
           cd catalog
 
           # Update stable aliases in jbang-catalog.json via jq
@@ -172,6 +182,10 @@ jobs:
 
           # Update jafar-shell.java stable wrapper
           sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
+
+          # Bump -latest wrappers to the next snapshot version
+          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$NEXT_SNAPSHOT|g" jafar-shell-latest.java
+          sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$NEXT_SNAPSHOT|g" jfr-mcp-latest.java
 
           # Clean up backup files
           rm -f *.bak
@@ -191,9 +205,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Stage all modified catalog files
-          git add jbang-catalog.json jafar-shell.java
+          git add jbang-catalog.json jafar-shell.java jafar-shell-latest.java jfr-mcp-latest.java
 
-          if git commit -m "Update jafar-shell and jfr-mcp to $VERSION"; then
+          if git commit -m "Update jafar-shell and jfr-mcp to $VERSION; bump snapshots"; then
             if git push; then
               echo "✅ Successfully updated JBang catalog to version $VERSION"
             else
