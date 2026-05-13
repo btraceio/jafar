@@ -16,6 +16,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
@@ -53,6 +54,8 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   private final OutputStream outputStream;
 
   private McpServerSession session;
+  ExecutorService inboundExecutor; // package-private for test visibility
+  ExecutorService outboundExecutor; // package-private for test visibility
 
   private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
@@ -87,6 +90,8 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
   @Override
   public void setSessionFactory(McpServerSession.Factory sessionFactory) {
     var transport = new StdioMcpSessionTransport();
+    this.inboundExecutor = transport.inboundExecutor;
+    this.outboundExecutor = transport.outboundExecutor;
     this.session = sessionFactory.create(transport);
     transport.initProcessing();
   }
@@ -146,20 +151,39 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
     private final AtomicBoolean isStarted = new AtomicBoolean(false);
 
-    private Scheduler inboundScheduler;
-
-    private Scheduler outboundScheduler;
+    private final ExecutorService inboundExecutor;
+    private final ExecutorService outboundExecutor;
+    private final Scheduler inboundScheduler;
+    private final Scheduler outboundScheduler;
 
     private final Sinks.One<Void> outboundReady = Sinks.one();
 
     StdioMcpSessionTransport() {
       this.inboundSink = Sinks.many().unicast().onBackpressureBuffer();
       this.outboundSink = Sinks.many().unicast().onBackpressureBuffer();
+      this.inboundExecutor =
+          Executors.newSingleThreadExecutor(
+              r -> {
+                Thread t = new Thread(r, "stdio-inbound");
+                t.setDaemon(true);
+                return t;
+              });
+      this.outboundExecutor =
+          Executors.newSingleThreadExecutor(
+              r -> {
+                Thread t = new Thread(r, "stdio-outbound");
+                t.setDaemon(true);
+                return t;
+              });
+      this.inboundScheduler = Schedulers.fromExecutorService(inboundExecutor, "stdio-inbound");
+      this.outboundScheduler = Schedulers.fromExecutorService(outboundExecutor, "stdio-outbound");
+    }
 
-      this.inboundScheduler =
-          Schedulers.fromExecutorService(Executors.newSingleThreadExecutor(), "stdio-inbound");
-      this.outboundScheduler =
-          Schedulers.fromExecutorService(Executors.newSingleThreadExecutor(), "stdio-outbound");
+    private void disposeStdio() {
+      inboundScheduler.dispose();
+      outboundScheduler.dispose();
+      inboundExecutor.shutdown();
+      outboundExecutor.shutdown();
     }
 
     @Override
@@ -229,7 +253,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           .doFinally(
               signalType -> {
                 this.outboundSink.tryEmitComplete();
-                this.inboundScheduler.dispose();
+                disposeStdio();
                 if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
                   logger.warn("Shutdown signal emission failed");
                 }
@@ -318,7 +342,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           .doOnComplete(
               () -> {
                 isClosing.set(true);
-                outboundScheduler.dispose();
+                disposeStdio();
               })
           .doOnError(
               e -> {
@@ -326,7 +350,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                   logger.error("Error in outbound processing", e);
                   isClosing.set(true);
                 }
-                outboundScheduler.dispose();
+                disposeStdio();
               })
           .subscribe();
     }
