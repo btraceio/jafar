@@ -691,9 +691,9 @@ public final class JafarMcpServer {
 
       int dropped = truncate(results, MAX_QUERY_ROWS);
       if (dropped > 0) {
-        LOG.warn("jfr_query truncated {} rows beyond cap {}", dropped, MAX_QUERY_ROWS);
-        response.put("truncated", true);
-        response.put("droppedRows", dropped);
+        LOG.warn("jfr_query capDroppedRows={} beyond cap {}", dropped, MAX_QUERY_ROWS);
+        response.put("capTruncated", true);
+        response.put("capDroppedRows", dropped);
       }
       response.put("resultCount", results.size());
       response.put("results", results);
