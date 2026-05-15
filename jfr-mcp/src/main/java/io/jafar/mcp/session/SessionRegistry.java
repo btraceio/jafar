@@ -216,7 +216,6 @@ public final class SessionRegistry {
 
     SessionInfo session = info.get();
     closeSession(session);
-    persistenceStore.remove(session.id());
     return true;
   }
 
@@ -241,6 +240,7 @@ public final class SessionRegistry {
       idsByAlias.remove(info.alias());
     }
     info.session().close();
+    persistenceStore.remove(info.id());
 
     // Update current session
     if (currentSessionId != null && currentSessionId == info.id()) {

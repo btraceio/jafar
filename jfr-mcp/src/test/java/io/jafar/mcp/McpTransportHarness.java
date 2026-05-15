@@ -116,6 +116,11 @@ final class McpTransportHarness implements AutoCloseable {
   @Override
   public void close() throws Exception {
     try {
+      // Close all sessions before shutting down so they are removed from the persistence store
+      callTool("jfr_close", "{\"closeAll\":true}");
+    } catch (Exception ignored) {
+    }
+    try {
       clientOut.close();
     } catch (IOException ignored) {
     }

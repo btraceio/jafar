@@ -64,7 +64,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("includeInsights", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -99,7 +99,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("resources", List.of("cpu"));
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -126,7 +126,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("endTime", 1000000000L); // First second
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -149,7 +149,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("sessionId", "999"); // Non-existent session
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
@@ -173,7 +173,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("includeInsights", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -249,7 +249,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("resources", List.of("threads"));
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     // Should not error even if no QueueTime events
     assertFalse(result.isError(), () -> extractTextContent(result));
@@ -274,7 +274,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("includeInsights", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrUse.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -325,7 +325,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -351,7 +351,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("minSamples", 100); // High threshold
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -374,7 +374,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -404,7 +404,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError(), () -> extractTextContent(result));
     String json = extractTextContent(result);
@@ -451,7 +451,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("topThreads", 10);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -504,7 +504,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("includeInsights", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -574,7 +574,7 @@ class JafarMcpServerUseTest extends BaseJfrTest {
     args.put("correlateBlocking", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrTsa.invoke(server, (McpSyncServerExchange) null, args, null);
 
     // Should not error even if no QueueTime events
     assertFalse(result.isError(), () -> extractTextContent(result));

@@ -29,12 +29,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
   @Test
   void exceptionsAnalyzesExceptionPatterns() throws Exception {
     Method handleJfrExceptions =
-        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args, null);
 
     // Recording may not contain exception events
     if (result.isError()) {
@@ -51,12 +52,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
   @Test
   void exceptionsIncludesExceptionTypes() throws Exception {
     Method handleJfrExceptions =
-        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args, null);
 
     if (result.isError()) {
       assertTrue(extractTextContent(result).contains("No exception events found"));
@@ -75,13 +77,14 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
   @Test
   void exceptionsRespectsLimit() throws Exception {
     Method handleJfrExceptions =
-        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("limit", 5);
 
     CallToolResult result =
-        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args, null);
 
     if (result.isError()) {
       assertTrue(extractTextContent(result).contains("No exception events found"));
@@ -99,13 +102,14 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
   @Test
   void exceptionsRespectsMinCount() throws Exception {
     Method handleJfrExceptions =
-        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("minCount", 10);
 
     CallToolResult result =
-        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args, null);
 
     if (result.isError()) {
       assertTrue(extractTextContent(result).contains("No exception events found"));
@@ -126,12 +130,13 @@ class JafarMcpServerExceptionsTest extends BaseJfrTest {
   @Test
   void exceptionsAutoDetectsEventType() throws Exception {
     Method handleJfrExceptions =
-        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrExceptions.invoke(server, (McpSyncServerExchange) null, args, null);
 
     if (result.isError()) {
       assertTrue(extractTextContent(result).contains("No exception events found"));

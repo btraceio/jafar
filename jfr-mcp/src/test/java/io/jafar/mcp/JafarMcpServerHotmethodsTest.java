@@ -38,12 +38,13 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
   @Test
   void hotmethodsReturnsTopMethods() throws Exception {
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -60,12 +61,13 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
   @Test
   void hotmethodsIncludesMethodDetails() throws Exception {
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -83,13 +85,14 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
   @Test
   void hotmethodsRespectsLimit() throws Exception {
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("limit", 5);
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -102,13 +105,14 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
   @Test
   void hotmethodsCanExcludeNative() throws Exception {
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("includeNative", false);
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
   }
@@ -116,12 +120,13 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
   @Test
   void hotmethodsAutoDetectsEventType() throws Exception {
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -142,13 +147,14 @@ class JafarMcpServerHotmethodsTest extends BaseJfrTest {
     // For now, just test error handling with explicit event type
 
     Method handleJfrHotmethods =
-        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrHotmethods", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "jdk.NonexistentEvent");
 
     CallToolResult result =
-        (CallToolResult) handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrHotmethods.invoke(server, (McpSyncServerExchange) null, args, null);
 
     // Should handle gracefully - either error or empty result
     assertNotNull(result);

@@ -75,11 +75,16 @@ class HandlerLogicTest {
   private CallToolResult invokeTool(String toolName, Map<String, Object> args) throws Exception {
     String methodName = camelCase("handle_" + toolName);
     try {
-      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
-      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class, Object.class);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args, null);
     } catch (NoSuchMethodException e) {
-      Method method = getMethod(methodName, Map.class);
-      return (CallToolResult) method.invoke(server, args);
+      try {
+        Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
+        return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      } catch (NoSuchMethodException e2) {
+        Method method = getMethod(methodName, Map.class);
+        return (CallToolResult) method.invoke(server, args);
+      }
     }
   }
 

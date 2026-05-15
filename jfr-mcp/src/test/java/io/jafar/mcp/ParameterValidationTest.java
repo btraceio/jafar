@@ -208,13 +208,21 @@ class ParameterValidationTest {
     try {
       Method method =
           JafarMcpServer.class.getDeclaredMethod(
-              methodName, McpSyncServerExchange.class, Map.class);
+              methodName, McpSyncServerExchange.class, Map.class, Object.class);
       method.setAccessible(true);
-      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args, null);
     } catch (NoSuchMethodException e) {
-      Method method = JafarMcpServer.class.getDeclaredMethod(methodName, Map.class);
-      method.setAccessible(true);
-      return (CallToolResult) method.invoke(server, args);
+      try {
+        Method method =
+            JafarMcpServer.class.getDeclaredMethod(
+                methodName, McpSyncServerExchange.class, Map.class);
+        method.setAccessible(true);
+        return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      } catch (NoSuchMethodException e2) {
+        Method method = JafarMcpServer.class.getDeclaredMethod(methodName, Map.class);
+        method.setAccessible(true);
+        return (CallToolResult) method.invoke(server, args);
+      }
     }
   }
 

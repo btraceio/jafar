@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,12 @@ class ConsumeEdgeCasesTest {
 
   private JafarMcpServer server;
   private String sessionId;
+
+  @AfterEach
+  void tearDown() throws Exception {
+    Method handleJfrClose = getMethod("handleJfrClose", Map.class);
+    handleJfrClose.invoke(server, Map.of("closeAll", true));
+  }
 
   @BeforeAll
   static void createTestFiles() throws Exception {
@@ -121,9 +128,10 @@ class ConsumeEdgeCasesTest {
     args.put("sessionId", sessionId);
     args.put("eventType", "jdk.JavaExceptionThrow");
 
-    Method method = getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class);
+    Method method =
+        getMethod("handleJfrExceptions", McpSyncServerExchange.class, Map.class, Object.class);
     CallToolResult result =
-        (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertNotNull(result);
     String text = extractTextContent(result);
@@ -148,11 +156,16 @@ class ConsumeEdgeCasesTest {
   private CallToolResult invokeTool(String toolName, Map<String, Object> args) throws Exception {
     String methodName = camelCase("handle_" + toolName);
     try {
-      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
-      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class, Object.class);
+      return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args, null);
     } catch (NoSuchMethodException e) {
-      Method method = getMethod(methodName, Map.class);
-      return (CallToolResult) method.invoke(server, args);
+      try {
+        Method method = getMethod(methodName, McpSyncServerExchange.class, Map.class);
+        return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+      } catch (NoSuchMethodException e2) {
+        Method method = getMethod(methodName, Map.class);
+        return (CallToolResult) method.invoke(server, args);
+      }
     }
   }
 

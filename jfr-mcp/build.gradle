@@ -58,6 +58,8 @@ test {
     useJUnitPlatform()
     // Allocate sufficient heap for tests that load real JFR files
     jvmArgs '-Xmx2g', '-Xms512m'
+    // Isolate session persistence from real ~/.jafar data during tests
+    systemProperty 'jafar.mcp.sessions.file', "${System.getProperty('java.io.tmpdir')}/jafar-mcp-test-sessions.json"
 
     // Stress tests are a separate concept from integration tests; always exclude from default `test`.
     exclude '**/JafarMcpStressTest.class'
@@ -98,6 +100,39 @@ tasks.register('integrationTest', Test) {
     // Integration tests need more heap for processing JFR files
     jvmArgs '-Xmx4g', '-Xms512m'
 
+    shouldRunAfter test
+}
+
+// End-to-end tests — spawn the MCP server subprocess and drive the real analysis workflow.
+// Run with: ./gradlew :jfr-mcp:endToEndTest
+// To test the published release: ./gradlew :jfr-mcp:endToEndTest -Dmcp.e2e.use.jbang=true
+// To test a specific JFR file:  ./gradlew :jfr-mcp:endToEndTest -Dmcp.e2e.jfr=/path/to/file.jfr
+tasks.register('endToEndTest', Test) {
+    description = 'Spawns the MCP server as a subprocess and drives the real tool sequence'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform {
+        includeTags 'e2e'
+    }
+
+    systemProperties System.properties.subMap(['mcp.e2e.use.jbang', 'mcp.e2e.jbang.cmd', 'mcp.e2e.jfr'])
+
+    jvmArgs '-Xmx512m', '-Xms256m'
+
+    doFirst {
+        def mockitoAgent = configurations.testRuntimeClasspath.files.find { it.name.contains('mockito-core') }
+        if (mockitoAgent) {
+            jvmArgs "-javaagent:${mockitoAgent}"
+        }
+    }
+    jvmArgs '--add-opens', 'java.base/java.lang=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.util=ALL-UNNAMED'
+    jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
+
+    dependsOn shadowJar
     shouldRunAfter test
 }
 

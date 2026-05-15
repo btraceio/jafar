@@ -57,12 +57,13 @@ class JafarMcpServerStackprofileTest {
   @Test
   void stackprofileReturnsFrames() throws Exception {
     Method handleJfrStackprofile =
-        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -81,12 +82,13 @@ class JafarMcpServerStackprofileTest {
   @Test
   void stackprofileFramesHaveProfile() throws Exception {
     Method handleJfrStackprofile =
-        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -118,13 +120,14 @@ class JafarMcpServerStackprofileTest {
   @Test
   void stackprofileRespectsLimit() throws Exception {
     Method handleJfrStackprofile =
-        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("limit", 5);
 
     CallToolResult result =
-        (CallToolResult) handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -137,13 +140,14 @@ class JafarMcpServerStackprofileTest {
   @Test
   void stackprofileRespectsDirection() throws Exception {
     Method handleJfrStackprofile =
-        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("direction", "bottom-up");
 
     CallToolResult result =
-        (CallToolResult) handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -156,12 +160,13 @@ class JafarMcpServerStackprofileTest {
   @Test
   void stackprofileAutoDetectsEventType() throws Exception {
     Method handleJfrStackprofile =
-        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrStackprofile", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrStackprofile.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);

@@ -39,12 +39,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseRunsComprehensiveAnalysis() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -57,12 +57,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseIncludesSummary() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -78,12 +78,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseIncludesFindings() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -97,12 +97,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseIncludesRecommendations() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -116,13 +116,13 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseCanIncludeAnalysisResults() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("includeAnalysis", true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -135,13 +135,13 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseCanExcludeAnalysisResults() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("includeAnalysis", false);
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -155,12 +155,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseDetectsExceptionIssues() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -185,12 +185,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseDetectsGCIssues() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -214,12 +214,12 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseDetectsCpuIssues() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -243,13 +243,13 @@ class JafarMcpServerDiagnoseTest extends BaseJfrTest {
   @Test
   void diagnoseHandlesMissingSession() throws Exception {
     Method handleJfrDiagnose =
-        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrDiagnose", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("sessionId", "nonexistent");
 
     CallToolResult result =
-        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult) handleJfrDiagnose.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
   }

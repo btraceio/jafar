@@ -321,7 +321,8 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
     handleJfrFlamegraph.setAccessible(true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrFlamegraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrFlamegraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);
@@ -339,7 +340,8 @@ class JafarMcpServerFlamegraphTest extends BaseJfrTest {
     handleJfrCallgraph.setAccessible(true);
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
     String json = extractTextContent(result);

@@ -194,9 +194,10 @@ class PprofHandlerTest {
   private CallToolResult invokeWithExchange(String methodName, Map<String, Object> args)
       throws Exception {
     Method method =
-        JafarMcpServer.class.getDeclaredMethod(methodName, McpSyncServerExchange.class, Map.class);
+        JafarMcpServer.class.getDeclaredMethod(
+            methodName, McpSyncServerExchange.class, Map.class, Object.class);
     method.setAccessible(true);
-    return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args);
+    return (CallToolResult) method.invoke(server, (McpSyncServerExchange) null, args, null);
   }
 
   private void assertError(CallToolResult result, String expectedFragment) {

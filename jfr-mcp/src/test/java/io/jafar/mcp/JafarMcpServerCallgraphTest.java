@@ -38,14 +38,15 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphGeneratesDotFormat() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "dot");
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -61,14 +62,15 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphGeneratesJsonFormat() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "json");
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -88,14 +90,15 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphIncludesConvergencePoints() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "datadog.ExecutionSample");
     args.put("format", "json");
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -122,7 +125,7 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphRespectsMinWeight() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "datadog.ExecutionSample");
@@ -130,7 +133,8 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
     args.put("minWeight", 100);
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertFalse(result.isError());
     String json = extractTextContent(result);
@@ -148,14 +152,15 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphFailsWithInvalidMinWeight() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
     args.put("eventType", "datadog.ExecutionSample");
     args.put("minWeight", 0);
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
     assertTrue(extractTextContent(result).contains("must be >= 1"));
@@ -164,12 +169,13 @@ class JafarMcpServerCallgraphTest extends BaseJfrTest {
   @Test
   void callgraphFailsWithoutEventType() throws Exception {
     Method handleJfrCallgraph =
-        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class);
+        getMethod("handleJfrCallgraph", McpSyncServerExchange.class, Map.class, Object.class);
 
     Map<String, Object> args = new HashMap<>();
 
     CallToolResult result =
-        (CallToolResult) handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args);
+        (CallToolResult)
+            handleJfrCallgraph.invoke(server, (McpSyncServerExchange) null, args, null);
 
     assertTrue(result.isError());
     assertTrue(extractTextContent(result).contains("Event type is required"));

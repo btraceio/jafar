@@ -77,6 +77,16 @@ class McpTransportIntegrationTest extends BaseJfrTest {
   @AfterEach
   void tearDown() throws Exception {
     try {
+      int closeId = 9999;
+      write(
+          "{\"jsonrpc\":\"2.0\",\"id\":"
+              + closeId
+              + ",\"method\":\"tools/call\","
+              + "\"params\":{\"name\":\"jfr_close\",\"arguments\":{\"closeAll\":true}}}");
+      collector.waitForId(closeId, 5_000);
+    } catch (Exception ignored) {
+    }
+    try {
       clientOut.close();
     } catch (IOException ignored) {
     }

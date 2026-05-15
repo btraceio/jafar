@@ -28,6 +28,11 @@ final class SessionPersistenceStore {
   private final Path storeFile;
 
   SessionPersistenceStore() {
+    String override = System.getProperty("jafar.mcp.sessions.file");
+    if (override != null) {
+      this.storeFile = Path.of(override);
+      return;
+    }
     Path dir = Paths.get(System.getProperty("user.home"), ".jafar");
     try {
       Files.createDirectories(dir);
