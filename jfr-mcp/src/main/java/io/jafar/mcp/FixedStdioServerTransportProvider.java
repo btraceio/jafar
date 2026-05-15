@@ -271,11 +271,9 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                           }))
           .doFinally(
               signalType -> {
+                // Signal the outbound pipeline to drain. Shutdown signal fires only
+                // after the outbound has fully flushed (see startOutboundProcessing).
                 this.outboundSink.tryEmitComplete();
-                disposeStdio();
-                if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
-                  logger.warn("Shutdown signal emission failed");
-                }
               })
           .subscribe();
     }
@@ -350,7 +348,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           .publishOn(outboundScheduler)
           .handle(
               (message, sink) -> {
-                if (message != null && !isClosing.get()) {
+                if (message != null) {
                   try {
                     String jsonMessage = jsonMapper.writeValueAsString(message);
                     jsonMessage =
@@ -363,21 +361,24 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                     outputStream.flush();
                     sink.next(message);
                   } catch (IOException e) {
-                    if (!isClosing.get()) {
+                    if (isClosing.get()) {
+                      // Broken pipe during shutdown — response lost but exit cleanly.
+                      logger.debug("Stream closed during shutdown", e);
+                      sink.complete();
+                    } else {
                       logger.error("Error writing message", e);
                       sink.error(new RuntimeException(e));
-                    } else {
-                      logger.debug("Stream closed during shutdown", e);
                     }
                   }
-                } else if (isClosing.get()) {
-                  sink.complete();
                 }
               })
           .doOnComplete(
               () -> {
                 isClosing.set(true);
                 disposeStdio();
+                if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
+                  logger.warn("Shutdown signal emission failed (complete)");
+                }
               })
           .doOnError(
               e -> {
@@ -386,6 +387,9 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                   isClosing.set(true);
                 }
                 disposeStdio();
+                if (!shutdownSignal.tryEmitEmpty().isSuccess()) {
+                  logger.warn("Shutdown signal emission failed (error)");
+                }
               })
           .subscribe();
     }

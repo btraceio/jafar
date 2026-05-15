@@ -62,10 +62,40 @@ public final class SessionRegistry {
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
   private Integer currentSessionId = null;
+  private final SessionPersistenceStore persistenceStore = new SessionPersistenceStore();
 
   public SessionRegistry() {
     this.parsingContext = ParsingContext.create();
     LOG.info("SessionRegistry created with ParsingContext");
+    restorePersistedSessions();
+  }
+
+  private void restorePersistedSessions() {
+    for (SessionPersistenceStore.Entry entry : persistenceStore.load()) {
+      try {
+        Path path = Path.of(entry.path());
+        if (!java.nio.file.Files.exists(path)) {
+          LOG.warn("Skipping persisted session {}: file not found: {}", entry.id(), entry.path());
+          persistenceStore.remove(entry.id());
+          continue;
+        }
+        JFRSession session = new JFRSession(path, parsingContext);
+        // Preserve the original session ID so callers can resume by the same ID.
+        int id = entry.id();
+        SessionInfo info = new SessionInfo(id, entry.alias(), path, Instant.now(), session);
+        sessionsById.put(id, info);
+        if (entry.alias() != null) {
+          idsByAlias.put(entry.alias(), id);
+        }
+        currentSessionId = id;
+        // Ensure nextId is always beyond any restored ID.
+        nextId.updateAndGet(cur -> Math.max(cur, id + 1));
+        LOG.info("Restored session {} for recording: {}", id, path);
+      } catch (Exception e) {
+        LOG.warn("Cannot restore session {}: {}", entry.id(), e.getMessage());
+        persistenceStore.remove(entry.id());
+      }
+    }
   }
 
   /** Shuts down the registry, closing all sessions. */
@@ -106,6 +136,7 @@ public final class SessionRegistry {
       idsByAlias.put(alias, id);
     }
     currentSessionId = id;
+    persistenceStore.upsert(id, path.toString(), alias);
 
     LOG.info("Opened session {} for recording: {}", id, path);
     return info;
@@ -185,6 +216,7 @@ public final class SessionRegistry {
 
     SessionInfo session = info.get();
     closeSession(session);
+    persistenceStore.remove(session.id());
     return true;
   }
 
