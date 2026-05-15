@@ -3,6 +3,7 @@ package io.jafar.shell;
 import dev.tamboui.layout.Position;
 import dev.tamboui.layout.Size;
 import dev.tamboui.terminal.AbstractBackend;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -20,10 +21,12 @@ final class JLineShellBackend extends AbstractBackend {
   private final Terminal terminal;
   private final OutputStream output;
   private Attributes savedAttributes;
+  private volatile Size cachedSize;
 
   JLineShellBackend(Terminal terminal) {
     this.terminal = terminal;
-    this.output = terminal.output();
+    this.output = new BufferedOutputStream(terminal.output(), 65536);
+    this.cachedSize = new Size(terminal.getWidth(), terminal.getHeight());
   }
 
   // ---- raw I/O (used by AbstractBackend.draw) ----
@@ -53,7 +56,7 @@ final class JLineShellBackend extends AbstractBackend {
 
   @Override
   public Size size() throws IOException {
-    return new Size(terminal.getWidth(), terminal.getHeight());
+    return cachedSize;
   }
 
   @Override
@@ -123,6 +126,7 @@ final class JLineShellBackend extends AbstractBackend {
     terminal.handle(
         Terminal.Signal.WINCH,
         signal -> {
+          cachedSize = new Size(terminal.getWidth(), terminal.getHeight());
           if (handler != null) {
             handler.run();
           }

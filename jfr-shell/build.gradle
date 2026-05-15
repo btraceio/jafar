@@ -61,6 +61,8 @@ dependencies {
     // JLine for better terminal handling
     implementation 'org.jline:jline-terminal:3.21.0'
     implementation 'org.jline:jline-reader:3.21.0'
+    // JNA required by jline-terminal-jna (macOS/Linux native PTY via ioctl instead of stty)
+    implementation 'net.java.dev.jna:jna:5.10.0'
 
     // TamboUI for rich terminal output rendering (tables, trees)
     implementation 'dev.tamboui:tamboui-core:0.2.0-SNAPSHOT'
@@ -298,6 +300,7 @@ afterEvaluate {
                             'org.apache.httpcomponents', // relocated into shadow JAR
                             'info.picocli',      // relocated into shadow JAR
                             'org.jline',         // relocated into shadow JAR
+                            'net.java.dev.jna',  // bundled into shadow JAR
                         ] as Set
                         deps.each { depsNode ->
                             depsNode.children().removeAll { dep ->
