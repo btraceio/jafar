@@ -9,11 +9,11 @@
     </appender>
 
     <!-- Quiet down noisy loggers -->
-    <logger name="io.modelcontextprotocol" level="WARN"/>
     <logger name="io.jafar.parser" level="WARN"/>
 
-    <!-- Our loggers - WARN for stdio mode (logs can confuse MCP clients) -->
-    <logger name="io.jafar.mcp" level="WARN"/>
+    <!-- Debug MCP traffic to diagnose disconnects -->
+    <logger name="io.modelcontextprotocol" level="DEBUG"/>
+    <logger name="io.jafar.mcp" level="DEBUG"/>
 
     <root level="WARN">
         <appender-ref ref="STDERR"/>

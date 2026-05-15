@@ -147,8 +147,8 @@ public final class JafarMcpServer {
         .build();
   }
 
-  /** Default idle timeout in minutes before the server exits. */
-  private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 10;
+  /** Default idle timeout: 0 = disabled. MCP clients manage server lifecycle directly. */
+  private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 0;
 
   /** Cap on rows returned by jfr_query. Configurable via {@code mcp.jfr.query.max-rows}. */
   static final int MAX_QUERY_ROWS = Integer.getInteger("mcp.jfr.query.max-rows", 50_000);
@@ -279,7 +279,7 @@ public final class JafarMcpServer {
           .addShutdownHook(
               new Thread(
                   () -> {
-                    LOG.info("Shutting down...");
+                    LOG.warn("JVM shutdown hook fired");
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
                     pprofSessionRegistry.shutdown();
@@ -287,10 +287,20 @@ public final class JafarMcpServer {
                     mcpServer.close();
                   }));
 
+      // Catch SIGTERM so we can log it before the JVM exits
+      sun.misc.Signal.handle(
+          new sun.misc.Signal("TERM"),
+          sig -> {
+            LOG.warn("Received SIGTERM — exiting");
+            System.exit(0);
+          });
+
       startIdleWatchdog();
 
       ShutdownAwaitable awaitable = transportProvider;
+      LOG.warn("MCP server running, waiting for shutdown signal");
       awaitable.awaitShutdown().block();
+      LOG.warn("awaitShutdown() returned — stdin closed or graceful stop");
 
     } catch (Exception e) {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
@@ -375,10 +385,8 @@ public final class JafarMcpServer {
 
   /**
    * Starts a daemon thread that exits the process when no tool has been called for the configured
-   * idle timeout period.
-   *
-   * <p>Timeout is read from system property {@code mcp.idle.timeout.minutes} (default: {@value
-   * DEFAULT_IDLE_TIMEOUT_MINUTES}).
+   * idle timeout period. Disabled by default ({@value DEFAULT_IDLE_TIMEOUT_MINUTES}); enable via
+   * system property {@code mcp.idle.timeout.minutes} (positive integer = minutes).
    */
   private void startIdleWatchdog() {
     int timeoutMinutes =
