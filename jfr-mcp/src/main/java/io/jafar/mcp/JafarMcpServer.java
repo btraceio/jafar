@@ -26,7 +26,9 @@ import io.jafar.pprof.shell.pprofpath.PprofPathParser;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
+import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -39,9 +41,11 @@ import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
+import io.modelcontextprotocol.spec.McpServerSession;
 import jakarta.servlet.Servlet;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
@@ -322,6 +326,32 @@ public final class JafarMcpServer {
     }
   }
 
+  /**
+   * Pre-populates a session's {@code exchangeSink} so tool calls succeed even when {@code
+   * notifications/initialized} hasn't arrived yet (e.g. after a server restart while the client
+   * keeps its SSE connection open). The SDK's {@code handleIncomingRequest} waits on {@code
+   * exchangeSink.asMono()} before dispatching; without this it hangs forever on stale sessions.
+   *
+   * <p>Uses reflection because {@code exchangeSink} is {@code private final}. A {@code Sinks.One}
+   * that was already populated silently ignores the second emit, so calling this after a genuine
+   * {@code notifications/initialized} round-trip is safe.
+   */
+  private static void eagarlyInitExchange(McpServerSession session) {
+    try {
+      Field sinkField = McpServerSession.class.getDeclaredField("exchangeSink");
+      sinkField.setAccessible(true);
+      @SuppressWarnings("unchecked")
+      reactor.core.publisher.Sinks.One<McpAsyncServerExchange> sink =
+          (reactor.core.publisher.Sinks.One<McpAsyncServerExchange>) sinkField.get(session);
+      McpAsyncServerExchange exchange =
+          new McpAsyncServerExchange(
+              session.getId(), session, null, null, McpTransportContext.EMPTY);
+      sink.tryEmitValue(exchange);
+    } catch (Exception e) {
+      LOG.warn("Could not pre-initialize session exchange: {}", e.getMessage());
+    }
+  }
+
   /** Run server with HTTP/SSE transport (for web clients). */
   public void runSse() {
     int port = Integer.getInteger("mcp.port", 3000);
@@ -358,6 +388,28 @@ public final class JafarMcpServer {
               .capabilities(ServerCapabilities.builder().tools(true).logging().build())
               .tools(createToolSpecifications())
               .build();
+
+      // Wrap the session factory AFTER build so every new session gets a pre-initialized
+      // exchangeSink. The MCP SDK waits on exchangeSink.asMono() before dispatching non-initialize
+      // requests; without this, tool calls hang forever on sessions that reconnect before
+      // notifications/initialized arrives from the client (e.g. after a server restart).
+      try {
+        Field factoryField =
+            HttpServletSseServerTransportProvider.class.getDeclaredField("sessionFactory");
+        factoryField.setAccessible(true);
+        McpServerSession.Factory originalFactory =
+            (McpServerSession.Factory) factoryField.get(transportProvider);
+        factoryField.set(
+            transportProvider,
+            (McpServerSession.Factory)
+                transport -> {
+                  McpServerSession session = originalFactory.create(transport);
+                  eagarlyInitExchange(session);
+                  return session;
+                });
+      } catch (Exception e) {
+        LOG.warn("Could not wrap session factory for eager init: {}", e.getMessage());
+      }
 
       // Set up Jetty
       Server jettyServer = new Server(port);
