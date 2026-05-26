@@ -34,6 +34,8 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
+import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
 import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
@@ -44,6 +46,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -64,6 +67,7 @@ import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.server.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -147,8 +151,14 @@ public final class JafarMcpServer {
         .build();
   }
 
-  /** Default idle timeout (minutes). Terminates orphaned servers that lost their client. */
-  private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
+  /**
+   * Default idle timeout (minutes). {@code 0} = disabled (the safe default — Claude Code and other
+   * MCP clients manage server lifecycle themselves; a self-terminating server strands clients with
+   * stale session IDs after restart). Set {@code mcp.idle.timeout.minutes} to a positive integer
+   * only if you explicitly want stdio orphan cleanup; the SSE transport ignores this property
+   * entirely (see {@link #runSse()}).
+   */
+  private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 0;
 
   /** Stores the port of a running SSE server so a second launch can report it and exit. */
   private static final Path SSE_PORT_FILE =
@@ -365,6 +375,7 @@ public final class JafarMcpServer {
                   () -> {
                     LOG.info("Shutting down...");
                     deleteSsePortFile();
+                    broadcastSseShutdownNotice(transportProvider);
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
                     pprofSessionRegistry.shutdown();
@@ -377,8 +388,20 @@ public final class JafarMcpServer {
                     }
                   }));
 
-      startIdleWatchdog();
+      // Catch SIGTERM (sent by `launchctl unload`, `kill`, etc.) so the shutdown hook runs
+      // and connected clients get the shutdown notification before the SSE streams close.
+      // Without this the JVM may exit on the default SIGTERM action without invoking the hook.
+      sun.misc.Signal.handle(
+          new sun.misc.Signal("TERM"),
+          sig -> {
+            LOG.warn("Received SIGTERM — exiting");
+            System.exit(0);
+          });
 
+      // Intentionally NOT calling startIdleWatchdog() in SSE mode: the watchdog's stated purpose
+      // is stdio-orphan cleanup, and self-terminating an SSE daemon strands every connected
+      // client with a stale session ID that the new JVM does not recognize. The launchd service
+      // (KeepAlive=true) keeps the daemon up; idle resource usage is negligible.
       // Start server
       jettyServer.start();
       writeSsePortFile(port);
@@ -389,6 +412,43 @@ public final class JafarMcpServer {
     } catch (Exception e) {
       LOG.error("Failed to start server: {}", e.getMessage(), e);
       System.exit(1);
+    }
+  }
+
+  /**
+   * Broadcasts a standard MCP {@code notifications/message} (logging) record to every active SSE
+   * session so connected clients learn the server is going away before its streams close. The
+   * server-assigned session IDs become invalid across a JVM restart, and the MCP HTTP/SSE transport
+   * returns HTTP 404 {@code "Session not found"} on POSTs from clients that still hold the old IDs
+   * — surfacing as "tool calls hang forever". This notice gives clients an opening to re-initialize
+   * on reconnect (or at minimum to log the cause). Bounded by a short timeout so a misbehaving
+   * session cannot stall the shutdown hook.
+   *
+   * <p>Package-private for unit tests; safe to call with no active sessions (broadcast is a no-op).
+   */
+  void broadcastSseShutdownNotice(HttpServletSseServerTransportProvider transportProvider) {
+    if (transportProvider == null) {
+      return;
+    }
+    LoggingMessageNotification notice =
+        new LoggingMessageNotification(
+            LoggingLevel.WARNING,
+            "jafar-mcp",
+            "Jafar MCP server is shutting down. Reconnecting clients must reinitialize:"
+                + " session IDs from this JVM will not be honored after restart.");
+    try {
+      transportProvider
+          .notifyClients("notifications/message", notice)
+          .timeout(Duration.ofSeconds(2))
+          .onErrorResume(
+              e -> {
+                LOG.warn("Failed to broadcast shutdown notice: {}", e.toString());
+                return Mono.empty();
+              })
+          .block();
+    } catch (Throwable t) {
+      // Shutdown path: never let notification failures abort the rest of the shutdown sequence.
+      LOG.warn("Shutdown notice broadcast threw {}", t.toString());
     }
   }
 

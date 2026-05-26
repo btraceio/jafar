@@ -2,10 +2,13 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -144,6 +147,28 @@ class IdleTimeoutTest {
       assertTrue(found, "Watchdog thread should have been started within 2 seconds");
     } finally {
       System.clearProperty("mcp.idle.timeout.minutes");
+    }
+  }
+
+  @Test
+  void broadcastSseShutdownNoticeIsSafeWithNullProvider() {
+    // The hook must never throw — null path covers the early-fail branch.
+    assertDoesNotThrow(() -> server.broadcastSseShutdownNotice(null));
+  }
+
+  @Test
+  void broadcastSseShutdownNoticeIsSafeWithNoActiveSessions() {
+    // notifyClients with no sessions is a Mono.empty() — the helper must complete cleanly.
+    HttpServletSseServerTransportProvider provider =
+        HttpServletSseServerTransportProvider.builder()
+            .jsonMapper(McpJsonDefaults.getMapper())
+            .messageEndpoint("/mcp/message")
+            .build();
+    try {
+      assertDoesNotThrow(() -> server.broadcastSseShutdownNotice(provider));
+    } finally {
+      // closeGracefully() returns a Mono; block briefly so the JVM exits cleanly post-test.
+      provider.closeGracefully().block(Duration.ofSeconds(2));
     }
   }
 
