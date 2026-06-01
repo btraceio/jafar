@@ -22,9 +22,9 @@ This checklist tracks the incremental refactoring of `JafarMcpServer` into small
 
 ## Phase 3 — Cross-Cutting Tool Interceptors
 
-- [ ] Move activity tracking out of tool construction into an interceptor/decorator.
-- [ ] Move tool-level error handling into an interceptor/decorator.
-- [ ] Keep `VirtualMachineError` behavior unchanged.
+- [x] Move activity tracking out of tool construction into an interceptor/decorator.
+- [x] Move tool-level error handling into an interceptor/decorator.
+- [x] Keep `VirtualMachineError` behavior unchanged.
 
 ## Phase 4 — Transport and Lifecycle
 

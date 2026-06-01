@@ -16,6 +16,7 @@ import io.jafar.mcp.session.HeapSessionRegistry;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.mcp.tool.ActivityTrackingInterceptor;
 import io.jafar.mcp.tool.ProgressReporter;
 import io.jafar.mcp.validation.FieldNameValidator;
 import io.jafar.mcp.validation.FileValidator;
@@ -582,27 +583,9 @@ public final class JafarMcpServer {
    */
   private McpServerFeatures.SyncToolSpecification withActivityTracking(
       McpServerFeatures.SyncToolSpecification spec) {
-    return new McpServerFeatures.SyncToolSpecification(
-        spec.tool(),
-        (exchange, args) -> {
-          if (!beginRequest()) {
-            return errorResult("Server is shutting down");
-          }
-          try {
-            touchActivity();
-            return spec.callHandler().apply(exchange, args);
-          } catch (Throwable t) {
-            if (t instanceof VirtualMachineError vme) {
-              throw vme;
-            }
-            LOG.error("Uncaught exception in tool handler '{}'", spec.tool().name(), t);
-            return errorResult(
-                "Internal error in " + spec.tool().name() + ": " + t.getClass().getSimpleName());
-          } finally {
-            endRequest();
-            touchActivity();
-          }
-        });
+    return new ActivityTrackingInterceptor(
+            this::beginRequest, this::endRequest, this::touchActivity, this::errorResult, LOG)
+        .apply(spec);
   }
 
   /** Returns false iff the watchdog has latched a shutdown intent. */
