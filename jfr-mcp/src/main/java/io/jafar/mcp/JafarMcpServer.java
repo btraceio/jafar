@@ -19,6 +19,7 @@ import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.mcp.tool.ActivityTrackingInterceptor;
 import io.jafar.mcp.tool.ProgressReporter;
+import io.jafar.mcp.transport.McpServerFactory;
 import io.jafar.mcp.validation.FieldNameValidator;
 import io.jafar.mcp.validation.FileValidator;
 import io.jafar.otlp.shell.OtlpSession;
@@ -37,7 +38,6 @@ import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
-import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -46,7 +46,6 @@ import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
-import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.spec.McpServerSession;
@@ -196,6 +195,7 @@ public final class JafarMcpServer {
   private final QueryParser queryParser;
   private final McpResultFactory resultFactory = new McpResultFactory(MAPPER);
   private final ProgressReporter progressReporter = new ProgressReporter();
+  private final McpServerFactory mcpServerFactory = new McpServerFactory();
 
   /** Timestamp of the last tool invocation, in nanoseconds. Updated on every tool call. */
   private volatile long lastActivityNanos = System.nanoTime();
@@ -291,11 +291,7 @@ public final class JafarMcpServer {
       // Build MCP server
       // Note: transport starts reading from stdin automatically when the server is built
       McpSyncServer mcpServer =
-          McpServer.sync(transportProvider)
-              .serverInfo("jafar-mcp", "0.10.0")
-              .capabilities(ServerCapabilities.builder().tools(true).logging().build())
-              .tools(createToolSpecifications())
-              .build();
+          mcpServerFactory.createSyncServer(transportProvider, createToolSpecifications());
 
       LOG.info("Jafar MCP Server ready (stdio mode)");
 
@@ -390,11 +386,7 @@ public final class JafarMcpServer {
 
       // Build MCP server
       McpSyncServer mcpServer =
-          McpServer.sync(transportProvider)
-              .serverInfo("jafar-mcp", "0.10.0")
-              .capabilities(ServerCapabilities.builder().tools(true).logging().build())
-              .tools(createToolSpecifications())
-              .build();
+          mcpServerFactory.createSyncServer(transportProvider, createToolSpecifications());
 
       // Wrap the session factory AFTER build so every new session gets a pre-initialized
       // exchangeSink. The MCP SDK waits on exchangeSink.asMono() before dispatching non-initialize
