@@ -6,6 +6,7 @@ import io.jafar.hdump.shell.hdumppath.HdumpPath;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
 import io.jafar.mcp.config.McpServerConfig;
+import io.jafar.mcp.lifecycle.SsePortRegistry;
 import io.jafar.mcp.query.DefaultQueryEvaluator;
 import io.jafar.mcp.query.DefaultQueryParser;
 import io.jafar.mcp.query.QueryEvaluator;
@@ -171,8 +172,7 @@ public final class JafarMcpServer {
   private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 0;
 
   /** Stores the port of a running SSE server so a second launch can report it and exit. */
-  private static final Path SSE_PORT_FILE =
-      Path.of(System.getProperty("user.home"), ".jafar", "mcp-sse.port");
+  private static final SsePortRegistry SSE_PORT_REGISTRY = SsePortRegistry.defaultRegistry(LOG);
 
   /** Cap on rows returned by jfr_query. Configurable via {@code mcp.jfr.query.max-rows}. */
   static final int MAX_QUERY_ROWS = McpServerConfig.MAX_QUERY_ROWS;
@@ -364,9 +364,9 @@ public final class JafarMcpServer {
     int port = Integer.getInteger("mcp.port", 3000);
 
     // Check if a Jafar SSE server is already running (via port file).
-    int runningPort = detectRunningSseServer();
+    int runningPort = SSE_PORT_REGISTRY.detectRunningServer();
     if (runningPort > 0) {
-      System.out.println(sseUrl(runningPort));
+      System.out.println(SSE_PORT_REGISTRY.url(runningPort));
       return;
     }
 
@@ -433,7 +433,7 @@ public final class JafarMcpServer {
               new Thread(
                   () -> {
                     LOG.info("Shutting down...");
-                    deleteSsePortFile();
+                    SSE_PORT_REGISTRY.delete();
                     broadcastSseShutdownNotice(transportProvider);
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
@@ -463,9 +463,9 @@ public final class JafarMcpServer {
       // (KeepAlive=true) keeps the daemon up; idle resource usage is negligible.
       // Start server
       jettyServer.start();
-      writeSsePortFile(port);
-      System.out.println(sseUrl(port));
-      LOG.info("Jafar MCP Server started — SSE: {}", sseUrl(port));
+      SSE_PORT_REGISTRY.write(port);
+      System.out.println(SSE_PORT_REGISTRY.url(port));
+      LOG.info("Jafar MCP Server started — SSE: {}", SSE_PORT_REGISTRY.url(port));
       jettyServer.join();
 
     } catch (Exception e) {
@@ -615,47 +615,6 @@ public final class JafarMcpServer {
     } catch (IOException e) {
       return false;
     }
-  }
-
-  /**
-   * Returns the port from the SSE port file if the server at that port is still reachable,
-   * otherwise cleans up the stale file and returns -1.
-   */
-  private static int detectRunningSseServer() {
-    try {
-      if (!Files.exists(SSE_PORT_FILE)) return -1;
-      int port = Integer.parseInt(Files.readString(SSE_PORT_FILE).trim());
-      try (Socket s = new Socket()) {
-        s.connect(new InetSocketAddress("localhost", port), 500);
-        return port;
-      } catch (IOException e) {
-        Files.deleteIfExists(SSE_PORT_FILE);
-        return -1;
-      }
-    } catch (Exception e) {
-      return -1;
-    }
-  }
-
-  private static void writeSsePortFile(int port) {
-    try {
-      Files.createDirectories(SSE_PORT_FILE.getParent());
-      Files.writeString(SSE_PORT_FILE, String.valueOf(port));
-    } catch (IOException e) {
-      LOG.warn("Cannot write SSE port file: {}", e.getMessage());
-    }
-  }
-
-  private static void deleteSsePortFile() {
-    try {
-      Files.deleteIfExists(SSE_PORT_FILE);
-    } catch (IOException e) {
-      LOG.warn("Cannot delete SSE port file: {}", e.getMessage());
-    }
-  }
-
-  private static String sseUrl(int port) {
-    return "http://localhost:" + port + "/mcp/sse";
   }
 
   /**

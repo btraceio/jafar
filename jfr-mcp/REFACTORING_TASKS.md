@@ -32,7 +32,7 @@ This checklist tracks the incremental refactoring of `JafarMcpServer` into small
 - [ ] Extract SSE transport runner.
 - [ ] Extract MCP server factory.
 - [ ] Extract idle watchdog.
-- [ ] Extract SSE port registry.
+- [x] Extract SSE port registry.
 - [ ] Extract shutdown coordination.
 - [ ] Isolate MCP SDK reflection workaround for SSE session initialization.
 
