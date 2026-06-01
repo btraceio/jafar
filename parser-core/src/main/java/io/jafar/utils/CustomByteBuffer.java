@@ -16,6 +16,19 @@ import java.nio.file.Path;
  */
 public interface CustomByteBuffer {
   /**
+   * Wraps a byte array in a CustomByteBuffer with the same byte-order semantics as a memory-mapped
+   * JFR file: the returned buffer has {@link #isNativeOrder()} == false so that multi-byte reads in
+   * {@link io.jafar.parser.internal_api.RecordingStreamReader} apply the same byte-reversal that
+   * file-backed buffers use.
+   *
+   * @param bytes the byte array to wrap
+   * @return a custom byte buffer wrapping the array
+   */
+  static CustomByteBuffer wrap(byte[] bytes) {
+    return new ByteBufferWrapper(ByteBuffer.wrap(bytes));
+  }
+
+  /**
    * Maps a file path to a custom byte buffer.
    *
    * @param channel the file path to map

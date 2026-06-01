@@ -5,11 +5,13 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.util.List;
 import java.util.Map;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectWriter;
 
 /** Creates MCP tool results with the response shape expected by existing clients. */
 public final class McpResultFactory {
 
   private final ObjectMapper mapper;
+  private final ObjectWriter prettyWriter;
 
   public McpResultFactory() {
     this(new ObjectMapper());
@@ -17,11 +19,12 @@ public final class McpResultFactory {
 
   public McpResultFactory(ObjectMapper mapper) {
     this.mapper = mapper;
+    this.prettyWriter = mapper.writerWithDefaultPrettyPrinter();
   }
 
   public CallToolResult success(Map<String, Object> data) {
     try {
-      String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(data);
+      String json = prettyWriter.writeValueAsString(data);
       return new CallToolResult(List.of(new TextContent(json)), false, data, null);
     } catch (Exception e) {
       return new CallToolResult(List.of(new TextContent(data.toString())), false, data, null);

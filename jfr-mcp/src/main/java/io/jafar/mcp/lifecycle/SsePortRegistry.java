@@ -64,12 +64,16 @@ public final class SsePortRegistry {
     return "http://localhost:" + port + "/mcp/sse";
   }
 
-  private static boolean isReachable(int port) {
+  public boolean isPortInUse(int port) {
     try (Socket socket = new Socket()) {
       socket.connect(new InetSocketAddress("localhost", port), 500);
       return true;
     } catch (IOException e) {
       return false;
     }
+  }
+
+  private boolean isReachable(int port) {
+    return isPortInUse(port);
   }
 }

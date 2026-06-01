@@ -1,6 +1,5 @@
 package io.jafar.mcp;
 
-import io.jafar.mcp.config.McpServerConfig;
 import io.jafar.mcp.hdump.HdumpTools;
 import io.jafar.mcp.jfr.JfrAnalysisTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
@@ -29,18 +28,13 @@ import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
-import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
-import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.spec.McpServerSession;
 import jakarta.servlet.Servlet;
-import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -120,17 +114,6 @@ public final class JafarMcpServer {
 
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  /**
-   * Builds an MCP {@link Tool} from a name, description, and raw JSON input schema. Uses {@link
-   * McpJsonDefaults#getMapper()} to parse the schema string.
-   */
-  private static Tool buildTool(String name, String description, String schema) {
-    return Tool.builder()
-        .name(name)
-        .description(description)
-        .inputSchema(McpJsonDefaults.getMapper(), schema)
-        .build();
-  }
 
   /**
    * Default idle timeout (minutes). {@code 0} = disabled (the safe default — Claude Code and other
@@ -144,16 +127,10 @@ public final class JafarMcpServer {
   /** Stores the port of a running SSE server so a second launch can report it and exit. */
   private static final SsePortRegistry SSE_PORT_REGISTRY = SsePortRegistry.defaultRegistry(LOG);
 
-  /** Cap on rows returned by jfr_query. Configurable via {@code mcp.jfr.query.max-rows}. */
-  static final int MAX_QUERY_ROWS = McpServerConfig.MAX_QUERY_ROWS;
-
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
   private final PprofSessionRegistry pprofSessionRegistry;
   private final OtlpSessionRegistry otlpSessionRegistry;
-  private final QueryEvaluator evaluator;
-  private final QueryParser queryParser;
-  private final JfrHelpProvider jfrHelpProvider = new JfrHelpProvider();
   private final JfrSessionTools jfrSessionTools;
   private final JfrAnalysisTools jfrAnalysisTools;
   private final HdumpTools hdumpTools;
@@ -207,12 +184,13 @@ public final class JafarMcpServer {
     this.heapSessionRegistry = heapSessionRegistry;
     this.pprofSessionRegistry = pprofSessionRegistry;
     this.otlpSessionRegistry = otlpSessionRegistry;
-    this.evaluator = evaluator;
-    this.queryParser = queryParser;
+    var jfrHelpProvider = new JfrHelpProvider();
     this.jfrSessionTools =
-        new JfrSessionTools(sessionRegistry, evaluator, queryParser, resultFactory, jfrHelpProvider);
+        new JfrSessionTools(
+            sessionRegistry, evaluator, queryParser, resultFactory, jfrHelpProvider);
     this.jfrAnalysisTools =
-        new JfrAnalysisTools(sessionRegistry, evaluator, queryParser, resultFactory, progressReporter);
+        new JfrAnalysisTools(
+            sessionRegistry, evaluator, queryParser, resultFactory, progressReporter);
     this.hdumpTools = new HdumpTools(heapSessionRegistry, resultFactory);
     this.pprofTools = new PprofTools(pprofSessionRegistry, resultFactory, progressReporter);
     this.otlpTools = new OtlpTools(otlpSessionRegistry, resultFactory, progressReporter);
@@ -340,7 +318,7 @@ public final class JafarMcpServer {
     }
 
     // Bail if the desired port is taken by a foreign process.
-    if (isPortInUse(port)) {
+    if (SSE_PORT_REGISTRY.isPortInUse(port)) {
       System.err.println(
           "Port " + port + " is in use by another process. Use -Dmcp.port=<port> to override.");
       System.exit(1);
@@ -568,21 +546,6 @@ public final class JafarMcpServer {
   }
 
   /**
-   * Checks if a port is already in use.
-   *
-   * @param port the port to check
-   * @return true if port is in use, false if available
-   */
-  private boolean isPortInUse(int port) {
-    try (Socket socket = new Socket()) {
-      socket.connect(new InetSocketAddress("localhost", port), 500);
-      return true;
-    } catch (IOException e) {
-      return false;
-    }
-  }
-
-  /**
    * Creates all tool specifications: 14 JFR tools, 6 heap dump tools, 9 pprof tools, and 7 otlp
    * tools.
    *
@@ -601,75 +564,59 @@ public final class JafarMcpServer {
    */
   List<McpServerFeatures.SyncToolSpecification> createToolSpecifications() {
     List<McpServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
-    tools.add(withActivityTracking(createJfrOpenTool()));
-    tools.add(withActivityTracking(createJfrQueryTool()));
-    tools.add(withActivityTracking(createJfrListTypesTool()));
-    tools.add(withActivityTracking(createJfrCloseTool()));
-    tools.add(withActivityTracking(createJfrHelpTool()));
-    tools.add(withActivityTracking(createJfrFlamegraphTool()));
-    tools.add(withActivityTracking(createJfrCallgraphTool()));
-    tools.add(withActivityTracking(createJfrExceptionsTool()));
-    tools.add(withActivityTracking(createJfrSummaryTool()));
-    tools.add(withActivityTracking(createJfrHotmethodsTool()));
-    tools.add(withActivityTracking(createJfrUseTool()));
-    tools.add(withActivityTracking(createJfrTsaTool()));
-    tools.add(withActivityTracking(createJfrDiagnoseTool()));
-    tools.add(withActivityTracking(createJfrStackprofileTool()));
-    tools.add(withActivityTracking(createHdumpOpenTool()));
-    tools.add(withActivityTracking(createHdumpCloseTool()));
-    tools.add(withActivityTracking(createHdumpQueryTool()));
-    tools.add(withActivityTracking(createHdumpSummaryTool()));
-    tools.add(withActivityTracking(createHdumpReportTool()));
-    tools.add(withActivityTracking(createHdumpHelpTool()));
-    tools.add(withActivityTracking(createPprofOpenTool()));
-    tools.add(withActivityTracking(createPprofCloseTool()));
-    tools.add(withActivityTracking(createPprofQueryTool()));
-    tools.add(withActivityTracking(createPprofSummaryTool()));
-    tools.add(withActivityTracking(createPprofFlamegraphTool()));
-    tools.add(withActivityTracking(createPprofUseTool()));
-    tools.add(withActivityTracking(createPprofHotmethodsTool()));
-    tools.add(withActivityTracking(createPprofTsaTool()));
-    tools.add(withActivityTracking(createPprofHelpTool()));
-    tools.add(withActivityTracking(createOtlpOpenTool()));
-    tools.add(withActivityTracking(createOtlpCloseTool()));
-    tools.add(withActivityTracking(createOtlpQueryTool()));
-    tools.add(withActivityTracking(createOtlpSummaryTool()));
-    tools.add(withActivityTracking(createOtlpFlamegraphTool()));
-    tools.add(withActivityTracking(createOtlpUseTool()));
-    tools.add(withActivityTracking(createOtlpHelpTool()));
+    tools.add(withActivityTracking(jfrSessionTools.createJfrOpenTool()));
+    tools.add(withActivityTracking(jfrSessionTools.createJfrQueryTool()));
+    tools.add(withActivityTracking(jfrSessionTools.createJfrListTypesTool()));
+    tools.add(withActivityTracking(jfrSessionTools.createJfrCloseTool()));
+    tools.add(withActivityTracking(jfrSessionTools.createJfrHelpTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrFlamegraphTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrCallgraphTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrExceptionsTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrSummaryTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrHotmethodsTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrUseTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrTsaTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpOpenTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpCloseTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpQueryTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpSummaryTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpReportTool()));
+    tools.add(withActivityTracking(hdumpTools.createHdumpHelpTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofOpenTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofCloseTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofQueryTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofSummaryTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofFlamegraphTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofUseTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofHotmethodsTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofTsaTool()));
+    tools.add(withActivityTracking(pprofTools.createPprofHelpTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpOpenTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpCloseTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpQueryTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpSummaryTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpFlamegraphTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpUseTool()));
+    tools.add(withActivityTracking(otlpTools.createOtlpHelpTool()));
     return tools;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // basic JFR tools
+  // Legacy handler delegation — kept for test backward-compatibility (Phase 9)
   // ─────────────────────────────────────────────────────────────────────────────
-
-  private McpServerFeatures.SyncToolSpecification createJfrOpenTool() {
-    return jfrSessionTools.createJfrOpenTool();
-  }
 
   private CallToolResult handleJfrOpen(Map<String, Object> args) {
     return jfrSessionTools.handleJfrOpen(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrQueryTool() {
-    return jfrSessionTools.createJfrQueryTool();
   }
 
   private CallToolResult handleJfrQuery(Map<String, Object> args) {
     return jfrSessionTools.handleJfrQuery(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createJfrListTypesTool() {
-    return jfrSessionTools.createJfrListTypesTool();
-  }
-
   private CallToolResult handleJfrListTypes(Map<String, Object> args) {
     return jfrSessionTools.handleJfrListTypes(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrCloseTool() {
-    return jfrSessionTools.createJfrCloseTool();
   }
 
   private CallToolResult handleJfrClose(Map<String, Object> args) {
@@ -712,21 +659,9 @@ public final class JafarMcpServer {
     return jfrSessionTools.getToolsHelp();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // JFR analysis tools
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  private McpServerFeatures.SyncToolSpecification createJfrFlamegraphTool() {
-    return jfrAnalysisTools.createJfrFlamegraphTool();
-  }
-
   private CallToolResult handleJfrFlamegraph(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return jfrAnalysisTools.handleJfrFlamegraph(exchange, args, progressToken);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrCallgraphTool() {
-    return jfrAnalysisTools.createJfrCallgraphTool();
   }
 
   private CallToolResult handleJfrCallgraph(
@@ -734,17 +669,9 @@ public final class JafarMcpServer {
     return jfrAnalysisTools.handleJfrCallgraph(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createJfrExceptionsTool() {
-    return jfrAnalysisTools.createJfrExceptionsTool();
-  }
-
   private CallToolResult handleJfrExceptions(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return jfrAnalysisTools.handleJfrExceptions(exchange, args, progressToken);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrSummaryTool() {
-    return jfrAnalysisTools.createJfrSummaryTool();
   }
 
   private CallToolResult handleJfrSummary(
@@ -752,17 +679,9 @@ public final class JafarMcpServer {
     return jfrAnalysisTools.handleJfrSummary(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createJfrHotmethodsTool() {
-    return jfrAnalysisTools.createJfrHotmethodsTool();
-  }
-
   private CallToolResult handleJfrHotmethods(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return jfrAnalysisTools.handleJfrHotmethods(exchange, args, progressToken);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrUseTool() {
-    return jfrAnalysisTools.createJfrUseTool();
   }
 
   private CallToolResult handleJfrUse(
@@ -770,26 +689,14 @@ public final class JafarMcpServer {
     return jfrAnalysisTools.handleJfrUse(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createJfrTsaTool() {
-    return jfrAnalysisTools.createJfrTsaTool();
-  }
-
   private CallToolResult handleJfrTsa(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return jfrAnalysisTools.handleJfrTsa(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createJfrDiagnoseTool() {
-    return jfrAnalysisTools.createJfrDiagnoseTool();
-  }
-
   private CallToolResult handleJfrDiagnose(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return jfrAnalysisTools.handleJfrDiagnose(exchange, args, progressToken);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createJfrStackprofileTool() {
-    return jfrAnalysisTools.createJfrStackprofileTool();
   }
 
   private CallToolResult handleJfrStackprofile(
@@ -801,104 +708,48 @@ public final class JafarMcpServer {
     return jfrAnalysisTools.extractMethodName(frame);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // hdump tools
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  private McpServerFeatures.SyncToolSpecification createHdumpOpenTool() {
-    return hdumpTools.createHdumpOpenTool();
-  }
-
   private CallToolResult handleHdumpOpen(Map<String, Object> args) {
     return hdumpTools.handleHdumpOpen(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createHdumpCloseTool() {
-    return hdumpTools.createHdumpCloseTool();
   }
 
   private CallToolResult handleHdumpClose(Map<String, Object> args) {
     return hdumpTools.handleHdumpClose(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createHdumpQueryTool() {
-    return hdumpTools.createHdumpQueryTool();
-  }
-
   private CallToolResult handleHdumpQuery(Map<String, Object> args) {
     return hdumpTools.handleHdumpQuery(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createHdumpSummaryTool() {
-    return hdumpTools.createHdumpSummaryTool();
   }
 
   private CallToolResult handleHdumpSummary(Map<String, Object> args) {
     return hdumpTools.handleHdumpSummary(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createHdumpReportTool() {
-    return hdumpTools.createHdumpReportTool();
-  }
-
   private CallToolResult handleHdumpReport(Map<String, Object> args) {
     return hdumpTools.handleHdumpReport(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createHdumpHelpTool() {
-    return hdumpTools.createHdumpHelpTool();
   }
 
   private CallToolResult handleHdumpHelp(Map<String, Object> args) {
     return hdumpTools.handleHdumpHelp(args);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // pprof tools
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  private McpServerFeatures.SyncToolSpecification createPprofOpenTool() {
-    return pprofTools.createPprofOpenTool();
-  }
-
   private CallToolResult handlePprofOpen(Map<String, Object> args) {
     return pprofTools.handlePprofOpen(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createPprofCloseTool() {
-    return pprofTools.createPprofCloseTool();
   }
 
   private CallToolResult handlePprofClose(Map<String, Object> args) {
     return pprofTools.handlePprofClose(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createPprofQueryTool() {
-    return pprofTools.createPprofQueryTool();
-  }
-
   private CallToolResult handlePprofQuery(Map<String, Object> args) {
     return pprofTools.handlePprofQuery(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createPprofSummaryTool() {
-    return pprofTools.createPprofSummaryTool();
   }
 
   private CallToolResult handlePprofSummary(Map<String, Object> args) {
     return pprofTools.handlePprofSummary(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createPprofFlamegraphTool() {
-    return pprofTools.createPprofFlamegraphTool();
-  }
-
   private CallToolResult handlePprofFlamegraph(Map<String, Object> args) {
     return pprofTools.handlePprofFlamegraph(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createPprofUseTool() {
-    return pprofTools.createPprofUseTool();
   }
 
   private CallToolResult handlePprofUse(
@@ -906,16 +757,8 @@ public final class JafarMcpServer {
     return pprofTools.handlePprofUse(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createPprofHotmethodsTool() {
-    return pprofTools.createPprofHotmethodsTool();
-  }
-
   private CallToolResult handlePprofHotmethods(Map<String, Object> args) {
     return pprofTools.handlePprofHotmethods(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createPprofTsaTool() {
-    return pprofTools.createPprofTsaTool();
   }
 
   private CallToolResult handlePprofTsa(
@@ -923,69 +766,33 @@ public final class JafarMcpServer {
     return pprofTools.handlePprofTsa(exchange, args, progressToken);
   }
 
-  private McpServerFeatures.SyncToolSpecification createPprofHelpTool() {
-    return pprofTools.createPprofHelpTool();
-  }
-
   private String getPprofHelpText() {
     return pprofTools.getPprofHelpText();
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // otlp tools
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  private McpServerFeatures.SyncToolSpecification createOtlpOpenTool() {
-    return otlpTools.createOtlpOpenTool();
   }
 
   private CallToolResult handleOtlpOpen(Map<String, Object> args) {
     return otlpTools.handleOtlpOpen(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createOtlpCloseTool() {
-    return otlpTools.createOtlpCloseTool();
-  }
-
   private CallToolResult handleOtlpClose(Map<String, Object> args) {
     return otlpTools.handleOtlpClose(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createOtlpQueryTool() {
-    return otlpTools.createOtlpQueryTool();
   }
 
   private CallToolResult handleOtlpQuery(Map<String, Object> args) {
     return otlpTools.handleOtlpQuery(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createOtlpSummaryTool() {
-    return otlpTools.createOtlpSummaryTool();
-  }
-
   private CallToolResult handleOtlpSummary(Map<String, Object> args) {
     return otlpTools.handleOtlpSummary(args);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createOtlpFlamegraphTool() {
-    return otlpTools.createOtlpFlamegraphTool();
   }
 
   private CallToolResult handleOtlpFlamegraph(Map<String, Object> args) {
     return otlpTools.handleOtlpFlamegraph(args);
   }
 
-  private McpServerFeatures.SyncToolSpecification createOtlpUseTool() {
-    return otlpTools.createOtlpUseTool();
-  }
-
   private CallToolResult handleOtlpUse(
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     return otlpTools.handleOtlpUse(exchange, args, progressToken);
-  }
-
-  private McpServerFeatures.SyncToolSpecification createOtlpHelpTool() {
-    return otlpTools.createOtlpHelpTool();
   }
 
   private String getOtlpHelpText() {
@@ -1003,19 +810,6 @@ public final class JafarMcpServer {
 
   private CallToolResult successResult(Map<String, Object> data) {
     return resultFactory.success(data);
-  }
-
-  private static Object progressToken(McpSchema.CallToolRequest req) {
-    return new ProgressReporter().progressToken(req);
-  }
-
-  private void sendProgress(
-      McpSyncServerExchange exchange,
-      Object progressToken,
-      double progress,
-      double total,
-      String message) {
-    progressReporter.send(exchange, progressToken, progress, total, message);
   }
 
   private CallToolResult errorResult(String message) {
