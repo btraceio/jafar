@@ -5,14 +5,20 @@ import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.hdumppath.HdumpPath;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
+import io.jafar.mcp.config.McpServerConfig;
 import io.jafar.mcp.query.DefaultQueryEvaluator;
 import io.jafar.mcp.query.DefaultQueryParser;
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
+import io.jafar.mcp.result.McpResultFactory;
+import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.mcp.tool.ProgressReporter;
+import io.jafar.mcp.validation.FieldNameValidator;
+import io.jafar.mcp.validation.FileValidator;
 import io.jafar.otlp.shell.OtlpSession;
 import io.jafar.otlp.shell.otlppath.OtlpPathEvaluator;
 import io.jafar.otlp.shell.otlppath.OtlpPathParseException;
@@ -65,7 +71,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.regex.Pattern;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.server.Server;
@@ -169,19 +174,18 @@ public final class JafarMcpServer {
       Path.of(System.getProperty("user.home"), ".jafar", "mcp-sse.port");
 
   /** Cap on rows returned by jfr_query. Configurable via {@code mcp.jfr.query.max-rows}. */
-  static final int MAX_QUERY_ROWS = Integer.getInteger("mcp.jfr.query.max-rows", 50_000);
+  static final int MAX_QUERY_ROWS = McpServerConfig.MAX_QUERY_ROWS;
 
   /**
    * Cap on flamegraph nodes/paths returned. Configurable via {@code mcp.jfr.flamegraph.max-nodes}.
    */
-  static final int MAX_FLAMEGRAPH_NODES =
-      Integer.getInteger("mcp.jfr.flamegraph.max-nodes", 100_000);
+  static final int MAX_FLAMEGRAPH_NODES = McpServerConfig.MAX_FLAMEGRAPH_NODES;
 
   /** Cap on callgraph nodes returned. Configurable via {@code mcp.jfr.callgraph.max-nodes}. */
-  static final int MAX_CALLGRAPH_NODES = Integer.getInteger("mcp.jfr.callgraph.max-nodes", 100_000);
+  static final int MAX_CALLGRAPH_NODES = McpServerConfig.MAX_CALLGRAPH_NODES;
 
   /** Cap on hdump_report findings. Configurable via {@code mcp.hdump.report.max-findings}. */
-  static final int MAX_HDUMP_FINDINGS = Integer.getInteger("mcp.hdump.report.max-findings", 5_000);
+  static final int MAX_HDUMP_FINDINGS = McpServerConfig.MAX_HDUMP_FINDINGS;
 
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
@@ -189,6 +193,8 @@ public final class JafarMcpServer {
   private final OtlpSessionRegistry otlpSessionRegistry;
   private final QueryEvaluator evaluator;
   private final QueryParser queryParser;
+  private final McpResultFactory resultFactory = new McpResultFactory(MAPPER);
+  private final ProgressReporter progressReporter = new ProgressReporter();
 
   /** Timestamp of the last tool invocation, in nanoseconds. Updated on every tool call. */
   private volatile long lastActivityNanos = System.nanoTime();
@@ -771,14 +777,9 @@ public final class JafarMcpServer {
     try {
       Path recordingPath = Path.of(path);
 
-      if (!Files.exists(recordingPath)) {
-        return errorResult("File not found: " + path);
-      }
-      if (!Files.isRegularFile(recordingPath)) {
-        return errorResult("Not a file: " + path);
-      }
-      if (!Files.isReadable(recordingPath)) {
-        return errorResult("File not readable: " + path);
+      String fileError = FileValidator.readableRegularFileError(recordingPath, path);
+      if (fileError != null) {
+        return errorResult(fileError);
       }
 
       SessionRegistry.SessionInfo session = sessionRegistry.open(recordingPath, alias);
@@ -4914,14 +4915,9 @@ public final class JafarMcpServer {
     try {
       Path hprofPath = Path.of(path);
 
-      if (!Files.exists(hprofPath)) {
-        return errorResult("File not found: " + path);
-      }
-      if (!Files.isRegularFile(hprofPath)) {
-        return errorResult("Not a file: " + path);
-      }
-      if (!Files.isReadable(hprofPath)) {
-        return errorResult("File not readable: " + path);
+      String fileError = FileValidator.readableRegularFileError(hprofPath, path);
+      if (fileError != null) {
+        return errorResult(fileError);
       }
 
       HeapSessionRegistry.SessionInfo info = heapSessionRegistry.open(hprofPath, alias);
@@ -5825,14 +5821,9 @@ public final class JafarMcpServer {
     try {
       Path profilePath = Path.of(path);
 
-      if (!Files.exists(profilePath)) {
-        return errorResult("File not found: " + path);
-      }
-      if (!Files.isRegularFile(profilePath)) {
-        return errorResult("Not a file: " + path);
-      }
-      if (!Files.isReadable(profilePath)) {
-        return errorResult("File not readable: " + path);
+      String fileError = FileValidator.readableRegularFileError(profilePath, path);
+      if (fileError != null) {
+        return errorResult(fileError);
       }
 
       var info = pprofSessionRegistry.open(profilePath, alias);
@@ -6997,14 +6988,9 @@ public final class JafarMcpServer {
     try {
       Path profilePath = Path.of(path);
 
-      if (!Files.exists(profilePath)) {
-        return errorResult("File not found: " + path);
-      }
-      if (!Files.isRegularFile(profilePath)) {
-        return errorResult("Not a file: " + path);
-      }
-      if (!Files.isReadable(profilePath)) {
-        return errorResult("File not readable: " + path);
+      String fileError = FileValidator.readableRegularFileError(profilePath, path);
+      if (fileError != null) {
+        return errorResult(fileError);
       }
 
       var info = otlpSessionRegistry.open(profilePath, alias);
@@ -7665,31 +7651,17 @@ public final class JafarMcpServer {
   // Utility methods
   // ─────────────────────────────────────────────────────────────────────────────
 
-  private static final Pattern SAFE_FIELD_NAME = Pattern.compile("^[a-zA-Z0-9_.:-]+$");
-
   /** Validates that a field name is safe to interpolate into a query string. */
   private static String requireSafeFieldName(String name, String paramName) {
-    if (name == null || name.isBlank()) {
-      throw new IllegalArgumentException(paramName + " must not be blank");
-    }
-    if (!SAFE_FIELD_NAME.matcher(name).matches()) {
-      throw new IllegalArgumentException("Invalid " + paramName + ": '" + name + "'");
-    }
-    return name;
+    return FieldNameValidator.requireSafeFieldName(name, paramName);
   }
 
   private CallToolResult successResult(Map<String, Object> data) {
-    try {
-      String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(data);
-      return new CallToolResult(List.of(new TextContent(json)), false, data, null);
-    } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(data.toString())), false, data, null);
-    }
+    return resultFactory.success(data);
   }
 
   private static Object progressToken(McpSchema.CallToolRequest req) {
-    var meta = req.meta();
-    return meta != null ? meta.get("progressToken") : null;
+    return new ProgressReporter().progressToken(req);
   }
 
   private void sendProgress(
@@ -7698,23 +7670,11 @@ public final class JafarMcpServer {
       double progress,
       double total,
       String message) {
-    if (exchange == null || progressToken == null) return;
-    try {
-      exchange.progressNotification(
-          new McpSchema.ProgressNotification(progressToken, progress, total, message));
-    } catch (Exception ignored) {
-      // Client may not support progress
-    }
+    progressReporter.send(exchange, progressToken, progress, total, message);
   }
 
   private CallToolResult errorResult(String message) {
-    Map<String, Object> error = Map.of("error", message, "success", false);
-    try {
-      String json = MAPPER.writeValueAsString(error);
-      return new CallToolResult(List.of(new TextContent(json)), true, error, null);
-    } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(message)), true, error, null);
-    }
+    return resultFactory.error(message);
   }
 
   /**
@@ -7722,10 +7682,6 @@ public final class JafarMcpServer {
    * rows; the caller surfaces a truncation marker in the response.
    */
   static int truncate(List<?> list, int max) {
-    int size = list.size();
-    if (size <= max) return 0;
-    int removed = size - max;
-    list.subList(max, size).clear();
-    return removed;
+    return ResultLimiter.truncate(list, max);
   }
 }
