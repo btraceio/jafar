@@ -62,15 +62,15 @@ This checklist tracks the incremental refactoring of `JafarMcpServer` into small
 
 ## Phase 8 — JFR Analysis Tools
 
-- [ ] Extract summary analyzer/tool.
-- [ ] Extract exception analyzer/tool.
-- [ ] Extract hot methods analyzer/tool.
-- [ ] Extract flamegraph analyzer/tool.
-- [ ] Extract callgraph analyzer/tool.
-- [ ] Extract stack profile analyzer/tool.
-- [ ] Extract USE analyzer/tool.
-- [ ] Extract TSA analyzer/tool.
-- [ ] Extract diagnose analyzer/tool.
+- [x] Extract summary analyzer/tool.
+- [x] Extract exception analyzer/tool.
+- [x] Extract hot methods analyzer/tool.
+- [x] Extract flamegraph analyzer/tool.
+- [x] Extract callgraph analyzer/tool.
+- [x] Extract stack profile analyzer/tool.
+- [x] Extract USE analyzer/tool.
+- [x] Extract TSA analyzer/tool.
+- [x] Extract diagnose analyzer/tool.
 
 ## Phase 9 — Test Migration and Cleanup
 
