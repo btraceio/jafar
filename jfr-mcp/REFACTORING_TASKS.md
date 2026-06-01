@@ -54,11 +54,11 @@ This checklist tracks the incremental refactoring of `JafarMcpServer` into small
 
 ## Phase 7 — JFR Basic Tools
 
-- [ ] Extract `jfr_open`.
-- [ ] Extract `jfr_close`.
-- [ ] Extract `jfr_query`.
-- [ ] Extract `jfr_list_types`.
-- [ ] Extract `jfr_help` and help text provider.
+- [x] Extract `jfr_open`.
+- [x] Extract `jfr_close`.
+- [x] Extract `jfr_query`.
+- [x] Extract `jfr_list_types`.
+- [x] Extract `jfr_help` and help text provider.
 
 ## Phase 8 — JFR Analysis Tools
 
