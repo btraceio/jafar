@@ -38,18 +38,18 @@ This checklist tracks the incremental refactoring of `JafarMcpServer` into small
 
 ## Phase 5 — Heap Dump Tools
 
-- [ ] Extract `hdump_open`.
-- [ ] Extract `hdump_close`.
-- [ ] Extract `hdump_query`.
-- [ ] Extract `hdump_summary`.
-- [ ] Extract `hdump_report`.
-- [ ] Extract `hdump_help` and help text provider.
+- [x] Extract `hdump_open`.
+- [x] Extract `hdump_close`.
+- [x] Extract `hdump_query`.
+- [x] Extract `hdump_summary`.
+- [x] Extract `hdump_report`.
+- [x] Extract `hdump_help` and help text provider.
 
 ## Phase 6 — pprof and OTLP Tools
 
 - [ ] Introduce shared sampling-profile backend strategy.
-- [ ] Extract pprof tools.
-- [ ] Extract OTLP tools.
+- [x] Extract pprof tools.
+- [x] Extract OTLP tools.
 - [ ] Share query, summary, flamegraph, and USE logic where behavior is identical.
 
 ## Phase 7 — JFR Basic Tools
