@@ -505,5 +505,4 @@ public final class JfrSessionTools {
   public String getToolsHelp() {
     return jfrHelpProvider.getToolsHelp();
   }
-
 }

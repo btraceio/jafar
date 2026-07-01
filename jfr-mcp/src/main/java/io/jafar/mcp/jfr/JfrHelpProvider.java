@@ -457,5 +457,4 @@ public final class JfrHelpProvider {
         Use jfr_help(topic="pipeline") and jfr_help(topic="filters") for query syntax.
         """;
   }
-
 }

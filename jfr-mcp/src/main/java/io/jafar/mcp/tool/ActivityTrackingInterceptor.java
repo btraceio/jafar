@@ -32,7 +32,8 @@ public final class ActivityTrackingInterceptor implements ToolInterceptor {
   }
 
   @Override
-  public McpServerFeatures.SyncToolSpecification apply(McpServerFeatures.SyncToolSpecification spec) {
+  public McpServerFeatures.SyncToolSpecification apply(
+      McpServerFeatures.SyncToolSpecification spec) {
     return new McpServerFeatures.SyncToolSpecification(
         spec.tool(),
         (exchange, args) -> {

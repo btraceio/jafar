@@ -17,7 +17,6 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -966,5 +965,4 @@ public final class HdumpTools {
         5. hdump_close      — release memory when done
         """;
   }
-
 }

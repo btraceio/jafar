@@ -1,0 +1,19 @@
+{
+  "extracted_at": "2026-07-01T15:34:28.179074+00:00",
+  "remote": "btraceio/jafar",
+  "prs_scanned": 58,
+  "commits_scanned": 374,
+  "advisor_sources": [
+    ".claude/worktrees/agent-a2d3208d/AGENTS.md",
+    "AGENTS.md",
+    ".claude/worktrees/agent-a2d3208d/CLAUDE.md",
+    "CLAUDE.md",
+    "README.md",
+    "build.gradle",
+    ".github/workflows/ci.yml",
+    ".github/workflows/pr-results-comment.yml",
+    ".github/workflows/pr-tests.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/sync-jbang-catalog.yml"
+  ]
+}

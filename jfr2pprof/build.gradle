@@ -1,0 +1,43 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    implementation project(':parser')
+    implementation 'org.snakeyaml:snakeyaml-engine:2.9'
+    implementation 'org.slf4j:slf4j-api:2.0.16'
+    runtimeOnly   'ch.qos.logback:logback-classic:1.5.18'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testRuntimeOnly   'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
+    testImplementation project(':pprof-shell')
+}
+
+test {
+    useJUnitPlatform()
+}
+
+shadowJar {
+    archiveClassifier.set('all')
+    manifest {
+        attributes 'Main-Class': 'io.jafar.jfr2pprof.Main'
+    }
+}
+
+group = 'io.btrace'
+version = rootProject.version
+description = 'JFR -> pprof converter'
