@@ -90,21 +90,23 @@ group = 'io.btrace'
 version = component_version
 description = 'JFR (Java Flight Recorder) manipulation tools'
 
-// Shadow JAR: embed internal parser-core module
+// Shadow JAR: embed internal parser-core module plus the runtime deps the
+// bundled Main-Class launcher needs to actually run standalone (java -jar).
 shadowJar {
     archiveBaseName = libraryName
     archiveVersion = component_version
     archiveClassifier.set('all')
     configurations = [project.configurations.runtimeClasspath, project.configurations.shadedInclude]
-    // Only include internal project modules, not external dependencies
     dependencies {
         include(project(':parser-core'))
         include(project(':jfr2pprof'))
         include(dependency('org.snakeyaml:snakeyaml-engine'))
+        include(dependency('org.slf4j:slf4j-api'))
+        include(dependency('org.slf4j:slf4j-simple'))
     }
     // parser-core is a Multi-Release JAR
     manifest {
-        attributes('Multi-Release': 'true')
+        attributes('Multi-Release': 'true', 'Main-Class': 'io.jafar.tools.Main')
     }
 }
 
