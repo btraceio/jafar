@@ -40,8 +40,19 @@ tasks.named('compileTestJava').configure { JavaCompile t ->
 
 def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 
+configurations {
+    // jfr2pprof targets a newer JVM version than this module's main sourceSet (Java 8),
+    // so it can't participate in the JVM-version-matched compile/runtime classpaths.
+    // Resolve it separately and shade its classes into the shadow JAR instead.
+    shadedInclude
+}
+
 dependencies {
     implementation project(':parser-core')
+    shadedInclude(project(':jfr2pprof')) { transitive = false }
+    // snakeyaml-engine is only used internally by jfr2pprof's MappingLoader; shade it in
+    // rather than exposing it as a published dependency.
+    shadedInclude 'org.snakeyaml:snakeyaml-engine:2.9'
     // Re-declare external deps from parser-core so they appear in the published POM
     // (parser-core is shaded into the shadow JAR and removed from the POM)
     runtimeOnly 'org.slf4j:slf4j-api:2.0.5'
@@ -84,9 +95,12 @@ shadowJar {
     archiveBaseName = libraryName
     archiveVersion = component_version
     archiveClassifier.set('all')
-    // Only include internal project module, not external dependencies
+    configurations = [project.configurations.runtimeClasspath, project.configurations.shadedInclude]
+    // Only include internal project modules, not external dependencies
     dependencies {
         include(project(':parser-core'))
+        include(project(':jfr2pprof'))
+        include(dependency('org.snakeyaml:snakeyaml-engine'))
     }
     // parser-core is a Multi-Release JAR
     manifest {
@@ -116,7 +130,7 @@ afterEvaluate {
                     if (deps) {
                         deps.each { depsNode ->
                             depsNode.children().removeAll { dep ->
-                                dep.artifactId.text() == 'jafar-parser-core'
+                                dep.artifactId.text() == 'jafar-parser-core' || dep.artifactId.text() == 'jfr2pprof'
                             }
                         }
                     }

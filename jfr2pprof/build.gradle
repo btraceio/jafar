@@ -5,7 +5,7 @@ plugins {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
@@ -15,7 +15,7 @@ repositories {
 }
 
 dependencies {
-    implementation project(':parser')
+    implementation project(':parser-core')
     implementation 'org.snakeyaml:snakeyaml-engine:2.9'
     implementation 'org.slf4j:slf4j-api:2.0.16'
     runtimeOnly   'ch.qos.logback:logback-classic:1.5.18'
@@ -27,7 +27,17 @@ dependencies {
     testImplementation project(':pprof-shell')
 }
 
+// Compile and run tests with Java 25 (pprof-shell test dependency requires it); main sources target 21
+def j25CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
+tasks.named('compileTestJava').configure { JavaCompile t ->
+    t.javaCompiler.set(j25CompilerProvider)
+    t.options.release.set(25)
+}
+
+def j25LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+
 test {
+    javaLauncher.set(j25LauncherProvider)
     useJUnitPlatform()
 }
 
