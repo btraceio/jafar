@@ -2,6 +2,7 @@ package io.jafar.jfr2pprof;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.jafar.jfr2pprof.config.FrameFormat;
 import io.jafar.jfr2pprof.config.ValueTypePair;
 import io.jafar.jfr2pprof.proto.PprofBuilder;
 import io.jafar.pprof.shell.PprofProfile;
@@ -9,7 +10,9 @@ import io.jafar.pprof.shell.PprofReader;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -105,5 +108,42 @@ class PprofBuilderRoundTripTest {
     assertThat(vals).hasSize(2);
     assertThat(vals.get(0)).isEqualTo(100L);
     assertThat(vals.get(1)).isEqualTo(200L);
+  }
+
+  private static Map<String, Object> frame(String className, String methodName, int lineNumber) {
+    Map<String, Object> typeMap = new HashMap<>();
+    typeMap.put("name", className);
+
+    Map<String, Object> methodMap = new HashMap<>();
+    methodMap.put("type", typeMap);
+    methodMap.put("name", methodName);
+
+    Map<String, Object> frameMap = new HashMap<>();
+    frameMap.put("method", methodMap);
+    frameMap.put("lineNumber", lineNumber);
+    return frameMap;
+  }
+
+  @Test
+  void testInternStackRendersFrameFormatIntoFunctionName() throws Exception {
+    PprofBuilder b = new PprofBuilder(1);
+    FrameFormat fmt = FrameFormat.defaultFormat();
+
+    Object[] frames = {
+      frame("Workload$CpuBurner", "run", 22), frame("Workload$CpuBurner", "spin", 29)
+    };
+
+    long[] locIds = b.internStack(frames, fmt);
+    assertThat(locIds).hasSize(2);
+
+    b.addSample(locIds, 0, new long[] {1L}, List.of());
+
+    List<ValueTypePair> valueTypes = List.of(new ValueTypePair("cpu-time", "nanoseconds"));
+    PprofProfile.Profile p = buildAndRead(b, valueTypes);
+
+    List<String> functionNames = p.functions().stream().map(PprofProfile.Function::name).toList();
+    assertThat(functionNames)
+        .contains("Workload$CpuBurner.run", "Workload$CpuBurner.spin")
+        .doesNotContain("Workload$CpuBurner");
   }
 }
