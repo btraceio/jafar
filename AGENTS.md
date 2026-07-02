@@ -57,7 +57,7 @@ Key architectural components:
 ### Prerequisites
 - Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otlp-shell`)
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
-- Git LFS (for test recordings): `git lfs pull`
+- Binary test recordings are fetched via `./get_resources.sh` (downloads from Dropbox), not Git LFS — see below
 
 ### Essential Commands
 ```bash
