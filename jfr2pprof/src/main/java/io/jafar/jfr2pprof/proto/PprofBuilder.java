@@ -94,9 +94,10 @@ public final class PprofBuilder {
       FrameExtractor.FrameData data = FrameExtractor.extractData(frameElement);
       if (data == null) continue;
 
+      String renderedName = fmt.render(data.className(), data.methodName(), data.lineNumber());
       long fnId =
           internFunction(
-              data.className(), data.methodName(), data.lineNumber() < 0 ? 0 : data.lineNumber());
+              renderedName, data.methodName(), data.lineNumber() < 0 ? 0 : data.lineNumber());
       long locId = internLocation(fnId, data.lineNumber() < 0 ? 0 : data.lineNumber());
       locIds.add(locId);
     }
