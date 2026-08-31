@@ -2,6 +2,7 @@ package io.jafar.otlp.shell;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.otlp.MinimalOtlpBuilder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

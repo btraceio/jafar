@@ -1,5 +1,6 @@
-package io.jafar.otlp.shell;
+package io.jafar.otlp.internal;
 
+import io.jafar.otlp.api.OtlpProfile;
 import io.jafar.utils.ProtoUtil;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

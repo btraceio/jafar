@@ -33,7 +33,7 @@ dependencies {
     implementation project(':pprof-shell')
     testImplementation(testFixtures(project(':pprof-parser')))
     implementation project(':otlp-shell')
-    testImplementation(testFixtures(project(':otlp-shell')))
+    testImplementation(testFixtures(project(':otlp-parser')))
 
     // Backend plugins (discovered via ServiceLoader)
     runtimeOnly project(':jfr-shell-jafar')

@@ -42,7 +42,8 @@ The project is organized as a multi-module Gradle build with the following struc
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **pprof-parser/**: pprof profile parser (gzip + protobuf wire format); public API in `io.jafar.pprof.api`, wire decoding in `internal`
 - **pprof-shell/**: pprof profile analysis CLI with PprofPath query language and tab completion (uses `pprof-parser`)
-- **otlp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtlpPath query language and tab completion
+- **otlp-parser/**: OpenTelemetry Profiling (OTLP) parser (protobuf wire format); public API in `io.jafar.otlp.api`, wire decoding in `internal`
+- **otlp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtlpPath query language and tab completion (uses `otlp-parser`)
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 

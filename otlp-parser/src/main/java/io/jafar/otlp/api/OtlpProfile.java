@@ -1,4 +1,4 @@
-package io.jafar.otlp.shell;
+package io.jafar.otlp.api;
 
 import java.util.List;
 

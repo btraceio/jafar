@@ -1,4 +1,4 @@
-package io.jafar.otlp.shell;
+package io.jafar.otlp;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

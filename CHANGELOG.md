@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
   - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
   - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals
+- **otlp-parser module** - Standalone OTLP profiling parser extracted from `otlp-shell`
+  - Public API in `io.jafar.otlp.api` (`OtlpParser`, `OtlpProfile`); wire decoding in `io.jafar.otlp.internal`
 
 ### Changed
 - **Modular structure / API-SPI separation** for the pprof and HPROF format support

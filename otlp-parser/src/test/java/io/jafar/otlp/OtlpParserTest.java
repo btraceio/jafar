@@ -1,14 +1,16 @@
-package io.jafar.otlp.shell;
+package io.jafar.otlp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.otlp.api.OtlpParser;
+import io.jafar.otlp.api.OtlpProfile;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests for {@link OtlpReader}: round-trip encoding and parsing of synthetic profiles. */
-class OtlpReaderTest {
+/** Tests for {@link OtlpParser}: round-trip encoding and parsing of synthetic profiles. */
+class OtlpParserTest {
 
   @TempDir Path tempDir;
 
@@ -32,7 +34,7 @@ class OtlpReaderTest {
     b.addSample(stackIdx, List.of(attrIdx), List.of(1_234_567L));
 
     Path file = b.write(tempDir);
-    OtlpProfile.ProfilesData data = OtlpReader.read(file);
+    OtlpProfile.ProfilesData data = OtlpParser.parse(file);
 
     // profiles
     assertEquals(1, data.profiles().size());
@@ -92,7 +94,7 @@ class OtlpReaderTest {
     b.addSample(stack2, List.of(), List.of(200L));
 
     Path file = b.write(tempDir);
-    OtlpProfile.ProfilesData data = OtlpReader.read(file);
+    OtlpProfile.ProfilesData data = OtlpParser.parse(file);
 
     assertEquals(1, data.profiles().size());
     assertEquals(2, data.profiles().get(0).samples().size());
@@ -106,7 +108,7 @@ class OtlpReaderTest {
     MinimalOtlpBuilder b = new MinimalOtlpBuilder();
     b.setSampleType(b.addString("cpu"), b.addString("nanoseconds"));
     Path file = b.write(tempDir);
-    OtlpProfile.ProfilesData data = OtlpReader.read(file);
+    OtlpProfile.ProfilesData data = OtlpParser.parse(file);
 
     List<String> st = data.dictionary().stringTable();
     assertFalse(st.isEmpty());
@@ -126,7 +128,7 @@ class OtlpReaderTest {
     b.addSample(stack, List.of(), List.of(1L));
 
     Path file = b.write(tempDir);
-    OtlpProfile.ProfilesData data = OtlpReader.read(file);
+    OtlpProfile.ProfilesData data = OtlpParser.parse(file);
 
     assertEquals(ts, data.profiles().get(0).timeUnixNano());
   }

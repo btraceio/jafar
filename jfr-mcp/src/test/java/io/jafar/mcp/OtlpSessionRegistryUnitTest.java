@@ -3,7 +3,7 @@ package io.jafar.mcp;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.mcp.session.OtlpSessionRegistry;
-import io.jafar.otlp.shell.MinimalOtlpBuilder;
+import io.jafar.otlp.MinimalOtlpBuilder;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
