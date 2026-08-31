@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - API compatibility enforced via japicmp for breaking change detection
 
 ### Fixed
+- **CI dependency resolution** - `jfr-shell` now depends on the released `dev.tamboui:*:0.2.0`
+  instead of the expired `0.2.0-SNAPSHOT`, which is no longer resolvable from any snapshot repository
 - **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
   - Added mavenPublishing configuration to publish fat JAR as main artifact
   - jfr-mcp now includes all dependencies and proper Main-Class manifest
