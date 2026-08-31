@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.jafar.jfr2pprof.config.MappingConfig;
 import io.jafar.jfr2pprof.config.MappingLoader;
 import io.jafar.jfr2pprof.convert.Jfr2PprofConverter;
-import io.jafar.pprof.shell.PprofProfile;
-import io.jafar.pprof.shell.PprofReader;
+import io.jafar.pprof.api.PprofParser;
+import io.jafar.pprof.api.PprofProfile;
 import java.io.ByteArrayOutputStream;
 import java.io.StringReader;
 import java.nio.file.Files;
@@ -81,7 +81,7 @@ class SingleValueConversionTest {
       new Jfr2PprofConverter().convert(jfrFile, config, true, out);
     }
 
-    PprofProfile.Profile profile = PprofReader.read(outFile);
+    PprofProfile.Profile profile = PprofParser.parse(outFile);
 
     assertThat(profile.sampleTypes()).hasSize(1);
     assertThat(profile.sampleTypes().get(0).type()).isEqualTo("cpu-time");

@@ -1,4 +1,4 @@
-package io.jafar.shell.core.proto;
+package io.jafar.utils;
 
 import java.io.IOException;
 
@@ -67,24 +67,23 @@ public final class ProtoUtil {
 
   /** Skips a field of the given wire type; returns the new position after the field. */
   public static int skipField(byte[] buf, int pos, int wireType) throws IOException {
-    return switch (wireType) {
-      case WIRE_VARINT -> pos + varintLen(buf, pos);
-      case WIRE_I64 -> {
+    switch (wireType) {
+      case WIRE_VARINT:
+        return pos + varintLen(buf, pos);
+      case WIRE_I64:
         if (pos + 8 > buf.length)
           throw new IOException("Truncated protobuf: fixed64 extends past buffer end");
-        yield pos + 8;
-      }
-      case WIRE_LEN -> {
+        return pos + 8;
+      case WIRE_LEN:
         int lenBytes = varintLen(buf, pos);
         int len = readSafeLen(buf, pos);
-        yield pos + lenBytes + len;
-      }
-      case WIRE_I32 -> {
+        return pos + lenBytes + len;
+      case WIRE_I32:
         if (pos + 4 > buf.length)
           throw new IOException("Truncated protobuf: fixed32 extends past buffer end");
-        yield pos + 4;
-      }
-      default -> throw new IOException("Cannot skip unknown wire type " + wireType);
-    };
+        return pos + 4;
+      default:
+        throw new IOException("Cannot skip unknown wire type " + wireType);
+    }
   }
 }

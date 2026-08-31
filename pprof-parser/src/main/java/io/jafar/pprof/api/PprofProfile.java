@@ -1,4 +1,4 @@
-package io.jafar.pprof.shell;
+package io.jafar.pprof.api;
 
 import java.util.List;
 

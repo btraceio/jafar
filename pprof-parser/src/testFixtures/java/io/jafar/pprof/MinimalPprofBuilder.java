@@ -1,4 +1,4 @@
-package io.jafar.pprof.shell;
+package io.jafar.pprof;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

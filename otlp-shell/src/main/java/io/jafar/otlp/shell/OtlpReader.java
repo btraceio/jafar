@@ -1,6 +1,6 @@
 package io.jafar.otlp.shell;
 
-import io.jafar.shell.core.proto.ProtoUtil;
+import io.jafar.utils.ProtoUtil;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

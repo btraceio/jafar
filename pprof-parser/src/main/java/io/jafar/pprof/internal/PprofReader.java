@@ -1,6 +1,7 @@
-package io.jafar.pprof.shell;
+package io.jafar.pprof.internal;
 
-import io.jafar.shell.core.proto.ProtoUtil;
+import io.jafar.pprof.api.PprofProfile;
+import io.jafar.utils.ProtoUtil;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;

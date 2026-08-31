@@ -1862,6 +1862,7 @@ public final class HeapDumpImpl implements HeapDump {
    * @param cls the heap class to get instances for
    * @return stream of heap objects belonging to this class
    */
+  @Override
   public Stream<HeapObject> getObjectsOfClassFast(HeapClass cls) {
     // Look up 32-bit class ID from 64-bit address
     long classAddress = cls.getId();
@@ -1880,6 +1881,7 @@ public final class HeapDumpImpl implements HeapDump {
    *
    * @return true if class-instances index is loaded and can be used
    */
+  @Override
   public boolean hasClassInstancesIndex() {
     return classInstancesOffsetReader != null && classInstancesDataReader != null;
   }
@@ -1941,13 +1943,30 @@ public final class HeapDumpImpl implements HeapDump {
 
   @Override
   public void computeDominators() {
-    computeDominators(null);
+    computeDominators((ApproximateRetainedSizeComputer.ProgressCallback) null);
+  }
+
+  @Override
+  public void computeDominators(HeapDumpParser.ProgressCallback progressCallback) {
+    computeDominators(
+        progressCallback == null
+            ? null
+            : (ApproximateRetainedSizeComputer.ProgressCallback) progressCallback::onProgress);
+  }
+
+  @Override
+  public void computeFullDominatorTree(HeapDumpParser.ProgressCallback progressCallback) {
+    computeFullDominatorTree(
+        progressCallback == null
+            ? null
+            : (DominatorTreeComputer.ProgressCallback) progressCallback::onProgress);
   }
 
   /**
    * Ensures retained sizes are computed, triggering computation if needed. This is called
    * automatically when retainedSize is accessed for the first time. Thread-safe and idempotent.
    */
+  @Override
   public void ensureRetainedSizesComputed() {
     if (!dominatorsComputed) {
       synchronized (this) {
@@ -2388,6 +2407,7 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /** Returns whether full dominator tree has been computed. */
+  @Override
   public boolean hasFullDominatorTree() {
     return fullDominatorTreeComputed;
   }
@@ -2525,6 +2545,7 @@ public final class HeapDumpImpl implements HeapDump {
    * @param dominator the dominating object
    * @return list of dominated objects (empty if full tree not computed)
    */
+  @Override
   public List<HeapObject> getDominatedObjects(HeapObject dominator) {
     if (!fullDominatorTreeComputed || dominatorChildrenMap == null) {
       return Collections.emptyList();

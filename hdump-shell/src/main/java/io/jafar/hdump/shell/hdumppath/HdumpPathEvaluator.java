@@ -666,9 +666,7 @@ public final class HdumpPathEvaluator {
     boolean usedClassIndex = false;
 
     // Try to use class-instances index for type filtering
-    if (query.typePattern() != null
-        && dump instanceof io.jafar.hdump.impl.HeapDumpImpl hdumpImpl
-        && hdumpImpl.hasClassInstancesIndex()) {
+    if (query.typePattern() != null && dump.hasClassInstancesIndex()) {
       // FAST PATH: Use class-instances index to directly enumerate matching instances
       String pattern = normalizeClassName(query.typePattern());
       filterDesc = " matching " + query.typePattern() + " (class-instances index)";
@@ -681,7 +679,7 @@ public final class HdumpPathEvaluator {
               .map(name -> dump.getClassByName(name))
               .filter(Optional::isPresent)
               .map(Optional::get)
-              .flatMap(cls -> hdumpImpl.getObjectsOfClassFast(cls));
+              .flatMap(cls -> dump.getObjectsOfClassFast(cls));
 
       usedClassIndex = true;
     } else {
@@ -905,7 +903,7 @@ public final class HdumpPathEvaluator {
     long freedBytes = 0;
     int freedObjects = 0;
 
-    if (session.hasFullDominatorTree() && dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
+    if (session.hasFullDominatorTree()) {
       Set<Long> visited = new java.util.HashSet<>();
       Deque<HeapObject> queue = new java.util.ArrayDeque<>();
 
@@ -920,7 +918,7 @@ public final class HdumpPathEvaluator {
       while (!queue.isEmpty()) {
         HeapObject cur = queue.poll();
         freedObjects++;
-        for (HeapObject child : impl.getDominatedObjects(cur)) {
+        for (HeapObject child : dump.getDominatedObjects(cur)) {
           if (visited.add(child.getId())) queue.add(child);
         }
       }
@@ -2468,8 +2466,7 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> applyRetainedBreakdown(
       HeapDump dump, List<Map<String, Object>> results, int maxDepth) {
 
-    if (!(dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl)
-        || !heapDumpImpl.hasFullDominatorTree()) {
+    if (!dump.hasFullDominatorTree()) {
       Map<String, Object> err = new LinkedHashMap<>();
       err.put(
           "error", "retainedBreakdown requires a computed dominator tree — run dominators() first");
@@ -2503,7 +2500,7 @@ public final class HdumpPathEvaluator {
                   HeapClass cls = obj.getHeapClass();
                   return cls != null && classNames.contains(cls.getName());
                 })
-            .forEach(obj -> walkDominatedSubtree(heapDumpImpl, obj, 0, maxDepth, agg));
+            .forEach(obj -> walkDominatedSubtree(dump, obj, 0, maxDepth, agg));
       }
     } else {
       for (Map<String, Object> row : results) {
@@ -2515,7 +2512,7 @@ public final class HdumpPathEvaluator {
                 : Long.parseLong(idObj.toString());
         HeapObject root = dump.getObjectById(id).orElse(null);
         if (root == null) continue;
-        walkDominatedSubtree(heapDumpImpl, root, 0, maxDepth, agg);
+        walkDominatedSubtree(dump, root, 0, maxDepth, agg);
       }
     }
 
@@ -2552,11 +2549,7 @@ public final class HdumpPathEvaluator {
   }
 
   private static void walkDominatedSubtree(
-      io.jafar.hdump.impl.HeapDumpImpl dump,
-      HeapObject obj,
-      int depth,
-      int maxDepth,
-      Map<String, long[]> agg) {
+      HeapDump dump, HeapObject obj, int depth, int maxDepth, Map<String, long[]> agg) {
 
     List<HeapObject> children = dump.getDominatedObjects(obj);
     if (children.isEmpty() || depth >= maxDepth) return;
@@ -2627,9 +2620,7 @@ public final class HdumpPathEvaluator {
 
       // Ensure retained sizes are computed (leak detectors need them)
       // Use approximate retained sizes which work in streaming mode (no OOME)
-      if (session.getHeapDump() instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-        heapDumpImpl.ensureRetainedSizesComputed();
-      }
+      session.getHeapDump().ensureRetainedSizesComputed();
 
       // Run the detector
       return detector.detect(session.getHeapDump(), op.threshold(), op.minSize());
@@ -2700,12 +2691,10 @@ public final class HdumpPathEvaluator {
       HeapSession session, HeapDump dump, List<Map<String, Object>> results, DominatorsOp op) {
 
     // Check if full dominator tree is computed
-    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-      if (!heapDumpImpl.hasFullDominatorTree()) {
-        // Auto-compute dominator tree
-        if (!session.promptAndComputeDominatorTree()) {
-          return List.of();
-        }
+    if (!dump.hasFullDominatorTree()) {
+      // Auto-compute dominator tree
+      if (!session.promptAndComputeDominatorTree()) {
+        return List.of();
       }
     }
 
@@ -2798,18 +2787,16 @@ public final class HdumpPathEvaluator {
       HeapObject dominator = dump.getObjectById(id).orElse(null);
       if (dominator == null) continue;
 
-      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-        List<HeapObject> dominatedObjects = heapDumpImpl.getDominatedObjects(dominator);
+      List<HeapObject> dominatedObjects = dump.getDominatedObjects(dominator);
 
-        for (HeapObject obj : dominatedObjects) {
-          if (obj.getRetainedSize() < minRetained) continue;
-          Map<String, Object> result = objectToMap(obj);
-          result.put("dominator", dominator.getId());
-          result.put(
-              "dominatorClass",
-              dominator.getHeapClass() != null ? dominator.getHeapClass().getName() : "unknown");
-          dominated.add(result);
-        }
+      for (HeapObject obj : dominatedObjects) {
+        if (obj.getRetainedSize() < minRetained) continue;
+        Map<String, Object> result = objectToMap(obj);
+        result.put("dominator", dominator.getId());
+        result.put(
+            "dominatorClass",
+            dominator.getHeapClass() != null ? dominator.getHeapClass().getName() : "unknown");
+        dominated.add(result);
       }
     }
 
@@ -2881,37 +2868,35 @@ public final class HdumpPathEvaluator {
       HeapObject dominator = dump.getObjectById(id).orElse(null);
       if (dominator == null) continue;
 
-      if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl heapDumpImpl) {
-        DominatorNode root = buildRecursiveDominatorTree(heapDumpImpl, dominator, 0, 3);
+      DominatorNode root = buildRecursiveDominatorTree(dump, dominator, 0, 3);
 
-        StringBuilder tree = new StringBuilder();
-        String dominatorClassName =
-            dominator.getHeapClass() != null
-                ? dominator.getHeapClass().getName().replace('/', '.')
-                : "unknown";
-        tree.append(
-            String.format(
-                "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
-        formatDominatorTree(root, tree, "", true);
+      StringBuilder tree = new StringBuilder();
+      String dominatorClassName =
+          dominator.getHeapClass() != null
+              ? dominator.getHeapClass().getName().replace('/', '.')
+              : "unknown";
+      tree.append(
+          String.format(
+              "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
+      formatDominatorTree(root, tree, "", true);
 
-        int totalDominated = countDominatedObjects(root);
+      int totalDominated = countDominatedObjects(root);
 
-        LOG.debug("=== Dominator Tree ===\n{}", tree);
+      LOG.debug("=== Dominator Tree ===\n{}", tree);
 
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("dominator", dominator.getId());
-        result.put("dominatorClass", dominatorClassName);
-        result.put("dominatedCount", totalDominated);
-        result.put("retainedSize", dominator.getRetainedSize());
-        treeResults.add(result);
-      }
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("dominator", dominator.getId());
+      result.put("dominatorClass", dominatorClassName);
+      result.put("dominatedCount", totalDominated);
+      result.put("retainedSize", dominator.getRetainedSize());
+      treeResults.add(result);
     }
 
     return treeResults;
   }
 
   private static DominatorNode buildRecursiveDominatorTree(
-      io.jafar.hdump.impl.HeapDumpImpl dump, HeapObject root, int depth, int maxDepth) {
+      HeapDump dump, HeapObject root, int depth, int maxDepth) {
     // Stop recursion at max depth to avoid stack overflow
     if (depth >= maxDepth) {
       return new DominatorNode("...");

@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.jafar.jfr2pprof.config.FrameFormat;
 import io.jafar.jfr2pprof.config.ValueTypePair;
 import io.jafar.jfr2pprof.proto.PprofBuilder;
-import io.jafar.pprof.shell.PprofProfile;
-import io.jafar.pprof.shell.PprofReader;
+import io.jafar.pprof.api.PprofParser;
+import io.jafar.pprof.api.PprofProfile;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +26,7 @@ class PprofBuilderRoundTripTest {
     builder.build(valueTypes, 0, 1_000_000L, true, baos);
     Path tmp = tempDir.resolve("test.pprof");
     Files.write(tmp, baos.toByteArray());
-    return PprofReader.read(tmp);
+    return PprofParser.parse(tmp);
   }
 
   @Test
@@ -99,7 +99,7 @@ class PprofBuilderRoundTripTest {
     b.build(valueTypes, 0, 1_000_000L, true, baos);
     Path tmp = tempDir.resolve("multi.pprof");
     Files.write(tmp, baos.toByteArray());
-    PprofProfile.Profile p = PprofReader.read(tmp);
+    PprofProfile.Profile p = PprofParser.parse(tmp);
 
     assertThat(p.sampleTypes()).hasSize(2);
     assertThat(p.samples()).hasSize(1);

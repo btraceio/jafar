@@ -1,14 +1,16 @@
-package io.jafar.pprof.shell;
+package io.jafar.pprof;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.pprof.api.PprofParser;
+import io.jafar.pprof.api.PprofProfile;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests for {@link PprofReader}: round-trip encoding and parsing of synthetic profiles. */
-class PprofReaderTest {
+/** Tests for {@link PprofParser}: round-trip encoding and parsing of synthetic profiles. */
+class PprofParserTest {
 
   @TempDir Path tempDir;
 
@@ -34,7 +36,7 @@ class PprofReaderTest {
     b.addSample(List.of(loc1), List.of(1_234_567L), List.of(new long[] {threadKey, mainStr, 0, 0}));
 
     Path file = b.write(tempDir);
-    PprofProfile.Profile profile = PprofReader.read(file);
+    PprofProfile.Profile profile = PprofParser.parse(file);
 
     // sample types
     assertEquals(1, profile.sampleTypes().size());
@@ -88,7 +90,7 @@ class PprofReaderTest {
     b.addSample(List.of(loc1), List.of(1_000_000L, 3L), List.of());
 
     Path file = b.write(tempDir);
-    PprofProfile.Profile profile = PprofReader.read(file);
+    PprofProfile.Profile profile = PprofParser.parse(file);
 
     assertEquals(2, profile.sampleTypes().size());
     assertEquals("cpu", profile.sampleTypes().get(0).type());
@@ -117,7 +119,7 @@ class PprofReaderTest {
     b.addSample(List.of(loc3, loc2), List.of(200L), List.of());
 
     Path file = b.write(tempDir);
-    PprofProfile.Profile profile = PprofReader.read(file);
+    PprofProfile.Profile profile = PprofParser.parse(file);
 
     assertEquals(2, profile.samples().size());
     assertEquals(2, profile.functions().size());
@@ -136,7 +138,7 @@ class PprofReaderTest {
     b.addSampleType(cpu, ns);
 
     Path file = b.write(tempDir);
-    PprofProfile.Profile profile = PprofReader.read(file);
+    PprofProfile.Profile profile = PprofParser.parse(file);
 
     // The string table always starts with "" at index 0
     assertFalse(profile.stringTable().isEmpty());
@@ -158,7 +160,7 @@ class PprofReaderTest {
     b.addSample(List.of(loc1), List.of(500L), List.of(new long[] {goroutineKey, 0, 42L, 0}));
 
     Path file = b.write(tempDir);
-    PprofProfile.Profile profile = PprofReader.read(file);
+    PprofProfile.Profile profile = PprofParser.parse(file);
 
     PprofProfile.Sample sample = profile.samples().get(0);
     assertEquals(1, sample.labels().size());

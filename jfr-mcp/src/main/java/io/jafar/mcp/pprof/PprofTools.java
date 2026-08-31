@@ -5,7 +5,7 @@ import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.tool.ProgressReporter;
 import io.jafar.mcp.validation.FieldNameValidator;
 import io.jafar.mcp.validation.FileValidator;
-import io.jafar.pprof.shell.PprofProfile;
+import io.jafar.pprof.api.PprofProfile;
 import io.jafar.pprof.shell.PprofSession;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
 import io.jafar.pprof.shell.pprofpath.PprofPathParseException;

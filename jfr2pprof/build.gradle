@@ -24,20 +24,10 @@ dependencies {
     testRuntimeOnly   'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.assertj:assertj-core:3.24.2'
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
-    testImplementation project(':pprof-shell')
+    testImplementation project(':pprof-parser')
 }
-
-// Compile and run tests with Java 25 (pprof-shell test dependency requires it); main sources target 21
-def j25CompilerProvider = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
-tasks.named('compileTestJava').configure { JavaCompile t ->
-    t.javaCompiler.set(j25CompilerProvider)
-    t.options.release.set(25)
-}
-
-def j25LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 
 test {
-    javaLauncher.set(j25LauncherProvider)
     useJUnitPlatform()
 }
 
