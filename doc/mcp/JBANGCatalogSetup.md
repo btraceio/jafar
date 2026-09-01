@@ -15,7 +15,7 @@ The following files need to be added to https://github.com/btraceio/jbang-catalo
 ///usr/bin/env jbang "$0" "$@" ; exit $?
 //DEPS io.btrace:jfr-mcp:0.10.0
 //DESCRIPTION Jafar MCP Server - AI-assisted JFR analysis via Model Context Protocol (Stable)
-//JAVA 21+
+//JAVA 26+
 
 /**
  * Jafar MCP Server launcher (stable releases).
@@ -53,7 +53,7 @@ public class jfr_mcp {
 //DEPS io.btrace:jfr-mcp:main-SNAPSHOT
 //REPOS mavencentral,ossrh-snapshots=https://s01.oss.sonatype.org/content/repositories/snapshots
 //DESCRIPTION Jafar MCP Server - AI-assisted JFR analysis (Development Snapshots)
-//JAVA 21+
+//JAVA 26+
 
 /**
  * Jafar MCP Server launcher (development snapshots).

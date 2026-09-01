@@ -212,7 +212,7 @@ Control JBang behavior with environment variables:
 
 ```bash
 # Use specific Java version
-export JAVA_HOME=/path/to/java-21
+export JAVA_HOME=/path/to/java-26
 jbang jfr-shell@btraceio recording.jfr
 
 # Enable debug output
@@ -267,7 +267,7 @@ Use in CI/CD pipelines:
 
 **Problem**: `UnsupportedClassVersionError` or Java version errors
 
-**Solution**: JBang automatically downloads Java 21+ if needed. Force a fresh install:
+**Solution**: JBang automatically downloads Java 26+ if needed. Force a fresh install:
 
 ```bash
 jbang --fresh jfr-shell@btraceio recording.jfr
