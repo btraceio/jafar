@@ -65,8 +65,8 @@ dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
 
     // TamboUI for rich terminal output rendering (tables, trees)
-    implementation 'dev.tamboui:tamboui-core:0.2.0-SNAPSHOT'
-    implementation 'dev.tamboui:tamboui-widgets:0.2.0-SNAPSHOT'
+    implementation 'dev.tamboui:tamboui-core:0.2.0'
+    implementation 'dev.tamboui:tamboui-widgets:0.2.0'
 
     // Utilities
     implementation 'org.slf4j:slf4j-api:2.0.5'

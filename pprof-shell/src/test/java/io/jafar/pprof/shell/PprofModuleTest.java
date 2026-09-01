@@ -2,6 +2,7 @@ package io.jafar.pprof.shell;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.pprof.MinimalPprofBuilder;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;

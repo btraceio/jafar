@@ -2,7 +2,7 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.jafar.pprof.shell.MinimalPprofBuilder;
+import io.jafar.pprof.MinimalPprofBuilder;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;

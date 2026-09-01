@@ -8,13 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
+  - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
+  - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals
+- **otlp-parser module** - Standalone OTLP profiling parser extracted from `otlp-shell`
+  - Public API in `io.jafar.otlp.api` (`OtlpParser`, `OtlpProfile`); wire decoding in `io.jafar.otlp.internal`
 
 ### Changed
+- **Modular structure / API-SPI separation** for the pprof and HPROF format support
+  - Heap dump analysis operations (dominator tree, retained sizes, class-instances index)
+    promoted to the `io.jafar.hdump.api.HeapDump` interface; `hdump-shell` no longer
+    references `io.jafar.hdump.impl` classes
+  - Protobuf wire-format decoding (`ProtoUtil`) moved from `shell-core` to `parser-core`
+    (`io.jafar.utils`), removing the parser-on-shell dependency for pprof/OTLP readers
 - **Backend plugin versioning** - Plugins now follow main project version
   - `jfr-shell-jdk` and `jfr-shell-jafar` sync with main project version
   - API compatibility enforced via japicmp for breaking change detection
 
 ### Fixed
+- **CI dependency resolution** - `jfr-shell` now depends on the released `dev.tamboui:*:0.2.0`
+  instead of the expired `0.2.0-SNAPSHOT`, which is no longer resolvable from any snapshot repository
 - **jfr-mcp publishing** - Fixed Maven Central artifact to use shadowJar
   - Added mavenPublishing configuration to publish fat JAR as main artifact
   - jfr-mcp now includes all dependencies and proper Main-Class manifest

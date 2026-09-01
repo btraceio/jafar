@@ -176,19 +176,13 @@ public final class HeapSession implements Session {
    *
    * @param progressCallback callback for progress updates
    */
-  public void computeFullDominatorTree(
-      io.jafar.hdump.impl.DominatorTreeComputer.ProgressCallback progressCallback) {
-    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
-      impl.computeFullDominatorTree(progressCallback);
-    }
+  public void computeFullDominatorTree(HeapDumpParser.ProgressCallback progressCallback) {
+    dump.computeFullDominatorTree(progressCallback);
   }
 
   /** Checks if full dominator tree has been computed. */
   public boolean hasFullDominatorTree() {
-    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
-      return impl.hasFullDominatorTree();
-    }
-    return false;
+    return dump.hasFullDominatorTree();
   }
 
   /**
@@ -196,46 +190,44 @@ public final class HeapSession implements Session {
    * than full dominator tree but less accurate.
    */
   public void computeApproximateRetainedSizes() {
-    if (dump instanceof io.jafar.hdump.impl.HeapDumpImpl impl) {
-      if (impl.hasDominators()) {
-        return; // Already computed
-      }
-
-      System.err.println();
-      System.err.println("Computing approximate retained sizes...");
-      System.err.println(
-          String.format(
-              "Scanning %,d objects from heap dump (may take a while for large dumps)",
-              dump.getObjectCount()));
-      System.err.println();
-
-      final String[] spinner = {"|", "/", "-", "\\"};
-      final int[] spinnerIndex = {0};
-      final long[] lastUpdate = {System.currentTimeMillis()};
-
-      impl.computeDominators(
-          (progress, message) -> {
-            long now = System.currentTimeMillis();
-            // Update every 200ms to avoid flickering
-            if (now - lastUpdate[0] >= 200) {
-              String progressBar = createProgressBar(progress, 30);
-              System.err.print(
-                  String.format(
-                      "\r%s [%s] %.0f%% - %s",
-                      spinner[spinnerIndex[0] % spinner.length],
-                      progressBar,
-                      progress * 100,
-                      message));
-              System.err.flush();
-              spinnerIndex[0]++;
-              lastUpdate[0] = now;
-            }
-          });
-
-      System.err.println();
-      System.err.println("Approximate retained size computation complete!");
-      System.err.println();
+    if (dump.hasDominators()) {
+      return; // Already computed
     }
+
+    System.err.println();
+    System.err.println("Computing approximate retained sizes...");
+    System.err.println(
+        String.format(
+            "Scanning %,d objects from heap dump (may take a while for large dumps)",
+            dump.getObjectCount()));
+    System.err.println();
+
+    final String[] spinner = {"|", "/", "-", "\\"};
+    final int[] spinnerIndex = {0};
+    final long[] lastUpdate = {System.currentTimeMillis()};
+
+    dump.computeDominators(
+        (progress, message) -> {
+          long now = System.currentTimeMillis();
+          // Update every 200ms to avoid flickering
+          if (now - lastUpdate[0] >= 200) {
+            String progressBar = createProgressBar(progress, 30);
+            System.err.print(
+                String.format(
+                    "\r%s [%s] %.0f%% - %s",
+                    spinner[spinnerIndex[0] % spinner.length],
+                    progressBar,
+                    progress * 100,
+                    message));
+            System.err.flush();
+            spinnerIndex[0]++;
+            lastUpdate[0] = now;
+          }
+        });
+
+    System.err.println();
+    System.err.println("Approximate retained size computation complete!");
+    System.err.println();
   }
 
   /**

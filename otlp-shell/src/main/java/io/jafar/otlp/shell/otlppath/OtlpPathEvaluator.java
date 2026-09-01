@@ -1,6 +1,6 @@
 package io.jafar.otlp.shell.otlppath;
 
-import io.jafar.otlp.shell.OtlpProfile;
+import io.jafar.otlp.api.OtlpProfile;
 import io.jafar.otlp.shell.OtlpSession;
 import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.ArrayList;

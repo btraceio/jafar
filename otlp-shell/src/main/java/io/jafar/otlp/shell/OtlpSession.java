@@ -1,5 +1,7 @@
 package io.jafar.otlp.shell;
 
+import io.jafar.otlp.api.OtlpParser;
+import io.jafar.otlp.api.OtlpProfile;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -36,7 +38,7 @@ public final class OtlpSession implements Session {
    */
   public static OtlpSession open(Path path) throws IOException {
     LOG.info("Opening OTLP profiles: {}", path);
-    OtlpProfile.ProfilesData data = OtlpReader.read(path);
+    OtlpProfile.ProfilesData data = OtlpParser.parse(path);
     int totalSamples = data.profiles().stream().mapToInt(p -> p.samples().size()).sum();
     LOG.info(
         "Loaded {} profiles, {} total samples, {} locations, {} functions",

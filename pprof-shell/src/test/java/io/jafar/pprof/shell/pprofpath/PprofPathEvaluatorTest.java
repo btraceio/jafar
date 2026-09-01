@@ -2,7 +2,7 @@ package io.jafar.pprof.shell.pprofpath;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.jafar.pprof.shell.MinimalPprofBuilder;
+import io.jafar.pprof.MinimalPprofBuilder;
 import io.jafar.pprof.shell.PprofSession;
 import java.io.IOException;
 import java.nio.file.Path;

@@ -1,5 +1,7 @@
 package io.jafar.pprof.shell;
 
+import io.jafar.pprof.api.PprofParser;
+import io.jafar.pprof.api.PprofProfile;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -35,7 +37,7 @@ public final class PprofSession implements Session {
    */
   public static PprofSession open(Path path) throws IOException {
     LOG.info("Opening pprof profile: {}", path);
-    PprofProfile.Profile profile = PprofReader.read(path);
+    PprofProfile.Profile profile = PprofParser.parse(path);
     LOG.info(
         "Loaded {} samples, {} locations, {} functions",
         profile.samples().size(),

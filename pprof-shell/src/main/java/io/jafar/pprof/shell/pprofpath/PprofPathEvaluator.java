@@ -1,6 +1,6 @@
 package io.jafar.pprof.shell.pprofpath;
 
-import io.jafar.pprof.shell.PprofProfile;
+import io.jafar.pprof.api.PprofProfile;
 import io.jafar.pprof.shell.PprofSession;
 import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.ArrayList;

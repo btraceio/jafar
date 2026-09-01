@@ -3,7 +3,6 @@ package io.jafar.hdump.shell.hdumppath;
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapObject;
-import io.jafar.hdump.impl.HeapDumpImpl;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -36,10 +35,6 @@ public final class ThreadOwnershipAnalyzer {
    * @return ownership result
    */
   public static Result compute(HeapDump dump) {
-    if (!(dump instanceof HeapDumpImpl impl)) {
-      return new Result(Map.of(), Map.of());
-    }
-
     // Build serial -> name and serial -> threadObjId maps from THREAD_OBJ roots
     Map<Integer, String> serialToName = new HashMap<>();
     Map<Integer, Long> serialToThreadObjId = new HashMap<>();
@@ -88,7 +83,7 @@ public final class ThreadOwnershipAnalyzer {
         if (ownerByObjId.containsKey(id)) continue; // primitive long overload — no boxing
         ownerByObjId.put(id, threadName);
         dominatedCount++;
-        for (HeapObject child : impl.getDominatedObjects(obj)) {
+        for (HeapObject child : dump.getDominatedObjects(obj)) {
           if (!ownerByObjId.containsKey(child.getId())) {
             queue.add(child);
           }

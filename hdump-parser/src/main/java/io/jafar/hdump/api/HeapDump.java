@@ -3,6 +3,7 @@ package io.jafar.hdump.api;
 import java.io.Closeable;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -122,6 +123,74 @@ public interface HeapDump extends Closeable {
 
   /** Returns whether dominators have been computed. */
   boolean hasDominators();
+
+  /**
+   * Computes dominator tree and retained sizes for all objects, reporting progress through the
+   * given callback. Equivalent to {@link #computeDominators()} otherwise.
+   *
+   * @param progressCallback optional callback for progress updates (may be null)
+   */
+  default void computeDominators(HeapDumpParser.ProgressCallback progressCallback) {
+    computeDominators();
+  }
+
+  /**
+   * Ensures retained sizes are available, computing them if necessary. Implementations may use a
+   * cheaper approximation than a full dominator tree. Idempotent.
+   */
+  default void ensureRetainedSizesComputed() {
+    if (!hasDominators()) {
+      computeDominators();
+    }
+  }
+
+  /**
+   * Computes the full (exact) dominator tree, enabling {@link #getDominatedObjects(HeapObject)}
+   * queries. More expensive than {@link #computeDominators()} but yields exact retained sizes.
+   *
+   * <p>Optional capability — implementations without full dominator tree support throw {@link
+   * UnsupportedOperationException}; check {@link #hasFullDominatorTree()} after computing.
+   *
+   * @param progressCallback optional callback for progress updates (may be null)
+   */
+  default void computeFullDominatorTree(HeapDumpParser.ProgressCallback progressCallback) {
+    throw new UnsupportedOperationException("Full dominator tree computation is not supported");
+  }
+
+  /** Returns whether the full dominator tree has been computed. */
+  default boolean hasFullDominatorTree() {
+    return false;
+  }
+
+  /**
+   * Returns the objects immediately dominated by the given object.
+   *
+   * <p>Requires {@link #computeFullDominatorTree(HeapDumpParser.ProgressCallback)}; returns an
+   * empty list when the full dominator tree is unavailable.
+   *
+   * @param dominator the dominating object
+   * @return list of dominated objects (empty if full tree not computed)
+   */
+  default List<HeapObject> getDominatedObjects(HeapObject dominator) {
+    return Collections.emptyList();
+  }
+
+  /** Returns whether an index accelerating {@link #getObjectsOfClassFast(HeapClass)} exists. */
+  default boolean hasClassInstancesIndex() {
+    return false;
+  }
+
+  /**
+   * Returns objects of the given class, using the class-instances index when available (10-60x
+   * faster on large indexed dumps). Falls back to a full scan otherwise; results match {@link
+   * #getObjectsOfClass(HeapClass)}.
+   *
+   * @param cls the heap class to get instances for
+   * @return stream of heap objects belonging to this class
+   */
+  default Stream<HeapObject> getObjectsOfClassFast(HeapClass cls) {
+    return getObjectsOfClass(cls);
+  }
 
   /**
    * Finds the shortest path from any GC root to the given object.

@@ -2,7 +2,7 @@ package io.jafar.mcp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.jafar.pprof.shell.MinimalPprofBuilder;
+import io.jafar.pprof.MinimalPprofBuilder;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.lang.reflect.Method;
