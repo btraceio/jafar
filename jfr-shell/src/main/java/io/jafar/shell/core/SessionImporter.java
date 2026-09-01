@@ -2,7 +2,6 @@ package io.jafar.shell.core;
 
 import io.jafar.shell.core.SessionManager.SessionRef;
 import io.jafar.shell.core.SessionSnapshot.VariableInfo;
-import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.jfrpath.JfrPath.Query;

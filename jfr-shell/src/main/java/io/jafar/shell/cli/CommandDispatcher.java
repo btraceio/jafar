@@ -2978,13 +2978,13 @@ public class CommandDispatcher {
       return;
     }
 
-    Optional<SessionManager.SessionRef> refOpt = sessions.current();
+    var refOpt = sessions.current();
     if (refOpt.isEmpty()) {
       io.error("No active session. Use 'open' to load a recording first.");
       return;
     }
 
-    SessionManager.SessionRef ref = refOpt.get();
+    var ref = refOpt.get();
 
     SessionExporter.ExportOptions opts =
         SessionExporter.ExportOptions.builder()

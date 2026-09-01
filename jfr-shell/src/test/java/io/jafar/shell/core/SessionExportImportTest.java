@@ -6,8 +6,8 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionExporter.ExportOptions;
 import io.jafar.shell.core.SessionImporter.ImportOptions;
+import io.jafar.shell.core.SessionManager.SessionFactory;
 import io.jafar.shell.core.SessionManager.SessionRef;
-import io.jafar.shell.core.VariableStore.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.jfrpath.JfrPath.Query;
@@ -30,10 +30,10 @@ class SessionExportImportTest {
 
   private final ParsingContext ctx = ParsingContext.create();
 
-  private SessionManager.JFRSessionFactory factory() {
+  private SessionFactory<JFRSession> factory() {
     return (path, c) -> {
       try {
-        return new JFRSession(path, c);
+        return new JFRSession(path, (ParsingContext) c);
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
@@ -54,10 +54,10 @@ class SessionExportImportTest {
       return;
     }
 
-    SessionManager sm = new SessionManager(ctx, factory());
+    SessionManager<JFRSession> sm = new SessionManager<>(factory(), ctx);
 
     // Create session with variables
-    SessionRef originalRef = sm.open(testJfr, "test-session");
+    SessionRef<JFRSession> originalRef = sm.open(testJfr, "test-session");
 
     // Add scalar variable
     originalRef.variables.set("myNumber", new ScalarValue(42));
@@ -71,7 +71,8 @@ class SessionExportImportTest {
 
     // Add lazy query variable (not evaluated)
     Query query = JfrPathParser.parse("events/jdk.ExecutionSample");
-    originalRef.variables.set("myQuery", new LazyQueryValue(query, originalRef, "events/jdk.ExecutionSample"));
+    originalRef.variables.set(
+        "myQuery", new LazyQueryValue(query, originalRef, "events/jdk.ExecutionSample"));
 
     // Set output format
     originalRef.outputFormat = "json";
@@ -91,12 +92,12 @@ class SessionExportImportTest {
     sm.closeAll();
 
     // Import session
-    SessionManager sm2 = new SessionManager(ctx, factory());
+    SessionManager<JFRSession> sm2 = new SessionManager<>(factory(), ctx);
     TestIO testIO = new TestIO();
     SessionImporter importer = new SessionImporter(testIO);
     ImportOptions importOpts = ImportOptions.builder().alias("imported").build();
 
-    SessionRef importedRef = importer.importFromJson(exportFile, importOpts, sm2);
+    SessionRef<JFRSession> importedRef = importer.importFromJson(exportFile, importOpts, sm2);
 
     // Verify session details
     assertNotNull(importedRef);
@@ -145,12 +146,13 @@ class SessionExportImportTest {
       return;
     }
 
-    SessionManager sm = new SessionManager(ctx, factory());
-    SessionRef originalRef = sm.open(testJfr, "test-session");
+    SessionManager<JFRSession> sm = new SessionManager<>(factory(), ctx);
+    SessionRef<JFRSession> originalRef = sm.open(testJfr, "test-session");
 
     // Add and evaluate a lazy query
     Query query = JfrPathParser.parse("events/jdk.ExecutionSample | count()");
-    LazyQueryValue lazyValue = new LazyQueryValue(query, originalRef, "events/jdk.ExecutionSample | count()");
+    LazyQueryValue lazyValue =
+        new LazyQueryValue(query, originalRef, "events/jdk.ExecutionSample | count()");
     originalRef.variables.set("eventCount", lazyValue);
 
     // Force evaluation
@@ -168,12 +170,12 @@ class SessionExportImportTest {
     sm.closeAll();
 
     // Import
-    SessionManager sm2 = new SessionManager(ctx, factory());
+    SessionManager<JFRSession> sm2 = new SessionManager<>(factory(), ctx);
     TestIO testIO = new TestIO();
     SessionImporter importer = new SessionImporter(testIO);
     ImportOptions importOpts = ImportOptions.defaults();
 
-    SessionRef importedRef = importer.importFromJson(exportFile, importOpts, sm2);
+    SessionRef<JFRSession> importedRef = importer.importFromJson(exportFile, importOpts, sm2);
 
     // Verify lazy query was restored
     assertTrue(importedRef.variables.contains("eventCount"));

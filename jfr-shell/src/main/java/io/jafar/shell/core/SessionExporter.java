@@ -4,7 +4,6 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager.SessionRef;
 import io.jafar.shell.core.SessionSnapshot.RecordingInfo;
 import io.jafar.shell.core.SessionSnapshot.VariableInfo;
-import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
@@ -84,7 +83,8 @@ public class SessionExporter {
    * @param opts export options
    * @return the captured snapshot
    */
-  public SessionSnapshot captureSnapshot(SessionRef ref, ExportOptions opts) throws Exception {
+  public SessionSnapshot captureSnapshot(SessionRef<? extends Session> ref, ExportOptions opts)
+      throws Exception {
     String exportedBy = "session #" + ref.id;
     if (ref.alias != null) {
       exportedBy += " (" + ref.alias + ")";
@@ -92,7 +92,10 @@ public class SessionExporter {
 
     SessionSnapshot.Metadata metadata = SessionSnapshot.Metadata.create(exportedBy, opts.format());
 
-    RecordingInfo recording = captureRecordingInfo(ref.session);
+    if (!(ref.session instanceof JFRSession jfrSession)) {
+      throw new IllegalStateException("Export currently only supports JFR sessions");
+    }
+    RecordingInfo recording = captureRecordingInfo(jfrSession);
 
     List<VariableInfo> sessionVars = captureVariables(ref.variables, opts);
 
@@ -133,7 +136,7 @@ public class SessionExporter {
       // File may have been moved/deleted, use 0
     }
 
-    int eventTypeCount = session.getAvailableEventTypes().size();
+    int eventTypeCount = session.getAvailableTypes().size();
     int metadataTypeCount = session.getAvailableMetadataTypes().size();
 
     // Get top 10 event types by count
