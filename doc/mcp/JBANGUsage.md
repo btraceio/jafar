@@ -231,7 +231,7 @@ Control server behavior:
 MCP_PORT=8080 jbang jfr-mcp@btraceio
 
 # Use specific Java version
-export JAVA_HOME=/path/to/java-21
+export JAVA_HOME=/path/to/java-26
 jbang jfr-mcp@btraceio
 
 # Enable JBang debug output
@@ -312,7 +312,7 @@ netstat -ano | findstr :3000
 
 **Problem**: `UnsupportedClassVersionError` or Java version errors
 
-**Solution**: JBang automatically downloads Java 21+ if needed. Force a fresh install:
+**Solution**: JBang automatically downloads Java 26+ if needed. Force a fresh install:
 
 ```bash
 jbang --fresh jfr-mcp@btraceio
