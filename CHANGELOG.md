@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     decoded-string cache (Jafar's `CachedStringParser`, widened to a small table)
   - Benchmarks discover whatever recordings are present, including the larger ones
     `./get_resources.sh` downloads, and pick their workload event types per recording
+  - Released as `go get github.com/btraceio/jafar/go-parser@vX.Y.Z`, versioned in step with the
+    Java artifacts; the release workflow creates the `go-parser/vX.Y.Z` tag a subdirectory module
+    needs, validating the module before tagging since a Go module version is immutable once
+    published
 - **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
   - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
   - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals

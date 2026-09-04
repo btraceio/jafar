@@ -10,6 +10,15 @@ Java modules of this repository (`jfr-shell`, `jfr-mcp`, …).
 * No external dependencies — Go standard library only
 * Go 1.21+
 
+```bash
+go get github.com/btraceio/jafar/go-parser@v0.27.0
+```
+
+The module is versioned in step with the Java artifacts, so `go-parser@v0.27.0` is the same commit
+as `io.btrace:jafar-parser:0.27.0`. Because the module lives in a subdirectory, its git tags carry
+the directory prefix (`go-parser/v0.27.0`); the release workflow creates them. Only the module
+subtree is downloaded — the recordings and the Java sources are not part of it.
+
 ## Why only the untyped parser
 
 The Java parser has two front ends. The typed API binds JFR types to annotated

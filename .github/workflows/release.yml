@@ -437,3 +437,135 @@ jobs:
                 body: release.body + '\n\n' + body
               });
             }
+
+  # Tag the Go module.
+  #
+  # A Go module living in a subdirectory is versioned by tags prefixed with that
+  # directory: consumers ask for github.com/btraceio/jafar/go-parser@vX.Y.Z, and
+  # the go command looks for the tag go-parser/vX.Y.Z. The plain vX.Y.Z tag that
+  # releases the Java artifacts is read as a version of the repository root
+  # instead, which does not contain the package - so without this job
+  # `go get github.com/btraceio/jafar/go-parser@vX.Y.Z` fails with "module
+  # github.com/btraceio/jafar@vX.Y.Z found, but does not contain package".
+  #
+  # The Go module therefore tracks the same version as the Java artifacts, and
+  # the parity rule in AGENTS.md is what makes that meaningful: the two untyped
+  # parsers are kept in step, so a shared version number is not a fiction.
+  tag-go-module:
+    name: Tag Go module
+    needs: [prepare, publish-maven]
+    if: needs.prepare.outputs.is_manual == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the released commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.version_tag }}
+          fetch-depth: 0
+
+      - name: Check the module is present in this release
+        id: presence
+        run: |
+          if [ -f go-parser/go.mod ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No go-parser/go.mod at ${{ needs.prepare.outputs.version_tag }}; nothing to tag." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # A module version is immutable once the Go proxy has served it: a broken
+      # tag cannot be corrected, only abandoned. Everything below therefore
+      # checks before it tags.
+      - name: Check the major version against the module path
+        if: steps.presence.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          version='${{ needs.prepare.outputs.version }}'
+          major="${version%%.*}"
+          module_path=$(awk '/^module /{print $2; exit}' go-parser/go.mod)
+          echo "module path: $module_path"
+          echo "major version: $major"
+
+          if [ "$major" -ge 2 ]; then
+            # From v2 on, Go requires the major version in the module path
+            # itself. Tagging go-parser/v2.0.0 against a path with no /v2
+            # suffix produces a version the proxy rejects.
+            case "$module_path" in
+              */v"$major")
+                echo "Module path carries the /v$major suffix." ;;
+              *)
+                echo "::error::Release v$version needs the module path to end in /v$major."
+                echo "Update go-parser/go.mod to 'module ${module_path}/v$major', update every"
+                echo "import of it, and re-run. See https://go.dev/ref/mod#major-version-suffixes"
+                exit 1 ;;
+            esac
+          fi
+
+      - name: Set up Go
+        if: steps.presence.outputs.present == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      # Tagging a module that does not build would publish a permanently broken
+      # version, so prove it works on the exact commit being tagged.
+      - name: Validate the module at the released commit
+        if: steps.presence.outputs.present == 'true'
+        working-directory: go-parser
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)" || { echo "::error::go-parser is not gofmt-formatted"; gofmt -l .; exit 1; }
+          go vet ./...
+          go test ./...
+
+      - name: Create and push the module tag
+        if: steps.presence.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          version='${{ needs.prepare.outputs.version }}'
+          release_tag='${{ needs.prepare.outputs.version_tag }}'
+          go_tag="go-parser/v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${go_tag}" >/dev/null; then
+            echo "Tag ${go_tag} already exists; nothing to do."
+            echo "Go module tag \`${go_tag}\` already existed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # Tag the same commit the Java release tag points at.
+          git tag -a "${go_tag}" "${release_tag}^{commit}" \
+            -m "Go module github.com/btraceio/jafar/go-parser v${version}"
+          git push origin "${go_tag}"
+
+      # Best effort: asking the proxy for the version makes it fetch and index
+      # the module, so pkg.go.dev shows the release without waiting for someone
+      # to be the first to depend on it.
+      - name: Warm the module proxy
+        if: steps.presence.outputs.present == 'true'
+        continue-on-error: true
+        run: |
+          version='${{ needs.prepare.outputs.version }}'
+          cd "$(mktemp -d)"
+          go mod init warm >/dev/null
+          GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod \
+            go list -m "github.com/btraceio/jafar/go-parser@v${version}"
+
+      - name: Summary
+        if: steps.presence.outputs.present == 'true'
+        run: |
+          version='${{ needs.prepare.outputs.version }}'
+          {
+            echo "### Go module"
+            echo ""
+            echo "Version \`v${version}\` is tagged as \`go-parser/v${version}\`. Consumers depend on it as:"
+            echo ""
+            echo '```'
+            echo "go get github.com/btraceio/jafar/go-parser@v${version}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

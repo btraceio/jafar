@@ -161,6 +161,8 @@ The project uses a fully automated release workflow. See [RELEASING.md](RELEASIN
 ### What Happens Automatically
 
 The release workflow (`.github/workflows/release.yml`) automatically:
+- Tags the Go module as `go-parser/vX.Y.Z` (validated first: a Go module version is immutable once
+  the proxy has served it) - see [RELEASING.md](RELEASING.md) section 5.6
 - Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
 - Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
 - Publishes `jfr-shell` to GitHub Packages
@@ -171,6 +173,9 @@ The release workflow (`.github/workflows/release.yml`) automatically:
 ### Version Management
 
 - **Root version**: Defined in `build.gradle` as `project.version="X.Y.Z"`
+- **Go module**: no version in a file; it is the `go-parser/vX.Y.Z` git tag, created by the release
+  workflow from the Java version. Plain `vX.Y.Z` tags do **not** version the Go module - a
+  subdirectory module needs the directory prefix
 - **Subprojects**: Use `rootProject.version` (automatic sync)
 - **Gradle plugin**: Has separate version in `jafar-gradle-plugin/build.gradle`
 - **Backend plugins registry**: `jfr-shell-plugins.json` (must always point to the latest **released** version, never SNAPSHOT — see below)

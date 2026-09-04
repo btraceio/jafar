@@ -109,11 +109,39 @@ The JBang catalog is updated automatically once artifacts are available on Maven
 - This file is automatically created if Maven Central is not immediately available
 - It's removed once the catalog is updated or an issue is created
 
+### 5.6. Go Module Tag
+
+The `tag-go-module` job creates a second tag, `go-parser/vX.Y.Z`, pointing at the same commit as
+the release tag. It runs only for tag-triggered releases, after `publish-maven`.
+
+This is not cosmetic. A Go module in a subdirectory is versioned by tags prefixed with that
+directory: consumers ask for `github.com/btraceio/jafar/go-parser@vX.Y.Z` and the `go` command
+looks for the tag `go-parser/vX.Y.Z`. The plain `vX.Y.Z` tag is read as a version of the
+repository root, which does not contain the package, so without the prefixed tag a consumer gets:
+
+```
+go: module github.com/btraceio/jafar@vX.Y.Z found,
+    but does not contain package github.com/btraceio/jafar/go-parser
+```
+
+The job validates before it tags - `gofmt`, `go vet` and `go test` on the released commit -
+because **a module version is immutable once the Go proxy has served it**. A broken tag cannot be
+corrected, only abandoned in favour of the next patch version.
+
+**Going to 2.0.0 needs a code change first.** From v2 on, Go requires the major version in the
+module path itself. The job refuses to tag `go-parser/v2.0.0` while `go-parser/go.mod` still reads
+`module github.com/btraceio/jafar/go-parser`; the path has to become
+`github.com/btraceio/jafar/go-parser/v2`, with every import updated, before that release can go
+out. See [Go major version suffixes](https://go.dev/ref/mod#major-version-suffixes).
+
 ### 6. Verify Release
 
 After the workflow completes, verify:
 
 ```bash
+# Test the Go module (available as soon as the tag is pushed - no Maven Central wait)
+go list -m github.com/btraceio/jafar/go-parser@X.Y.Z
+
 # Test JBang installation (may work immediately via GitHub Packages, or after Maven Central sync)
 jbang --fresh jfr-shell@btraceio --version
 
@@ -123,7 +151,7 @@ jbang --fresh jfr-shell@btraceio --version
 ```
 
 **Expected Timeline:**
-- **Immediately (0-15 min)**: GitHub Release created, artifacts published to Sonatype
+- **Immediately (0-15 min)**: GitHub Release created, artifacts published to Sonatype, Go module tag pushed
 - **Within 2 hours**: Artifacts appear on Maven Central
 - **Within 2.5 hours**: JBang catalog updated automatically (if Maven Central sync completes)
 
@@ -234,3 +262,13 @@ Follow [Semantic Versioning](https://semver.org/):
 - **Patch (0.0.X)**: Bug fixes, backward compatible
 
 Development versions use `-SNAPSHOT` suffix (e.g., `0.4.0-SNAPSHOT`).
+
+The Go module tracks the same version as the Java artifacts, so `go-parser/v0.27.0` and
+`io.btrace:jafar-parser:0.27.0` are the same commit. The parity rule in [AGENTS.md](AGENTS.md) is
+what makes that meaningful: the two untyped parsers are kept in step, so the shared number is not a
+fiction. A release where `go-parser/` did not change still gets a tag - a tag on unchanged code
+costs nothing and keeps the two version lines aligned.
+
+Note that Go treats `v0.x.y` as having no compatibility guarantees, which matches the project's
+experimental status. The first `v1.0.0` release is the point at which the Go module's API becomes a
+compatibility promise.
