@@ -46,6 +46,7 @@ The project is organized as a multi-module Gradle build with the following struc
 - **otlp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtlpPath query language and tab completion (uses `otlp-parser`)
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
+- **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
 
 Key architectural components:
 - `JafarParser`: Main entry point supporting both typed and untyped parsing
@@ -99,6 +100,21 @@ java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recor
 # Publish to local Maven repository
 ./gradlew publishToMavenLocal
 ```
+
+### Go parser Commands
+The `go-parser/` directory is a standalone Go module and is deliberately kept out of the Gradle
+build; `./gradlew build` neither builds nor tests it.
+
+```bash
+cd go-parser
+go test ./...            # unit tests plus the JFR recordings checked into the repo
+go test -bench . ./...   # throughput benchmarks
+go vet ./...
+gofmt -l .               # must print nothing
+```
+
+Only the untyped parser is ported. The typed API depends on run-time bytecode generation for
+interfaces discovered at run time and has no Go equivalent - do not attempt to port it.
 
 ### Module-specific Commands
 ```bash

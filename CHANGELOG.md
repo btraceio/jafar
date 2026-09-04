@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **go-parser module** - Pure Go port of the untyped JFR parser (`github.com/btraceio/jafar/go-parser`)
+  - Standalone Go module in `go-parser/`, kept out of the Gradle build; no external dependencies
+  - Same value model as the Java untyped API: events as `map[string]any`, lazy per-chunk
+    constant-pool resolution, `@Timestamp`/`@Timespan` tick normalisation
+  - Parser only - no JfrPath, no shell, no CLI; the typed API is not ported
 - **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
   - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
   - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals
