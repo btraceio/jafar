@@ -46,6 +46,7 @@ The project is organized as a multi-module Gradle build with the following struc
 - **otlp-shell/**: OpenTelemetry Profiling (OTLP) analysis CLI with OtlpPath query language and tab completion (uses `otlp-parser`)
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
+- **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
 
 Key architectural components:
 - `JafarParser`: Main entry point supporting both typed and untyped parsing
@@ -100,6 +101,36 @@ java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recor
 ./gradlew publishToMavenLocal
 ```
 
+### Go parser Commands
+The `go-parser/` directory is a standalone Go module and is deliberately kept out of the Gradle
+build; `./gradlew build` neither builds nor tests it.
+
+```bash
+cd go-parser
+go test ./...            # unit tests plus the JFR recordings checked into the repo
+go test -bench . ./...   # throughput benchmarks
+go vet ./...
+gofmt -l .               # must print nothing
+```
+
+Only the untyped parser is ported. The typed API depends on run-time bytecode generation for
+interfaces discovered at run time and has no Go equivalent - do not attempt to port it.
+
+The Go and Java untyped parsers must be kept at parity - see the parity rule under **Rules** below
+before changing either of them.
+Benchmarks need real recordings, and the large ones are not in the repository - `./get_resources.sh`
+downloads them. The **Go Parser Benchmarks** workflow (`.github/workflows/go-parser-bench.yml`) runs
+them where that download works: on demand (`workflow_dispatch`, with inputs for benchtime, count,
+benchmark pattern and an optional baseline ref to diff against via benchstat), weekly, and on pushes
+to `main` that touch `go-parser/`. It caches the recordings on the hash of `get_resources.sh`, runs
+the correctness tests against them before benchmarking, and publishes the numbers to the job summary
+plus an artifact. Do not add the recording download to the fast per-PR job; it would slow every PR
+for numbers that are too noisy to gate on.
+
+`workflow_dispatch` only works for workflows that already exist on the default branch, so to
+benchmark a branch that has not been merged yet, push it as `bench/<something>` - the workflow also
+triggers on any `bench/**` branch.
+
 ### Module-specific Commands
 ```bash
 # Build only the parser core module
@@ -130,6 +161,8 @@ The project uses a fully automated release workflow. See [RELEASING.md](RELEASIN
 ### What Happens Automatically
 
 The release workflow (`.github/workflows/release.yml`) automatically:
+- Tags the Go module as `go-parser/vX.Y.Z` (validated first: a Go module version is immutable once
+  the proxy has served it) - see [RELEASING.md](RELEASING.md) section 5.6
 - Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
 - Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
 - Publishes `jfr-shell` to GitHub Packages
@@ -140,6 +173,9 @@ The release workflow (`.github/workflows/release.yml`) automatically:
 ### Version Management
 
 - **Root version**: Defined in `build.gradle` as `project.version="X.Y.Z"`
+- **Go module**: no version in a file; it is the `go-parser/vX.Y.Z` git tag, created by the release
+  workflow from the Java version. Plain `vX.Y.Z` tags do **not** version the Go module - a
+  subdirectory module needs the directory prefix
 - **Subprojects**: Use `rootProject.version` (automatic sync)
 - **Gradle plugin**: Has separate version in `jafar-gradle-plugin/build.gradle`
 - **Backend plugins registry**: `jfr-shell-plugins.json` (must always point to the latest **released** version, never SNAPSHOT — see below)
@@ -407,3 +443,14 @@ rewriting an existing completer.
 ## Rules
 - When fixing an issue, always check the alternative implementation for other Java versions
 - When adding or modifying features, always update user documentation, help and tutorials
+- **Keep the two untyped parsers at parity.** The Java untyped parser
+  (`parser-core/src/main/java/io/jafar/parser/impl/`, `.../internal_api/`) and the Go untyped parser
+  (`go-parser/jfr/`) are two implementations of the same format and the same value model. Any bug
+  fix, correctness change, tolerance change, or performance improvement made in one **must be
+  considered for the other**, and the outcome recorded - either port it, or state in the commit
+  message or PR description why it does not apply (for example, an optimization that depends on
+  runtime bytecode generation has no Go equivalent, and Go's stack recursion already replaces the
+  Java visitor's reusable stack). This applies in both directions: a fix landing in the Go parser is
+  just as much a signal for the Java one. Parity is about behaviour and intent, not line-by-line
+  translation - where an implementation can do better idiomatically, do better and note the
+  divergence in `go-parser/README.md` under "Differences from the Java parser".

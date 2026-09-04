@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **go-parser module** - Pure Go port of the untyped JFR parser (`github.com/btraceio/jafar/go-parser`)
+  - Standalone Go module in `go-parser/`, kept out of the Gradle build; no external dependencies
+  - Same value model as the Java untyped API: events as `map[string]any`, lazy per-chunk
+    constant-pool resolution, `@Timestamp`/`@Timespan` tick normalisation
+  - Parser only - no JfrPath, no shell, no CLI; the typed API is not ported
+  - Benchmark suite mirroring the JMH untyped-parser workloads, plus the constant-pool
+    resolution axis those do not isolate
+  - Allocation work: memoised deep constant-pool resolution, metadata decoded straight into
+    its target objects instead of an intermediate element tree, block-allocated constant-pool
+    references, and an opt-in `Options.ReuseValues` that recycles the objects an event decodes
+    into (93% fewer bytes and 1.76x faster on the reference recording), and a per-chunk
+    decoded-string cache (Jafar's `CachedStringParser`, widened to a small table)
+  - Benchmarks discover whatever recordings are present, including the larger ones
+    `./get_resources.sh` downloads, and pick their workload event types per recording
+  - Released as `go get github.com/btraceio/jafar/go-parser@vX.Y.Z`, versioned in step with the
+    Java artifacts; the release workflow creates the `go-parser/vX.Y.Z` tag a subdirectory module
+    needs, validating the module before tagging since a Go module version is immutable once
+    published
 - **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
   - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
   - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals

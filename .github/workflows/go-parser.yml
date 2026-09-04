@@ -1,0 +1,43 @@
+name: Go Parser
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'go-parser/**'
+      - '.github/workflows/go-parser.yml'
+  pull_request:
+    paths:
+      - 'go-parser/**'
+      - '.github/workflows/go-parser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-parser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          # The module has no dependencies, so there is nothing to cache.
+          cache: false
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...

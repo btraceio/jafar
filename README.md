@@ -110,6 +110,33 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 }
 ```
 
+## Go parser (`go-parser/`)
+
+A pure Go port of the untyped parser lives in [`go-parser/`](go-parser/README.md), as a
+standalone Go module (`github.com/btraceio/jafar/go-parser`) that is not part of the Gradle build.
+It parses recordings and hands events to a callback as `map[string]any`, with the same value model,
+tick normalisation and lazy constant-pool resolution as the Java untyped API. It has no external
+dependencies and covers the parser only - no JfrPath, no shell, no CLI.
+
+```go
+parser, err := jfr.Open("recording.jfr")
+if err != nil {
+    log.Fatal(err)
+}
+err = parser.ParseWith(jfr.Options{
+    TypeFilter: func(t *jfr.ClassType) bool { return t.Name == "jdk.ExecutionSample" },
+}, func(e *jfr.Event) error {
+    thread, _ := jfr.GetString(e.Values, "sampledThread", "javaName")
+    method, _ := jfr.GetString(e.Values, "stackTrace", "frames", 0, "method", "name", "string")
+    fmt.Println(thread, method)
+    return nil
+})
+```
+
+The typed API is not ported: it relies on run-time bytecode generation for interfaces discovered
+at run time, which has no Go equivalent. See [go-parser/README.md](go-parser/README.md) for the
+full value model, error handling contract and the differences from the Java parser.
+
 ## Build-Time Handler Generation
 
 JAFAR now supports **build-time handler generation** via annotation processor, providing massive performance benefits for production applications.

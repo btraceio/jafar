@@ -1,0 +1,6 @@
+# Go test binaries, written into the package directory by `go test -c` and by
+# the profiling flags (-memprofile, -cpuprofile).
+*.test
+# Profiles produced by those flags.
+*.out
+*.prof
