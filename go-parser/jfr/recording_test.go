@@ -1,6 +1,9 @@
 package jfr
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,24 +34,55 @@ var wellFormedRecordings = []string{
 	"../../demo/src/test/resources/test-dd.jfr",
 }
 
-// availableRecordings returns the well-formed recordings present on disk,
-// deduplicated by file name since get_resources.sh copies the same recordings
-// into two places.
+// availableRecordings returns the well-formed recordings present on disk.
+//
+// It deduplicates by content rather than by file name: get_resources.sh copies
+// the same recordings into two directories, and it also writes one of them
+// under a second name, so a name-based check leaves the parser measuring the
+// same bytes twice. Files that do not carry the JFR magic are skipped, so that
+// a failed or misconfigured download shows up as a missing recording rather
+// than as a parser failure.
 func availableRecordings() []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, path := range wellFormedRecordings {
-		if _, err := os.Stat(path); err != nil {
+		info, err := os.Stat(path)
+		if err != nil {
 			continue
 		}
-		name := filepath.Base(path)
-		if seen[name] {
+		key, err := recordingIdentity(path, info.Size())
+		if err != nil {
 			continue
 		}
-		seen[name] = true
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, path)
 	}
 	return out
+}
+
+// recordingIdentity fingerprints a recording by its size and its leading bytes,
+// which is enough to spot a copy without hashing gigabytes. It fails for a file
+// that is not a JFR recording.
+func recordingIdentity(path string, size int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	head := make([]byte, 1<<20)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", err
+	}
+	head = head[:n]
+	if len(head) < 4 || string(head[:4]) != "FLR\x00" {
+		return "", fmt.Errorf("%s does not start with the JFR magic", path)
+	}
+	return fmt.Sprintf("%d:%x", size, sha256.Sum256(head)), nil
 }
 
 func openFixture(t *testing.T, path string) *Parser {

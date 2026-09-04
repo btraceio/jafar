@@ -153,6 +153,30 @@ func (r *benchRecording) profile() error {
 	return nil
 }
 
+// largeRecordingBytes is the size above which the constant-pool resolution
+// benchmarks skip a recording.
+//
+// Resolving one stack frame per event forces the whole stack trace pool into
+// memory, and the pool is cached for the life of the chunk, so the cost grows
+// with the recording rather than with the work asked of it: on a 1.8 GB
+// recording BenchmarkResolveTopFrame measured 69 s, 69 GB and 494 M allocations
+// for a single iteration. That is a real property of the parser worth knowing,
+// but it is not a routine regression check - it swamps every other benchmark in
+// the suite. Point the suite at one such recording deliberately
+// (JAFAR_BENCH_JFR) when that is what you want to measure.
+const largeRecordingBytes = 256 << 20
+
+// skipIfLarge skips a constant-pool resolution benchmark on a recording big
+// enough for it to dominate the run.
+func (r *benchRecording) skipIfLarge(b *testing.B) bool {
+	if len(r.data) > largeRecordingBytes {
+		b.Skipf("recording is %d MB; constant pool resolution is measured on recordings under %d MB",
+			len(r.data)>>20, largeRecordingBytes>>20)
+		return true
+	}
+	return false
+}
+
 func filterTo(names ...string) func(*ClassType) bool {
 	set := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -190,6 +214,7 @@ func forEachRecording(b *testing.B, workload func(*benchRecording) (Options, fun
 				}
 			}
 			b.StopTimer()
+			b.ReportMetric(float64(len(rec.data))/(1<<20), "MB_file")
 			if events > 0 {
 				b.ReportMetric(float64(events), "events/op")
 				b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*events), "ns/event")
@@ -294,6 +319,9 @@ func BenchmarkFilteredReused(b *testing.B) {
 func BenchmarkResolveTopFrame(b *testing.B) {
 	var sink string
 	forEachRecording(b, func(rec *benchRecording) (Options, func(*Event)) {
+		if rec.skipIfLarge(b) {
+			return Options{}, nil
+		}
 		return Options{TypeFilter: filterTo(rec.hot)}, func(e *Event) {
 			s, _ := GetString(e.Values, "stackTrace", "frames", 0, "method", "name", "string")
 			sink = s
@@ -308,6 +336,9 @@ func BenchmarkResolveTopFrame(b *testing.B) {
 func BenchmarkResolveDeep(b *testing.B) {
 	var sink map[string]any
 	forEachRecording(b, func(rec *benchRecording) (Options, func(*Event)) {
+		if rec.skipIfLarge(b) {
+			return Options{}, nil
+		}
 		return Options{TypeFilter: filterTo(rec.hot)}, func(e *Event) {
 			sink = ResolveDeepMap(e.Values)
 		}
