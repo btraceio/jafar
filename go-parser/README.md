@@ -109,10 +109,19 @@ almost nothing:
 
 | Workload (tck-test.jfr, 67 657 events) | ns/op | B/op | allocs/op |
 |---|---:|---:|---:|
-| Decode every event | 69 435 447 | 44 607 180 | 508 592 |
-| Decode every event, `ReuseValues` | 37 499 161 | 3 120 132 | 221 007 |
-| One event type, two fields | 22 303 225 | 12 571 193 | 116 785 |
-| One event type, two fields, `ReuseValues` | 14 158 477 | 1 453 872 | 45 507 |
+| Decode every event | 66 981 347 | 44 502 849 | 504 661 |
+| Decode every event, `ReuseValues` | 37 963 037 | 3 015 857 | 217 077 |
+| One event type, two fields | 23 477 273 | 12 575 478 | 116 785 |
+| One event type, two fields, `ReuseValues` | 18 692 524 | 1 458 193 | 45 507 |
+
+The same shape holds on larger recordings, and cost scales linearly with them -
+a 61 MB, 2.2 M event recording costs 8.07x the time and 8.0x the allocations of
+the 7.6 MB, 276 k event recording it is eight copies of:
+
+| Workload (7.6 MB, 275 972 events) | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| Decode every event | 163 738 400 | 119 392 558 | 1 897 483 |
+| Decode every event, `ReuseValues` | 114 632 376 | 11 217 370 | 1 051 854 |
 
 It comes with a contract: an `Event` and everything reachable from its `Values`
 are only valid until the handler returns. Leave it off if you keep events, and
@@ -128,8 +137,11 @@ Two other things matter more than they look:
   event transitively references. Prefer `Get`/`GetString`/`GetInt` for the few
   fields you actually need.
 
-Run `go test -bench . ./...` to reproduce; `JAFAR_BENCH_JFR` and
-`JAFAR_BENCH_TYPE` point the suite at your own recording.
+Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
+available recording, and picks its workload event types per recording rather
+than by name, so the numbers stay comparable across files. Run
+`./get_resources.sh` from the repository root first to add the larger
+recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
 
 ## Error handling
 
@@ -167,6 +179,10 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   constant pool graph for every event, and follows a cyclic class/class loader
   graph until the stack runs out. No recording in this repository contains such
   a cycle, so the Java behaviour is a latent risk rather than an observed bug.
+* **Decoded strings are cached per chunk**, so a recording that repeats a string
+  - a GC phase name, a flag name, a thread state - holds one copy of it rather
+  than one per event. This is Jafar's `CachedStringParser` widened from its
+  single entry to a small direct-mapped table.
 * **Optimizations that do not port.** The typed API and the generated untyped
   deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
   generation. `LazyEventMap` in particular works because Java lets a lazy object
@@ -188,10 +204,17 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 ```bash
 cd go-parser
 go test ./...            # unit tests plus the recordings checked into the repo
-go test -bench . ./...   # throughput benchmarks
+go test -short ./...     # skips the slowest end-to-end comparison
+go test -bench . ./...   # throughput and allocation benchmarks
 go vet ./...
 gofmt -l .
 ```
+
+The benchmarks pick up whatever recordings are present. `./get_resources.sh` in
+the repository root downloads the larger ones from Dropbox into
+`parser-core/src/test/resources/` and `demo/src/test/resources/`; the suite finds
+them there and reports each file separately. Without them it falls back to the
+recordings checked into the repository.
 
 The tests are in two groups. `parser_test.go` and `reader_test.go` build JFR
 chunks byte by byte (see `testrecording_test.go`) and need no fixtures.

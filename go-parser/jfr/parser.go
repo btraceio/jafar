@@ -273,6 +273,8 @@ type chunkParser struct {
 	// event is handed to the handler when values are recycled; the Event
 	// struct is as short-lived as the values it points at.
 	event Event
+	// strings deduplicates the strings decoded from this chunk.
+	strings stringCache
 }
 
 func (c *chunkParser) readChunkMetadata() error {

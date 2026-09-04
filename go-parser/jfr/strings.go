@@ -71,10 +71,13 @@ func readString(r *reader, md *Metadata, cp *chunkParser) (string, bool, error) 
 		}
 		buf := r.data[r.pos : r.pos+int(size)]
 		r.pos += int(size)
-		if id == strUTF8 {
-			return string(buf), false, nil
+		if id == strLatin1 {
+			return latin1ToString(buf), false, nil
 		}
-		return latin1ToString(buf), false, nil
+		if cp != nil {
+			return cp.strings.lookup(buf), false, nil
+		}
+		return string(buf), false, nil
 	case strCharArr:
 		size := r.readVarint()
 		if r.err != nil {
@@ -132,6 +135,44 @@ func skipString(r *reader) error {
 		// null, empty and unknown ids carry no payload
 	}
 	return r.err
+}
+
+// stringCache deduplicates decoded strings within a chunk.
+//
+// The same string is written out over and over in a recording - a GC phase
+// name, a flag name, a thread state - and decoding one allocates. Keeping the
+// strings recently decoded from a given byte sequence turns the repeats into a
+// comparison. This mirrors CachedStringParser in the Java parser, widened from
+// its single entry to a small direct-mapped table so that interleaved event
+// types do not evict each other on every event.
+//
+// Strings are immutable in Go, so handing the same one out repeatedly is safe;
+// it also means a recording full of repeated strings holds one copy instead of
+// one per event.
+type stringCache struct {
+	entries [stringCacheSize]string
+}
+
+// stringCacheSize is a power of two so the hash can be masked. It is small
+// enough to stay in cache and large enough for the handful of distinct strings
+// a chunk repeats.
+const stringCacheSize = 128
+
+// lookup returns the cached string equal to buf, decoding and remembering it on
+// a miss. Comparing a string against a []byte does not allocate, so a hit costs
+// only the hash and the comparison.
+func (c *stringCache) lookup(buf []byte) string {
+	h := uint32(2166136261)
+	for _, b := range buf {
+		h = (h ^ uint32(b)) * 16777619
+	}
+	slot := h & (stringCacheSize - 1)
+	if cached := c.entries[slot]; len(cached) == len(buf) && cached == string(buf) {
+		return cached
+	}
+	s := string(buf)
+	c.entries[slot] = s
+	return s
 }
 
 // latin1ToString decodes ISO-8859-1 bytes, where every byte maps to the code

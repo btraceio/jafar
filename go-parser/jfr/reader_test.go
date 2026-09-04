@@ -3,6 +3,7 @@ package jfr
 import (
 	"math"
 	"testing"
+	"unsafe"
 )
 
 func TestVarintRoundTrip(t *testing.T) {
@@ -139,5 +140,48 @@ func TestRoundHalfUpMatchesJavaMathRound(t *testing.T) {
 		if got := roundHalfUp(in); got != want {
 			t.Errorf("roundHalfUp(%v) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestStringCacheReturnsEqualStrings(t *testing.T) {
+	var c stringCache
+	// More distinct values than the table has slots, so entries evict each
+	// other and collisions have to be handled rather than assumed away.
+	for i := 0; i < stringCacheSize*4; i++ {
+		want := "value-" + itoa(int64(i))
+		if got := c.lookup([]byte(want)); got != want {
+			t.Fatalf("lookup(%q) = %q", want, got)
+		}
+		// Re-reading an entry that is still resident must give the same value.
+		if got := c.lookup([]byte(want)); got != want {
+			t.Fatalf("second lookup(%q) = %q", want, got)
+		}
+	}
+}
+
+func TestStringCacheSharesRepeatedStrings(t *testing.T) {
+	var c stringCache
+	first := c.lookup([]byte("Parallel"))
+	second := c.lookup([]byte("Parallel"))
+	if unsafe.StringData(first) != unsafe.StringData(second) {
+		t.Error("a repeated string was decoded twice instead of being reused")
+	}
+	// A different string in the same table must not be confused with it.
+	if got := c.lookup([]byte("Serial")); got != "Serial" {
+		t.Errorf("lookup = %q, want Serial", got)
+	}
+	if first != "Parallel" {
+		t.Errorf("cached string was corrupted: %q", first)
+	}
+}
+
+func TestStringCacheHandlesEmptyAndBinary(t *testing.T) {
+	var c stringCache
+	if got := c.lookup(nil); got != "" {
+		t.Errorf("lookup(nil) = %q, want empty", got)
+	}
+	raw := []byte{0x00, 0xff, 0x7f, 0x80}
+	if got := c.lookup(raw); got != string(raw) {
+		t.Errorf("lookup of non-UTF-8 bytes = %q", got)
 	}
 }
