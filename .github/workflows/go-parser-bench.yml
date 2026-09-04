@@ -6,7 +6,8 @@ name: Go Parser Benchmarks
 # leaving them to whatever recording a developer happens to have locally.
 #
 # Benchmarks are slow and noisy, so this does not run on every push: it runs on
-# demand, on a schedule, and when the parser itself changes on main.
+# demand, on a schedule, when the parser changes on main, and on any branch
+# named bench/* for a branch that has not been merged yet.
 
 on:
   workflow_dispatch:
@@ -14,7 +15,7 @@ on:
       benchtime:
         description: 'go test -benchtime value (e.g. 3x, 10x, 2s)'
         required: false
-        default: '5x'
+        default: '3x'
       count:
         description: 'go test -count value. benchstat needs at least 6 samples for a confidence interval, so raise this when comparing against a baseline.'
         required: false
@@ -30,9 +31,16 @@ on:
   schedule:
     # Weekly, Monday 04:17 UTC. Off the hour to avoid the scheduling stampede.
     - cron: '17 4 * * 1'
+  # On main, whenever the parser changes. Also on any branch under bench/, which
+  # is how a branch that is not merged yet gets benchmarked: workflow_dispatch
+  # only works for workflows already on the default branch, so push the branch
+  # as bench/<something> instead. GitHub applies one path filter to both, so a
+  # bench/ branch has to carry a change under go-parser/ - which it does, since
+  # that is the point of benchmarking it.
   push:
     branches:
       - 'main'
+      - 'bench/**'
     paths:
       - 'go-parser/**'
       - '.github/workflows/go-parser-bench.yml'
@@ -47,7 +55,10 @@ permissions:
   contents: read
 
 env:
-  BENCHTIME: ${{ inputs.benchtime || '5x' }}
+  # The recordings get_resources.sh downloads are of unknown size on a first
+  # run, so the scheduled and push defaults are deliberately modest. Raise them
+  # through workflow_dispatch once the runtime is known.
+  BENCHTIME: ${{ inputs.benchtime || '3x' }}
   BENCHCOUNT: ${{ inputs.count || '3' }}
   BENCHPATTERN: ${{ inputs.pattern || '.' }}
 

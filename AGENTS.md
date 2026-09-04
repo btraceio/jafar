@@ -127,6 +127,10 @@ the correctness tests against them before benchmarking, and publishes the number
 plus an artifact. Do not add the recording download to the fast per-PR job; it would slow every PR
 for numbers that are too noisy to gate on.
 
+`workflow_dispatch` only works for workflows that already exist on the default branch, so to
+benchmark a branch that has not been merged yet, push it as `bench/<something>` - the workflow also
+triggers on any `bench/**` branch.
+
 ### Module-specific Commands
 ```bash
 # Build only the parser core module

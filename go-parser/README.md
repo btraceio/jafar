@@ -219,8 +219,11 @@ repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs
 the benchmarks on demand, weekly, and on pushes to `main`, publishing the numbers
-to the job summary. Trigger it manually to benchmark a branch, optionally against
-a baseline ref for a benchstat diff.
+to the job summary. Run it manually to benchmark a branch, optionally against a
+baseline ref for a benchstat diff. A branch that has not been merged yet cannot
+be dispatched - GitHub only offers `workflow_dispatch` for workflows already on
+the default branch - so push it as `bench/<something>`, which the workflow also
+triggers on.
 
 The tests are in two groups. `parser_test.go` and `reader_test.go` build JFR
 chunks byte by byte (see `testrecording_test.go`) and need no fixtures.
