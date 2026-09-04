@@ -137,6 +137,34 @@ are only valid until the handler returns. Leave it off if you keep events, and
 it is off by default. Values resolved from a constant pool are cached in their
 pool and stay valid either way.
 
+### On large recordings
+
+Measured on the benchmark corpus `./get_resources.sh` downloads, on a GitHub
+`ubuntu-latest` runner:
+
+| Recording | Size | Events | Decode one type, two fields, `ReuseValues` |
+|---|---:|---:|---|
+| `test-ap.jfr` | 179 MB | 2 908 299 | 1.94 s, 668 ns/event, 45 MB, 2.9 M allocs |
+| `test-jfr.jfr` | 1.78 GB | 10 673 057 | 13.95 s, 1307 ns/event, 422 MB, 21.7 M allocs |
+
+Per-event cost stays flat as the recording grows, which is the property that
+matters. One thing does not, and it is worth knowing before you write a
+consumer:
+
+**Resolving a constant pool reference on every event materialises the whole
+pool.** Entries are cached for the life of the chunk, so reading one stack frame
+per event pulls the entire stack trace, frame, method and symbol graph into
+memory and keeps it there. On `tck-test.jfr` (14 202 events) that costs 21 ms
+and 153 k allocations; on `test-jfr.jfr` (10.7 M events) the same one-line
+access costs **69 s and 494 M allocations**, because the pool it is filling is
+three orders of magnitude larger. The caching is what makes the common case
+fast - a stack trace shared by ten thousand events is decoded once - but it
+scales with the pool, not with the work you asked for.
+
+If you only need a few stack traces out of many events, filter the events down
+first (`TypeFilter`, or a predicate in the handler) and resolve only what
+survives.
+
 Two other things matter more than they look:
 
 * **Filter early.** `TypeFilter` skips an event before it is decoded. On the

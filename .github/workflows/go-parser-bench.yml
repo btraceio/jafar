@@ -55,18 +55,24 @@ permissions:
   contents: read
 
 env:
-  # The recordings get_resources.sh downloads are of unknown size on a first
-  # run, so the scheduled and push defaults are deliberately modest. Raise them
-  # through workflow_dispatch once the runtime is known.
-  BENCHTIME: ${{ inputs.benchtime || '3x' }}
-  BENCHCOUNT: ${{ inputs.count || '3' }}
+  # inputs.* is empty for schedule and push, so these fall back to the cheap
+  # settings while a workflow_dispatch run picks up the richer input defaults
+  # below. The recordings are large - the corpus is ~2 GB, one file of it 1.8 GB
+  # - and every benchmark iteration parses a whole file, so an unattended run
+  # takes one sample per benchmark. Allocation counts are deterministic and stay
+  # exact at one iteration, which is the signal worth tracking over time; timing
+  # at one sample is indicative, so raise these by hand when timing is the point.
+  BENCHTIME: ${{ inputs.benchtime || '1x' }}
+  BENCHCOUNT: ${{ inputs.count || '1' }}
   BENCHPATTERN: ${{ inputs.pattern || '.' }}
 
 jobs:
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A full workflow_dispatch sweep over the corpus at 3x/3 is roughly 40
+    # minutes; the unattended run is a few minutes.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -120,7 +126,7 @@ jobs:
             -benchtime "$BENCHTIME" \
             -count "$BENCHCOUNT" \
             -benchmem \
-            -timeout 55m \
+            -timeout 80m \
             ./... 2>&1 | tee ../bench-current.txt
 
       - name: Benchmark the baseline
@@ -139,7 +145,7 @@ jobs:
             -benchtime "$BENCHTIME" \
             -count "$BENCHCOUNT" \
             -benchmem \
-            -timeout 55m \
+            -timeout 80m \
             ./... 2>&1 | tee "$GITHUB_WORKSPACE/bench-baseline.txt"
 
       - name: Compare against the baseline
