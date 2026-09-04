@@ -210,11 +210,17 @@ go vet ./...
 gofmt -l .
 ```
 
-The benchmarks pick up whatever recordings are present. `./get_resources.sh` in
-the repository root downloads the larger ones from Dropbox into
-`parser-core/src/test/resources/` and `demo/src/test/resources/`; the suite finds
-them there and reports each file separately. Without them it falls back to the
-recordings checked into the repository.
+The tests and benchmarks pick up whatever recordings are present.
+`./get_resources.sh` in the repository root downloads the larger ones from
+Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
+both the suite and the benchmarks find them there and report each file
+separately. Without them they fall back to the recordings checked into the
+repository.
+
+The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs
+the benchmarks on demand, weekly, and on pushes to `main`, publishing the numbers
+to the job summary. Trigger it manually to benchmark a branch, optionally against
+a baseline ref for a benchstat diff.
 
 The tests are in two groups. `parser_test.go` and `reader_test.go` build JFR
 chunks byte by byte (see `testrecording_test.go`) and need no fixtures.

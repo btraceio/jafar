@@ -118,6 +118,14 @@ interfaces discovered at run time and has no Go equivalent - do not attempt to p
 
 The Go and Java untyped parsers must be kept at parity - see the parity rule under **Rules** below
 before changing either of them.
+Benchmarks need real recordings, and the large ones are not in the repository - `./get_resources.sh`
+downloads them. The **Go Parser Benchmarks** workflow (`.github/workflows/go-parser-bench.yml`) runs
+them where that download works: on demand (`workflow_dispatch`, with inputs for benchtime, count,
+benchmark pattern and an optional baseline ref to diff against via benchstat), weekly, and on pushes
+to `main` that touch `go-parser/`. It caches the recordings on the hash of `get_resources.sh`, runs
+the correctness tests against them before benchmarking, and publishes the numbers to the job summary
+plus an artifact. Do not add the recording download to the fast per-PR job; it would slow every PR
+for numbers that are too noisy to gate on.
 
 ### Module-specific Commands
 ```bash

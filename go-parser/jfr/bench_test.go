@@ -40,19 +40,6 @@ type benchRecording struct {
 	events      int
 }
 
-// benchPaths lists the recordings to look for, in reporting order. The two
-// checked into the repository come first; the rest are what ./get_resources.sh
-// downloads and are skipped when it has not been run.
-var benchPaths = []string{
-	tckRecording,
-	"../../parser-core/src/test/resources/test-jfr.jfr",
-	"../../parser-core/src/test/resources/test-ap.jfr",
-	"../../parser-core/src/test/resources/test-dd.jfr",
-	"../../demo/src/test/resources/test-jfr.jfr",
-	"../../demo/src/test/resources/test-ap.jfr",
-	"../../demo/src/test/resources/test-dd.jfr",
-}
-
 var (
 	benchOnce sync.Once
 	benchSet  []*benchRecording
@@ -72,23 +59,17 @@ func recordings(b *testing.B) []*benchRecording {
 }
 
 func loadRecordings() ([]*benchRecording, error) {
-	paths := benchPaths
+	paths := availableRecordings()
 	if p := os.Getenv("JAFAR_BENCH_JFR"); p != "" {
 		paths = filepath.SplitList(p)
 	}
 	var out []*benchRecording
-	seen := map[string]bool{}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		name := filepath.Base(path)
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		r := &benchRecording{name: name, data: data}
+		r := &benchRecording{name: filepath.Base(path), data: data}
 		if err := r.profile(); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}

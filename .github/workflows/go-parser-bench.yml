@@ -1,0 +1,164 @@
+name: Go Parser Benchmarks
+
+# The Go parser benchmarks are only meaningful against real recordings, and the
+# large ones live outside the repository - ./get_resources.sh downloads them.
+# This job runs where that download works and publishes the numbers, rather than
+# leaving them to whatever recording a developer happens to have locally.
+#
+# Benchmarks are slow and noisy, so this does not run on every push: it runs on
+# demand, on a schedule, and when the parser itself changes on main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchtime:
+        description: 'go test -benchtime value (e.g. 3x, 10x, 2s)'
+        required: false
+        default: '5x'
+      count:
+        description: 'go test -count value. benchstat needs at least 6 samples for a confidence interval, so raise this when comparing against a baseline.'
+        required: false
+        default: '3'
+      pattern:
+        description: 'Benchmark name pattern (go test -bench)'
+        required: false
+        default: '.'
+      baseline_ref:
+        description: 'Optional git ref to compare against (benchstat diff). Must be a ref whose benchmarks accept JAFAR_BENCH_JFR as a path list.'
+        required: false
+        default: ''
+  schedule:
+    # Weekly, Monday 04:17 UTC. Off the hour to avoid the scheduling stampede.
+    - cron: '17 4 * * 1'
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'go-parser/**'
+      - '.github/workflows/go-parser-bench.yml'
+
+concurrency:
+  group: go-parser-bench-${{ github.ref }}
+  # A benchmark run is expensive and its results are the point; do not throw one
+  # away because another commit landed while it was running.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BENCHTIME: ${{ inputs.benchtime || '5x' }}
+  BENCHCOUNT: ${{ inputs.count || '3' }}
+  BENCHPATTERN: ${{ inputs.pattern || '.' }}
+
+jobs:
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so a baseline ref can be checked out for comparison.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      # The recordings are large and change rarely, so cache them on the
+      # contents of the script that defines where they come from.
+      - name: Cache benchmark recordings
+        id: recordings
+        uses: actions/cache@v4
+        with:
+          path: |
+            parser-core/src/test/resources/test-*.jfr
+            demo/src/test/resources/test-*.jfr
+          key: jfr-recordings-${{ hashFiles('get_resources.sh') }}
+
+      - name: Download benchmark recordings
+        if: steps.recordings.outputs.cache-hit != 'true'
+        run: ./get_resources.sh
+
+      - name: Report available recordings
+        run: |
+          echo "### Recordings" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # The parser is only benchmarked against recordings that are actually
+          # present, so record which ones the run saw.
+          find parser-core/src/test/resources demo/src/test/resources jfr-shell-tck/src/main/resources \
+            -name '*.jfr' -printf '%p\t%s bytes\n' 2>/dev/null | sort | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # A benchmark that measures a broken parser measures nothing, so the
+      # correctness tests run first - against the downloaded recordings too.
+      - name: Test against every available recording
+        working-directory: go-parser
+        run: go test -v ./...
+
+      - name: Run benchmarks
+        working-directory: go-parser
+        run: |
+          set -o pipefail
+          go test -run '^$' \
+            -bench "$BENCHPATTERN" \
+            -benchtime "$BENCHTIME" \
+            -count "$BENCHCOUNT" \
+            -benchmem \
+            -timeout 55m \
+            ./... 2>&1 | tee ../bench-current.txt
+
+      - name: Benchmark the baseline
+        if: inputs.baseline_ref != ''
+        run: |
+          set -o pipefail
+          git worktree add ../baseline "${{ inputs.baseline_ref }}"
+          # Recordings are resolved relative to the module, so point the
+          # baseline run at the ones this checkout already has.
+          jfrs=$(find "$PWD/parser-core/src/test/resources" "$PWD/demo/src/test/resources" \
+                   "$PWD/jfr-shell-tck/src/main/resources" -name '*.jfr' 2>/dev/null \
+                 | grep -v dd-trace-java-stripped | paste -sd: -)
+          cd ../baseline/go-parser
+          JAFAR_BENCH_JFR="$jfrs" go test -run '^$' \
+            -bench "$BENCHPATTERN" \
+            -benchtime "$BENCHTIME" \
+            -count "$BENCHCOUNT" \
+            -benchmem \
+            -timeout 55m \
+            ./... 2>&1 | tee "$GITHUB_WORKSPACE/bench-baseline.txt"
+
+      - name: Compare against the baseline
+        if: inputs.baseline_ref != ''
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@latest
+          {
+            echo "### benchstat: ${{ inputs.baseline_ref }} → ${{ github.sha }}"
+            echo '```'
+            "$(go env GOPATH)/bin/benchstat" bench-baseline.txt bench-current.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish results
+        if: always()
+        run: |
+          {
+            echo "### Benchmarks (benchtime=$BENCHTIME, count=$BENCHCOUNT)"
+            echo '```'
+            grep -E '^(Benchmark|goos|goarch|pkg|cpu)' bench-current.txt || echo 'no benchmark output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-parser-bench-${{ github.run_id }}
+          path: |
+            bench-current.txt
+            bench-baseline.txt
+          if-no-files-found: warn
+          retention-days: 90

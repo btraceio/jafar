@@ -7,12 +7,49 @@ import (
 	"testing"
 )
 
-// These tests run against the JFR recordings checked into the repository. They
+// These tests run against the JFR recordings available in the repository. They
 // are skipped when the package is built outside the repository tree.
 const (
 	tckRecording       = "../../jfr-shell-tck/src/main/resources/tck-test.jfr"
 	strippedRecordings = "../../parser-core/src/test/resources/dd-trace-java-stripped"
 )
+
+// wellFormedRecordings lists the recordings expected to decode without a single
+// recoverable problem, in reporting order. The first is checked into the
+// repository; the rest are the larger ones ./get_resources.sh downloads, and are
+// simply absent when it has not been run.
+//
+// The deliberately malformed dd-trace-java fixtures are not listed here; they
+// have their own test.
+var wellFormedRecordings = []string{
+	tckRecording,
+	"../../parser-core/src/test/resources/test-jfr.jfr",
+	"../../parser-core/src/test/resources/test-ap.jfr",
+	"../../parser-core/src/test/resources/test-dd.jfr",
+	"../../demo/src/test/resources/test-jfr.jfr",
+	"../../demo/src/test/resources/test-ap.jfr",
+	"../../demo/src/test/resources/test-dd.jfr",
+}
+
+// availableRecordings returns the well-formed recordings present on disk,
+// deduplicated by file name since get_resources.sh copies the same recordings
+// into two places.
+func availableRecordings() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, path := range wellFormedRecordings {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		name := filepath.Base(path)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, path)
+	}
+	return out
+}
 
 func openFixture(t *testing.T, path string) *Parser {
 	t.Helper()
@@ -173,36 +210,110 @@ func TestStrippedRecordings(t *testing.T) {
 	}
 }
 
-// TestReuseValuesMatchesFreshValuesOnRecording is the end-to-end check for
-// value recycling: every event of the reference recording has to decode to the
-// same thing whether or not the parser recycles the objects it decodes into.
-func TestReuseValuesMatchesFreshValuesOnRecording(t *testing.T) {
-	if testing.Short() {
-		t.Skip("deep-compares every event of the reference recording twice")
+// TestAvailableRecordingsDecodeCleanly parses every well-formed recording in the
+// repository strictly: a recoverable problem that the parser would normally
+// absorb fails the test instead. It is the check that gains the most from
+// ./get_resources.sh having been run, since the larger recordings exercise far
+// more of the format than the ones checked in.
+func TestAvailableRecordingsDecodeCleanly(t *testing.T) {
+	paths := availableRecordings()
+	if len(paths) == 0 {
+		t.Skip("no recording available; run ./get_resources.sh")
 	}
-	p := openFixture(t, tckRecording)
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			p := openFixture(t, path)
 
-	collect := func(reuse bool) []map[string]any {
-		var out []map[string]any
-		err := p.ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
-			out = append(out, ResolveDeepMap(e.Values))
-			return nil
+			events, chunks := 0, 0
+			types := map[string]bool{}
+			err := p.ParseWith(Options{
+				OnChunkStart: func(_ *ChunkInfo, md *Metadata) error {
+					chunks++
+					if len(md.Classes) == 0 {
+						t.Errorf("chunk %d declares no types", chunks)
+					}
+					return nil
+				},
+				OnError: FailOnError,
+			}, func(e *Event) error {
+				events++
+				types[e.Type.Name] = true
+				// Every event belongs to the chunk it was read from and to a
+				// type declared by that chunk's metadata.
+				if e.Chunk == nil || e.Type == nil {
+					t.Fatalf("event %d has no chunk or type", events)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if chunks == 0 {
+				t.Fatal("no chunk was parsed")
+			}
+			if events == 0 {
+				t.Fatal("no event was decoded")
+			}
+			t.Logf("%d chunk(s), %d events, %d event types", chunks, events, len(types))
 		})
-		if err != nil {
-			t.Fatalf("parse (reuse=%t): %v", reuse, err)
-		}
-		return out
 	}
+}
 
-	fresh := collect(false)
-	reused := collect(true)
-	if len(fresh) != len(reused) {
-		t.Fatalf("event counts differ: %d fresh, %d reused", len(fresh), len(reused))
+// The fresh-versus-recycled comparison deep resolves every event twice, so it
+// is exhaustive on a recording small enough for that to be cheap and capped on
+// anything larger.
+const (
+	exhaustiveComparisonBytes = 16 << 20
+	maxEquivalenceEvents      = 20000
+)
+
+// TestAvailableRecordingsReuseEquivalence checks value recycling against every
+// available recording, not just the one checked in: a recycled parse has to
+// decode to exactly what a fresh parse does.
+func TestAvailableRecordingsReuseEquivalence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("deep-compares events of every available recording twice")
 	}
-	for i := range fresh {
-		if !reflect.DeepEqual(fresh[i], reused[i]) {
-			t.Fatalf("event %d differs between a fresh and a recycled parse:\n fresh  = %#v\n reused = %#v",
-				i, fresh[i], reused[i])
-		}
+	paths := availableRecordings()
+	if len(paths) == 0 {
+		t.Skip("no recording available; run ./get_resources.sh")
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			p := openFixture(t, path)
+
+			limit := maxEquivalenceEvents
+			if info, err := os.Stat(path); err == nil && info.Size() <= exhaustiveComparisonBytes {
+				limit = 0 // compare every event
+			}
+
+			collect := func(reuse bool) []map[string]any {
+				var out []map[string]any
+				err := p.ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
+					if limit > 0 && len(out) >= limit {
+						return ErrStop
+					}
+					out = append(out, ResolveDeepMap(e.Values))
+					return nil
+				})
+				if err != nil {
+					t.Fatalf("parse (reuse=%t): %v", reuse, err)
+				}
+				return out
+			}
+
+			fresh := collect(false)
+			reused := collect(true)
+			if len(fresh) != len(reused) {
+				t.Fatalf("event counts differ: %d fresh, %d reused", len(fresh), len(reused))
+			}
+			for i := range fresh {
+				if !reflect.DeepEqual(fresh[i], reused[i]) {
+					t.Fatalf("event %d differs between a fresh and a recycled parse:\n fresh  = %#v\n reused = %#v",
+						i, fresh[i], reused[i])
+				}
+			}
+			t.Logf("compared %d events", len(fresh))
+		})
 	}
 }
