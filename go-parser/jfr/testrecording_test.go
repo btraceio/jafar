@@ -247,3 +247,128 @@ func (s chunkSpec) build() []byte {
 	w.bytes(metadata)
 	return w.buf
 }
+
+// --- cyclic constant pool recording -----------------------------------------
+
+// The class/class loader graph of a real recording can form a cycle through the
+// constant pools. cyclicRecording reproduces the shape with the smallest
+// possible type: a node whose pooled "next" field points back at its
+// predecessor.
+const (
+	tIDNode   = 50
+	tIDCyclic = 101
+)
+
+func cyclicMetadata() *metaElement {
+	node := elem("class", attr("id", itoa(tIDNode)), attr("name", "test.Node")).with(
+		elem("field", attr("name", "name"), attr("class", itoa(tIDString))),
+		elem("field", attr("name", "next"), attr("class", itoa(tIDNode)), attr("constantPool", "true")),
+	)
+	event := elem("class",
+		attr("id", itoa(tIDCyclic)),
+		attr("name", "test.Cyclic"),
+		attr("superType", "jdk.jfr.Event"),
+	).with(
+		elem("field", attr("name", "node"), attr("class", itoa(tIDNode)), attr("constantPool", "true")),
+	)
+	return elem("root").with(
+		elem("metadata").with(
+			primitiveClass(tIDString, "java.lang.String"),
+			node,
+			event,
+		),
+	)
+}
+
+// nodeEntry encodes one test.Node constant pool entry.
+func nodeEntry(name string, next int64) []byte {
+	w := &writer{}
+	w.bytes(utf8String(name))
+	w.varint(next)
+	return w.buf
+}
+
+func cyclicRecording() []byte {
+	event := func() []byte {
+		w := &writer{}
+		w.varint(tIDCyclic)
+		w.varint(1) // node -> constant pool entry 1
+		return w.buf
+	}
+	spec := chunkSpec{
+		metadata: cyclicMetadata(),
+		pools: []constantPoolData{
+			{typeID: tIDNode, entries: []poolEntry{
+				{id: 1, data: nodeEntry("a", 2)},
+				{id: 2, data: nodeEntry("b", 1)},
+			}},
+		},
+		events:     [][]byte{event(), event()},
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}
+
+// --- variable shape recording -----------------------------------------------
+
+// An array of complex values makes the number of maps an event needs vary from
+// event to event, which is the case value recycling has to get right.
+const tIDBag = 102
+
+func bagMetadata() *metaElement {
+	nested := elem("class", attr("id", itoa(tIDNested)), attr("name", "test.Nested")).with(
+		elem("field", attr("name", "a"), attr("class", itoa(tIDInt))),
+		elem("field", attr("name", "b"), attr("class", itoa(tIDString))),
+	)
+	bag := elem("class",
+		attr("id", itoa(tIDBag)),
+		attr("name", "test.Bag"),
+		attr("superType", "jdk.jfr.Event"),
+	).with(
+		elem("field", attr("name", "label"), attr("class", itoa(tIDString))),
+		elem("field", attr("name", "items"), attr("class", itoa(tIDNested)), attr("dimension", "1")),
+	)
+	return elem("root").with(
+		elem("metadata").with(
+			primitiveClass(tIDInt, "int"),
+			primitiveClass(tIDString, "java.lang.String"),
+			nested,
+			bag,
+		),
+	)
+}
+
+// bagEvent encodes a test.Bag event with the given item labels.
+func bagEvent(label string, items []string) []byte {
+	w := &writer{}
+	w.varint(tIDBag)
+	w.bytes(utf8String(label))
+	w.varint(int64(len(items)))
+	for i, it := range items {
+		w.varint(int64(uint32(int32(i))))
+		w.bytes(utf8String(it))
+	}
+	return w.buf
+}
+
+// bagRecording holds events whose array field has a different length each time,
+// including an empty one, so a recycled array cannot hide a stale element.
+func bagRecording() []byte {
+	spec := chunkSpec{
+		metadata: bagMetadata(),
+		events: [][]byte{
+			bagEvent("three", []string{"x", "y", "z"}),
+			bagEvent("zero", nil),
+			bagEvent("one", []string{"only"}),
+			bagEvent("two", []string{"p", "q"}),
+		},
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}

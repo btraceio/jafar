@@ -3,6 +3,7 @@ package jfr
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -169,5 +170,39 @@ func TestStrippedRecordings(t *testing.T) {
 				t.Error("no chunk was parsed")
 			}
 		})
+	}
+}
+
+// TestReuseValuesMatchesFreshValuesOnRecording is the end-to-end check for
+// value recycling: every event of the reference recording has to decode to the
+// same thing whether or not the parser recycles the objects it decodes into.
+func TestReuseValuesMatchesFreshValuesOnRecording(t *testing.T) {
+	if testing.Short() {
+		t.Skip("deep-compares every event of the reference recording twice")
+	}
+	p := openFixture(t, tckRecording)
+
+	collect := func(reuse bool) []map[string]any {
+		var out []map[string]any
+		err := p.ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
+			out = append(out, ResolveDeepMap(e.Values))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("parse (reuse=%t): %v", reuse, err)
+		}
+		return out
+	}
+
+	fresh := collect(false)
+	reused := collect(true)
+	if len(fresh) != len(reused) {
+		t.Fatalf("event counts differ: %d fresh, %d reused", len(fresh), len(reused))
+	}
+	for i := range fresh {
+		if !reflect.DeepEqual(fresh[i], reused[i]) {
+			t.Fatalf("event %d differs between a fresh and a recycled parse:\n fresh  = %#v\n reused = %#v",
+				i, fresh[i], reused[i])
+		}
 	}
 }

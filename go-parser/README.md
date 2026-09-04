@@ -42,11 +42,13 @@ err = parser.Parse(func(e *jfr.Event) error {
 ```
 
 Skipping the events you do not care about is much cheaper than decoding and
-discarding them:
+discarding them, and a handler that keeps nothing can let the parser recycle
+what it decodes into:
 
 ```go
 opts := jfr.Options{
-    TypeFilter: func(t *jfr.ClassType) bool { return t.Name == "jdk.ExecutionSample" },
+    TypeFilter:  func(t *jfr.ClassType) bool { return t.Name == "jdk.ExecutionSample" },
+    ReuseValues: true, // events are only valid until the handler returns
 }
 err = parser.ParseWith(opts, handler)
 ```
@@ -99,6 +101,36 @@ constant pools routinely contain.
 A `*Ref` stays resolvable after `Parse` returns, and it keeps its chunk's bytes
 alive for as long as it is reachable.
 
+## Performance
+
+`Options.ReuseValues` recycles the maps, arrays and references an event decodes
+into, per event type. After the first event of a type, decoding it allocates
+almost nothing:
+
+| Workload (tck-test.jfr, 67 657 events) | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| Decode every event | 69 435 447 | 44 607 180 | 508 592 |
+| Decode every event, `ReuseValues` | 37 499 161 | 3 120 132 | 221 007 |
+| One event type, two fields | 22 303 225 | 12 571 193 | 116 785 |
+| One event type, two fields, `ReuseValues` | 14 158 477 | 1 453 872 | 45 507 |
+
+It comes with a contract: an `Event` and everything reachable from its `Values`
+are only valid until the handler returns. Leave it off if you keep events, and
+it is off by default. Values resolved from a constant pool are cached in their
+pool and stay valid either way.
+
+Two other things matter more than they look:
+
+* **Filter early.** `TypeFilter` skips an event before it is decoded. On the
+  reference recording, filtering to one type is 3× faster than decoding
+  everything and then ignoring most of it.
+* **`ResolveDeep` is memoised but not free.** It materialises everything an
+  event transitively references. Prefer `Get`/`GetString`/`GetInt` for the few
+  fields you actually need.
+
+Run `go test -bench . ./...` to reproduce; `JAFAR_BENCH_JFR` and
+`JAFAR_BENCH_TYPE` point the suite at your own recording.
+
 ## Error handling
 
 Problems that leave the parser without a resynchronisation point — a bad chunk
@@ -130,6 +162,18 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 * **Type IDs are chunk-scoped**, as they are in the format. A recording whose
   chunks come from different producers can map the same type ID to different
   type names, and each chunk is decoded against its own metadata.
+* **`ResolveDeep` breaks reference cycles and memoises what it resolves.** The
+  Java `Values.resolvedDeep` does neither: it re-materialises the shared
+  constant pool graph for every event, and follows a cyclic class/class loader
+  graph until the stack runs out. No recording in this repository contains such
+  a cycle, so the Java behaviour is a latent risk rather than an observed bug.
+* **Optimizations that do not port.** The typed API and the generated untyped
+  deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
+  generation. `LazyEventMap` in particular works because Java lets a lazy object
+  implement `Map`; Go's `map[string]any` is a builtin, so the equivalent would
+  have to change the type of `Event.Values`. `ReuseValues` takes the other route
+  and recycles the map instead. Jafar's reusable `MultiTypeStack` has no Go
+  counterpart either: recursion over the goroutine stack allocates nothing.
 
 ## Not supported
 

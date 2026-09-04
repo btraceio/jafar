@@ -146,6 +146,34 @@ func BenchmarkResolveDeep(b *testing.B) {
 	_ = sink
 }
 
+// BenchmarkCountOnlyReused is BenchmarkCountOnly with Options.ReuseValues,
+// which recycles the maps, arrays and references of an event per event type.
+func BenchmarkCountOnlyReused(b *testing.B) {
+	runBench(b, Options{ReuseValues: true}, nil)
+}
+
+// BenchmarkSparseAccessReused is BenchmarkSparseAccess with recycled values,
+// the shape a streaming consumer that keeps nothing has.
+func BenchmarkSparseAccessReused(b *testing.B) {
+	var sink int64
+	runBench(b, Options{ReuseValues: true}, func(e *Event) {
+		v, _ := GetInt(e.Values, "startTime")
+		d, _ := GetInt(e.Values, "duration")
+		sink += v + d
+	})
+	_ = sink
+}
+
+// BenchmarkFilteredReused is BenchmarkFiltered with recycled values.
+func BenchmarkFilteredReused(b *testing.B) {
+	var sink int64
+	runBench(b, Options{TypeFilter: filterTo(hotType()), ReuseValues: true}, func(e *Event) {
+		v, _ := GetInt(e.Values, "startTime")
+		sink += v
+	})
+	_ = sink
+}
+
 // BenchmarkStringHeavy decodes the event types carrying inline string fields.
 func BenchmarkStringHeavy(b *testing.B) {
 	var sink any

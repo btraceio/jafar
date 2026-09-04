@@ -118,7 +118,7 @@ func (c *chunkParser) readValue(r *reader, ct *ClassType, depth int) (any, error
 	if ct.primitive {
 		return c.readPrimitive(r, nil, ct, "")
 	}
-	m := make(map[string]any, len(ct.Fields))
+	m := c.newMap(len(ct.Fields))
 	for _, f := range ct.Fields {
 		if err := c.readField(r, m, ct, f, depth); err != nil {
 			return nil, err
@@ -147,7 +147,7 @@ func (c *chunkParser) readField(r *reader, into map[string]any, owner *ClassType
 	if f.Type != nil {
 		elementType = f.Type.Name
 	}
-	arr := &Array{ElementType: elementType, Values: make([]any, n)}
+	arr := c.newArray(elementType, int(n))
 	for i := int64(0); i < n; i++ {
 		v, err := c.readFieldValue(r, owner, f, depth)
 		if err != nil {
@@ -173,7 +173,7 @@ func (c *chunkParser) readFieldValue(r *reader, owner *ClassType, f *Field, dept
 			}
 			f.pool = c.pools.getOrCreate(typeID)
 		}
-		return &Ref{pool: f.pool, index: idx}, nil
+		return c.newRef(f.pool, idx), nil
 	}
 	if f.Type == nil {
 		return nil, fmt.Errorf("%s.%s: field type could not be resolved from the chunk metadata", owner.Name, f.Name)

@@ -116,6 +116,9 @@ gofmt -l .               # must print nothing
 Only the untyped parser is ported. The typed API depends on run-time bytecode generation for
 interfaces discovered at run time and has no Go equivalent - do not attempt to port it.
 
+The Go and Java untyped parsers must be kept at parity - see the parity rule under **Rules** below
+before changing either of them.
+
 ### Module-specific Commands
 ```bash
 # Build only the parser core module
@@ -423,3 +426,14 @@ rewriting an existing completer.
 ## Rules
 - When fixing an issue, always check the alternative implementation for other Java versions
 - When adding or modifying features, always update user documentation, help and tutorials
+- **Keep the two untyped parsers at parity.** The Java untyped parser
+  (`parser-core/src/main/java/io/jafar/parser/impl/`, `.../internal_api/`) and the Go untyped parser
+  (`go-parser/jfr/`) are two implementations of the same format and the same value model. Any bug
+  fix, correctness change, tolerance change, or performance improvement made in one **must be
+  considered for the other**, and the outcome recorded - either port it, or state in the commit
+  message or PR description why it does not apply (for example, an optimization that depends on
+  runtime bytecode generation has no Go equivalent, and Go's stack recursion already replaces the
+  Java visitor's reusable stack). This applies in both directions: a fix landing in the Go parser is
+  just as much a signal for the Java one. Parity is about behaviour and intent, not line-by-line
+  translation - where an implementation can do better idiomatically, do better and note the
+  divergence in `go-parser/README.md` under "Differences from the Java parser".

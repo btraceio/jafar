@@ -76,6 +76,21 @@ type Options struct {
 	// OnChunkEnd, when set, is called once per chunk after its last event.
 	OnChunkEnd func(*ChunkInfo) error
 
+	// ReuseValues lets the parser recycle the maps, arrays and constant pool
+	// references that make up an event, per event type, so that after the first
+	// event of a type decoding it allocates almost nothing.
+	//
+	// It changes the handler contract: with ReuseValues set, an Event and
+	// everything reachable from its Values - nested maps, arrays and *Ref
+	// values - are only valid until the handler returns, and are overwritten by
+	// the next event of the same type. A handler that keeps an event, stores it
+	// in a slice, or hands it to another goroutine must either leave this off or
+	// take a copy first (ResolveDeepMap returns one for the event's own fields).
+	//
+	// Values resolved from a constant pool are cached in their pool and are not
+	// recycled, so they stay valid either way.
+	ReuseValues bool
+
 	// OnError is called for recoverable decoding problems: a checkpoint chain
 	// that cannot be followed, a constant pool referring to an undeclared type,
 	// or a single event that fails to decode. Parsing continues when it returns
@@ -245,6 +260,19 @@ type chunkParser struct {
 	opts     *Options
 	// headerSize is the number of bytes consumed by the chunk header.
 	headerSize int
+	// refSlab hands out *Ref values in blocks. Constant pool references are the
+	// most numerous object the parser creates, and allocating them one at a
+	// time dominates its allocation count.
+	refSlab []Ref
+	// arenas recycle the objects of one event, per event type; only populated
+	// when Options.ReuseValues is set. arena is the one in use while an event
+	// is being decoded, and nil at every other time, so that values cached in a
+	// constant pool are never recycled.
+	arenas map[*ClassType]*valueArena
+	arena  *valueArena
+	// event is handed to the handler when values are recycled; the Event
+	// struct is as short-lived as the values it points at.
+	event Event
 }
 
 func (c *chunkParser) readChunkMetadata() error {
@@ -452,7 +480,14 @@ func (c *chunkParser) readEvent(r *reader, typeID int64, fn EventFunc) error {
 	if c.opts.TypeFilter != nil && !c.opts.TypeFilter(class) {
 		return nil
 	}
+	if c.opts.ReuseValues {
+		c.arena = c.arenaFor(class)
+		c.arena.reset()
+	}
 	values, err := c.readValue(r, class, 0)
+	// The arena is only current while the event is being decoded: anything the
+	// handler resolves afterwards allocates normally.
+	c.arena = nil
 	if err != nil {
 		return c.recoverable(fmt.Errorf("event %s: %w", class.Name, err))
 	}
@@ -460,7 +495,12 @@ func (c *chunkParser) readEvent(r *reader, typeID int64, fn EventFunc) error {
 	if !ok {
 		return c.recoverable(fmt.Errorf("event %s: unexpected non-complex event value", class.Name))
 	}
-	if err := fn(&Event{Type: class, Values: m, Chunk: c.info}); err != nil {
+	event := &c.event
+	if !c.opts.ReuseValues {
+		event = &Event{}
+	}
+	event.Type, event.Values, event.Chunk = class, m, c.info
+	if err := fn(event); err != nil {
 		return &handlerError{err}
 	}
 	return nil

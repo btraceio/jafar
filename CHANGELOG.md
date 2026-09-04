@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Same value model as the Java untyped API: events as `map[string]any`, lazy per-chunk
     constant-pool resolution, `@Timestamp`/`@Timespan` tick normalisation
   - Parser only - no JfrPath, no shell, no CLI; the typed API is not ported
+  - Benchmark suite mirroring the JMH untyped-parser workloads, plus the constant-pool
+    resolution axis those do not isolate
+  - Allocation work: memoised deep constant-pool resolution, metadata decoded straight into
+    its target objects instead of an intermediate element tree, block-allocated constant-pool
+    references, and an opt-in `Options.ReuseValues` that recycles the objects an event decodes
+    into (89% fewer bytes and 1.85x faster on the reference recording)
 - **pprof-parser module** - Standalone pprof profile parser extracted from `pprof-shell`
   - Public API in `io.jafar.pprof.api` (`PprofParser`, `PprofProfile`); wire decoding in `io.jafar.pprof.internal`
   - `pprof-shell`, `jfr-mcp`, and `jfr2pprof` now consume the parser API instead of shell internals

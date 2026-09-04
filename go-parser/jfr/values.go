@@ -78,16 +78,23 @@ func Resolve(v any) any {
 }
 
 // ResolveDeep resolves every constant pool reference reachable from v,
-// returning a structure built only from maps, slices and scalars. Reference
-// cycles, which the constant pools of a JFR recording routinely contain, are
-// broken by returning nil for an entry already being resolved on the current
-// path.
+// returning a structure built only from maps, slices and scalars.
 //
-// The result is a copy; the caller may modify it freely. Resolving a whole
-// event deeply can be expensive, as it materialises everything the event
-// transitively references.
+// Resolved constant pool entries are memoised per entry, so a stack trace
+// shared by ten thousand events is materialised once rather than once per
+// event. The result is therefore NOT a private copy: sub-structures reached
+// through a constant pool reference are shared between calls and between
+// events, and must be treated as read-only. The map passed in is always copied,
+// so the event's own fields can be modified freely.
+//
+// Reference cycles, which the constant pools of a JFR recording can contain
+// through the class/class loader graph, are broken by returning nil for an
+// entry already being resolved on the current path. Entries whose subtree
+// crosses such a back edge are resolved but not memoised, because their value
+// depends on where the walk entered them.
 func ResolveDeep(v any) any {
-	return resolveDeep(v, make(map[*constantPool]map[int64]bool))
+	value, _ := resolveDeep(v, make(map[deepKey]int), 0)
+	return value
 }
 
 // ResolveDeepMap is ResolveDeep for a decoded event.
@@ -96,36 +103,65 @@ func ResolveDeepMap(m map[string]any) map[string]any {
 	return resolved
 }
 
-func resolveDeep(v any, visiting map[*constantPool]map[int64]bool) any {
+// deepKey identifies a constant pool entry across a deep resolution.
+type deepKey struct {
+	pool  *constantPool
+	index int64
+}
+
+// noBackEdge marks a subtree that contains no reference back to an entry still
+// being resolved, and is therefore safe to memoise.
+const noBackEdge = int(^uint(0) >> 1)
+
+// resolveDeep returns the resolved value along with the shallowest path depth
+// any back edge in its subtree points at. A value is safe to memoise only when
+// that depth is below its own, meaning no cycle reaches into it.
+func resolveDeep(v any, onPath map[deepKey]int, depth int) (any, int) {
 	switch value := v.(type) {
 	case *Ref:
 		if value.pool == nil {
-			return nil
+			return nil, noBackEdge
 		}
-		seen := visiting[value.pool]
-		if seen == nil {
-			seen = make(map[int64]bool)
-			visiting[value.pool] = seen
+		k := deepKey{value.pool, value.index}
+		if cached, ok := value.pool.deepCache[k.index]; ok {
+			return cached, noBackEdge
 		}
-		if seen[value.index] {
-			return nil
+		if at, ok := onPath[k]; ok {
+			return nil, at
 		}
-		seen[value.index] = true
-		defer delete(seen, value.index)
-		return resolveDeep(value.Value(), visiting)
+		onPath[k] = depth
+		resolved, minBack := resolveDeep(value.Value(), onPath, depth+1)
+		delete(onPath, k)
+		if minBack > depth {
+			if value.pool.deepCache == nil {
+				value.pool.deepCache = make(map[int64]any)
+			}
+			value.pool.deepCache[k.index] = resolved
+		}
+		return resolved, minBack
 	case map[string]any:
 		out := make(map[string]any, len(value))
-		for k, item := range value {
-			out[k] = resolveDeep(item, visiting)
+		minBack := noBackEdge
+		for name, item := range value {
+			resolved, back := resolveDeep(item, onPath, depth)
+			if back < minBack {
+				minBack = back
+			}
+			out[name] = resolved
 		}
-		return out
+		return out, minBack
 	case *Array:
 		out := make([]any, len(value.Values))
+		minBack := noBackEdge
 		for i, item := range value.Values {
-			out[i] = resolveDeep(item, visiting)
+			resolved, back := resolveDeep(item, onPath, depth)
+			if back < minBack {
+				minBack = back
+			}
+			out[i] = resolved
 		}
-		return out
+		return out, minBack
 	default:
-		return v
+		return v, noBackEdge
 	}
 }

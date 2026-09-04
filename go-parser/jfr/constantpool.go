@@ -15,7 +15,10 @@ type constantPool struct {
 	cache   map[int64]any
 	pending map[int64]bool
 	errors  map[int64]error
-	chunk   *chunkParser
+	// deepCache memoises fully resolved entries for ResolveDeep. Created on
+	// first use, since most consumers never resolve deeply.
+	deepCache map[int64]any
+	chunk     *chunkParser
 }
 
 func newConstantPool(chunk *chunkParser, typeID int64, hint int) *constantPool {
@@ -125,9 +128,14 @@ func (c *chunkParser) decodeConstant(ct *ClassType, offset int) (any, error) {
 	saved := r.pos
 	savedErr := r.err
 	r.err = nil
+	// A constant pool value is cached in its pool and outlives the event that
+	// first resolved it, so it must never be built from an event's arena.
+	savedArena := c.arena
+	c.arena = nil
 	defer func() {
 		r.pos = saved
 		r.err = savedErr
+		c.arena = savedArena
 	}()
 	r.seek(offset)
 	if r.err != nil {

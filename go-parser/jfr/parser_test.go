@@ -494,3 +494,196 @@ func TestChunkHeaders(t *testing.T) {
 		t.Errorf("header timing = %+v", h)
 	}
 }
+
+func TestResolveDeepBreaksCycles(t *testing.T) {
+	events := parseAll(t, cyclicRecording(), Options{OnError: FailOnError})
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// Both events walk the same cycle, so the second must see exactly what the
+	// first saw: a memoised truncation would corrupt it.
+	for i, e := range events {
+		resolved := ResolveDeepMap(e.Values)
+		node, ok := resolved["node"].(map[string]any)
+		if !ok {
+			t.Fatalf("event %d: node = %#v, want a map", i, resolved["node"])
+		}
+		if node["name"] != "a" {
+			t.Errorf("event %d: node.name = %#v, want a", i, node["name"])
+		}
+		next, ok := node["next"].(map[string]any)
+		if !ok {
+			t.Fatalf("event %d: node.next = %#v, want a map", i, node["next"])
+		}
+		if next["name"] != "b" {
+			t.Errorf("event %d: node.next.name = %#v, want b", i, next["name"])
+		}
+		// The back edge to entry 1 is broken rather than followed.
+		if v, present := next["next"]; !present || v != nil {
+			t.Errorf("event %d: node.next.next = %#v, want nil at the cycle", i, v)
+		}
+	}
+}
+
+func TestResolveDeepMemoisesAcyclicEntries(t *testing.T) {
+	events := parseAll(t, testRecording(), Options{OnError: FailOnError})
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	first := ResolveDeepMap(events[0].Values)
+	if got := first["symbol"]; !reflect.DeepEqual(got, map[string]any{"string": "sym-seven"}) {
+		t.Fatalf("symbol = %#v", got)
+	}
+
+	// A second resolution of the same constant pool entry must hand back the
+	// memoised structure rather than building a fresh one.
+	again := ResolveDeepMap(events[0].Values)
+	if !sameMap(first["symbol"], again["symbol"]) {
+		t.Error("resolving the same constant pool entry twice rebuilt the value instead of reusing it")
+	}
+	// The event's own fields are always freshly built, so they stay writable.
+	if sameMap(first, again) {
+		t.Error("the event map itself must not be shared between resolutions")
+	}
+}
+
+// sameMap reports whether two values are the same map instance.
+func sameMap(a, b any) bool {
+	am, aok := a.(map[string]any)
+	bm, bok := b.(map[string]any)
+	if !aok || !bok {
+		return false
+	}
+	return reflect.ValueOf(am).Pointer() == reflect.ValueOf(bm).Pointer()
+}
+
+// snapshot renders an event into a form that survives value recycling, so that
+// a recycled parse can be compared against a fresh one.
+func snapshot(e *Event) map[string]any {
+	return ResolveDeepMap(e.Values)
+}
+
+func parseSnapshots(t *testing.T, data []byte, reuse bool) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	err := NewParser(data).ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
+		out = append(out, snapshot(e))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse (reuse=%t): %v", reuse, err)
+	}
+	return out
+}
+
+func TestReuseValuesDecodesIdentically(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"synthetic": testRecording(),
+		"cyclic":    cyclicRecording(),
+		"bag":       bagRecording(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fresh := parseSnapshots(t, data, false)
+			reused := parseSnapshots(t, data, true)
+			if !reflect.DeepEqual(fresh, reused) {
+				t.Errorf("ReuseValues changed the decoded values\n fresh  = %#v\n reused = %#v", fresh, reused)
+			}
+		})
+	}
+}
+
+func TestReuseValuesHandlesVariableArrayLength(t *testing.T) {
+	want := [][]string{{"x", "y", "z"}, {}, {"only"}, {"p", "q"}}
+	i := 0
+	err := NewParser(bagRecording()).ParseWith(Options{ReuseValues: true, OnError: FailOnError}, func(e *Event) error {
+		arr, ok := e.Values["items"].(*Array)
+		if !ok {
+			t.Fatalf("event %d: items = %#v, want *Array", i, e.Values["items"])
+		}
+		if arr.Len() != len(want[i]) {
+			t.Fatalf("event %d: %d items, want %d", i, arr.Len(), len(want[i]))
+		}
+		for j, item := range arr.Values {
+			m, ok := item.(map[string]any)
+			if !ok {
+				t.Fatalf("event %d item %d: %#v, want a map", i, j, item)
+			}
+			if m["b"] != want[i][j] {
+				t.Errorf("event %d item %d: b = %#v, want %q", i, j, m["b"], want[i][j])
+			}
+			if m["a"] != int64(j) {
+				t.Errorf("event %d item %d: a = %#v, want %d", i, j, m["a"], j)
+			}
+		}
+		i++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if i != len(want) {
+		t.Errorf("saw %d events, want %d", i, len(want))
+	}
+}
+
+func TestReuseValuesRecyclesTheEventMap(t *testing.T) {
+	var seen []uintptr
+	err := NewParser(bagRecording()).ParseWith(Options{ReuseValues: true, OnError: FailOnError}, func(e *Event) error {
+		seen = append(seen, reflect.ValueOf(e.Values).Pointer())
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected several events, got %d", len(seen))
+	}
+	for i, p := range seen[1:] {
+		if p != seen[0] {
+			t.Errorf("event %d used a different map; ReuseValues should hand back the same one", i+1)
+		}
+	}
+}
+
+func TestWithoutReuseValuesEventsStayValid(t *testing.T) {
+	var kept []map[string]any
+	err := NewParser(bagRecording()).Parse(func(e *Event) error {
+		kept = append(kept, e.Values)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The default contract lets a handler keep events; each must still hold its
+	// own values afterwards.
+	labels := []string{"three", "zero", "one", "two"}
+	for i, m := range kept {
+		if m["label"] != labels[i] {
+			t.Errorf("kept event %d: label = %#v, want %q", i, m["label"], labels[i])
+		}
+	}
+}
+
+func TestReuseValuesKeepsConstantPoolValues(t *testing.T) {
+	// A value resolved from a constant pool is cached in its pool, so it must
+	// survive the events that follow the one that resolved it.
+	var first map[string]any
+	err := NewParser(cyclicRecording()).ParseWith(Options{ReuseValues: true, OnError: FailOnError}, func(e *Event) error {
+		if first == nil {
+			ref := e.Values["node"].(*Ref)
+			first = ref.Map()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if first == nil {
+		t.Fatal("no event was decoded")
+	}
+	if first["name"] != "a" {
+		t.Errorf("constant pool value was recycled: name = %#v, want a", first["name"])
+	}
+}

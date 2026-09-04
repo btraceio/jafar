@@ -110,6 +110,9 @@ type ClassType struct {
 	Settings map[string]*Setting
 
 	primitive bool
+	// rawID is the "id" attribute as written, parsed once the element is
+	// complete.
+	rawID string
 	// temporal caches the per-field tick normalisation kinds; see temporal.go.
 	temporal map[string]int
 }
@@ -202,16 +205,6 @@ type metadataEvent struct {
 	Metadata   *Metadata
 }
 
-// element is the generic metadata element representation used while decoding;
-// every element is a name, a set of string attributes and a list of children.
-type element struct {
-	name       string
-	attributes map[string]string
-	children   []*element
-}
-
-func (e *element) attr(key string) string { return e.attributes[key] }
-
 // readMetadata decodes the metadata event located at the reader's current
 // position and builds the chunk type universe from it.
 func readMetadata(r *reader) (*metadataEvent, error) {
@@ -255,109 +248,216 @@ func readMetadata(r *reader) (*metadataEvent, error) {
 		md.strings[i] = s
 	}
 
-	root, err := readElement(r, md, 0)
-	if err != nil {
+	if _, err := readElement(r, md, 0); err != nil {
 		return nil, err
 	}
-	if err := buildTypes(md, root); err != nil {
-		return nil, err
-	}
+	resolveReferences(md)
 	if str := md.ClassByName("java.lang.String"); str != nil {
 		md.stringTypeID = str.ID
 	}
 	return ev, r.err
 }
 
+// Metadata elements are decoded straight into the objects they describe. The
+// element name identifies the kind, so attributes can be written into the
+// target as they are read and children attached as they are parsed - there is
+// no intermediate element tree, which on a type-rich chunk is the bulk of the
+// parser's fixed cost.
+const (
+	elemUnknown = iota
+	elemClass
+	elemField
+	elemAnnotation
+	elemSetting
+)
+
+func elementKind(name string) int {
+	switch name {
+	case "class":
+		return elemClass
+	case "field":
+		return elemField
+	case "annotation":
+		return elemAnnotation
+	case "setting":
+		return elemSetting
+	default:
+		// "root", "metadata", "region" and anything a future writer adds carry
+		// no data this parser needs, but their children still do.
+		return elemUnknown
+	}
+}
+
+// parsedElement is the decoded element handed back to its parent. It is a value
+// type: the only allocations are the objects the caller keeps.
+type parsedElement struct {
+	kind    int
+	class   *ClassType
+	field   *Field
+	ann     *Annotation
+	setting *Setting
+}
+
+// setAttribute writes one attribute into the element being decoded.
+func (e *parsedElement) setAttribute(key, value string) {
+	switch e.kind {
+	case elemClass:
+		switch key {
+		case "id":
+			e.class.rawID = value
+		case "name":
+			e.class.Name = value
+		case "superType":
+			e.class.SuperType = value
+		case "simpleType":
+			e.class.SimpleType = value == "true"
+		}
+	case elemField:
+		switch key {
+		case "name":
+			e.field.Name = value
+		case "class":
+			e.field.typeID, e.field.typeName = classRef(value)
+		case "constantPool":
+			e.field.ConstantPool = value == "true"
+		case "dimension":
+			if v, err := strconv.Atoi(value); err == nil {
+				e.field.Dimension = v
+			}
+		}
+	case elemAnnotation:
+		switch key {
+		case "class":
+			e.ann.classID, e.ann.className = classRef(value)
+		case "value":
+			e.ann.Value = value
+		}
+	case elemSetting:
+		switch key {
+		case "name":
+			e.setting.Name = value
+		case "class":
+			e.setting.classID, e.setting.className = classRef(value)
+		case "defaultValue":
+			e.setting.DefaultValue = value
+		}
+	}
+}
+
+// addChild attaches a decoded child element to its parent.
+func (e *parsedElement) addChild(child parsedElement) {
+	switch e.kind {
+	case elemClass:
+		switch child.kind {
+		case elemField:
+			e.class.Fields = append(e.class.Fields, child.field)
+		case elemAnnotation:
+			e.class.Annotations = append(e.class.Annotations, child.ann)
+		case elemSetting:
+			if e.class.Settings == nil {
+				e.class.Settings = make(map[string]*Setting)
+			}
+			e.class.Settings[child.setting.Name] = child.setting
+		}
+	case elemField:
+		if child.kind == elemAnnotation {
+			e.field.Annotations = append(e.field.Annotations, child.ann)
+		}
+	case elemAnnotation:
+		if child.kind == elemAnnotation {
+			e.ann.Annotations = append(e.ann.Annotations, child.ann)
+		}
+	}
+}
+
 // maxElementDepth guards against malformed metadata driving unbounded
 // recursion.
 const maxElementDepth = 64
 
-func readElement(r *reader, md *Metadata, depth int) (*element, error) {
-	if depth > maxElementDepth {
-		return nil, fmt.Errorf("metadata element nesting exceeds %d levels", maxElementDepth)
-	}
+// readElement decodes one metadata element and everything below it. Classes
+// register themselves as they are completed, so a class nested under an element
+// this parser does not recognise is still picked up.
+func readElement(r *reader, md *Metadata, depth int) (parsedElement, error) {
+	var el parsedElement
 	nameIdx := r.readVarint()
 	if r.err != nil {
-		return nil, r.err
+		return el, r.err
+	}
+	if depth > maxElementDepth {
+		return el, fmt.Errorf("metadata element nesting exceeds %d levels", maxElementDepth)
 	}
 	name, err := md.str(nameIdx)
 	if err != nil {
-		return nil, err
+		return el, err
 	}
-	e := &element{name: name}
+	el.kind = elementKind(name)
+	switch el.kind {
+	case elemClass:
+		el.class = &ClassType{ID: -1}
+	case elemField:
+		el.field = &Field{Dimension: -1, typeID: -1}
+	case elemAnnotation:
+		el.ann = &Annotation{classID: -1}
+	case elemSetting:
+		el.setting = &Setting{classID: -1}
+	}
 
 	attrCount := r.readVarint()
 	if r.err != nil {
-		return nil, r.err
+		return el, r.err
 	}
 	if attrCount < 0 || attrCount > int64(r.remaining()) {
-		return nil, fmt.Errorf("metadata element %q: implausible attribute count %d", name, attrCount)
-	}
-	if attrCount > 0 {
-		e.attributes = make(map[string]string, attrCount)
+		return el, fmt.Errorf("metadata element %q: implausible attribute count %d", name, attrCount)
 	}
 	for i := int64(0); i < attrCount; i++ {
 		k := r.readVarint()
 		v := r.readVarint()
 		if r.err != nil {
-			return nil, r.err
+			return el, r.err
 		}
 		key, err := md.str(k)
 		if err != nil {
-			return nil, err
+			return el, err
 		}
 		value, err := md.str(v)
 		if err != nil {
-			return nil, err
+			return el, err
 		}
-		e.attributes[key] = value
+		el.setAttribute(key, value)
 	}
 
 	childCount := r.readVarint()
 	if r.err != nil {
-		return nil, r.err
+		return el, r.err
 	}
 	if childCount < 0 || childCount > int64(r.remaining()) {
-		return nil, fmt.Errorf("metadata element %q: implausible child count %d", name, childCount)
+		return el, fmt.Errorf("metadata element %q: implausible child count %d", name, childCount)
 	}
 	for i := int64(0); i < childCount; i++ {
 		child, err := readElement(r, md, depth+1)
 		if err != nil {
-			return nil, err
+			return el, err
 		}
-		e.children = append(e.children, child)
+		el.addChild(child)
 	}
-	return e, nil
+
+	if el.kind == elemClass {
+		id, err := parseTypeID(el.class.rawID)
+		if err != nil {
+			return el, fmt.Errorf("metadata class %q: %w", el.class.Name, err)
+		}
+		el.class.ID = id
+		el.class.primitive = primitiveTypeNames[el.class.Name]
+		md.addClass(el.class)
+	}
+	return el, nil
 }
 
-// buildTypes walks the decoded element tree, materialises every declared type
-// and then resolves the cross references (field types, annotation types,
-// setting types) that may point forward.
-func buildTypes(md *Metadata, root *element) error {
-	var classes []*ClassType
-	var walk func(e *element) error
-	walk = func(e *element) error {
-		if e.name == "class" {
-			c, err := buildClass(e)
-			if err != nil {
-				return err
-			}
-			md.addClass(c)
-			classes = append(classes, c)
-			return nil
-		}
-		for _, child := range e.children {
-			if err := walk(child); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := walk(root); err != nil {
-		return err
-	}
-
-	for _, c := range classes {
+// resolveReferences links the type references collected while decoding. It runs
+// once the whole metadata event has been read, because a field may reference a
+// type declared after it.
+func resolveReferences(md *Metadata) {
+	for _, c := range md.Classes {
 		for _, f := range c.Fields {
 			f.Type = resolveClass(md, f.typeID, f.typeName)
 			resolveAnnotations(md, f.Annotations)
@@ -367,7 +467,6 @@ func buildTypes(md *Metadata, root *element) error {
 			s.Type = resolveClass(md, s.classID, s.className)
 		}
 	}
-	return nil
 }
 
 func resolveClass(md *Metadata, id int64, name string) *ClassType {
@@ -387,75 +486,6 @@ func resolveAnnotations(md *Metadata, annotations []*Annotation) {
 		a.Type = resolveClass(md, a.classID, a.className)
 		resolveAnnotations(md, a.Annotations)
 	}
-}
-
-func buildClass(e *element) (*ClassType, error) {
-	id, err := parseTypeID(e.attr("id"))
-	if err != nil {
-		return nil, fmt.Errorf("metadata class %q: %w", e.attr("name"), err)
-	}
-	c := &ClassType{
-		ID:         id,
-		Name:       e.attr("name"),
-		SuperType:  e.attr("superType"),
-		SimpleType: e.attr("simpleType") == "true",
-	}
-	c.primitive = primitiveTypeNames[c.Name]
-	for _, child := range e.children {
-		switch child.name {
-		case "field":
-			c.Fields = append(c.Fields, buildField(child))
-		case "annotation":
-			c.Annotations = append(c.Annotations, buildAnnotation(child))
-		case "setting":
-			s := buildSetting(child)
-			if c.Settings == nil {
-				c.Settings = make(map[string]*Setting)
-			}
-			c.Settings[s.Name] = s
-		}
-	}
-	return c, nil
-}
-
-func buildField(e *element) *Field {
-	f := &Field{
-		Name:         e.attr("name"),
-		ConstantPool: e.attr("constantPool") == "true",
-		Dimension:    -1,
-	}
-	if d := e.attr("dimension"); d != "" {
-		if v, err := strconv.Atoi(d); err == nil {
-			f.Dimension = v
-		}
-	}
-	f.typeID, f.typeName = classRef(e.attr("class"))
-	for _, child := range e.children {
-		if child.name == "annotation" {
-			f.Annotations = append(f.Annotations, buildAnnotation(child))
-		}
-	}
-	return f
-}
-
-func buildAnnotation(e *element) *Annotation {
-	a := &Annotation{Value: e.attr("value")}
-	a.classID, a.className = classRef(e.attr("class"))
-	for _, child := range e.children {
-		if child.name == "annotation" {
-			a.Annotations = append(a.Annotations, buildAnnotation(child))
-		}
-	}
-	return a
-}
-
-func buildSetting(e *element) *Setting {
-	s := &Setting{
-		Name:         e.attr("name"),
-		DefaultValue: e.attr("defaultValue"),
-	}
-	s.classID, s.className = classRef(e.attr("class"))
-	return s
 }
 
 // classRef interprets a "class" attribute. Well-formed recordings carry a
