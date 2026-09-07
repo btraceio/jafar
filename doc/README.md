@@ -48,6 +48,9 @@ Documentation for the interactive shell command-line interface (JFR, pprof, heap
 | [BackendQuickstart.md](cli/BackendQuickstart.md) | Build a custom backend in 10 minutes |
 | [CommandRecording.md](cli/CommandRecording.md) | Recording and replaying command workflows |
 | [ScriptExecution.md](cli/ScriptExecution.md) | Executing scripts for batch analysis |
+| [LlmSetup.md](cli/LlmSetup.md) | Setting up the `ask` command: API key and keyless auth, settings, cost |
+| [AskTutorial.md](cli/AskTutorial.md) | Asking a recording questions in plain language (and learning JfrPath by doing it) |
+| [LlmPrivacy.md](cli/LlmPrivacy.md) | Exactly what leaves your machine, redaction, and untrusted recordings |
 | [pprof-shell-tutorial.md](cli/pprof-shell-tutorial.md) | Tutorial for pprof profile analysis |
 | [hdump-shell-tutorial.md](cli/hdump-shell-tutorial.md) | Tutorial for heap dump analysis |
 
@@ -70,6 +73,7 @@ Documentation for the Model Context Protocol server for AI-assisted JFR analysis
 | [Tutorial.md](mcp/Tutorial.md) | Complete MCP server setup and usage guide |
 | [JBANGUsage.md](mcp/JBANGUsage.md) | JBang distribution guide for MCP server |
 | [JBANGCatalogSetup.md](mcp/JBANGCatalogSetup.md) | Setting up external JBang catalog repository |
+| [WhenToUseWhich.md](mcp/WhenToUseWhich.md) | In-shell `ask` vs the MCP server vs the `jafar-perf` plugin |
 
 **Start here if you want to:**
 - Use Claude Desktop to analyze JFR files

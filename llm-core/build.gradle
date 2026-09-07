@@ -1,0 +1,34 @@
+plugins {
+    id 'java-library'
+}
+
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // The SPI lives in shell-core; only this module sees the Anthropic SDK, so a shell that
+    // does not depend on llm-core carries no LLM dependency at all.
+    api project(':shell-core')
+    implementation 'com.anthropic:anthropic-java:2.34.0'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'Anthropic-backed LLM support for the Jafar shells'

@@ -38,6 +38,8 @@ The project is organized as a multi-module Gradle build with the following struc
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
 - **jfr-shell-tck/**: Technology Compatibility Kit for validating backend plugin implementations
 - **jfr-mcp/**: MCP (Model Context Protocol) server enabling AI agents to analyze JFR recordings
+- **llm-core/**: Anthropic-backed LLM support for the shells (the `ask` command); the SPI lives in
+  `shell-core` so this module is optional at runtime and discovered via ServiceLoader
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes); public API in `io.jafar.hdump.api`, implementation details in `impl`/`internal`/`index`
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **pprof-parser/**: pprof profile parser (gzip + protobuf wire format); public API in `io.jafar.pprof.api`, wire decoding in `internal`
@@ -390,6 +392,35 @@ de-duplicate and merge — see `Findings.merge`. When adding a tool that makes a
 findings in this shape rather than inventing another one.
 
 See [jfr-mcp/README.md](jfr-mcp/README.md) and [doc/mcp/Tutorial.md](doc/mcp/Tutorial.md) for full documentation.
+
+### LLM in the Shell (`ask`)
+`jfr-shell` can translate a question into a query and run it: `ask <question>`, `explain`,
+`llm status`, `llm dry-run <question>`, `llm cost`.
+
+Architecture, and the reasons it is shaped this way:
+- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. The
+  Anthropic SDK is only in **llm-core**, which `jfr-shell` takes as `runtimeOnly` and discovers via
+  `ServiceLoader`. Dropping that dependency removes the SDK entirely and the commands degrade to a
+  clear message — air-gapped use is a supported configuration, not an accident.
+- **The model never sees raw events.** It composes a query; the shell runs it. Recording size does
+  not affect cost. Do not add code paths that feed event data to the model.
+- `LanguageReference` strings are the **cached prompt prefix and must stay byte-stable** between
+  calls; anything varying in there costs full price every request.
+- Recording-derived content is fenced in `<<<RECORDING_DATA ... RECORDING_DATA>>>` markers and the
+  system prompt declares it data, never instruction. Thread names and heap strings are
+  attacker-controllable when the recording came from someone else.
+- Egress redaction reuses the same field-name model as the scrubber in `tools/`.
+- **Unit tests must never reach a real backend.** `llm-core` is on `jfr-shell`'s test runtime
+  classpath, so `LlmCommandsTest` pins `llm.backend` to a non-existent id; without that, a machine
+  with `ANTHROPIC_API_KEY` set would make live billable calls during the test suite.
+
+Both authentication modes are the SDK's job (`AnthropicOkHttpClient.fromEnv()`): `ANTHROPIC_API_KEY`,
+or a keyless OAuth profile from `ant auth login`. Jafar contributes only the diagnostics, because
+the SDK does not fail fast when credentials are absent.
+
+See [doc/cli/LlmSetup.md](doc/cli/LlmSetup.md), [doc/cli/LlmPrivacy.md](doc/cli/LlmPrivacy.md), and
+[doc/plans/llm-in-the-shell-handoff.md](doc/plans/llm-in-the-shell-handoff.md) for the seams left
+for the planned agentic mode.
 
 ### Claude Code Plugin (`plugins/jafar-perf`)
 The repository ships a Claude Code plugin that turns the MCP server into a guided performance

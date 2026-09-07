@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`ask` — an LLM inside the shell** (`llm-core` module, `io.jafar.shell.core.llm` in `shell-core`)
+  - `ask <question>` turns a question into a query, **prints it**, and runs it; `explain` describes
+    the last result; `llm status`, `llm dry-run <question>` and `llm cost` cover setup and egress
+  - Works for every query language the current session uses — JfrPath, HdumpPath, and the shared
+    pprof/OTLP samples grammar
+  - **Both authentication modes come from the SDK**: `ANTHROPIC_API_KEY`, or a keyless OAuth profile
+    written by `ant auth login`. Jafar adds no auth code, only diagnostics — the SDK does not fail
+    fast when credentials are missing, so `llm status` reports which source wins and catches the
+    three traps (a stale key shadowing a profile, an empty-but-set key, both credentials at once)
+  - **The model never sees raw events.** It composes a query and the shell runs it, so a 900 MB
+    recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
+    prefix
+  - **Egress control**: result rows are redacted by field name before leaving the process (paths,
+    addresses, hosts, messages, string values), truncated to `llm.max-rows`, and `llm dry-run`
+    prints the exact bytes a real call would send without sending them
+  - **Recording content is treated as untrusted input**: thread names, exception messages and heap
+    string values are attacker-controllable when the recording came from a third party, so they are
+    fenced in explicit data markers and the tool surface is read-only
+  - Optional at runtime: the SPI is in `shell-core` with no new dependencies and the backend is
+    discovered via `ServiceLoader`, so a build without `llm-core` carries no Anthropic SDK and every
+    other command is unchanged
+  - Settings via `set`: `llm.enabled`, `llm.model` (default `claude-opus-5`), `llm.backend`,
+    `llm.max-tokens`, `llm.max-rows`, `llm.confirm`, `llm.redact`, `llm.redact-fields`
+  - Docs: [LlmSetup](doc/cli/LlmSetup.md), [AskTutorial](doc/cli/AskTutorial.md),
+    [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
+    [the handoff](doc/plans/llm-in-the-shell-handoff.md) describing the seams left for an agentic
+    mode
+  - Not wired into the unified `jafar-shell`, which has its own command chain and no variable store,
+    so `llm.*` settings would not resolve there. The live API path is unit-tested against a fake
+    backend but has not been exercised against api.anthropic.com — see the handoff, section 6
 - **`jafar-perf` Claude Code plugin** (`plugins/jafar-perf/`) - methodology layer over the MCP server
   - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
   - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
