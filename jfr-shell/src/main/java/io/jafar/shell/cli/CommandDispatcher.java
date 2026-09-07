@@ -65,6 +65,7 @@ public class CommandDispatcher {
 
   private final JfrSelector selector;
   private QueryEvaluator moduleEvaluator;
+  private LlmCommands llmCommands;
 
   public CommandDispatcher(
       SessionManager<? extends Session> sessions, IO io, SessionChangeListener listener) {
@@ -133,6 +134,105 @@ public class CommandDispatcher {
    * Returns the current session as a {@link JFRSession}, or {@code null} if no session is open or
    * the current session is not a JFR session.
    */
+  /**
+   * Builds the LLM command handler on first use, adapting this dispatcher to {@link
+   * LlmCommands.Host}. Construction is lazy so a shell that never runs an LLM command never loads
+   * the backend.
+   */
+  private LlmCommands llmCommands() {
+    if (llmCommands == null) {
+      llmCommands =
+          new LlmCommands(
+              new LlmCommands.Host() {
+                @Override
+                public void println(String line) {
+                  io.println(line);
+                }
+
+                @Override
+                public java.util.Optional<String> currentModuleId() {
+                  var cur = sessions.current();
+                  if (cur.isEmpty()) {
+                    return java.util.Optional.empty();
+                  }
+                  return java.util.Optional.of(cur.get().session.getType());
+                }
+
+                @Override
+                public List<String> availableTypes() {
+                  var cur = sessions.current();
+                  if (cur.isEmpty()) {
+                    return List.of();
+                  }
+                  try {
+                    return cur.get().session.getAvailableTypes().stream().sorted().toList();
+                  } catch (Exception e) {
+                    return List.of();
+                  }
+                }
+
+                @Override
+                public List<Map<String, Object>> runQuery(String query) throws Exception {
+                  JFRSession jfr = currentJfrSession();
+                  if (jfr != null && selector != null) {
+                    return selector.select(jfr, query);
+                  }
+                  var cur = sessions.current();
+                  if (cur.isPresent() && moduleEvaluator != null) {
+                    Object parsed = moduleEvaluator.parse(query);
+                    Object result = moduleEvaluator.evaluate(cur.get().session, parsed);
+                    if (result instanceof List<?> list) {
+                      @SuppressWarnings("unchecked")
+                      List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
+                      return rows;
+                    }
+                    return List.of();
+                  }
+                  throw new IllegalStateException("No query evaluator available for this session");
+                }
+
+                @Override
+                public void renderRows(List<Map<String, Object>> rows) {
+                  if (rows.isEmpty()) {
+                    io.println("(empty result)");
+                    return;
+                  }
+                  TableRenderer.render(rows, io);
+                }
+
+                @Override
+                public String setting(String name) {
+                  // Session-scoped settings win over global ones, matching how 'set' behaves.
+                  var cur = sessions.current();
+                  if (cur.isPresent()) {
+                    String value = readVar(cur.get().variables, name);
+                    if (value != null) {
+                      return value;
+                    }
+                  }
+                  return readVar(globalStore, name);
+                }
+
+                private String readVar(VariableStore store, String name) {
+                  if (store == null) {
+                    return null;
+                  }
+                  VariableStore.Value value = store.get(name);
+                  if (value == null) {
+                    return null;
+                  }
+                  try {
+                    Object raw = value.get();
+                    return raw == null ? null : String.valueOf(raw);
+                  } catch (Exception e) {
+                    return null;
+                  }
+                }
+              });
+    }
+    return llmCommands;
+  }
+
   private JFRSession currentJfrSession() {
     var cur = sessions.current();
     if (cur.isPresent() && cur.get().session instanceof JFRSession jfr) {
@@ -232,6 +332,15 @@ public class CommandDispatcher {
       }
 
       switch (cmd) {
+        case "ask":
+          llmCommands().ask(String.join(" ", args));
+          return true;
+        case "explain":
+          llmCommands().explain();
+          return true;
+        case "llm":
+          llmCommands().llm(args);
+          return true;
         case "open":
           cmdOpen(args);
           return true;
@@ -940,6 +1049,11 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
+      io.println("");
+      io.println("Ask (LLM, optional):");
+      io.println("  ask <q>   - Turn a question into a query, show it, and run it");
+      io.println("  explain   - Explain the most recent result");
+      io.println("  llm       - status | dry-run <q> | cost");
       if (isJfr) {
         io.println("");
         io.println("System:");

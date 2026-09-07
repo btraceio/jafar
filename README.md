@@ -508,6 +508,32 @@ jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=mon
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
+## Ask Your Recording a Question
+
+`jfr-shell` can turn a question into a query, show you the query, and run it:
+
+```
+jfr> ask which threads used the most CPU?
+
+# Groups execution samples by thread name and ranks the ten busiest.
+
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+```
+
+The query is always printed — so a wrong guess is visible, and you learn JfrPath as you go.
+The recording itself never leaves your machine: the model composes the query, the shell runs it.
+
+Authenticate with an API key or keylessly with an OAuth profile:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or:
+ant auth login                        # keyless; no static secret to manage
+```
+
+`llm dry-run <question>` prints exactly what would be sent without sending it, and result data is
+redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
+**[the tutorial](doc/cli/AskTutorial.md)** and **[what leaves your machine](doc/cli/LlmPrivacy.md)**.
+
 ## MCP Server
 
 JAFAR includes an MCP (Model Context Protocol) server that enables AI agents like Claude to analyze JFR recordings. See **[jfr-mcp/README.md](jfr-mcp/README.md)** for details.
