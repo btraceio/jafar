@@ -1,0 +1,12 @@
+{
+  "name": "jafar-perf",
+  "displayName": "Jafar Performance Engineer",
+  "description": "Turns the Jafar MCP server into a guided JVM performance analyst: methodology skills for CPU, latency, GC, memory and heap investigations, plus specialist subagents that cite the tool call behind every claim.",
+  "version": "0.1.0",
+  "author": {
+    "name": "btraceio"
+  },
+  "homepage": "https://github.com/btraceio/jafar",
+  "repository": "https://github.com/btraceio/jafar",
+  "license": "Apache-2.0"
+}

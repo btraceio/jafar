@@ -1,5 +1,7 @@
 package io.jafar.mcp.pprof;
 
+import io.jafar.mcp.findings.Findings;
+import io.jafar.mcp.findings.SamplingFindings;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.tool.ProgressReporter;
@@ -522,6 +524,9 @@ public final class PprofTools {
 
       sendProgress(exchange, progressToken, step, totalSteps, "Generating insights...");
       result.put("insights", generatePprofUseInsights(resourceMetrics, profile));
+      result.put(
+          "findings",
+          Findings.toMaps(Findings.merge(SamplingFindings.fromUse(resourceMetrics, "pprof_use"))));
 
       sendProgress(exchange, progressToken, totalSteps, totalSteps, "Done");
       return successResult(result);

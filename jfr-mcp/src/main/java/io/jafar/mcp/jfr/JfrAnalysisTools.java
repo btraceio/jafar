@@ -1,6 +1,8 @@
 package io.jafar.mcp.jfr;
 
 import io.jafar.mcp.config.McpServerConfig;
+import io.jafar.mcp.findings.Finding;
+import io.jafar.mcp.findings.Findings;
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.result.McpResultFactory;
@@ -236,8 +238,7 @@ public final class JfrAnalysisTools {
   }
 
   @SuppressWarnings("unchecked")
-  private List<String> extractFrames(
-      Map<String, Object> event, String direction, Integer maxDepth) {
+  List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
     List<String> frames = new ArrayList<>();
 
     Object stackTrace = event.get("stackTrace");
@@ -1366,7 +1367,7 @@ public final class JfrAnalysisTools {
     }
   }
 
-  private String detectExecutionEventType(SessionRegistry.SessionInfo sessionInfo) {
+  String detectExecutionEventType(SessionRegistry.SessionInfo sessionInfo) {
     String[] candidateTypes = {
       "jdk.ExecutionSample", "datadog.ExecutionSample", "jdk.NativeMethodSample"
     };
@@ -1406,7 +1407,7 @@ public final class JfrAnalysisTools {
     return null;
   }
 
-  private boolean isNativeMethod(String methodName) {
+  boolean isNativeMethod(String methodName) {
     if (methodName == null) return false;
     // C++ mangled names typically have < > :: or start with special chars
     return methodName.contains("<")
@@ -1528,6 +1529,9 @@ public final class JfrAnalysisTools {
       if (includeInsights) {
         result.put("insights", generateUseInsights(resourceMetrics));
         result.put("summary", generateUseSummary(resourceMetrics));
+        result.put(
+            "findings",
+            Findings.toMaps(Findings.merge(JfrFindings.fromUse(resourceMetrics, "jfr_use"))));
       }
 
       sendProgress(exchange, progressToken, totalSteps, totalSteps, "Done");
@@ -2467,6 +2471,8 @@ public final class JfrAnalysisTools {
             "insights",
             generateTsaInsights(
                 threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
+        result.put(
+            "findings", Findings.toMaps(Findings.merge(JfrFindings.fromTsa(result, "jfr_tsa"))));
       }
 
       sendProgress(exchange, progressToken, 3, 3, "Done");
@@ -2973,6 +2979,11 @@ public final class JfrAnalysisTools {
             "includeAnalysis": {
               "type": "boolean",
               "description": "Include full analysis results from triggered tools (default: true)"
+            },
+            "depth": {
+              "type": "string",
+              "enum": ["quick", "full"],
+              "description": "quick = summary-derived thresholds only; full (default) also runs the USE and TSA analyses in-process and merges their findings"
             }
           }
         }
@@ -2981,10 +2992,12 @@ public final class JfrAnalysisTools {
     return new McpServerFeatures.SyncToolSpecification(
         buildTool(
             "jfr_diagnose",
-            "Intelligently diagnoses performance issues in a JFR recording by automatically "
-                + "running appropriate analysis tools based on recording characteristics. "
-                + "Analyzes exception rates, GC pressure, CPU patterns, and suggests next steps. "
-                + "Use this as a first step when exploring an unfamiliar recording.",
+            "Diagnoses performance issues in a JFR recording by running the appropriate analyses "
+                + "and merging their results. Covers exception rates, GC pressure, CPU hotspots, "
+                + "resource bottlenecks (USE) and thread states (TSA), and returns severity-ranked "
+                + "structured findings plus the capability gaps that limit what this recording can "
+                + "answer. Use this as the first step on an unfamiliar recording; pass depth=quick "
+                + "to skip the USE and TSA passes on very large files.",
             schema),
         (exchange, args) -> handleJfrDiagnose(exchange, args.arguments(), progressToken(args)));
   }
@@ -2994,6 +3007,8 @@ public final class JfrAnalysisTools {
       McpSyncServerExchange exchange, Map<String, Object> args, Object progressToken) {
     String sessionId = (String) args.get("sessionId");
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
+    String depth = args.get("depth") instanceof String d ? d : "full";
+    boolean runDeepAnalysis = !"quick".equalsIgnoreCase(depth);
 
     try {
       SessionRegistry.SessionInfo sessionInfo = sessionRegistry.getOrCurrent(sessionId);
@@ -3003,7 +3018,7 @@ public final class JfrAnalysisTools {
       diagnosis.put("sessionId", sessionInfo.id());
 
       // Step 1: Get summary data
-      sendProgress(exchange, progressToken, 0, 4, "Running summary...");
+      sendProgress(exchange, progressToken, 0, 6, "Running summary...");
       CallToolResult summaryResult = handleJfrSummary(null, args, null);
       if (summaryResult.isError()) {
         return summaryResult;
@@ -3017,19 +3032,33 @@ public final class JfrAnalysisTools {
       Long totalEvents = ((Number) summary.get("totalEvents")).longValue();
       Map<String, Object> highlights = (Map<String, Object>) summary.get("highlights");
 
-      List<String> findings = new ArrayList<>();
+      List<String> headlines = new ArrayList<>();
       List<String> recommendations = new ArrayList<>();
+      List<String> capabilityGaps = new ArrayList<>();
+      List<Finding> thresholdFindings = new ArrayList<>();
       Map<String, Object> analyses = new LinkedHashMap<>();
 
       // Step 2: Analyze exception patterns
-      sendProgress(exchange, progressToken, 1, 4, "Analyzing exceptions...");
+      sendProgress(exchange, progressToken, 1, 6, "Analyzing exceptions...");
       if (highlights.containsKey("exceptions")) {
         Map<String, Object> exceptionStats = (Map<String, Object>) highlights.get("exceptions");
         Long exceptionCount = ((Number) exceptionStats.get("totalExceptions")).longValue();
 
         if (exceptionCount > 1000) {
-          findings.add(
+          headlines.add(
               String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+          thresholdFindings.add(
+              Finding.of("exceptions", "rate")
+                  .warning()
+                  .title("High exception rate: %,d exceptions", exceptionCount)
+                  .description(
+                      "Exception construction fills in stack traces, which is expensive when it"
+                          + " happens on a hot path. High rates usually mean control flow by"
+                          + " exception, a misconfiguration, or a failing dependency.")
+                  .source("jfr_diagnose")
+                  .evidence("totalExceptions", exceptionCount)
+                  .action("Identify the dominant exception type and its throw site")
+                  .build());
 
           // Run exception analysis
           CallToolResult exceptionsResult = handleJfrExceptions(null, args, null);
@@ -3042,13 +3071,20 @@ public final class JfrAnalysisTools {
               "Investigate exception types - high exception rates often indicate misconfiguration "
                   + "or error handling issues");
         } else if (exceptionCount > 100) {
-          findings.add(
+          headlines.add(
               String.format("MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+          thresholdFindings.add(
+              Finding.of("exceptions", "rate")
+                  .info()
+                  .title("Moderate exception rate: %,d exceptions", exceptionCount)
+                  .source("jfr_diagnose")
+                  .evidence("totalExceptions", exceptionCount)
+                  .build());
         }
       }
 
       // Step 3: Analyze GC pressure
-      sendProgress(exchange, progressToken, 2, 4, "Analyzing GC pressure...");
+      sendProgress(exchange, progressToken, 2, 6, "Analyzing GC pressure...");
       if (highlights.containsKey("gc")) {
         Map<String, Object> gcStats = (Map<String, Object>) highlights.get("gc");
         if (gcStats.containsKey("totalCollections")) {
@@ -3057,83 +3093,158 @@ public final class JfrAnalysisTools {
           Double totalPauseMs = ((Number) gcStats.get("totalPauseMs")).doubleValue();
 
           if (avgPauseMs > 100 || totalPauseMs > 10000) {
-            findings.add(
+            headlines.add(
                 String.format(
                     "HIGH GC PRESSURE: %,d collections, %.1fms avg pause, %.1fs total pause",
                     gcCount, avgPauseMs, totalPauseMs / 1000.0));
+            thresholdFindings.add(
+                Finding.of("gc", "pressure")
+                    .warning()
+                    .title(
+                        "High GC pressure: %,d collections, %.1f ms average pause",
+                        gcCount, avgPauseMs)
+                    .description(
+                        "Compare total pause against the recording wall clock before acting: the"
+                            + " fraction of time lost to pauses is what matters, not the count.")
+                    .source("jfr_diagnose")
+                    .evidence("totalCollections", gcCount)
+                    .evidence("avgPauseMs", avgPauseMs)
+                    .evidence("totalPauseMs", totalPauseMs)
+                    .action("Find allocation hotspots before tuning collector flags")
+                    .query("events/jdk.GCPhasePause | quantiles(0.5, 0.9, 0.99, path=duration)")
+                    .build());
 
             recommendations.add(
                 "GC pressure indicates memory saturation - consider running jfr_use to analyze "
                     + "memory resource utilization");
 
             // Detect and recommend appropriate allocation event type
-            String allocEventType = detectAllocationEventType(sessionInfo);
-            if (allocEventType != null) {
+            String allocEventTypeForGc = detectAllocationEventType(sessionInfo);
+            if (allocEventTypeForGc != null) {
               recommendations.add(
                   String.format(
                       "Run jfr_flamegraph with %s to identify allocation hotspots",
-                      allocEventType));
+                      allocEventTypeForGc));
             } else {
               recommendations.add(
                   "Allocation profiling not enabled in this recording - consider enabling "
                       + "for future recordings to identify allocation hotspots");
             }
           } else if (avgPauseMs > 50 || totalPauseMs > 5000) {
-            findings.add(
+            headlines.add(
                 String.format(
                     "MODERATE GC PRESSURE: %,d collections, %.1fms avg pause",
                     gcCount, avgPauseMs));
+            thresholdFindings.add(
+                Finding.of("gc", "pressure")
+                    .info()
+                    .title(
+                        "Moderate GC pressure: %,d collections, %.1f ms average pause",
+                        gcCount, avgPauseMs)
+                    .source("jfr_diagnose")
+                    .evidence("totalCollections", gcCount)
+                    .evidence("avgPauseMs", avgPauseMs)
+                    .evidence("totalPauseMs", totalPauseMs)
+                    .build());
           }
         }
       }
 
       // Step 4: Analyze CPU patterns
-      sendProgress(exchange, progressToken, 3, 4, "Analyzing CPU patterns...");
+      sendProgress(exchange, progressToken, 3, 6, "Analyzing CPU patterns...");
       if (highlights.containsKey("cpu")) {
         Map<String, Object> cpuStats = (Map<String, Object>) highlights.get("cpu");
         Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
 
         if (cpuSamples > 5000) {
-          findings.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
+          headlines.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
           CallToolResult hotmethodsResult = handleJfrHotmethods(null, args, null);
-          if (!hotmethodsResult.isError() && includeAnalysis) {
+          if (!hotmethodsResult.isError()) {
             String hotmethodsJson = ((TextContent) hotmethodsResult.content().get(0)).text();
-            analyses.put("hotmethods", MAPPER.readValue(hotmethodsJson, Map.class));
+            Map<String, Object> hotmethods = MAPPER.readValue(hotmethodsJson, Map.class);
+            if (includeAnalysis) {
+              analyses.put("hotmethods", hotmethods);
+            }
+            thresholdFindings.addAll(topHotMethodFindings(hotmethods));
           }
 
           recommendations.add(
               "Run jfr_flamegraph with execution samples to understand full call stacks");
-          recommendations.add(
-              "Consider running jfr_tsa (Thread State Analysis) to understand thread behavior");
         }
       }
 
-      // Step 5: Check allocation profiling availability
+      // Step 5: Resource bottlenecks (USE) - run it rather than only recommending it
+      Map<String, Object> useResult = null;
+      Map<String, Object> tsaResult = null;
+      if (runDeepAnalysis) {
+        sendProgress(exchange, progressToken, 4, 6, "Analyzing resources (USE)...");
+        CallToolResult use = handleJfrUse(null, args, null);
+        if (!use.isError()) {
+          useResult = MAPPER.readValue(((TextContent) use.content().get(0)).text(), Map.class);
+          if (includeAnalysis) {
+            analyses.put("use", useResult);
+          }
+        } else {
+          LOG.debug("USE analysis unavailable during diagnose");
+        }
+
+        // Step 6: Thread states (TSA)
+        sendProgress(exchange, progressToken, 5, 6, "Analyzing thread states (TSA)...");
+        CallToolResult tsa = handleJfrTsa(null, args, null);
+        if (!tsa.isError()) {
+          tsaResult = MAPPER.readValue(((TextContent) tsa.content().get(0)).text(), Map.class);
+          if (includeAnalysis) {
+            analyses.put("tsa", tsaResult);
+          }
+        } else {
+          LOG.debug("TSA analysis unavailable during diagnose");
+        }
+      } else {
+        recommendations.add(
+            "Run jfr_use and jfr_tsa for resource and thread-state analysis "
+                + "(or call jfr_diagnose with depth=full)");
+      }
+
+      // Capability gaps: what this recording cannot answer, stated separately from findings
       String allocEventType = detectAllocationEventType(sessionInfo);
       if (allocEventType != null) {
-        findings.add(
+        headlines.add(
             String.format(
                 "ALLOCATION PROFILING: %s events available for analysis", allocEventType));
       } else {
-        findings.add("ALLOCATION PROFILING: Not enabled in this recording");
+        headlines.add("ALLOCATION PROFILING: Not enabled in this recording");
+        capabilityGaps.add(
+            "Allocation profiling was not enabled, so allocation and memory-churn questions "
+                + "cannot be answered from this recording. Enable with "
+                + "-XX:StartFlightRecording:settings=profile (JDK) or use a profiler that "
+                + "records allocation samples.");
         recommendations.add(
             "Consider enabling allocation profiling (JDK: -XX:StartFlightRecording:settings=profile, "
                 + "Datadog: included by default) for memory analysis");
       }
-
-      // Step 6: Check for blocking patterns (always recommend USE/TSA for comprehensive view)
-      if (totalEvents > 10000) {
-        recommendations.add(
-            "Run jfr_use (USE Method) for comprehensive resource bottleneck analysis "
-                + "(CPU, Memory, Threads, I/O)");
+      if (detectExecutionEventType(sessionInfo) == null) {
+        capabilityGaps.add(
+            "No execution-sample events were found, so CPU attribution is not possible from "
+                + "this recording.");
       }
 
-      // Step 7: Build response
-      diagnosis.put(
-          "findings", findings.isEmpty() ? List.of("No significant issues detected") : findings);
+      // Build the merged, de-duplicated findings list
+      List<Finding> merged =
+          Findings.merge(
+              thresholdFindings,
+              JfrFindings.fromUse(
+                  useResult == null ? null : asStringObjectMap(useResult.get("resources")),
+                  "jfr_use"),
+              JfrFindings.fromTsa(tsaResult, "jfr_tsa"));
+
+      diagnosis.put("findings", Findings.toMaps(merged));
+      diagnosis.put("findingCounts", Findings.countBySeverity(merged));
+      diagnosis.put("headlines", headlines);
       diagnosis.put("recommendations", recommendations);
+      diagnosis.put("capabilityGaps", capabilityGaps);
+      diagnosis.put("analysisDepth", runDeepAnalysis ? "full" : "quick");
 
       if (includeAnalysis && !analyses.isEmpty()) {
         diagnosis.put("detailedAnalysis", analyses);
@@ -3147,13 +3258,69 @@ public final class JfrAnalysisTools {
               "eventTypes", summary.get("totalEventTypes"),
               "highlights", highlights));
 
-      sendProgress(exchange, progressToken, 4, 4, "Done");
+      sendProgress(exchange, progressToken, 6, 6, "Done");
       return successResult(diagnosis);
 
     } catch (Exception e) {
       LOG.error("Failed to diagnose recording: {}", e.getMessage(), e);
       return errorResult("Failed to diagnose recording: " + e.getMessage());
     }
+  }
+
+  /**
+   * Turns the top entries of a {@code jfr_hotmethods} result into findings.
+   *
+   * <p>Only frames above the 5% self-time mark become findings: below that, a single leaf frame is
+   * rarely worth a recommendation on its own, and the flat list is better read as a whole.
+   */
+  @SuppressWarnings("unchecked")
+  private List<Finding> topHotMethodFindings(Map<String, Object> hotmethods) {
+    List<Finding> findings = new ArrayList<>();
+    Object methodsObj = hotmethods.get("methods");
+    Object totalObj = hotmethods.get("totalSamples");
+    if (!(methodsObj instanceof List<?> methods) || !(totalObj instanceof Number total)) {
+      return findings;
+    }
+    long totalSamples = total.longValue();
+    if (totalSamples <= 0) {
+      return findings;
+    }
+    for (Object entry : methods) {
+      if (!(entry instanceof Map<?, ?> raw)) {
+        continue;
+      }
+      Map<String, Object> method = (Map<String, Object>) raw;
+      Object samplesObj = method.get("samples");
+      if (!(samplesObj instanceof Number samples)) {
+        continue;
+      }
+      double pct = samples.doubleValue() * 100.0 / totalSamples;
+      if (pct < 5.0) {
+        continue;
+      }
+      String name = String.valueOf(method.get("method"));
+      findings.add(
+          Finding.of("cpu", "hot-method-" + name)
+              .warning()
+              .title("Hot method: %s holds %.1f%% of execution samples", name, pct)
+              .description(
+                  "Self time only - this is the leaf frame of the sampled stacks, not the cost of"
+                      + " the whole call path.")
+              .source("jfr_hotmethods")
+              .evidence("method", name)
+              .evidence("samples", samples.longValue())
+              .evidence("totalSamples", totalSamples)
+              .evidence("selfPct", pct)
+              .evidence("type", method.get("type"))
+              .action("Use jfr_flamegraph bottom-up to see which call paths reach this frame")
+              .build());
+    }
+    return findings;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> asStringObjectMap(Object value) {
+    return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

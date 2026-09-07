@@ -2,6 +2,7 @@ package io.jafar.mcp;
 
 import io.jafar.mcp.hdump.HdumpTools;
 import io.jafar.mcp.jfr.JfrAnalysisTools;
+import io.jafar.mcp.jfr.JfrCompareTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.mcp.jfr.JfrSessionTools;
 import io.jafar.mcp.lifecycle.BearerAuthFilter;
@@ -9,13 +10,16 @@ import io.jafar.mcp.lifecycle.SseAuthToken;
 import io.jafar.mcp.lifecycle.SsePortRegistry;
 import io.jafar.mcp.otlp.OtlpTools;
 import io.jafar.mcp.pprof.PprofTools;
+import io.jafar.mcp.prompt.JafarPrompts;
 import io.jafar.mcp.query.DefaultQueryEvaluator;
 import io.jafar.mcp.query.DefaultQueryParser;
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
+import io.jafar.mcp.resource.JafarResources;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.McpCrossSessionContext;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
@@ -144,6 +148,9 @@ public final class JafarMcpServer {
   private final OtlpSessionRegistry otlpSessionRegistry;
   private final JfrSessionTools jfrSessionTools;
   private final JfrAnalysisTools jfrAnalysisTools;
+  private final JfrCompareTools jfrCompareTools;
+  private final JafarPrompts jafarPrompts;
+  private final JafarResources jafarResources;
   private final HdumpTools hdumpTools;
   private final PprofTools pprofTools;
   private final OtlpTools otlpTools;
@@ -202,9 +209,25 @@ public final class JafarMcpServer {
     this.jfrAnalysisTools =
         new JfrAnalysisTools(
             sessionRegistry, evaluator, queryParser, resultFactory, progressReporter);
-    this.hdumpTools = new HdumpTools(heapSessionRegistry, resultFactory);
+    this.jfrCompareTools =
+        new JfrCompareTools(
+            sessionRegistry, evaluator, queryParser, resultFactory, this.jfrAnalysisTools);
+    this.hdumpTools =
+        new HdumpTools(
+            heapSessionRegistry,
+            resultFactory,
+            new McpCrossSessionContext(heapSessionRegistry, sessionRegistry));
     this.pprofTools = new PprofTools(pprofSessionRegistry, resultFactory, progressReporter);
     this.otlpTools = new OtlpTools(otlpSessionRegistry, resultFactory, progressReporter);
+    this.jafarPrompts = new JafarPrompts(sessionRegistry, heapSessionRegistry);
+    this.jafarResources =
+        new JafarResources(
+            sessionRegistry,
+            heapSessionRegistry,
+            pprofSessionRegistry,
+            otlpSessionRegistry,
+            jfrHelpProvider,
+            this.hdumpTools);
   }
 
   public static void main(String[] args) {
@@ -253,7 +276,11 @@ public final class JafarMcpServer {
       // Build MCP server
       // Note: transport starts reading from stdin automatically when the server is built
       McpSyncServer mcpServer =
-          mcpServerFactory.createSyncServer(transportProvider, createToolSpecifications());
+          mcpServerFactory.createSyncServer(
+              transportProvider,
+              createToolSpecifications(),
+              jafarPrompts.createPromptSpecifications(),
+              jafarResources.createResourceSpecifications());
 
       LOG.info("Jafar MCP Server ready (stdio mode)");
 
@@ -363,7 +390,11 @@ public final class JafarMcpServer {
 
       // Build MCP server
       McpSyncServer mcpServer =
-          mcpServerFactory.createSyncServer(transportProvider, createToolSpecifications());
+          mcpServerFactory.createSyncServer(
+              transportProvider,
+              createToolSpecifications(),
+              jafarPrompts.createPromptSpecifications(),
+              jafarResources.createResourceSpecifications());
 
       // Wrap the session factory AFTER build so every new session gets a pre-initialized
       // exchangeSink. The MCP SDK waits on exchangeSink.asMono() before dispatching non-initialize
@@ -644,6 +675,7 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrCompareTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
+    tools.add(withActivityTracking(jfrCompareTools.createJfrCompareTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpOpenTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpCloseTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpQueryTool()));
@@ -780,6 +812,10 @@ public final class JafarMcpServer {
 
   private CallToolResult handleHdumpClose(Map<String, Object> args) {
     return hdumpTools.handleHdumpClose(args);
+  }
+
+  private CallToolResult handleJfrCompare(Map<String, Object> args) {
+    return jfrCompareTools.handleJfrCompare(null, args);
   }
 
   private CallToolResult handleHdumpQuery(Map<String, Object> args) {

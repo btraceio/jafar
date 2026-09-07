@@ -106,6 +106,42 @@ events/jdk.FileRead[path~"/tmp/.*"]
 metadata/jdk.types.Method[name="toString"]
 ```
 
+### Numeric Literals and Units
+
+Numeric literals accept unit suffixes, so a filter reads the way the value does.
+
+**Size suffixes** are binary and apply to byte-valued fields:
+
+| Suffix | Multiplier |
+|--------|-----------|
+| `K`, `KB` | 1024 |
+| `M`, `MB` | 1024² |
+| `G`, `GB` | 1024³ |
+
+**Duration suffixes** convert to nanoseconds, which is how JFR stores durations:
+
+| Suffix | Value in nanoseconds |
+|--------|---------------------|
+| `ns` | 1 |
+| `us` | 1 000 |
+| `ms` | 1 000 000 |
+| `s` | 1 000 000 000 |
+
+Suffixes are case-insensitive, and work with decimals (`1.5ms` is 1 500 000 ns). A bare
+number carries the field's own unit, so `[duration>10000000]` and `[duration>10ms]` are the
+same filter.
+
+There is deliberately no minute suffix: `m` already means mebibytes, and a silently wrong
+unit is worse than a parse error.
+
+**Examples**:
+```
+events/jdk.FileRead[bytes>1MB]
+events/jdk.GCPhasePause[duration>10ms]
+events/jdk.JavaMonitorEnter[duration>1ms] | count()
+events/jdk.SocketRead[duration>500us and bytes>4KB]
+```
+
 ### Boolean Expression Filters
 
 Complex conditions with functions and logic:
