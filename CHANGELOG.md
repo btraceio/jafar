@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ask` — an LLM inside the shell** (`llm-core` module, `io.jafar.shell.core.llm` in `shell-core`)
   - `ask <question>` turns a question into a query, **prints it**, and runs it; `explain` describes
     the last result; `llm status`, `llm dry-run <question>` and `llm cost` cover setup and egress
-  - Works for every query language the current session uses — JfrPath, HdumpPath, and the shared
-    pprof/OTLP samples grammar
+  - Wired into `jfr-shell` (JFR recordings) and the unified `jafar-shell`, which is the entry point
+    that opens all four formats — `ask` there uses whichever language the current session needs:
+    JfrPath, HdumpPath, or the shared pprof/OTLP samples grammar
   - **Both authentication modes come from the SDK**: `ANTHROPIC_API_KEY`, or a keyless OAuth profile
     written by `ant auth login`. Jafar adds no auth code, only diagnostics — the SDK does not fail
     fast when credentials are missing, so `llm status` reports which source wins and catches the
@@ -35,9 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
     [the handoff](doc/plans/llm-in-the-shell-handoff.md) describing the seams left for an agentic
     mode
-  - Not wired into the unified `jafar-shell`, which has its own command chain and no variable store,
-    so `llm.*` settings would not resolve there. The live API path is unit-tested against a fake
-    backend but has not been exercised against api.anthropic.com — see the handoff, section 6
+  - `jafar-shell` has no `set` command yet, so settings there come from `JAFAR_LLM_*` environment
+    variables. The live API path is unit-tested against a fake backend but has not been exercised
+    against api.anthropic.com — see the handoff, section 6
 - **`jafar-perf` Claude Code plugin** (`plugins/jafar-perf/`) - methodology layer over the MCP server
   - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
   - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists

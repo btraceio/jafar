@@ -5,6 +5,10 @@ JfrPath replacement.
 
 Prerequisite: [LLM setup](LlmSetup.md), and `llm status` reporting READY.
 
+Available in `jfr-shell` (JFR recordings) and in the unified `jafar-shell` (JFR recordings, heap
+dumps, pprof and OTLP profiles). Note that `jafar-shell` has no `set` command yet, so configure it
+there with the `JAFAR_LLM_*` environment variables.
+
 ## The first question
 
 ```
@@ -89,11 +93,16 @@ conclusion and an easy one to draw.
 
 ## Working across formats
 
-`ask` follows the current session, and uses the query language that session needs — JfrPath for
-recordings, HdumpPath for heap dumps, the samples language for pprof and OTLP profiles:
+`ask` follows the current session and uses the query language that session needs — JfrPath for
+recordings, HdumpPath for heap dumps, the samples language for pprof and OTLP profiles.
+
+**Which shell you are in matters here.** `jfr-shell` only opens JFR recordings, so `ask` there is
+always JfrPath. The unified `jafar-shell` opens all four formats, and that is where `ask` reaches
+the other languages:
 
 ```
-jfr> open heap.hprof
+$ jafar-shell
+jafar> open heap.hprof
 hdump> ask what is holding the most memory?
 ```
 

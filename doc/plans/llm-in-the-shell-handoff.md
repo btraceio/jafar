@@ -12,7 +12,8 @@ session) can start from the seams rather than from the design.
 | Backend SPI, config, redaction, prompts, parsing, orchestration | `shell-core/src/main/java/io/jafar/shell/core/llm/` |
 | Anthropic backend and credential diagnostics | `llm-core/src/main/java/io/jafar/shell/llm/` |
 | `ask`, `explain`, `llm` commands | `jfr-shell/src/main/java/io/jafar/shell/cli/LlmCommands.java` |
-| Dispatcher wiring | `CommandDispatcher.java` — cases at the top of the switch, `llmCommands()` host adapter |
+| Wiring — `jfr-shell` (JFR only) | `CommandDispatcher.java` — cases at the top of the switch, `llmCommands()` host adapter |
+| Wiring — `jafar-shell` (all four formats) | `unified/Shell.java` — branches in the command chain, `llmCommands()` host adapter |
 | Docs | `doc/cli/LlmSetup.md`, `AskTutorial.md`, `LlmPrivacy.md`, `doc/mcp/WhenToUseWhich.md` |
 
 Commands: `ask <question>`, `explain`, `llm status`, `llm dry-run <question>`, `llm cost`.
@@ -99,7 +100,7 @@ investigation become mergeable.
 | Not done | Why |
 |---|---|
 | Streaming output | The `IO` hook (`CommandDispatcher.IO.println`) supports it, but an `ask` reply is a query and one sentence — streaming it adds machinery for no perceptible gain. B, whose replies are long, is where it earns its place. |
-| `jafar-shell` (unified) wiring | It has its own command chain rather than `CommandDispatcher`, and no `set`/`vars`, so `llm.*` settings would not resolve. Wiring `ask` there without config would be a half-feature. The prerequisite is giving the unified shell the variable store — see `doc/plans/performance-engineer-in-a-box.md` gap G8. |
+| A `set` command in `jafar-shell` | The unified shell is wired for `ask` (it is the only entry point that opens all four formats), but it still has no `set`/`vars`, so `llm.*` settings there resolve from its global `VariableStore` — which nothing populates — and then from `JAFAR_LLM_*` environment variables. Giving that shell a `set` command is gap G8 in `performance-engineer-in-a-box.md`; the LLM host adapter already reads the store, so it starts working the day `set` lands. |
 | Multi-turn conversation | `ask` is one shot. Conversation state belongs in `VariableStore` so `vars` shows it and scripts can reset it, but it is only worth building with B's loop. |
 | Cost in currency | Usage is reported in tokens. Converting to money means shipping a price table that goes stale; the token counts are exact and the pricing is one lookup away. |
 | Live API test | No test in this repository makes a real API call. See §6. |
