@@ -8,6 +8,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`jafar-perf` Claude Code plugin** (`plugins/jafar-perf/`) - methodology layer over the MCP server
+  - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
+  - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
+  - Bundles `.mcp.json`, so installing the plugin registers the MCP server; marketplace manifest at
+    `.claude-plugin/marketplace.json`
+- **`jfr_compare` MCP tool** - compares a candidate recording against a baseline
+  - Event counts normalised to per-second rates using each recording's own observed span; stack frames
+    compared as a share of that recording's samples, so different sampling intervals stay comparable
+  - Reports a `comparability` block (different profiler event types, durations differing by more than
+    3x, low sample counts) rather than silently producing a plausible-looking number
+  - Changes below a configurable noise floor (`minDeltaPct`, default 1.0 percentage points) are withheld
+- **Unified findings model** (`io.jafar.mcp.findings.Finding`) - `jfr_diagnose`, `jfr_use`, `jfr_tsa`,
+  `jfr_compare`, `pprof_use`, `otlp_use` and `hdump_report` now all return a `findings` array with a
+  stable `id`, `severity`, `category`, `title`, `evidence`, `action` and follow-up `query`. Findings from
+  different tools de-duplicate and merge (`Findings.merge`). Findings derived from heuristics — the
+  keyword-inferred thread states in the pprof and OTLP tools — record `heuristic=true`.
+- **MCP prompts and resources** - the server now advertises both capabilities
+  - Prompts: `triage`, `compare`, `leak-hunt`, `latency` (surfaced as `/mcp__jafar__<name>` in Claude Code)
+  - Resources: `jafar://sessions`, `jafar://help/jfrpath`, `jafar://help/hdumppath`, `jafar://help/tools`
+- **JfrPath duration unit suffixes** - `ns`, `us`, `ms`, `s` in numeric literals, converting to
+  nanoseconds (`events/jdk.GCPhasePause[duration>10ms]`). These were already documented in the MCP
+  `jfr_help` output and in `doc/mcp/Tutorial.md`, but the parser rejected them. No minute suffix: `m`
+  already means mebibytes. Size suffixes are unchanged.
+
+### Changed
+- **`jfr_diagnose` runs the analyses it previously only recommended** - it now executes the USE and TSA
+  passes in-process and merges their findings. New `depth` parameter (`quick` skips both). The response
+  keeps `recommendations` and moves the old human-readable strings to `headlines`; `findings` is now the
+  structured array, matching `hdump_report`. New `capabilityGaps` lists what the recording cannot answer
+  (for example allocation profiling not enabled), stated separately from findings.
+- **`JfrQueryEvaluator` moved from `jfr-shell` to `shell-core`** (same package and FQN, no import changes)
+  so that consumers without the interactive CLI can evaluate JfrPath against a JFR session.
+
+### Fixed
+- **Heap-to-JFR correlation now works over MCP** - `hdump_query` was passed a bare `SessionResolver`, so
+  `join(session=..., root="jdk.ObjectAllocationSample", by=class)` failed with "Cross-type join requires a
+  CrossSessionContext" and the correlation was reachable only from `jafar-shell`. The server now supplies
+  an `McpCrossSessionContext` spanning the heap and JFR registries.
+- **Allocation correlation produced only null columns** - `AllocationAggregator` read
+  `objectClass.name` as a plain string, but the untyped parser wraps string constants
+  (`{objectClass: {name: {value: {string: "[B"}}}}`), so every real recording aggregated to an empty
+  map and the heap-to-JFR join filled `allocCount`, `allocWeight`, `allocRate`, `topAllocSite` and
+  `survivalRatio` with nulls for every class. Allocation-site extraction had the same problem with
+  wrapped frame and type names. Verified end to end against a real recording and heap dump:
+  `byte[]` now correlates to 3494 allocation samples with `topAllocSite` resolved. The existing
+  tests missed this because they all fed a flattened `objectClass.name` string shape the parser
+  never emits; regression tests now cover the real shape.
+- **`by=class` was wrong in the documented cross-type join examples** - on the `classes` root the
+  join key field is `name` (`by=class` applies to the `objects` root), so the documented queries
+  silently matched nothing. The examples now let the key be inferred.
+- **Documentation understated the MCP server** - `jfr-mcp/README.md` and `doc/mcp/Tutorial.md` listed 13
+  JFR-only tools; the server registers 37 across JFR, HPROF, pprof and OTLP. `AGENTS.md` omitted the
+  `hdump_*` family.
+
 - **go-parser module** - Pure Go port of the untyped JFR parser (`github.com/btraceio/jafar/go-parser`)
   - Standalone Go module in `go-parser/`, kept out of the Gradle build; no external dependencies
   - Same value model as the Java untyped API: events as `map[string]any`, lazy per-chunk

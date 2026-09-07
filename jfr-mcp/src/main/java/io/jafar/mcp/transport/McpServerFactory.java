@@ -16,10 +16,41 @@ public final class McpServerFactory {
   public McpSyncServer createSyncServer(
       McpServerTransportProvider transportProvider,
       List<McpServerFeatures.SyncToolSpecification> tools) {
-    return McpServer.sync(transportProvider)
-        .serverInfo(SERVER_NAME, SERVER_VERSION)
-        .capabilities(ServerCapabilities.builder().tools(true).logging().build())
-        .tools(tools)
-        .build();
+    return createSyncServer(transportProvider, tools, List.of(), List.of());
+  }
+
+  /**
+   * Builds a server that also advertises prompts and resources.
+   *
+   * <p>Capabilities are declared from what is actually supplied: a client that sees {@code prompts}
+   * or {@code resources} in the handshake will list them, so advertising an empty set would be a
+   * lie the client pays a round trip to discover.
+   */
+  public McpSyncServer createSyncServer(
+      McpServerTransportProvider transportProvider,
+      List<McpServerFeatures.SyncToolSpecification> tools,
+      List<McpServerFeatures.SyncPromptSpecification> prompts,
+      List<McpServerFeatures.SyncResourceSpecification> resources) {
+    ServerCapabilities.Builder capabilities = ServerCapabilities.builder().tools(true).logging();
+    if (!prompts.isEmpty()) {
+      capabilities.prompts(false);
+    }
+    if (!resources.isEmpty()) {
+      // No subscribe support; listChanged is false because the set is fixed at startup.
+      capabilities.resources(false, false);
+    }
+
+    var spec =
+        McpServer.sync(transportProvider)
+            .serverInfo(SERVER_NAME, SERVER_VERSION)
+            .capabilities(capabilities.build())
+            .tools(tools);
+    if (!prompts.isEmpty()) {
+      spec = spec.prompts(prompts);
+    }
+    if (!resources.isEmpty()) {
+      spec = spec.resources(resources);
+    }
+    return spec.build();
   }
 }

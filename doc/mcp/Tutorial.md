@@ -14,24 +14,44 @@ This tutorial teaches you how to use the Jafar MCP (Model Context Protocol) serv
 
 ## What is MCP?
 
-The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes thirteen tools for JFR analysis:
+The Model Context Protocol (MCP) is a standard protocol for AI agents to interact with external tools and data sources. The Jafar MCP server exposes 37 tools across four artifact formats, plus MCP prompts and resources.
 
-**Core Tools:**
-- **jfr_open** - Open a JFR recording file for analysis
+**JFR core tools:**
+- **jfr_open** / **jfr_close** - Open and close a JFR recording session
 - **jfr_list_types** - List available event types in a recording
 - **jfr_query** - Execute JfrPath queries against the recording
-- **jfr_close** - Close a recording session
 - **jfr_help** - Get JfrPath query language documentation
 
-**Analysis Tools:**
-- **jfr_diagnose** - Comprehensive automated diagnosis with multi-dimensional analysis
+**JFR analysis tools:**
+- **jfr_diagnose** - Automated diagnosis: applies threshold checks, runs the USE and TSA analyses in-process, and returns merged severity-ranked findings plus the capability gaps that limit what the recording can answer
+- **jfr_compare** - Compare a candidate recording against a baseline; duration-normalised event rates and per-frame self-time deltas, with a comparability report
 - **jfr_summary** - Quick overview with duration, event counts, and key highlights
 - **jfr_flamegraph** - Generate aggregated stack trace data for flamegraph-style analysis
 - **jfr_callgraph** - Generate caller-callee relationship graph from stack traces
+- **jfr_stackprofile** - Frames with self and total shares, time buckets, and per-thread counts
 - **jfr_exceptions** - Analyze exception patterns and throw sites
 - **jfr_hotmethods** - Identify CPU-intensive methods with sample counts
 - **jfr_use** - USE Method analysis (Utilization, Saturation, Errors) for resource bottlenecks
 - **jfr_tsa** - Thread State Analysis showing time distribution across thread states
+
+**Heap dump tools:**
+- **hdump_open** / **hdump_close** - Session management for HPROF heap dumps
+- **hdump_query** - HdumpPath queries: retained sizes, dominators, GC root paths, leak detectors, clusters, collection waste, and cross-session joins
+- **hdump_summary** - Fast overview that does not compute retained sizes
+- **hdump_report** - Heap health report with severity-ranked findings
+- **hdump_help** - HdumpPath query language documentation
+
+**pprof profile tools:**
+- **pprof_open** / **pprof_close** / **pprof_query** / **pprof_summary** / **pprof_flamegraph** / **pprof_hotmethods** / **pprof_tsa** / **pprof_use** / **pprof_help**
+
+**OpenTelemetry profile tools:**
+- **otlp_open** / **otlp_close** / **otlp_query** / **otlp_summary** / **otlp_flamegraph** / **otlp_use** / **otlp_help**
+
+**Prompts** (in Claude Code, `/mcp__jafar__<name>`): `triage`, `compare`, `leak-hunt`, `latency`.
+
+**Resources**: `jafar://sessions` (what is open, with ids and aliases), `jafar://help/jfrpath`, `jafar://help/hdumppath`, `jafar://help/tools`.
+
+Note that the thread-state and error signals in the pprof and OTLP tools are heuristic — they are inferred from function names, not from observed state transitions — and their output says so.
 
 This allows AI assistants to autonomously analyze JFR files, identify performance issues, and provide insights without manual intervention.
 
@@ -184,7 +204,7 @@ events/jdk.ExecutionSample | count()
 events/jdk.GCPhasePause | top(10)
 events/jdk.FileRead | groupBy(path)
 events/jdk.ThreadCPULoad | stats(user)
-events/jdk.JavaMonitorEnter[duration > 10ms] | top(5)
+events/jdk.JavaMonitorEnter[duration>10ms] | top(5)
 ```
 
 **Example Response:**
@@ -494,7 +514,7 @@ kill $SSE_PID 2>/dev/null
 
 4. **Check for lock contention**
    ```
-   jfr_query: query="events/jdk.JavaMonitorEnter[duration > 1ms] | top(10)"
+   jfr_query: query="events/jdk.JavaMonitorEnter[duration>1ms] | top(10)"
    ```
 
 5. **Examine GC pauses**
@@ -523,7 +543,7 @@ kill $SSE_PID 2>/dev/null
 
 1. **Find slow file reads**
    ```
-   jfr_query: query="events/jdk.FileRead[duration > 10ms] | top(10)"
+   jfr_query: query="events/jdk.FileRead[duration>10ms] | top(10)"
    ```
 
 2. **Analyze socket activity**
