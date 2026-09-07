@@ -16,6 +16,11 @@ what to do if that is not what you expected.
 | `llm dry-run <question>` | Prints exactly what `ask` would send, and sends nothing |
 | `llm cost` | Token usage for this process |
 
+Both `jfr-shell` (JFR recordings) and the unified `jafar-shell` (recordings, heap dumps, pprof and
+OTLP profiles) have these commands. `ask` uses whichever query language the current session needs,
+so in `jafar-shell` it reaches HdumpPath and the samples grammar as well as JfrPath. `jafar-shell`
+has no `set` command yet, so configure it there with the `JAFAR_LLM_*` environment variables.
+
 The feature is optional. Without the `llm-core` module on the classpath, or without a credential,
 every other shell command behaves exactly as before and the LLM commands print a clear message.
 Nothing calls out to the network unless you run one of the commands above.
