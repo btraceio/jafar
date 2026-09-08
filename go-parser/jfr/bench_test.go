@@ -156,15 +156,21 @@ func (r *benchRecording) profile() error {
 // largeRecordingBytes is the size above which the constant-pool resolution
 // benchmarks skip a recording.
 //
-// Resolving one stack frame per event forces the whole stack trace pool into
-// memory, and the pool is cached for the life of the chunk, so the cost grows
-// with the recording rather than with the work asked of it: on a 1.8 GB
-// recording BenchmarkResolveTopFrame measured 69 s, 69 GB and 494 M allocations
-// for a single iteration. That is a real property of the parser worth knowing,
-// but it is not a routine regression check - it swamps every other benchmark in
-// the suite. Point the suite at one such recording deliberately
-// (JAFAR_BENCH_JFR) when that is what you want to measure.
-const largeRecordingBytes = 256 << 20
+// Resolving a constant pool reference on every event pulls the whole pool into
+// memory: entries are cached for the life of the chunk, so the cost grows with
+// the pool rather than with the work asked of it. Measured on a GitHub runner,
+// one iteration of BenchmarkResolveTopFrame cost 69 s and 69 GB on a 1.7 GiB
+// recording, and 12 s and 11 GB on a 171 MiB one; BenchmarkResolveDeep, which
+// also retains a materialised copy per entry, exhausted the runner's memory on
+// that same 171 MiB recording and the job was killed with SIGTERM.
+//
+// The threshold therefore sits below the smallest recording in the downloaded
+// corpus: constant pool resolution is measured on the reference recording in
+// the repository, which is the stable regression signal, and skipped on
+// anything large enough to turn the benchmark into a memory-exhaustion test.
+// Point the suite at a large recording deliberately (JAFAR_BENCH_JFR) when
+// measuring that behaviour is the actual goal - and give it room to run.
+const largeRecordingBytes = 64 << 20
 
 // skipIfLarge skips a constant-pool resolution benchmark on a recording big
 // enough for it to dominate the run.

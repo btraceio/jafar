@@ -140,30 +140,35 @@ pool and stay valid either way.
 ### On large recordings
 
 Measured on the benchmark corpus `./get_resources.sh` downloads, on a GitHub
-`ubuntu-latest` runner:
+`ubuntu-latest` runner (AMD EPYC 7763), one iteration per benchmark:
 
-| Recording | Size | Events | Decode one type, two fields, `ReuseValues` |
-|---|---:|---:|---|
-| `test-ap.jfr` | 179 MB | 2 908 299 | 1.94 s, 668 ns/event, 45 MB, 2.9 M allocs |
-| `test-jfr.jfr` | 1.78 GB | 10 673 057 | 13.95 s, 1307 ns/event, 422 MB, 21.7 M allocs |
+| Recording | Size | Events | Decode every event | …with `ReuseValues` |
+|---|---:|---:|---|---|
+| `tck-test.jfr` | 2.2 MiB | 67 657 | 44.8 ms, 44.5 MB, 505 k allocs | 35.3 ms, **3.0 MB**, 217 k allocs |
+| `test-ap.jfr` | 171 MiB | 2 914 799 | 2.27 s, 1.26 GB, 11.7 M allocs | 1.94 s, **45 MB**, 3.0 M allocs |
+| `test-jfr.jfr` | 1.65 GiB | 12 972 157 | 15.98 s, 5.89 GB, 67.9 M allocs | 14.74 s, **486 MB**, 28.6 M allocs |
 
-Per-event cost stays flat as the recording grows, which is the property that
-matters. One thing does not, and it is worth knowing before you write a
-consumer:
+Per-event cost stays flat as the recording grows — 663, 778 and 1232 ns/event
+respectively — and `ReuseValues` removes 92–96% of the bytes at every size. That
+is the property that matters.
 
-**Resolving a constant pool reference on every event materialises the whole
-pool.** Entries are cached for the life of the chunk, so reading one stack frame
-per event pulls the entire stack trace, frame, method and symbol graph into
-memory and keeps it there. On `tck-test.jfr` (14 202 events) that costs 21 ms
-and 153 k allocations; on `test-jfr.jfr` (10.7 M events) the same one-line
-access costs **69 s and 494 M allocations**, because the pool it is filling is
-three orders of magnitude larger. The caching is what makes the common case
-fast - a stack trace shared by ten thousand events is decoded once - but it
-scales with the pool, not with the work you asked for.
+One thing does not scale, and it is worth knowing before you write a consumer:
 
-If you only need a few stack traces out of many events, filter the events down
-first (`TypeFilter`, or a predicate in the handler) and resolve only what
-survives.
+**Resolving a constant pool reference on every event pulls the whole pool into
+memory.** Entries are cached for the life of the chunk, so reading one stack
+frame per event materialises the entire stack trace, frame, method and symbol
+graph and keeps it there. The same one-line access costs 23 ms and 153 k
+allocations on `tck-test.jfr` (14 202 events), **12 s and 11 GB** on
+`test-ap.jfr` (2.9 M events), and **69 s and 69 GB** on `test-jfr.jfr` (10.7 M
+events). `ResolveDeep` additionally retains a materialised copy per entry, and
+exhausted a 16 GB CI runner on the 171 MiB recording.
+
+The caching is what makes the common case fast — a stack trace shared by ten
+thousand events is decoded once — but it is unbounded and scales with the pool,
+not with the work you asked for. If you need stack traces from a subset of
+events, filter the events down first (`TypeFilter`, or a predicate in the
+handler) and resolve only what survives. If you need them from all events of a
+multi-gigabyte recording, budget the memory for the whole pool.
 
 Two other things matter more than they look:
 
