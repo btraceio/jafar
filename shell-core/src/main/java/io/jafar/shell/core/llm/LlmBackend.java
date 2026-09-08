@@ -7,10 +7,15 @@ import java.util.ServiceLoader;
 /**
  * A source of model completions for the shell's LLM features.
  *
- * <p>This interface is the seam that keeps the Anthropic SDK out of {@code shell-core}. Backends
+ * <p>This interface is the seam that keeps every provider SDK out of {@code shell-core}. Backends
  * are discovered with {@link ServiceLoader}, so a shell that does not ship one still compiles,
  * starts and runs every non-LLM command unchanged — {@link #discover()} simply returns empty and
  * the {@code ask} command reports that LLM support is not installed.
+ *
+ * <p>Nothing in this interface, or in {@link LlmRequest} and {@link LlmResponse}, is specific to a
+ * provider: a request is a cacheable system prefix plus turns, and a response is text plus token
+ * counts. Adapters exist for the Anthropic API and for any OpenAI-compatible endpoint (which covers
+ * OpenAI itself, Ollama local and cloud, vLLM, LM Studio and the hosted gateways).
  *
  * <p>It is also the seam for the planned agentic mode. Today {@link #complete} is one request and
  * one response, which is all the {@code ask} and {@code explain} commands need. A tool-using loop
@@ -19,7 +24,7 @@ import java.util.ServiceLoader;
  */
 public interface LlmBackend {
 
-  /** Stable identifier, e.g. {@code anthropic}. Shown by {@code llm status}. */
+  /** Stable identifier, e.g. {@code anthropic}, {@code openai}, {@code ollama}. */
   String id();
 
   /** Human-readable name for diagnostics. */
@@ -29,10 +34,26 @@ public interface LlmBackend {
    * Reports whether this backend can currently serve a request, and why not when it cannot.
    *
    * <p>Called by {@code llm status} and before any request, so the user gets an actionable local
-   * message ("no credentials — run `ant auth login` or set ANTHROPIC_API_KEY") rather than an
-   * opaque 401 from the server.
+   * message — a missing key, an unreachable local server, a shadowed profile — rather than an
+   * opaque error from the far end.
    */
   Readiness readiness(LlmConfig config);
+
+  /**
+   * The model this backend uses when {@code llm.model} is not set.
+   *
+   * <p>Each provider names its models differently and there is no sensible cross-provider default,
+   * so the default belongs here rather than in {@link LlmConfig}.
+   */
+  String defaultModel();
+
+  /**
+   * One line telling the user how to authenticate to this backend, shown in help and when no
+   * backend is ready. Returns {@code null} when the backend needs no credentials.
+   */
+  default String credentialHelp() {
+    return null;
+  }
 
   /**
    * Performs one completion.
@@ -55,11 +76,11 @@ public interface LlmBackend {
   }
 
   /**
-   * Loads every backend on the classpath, most preferred first.
+   * Loads every backend on the classpath, ordered by {@link #id()} for determinism.
    *
-   * <p>Ordering is by {@link #id()} for determinism; with a single backend it does not matter, and
-   * when a delegate backend is added the {@code llm.backend} setting selects explicitly rather than
-   * relying on discovery order.
+   * <p>Discovery order is deliberately not a preference order — see {@link #select(String,
+   * LlmConfig)}, which picks a backend that is actually usable rather than the alphabetically first
+   * one.
    */
   static List<LlmBackend> discover() {
     List<LlmBackend> backends = new java.util.ArrayList<>();
@@ -70,15 +91,35 @@ public interface LlmBackend {
     return List.copyOf(backends);
   }
 
-  /**
-   * Selects a backend by id, or the first discovered one when {@code preferredId} is {@code null},
-   * blank or {@code auto}.
-   */
-  static Optional<LlmBackend> select(String preferredId) {
-    List<LlmBackend> backends = discover();
-    if (preferredId == null || preferredId.isBlank() || "auto".equalsIgnoreCase(preferredId)) {
-      return backends.isEmpty() ? Optional.empty() : Optional.of(backends.get(0));
+  /** Selects a backend by id. Exact match only; {@code auto} is not handled here. */
+  static Optional<LlmBackend> byId(String id) {
+    if (id == null || id.isBlank()) {
+      return Optional.empty();
     }
-    return backends.stream().filter(b -> b.id().equalsIgnoreCase(preferredId)).findFirst();
+    return discover().stream().filter(b -> b.id().equalsIgnoreCase(id)).findFirst();
+  }
+
+  /**
+   * Selects a backend by id, or picks one automatically when {@code preferredId} is {@code null},
+   * blank or {@code auto}.
+   *
+   * <p>Automatic selection prefers a backend that is <em>ready</em> — one whose credentials or
+   * local server are actually present. Taking the alphabetically first backend instead would mean
+   * that installing the Anthropic adapter silently shadowed a configured local Ollama, which is
+   * exactly the surprise this method exists to avoid. When none is ready, the first is returned so
+   * that the caller can report its readiness detail and remedy rather than a bare "no backend".
+   */
+  static Optional<LlmBackend> select(String preferredId, LlmConfig config) {
+    List<LlmBackend> backends = discover();
+    if (backends.isEmpty()) {
+      return Optional.empty();
+    }
+    if (preferredId != null && !preferredId.isBlank() && !"auto".equalsIgnoreCase(preferredId)) {
+      return backends.stream().filter(b -> b.id().equalsIgnoreCase(preferredId)).findFirst();
+    }
+    return backends.stream()
+        .filter(b -> b.readiness(config).ready())
+        .findFirst()
+        .or(() -> Optional.of(backends.get(0)));
   }
 }

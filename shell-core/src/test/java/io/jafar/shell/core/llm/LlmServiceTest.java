@@ -17,16 +17,21 @@ class LlmServiceTest {
 
   /** Records what it was asked and replies with a canned answer. */
   private static final class FakeBackend implements LlmBackend {
-    private final String reply;
+    private final List<String> replies;
     private final Readiness readiness;
     final List<LlmRequest> requests = new ArrayList<>();
 
     FakeBackend(String reply) {
-      this(reply, Readiness.ready("fake"));
+      this(List.of(reply), Readiness.ready("fake"));
     }
 
     FakeBackend(String reply, Readiness readiness) {
-      this.reply = reply;
+      this(List.of(reply), readiness);
+    }
+
+    /** Replies in sequence, repeating the last one once exhausted. */
+    FakeBackend(List<String> replies, Readiness readiness) {
+      this.replies = replies;
       this.readiness = readiness;
     }
 
@@ -41,15 +46,24 @@ class LlmServiceTest {
     }
 
     @Override
+    public String defaultModel() {
+      return "fake-model-v1";
+    }
+
+    @Override
     public Readiness readiness(LlmConfig config) {
       return readiness;
     }
 
     @Override
     public LlmResponse complete(LlmRequest request, LlmConfig config) {
+      String reply = replies.get(Math.min(requests.size(), replies.size() - 1));
       requests.add(request);
       return new LlmResponse(
-          reply, Optional.of(new LlmResponse.Usage(100, 20, 900, 0)), config.model(), "end_turn");
+          reply,
+          Optional.of(new LlmResponse.Usage(100, 20, 900, 0)),
+          config.modelFor(this),
+          "end_turn");
     }
   }
 
@@ -183,5 +197,114 @@ class LlmServiceTest {
             .buildAskRequest("q", "pprof", List.of())
             .systemPrefix()
             .contains("Single root: samples"));
+  }
+
+  // ── query validation and correction ───────────────────────────────────────────
+  //
+  // The shell owns the parser, so an invalid query can be caught before it runs and the parser's
+  // own message fed back. This is what makes the feature usable on a small local model, which
+  // produces invalid queries far more often than a frontier model does.
+
+  @Test
+  void anInvalidQueryIsSentBackForCorrection() throws Exception {
+    FakeBackend backend =
+        new FakeBackend(
+            List.of(
+                "QUERY: events/jdk.FileRead | bogus()\nWHY: first attempt",
+                "QUERY: events/jdk.FileRead | count()\nWHY: corrected"),
+            LlmBackend.Readiness.ready("fake"));
+    LlmService service = new LlmService(backend, config(Map.of()));
+
+    QueryProposal proposal =
+        service.ask(
+            "how many reads?",
+            "jfr",
+            List.of(),
+            query ->
+                query.contains("bogus")
+                    ? Optional.of("Unknown operator: bogus")
+                    : Optional.empty());
+
+    assertEquals("events/jdk.FileRead | count()", proposal.query());
+    assertEquals(2, backend.requests.size(), "one retry");
+    assertEquals(1, service.retryCount());
+    assertTrue(service.lastValidationError().isEmpty(), "the corrected query parses");
+
+    // The correction turn must carry the offending query and the parser's message.
+    String correction = backend.requests.get(1).messages().get(2).text();
+    assertTrue(correction.contains("bogus()"), correction);
+    assertTrue(correction.contains("Unknown operator: bogus"), correction);
+    assertTrue(correction.contains(PromptBuilder.DATA_OPEN), "echoed query stays fenced as data");
+  }
+
+  @Test
+  void aValidQueryCostsNoExtraRequest() throws Exception {
+    FakeBackend backend = new FakeBackend("QUERY: events/jdk.FileRead | count()\nWHY: fine");
+    LlmService service = new LlmService(backend, config(Map.of()));
+
+    service.ask("q", "jfr", List.of(), query -> Optional.empty());
+
+    assertEquals(1, backend.requests.size());
+    assertEquals(0, service.retryCount());
+  }
+
+  @Test
+  void aStillInvalidQueryIsReportedRatherThanRun() throws Exception {
+    FakeBackend backend =
+        new FakeBackend(List.of("QUERY: nonsense\nWHY: no"), LlmBackend.Readiness.ready("fake"));
+    LlmService service = new LlmService(backend, config(Map.of()));
+
+    QueryProposal proposal =
+        service.ask("q", "jfr", List.of(), query -> Optional.of("Expected root at position 0"));
+
+    assertTrue(proposal.hasQuery(), "the query is returned so the caller can show it");
+    assertEquals(
+        "Expected root at position 0",
+        service.lastValidationError().orElseThrow(),
+        "the caller needs the error to explain why nothing ran");
+  }
+
+  @Test
+  void retriesCanBeDisabled() throws Exception {
+    FakeBackend backend =
+        new FakeBackend(List.of("QUERY: bad\nWHY: no"), LlmBackend.Readiness.ready("fake"));
+    LlmService service = new LlmService(backend, config(Map.of("llm.max-retries", "0")));
+
+    service.ask("q", "jfr", List.of(), query -> Optional.of("nope"));
+
+    assertEquals(1, backend.requests.size(), "no correction round-trip when retries are off");
+    assertEquals(0, service.retryCount());
+  }
+
+  @Test
+  void theCorrectionReusesTheCachedSystemPrefix() throws Exception {
+    FakeBackend backend =
+        new FakeBackend(
+            List.of("QUERY: bad\nWHY: x", "QUERY: good\nWHY: y"),
+            LlmBackend.Readiness.ready("fake"));
+    LlmService service = new LlmService(backend, config(Map.of()));
+
+    service.ask(
+        "q", "jfr", List.of(), query -> "bad".equals(query) ? Optional.of("e") : Optional.empty());
+
+    assertEquals(
+        backend.requests.get(0).systemPrefix(),
+        backend.requests.get(1).systemPrefix(),
+        "a changed prefix on the retry would pay full price twice");
+  }
+
+  @Test
+  void backendSelectionPrefersAReadyBackendOverAlphabeticalOrder() {
+    // Guards the surprise this rule exists to prevent: installing a second adapter must not
+    // silently shadow the one the user actually configured.
+    LlmConfig config = config(Map.of());
+    List<LlmBackend> discovered = LlmBackend.discover();
+    if (discovered.size() > 1) {
+      LlmBackend chosen = LlmBackend.select("auto", config).orElseThrow();
+      boolean anyReady = discovered.stream().anyMatch(b -> b.readiness(config).ready());
+      if (anyReady) {
+        assertTrue(chosen.readiness(config).ready(), "auto must pick a usable backend");
+      }
+    }
   }
 }

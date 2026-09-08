@@ -175,7 +175,11 @@ class LlmCommandsTest {
     String help = LlmCommands.helpText();
     assertTrue(help.contains("ask <question>"));
     assertTrue(help.contains("llm dry-run"));
-    assertTrue(help.contains("ANTHROPIC_API_KEY"));
-    assertTrue(help.contains("ant auth login"));
+    // Provider-neutral: naming one vendor's environment variable here would go stale the moment a
+    // second backend shipped, which is exactly what happened. 'llm status' is the live answer.
+    assertTrue(help.contains("llm status"), help);
+    assertTrue(help.contains("llm.backend"), help);
+    assertTrue(help.contains("llm.base-url"), help);
+    assertFalse(help.contains("%s"), "the template placeholder was never formatted: " + help);
   }
 }

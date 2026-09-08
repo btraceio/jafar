@@ -1,6 +1,5 @@
 package io.jafar.shell.cli;
 
-import io.jafar.shell.core.llm.LanguageReference;
 import io.jafar.shell.core.llm.LlmBackend;
 import io.jafar.shell.core.llm.LlmConfig;
 import io.jafar.shell.core.llm.LlmException;
@@ -46,6 +45,19 @@ public final class LlmCommands {
 
     /** Resolves a shell setting, e.g. {@code llm.model}. */
     String setting(String name);
+
+    /**
+     * Checks a candidate query against the current session's parser, returning an error message
+     * when it is invalid.
+     *
+     * <p>The default accepts everything, so a host with no parser to hand still works. Supplying a
+     * real one is what lets {@code ask} catch a bad query before running it and ask the model to
+     * correct itself — the difference between this feature working and not working on a small local
+     * model.
+     */
+    default Optional<String> validateQuery(String query) {
+      return Optional.empty();
+    }
   }
 
   private final Host host;
@@ -57,6 +69,11 @@ public final class LlmCommands {
 
   public LlmCommands(Host host) {
     this.host = host;
+  }
+
+  /** The host this instance talks to. Package-private: it exists so tests can drive the adapter. */
+  Host host() {
+    return host;
   }
 
   /** Records a query the user ran directly, so {@code explain} can describe it. */
@@ -92,7 +109,8 @@ public final class LlmCommands {
 
     String moduleId = host.currentModuleId().get();
     try {
-      QueryProposal proposal = service.value().ask(question, moduleId, inventory());
+      QueryProposal proposal =
+          service.value().ask(question, moduleId, inventory(), host::validateQuery);
 
       proposal.rationaleText().ifPresent(why -> host.println("# " + why));
 
@@ -113,6 +131,16 @@ public final class LlmCommands {
       host.println(query);
       host.println("");
 
+      Optional<String> stillInvalid = service.value().lastValidationError();
+      if (stillInvalid.isPresent()) {
+        // The retry did not rescue it. Show the query and the parser's complaint rather than
+        // running something known to be broken.
+        host.println("That query does not parse: " + stillInvalid.get());
+        host.println("Nothing was run. Try rephrasing, or write the query yourself.");
+        printUsage(service.value());
+        return;
+      }
+
       if (config.confirmBeforeRun()) {
         host.println("(llm.confirm is on — copy the query above to run it)");
         printUsage(service.value());
@@ -127,6 +155,8 @@ public final class LlmCommands {
     } catch (Exception e) {
       host.println("Query failed: " + e.getMessage());
       host.println("The query above came from the model; it may be invalid. Try rephrasing.");
+      // The request was paid for whether or not the query ran, so report it either way.
+      printUsage(service.value());
     }
   }
 
@@ -204,8 +234,12 @@ public final class LlmCommands {
               .formatted(
                   backend.id(), backend.displayName(), readiness.ready() ? "READY" : "NOT READY"));
       host.println("               " + readiness.detail());
-      if (!readiness.ready() && readiness.remedy() != null) {
-        host.println("               -> " + readiness.remedy());
+      host.println("               default model: " + backend.defaultModel());
+      if (!readiness.ready()) {
+        String remedy = readiness.remedy() != null ? readiness.remedy() : backend.credentialHelp();
+        if (remedy != null) {
+          host.println("               -> " + remedy);
+        }
       }
     }
   }
@@ -284,7 +318,9 @@ public final class LlmCommands {
     LlmResponse.Usage usage = service.sessionUsage();
     if (usage.totalTokens() > 0) {
       host.println("");
-      host.println("[llm: " + usage + "]");
+      String corrections =
+          service.retryCount() > 0 ? ", " + service.retryCount() + " correction(s)" : "";
+      host.println("[llm: " + usage + corrections + "]");
     }
   }
 
@@ -305,20 +341,32 @@ public final class LlmCommands {
   /** Help text, printed by the shell's {@code help} command. */
   public static String helpText() {
     return """
-        LLM commands (require the llm-core module and a credential):
-          ask <question>        Translate a question into a %s query, show it, and run it
+        LLM commands (require a backend module on the classpath, and for a hosted
+        provider a credential):
+          ask <question>        Turn a question into a query, show it, and run it
           explain               Explain the most recent result
-          llm status            Which credential source and settings are active
+          llm status            Backends, readiness, credential source, settings
           llm dry-run <q>       Print exactly what 'ask' would send, and send nothing
           llm cost              Token usage for this process
 
+        The query language is whichever one the current session uses: JfrPath for a
+        recording, HdumpPath for a heap dump, the samples grammar for pprof and OTLP.
+
         Settings (use 'set'):
-          llm.enabled, llm.model, llm.backend, llm.max-tokens, llm.max-rows,
+          llm.enabled, llm.backend, llm.model, llm.base-url, llm.api-key,
+          llm.max-tokens, llm.max-rows, llm.max-retries, llm.timeout,
           llm.confirm, llm.redact, llm.redact-fields
 
-        Authentication: export ANTHROPIC_API_KEY, or run 'ant auth login' for keyless use.
-        Recording data sent to the model is redacted by default; see 'llm dry-run'."""
-        .formatted(LanguageReference.languageName("jfr"));
+        Backends ship for Anthropic, OpenAI and Ollama, are discovered on the classpath,
+        and are selected with llm.backend ('auto' takes the first that is ready).
+        'llm status' lists them with how to authenticate to each. Point llm.base-url at
+        any other OpenAI-compatible server to use that instead; with a local one nothing
+        leaves the machine.
+
+        A query the parser rejects is never run: the parser's error goes back to the
+        model for a correction, up to llm.max-retries times. Recording data sent to the
+        model is redacted by default, and 'llm dry-run' shows exactly what would be
+        sent.""";
   }
 
   /** Exposed for tests: the redactor a given config would apply. */

@@ -53,7 +53,8 @@ dependencies {
     // LLM support is optional at runtime: the SPI lives in shell-core and the backend is
     // discovered via ServiceLoader, so dropping this line removes the Anthropic SDK entirely
     // and the ask/explain commands degrade to a clear message.
-    runtimeOnly project(':llm-core')
+    runtimeOnly project(':llm-anthropic')
+    runtimeOnly project(':llm-openai')
 
     // Backend plugins available for testing (discovered via ServiceLoader)
     testRuntimeOnly project(':jfr-shell-jafar')

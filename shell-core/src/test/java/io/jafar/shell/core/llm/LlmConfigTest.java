@@ -2,6 +2,7 @@ package io.jafar.shell.core.llm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
@@ -20,9 +21,64 @@ class LlmConfigTest {
     assertTrue(config.enabled());
     assertTrue(config.redactionEnabled(), "redaction must be on unless explicitly disabled");
     assertFalse(config.confirmBeforeRun());
-    assertEquals(LlmConfig.DEFAULT_MODEL, config.model());
+    // No cross-provider default: the model comes from the backend unless configured.
+    assertNull(config.model());
     assertEquals(LlmConfig.DEFAULT_MAX_ROWS, config.maxRows());
     assertEquals("auto", config.backendId());
+  }
+
+  @Test
+  void modelFallsBackToTheBackendDefault() {
+    LlmBackend backend = stubBackend("stub-model-v1");
+    assertEquals("stub-model-v1", of(Map.of()).modelFor(backend));
+    assertEquals("chosen", of(Map.of("llm.model", "chosen")).modelFor(backend));
+  }
+
+  @Test
+  void retriesAreBoundedAndTolerateNonsense() {
+    assertEquals(LlmConfig.DEFAULT_MAX_RETRIES, of(Map.of()).maxRetries());
+    assertEquals(0, of(Map.of("llm.max-retries", "0")).maxRetries());
+    assertEquals(3, of(Map.of("llm.max-retries", "99")).maxRetries(), "capped");
+    assertEquals(0, of(Map.of("llm.max-retries", "-4")).maxRetries(), "floored");
+    assertEquals(LlmConfig.DEFAULT_MAX_RETRIES, of(Map.of("llm.max-retries", "x")).maxRetries());
+  }
+
+  @Test
+  void baseUrlAndApiKeyAreUnsetByDefault() {
+    assertNull(of(Map.of()).baseUrl());
+    assertNull(of(Map.of()).apiKey());
+    assertEquals(
+        "http://localhost:11434/v1",
+        of(Map.of("llm.base-url", "http://localhost:11434/v1")).baseUrl());
+  }
+
+  private static LlmBackend stubBackend(String defaultModel) {
+    return new LlmBackend() {
+      @Override
+      public String id() {
+        return "stub";
+      }
+
+      @Override
+      public String displayName() {
+        return "Stub";
+      }
+
+      @Override
+      public String defaultModel() {
+        return defaultModel;
+      }
+
+      @Override
+      public Readiness readiness(LlmConfig config) {
+        return Readiness.ready("stub");
+      }
+
+      @Override
+      public LlmResponse complete(LlmRequest request, LlmConfig config) {
+        throw new UnsupportedOperationException();
+      }
+    };
   }
 
   @Test

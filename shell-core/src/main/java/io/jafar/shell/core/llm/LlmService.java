@@ -1,5 +1,6 @@
 package io.jafar.shell.core.llm;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -8,7 +9,7 @@ import java.util.Optional;
  * Orchestrates the shell's LLM features: builds prompts, applies redaction, calls a backend, and
  * accounts for what it cost.
  *
- * <p>The command layer talks to this class only, which is what keeps the Anthropic SDK, prompt
+ * <p>The command layer talks to this class only, which is what keeps provider SDKs, prompt
  * construction and redaction out of the shells. The same boundary is where the agentic mode will
  * attach: an {@code analyze} entry point joins {@link #ask} and {@link #explain} here, reusing the
  * redaction path, the usage accounting and the backend selection rather than duplicating them.
@@ -21,6 +22,8 @@ public final class LlmService {
 
   private LlmResponse.Usage sessionUsage = new LlmResponse.Usage(0, 0, 0, 0);
   private int requestCount;
+  private int retryCount;
+  private String lastValidationError;
 
   public LlmService(LlmBackend backend, LlmConfig config) {
     this.backend = backend;
@@ -37,7 +40,7 @@ public final class LlmService {
     if (!config.enabled()) {
       return Result.failure("LLM support is disabled.", "Enable it with: set llm.enabled = true");
     }
-    Optional<LlmBackend> backend = LlmBackend.select(config.backendId());
+    Optional<LlmBackend> backend = LlmBackend.select(config.backendId(), config);
     if (backend.isEmpty()) {
       List<LlmBackend> available = LlmBackend.discover();
       if (available.isEmpty()) {
@@ -79,13 +82,93 @@ public final class LlmService {
         "ask");
   }
 
-  /** Translates a question into a query proposal. */
+  /** Translates a question into a query proposal, with no local validation. */
   public QueryProposal ask(
       String question, String moduleId, List<PromptBuilder.TypeEntry> inventory)
       throws LlmException {
+    return ask(question, moduleId, inventory, QueryValidator.NONE);
+  }
+
+  /**
+   * Translates a question into a query proposal, validating the result locally and asking for a
+   * correction when it does not parse.
+   *
+   * <p>This is the difference between the feature working on a frontier model and working on a
+   * small local one. The shell owns the query parser, so an invalid query can be caught before it
+   * is ever run, and the parser's own error message is the most useful correction signal available
+   * — far better than a generic "that was wrong". The retry is provider-independent: it costs
+   * nothing on a model that gets it right first time, and rescues most of the failures on a model
+   * that does not.
+   *
+   * @param validator checks a candidate query, returning an error message when it is invalid
+   */
+  public QueryProposal ask(
+      String question,
+      String moduleId,
+      List<PromptBuilder.TypeEntry> inventory,
+      QueryValidator validator)
+      throws LlmException {
+
+    // Cleared per call: a stale error from a previous ask, or from an earlier attempt in this
+    // one, would make the caller refuse to run a query that is actually fine.
+    lastValidationError = null;
+
     LlmRequest request = buildAskRequest(question, moduleId, inventory);
     LlmResponse response = send(request);
-    return QueryProposal.parse(response.text());
+    QueryProposal proposal = QueryProposal.parse(response.text());
+
+    int retriesLeft = config.maxRetries();
+    List<LlmRequest.Turn> turns = new ArrayList<>(request.messages());
+
+    while (retriesLeft > 0 && proposal.hasQuery()) {
+      Optional<String> error = validator.validate(proposal.query());
+      if (error.isEmpty()) {
+        lastValidationError = null;
+        return proposal;
+      }
+      lastValidationError = error.get();
+
+      // Show the model its own output and the parser's complaint, then ask for one correction.
+      turns.add(LlmRequest.Turn.assistant(response.text()));
+      turns.add(
+          LlmRequest.Turn.user(PromptBuilder.correctionMessage(proposal.query(), error.get())));
+
+      response =
+          send(
+              new LlmRequest(
+                  request.systemPrefix(), List.copyOf(turns), request.maxTokens(), "ask-retry"));
+      proposal = QueryProposal.parse(response.text());
+      retriesLeft--;
+      retryCount++;
+    }
+
+    // Surface a still-invalid query rather than hiding it: the command layer prints the query and
+    // the error, which is more useful than silently returning nothing. Re-validating here also
+    // clears the error when the last attempt did in fact succeed.
+    if (proposal.hasQuery()) {
+      lastValidationError = validator.validate(proposal.query()).orElse(null);
+    }
+    return proposal;
+  }
+
+  /** Checks whether a candidate query is valid for the current session's language. */
+  @FunctionalInterface
+  public interface QueryValidator {
+    /** Returns an error message when the query is invalid, or empty when it parses. */
+    Optional<String> validate(String query);
+
+    /** A validator that accepts everything, for callers with no parser to hand. */
+    QueryValidator NONE = query -> Optional.empty();
+  }
+
+  /** The parse error from the most recent {@code ask}, when the final query still did not parse. */
+  public Optional<String> lastValidationError() {
+    return Optional.ofNullable(lastValidationError);
+  }
+
+  /** How many correction round-trips this service has made. */
+  public int retryCount() {
+    return retryCount;
   }
 
   /**

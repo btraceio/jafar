@@ -48,6 +48,18 @@ public final class AnthropicBackend implements LlmBackend {
   }
 
   @Override
+  public String defaultModel() {
+    // Deliberately the strongest tier: a wrong query wastes the user's turn and teaches them the
+    // wrong syntax, which costs more than the token difference. `set llm.model` overrides it.
+    return "claude-opus-5";
+  }
+
+  @Override
+  public String credentialHelp() {
+    return "Set ANTHROPIC_API_KEY, or run `ant auth login` for keyless use.";
+  }
+
+  @Override
   public Readiness readiness(LlmConfig config) {
     String apiKey = System.getenv("ANTHROPIC_API_KEY");
     String authToken = System.getenv("ANTHROPIC_AUTH_TOKEN");
@@ -93,7 +105,7 @@ public final class AnthropicBackend implements LlmBackend {
     try {
       MessageCreateParams.Builder params =
           MessageCreateParams.builder()
-              .model(config.model())
+              .model(config.modelFor(this))
               .maxTokens(request.maxTokens())
               // The system prefix is the query-language reference: large, and identical on every
               // call. Marking it ephemeral makes it a cache read after the first request, which is
@@ -136,7 +148,7 @@ public final class AnthropicBackend implements LlmBackend {
 
     String stopReason = message.stopReason().map(Object::toString).orElse("");
     return new LlmResponse(
-        text.toString().strip(), Optional.of(accounting), config.model(), stopReason);
+        text.toString().strip(), Optional.of(accounting), config.modelFor(this), stopReason);
   }
 
   private AnthropicClient client() {

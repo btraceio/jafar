@@ -31,4 +31,4 @@ test {
 
 group = 'io.btrace'
 version = component_version
-description = 'Anthropic-backed LLM support for the Jafar shells'
+description = 'Anthropic API backend for the Jafar shells'

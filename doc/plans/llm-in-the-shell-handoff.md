@@ -9,8 +9,9 @@ session) can start from the seams rather than from the design.
 
 | Piece | Where |
 |---|---|
-| Backend SPI, config, redaction, prompts, parsing, orchestration | `shell-core/src/main/java/io/jafar/shell/core/llm/` |
-| Anthropic backend and credential diagnostics | `llm-core/src/main/java/io/jafar/shell/llm/` |
+| Backend SPI, config, redaction, prompts, parsing, orchestration, validation loop | `shell-core/src/main/java/io/jafar/shell/core/llm/` |
+| Anthropic backend and credential diagnostics | `llm-anthropic/src/main/java/io/jafar/shell/llm/` |
+| OpenAI-compatible backends (`openai`, `ollama`) | `llm-openai/src/main/java/io/jafar/shell/llm/openai/` |
 | `ask`, `explain`, `llm` commands | `jfr-shell/src/main/java/io/jafar/shell/cli/LlmCommands.java` |
 | Wiring — `jfr-shell` (JFR only) | `CommandDispatcher.java` — cases at the top of the switch, `llmCommands()` host adapter |
 | Wiring — `jafar-shell` (all four formats) | `unified/Shell.java` — branches in the command chain, `llmCommands()` host adapter |
@@ -24,14 +25,27 @@ Commands: `ask <question>`, `explain`, `llm status`, `llm dry-run <question>`, `
 correct at the same time. A 900 MB recording costs the same as a 2 MB one. Any future work that
 starts feeding event data to the model should be treated as a redesign, not an increment.
 
-**LLM support is optional at every level.** The SPI is in `shell-core` (no new dependencies); the
-Anthropic SDK is only in `llm-core`, which `jfr-shell` takes as `runtimeOnly` and discovers with
-`ServiceLoader`. Delete that one line and the SDK is gone, the commands degrade to a message, and
-nothing else changes. Air-gapped users are a real part of this tool's audience.
+**LLM support is optional at every level.** The SPI is in `shell-core` (no new dependencies);
+provider code is only in `llm-anthropic` and `llm-openai`, which both shells take as `runtimeOnly`
+and discover with `ServiceLoader`. Delete those two lines and every provider dependency is gone, the
+commands degrade to a message, and nothing else changes. Air-gapped users are a real part of this
+tool's audience — and `ollama` on loopback is the other answer for them.
 
-**Both auth modes are the SDK's job.** `AnthropicOkHttpClient.fromEnv()` resolves API key, OAuth
-profile and WIF. Jafar contributes no auth code — only the *diagnostics*, because the SDK does not
-fail fast when credentials are missing.
+**No provider is privileged.** `llm.backend` selects by id, `auto` takes the first ready one, and
+each backend supplies its own `defaultModel()` — which is why `LlmConfig` has no cross-provider
+model default. `OpenAiCompatibleBackend` is a `Profile` plus wire code, so adding vLLM or Groq as a
+named id is a new `Profile`, not new transport.
+
+**For Anthropic, both auth modes are the SDK's job.** `AnthropicOkHttpClient.fromEnv()` resolves API
+key, OAuth profile and WIF. Jafar contributes no auth code — only the *diagnostics*, because the SDK
+does not fail fast when credentials are missing. The OpenAI-compatible backends take a bearer token
+from `llm.api-key` or the profile's env vars, and omit the `Authorization` header entirely when
+there is none: an empty bearer breaks several local servers.
+
+**A candidate query is validated locally before it runs.** `Host.validateQuery` parses it with the
+same parser that would execute it; on rejection `LlmService` feeds the parser's own error back and
+asks for a correction, bounded by `llm.max-retries`. Without this the feature does not work on a
+small local model, which is most of the reason `ollama` is worth having.
 
 **The query is always printed before it runs.** Non-negotiable: it is how a wrong guess becomes
 visible and how users learn JfrPath. Do not add a "quiet" mode that hides it.
@@ -54,8 +68,10 @@ support (`Tool.builder()`, `stop_reason == "tool_use"`; the SDK's tool runner ne
 `.addBeta("structured-outputs-2025-11-13")`).
 
 Because discovery is `ServiceLoader`-based and selection goes through `llm.backend`, **alternative
-C's delegate backend is a second implementation in `llm-core` and one line in a services file** —
-no changes to the command layer, the config, or the redaction path.
+C's delegate backend is a new module (or a class in an existing one) and one line in a services
+file** — no changes to the command layer, the config, or the redaction path. `llm-openai` is the
+worked example: it was added without touching `LlmCommands`, `LlmService`, `Redactor` or either
+shell's adapter.
 
 ### 3.2 `LlmService` — the orchestration point
 
@@ -103,7 +119,10 @@ investigation become mergeable.
 | A `set` command in `jafar-shell` | The unified shell is wired for `ask` (it is the only entry point that opens all four formats), but it still has no `set`/`vars`, so `llm.*` settings there resolve from its global `VariableStore` — which nothing populates — and then from `JAFAR_LLM_*` environment variables. Giving that shell a `set` command is gap G8 in `performance-engineer-in-a-box.md`; the LLM host adapter already reads the store, so it starts working the day `set` lands. |
 | Multi-turn conversation | `ask` is one shot. Conversation state belongs in `VariableStore` so `vars` shows it and scripts can reset it, but it is only worth building with B's loop. |
 | Cost in currency | Usage is reported in tokens. Converting to money means shipping a price table that goes stale; the token counts are exact and the pricing is one lookup away. |
-| Live API test | No test in this repository makes a real API call. See §6. |
+| Live API test | No test in this repository calls a hosted provider. See §6. |
+| Streaming / tool use on the OpenAI backends | `stream:false` and no `tools` array. B needs tool use; the OpenAI protocol has it, and it goes next to `complete` per §3.1. |
+| A named `Profile` per provider | vLLM, LM Studio, Groq, Together and OpenRouter all work today via `llm.backend = openai` plus `llm.base-url`. Named ids are three lines each and worth adding when someone actually asks. |
+| Ollama's native `/api/*` endpoints | The OpenAI-compatible surface is enough and keeps one code path. Native mode would buy `keep_alive` and model-pull control. |
 
 ## 5. Where to look first
 
@@ -118,9 +137,14 @@ shell-core/src/main/java/io/jafar/shell/core/llm/
   QueryProposal.java     forgiving parse of the model's reply
   LlmRequest/Response    transport-neutral request and usage records
 
-llm-core/src/main/java/io/jafar/shell/llm/
+llm-anthropic/src/main/java/io/jafar/shell/llm/
   AnthropicBackend.java       the SDK call, prompt caching, error->remedy mapping
   CredentialDiagnostics.java  which credential wins, and the shadowing traps
+
+llm-openai/src/main/java/io/jafar/shell/llm/openai/
+  OpenAiCompatibleBackend.java  chat-completions over the JDK HttpClient; Profile; loopback probe
+  OpenAiBackend.java            profile: api.openai.com, gpt-4o-mini, key required
+  OllamaBackend.java            profile: localhost:11434, qwen2.5-coder:7b, keyless
 
 jfr-shell/src/main/java/io/jafar/shell/cli/
   LlmCommands.java       command behaviour, Host interface           <- B's tools extend Host
@@ -132,39 +156,69 @@ Two invariants to preserve:
 1. **`LanguageReference` strings must stay byte-stable between calls.** They are the cached prompt
    prefix. A timestamp or session id in there silently costs full price on every request. The test
    `LlmServiceTest.theSystemPrefixIsByteStableAcrossCalls` guards this.
-2. **Unit tests must never reach a real backend.** `llm-core` is on `jfr-shell`'s test runtime
-   classpath, so the Anthropic backend *is* discoverable in tests. `LlmCommandsTest` pins
-   `llm.backend` to a non-existent id for exactly this reason — without it, running the suite on a
-   machine with `ANTHROPIC_API_KEY` set would issue live, billable calls. Keep that pin.
+2. **Unit tests must never reach a real backend.** `llm-anthropic` and `llm-openai` are both on
+   `jfr-shell`'s test runtime classpath, so their backends *are* discoverable in tests.
+   `LlmCommandsTest` pins `llm.backend` to a non-existent id for exactly this reason — without it,
+   running the suite on a machine with `ANTHROPIC_API_KEY` set would issue live, billable calls.
+   Keep that pin. `llm-openai`'s own tests bind a `com.sun.net.httpserver.HttpServer` to loopback,
+   which is a real socket and a real request but no provider account.
+3. **The LLM host adapter must know both of `CommandDispatcher`'s query paths.** With a
+   `JfrSelector` it delegates; without one — which is how the interactive `io.jafar.shell.Shell`
+   builds it — it parses and evaluates JfrPath directly. An adapter that knows only the selector
+   leaves `ask` broken in the shell people actually type into while every fake-host unit test stays
+   green. `LlmHostAdapterTest` guards it.
 
 ## 6. Verification status — read this before trusting anything
 
 **Tested, and passing:**
 
-- 27 unit tests across `shell-core` and `jfr-shell`: redaction (including nesting and
+- Unit tests across `shell-core`, `llm-openai` and `jfr-shell`: redaction (including nesting and
   non-mutation), config precedence and defaults, reply parsing in six shapes, prompt construction,
-  prefix stability, data fencing, truncation declaration, dry-run/actual equivalence, and every
-  command's degraded path.
-- End-to-end in a built shell against a real recording: `llm status`, `llm dry-run`, and `ask`
-  without credentials, plus both credential traps (empty key; key and token together) — each
-  produced the intended local diagnostic and remedy.
-- ServiceLoader discovery of `AnthropicBackend` from the shell's classpath.
+  prefix stability, data fencing, truncation declaration, dry-run/actual equivalence, the
+  validate-and-correct loop, and every command's degraded path.
+- `llm-openai` is tested against a real `com.sun.net.httpserver.HttpServer` on loopback rather than
+  a mocked client, because what is most likely to be wrong there is on the wire: the JSON shape, the
+  headers, the absence of an `Authorization` header when there is no key, usage accounting with
+  `prompt_tokens_details.cached_tokens`, and how an error body becomes a remedy.
+- **The full path, in both built shells, against a real recording and a real HTTP server.** A stub
+  OpenAI-compatible server was scripted to answer first with a query the JfrPath parser rejects and
+  then with a valid one. `jfr-shell` and `jafar-shell` each produced:
 
-**Not tested:** the live API path. No credentials were available and spending someone's money from
-a test is not acceptable, so `AnthropicBackend.complete` has never executed against
-`api.anthropic.com`. What that leaves unverified, concretely:
+  ```
+  events/jdk.ExecutionSample | count()
+  | count |
+  +-------+
+  | 1142  |
+  [llm: 200 in, 48 out, 2200 cached, 1 correction(s)]
+  ```
 
-- that the request shape is accepted (model id, `systemOfTextBlockParams` with `cacheControl`,
-  `maxTokens`);
-- that the cached prefix produces a non-zero `cache_read_input_tokens` on the second call;
-- that a real model reply parses — `QueryProposal` is tested against six hand-written shapes, not
-  against actual output;
-- that `remedyFor` matches the SDK's real error messages for 401/403/429/404. It matches on
-  substrings of the message, which is the fragile part.
+  matching the same query typed by hand — so the correction loop, the query execution, the
+  rendering and the usage accounting all work outside the test harness.
+- End-to-end without credentials: `llm status`, `llm dry-run`, and `ask`, plus both Anthropic
+  credential traps (empty key; key and token together) — each produced the intended local
+  diagnostic and remedy.
+- ServiceLoader discovery of all three backends from a built shell's classpath.
 
-**The first thing to do with a credential** is run `llm dry-run`, then `ask`, then `llm cost`, and
-check that the cached-token count is non-zero on the second `ask`. That exercises every one of the
-above in under a minute.
+**Not tested:** any hosted provider. No credentials were available and spending someone's money
+from a test is not acceptable, so neither `AnthropicBackend.complete` nor a call to
+`api.openai.com` has ever executed. What that leaves unverified, concretely:
+
+- for Anthropic, that the request shape is accepted (model id, `systemOfTextBlockParams` with
+  `cacheControl`, `maxTokens`), and that the cached prefix produces a non-zero
+  `cache_read_input_tokens` on the second call;
+- that `remedyFor` matches each provider's real error messages for 401/403/429/404. Both backends
+  match on substrings, which is the fragile part; the OpenAI one at least matches on the HTTP
+  status first;
+- that a real model's reply parses. `QueryProposal` is tested against six hand-written shapes and
+  the stub's output, not against a real model.
+
+The OpenAI-compatible path is the cheapest to close: `ollama serve`, `ollama pull qwen2.5-coder:7b`,
+`set llm.backend = ollama`, `ask`. That costs nothing and exercises real model output through the
+real wire format.
+
+**The first thing to do with a hosted credential** is run `llm dry-run`, then `ask`, then
+`llm cost`, and check that the cached-token count is non-zero on the second `ask`. That exercises
+the rest in under a minute.
 
 ## 7. Suggested order for B
 
