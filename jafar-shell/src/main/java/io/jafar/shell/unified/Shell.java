@@ -49,6 +49,7 @@ public final class Shell implements AutoCloseable {
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
   private final Map<String, org.jline.reader.Completer>
       completerCache; // Cache completers per module
+  private io.jafar.shell.cli.LlmCommands llmCommands;
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -192,6 +193,22 @@ public final class Shell implements AutoCloseable {
 
         if (input.startsWith("info")) {
           handleInfo(input);
+          continue;
+        }
+
+        if (input.startsWith("ask ") || input.equals("ask")) {
+          llmCommands().ask(input.length() > 3 ? input.substring(4).trim() : "");
+          continue;
+        }
+
+        if (input.equals("explain")) {
+          llmCommands().explain();
+          continue;
+        }
+
+        if (input.equals("llm") || input.startsWith("llm ")) {
+          String rest = input.length() > 3 ? input.substring(4).trim() : "";
+          llmCommands().llm(rest.isEmpty() ? List.of() : List.of(rest.split("\\s+")));
           continue;
         }
 
@@ -507,6 +524,122 @@ public final class Shell implements AutoCloseable {
     }
   }
 
+  /**
+   * Builds the LLM command handler, adapting the unified shell to {@link
+   * io.jafar.shell.cli.LlmCommands.Host}.
+   *
+   * <p>This shell is the one that can hold sessions of every format, so it is where {@code ask}
+   * reaches HdumpPath and the pprof/OTLP samples grammar as well as JfrPath — the module of the
+   * current session picks the language.
+   *
+   * <p>Settings resolve from the global variable store and then from environment variables. This
+   * shell has no {@code set} command yet, so in practice {@code JAFAR_LLM_*} environment variables
+   * are how you configure it here; the store is consulted first so that {@code set} works the day
+   * it is added.
+   */
+  private io.jafar.shell.cli.LlmCommands llmCommands() {
+    if (llmCommands == null) {
+      llmCommands =
+          new io.jafar.shell.cli.LlmCommands(
+              new io.jafar.shell.cli.LlmCommands.Host() {
+                @Override
+                public void println(String line) {
+                  terminal.writer().println(line);
+                  terminal.flush();
+                }
+
+                @Override
+                public Optional<String> currentModuleId() {
+                  return sessions.getCurrent().map(ref -> ref.session.getType());
+                }
+
+                @Override
+                public List<String> availableTypes() {
+                  return sessions
+                      .getCurrent()
+                      .map(
+                          ref -> {
+                            try {
+                              return ref.session.getAvailableTypes().stream().sorted().toList();
+                            } catch (Exception e) {
+                              return List.<String>of();
+                            }
+                          })
+                      .orElseGet(List::of);
+                }
+
+                @Override
+                @SuppressWarnings("unchecked")
+                public List<Map<String, Object>> runQuery(String query) throws Exception {
+                  Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+                  if (current.isEmpty()) {
+                    throw new IllegalStateException("No session open");
+                  }
+                  SessionManager.SessionRef<Session> ref = current.get();
+                  ShellModule module = moduleById.get(ref.session.getType());
+                  if (module == null || module.getQueryEvaluator() == null) {
+                    throw new IllegalStateException(
+                        "No query evaluator for session type: " + ref.session.getType());
+                  }
+                  // Parse first: an evaluator's contract is to take the parsed query, and only
+                  // some of them also accept the raw string.
+                  QueryEvaluator evaluator = module.getQueryEvaluator();
+                  Object result =
+                      evaluator.evaluate(
+                          ref.session, evaluator.parse(query), buildCrossSessionContext());
+                  return result instanceof List<?> list
+                      ? (List<Map<String, Object>>) list
+                      : List.of();
+                }
+
+                @Override
+                public void renderRows(List<Map<String, Object>> rows) {
+                  printResult(rows);
+                }
+
+                @Override
+                public Optional<String> validateQuery(String query) {
+                  // Use the current module's own parser, so each format validates in its own
+                  // language and the model is corrected with a message it can act on.
+                  try {
+                    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+                    if (current.isEmpty()) {
+                      return Optional.empty();
+                    }
+                    ShellModule module = moduleById.get(current.get().session.getType());
+                    if (module == null || module.getQueryEvaluator() == null) {
+                      return Optional.empty();
+                    }
+                    module.getQueryEvaluator().parse(query);
+                    return Optional.empty();
+                  } catch (RuntimeException e) {
+                    String message = e.getMessage();
+                    return Optional.of(
+                        message == null || message.isBlank() ? e.toString() : message);
+                  }
+                }
+
+                @Override
+                public String setting(String name) {
+                  if (globalStore == null) {
+                    return null;
+                  }
+                  VariableStore.Value value = globalStore.get(name);
+                  if (value == null) {
+                    return null;
+                  }
+                  try {
+                    Object raw = value.get();
+                    return raw == null ? null : String.valueOf(raw);
+                  } catch (Exception e) {
+                    return null;
+                  }
+                }
+              });
+    }
+    return llmCommands;
+  }
+
   private CrossSessionContext buildCrossSessionContext() {
     return new CrossSessionContext() {
       @Override
@@ -667,6 +800,11 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Query:");
     terminal.writer().println("  show <query>       Execute a query on current session");
+    terminal.writer().println();
+    terminal.writer().println("Ask (LLM, optional):");
+    terminal.writer().println("  ask <question>     Turn a question into a query, show it, run it");
+    terminal.writer().println("  explain            Explain the most recent result");
+    terminal.writer().println("  llm                status | dry-run <question> | cost");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");

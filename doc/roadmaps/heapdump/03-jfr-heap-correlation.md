@@ -22,17 +22,17 @@ open recording.jfr
 open dump.hprof
 
 # Correlate: enrich heap class histogram with JFR allocation data
-classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class) | sortBy(allocRate)
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample") | sortBy(allocRate)
 
 # Using session alias
 use jfr1 = recording.jfr
-classes | join(session=jfr1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocRate)
+classes | join(session=jfr1, root="jdk.ObjectAllocationSample") | sortBy(allocRate)
 
 # Find classes with high allocation rate but low survival (churn)
-classes | join(session=jfr1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000 and retained < 1MB) | top(20)
+classes | join(session=jfr1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000 and retained < 1MB) | top(20)
 
 # Find classes with high retained size — where are they allocated?
-classes | join(session=jfr1, root="jdk.ObjectAllocationSample", by=class) | filter(retained > 10MB) | select(name, retained, allocCount, topAllocSite)
+classes | join(session=jfr1, root="jdk.ObjectAllocationSample") | filter(retained > 10MB) | select(name, retained, allocCount, topAllocSite)
 ```
 
 ## Design

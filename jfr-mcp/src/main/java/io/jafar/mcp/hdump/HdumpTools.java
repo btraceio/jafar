@@ -6,10 +6,12 @@ import io.jafar.hdump.shell.hdumppath.HdumpPath;
 import io.jafar.hdump.shell.hdumppath.HdumpPathEvaluator;
 import io.jafar.hdump.shell.hdumppath.HdumpPathParser;
 import io.jafar.mcp.config.McpServerConfig;
+import io.jafar.mcp.findings.Findings;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
 import io.jafar.mcp.validation.FileValidator;
+import io.jafar.shell.core.SessionResolver;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -33,10 +35,24 @@ public final class HdumpTools {
 
   private final HeapSessionRegistry heapSessionRegistry;
   private final McpResultFactory resultFactory;
+  private final SessionResolver sessionResolver;
 
   public HdumpTools(HeapSessionRegistry heapSessionRegistry, McpResultFactory resultFactory) {
+    this(heapSessionRegistry, resultFactory, heapSessionRegistry.asResolver());
+  }
+
+  /**
+   * @param sessionResolver resolves session references for cross-session operators. Pass a {@code
+   *     CrossSessionContext} to enable cross-type joins such as heap-to-JFR allocation correlation;
+   *     a bare resolver supports heap-to-heap joins only.
+   */
+  public HdumpTools(
+      HeapSessionRegistry heapSessionRegistry,
+      McpResultFactory resultFactory,
+      SessionResolver sessionResolver) {
     this.heapSessionRegistry = heapSessionRegistry;
     this.resultFactory = resultFactory;
+    this.sessionResolver = sessionResolver;
   }
 
   private static Tool buildTool(String name, String description, String schema) {
@@ -290,7 +306,7 @@ public final class HdumpTools {
       HeapSessionRegistry.SessionInfo info = heapSessionRegistry.getOrCurrent(sessionId);
       HdumpPath.Query query = HdumpPathParser.parse(queryStr);
       List<Map<String, Object>> rows =
-          HdumpPathEvaluator.evaluate(info.session(), query, heapSessionRegistry.asResolver());
+          HdumpPathEvaluator.evaluate(info.session(), query, sessionResolver);
 
       boolean truncated = rows.size() > limit;
       if (truncated) {
@@ -446,14 +462,18 @@ public final class HdumpTools {
               ? HeapReportGenerator.formatMarkdown(findings, info.session())
               : HeapReportGenerator.formatText(findings, info.session());
 
-      // Also return structured findings
+      // Also return structured findings. The id and source keys make these mergeable with the
+      // findings emitted by the JFR tools, so an agent holding both a heap dump and a recording
+      // can rank one list instead of reconciling two shapes.
       List<Map<String, Object>> findingMaps = new ArrayList<>();
       for (HeapReportGenerator.Finding f : findings) {
         Map<String, Object> fm = new LinkedHashMap<>();
+        fm.put("id", Findings.id(f.category(), f.title()));
         fm.put("severity", f.severity().name());
         fm.put("category", f.category());
         fm.put("title", f.title());
         if (f.description() != null) fm.put("description", f.description());
+        fm.put("source", "hdump_report");
         if (f.retainedSize() >= 0) fm.put("retainedSize", f.retainedSize());
         if (f.affectedObjects() >= 0) fm.put("affectedObjects", f.affectedObjects());
         if (f.action() != null) fm.put("action", f.action());
@@ -511,7 +531,16 @@ public final class HdumpTools {
   }
 
   public CallToolResult handleHdumpHelp(Map<String, Object> args) {
-    String topic = (String) args.get("topic");
+    String content = help((String) args.get("topic"));
+    return new CallToolResult(List.of(new TextContent(content)), false, null, null);
+  }
+
+  /**
+   * Returns the HdumpPath help text for a topic. Exposed so that the same reference can be served
+   * as an MCP resource, not only through the {@code hdump_help} tool.
+   */
+  public String help(String requestedTopic) {
+    String topic = requestedTopic;
     if (topic == null || topic.isBlank()) {
       topic = "overview";
     }
@@ -531,7 +560,7 @@ public final class HdumpTools {
                   + ". Valid topics: overview, roots, filters, operators, examples, patterns, tools";
         };
 
-    return new CallToolResult(List.of(new TextContent(content)), false, null, null);
+    return content;
   }
 
   private String getHdumpOverviewHelp() {

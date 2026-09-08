@@ -1,0 +1,2 @@
+io.jafar.shell.llm.openai.OpenAiBackend
+io.jafar.shell.llm.openai.OllamaBackend

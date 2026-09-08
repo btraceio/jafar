@@ -1,5 +1,7 @@
 package io.jafar.mcp.otlp;
 
+import io.jafar.mcp.findings.Findings;
+import io.jafar.mcp.findings.SamplingFindings;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.tool.ProgressReporter;
@@ -522,6 +524,9 @@ public final class OtlpTools {
 
       sendProgress(exchange, progressToken, step, totalSteps, "Generating insights...");
       result.put("insights", generateOtlpUseInsights(resourceMetrics));
+      result.put(
+          "findings",
+          Findings.toMaps(Findings.merge(SamplingFindings.fromUse(resourceMetrics, "otlp_use"))));
 
       sendProgress(exchange, progressToken, totalSteps, totalSteps, "Done");
       return successResult(result);

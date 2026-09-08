@@ -508,9 +508,61 @@ jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=mon
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
+## Ask Your Recording a Question
+
+`jfr-shell` can turn a question into a query, show you the query, and run it:
+
+```
+jfr> ask which threads used the most CPU?
+
+# Groups execution samples by thread name and ranks the ten busiest.
+
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+```
+
+The query is always printed — so a wrong guess is visible, and you learn JfrPath as you go.
+The recording itself never leaves your machine: the model composes the query, the shell runs it.
+
+Authenticate with an API key or keylessly with an OAuth profile:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or:
+ant auth login                        # keyless; no static secret to manage
+```
+
+`llm dry-run <question>` prints exactly what would be sent without sending it, and result data is
+redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
+**[the tutorial](doc/cli/AskTutorial.md)** and **[what leaves your machine](doc/cli/LlmPrivacy.md)**.
+
+## Claude Code Plugin
+
+`jafar-perf` adds the methodology the tools do not carry: nine skills (`triage`, `cpu`, `latency`,
+`gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`) and seven agents that know *which*
+analysis to run on an unfamiliar recording or heap dump, not just how to run one.
+
+```
+/plugin marketplace add jbachorik/jafar-perf-box
+/plugin install jafar-perf@btraceio
+```
+
+The plugin bundles `.mcp.json`, so installing it **also registers the `jafar` MCP server** described
+below — no separate `claude mcp add` is needed. [JBang](https://www.jbang.dev) must be on your PATH;
+it fetches the server on first use.
+
+It lives in **[jbachorik/jafar-perf-box](https://github.com/jbachorik/jafar-perf-box)**, not in this
+repository: adding a marketplace clones its repository, and there is no reason to pull Jafar's
+binary test recordings onto a machine that only wants the skills.
+
+The two lines above deliberately do not match. `@btraceio` is the *marketplace* name, which stays
+fixed so that moving the plugin repository later changes only the `marketplace add` argument and
+does not break the plugin id for anyone who already installed it.
+
 ## MCP Server
 
 JAFAR includes an MCP (Model Context Protocol) server that enables AI agents like Claude to analyze JFR recordings. See **[jfr-mcp/README.md](jfr-mcp/README.md)** for details.
+
+Installing the plugin above already registers it; the rest of this section is for using the server
+on its own, or from a client other than Claude Code.
 
 ### Quick Install
 
