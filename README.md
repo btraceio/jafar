@@ -541,7 +541,7 @@ redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
 analysis to run on an unfamiliar recording or heap dump, not just how to run one.
 
 ```
-/plugin marketplace add btraceio/jafar
+/plugin marketplace add btraceio/jafar-perf
 /plugin install jafar-perf@btraceio
 ```
 
@@ -549,8 +549,9 @@ The plugin bundles `.mcp.json`, so installing it **also registers the `jafar` MC
 below — no separate `claude mcp add` is needed. [JBang](https://www.jbang.dev) must be on your PATH;
 it fetches the server on first use.
 
-See **[plugins/jafar-perf/README.md](plugins/jafar-perf/README.md)** for the full skill and agent
-list.
+It lives in **[btraceio/jafar-perf](https://github.com/btraceio/jafar-perf)**, not in this
+repository: adding a marketplace clones its repository, and there is no reason to pull Jafar's
+binary test recordings onto a machine that only wants the skills.
 
 ## MCP Server
 

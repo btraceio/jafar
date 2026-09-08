@@ -58,11 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     variables. The whole path — including the correction loop — is verified in both built shells
     against a real recording and a real local HTTP server, but no hosted provider has been called
     from this repository; see the handoff, section 6
-- **`jafar-perf` Claude Code plugin** (`plugins/jafar-perf/`) - methodology layer over the MCP server
+- **`jafar-perf` Claude Code plugin** - methodology layer over the MCP server, published from
+  [btraceio/jafar-perf](https://github.com/btraceio/jafar-perf)
   - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
   - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
-  - Bundles `.mcp.json`, so installing the plugin registers the MCP server; marketplace manifest at
-    `.claude-plugin/marketplace.json`
+  - Bundles `.mcp.json`, so installing the plugin registers the MCP server too
+  - Kept in its own repository because `/plugin marketplace add` clones the marketplace repository:
+    the plugin is 160 KB of Markdown and this repository is ~18 MB, 9.6 MB of it binary JFR test
+    recordings
 - **`jfr_compare` MCP tool** - compares a candidate recording against a baseline
   - Event counts normalised to per-second rates using each recording's own observed span; stack frames
     compared as a share of that recording's samples, so different sampling intervals stay comparable
