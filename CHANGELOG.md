@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     against a real recording and a real local HTTP server, but no hosted provider has been called
     from this repository; see the handoff, section 6
 - **`jafar-perf` Claude Code plugin** - methodology layer over the MCP server, published from
-  [btraceio/jafar-perf](https://github.com/btraceio/jafar-perf)
+  [jbachorik/jafar-perf-box](https://github.com/jbachorik/jafar-perf-box)
   - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
   - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
   - Bundles `.mcp.json`, so installing the plugin registers the MCP server too

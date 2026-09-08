@@ -49,7 +49,7 @@ gaps stated separately from findings.
 It is also the answer if you have a **Claude subscription rather than API credits**: Claude Code
 uses your subscription, and the plugin gives it the tools.
 
-→ [btraceio/jafar-perf](https://github.com/btraceio/jafar-perf)
+→ [jbachorik/jafar-perf-box](https://github.com/jbachorik/jafar-perf-box)
 
 ## Combining them
 
