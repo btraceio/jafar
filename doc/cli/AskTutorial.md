@@ -127,7 +127,7 @@ Well:
 Less well:
 
 - "why is my app slow?" — too open for a single query. Run `jfr_diagnose` through the MCP server,
-  or the `perf-lead` agent from the [plugin](../../plugins/jafar-perf/README.md), which are built
+  or the `perf-lead` agent from the [plugin](https://github.com/btraceio/jafar-perf), which are built
   for open-ended investigation. A multi-step `analyze` in the shell is
   [designed but not built](../plans/llm-in-the-shell-handoff.md).
 - "is this normal?" — nothing in the recording says what normal is. Compare two recordings instead.

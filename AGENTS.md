@@ -451,16 +451,19 @@ See [doc/cli/LlmSetup.md](doc/cli/LlmSetup.md), [doc/cli/LlmPrivacy.md](doc/cli/
 [doc/plans/llm-in-the-shell-handoff.md](doc/plans/llm-in-the-shell-handoff.md) for the seams left
 for the planned agentic mode.
 
-### Claude Code Plugin (`plugins/jafar-perf`)
-The repository ships a Claude Code plugin that turns the MCP server into a guided performance
-analyst: methodology skills (`triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`,
-`compare`, `jfrpath`, `report`) and subagents (`perf-lead` plus five specialists). It bundles
-`.mcp.json`, so installing it registers the MCP server too. The marketplace manifest is
-`.claude-plugin/marketplace.json` at the repository root.
+### Claude Code Plugin (`btraceio/jafar-perf`, a separate repository)
+A Claude Code plugin turns the MCP server into a guided performance analyst: methodology skills
+(`triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`) and
+subagents (`perf-lead` plus five specialists). It bundles `.mcp.json`, so installing it registers
+the MCP server too.
 
-When changing a tool's name, parameters or response shape, update the affected skill files in
-`plugins/jafar-perf/skills/` — they name tools and parameters explicitly, and stale guidance
-sends an agent down a path that no longer works.
+**It lives in [btraceio/jafar-perf](https://github.com/btraceio/jafar-perf), not here.** Adding a
+marketplace clones its repository, and this one carries several megabytes of binary test recordings
+a plugin user has no use for. That split has a cost, and it is the one thing to remember:
+
+> **When changing an MCP tool's name, parameters or response shape, update the affected skill files
+> in `btraceio/jafar-perf`.** They name tools and parameters explicitly, they are not covered by
+> this repository's tests, and stale guidance sends an agent down a path that no longer works.
 
 ### Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)

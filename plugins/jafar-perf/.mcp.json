@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "jafar": {
-      "type": "stdio",
-      "command": "jbang",
-      "args": ["jfr-mcp@btraceio", "--stdio"]
-    }
-  }
-}
