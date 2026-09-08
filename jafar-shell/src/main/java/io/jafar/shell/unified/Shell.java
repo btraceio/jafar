@@ -581,10 +581,12 @@ public final class Shell implements AutoCloseable {
                     throw new IllegalStateException(
                         "No query evaluator for session type: " + ref.session.getType());
                   }
+                  // Parse first: an evaluator's contract is to take the parsed query, and only
+                  // some of them also accept the raw string.
+                  QueryEvaluator evaluator = module.getQueryEvaluator();
                   Object result =
-                      module
-                          .getQueryEvaluator()
-                          .evaluate(ref.session, query, buildCrossSessionContext());
+                      evaluator.evaluate(
+                          ref.session, evaluator.parse(query), buildCrossSessionContext());
                   return result instanceof List<?> list
                       ? (List<Map<String, Object>>) list
                       : List.of();
@@ -593,6 +595,28 @@ public final class Shell implements AutoCloseable {
                 @Override
                 public void renderRows(List<Map<String, Object>> rows) {
                   printResult(rows);
+                }
+
+                @Override
+                public Optional<String> validateQuery(String query) {
+                  // Use the current module's own parser, so each format validates in its own
+                  // language and the model is corrected with a message it can act on.
+                  try {
+                    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+                    if (current.isEmpty()) {
+                      return Optional.empty();
+                    }
+                    ShellModule module = moduleById.get(current.get().session.getType());
+                    if (module == null || module.getQueryEvaluator() == null) {
+                      return Optional.empty();
+                    }
+                    module.getQueryEvaluator().parse(query);
+                    return Optional.empty();
+                  } catch (RuntimeException e) {
+                    String message = e.getMessage();
+                    return Optional.of(
+                        message == null || message.isBlank() ? e.toString() : message);
+                  }
                 }
 
                 @Override

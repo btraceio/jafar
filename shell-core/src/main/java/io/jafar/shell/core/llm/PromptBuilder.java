@@ -121,6 +121,27 @@ public final class PromptBuilder {
     return sb.toString();
   }
 
+  /**
+   * Builds the correction turn sent after a generated query failed to parse.
+   *
+   * <p>The parser's own message, with its position, is the most specific feedback available, so it
+   * goes in verbatim. The query is fenced as data: it came from the model, but it is echoed back
+   * through the same untrusted channel as everything else.
+   */
+  public static String correctionMessage(String invalidQuery, String parseError) {
+    return """
+        That query is not valid and was not run. The shell's parser rejected it:
+
+        %s
+        %s
+        %s
+
+        Parser error: %s
+
+        Reply in the same format with a corrected query. Use only the types listed earlier. If the         question cannot be answered with a valid query against those types, reply with         `QUERY: <none>` and explain why."""
+        .formatted(DATA_OPEN, invalidQuery, DATA_CLOSE, parseError);
+  }
+
   /** Builds the user turn for an explanation request. */
   public static String explanationUserMessage(
       String query, List<Map<String, Object>> rows, int totalRows, int shownRows) {

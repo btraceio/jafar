@@ -1,8 +1,13 @@
 # What leaves your machine
 
-The shell's LLM commands send data to a third-party API. This page states exactly what, how to see
-it before it goes, how to restrict it, and one risk that is specific to analysing recordings you
-did not produce.
+The shell's LLM commands send data to whichever model backend you selected. This page states
+exactly what, how to see it before it goes, how to restrict it, and one risk that is specific to
+analysing recordings you did not produce.
+
+**Where "third party" appears below, it means a hosted backend** (`anthropic`, `openai`, or a
+remote `llm.base-url`). With a local model — `ollama` on loopback, or any other server you run —
+nothing in this document leaves the machine at all; see
+[Local models](#local-models-nothing-leaves-the-machine).
 
 ## The short version
 
@@ -96,19 +101,49 @@ That is mitigation, not a guarantee: prompt injection is not a solved problem. W
 recording from an untrusted source, read the query `ask` prints before you trust the result, the
 same way you would read a script someone sent you.
 
+## Local models: nothing leaves the machine
+
+`set llm.backend = ollama` (or any `llm.base-url` pointing at a server you run) changes the
+document above from "here is what is sent and how it is restricted" to "nothing is sent". The
+question, the type names, the result rows and the language reference all go over loopback to a
+process on your own machine.
+
+That is the configuration to reach for when the recording came from a customer, when the type names
+themselves are confidential, or when policy simply does not allow a hosted call. Redaction still
+applies — it costs nothing and keeps the two configurations behaving identically — but it is no
+longer what is protecting you.
+
+Two honest caveats:
+
+- **"Local" is only local if the base URL is.** `llm status` says which endpoint it will use;
+  Ollama Cloud is a hosted service and gets the hosted treatment. The readiness line distinguishes
+  them: a loopback endpoint is probed and reported as reachable or not, a remote one is not.
+- **A small local model writes wrong queries more often.** The shell validates every generated
+  query against its own parser and asks for a correction before running anything (see
+  [Wrong queries](LlmSetup.md#wrong-queries)), which is what makes this trade acceptable rather
+  than merely cheap — but read the query `ask` prints, as always.
+
 ## Turning it off entirely
 
 ```
 jfr> set llm.enabled = false
 ```
 
-Or leave `llm-core` off the classpath, and the Anthropic SDK is not present at all. Every other
-shell command is unaffected either way — no startup cost, no network call, no behaviour change.
-This is the intended configuration for air-gapped and regulated environments, and the shell is
-fully functional in it.
+Or leave `llm-anthropic` and `llm-openai` off the classpath, and no provider SDK or HTTP client for
+one is present at all. Every other shell command is unaffected either way — no startup cost, no
+network call, no behaviour change. This is the intended configuration for air-gapped and regulated
+environments, and the shell is fully functional in it. (A local `ollama` backend is the other
+option for those environments, when you want `ask` to keep working.)
 
 ## Where the data goes
 
-To the Anthropic API, under whichever credential `llm status` reports. Retention and handling are
-governed by the terms of the account that credential belongs to, which is a matter between you and
-Anthropic; Jafar neither stores nor forwards anything itself.
+To whichever endpoint `llm status` names, under whichever credential it reports:
+
+| Backend | Endpoint |
+|---|---|
+| `anthropic` | the Anthropic API |
+| `openai` | the OpenAI API, or whatever `llm.base-url` points at |
+| `ollama` | `http://localhost:11434/v1` by default — your machine |
+
+Retention and handling are governed by the terms of the account that credential belongs to, which
+is a matter between you and that provider; Jafar neither stores nor forwards anything itself.

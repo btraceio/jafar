@@ -8,16 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`ask` — an LLM inside the shell** (`llm-core` module, `io.jafar.shell.core.llm` in `shell-core`)
+- **`ask` — an LLM inside the shell** (`llm-anthropic` and `llm-openai` modules,
+  `io.jafar.shell.core.llm` in `shell-core`)
   - `ask <question>` turns a question into a query, **prints it**, and runs it; `explain` describes
     the last result; `llm status`, `llm dry-run <question>` and `llm cost` cover setup and egress
   - Wired into `jfr-shell` (JFR recordings) and the unified `jafar-shell`, which is the entry point
     that opens all four formats — `ask` there uses whichever language the current session needs:
     JfrPath, HdumpPath, or the shared pprof/OTLP samples grammar
-  - **Both authentication modes come from the SDK**: `ANTHROPIC_API_KEY`, or a keyless OAuth profile
-    written by `ant auth login`. Jafar adds no auth code, only diagnostics — the SDK does not fail
-    fast when credentials are missing, so `llm status` reports which source wins and catches the
-    three traps (a stale key shadowing a profile, an empty-but-set key, both credentials at once)
+  - **Three backends, no privileged provider**: `anthropic` (Anthropic Java SDK), `openai` and
+    `ollama` (OpenAI chat-completions over the JDK HTTP client, no provider SDK). `llm.backend`
+    selects one; `auto` takes the first that reports ready. Each supplies its own default model, so
+    there is no cross-provider default to get wrong
+  - **`llm.base-url` reaches anything that speaks the same protocol** — vLLM, LM Studio, Groq,
+    Together, OpenRouter, Ollama Cloud — without new code. A loopback endpoint is probed with
+    `GET /models` so `llm status` says "reachable" or "cannot reach" instead of hanging later
+  - **A local model means nothing leaves the machine.** `set llm.backend = ollama` and the question,
+    the type names and the result rows all stay on loopback — the configuration for recordings you
+    did not produce, and for environments where a hosted call is not allowed
+  - **Both Anthropic authentication modes come from the SDK**: `ANTHROPIC_API_KEY`, or a keyless
+    OAuth profile written by `ant auth login`. Jafar adds no auth code, only diagnostics — the SDK
+    does not fail fast when credentials are missing, so `llm status` reports which source wins and
+    catches the three traps (a stale key shadowing a profile, an empty-but-set key, both credentials
+    at once). The OpenAI-compatible backends send no `Authorization` header at all when there is no
+    key, because an empty bearer breaks several local servers
+  - **A generated query is validated before it runs**: parsed with the same parser that would
+    execute it, and on rejection the parser's own error goes back to the model with a request to
+    correct itself (`llm.max-retries`, default 1, capped at 3). `ask` prints the correction count
+    with the token usage. This is what makes a small local model usable for the job
   - **The model never sees raw events.** It composes a query and the shell runs it, so a 900 MB
     recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
     prefix
@@ -27,18 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Recording content is treated as untrusted input**: thread names, exception messages and heap
     string values are attacker-controllable when the recording came from a third party, so they are
     fenced in explicit data markers and the tool surface is read-only
-  - Optional at runtime: the SPI is in `shell-core` with no new dependencies and the backend is
-    discovered via `ServiceLoader`, so a build without `llm-core` carries no Anthropic SDK and every
-    other command is unchanged
-  - Settings via `set`: `llm.enabled`, `llm.model` (default `claude-opus-5`), `llm.backend`,
-    `llm.max-tokens`, `llm.max-rows`, `llm.confirm`, `llm.redact`, `llm.redact-fields`
+  - Optional at runtime: the SPI is in `shell-core` with no new dependencies and backends are
+    discovered via `ServiceLoader`, so a build without `llm-anthropic` and `llm-openai` carries no
+    provider dependency at all and every other command is unchanged
+  - Settings via `set`: `llm.enabled`, `llm.backend`, `llm.model`, `llm.base-url`, `llm.api-key`,
+    `llm.max-tokens`, `llm.max-rows`, `llm.max-retries`, `llm.timeout`, `llm.confirm`, `llm.redact`,
+    `llm.redact-fields`
   - Docs: [LlmSetup](doc/cli/LlmSetup.md), [AskTutorial](doc/cli/AskTutorial.md),
     [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
     [the handoff](doc/plans/llm-in-the-shell-handoff.md) describing the seams left for an agentic
     mode
   - `jafar-shell` has no `set` command yet, so settings there come from `JAFAR_LLM_*` environment
-    variables. The live API path is unit-tested against a fake backend but has not been exercised
-    against api.anthropic.com — see the handoff, section 6
+    variables. The whole path — including the correction loop — is verified in both built shells
+    against a real recording and a real local HTTP server, but no hosted provider has been called
+    from this repository; see the handoff, section 6
 - **`jafar-perf` Claude Code plugin** (`plugins/jafar-perf/`) - methodology layer over the MCP server
   - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
   - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
@@ -73,6 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so that consumers without the interactive CLI can evaluate JfrPath against a JFR session.
 
 ### Fixed
+- `JfrQueryEvaluator.evaluate` now accepts a raw query string as well as a parsed
+  `JfrPath.Query`, matching what the `QueryEvaluator` interface documents and what the Hdump, pprof
+  and OTLP evaluators already did. It previously threw `Expected JfrPath.Query`, so a caller holding
+  only the query text had to know which implementation it had
 - **Heap-to-JFR correlation now works over MCP** - `hdump_query` was passed a bare `SessionResolver`, so
   `join(session=..., root="jdk.ObjectAllocationSample", by=class)` failed with "Cross-type join requires a
   CrossSessionContext" and the correlation was reachable only from `jafar-shell`. The server now supplies

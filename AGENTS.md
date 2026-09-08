@@ -38,8 +38,13 @@ The project is organized as a multi-module Gradle build with the following struc
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
 - **jfr-shell-tck/**: Technology Compatibility Kit for validating backend plugin implementations
 - **jfr-mcp/**: MCP (Model Context Protocol) server enabling AI agents to analyze JFR recordings
-- **llm-core/**: Anthropic-backed LLM support for the shells (the `ask` command); the SPI lives in
-  `shell-core` so this module is optional at runtime and discovered via ServiceLoader
+- **llm-anthropic/**: Anthropic backend for the shells' `ask` command (Anthropic Java SDK, API key
+  or keyless OAuth profile), plus credential diagnostics
+- **llm-openai/**: OpenAI-compatible backends — `openai` and `ollama` — speaking the chat-completions
+  protocol over the JDK HTTP client, with no provider SDK. The same code reaches OpenAI, Ollama
+  (local or cloud), vLLM, LM Studio and anything else that speaks that protocol via `llm.base-url`
+- Both are optional at runtime: the SPI lives in `shell-core` with no new dependencies, and backends
+  are discovered via `ServiceLoader`
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes); public API in `io.jafar.hdump.api`, implementation details in `impl`/`internal`/`index`
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **pprof-parser/**: pprof profile parser (gzip + protobuf wire format); public API in `io.jafar.pprof.api`, wire decoding in `internal`
@@ -398,10 +403,19 @@ See [jfr-mcp/README.md](jfr-mcp/README.md) and [doc/mcp/Tutorial.md](doc/mcp/Tut
 `llm status`, `llm dry-run <question>`, `llm cost`.
 
 Architecture, and the reasons it is shaped this way:
-- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. The
-  Anthropic SDK is only in **llm-core**, which `jfr-shell` takes as `runtimeOnly` and discovers via
-  `ServiceLoader`. Dropping that dependency removes the SDK entirely and the commands degrade to a
-  clear message — air-gapped use is a supported configuration, not an accident.
+- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. Backends
+  live in **llm-anthropic** (Anthropic Java SDK) and **llm-openai** (chat-completions over the JDK
+  HTTP client, no provider SDK), which both shells take as `runtimeOnly` and discover via
+  `ServiceLoader`. Dropping those dependencies removes every provider SDK and the commands degrade
+  to a clear message — air-gapped use is a supported configuration, not an accident.
+- **No provider is privileged.** `llm.backend` selects one by id (`anthropic`, `openai`, `ollama`);
+  `auto` takes the first that reports ready. Each backend supplies its own `defaultModel()`, so
+  `LlmConfig` holds no cross-provider model default — setting `llm.model` for one provider and then
+  switching would otherwise send a model id the new provider has never heard of.
+- **`llm.base-url` is what makes "OpenAI-compatible" mean it.** `OpenAiCompatibleBackend` is a
+  `Profile` (id, display name, default base URL, default model, key env vars, whether a key is
+  required) plus the wire code; `openai` and `ollama` are two instances of it. Adding vLLM or Groq
+  as a named id is a new `Profile`, not new transport code.
 - **The model never sees raw events.** It composes a query; the shell runs it. Recording size does
   not affect cost. Do not add code paths that feed event data to the model.
 - `LanguageReference` strings are the **cached prompt prefix and must stay byte-stable** between
@@ -410,13 +424,28 @@ Architecture, and the reasons it is shaped this way:
   system prompt declares it data, never instruction. Thread names and heap strings are
   attacker-controllable when the recording came from someone else.
 - Egress redaction reuses the same field-name model as the scrubber in `tools/`.
-- **Unit tests must never reach a real backend.** `llm-core` is on `jfr-shell`'s test runtime
-  classpath, so `LlmCommandsTest` pins `llm.backend` to a non-existent id; without that, a machine
-  with `ANTHROPIC_API_KEY` set would make live billable calls during the test suite.
+- **A candidate query is validated locally before it runs.** `LlmCommands.Host.validateQuery`
+  parses it with the same parser that would execute it; on rejection `LlmService` sends the parser's
+  own error back and asks for a correction, up to `llm.max-retries` (default 1, capped at 3). This
+  is the difference between the feature working and not working on a small local model.
+- **Unit tests must never reach a real backend.** `llm-anthropic` and `llm-openai` are both on
+  `jfr-shell`'s test runtime classpath, so `LlmCommandsTest` pins `llm.backend` to a non-existent
+  id; without that, a machine with `ANTHROPIC_API_KEY` set would make live billable calls during
+  the test suite. `llm-openai`'s own tests drive a `com.sun.net.httpserver.HttpServer` bound to
+  loopback — a real socket, no provider account.
+- **`CommandDispatcher` has two query paths and the LLM host adapter must know both.** With a
+  `JfrSelector` it delegates; without one (how the interactive `io.jafar.shell.Shell` builds it) it
+  parses and evaluates JfrPath directly. `LlmHostAdapterTest` guards this: an adapter that knows
+  only the selector leaves `ask` broken in the interactive shell while every fake-host unit test
+  stays green.
 
-Both authentication modes are the SDK's job (`AnthropicOkHttpClient.fromEnv()`): `ANTHROPIC_API_KEY`,
-or a keyless OAuth profile from `ant auth login`. Jafar contributes only the diagnostics, because
-the SDK does not fail fast when credentials are absent.
+For the Anthropic backend both authentication modes are the SDK's job
+(`AnthropicOkHttpClient.fromEnv()`): `ANTHROPIC_API_KEY`, or a keyless OAuth profile from
+`ant auth login`. Jafar contributes only the diagnostics, because the SDK does not fail fast when
+credentials are absent. The OpenAI-compatible backends take a bearer token from `llm.api-key` or the
+profile's env vars, and send no `Authorization` header at all when there is none — an empty bearer
+breaks several local servers. A loopback `llm.base-url` is probed with `GET /models` so
+`llm status` can say "reachable" or "cannot reach" instead of failing at request time.
 
 See [doc/cli/LlmSetup.md](doc/cli/LlmSetup.md), [doc/cli/LlmPrivacy.md](doc/cli/LlmPrivacy.md), and
 [doc/plans/llm-in-the-shell-handoff.md](doc/plans/llm-in-the-shell-handoff.md) for the seams left

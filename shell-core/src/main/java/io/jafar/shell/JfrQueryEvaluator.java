@@ -46,10 +46,23 @@ public final class JfrQueryEvaluator implements QueryEvaluator {
     if (!(session instanceof JFRSession jfrSession)) {
       throw new IllegalArgumentException("JfrQueryEvaluator requires a JFRSession");
     }
-    if (!(query instanceof Query jfrQuery)) {
-      throw new IllegalArgumentException("Expected JfrPath.Query, got " + query.getClass());
+    return new JfrPathEvaluator().evaluate(jfrSession, toQuery(query));
+  }
+
+  /**
+   * Accepts either a parsed query or the raw string, as {@link QueryEvaluator#evaluate} documents
+   * and as the Hdump, pprof and OTLP evaluators already do. Without this a caller that holds only
+   * the query text has to know which evaluator it is talking to.
+   */
+  private Query toQuery(Object query) {
+    if (query instanceof Query q) {
+      return q;
     }
-    return new JfrPathEvaluator().evaluate(jfrSession, jfrQuery);
+    if (query instanceof String s) {
+      return (Query) parse(s);
+    }
+    throw new IllegalArgumentException(
+        "Expected JfrPath.Query or String, got " + (query == null ? "null" : query.getClass()));
   }
 
   @Override
