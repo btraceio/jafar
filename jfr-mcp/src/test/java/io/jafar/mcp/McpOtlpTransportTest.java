@@ -74,7 +74,8 @@ class McpOtlpTransportTest extends McpTransportTestBase {
 
   @Test
   void otlpCloseSucceeds() throws Exception {
-    harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\",\"alias\":\"o\"}");
+    assertSuccess(
+        harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\",\"alias\":\"o\"}"), 1);
     JsonNode resp = harness.callTool(2, "otlp_close", "{\"sessionId\":\"o\"}");
     assertSuccess(resp, 2);
   }
@@ -85,7 +86,7 @@ class McpOtlpTransportTest extends McpTransportTestBase {
 
   @Test
   void otlpQueryCountReturnsResult() throws Exception {
-    harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "otlp_query", "{\"query\":\"samples | count\"}");
     assertSuccess(resp, 2);
   }
@@ -96,7 +97,7 @@ class McpOtlpTransportTest extends McpTransportTestBase {
 
   @Test
   void otlpSummaryReturnsSampleInfo() throws Exception {
-    harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "otlp_summary", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("sessionId"));
@@ -108,7 +109,7 @@ class McpOtlpTransportTest extends McpTransportTestBase {
 
   @Test
   void otlpFlamegraphReturnsRows() throws Exception {
-    harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "otlp_flamegraph", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("rows"));
@@ -120,7 +121,7 @@ class McpOtlpTransportTest extends McpTransportTestBase {
 
   @Test
   void otlpUseReturnsReport() throws Exception {
-    harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "otlp_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "otlp_use", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("USE"));
