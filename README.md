@@ -534,9 +534,30 @@ ant auth login                        # keyless; no static secret to manage
 redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
 **[the tutorial](doc/cli/AskTutorial.md)** and **[what leaves your machine](doc/cli/LlmPrivacy.md)**.
 
+## Claude Code Plugin
+
+`jafar-perf` adds the methodology the tools do not carry: nine skills (`triage`, `cpu`, `latency`,
+`gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`) and seven agents that know *which*
+analysis to run on an unfamiliar recording or heap dump, not just how to run one.
+
+```
+/plugin marketplace add btraceio/jafar
+/plugin install jafar-perf@btraceio
+```
+
+The plugin bundles `.mcp.json`, so installing it **also registers the `jafar` MCP server** described
+below — no separate `claude mcp add` is needed. [JBang](https://www.jbang.dev) must be on your PATH;
+it fetches the server on first use.
+
+See **[plugins/jafar-perf/README.md](plugins/jafar-perf/README.md)** for the full skill and agent
+list.
+
 ## MCP Server
 
 JAFAR includes an MCP (Model Context Protocol) server that enables AI agents like Claude to analyze JFR recordings. See **[jfr-mcp/README.md](jfr-mcp/README.md)** for details.
+
+Installing the plugin above already registers it; the rest of this section is for using the server
+on its own, or from a client other than Claude Code.
 
 ### Quick Install
 
