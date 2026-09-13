@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so that consumers without the interactive CLI can evaluate JfrPath against a JFR session.
 
 ### Fixed
+- **The MCP server reported the wrong version in its handshake.** `serverInfo.version` was a
+  literal `"0.10.0"` that was never updated, so every release from 0.10.0 onwards - 0.26.2
+  included - told clients it was 0.10.0, and anything gating on it was misled. The version is now
+  read from the jar manifest (`Implementation-Version`, added to the shadow jar), which cannot go
+  stale; outside a jar it reports `unknown` rather than a number that might be wrong
 - `JfrQueryEvaluator.evaluate` now accepts a raw query string as well as a parsed
   `JfrPath.Query`, matching what the `QueryEvaluator` interface documents and what the Hdump, pprof
   and OTLP evaluators already did. It previously threw `Expected JfrPath.Query`, so a caller holding

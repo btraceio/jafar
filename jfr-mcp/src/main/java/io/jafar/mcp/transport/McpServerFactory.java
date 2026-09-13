@@ -11,7 +11,21 @@ import java.util.List;
 public final class McpServerFactory {
 
   private static final String SERVER_NAME = "jafar-mcp";
-  private static final String SERVER_VERSION = "0.10.0";
+
+  /**
+   * The version reported in the MCP handshake, read from the jar manifest.
+   *
+   * <p>It used to be a literal, and the literal was never updated: every release from 0.10.0
+   * onwards told clients it was 0.10.0, so anything gating on {@code serverInfo.version} was
+   * misled. Reading the manifest cannot go stale. Outside a jar — tests, an IDE — there is no
+   * manifest, and {@code "unknown"} is the honest answer rather than a number that might be wrong.
+   */
+  private static final String SERVER_VERSION = resolveVersion();
+
+  private static String resolveVersion() {
+    String version = McpServerFactory.class.getPackage().getImplementationVersion();
+    return version != null && !version.isBlank() ? version : "unknown";
+  }
 
   public McpSyncServer createSyncServer(
       McpServerTransportProvider transportProvider,
