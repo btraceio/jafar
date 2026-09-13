@@ -77,6 +77,11 @@ public final class LanguageReference {
           groupBy(key[, agg=count|sum|avg|min|max][, value=path][, sortBy=key|value][, asc=]),
           sortBy(field[, asc=]), top(n[, by=path][, asc=]), head(n), tail(n), distinct()
         shaping: select(...), filter([predicate])
+
+      Hot methods: use stackprofile(), not groupBy over frames. A path inside a function
+      argument cannot be indexed - groupBy(stackTrace/frames[0]/method/name) is a parse
+      error - and the legal groupBy(stackTrace/frames/method/name) counts every frame on
+      every stack, not the leaf, so it answers a different question.
         correlation:
           decorateByTime(<type>, fields=f1,f2 [, threadPath=] [, decoratorThreadPath=])
           decorateByKey(<type>, key=<path>, decoratorKey=<path>, fields=f1,f2)

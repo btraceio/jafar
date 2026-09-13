@@ -92,6 +92,18 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
       }
     }
 
+    // A model that writes "QUERY: FIELDS: jdk.types.StackFrame" meant the inner directive. Taking
+    // the line at face value runs "FIELDS: ..." as a query, which fails with a parser error about
+    // an unknown root and costs a step to learn nothing.
+    if (query != null) {
+      String inner = query.toUpperCase(Locale.ROOT);
+      if (inner.startsWith("FIELDS:")
+          || inner.startsWith("QUERY:")
+          || inner.startsWith("ANSWER:")) {
+        return parse(query);
+      }
+    }
+
     String prose = answer.toString().strip();
     if (!prose.isEmpty()) {
       return answer(prose);

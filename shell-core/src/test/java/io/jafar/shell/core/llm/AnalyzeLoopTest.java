@@ -215,6 +215,31 @@ class AnalyzeLoopTest {
   }
 
   @Test
+  void aDirectiveSmuggledInsideAQueryLineIsReadAsTheDirective() {
+    // Seen in a real run: the model wrote "QUERY: FIELDS: jdk.types.StackFrame, jdk.types.Symbol".
+    // Taken at face value that runs "FIELDS: ..." as a query and fails with "Unknown root:
+    // FIELDS:",
+    // spending a step to learn nothing.
+    AnalysisStep step = AnalysisStep.parse("QUERY: FIELDS: jdk.types.StackFrame, jdk.types.Symbol");
+
+    assertEquals(AnalysisStep.Kind.FIELDS, step.kind());
+    assertEquals(List.of("jdk.types.StackFrame", "jdk.types.Symbol"), step.types());
+  }
+
+  @Test
+  void anOrdinaryQueryIsUntouchedByThatRecovery() {
+    AnalysisStep step = AnalysisStep.parse("QUERY: events/jdk.ExecutionSample | count()");
+
+    assertEquals(AnalysisStep.Kind.QUERY, step.kind());
+    assertEquals("events/jdk.ExecutionSample | count()", step.query());
+  }
+
+  @Test
+  void aTruncatedDirectiveDoesNotLoopOrCrash() {
+    assertEquals(AnalysisStep.Kind.UNKNOWN, AnalysisStep.parse("QUERY: QUERY:").kind());
+  }
+
+  @Test
   void anUnusableReplyIsNudgedRatherThanTreatedAsAnAnswer() throws Exception {
     ScriptedBackend backend =
         new ScriptedBackend("I think we should look at the GC.", "ANSWER: ok");
