@@ -28,6 +28,11 @@ everything.
 Every rule in it exists because something shipped, or nearly shipped, broken *while its tests were
 green*. If you read one linked document, read that one.
 
+**It is also yours to extend.** When a bug costs you more than one attempt, or you turn out to have
+been confidently wrong about a cost, that belongs in it — with the case file that proves it. See
+[Keeping this file honest](doc/agents/Verification.md#keeping-this-file-honest) for what earns a
+rule and what does not.
+
 The short version, expanded with evidence in that file:
 
 | | |
@@ -40,6 +45,8 @@ The short version, expanded with evidence in that file:
 | **R6** | Compare failure sets **by name**, never by count — parts of this suite fail without the downloaded recordings. |
 | **R7** | One source of truth for any list two places must agree on. |
 | **R8** | State plainly what you did not verify. |
+| **R9** | Inspect the payload, not the exit status. A green command proves nothing about what it sent. |
+| **R10** | Before a refactor, find what actually covers the code here — then prove that net fails. |
 
 ## Project Overview
 
@@ -63,6 +70,7 @@ Key components:
 | **How to verify a change** | [doc/agents/Verification.md](doc/agents/Verification.md) |
 | Build commands, prerequisites, Go parser | [doc/agents/Build.md](doc/agents/Build.md) |
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
+| **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
 | Shells, JfrPath, tab completion, backend plugins | [doc/agents/Shells.md](doc/agents/Shells.md) |
 | MCP server, tools, findings contract | [doc/agents/Mcp.md](doc/agents/Mcp.md) |
 | `ask` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
@@ -126,8 +134,15 @@ Full command reference, including the Go parser's separate toolchain:
 
 ## Rules
 
-Standing rules for this repository. They sit alongside R1–R8 above, which cover *how to verify* a
+Standing rules for this repository. They sit alongside R1–R10 above, which cover *how to verify* a
 change; these cover *what a change must not leave behind*.
+
+- **Leave this knowledge base better than you found it.** These documents are working notes, not a
+  historical record: when you learn something the hard way, write it down where the next person will
+  hit it, in the same change. A lesson kept in a commit message is lost. What earns a place and what
+  does not is set out in
+  [Verification.md](doc/agents/Verification.md#keeping-this-file-honest), and the same page covers
+  keeping the map, the links and the docs honest when things move.
 
 - When fixing an issue, always check the alternative implementation for other Java versions
 - When adding or modifying features, always update user documentation, help and tutorials

@@ -58,6 +58,12 @@ In this repository the recurring multiplicities are:
 > **Case file — one shell.** `explain` was fixed in `jfr-shell` and left broken in `jafar-shell` in
 > the same change, because the second dispatcher was not on the list.
 
+> **Case file — a seam is a path too.** Extracting the analyses out of `jfr-mcp`, `JfrAnalyses`
+> built its own `new JfrPathEvaluator()` instead of taking the injected one. It looks equivalent and
+> is not: `ConsumeEdgeCasesTest` constructs the server with an evaluator that yields nothing, and an
+> analysis holding its own real one ignored the double and read the recording. Injection points do
+> not appear in a diff as changes — they appear as code that looks the same.
+
 ## R3. A fallback that hides a misconfiguration is a bug
 
 A `catch` that substitutes a default, a literal that stands in for a real value, a lookup that
@@ -72,6 +78,12 @@ looks identical to the file not being read at all.
 > did `Integer.parseInt("20.0")`, caught `NumberFormatException`, and returned the default. The
 > shell printed `Set llm.max-rows = 20.0` and `llm status` went on reporting `50`. Two confident,
 > mutually contradictory messages and no error anywhere.
+
+> **Case file — the answer was in hand and thrown away.** Both LLM backends read `finish_reason`
+> into `LlmResponse.stopReason` and *nothing consumed it*. A reply truncated mid-thought reported
+> only "No query could be extracted from the model's reply", with the token count that would have
+> explained it printed on the next line. A field you capture and never read is a fallback in
+> disguise.
 
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
@@ -160,6 +172,127 @@ Two standing gaps in this area:
 - **Flake is a diagnosis of last resort.** A CI failure that did not reproduce in 13 local runs was
   not declared flaky; instead `assertSuccess` was made to include the response in every message and
   12 unasserted setup calls were asserted, so the next occurrence names its own cause.
+
+## R9. Inspect the payload, not the exit status
+
+A command that succeeds has not told you it did the right thing. Read what actually went out or came
+back: the bytes on the wire, the rows the model received, the JSON the tool returned.
+
+Every bug in [DataShapes.md](DataShapes.md) survived a green test run, and each was caught the same
+way — by looking at a value rather than at control flow.
+
+> **Case file — the redaction that looked like it was working.** Driving `analyze` against a stub
+> and reading what the stub received showed:
+>
+> ```
+> count   key
+> 8519    {string=<redacted>}
+> ```
+>
+> Class names were being redacted because the parser's wrapper has an inner key named `string`. The
+> command succeeded, the rows arrived, the redaction ran. Only the payload showed it was wrong — and
+> the same read showed a `Finding`'s own description being redacted too, which is Jafar's prose, not
+> recording content.
+
+> **Case file — the empty field list.** The field-metadata feature "worked": the model got labels
+> and descriptions. Dumping what the stub received showed every `fields:` line missing, because the
+> code read the display list rather than the structured one.
+
+When a model is the consumer, this is the only way: it will use whatever it is given and produce a
+fluent answer either way. A plausible answer drawn from redacted data is indistinguishable from a
+good one unless you looked.
+
+## R10. Before a refactor, establish the net — and prove it fails
+
+Find out what actually covers the code you are about to move, in *this* environment. Not what exists
+in the repository; what runs.
+
+> **Case file — nineteen hundred lines with nothing watching.** `jfr_use`, `jfr_tsa` and
+> `jfr_diagnose` are exercised only by `McpJfrTransportTest`, which cannot run without the binary
+> recordings `get_resources.sh` downloads and is one of this environment's standing failures, and by
+> `McpEndToEndTest`, a separate task. Moving them on a green `./gradlew :jfr-mcp:test` would have
+> been a guess dressed as a refactor. `JfrAnalysesCharacterizationTest` was written first, against a
+> synthetic recording so no download is needed, and pins the keys callers bind to rather than
+> numbers that depend on the recording.
+
+Then prove the net closes: change the thing it is supposed to notice and watch it fail. Renaming
+`capabilityGaps` to `capability_gaps` failed exactly one test and no others. A net that has never
+failed is an assumption, and R5 applies to safety nets as much as to fixes.
+
+Hold behaviour fixed while moving code, because the net is only a net if the answers are identical.
+Two things that are invisible in a diff and change the answer:
+
+- **A type that crosses a boundary.** `SessionInfo.id()` is an `int` and the MCP result has always
+  carried a number; declaring the new record's field `String` would have changed the JSON without
+  failing anything that runs here.
+- **An injected dependency replaced by a constructed one.** See the seam case under R2.
+
+A refactor that removes a JSON round trip, a duplicated helper or a copied constant is worth doing
+on its own — `diagnose` serialised five sub-analyses to JSON and parsed them back — but do it as a
+step you can point at, not mixed into the move.
+
+---
+
+## Keeping this file honest
+
+**This file is part of the work, not a record of it.** Every rule here was paid for once; the point
+is not to pay again. That only holds if it grows when something new is learned and stays trustworthy
+when something changes.
+
+Add a rule when a bug **cost more than one attempt to find**, or when you were **confidently wrong
+about a cost or a risk** — those are the two shapes that repeat. A one-line fix you spotted
+immediately is not a lesson.
+
+Every rule needs a **case file**: what actually happened, with the real error text, the real numbers,
+the real command. A rule without one degrades into advice, and advice is ignored. If you cannot
+write the case file, you have not understood the bug well enough to generalise from it yet.
+
+Keep the case files even after the bug is fixed — they are the evidence for the rule, not a bug
+list. But correct them when they become untrue: if `get_resources.sh` starts working here, R6 and
+R10 change shape, and a stale case file is worse than none because it is quotable.
+
+When a rule earns its place, add the one-line summary to the table in
+[AGENTS.md](../../AGENTS.md#read-this-first) as well — that table is what gets read; this file is
+what gets read second.
+
+## Keeping the rest of it honest
+
+The same obligation runs through `doc/agents/`:
+
+- **A new area gets a document, and a row in the map** in [AGENTS.md](../../AGENTS.md#where-things-are)
+  and in [doc/README.md](../README.md). A document nothing links to is a document nobody opens.
+- **Prefer a section link to a line number.** `AGENTS.md:364-372` pointed at nothing within a day of
+  the file being reorganised; `Mcp.md#mcp-server-jfr-mcp` survives a move.
+- **When you change a behaviour a document describes, change the document in the same commit.** Not
+  the next one. The rule in `## Rules` about updating user docs applies to these too.
+- **A design document records what was proposed at the time**, so leave `doc/plans/` as written and
+  correct the record elsewhere. Do not retrofit a plan to match what shipped.
+
+Checking the links costs nothing, so there is no excuse for a dead one you introduced:
+
+```bash
+python3 - <<'EOF'
+import re, pathlib
+for p in list(pathlib.Path("doc").rglob("*.md")) + [pathlib.Path("AGENTS.md")]:
+    body, fenced = [], False
+    for line in p.read_text().split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced           # a regex in a code block is not a link
+        elif not fenced:
+            body.append(line)
+    for m in re.finditer(r"\]\((?!https?://)([^)#]+)(#[^)]*)?\)", "\n".join(body)):
+        if not (p.parent / m.group(1)).resolve().exists():
+            print("MISSING", p, "->", m.group(1))
+EOF
+```
+
+It currently reports 23 misses, none of them under `doc/agents/`: three are the deliberate
+`filename.md` placeholders in [doc/README.md](../README.md), four are footnote-style `[1]`–`[4]`
+references in `doc/design/jfr2pprof.md` that are not links at all, and the remaining sixteen are
+older pages pointing at files that were renamed or never existed — `jfrpath.md`,
+`../jfr-shell/README.md`, `unTypedAPITutorial.md`. They predate this page and are left alone here
+rather than swept up in an unrelated change. The bar is that **your** change adds none, which the
+same command tells you in a second.
 
 ---
 
