@@ -9,9 +9,20 @@ import java.util.function.Function;
 /**
  * Settings for the shell's LLM features.
  *
- * <p>Values are read from shell variables (so {@code set llm.model = ...} works and {@code vars}
- * shows them), falling back to environment variables and then to the defaults here. Every default
- * is chosen so that the safe behaviour is the one you get without configuring anything.
+ * <p>Resolution order, first match wins:
+ *
+ * <ol>
+ *   <li>a shell variable, so {@code set llm.model = ...} works and {@code vars} shows it
+ *   <li>an environment variable, which is the practical route in CI
+ *   <li>the settings file — see {@link LlmSettingsFile} — which is where a long-lived credential
+ *       belongs, because a file only its owner can read beats a variable every child process
+ *       inherits
+ *   <li>the defaults here
+ * </ol>
+ *
+ * <p>Every default is chosen so that the safe behaviour is the one you get without configuring
+ * anything. {@link #sourceOf} reports which layer answered, because a setting coming from somewhere
+ * unexpected is the hardest kind of misconfiguration to see.
  */
 public final class LlmConfig {
 
@@ -46,12 +57,21 @@ public final class LlmConfig {
       List.of("path", "address", "host", "hostname", "message", "description", "value", "string");
 
   private final Function<String, String> lookup;
+  private final java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile;
 
   /**
    * @param lookup resolves a setting name (e.g. {@code llm.model}) to a value, or {@code null}
    */
   public LlmConfig(Function<String, String> lookup) {
+    this(lookup, LlmSettingsFile::find);
+  }
+
+  /** Package-private seam: lets a test supply a settings file without setting an env var. */
+  LlmConfig(
+      Function<String, String> lookup,
+      java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile) {
     this.lookup = lookup == null ? name -> null : lookup;
+    this.settingsFile = settingsFile;
   }
 
   /** A config backed only by environment variables and defaults. */
@@ -180,7 +200,50 @@ public final class LlmConfig {
     if (value != null && !value.isBlank()) {
       return value.trim();
     }
+    value = settingsFile.get().map(file -> file.get(setting)).orElse(null);
+    if (value != null && !value.isBlank()) {
+      return value.trim();
+    }
     return fallback;
+  }
+
+  /** Where a setting's value came from. Reported by {@code llm status}. */
+  public enum Source {
+    /** A {@code set} command in this shell. */
+    SHELL_VARIABLE,
+    /** An environment variable. */
+    ENVIRONMENT,
+    /** The settings file. */
+    SETTINGS_FILE,
+    /** Nothing configured it; the built-in default applies. */
+    DEFAULT
+  }
+
+  /**
+   * Which layer supplies {@code setting}.
+   *
+   * <p>Worth reporting because the failure this prevents is silent: a stale environment variable
+   * quietly overriding the settings file looks identical to the file not being read at all.
+   */
+  public Source sourceOf(String setting, String envVar) {
+    String value = lookup.apply(setting);
+    if (value != null && !value.isBlank()) {
+      return Source.SHELL_VARIABLE;
+    }
+    value = System.getenv(envVar);
+    if (value != null && !value.isBlank()) {
+      return Source.ENVIRONMENT;
+    }
+    value = settingsFile.get().map(file -> file.get(setting)).orElse(null);
+    if (value != null && !value.isBlank()) {
+      return Source.SETTINGS_FILE;
+    }
+    return Source.DEFAULT;
+  }
+
+  /** The settings file in use, if there is one. */
+  public java.util.Optional<LlmSettingsFile> settingsFile() {
+    return settingsFile.get();
   }
 
   private int intValue(String setting, String envVar, int fallback) {
