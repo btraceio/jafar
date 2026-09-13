@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     catches the three traps (a stale key shadowing a profile, an empty-but-set key, both credentials
     at once). The OpenAI-compatible backends send no `Authorization` header at all when there is no
     key, because an empty bearer breaks several local servers
+  - **The output ceiling adapts to reasoning models.** `llm.max-tokens` stays at 2048 — the size of
+    an answer, and the cap on a runaway — but a model that reasons before answering spends that
+    budget thinking, hits the ceiling mid-thought and returns no query, billing the full amount for
+    nothing. When a reply stops on its token limit without a query, the shell raises the ceiling to
+    16384, says so, retries, and remembers it for that model for the session. The trigger is the
+    reply's stop reason rather than a list of model names. A ceiling you set yourself is never
+    lowered
+  - **A failure to find a query now says why.** Both backends read `finish_reason` and nothing
+    consumed it, so a reply truncated mid-thought reported only "No query could be extracted from
+    the model's reply" — with the token count that would have explained it sitting in the same
+    output
   - **A generated query is validated before it runs**: parsed with the same parser that would
     execute it, and on rejection the parser's own error goes back to the model with a request to
     correct itself (`llm.max-retries`, default 1, capped at 3). `ask` prints the correction count

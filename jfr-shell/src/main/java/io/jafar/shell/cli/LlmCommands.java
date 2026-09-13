@@ -86,6 +86,27 @@ public final class LlmCommands {
     return new LlmConfig(host::setting);
   }
 
+  private LlmService.Result<LlmService> cachedService;
+  private String cachedBackendId;
+
+  /**
+   * The service for the configured backend, built once and kept for the session.
+   *
+   * <p>It used to be built per command, which quietly undid what the service learns: having
+   * discovered that a model reasons before answering and raised its token ceiling, the next {@code
+   * ask} started from scratch and paid for the truncated round trip again. The config it holds
+   * reads settings live through {@code host::setting}, so a cached service still sees {@code set}
+   * changes; only a different {@code llm.backend} needs a new one.
+   */
+  private LlmService.Result<LlmService> service(LlmConfig config) {
+    String backendId = config.backendId();
+    if (cachedService == null || !backendId.equals(cachedBackendId)) {
+      cachedService = LlmService.create(config);
+      cachedBackendId = backendId;
+    }
+    return cachedService;
+  }
+
   /** Whether {@code --dry-run} appears as a whole word in the argument. */
   private static boolean hasDryRunFlag(String argument) {
     if (argument == null) {
@@ -148,7 +169,7 @@ public final class LlmCommands {
     }
 
     LlmConfig config = config();
-    LlmService.Result<LlmService> service = LlmService.create(config);
+    LlmService.Result<LlmService> service = service(config);
     if (!service.isPresent()) {
       reportUnavailable(service);
       return;
@@ -163,6 +184,16 @@ public final class LlmCommands {
       QueryProposal proposal =
           service.value().ask(question, moduleId, inventory(), host::validateQuery);
 
+      service
+          .value()
+          .autoRaisedTo()
+          .ifPresent(
+              ceiling ->
+                  host.println(
+                      "# This model reasons before answering; raised llm.max-tokens to "
+                          + ceiling
+                          + " for this session."));
+
       proposal.rationaleText().ifPresent(why -> host.println("# " + why));
 
       if (proposal.unanswerable()) {
@@ -172,7 +203,7 @@ public final class LlmCommands {
         return;
       }
       if (!proposal.hasQuery()) {
-        host.println("No query could be extracted from the model's reply. Nothing was run.");
+        explainMissingQuery(service.value(), config);
         printUsage(service.value());
         return;
       }
@@ -235,7 +266,7 @@ public final class LlmCommands {
       return;
     }
 
-    LlmService.Result<LlmService> service = LlmService.create(config());
+    LlmService.Result<LlmService> service = service(config());
     if (!service.isPresent()) {
       reportUnavailable(service);
       return;
@@ -370,7 +401,7 @@ public final class LlmCommands {
   /** Prints what an {@code ask} would send, and sends nothing. */
   private void dryRunAsk(String question) {
     LlmConfig config = config();
-    LlmService.Result<LlmService> service = LlmService.create(config);
+    LlmService.Result<LlmService> service = service(config);
     if (!service.isPresent()) {
       reportUnavailable(service);
       return;
@@ -396,7 +427,7 @@ public final class LlmCommands {
       return;
     }
     LlmConfig config = config();
-    LlmService.Result<LlmService> service = LlmService.create(config);
+    LlmService.Result<LlmService> service = service(config);
     if (!service.isPresent()) {
       reportUnavailable(service);
       return;
@@ -433,7 +464,7 @@ public final class LlmCommands {
 
   /** Shows what this session has spent so far. */
   public void cost() {
-    LlmService.Result<LlmService> service = LlmService.create(config());
+    LlmService.Result<LlmService> service = service(config());
     if (!service.isPresent()) {
       reportUnavailable(service);
       return;
@@ -458,6 +489,48 @@ public final class LlmCommands {
       entries.add(PromptBuilder.TypeEntry.of(type));
     }
     return entries;
+  }
+
+  /**
+   * Says why a reply carried no query.
+   *
+   * <p>"No query could be extracted" is true but nearly useless: the common cause is that the model
+   * hit {@code llm.max-tokens} while still reasoning, and the reply says so in its stop reason. The
+   * shell used to read that field and throw it away, leaving the user to guess at a ceiling they
+   * did not know existed.
+   */
+  private void explainMissingQuery(LlmService service, LlmConfig config) {
+    String stop = service.lastResponse().map(LlmResponse::stopReason).orElse("");
+    String text = service.lastResponse().map(LlmResponse::text).orElse("");
+
+    if ("length".equalsIgnoreCase(stop) || "max_tokens".equalsIgnoreCase(stop)) {
+      int ceiling = service.effectiveMaxTokens();
+      host.println(
+          "The reply stopped at the llm.max-tokens ceiling ("
+              + ceiling
+              + ") before it produced a query, even after raising it. Nothing was run.");
+      host.println("    set llm.max-tokens = " + ceiling * 2 + "   # to go higher still");
+      host.println("Or use a model that does less thinking: 'llm status' lists what is available.");
+      return;
+    }
+
+    if (text.isBlank()) {
+      host.println("The endpoint returned an empty reply. Nothing was run.");
+      host.println(
+          "Some models put their output in a separate reasoning field, which is not read here. "
+              + "Try a different model, or 'ask --dry-run' to check what is being sent.");
+      return;
+    }
+
+    host.println("No query could be extracted from the model's reply. Nothing was run.");
+    host.println("The model answered, but with no QUERY: line and no code block. It said:");
+    host.println("    " + snippet(text));
+  }
+
+  /** First line or so of a reply, for an error message. */
+  private static String snippet(String text) {
+    String flat = text.strip().replaceAll("\\s+", " ");
+    return flat.length() <= 200 ? flat : flat.substring(0, 200) + "…";
   }
 
   private void printUsage(LlmService service) {
