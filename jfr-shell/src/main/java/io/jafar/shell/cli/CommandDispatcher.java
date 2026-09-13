@@ -30,6 +30,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -198,6 +199,11 @@ public class CommandDispatcher {
                 }
 
                 @Override
+                public List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames) {
+                  return describeFields(typeNames);
+                }
+
+                @Override
                 public List<Map<String, Object>> runQuery(String query) throws Exception {
                   JFRSession jfr = currentJfrSession();
                   if (jfr != null) {
@@ -339,45 +345,147 @@ public class CommandDispatcher {
       return describedTypesCache;
     }
 
-    Map<String, String[]> docs = new HashMap<>();
-    try {
-      for (Map<String, Object> clazz : MetadataProvider.loadAllClasses(jfr.getRecordingPath())) {
-        Object name = clazz.get("name");
-        Object annotations = clazz.get("classAnnotations");
-        if (name == null || !(annotations instanceof List<?> list)) {
-          continue;
-        }
-        String label = null;
-        String description = null;
-        for (Object a : list) {
-          String text = String.valueOf(a);
-          if (text.startsWith("@Label(") && text.endsWith(")")) {
-            label = text.substring("@Label(".length(), text.length() - 1);
-          } else if (text.startsWith("@Description(") && text.endsWith(")")) {
-            description = text.substring("@Description(".length(), text.length() - 1);
-          }
-        }
-        if (label != null || description != null) {
-          docs.put(String.valueOf(name), new String[] {label, description});
-        }
-      }
-    } catch (Exception e) {
-      // Metadata is an enrichment: without it the model still gets the type names, which is what
-      // it had before. A backend that cannot read annotations must not break `ask`.
+    Map<String, Map<String, Object>> byName = metadataByName(jfr);
+    if (byName.isEmpty()) {
       return names.stream().map(PromptBuilder.TypeEntry::of).toList();
     }
 
     List<PromptBuilder.TypeEntry> entries = new ArrayList<>();
     for (String name : names) {
-      String[] doc = docs.get(name);
+      Map<String, Object> clazz = byName.get(name);
       entries.add(
-          doc == null
+          clazz == null
               ? PromptBuilder.TypeEntry.of(name)
-              : PromptBuilder.TypeEntry.documented(name, doc[0], doc[1]));
+              : PromptBuilder.TypeEntry.documented(name, labelOf(clazz), descriptionOf(clazz)));
     }
     describedTypesFor = key;
     describedTypesCache = List.copyOf(entries);
     return describedTypesCache;
+  }
+
+  // Raw metadata classes by name, parsed once per recording. Both the type inventory and the
+  // per-question field lookup read it, and a recording is asked about repeatedly.
+  private String metadataFor;
+  private Map<String, Map<String, Object>> metadataCache;
+
+  private Map<String, Map<String, Object>> metadataByName(JFRSession jfr) {
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(metadataFor) && metadataCache != null) {
+      return metadataCache;
+    }
+    Map<String, Map<String, Object>> byName = new HashMap<>();
+    try {
+      for (Map<String, Object> clazz : MetadataProvider.loadAllClasses(jfr.getRecordingPath())) {
+        Object name = clazz.get("name");
+        if (name != null) {
+          byName.put(String.valueOf(name), clazz);
+        }
+      }
+    } catch (Exception e) {
+      // Metadata is an enrichment; without it the model still gets type names.
+      return Map.of();
+    }
+    metadataFor = key;
+    metadataCache = Map.copyOf(byName);
+    return metadataCache;
+  }
+
+  /**
+   * The fields of the named types, and of the types those fields lead to.
+   *
+   * <p>One level of following is what makes a path work: knowing {@code jdk.ExecutionSample} has
+   * {@code sampledThread: java.lang.Thread} is only useful alongside {@code java.lang.Thread}'s own
+   * fields, which is where {@code javaName} comes from. Going deeper is not free and has not been
+   * needed — the model can ask again if it is.
+   */
+  private List<PromptBuilder.TypeEntry> describeFields(List<String> typeNames) {
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null || typeNames == null || typeNames.isEmpty()) {
+      return List.of();
+    }
+    Map<String, Map<String, Object>> byName = metadataByName(jfr);
+    if (byName.isEmpty()) {
+      return List.of();
+    }
+
+    List<PromptBuilder.TypeEntry> result = new ArrayList<>();
+    Set<String> referenced = new LinkedHashSet<>();
+    Set<String> seen = new LinkedHashSet<>();
+
+    for (String requested : typeNames) {
+      Map<String, Object> clazz = byName.get(requested);
+      if (clazz == null || !seen.add(requested)) {
+        continue;
+      }
+      List<PromptBuilder.FieldEntry> fields = fieldsOf(clazz, referenced);
+      result.add(
+          PromptBuilder.TypeEntry.event(requested, labelOf(clazz), descriptionOf(clazz), fields));
+    }
+
+    for (String name : referenced) {
+      Map<String, Object> clazz = byName.get(name);
+      if (clazz == null || !seen.add(name)) {
+        continue;
+      }
+      result.add(PromptBuilder.TypeEntry.fieldType(name, fieldsOf(clazz, new LinkedHashSet<>())));
+    }
+    return result;
+  }
+
+  /** Reads a class's fields, recording the non-primitive types they lead to. */
+  private static List<PromptBuilder.FieldEntry> fieldsOf(
+      Map<String, Object> clazz, Set<String> referenced) {
+    // "fields" is a list of rendered display strings; "fieldsByName" carries the structured
+    // name/type/dimension. Reading the wrong one yields an empty list and no error at all.
+    Object raw = clazz.get("fieldsByName");
+    if (!(raw instanceof Map<?, ?> byName)) {
+      return List.of();
+    }
+    List<PromptBuilder.FieldEntry> fields = new ArrayList<>();
+    for (Object entry : byName.values()) {
+      if (!(entry instanceof Map<?, ?> field)) {
+        continue;
+      }
+      Object name = field.get("name");
+      Object type = field.get("type");
+      if (name == null) {
+        continue;
+      }
+      String rendered = type == null ? "" : String.valueOf(type);
+      Object dimension = field.get("dimension");
+      if (dimension instanceof Number n && n.intValue() > 0) {
+        rendered += "[]".repeat(n.intValue());
+      }
+      if (type != null && String.valueOf(type).indexOf('.') > 0) {
+        referenced.add(String.valueOf(type));
+      }
+      fields.add(new PromptBuilder.FieldEntry(String.valueOf(name), rendered));
+    }
+    // fieldsByName is a HashMap, so its iteration order is arbitrary. Sort, so the same recording
+    // and the same question produce the same prompt twice running.
+    fields.sort(java.util.Comparator.comparing(PromptBuilder.FieldEntry::name));
+    return fields;
+  }
+
+  private static String labelOf(Map<String, Object> clazz) {
+    return annotationValue(clazz, "@Label(");
+  }
+
+  private static String descriptionOf(Map<String, Object> clazz) {
+    return annotationValue(clazz, "@Description(");
+  }
+
+  private static String annotationValue(Map<String, Object> clazz, String prefix) {
+    if (!(clazz.get("classAnnotations") instanceof List<?> list)) {
+      return null;
+    }
+    for (Object a : list) {
+      String text = String.valueOf(a);
+      if (text.startsWith(prefix) && text.endsWith(")")) {
+        return text.substring(prefix.length(), text.length() - 1);
+      }
+    }
+    return null;
   }
 
   /** Returns the global variable store. */

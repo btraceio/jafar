@@ -31,6 +31,15 @@ Architecture, and the reasons it is shaped this way:
   scanning the recording. Type names and descriptions are attacker-controllable in a recording you
   did not produce, so they stay inside the `RECORDING_DATA` fence even though they now sit in the
   system prompt.
+- **Fields are fetched in a second round, not shipped in the prefix.** JFR is self-describing, so a
+  field name cannot be inferred from a type name — the fields are whatever the recording declares,
+  and a custom event's are unknowable in advance. Sending all of them costs ~9,800 tokens on an
+  ordinary recording (measured: 181 event types, 994 fields) and is unbounded on one with custom
+  events. Instead the model may answer `FIELDS: <types>` and is sent those types' fields plus the
+  types they lead to — one level, which is what makes `sampledThread/javaName` derivable rather
+  than guessed. Bounded by `PromptBuilder.MAX_FIELD_REQUEST` types and `MAX_FIELD_ROUNDS` rounds; a
+  model that keeps asking is reported, not looped on. `fieldsByName` is the structured field map —
+  `fields` is a list of rendered display strings, and reading it yields an empty list with no error.
 - **The model never sees raw events.** It composes a query; the shell runs it. Recording size does
   not affect cost. Do not add code paths that feed event data to the model.
 - `LanguageReference` strings are the **cached prompt prefix and must stay byte-stable** between

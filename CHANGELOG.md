@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fence: a custom type is labelled by whoever produced the recording. Event counts are not
     included, because computing them means scanning the recording and `ask` is deliberately
     independent of recording size
+  - **The model asks what fields a type has instead of guessing.** JFR is self-describing, so an
+    event's fields are whatever the recording declares — unknowable from the type name, and for a
+    custom event unknowable at all. A reply may be `FIELDS: <types>`, answered with those types'
+    fields and the types those fields lead to, so `sampledThread/javaName` is read rather than
+    invented. One extra round trip and ~1,200 characters, against ~9,800 tokens to send every
+    type's fields up front. Capped at 8 types and one round
   - **The model never sees raw events.** It composes a query and the shell runs it, so a 900 MB
     recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
     prefix

@@ -48,6 +48,17 @@ public final class LlmCommands {
       return availableTypes().stream().map(PromptBuilder.TypeEntry::of).toList();
     }
 
+    /**
+     * The fields of the named types, plus the types those fields lead to.
+     *
+     * <p>Answers the model's {@code FIELDS:} request. Empty by default: a format whose metadata
+     * carries no field information simply never supplies any, and the model is told that rather
+     * than left to guess.
+     */
+    default List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames) {
+      return List.of();
+    }
+
     /** Runs a query against the current session and returns the rows. */
     List<Map<String, Object>> runQuery(String query) throws Exception;
 
@@ -193,7 +204,7 @@ public final class LlmCommands {
     String moduleId = host.currentModuleId().get();
     try {
       QueryProposal proposal =
-          service.value().ask(question, moduleId, inventory(), host::validateQuery);
+          service.value().ask(question, moduleId, inventory(), host::validateQuery, host::fieldsOf);
 
       service
           .value()
