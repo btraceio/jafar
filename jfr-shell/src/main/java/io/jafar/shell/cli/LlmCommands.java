@@ -86,13 +86,64 @@ public final class LlmCommands {
     return new LlmConfig(host::setting);
   }
 
+  /** Whether {@code --dry-run} appears as a whole word in the argument. */
+  private static boolean hasDryRunFlag(String argument) {
+    if (argument == null) {
+      return false;
+    }
+    for (String word : argument.trim().split("\\s+")) {
+      if ("--dry-run".equals(word) || "--dryrun".equals(word)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The argument with the flag removed.
+   *
+   * <p>Removed wherever it appears, not just at the front: {@code ask which threads --dry-run} is a
+   * thing people type, and silently treating the flag as part of the question would send the very
+   * request they were trying not to send.
+   */
+  private static String stripDryRunFlag(String argument) {
+    if (argument == null) {
+      return null;
+    }
+    StringBuilder kept = new StringBuilder();
+    for (String word : argument.trim().split("\\s+")) {
+      if ("--dry-run".equals(word) || "--dryrun".equals(word)) {
+        continue;
+      }
+      if (kept.length() > 0) {
+        kept.append(' ');
+      }
+      kept.append(word);
+    }
+    return kept.toString();
+  }
+
   // ── ask ───────────────────────────────────────────────────────────────────────
 
-  /** Translates a question into a query, prints it, and runs it. */
-  public void ask(String question) {
+  /**
+   * Translates a question into a query, prints it, and runs it.
+   *
+   * <p>{@code --dry-run} builds the identical request and prints it instead of sending it. It is a
+   * flag rather than a separate command because it is a mode of this one: same question, same
+   * bytes, differing only in whether they leave the machine.
+   */
+  public void ask(String argument) {
+    boolean dryRun = hasDryRunFlag(argument);
+    String question = stripDryRunFlag(argument);
+
     if (question == null || question.isBlank()) {
-      host.println("Usage: ask <question>");
+      host.println("Usage: ask [--dry-run] <question>");
       host.println("  e.g. ask which threads used the most CPU?");
+      host.println("       ask --dry-run which threads used the most CPU?");
+      return;
+    }
+    if (dryRun) {
+      dryRunAsk(question);
       return;
     }
 
@@ -167,6 +218,15 @@ public final class LlmCommands {
   }
 
   // ── explain ───────────────────────────────────────────────────────────────────
+
+  /** Explains the most recent result. {@code --dry-run} prints the request instead of sending. */
+  public void explain(String argument) {
+    if (hasDryRunFlag(argument)) {
+      dryRunExplain();
+      return;
+    }
+    explain();
+  }
 
   /** Explains the most recent result. */
   public void explain() {
@@ -247,7 +307,7 @@ public final class LlmCommands {
       case "cost" -> cost();
       default -> {
         host.println("Unknown: llm " + sub);
-        host.println("Usage: llm [status | dry-run <question> | cost]");
+        host.println("Usage: llm [status | cost]   (dry-run moved to 'ask --dry-run')");
       }
     }
   }
@@ -299,8 +359,40 @@ public final class LlmCommands {
    * production recordings.
    */
   public void dryRun(String question) {
+    // Retained for `llm dry-run`, which is an undocumented alias for `ask --dry-run`.
     if (question == null || question.isBlank()) {
-      host.println("Usage: llm dry-run <question>");
+      host.println("Usage: ask --dry-run <question>");
+      return;
+    }
+    dryRunAsk(question);
+  }
+
+  /** Prints what an {@code ask} would send, and sends nothing. */
+  private void dryRunAsk(String question) {
+    LlmConfig config = config();
+    LlmService.Result<LlmService> service = LlmService.create(config);
+    if (!service.isPresent()) {
+      reportUnavailable(service);
+      return;
+    }
+    String moduleId = host.currentModuleId().orElse("jfr");
+    printRequest(
+        "ask",
+        service.value().buildAskRequest(question, moduleId, inventory()),
+        config,
+        service.value());
+  }
+
+  /**
+   * Prints what an {@code explain} would send, and sends nothing.
+   *
+   * <p>This is the one that matters most for egress review, and until {@code --dry-run} became a
+   * flag there was no way to reach it: {@code explain} is the command that puts recording-derived
+   * result rows into a prompt, where {@code ask} sends only the question and the type names.
+   */
+  private void dryRunExplain() {
+    if (lastQuery == null || lastRows == null) {
+      host.println("Nothing to explain yet — run a query, or 'ask' a question, first.");
       return;
     }
     LlmConfig config = config();
@@ -310,12 +402,19 @@ public final class LlmCommands {
       return;
     }
     String moduleId = host.currentModuleId().orElse("jfr");
-    LlmRequest request = service.value().buildAskRequest(question, moduleId, inventory());
+    printRequest(
+        "explain",
+        service.value().buildExplainRequest(lastQuery, lastRows, moduleId),
+        config,
+        service.value());
+  }
 
-    host.println("Nothing was sent. This is exactly what an 'ask' would transmit.");
+  private void printRequest(
+      String command, LlmRequest request, LlmConfig config, LlmService service) {
+    host.println("Nothing was sent. This is exactly what an '" + command + "' would transmit.");
     host.println("");
-    host.println("model      : " + config.model());
-    host.println("backend    : " + service.value().backend().id());
+    host.println("model      : " + config.modelFor(service.backend()));
+    host.println("backend    : " + service.backend().id());
     host.println(
         "redaction  : "
             + (config.redactionEnabled()
@@ -390,11 +489,16 @@ public final class LlmCommands {
     return """
         LLM commands (require a backend module on the classpath, and for a hosted
         provider a credential):
-          ask <question>        Turn a question into a query, show it, and run it
-          explain               Explain the most recent result
+          ask [--dry-run] <q>   Turn a question into a query, show it, and run it
+          explain [--dry-run]   Explain the most recent result
           llm status            Backends, readiness, credential source, settings
-          llm dry-run <q>       Print exactly what 'ask' would send, and send nothing
           llm cost              Token usage for this process
+
+        --dry-run builds the identical request and prints it instead of sending
+        it. It is a flag rather than a command because it is a mode of the two
+        verbs above: same input, same bytes, differing only in whether they
+        leave the machine. On 'explain' it is the one worth reaching for, since
+        that is the command that puts result rows into a prompt.
 
         The query language is whichever one the current session uses: JfrPath for a
         recording, HdumpPath for a heap dump, the samples grammar for pprof and OTLP.
@@ -412,7 +516,7 @@ public final class LlmCommands {
 
         A query the parser rejects is never run: the parser's error goes back to the
         model for a correction, up to llm.max-retries times. Recording data sent to the
-        model is redacted by default, and 'llm dry-run' shows exactly what would be
+        model is redacted by default, and --dry-run shows exactly what would be
         sent.
 
         Examples:
@@ -420,7 +524,8 @@ public final class LlmCommands {
           ask what allocated the most bytes, by class?
           ask show me file reads slower than 10ms
           explain                       # describe the result just printed
-          llm dry-run which threads used the most CPU?
+          ask --dry-run which threads used the most CPU?
+          explain --dry-run             # see the result rows before they are sent
           llm status                    # before the first ask, to see what will be used
 
           set llm.backend = ollama      # keep everything on this machine

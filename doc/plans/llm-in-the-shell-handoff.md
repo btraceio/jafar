@@ -17,7 +17,7 @@ session) can start from the seams rather than from the design.
 | Wiring — `jafar-shell` (all four formats) | `unified/Shell.java` — branches in the command chain, `llmCommands()` host adapter |
 | Docs | `doc/cli/LlmSetup.md`, `AskTutorial.md`, `LlmPrivacy.md`, `doc/mcp/WhenToUseWhich.md` |
 
-Commands: `ask <question>`, `explain`, `llm status`, `llm dry-run <question>`, `llm cost`.
+Commands: `ask [--dry-run] <question>`, `explain [--dry-run]`, `llm status`, `llm cost`.
 
 ## 2. The five decisions worth not re-litigating
 
@@ -194,7 +194,7 @@ Two invariants to preserve:
 
   matching the same query typed by hand — so the correction loop, the query execution, the
   rendering and the usage accounting all work outside the test harness.
-- End-to-end without credentials: `llm status`, `llm dry-run`, and `ask`, plus both Anthropic
+- End-to-end without credentials: `llm status`, `ask --dry-run`, and `ask`, plus both Anthropic
   credential traps (empty key; key and token together) — each produced the intended local
   diagnostic and remedy.
 - ServiceLoader discovery of all three backends from a built shell's classpath.
@@ -216,7 +216,7 @@ The OpenAI-compatible path is the cheapest to close: `ollama serve`, `ollama pul
 `set llm.backend = ollama`, `ask`. That costs nothing and exercises real model output through the
 real wire format.
 
-**The first thing to do with a hosted credential** is run `llm dry-run`, then `ask`, then
+**The first thing to do with a hosted credential** is run `ask --dry-run`, then `ask`, then
 `llm cost`, and check that the cached-token count is non-zero on the second `ask`. That exercises
 the rest in under a minute.
 

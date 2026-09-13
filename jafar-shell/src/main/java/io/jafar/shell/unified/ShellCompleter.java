@@ -62,6 +62,7 @@ public final class ShellCompleter implements Completer {
     switch (cmd) {
       case "show" -> completeShow(line, candidates);
       case "llm" -> completeLlm(line, candidates, words, wordIndex);
+      case "ask", "explain" -> completeDryRunFlag(line, candidates);
       case "open" -> completeOpen(reader, line, candidates);
       case "use", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);
@@ -88,6 +89,16 @@ public final class ShellCompleter implements Completer {
           candidates.add(new Candidate(cmd));
         }
       }
+    }
+  }
+
+  /** The {@code --dry-run} flag, offered once a leading dash is typed. */
+  private void completeDryRunFlag(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word();
+    if (partial.startsWith("-") && "--dry-run".startsWith(partial)) {
+      candidates.add(
+          new Candidate(
+              "--dry-run", "--dry-run", null, "print the request, send nothing", null, null, true));
     }
   }
 

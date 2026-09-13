@@ -11,9 +11,10 @@ and why, and tells you what to do about the ones that are not ready.
 | Command | Does |
 |---|---|
 | `ask <question>` | Turns the question into a query, **prints the query**, and runs it |
+| `ask --dry-run <question>` | Prints exactly what `ask` would send, and sends nothing |
 | `explain` | Explains the most recent result |
+| `explain --dry-run` | Prints exactly what `explain` would send, and sends nothing |
 | `llm status` | Backends, readiness, credential source, and the active settings |
-| `llm dry-run <question>` | Prints exactly what `ask` would send, and sends nothing |
 | `llm cost` | Token usage for this process |
 
 Both `jfr-shell` (JFR recordings) and the unified `jafar-shell` (recordings, heap dumps, pprof and
@@ -309,8 +310,8 @@ then failed to run, because the request was paid for either way.
 
 ## Verifying without spending anything
 
-`llm dry-run <question>` builds the identical request and prints it instead of sending it — same
-prompt, same redaction, same bytes. Use it to see what would leave the machine before you let
+`ask --dry-run <question>` builds the identical request and prints it instead of sending it — same
+prompt, same redaction, same bytes. `explain --dry-run` does the same for the explain request. Use it to see what would leave the machine before you let
 anything leave the machine. It needs no credentials.
 
 ## Next

@@ -530,7 +530,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # or:
 ant auth login                        # keyless; no static secret to manage
 ```
 
-`llm dry-run <question>` prints exactly what would be sent without sending it, and result data is
+`ask --dry-run <question>` prints exactly what would be sent without sending it, and result data is
 redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
 **[the tutorial](doc/cli/AskTutorial.md)** and **[what leaves your machine](doc/cli/LlmPrivacy.md)**.
 

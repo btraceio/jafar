@@ -14,7 +14,8 @@ nothing in this document leaves the machine at all; see
 - The **recording never leaves your machine.** The model composes queries; the shell runs them.
 - `ask` sends your question and the **list of event type names** in the recording. No event data.
 - `explain` sends **the query and up to 50 result rows**, with sensitive fields redacted.
-- `llm dry-run <question>` prints the exact bytes that would be sent, and sends nothing.
+- `ask --dry-run <question>` prints the exact bytes that would be sent, and sends nothing.
+  `explain --dry-run` does the same for the explain request.
 - Nothing is sent by any other command, or by opening a recording.
 
 ## Per command
@@ -23,12 +24,13 @@ nothing in this document leaves the machine at all; see
 |---|---|---|
 | `ask` | Your question; type names and counts; the language reference | Any event data |
 | `explain` | The query; up to `llm.max-rows` result rows, redacted | Rows beyond the cap; redacted fields |
+| `ask --dry-run` | nothing | — |
+| `explain --dry-run` | nothing | — |
 | `llm status` | nothing | — |
-| `llm dry-run` | nothing | — |
 | `llm cost` | nothing | — |
 
 Type names are not always harmless — a custom event type can be named after an internal system —
-which is why `dry-run` shows them too.
+which is why `--dry-run` shows them too.
 
 ## Redaction
 
@@ -61,7 +63,7 @@ With redaction off, `llm status` says so in capitals, on purpose.
 ## Verify before you trust
 
 ```
-jfr> llm dry-run which threads used the most CPU?
+jfr> ask --dry-run which threads used the most CPU?
 ```
 
 It builds the request through the same code path a real `ask` uses — same prompt, same redaction —
