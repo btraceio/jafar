@@ -89,14 +89,30 @@ secret to store and rotate.
 
 **Mode 2 — keyless, with an OAuth profile**
 
+This needs the [Anthropic CLI](https://github.com/anthropics/anthropic-cli), which is **not
+installed by default** — `ant: command not found` means you have not installed it yet:
+
+```bash
+brew install anthropics/tap/ant                                    # macOS
+go install 'github.com/anthropics/anthropic-cli/cmd/ant@latest'    # Go 1.22+, any platform
+```
+
+The Go route installs into `$(go env GOPATH)/bin`, which has to be on your `PATH`.
+
+> **If `ant` runs but does something odd**, check which one you have: `ant -version` printing
+> *"Apache Ant"* means your `ant` is the Java build tool, which has owned that name for two decades.
+> Put the Anthropic CLI earlier on your `PATH`, or invoke it by its full path.
+
+Then:
+
 ```bash
 ant auth login          # opens a browser, stores a profile under ~/.config/anthropic/
 jfr-shell recording.jfr # no environment variable needed
 ```
 
-`ant` is the [Anthropic CLI](https://github.com/anthropics/anthropic-cli). After login it writes
-`configs/<profile>.json` and `credentials/<profile>.json`, and the SDK picks them up
-automatically — there is no static key anywhere, and tokens are short-lived and refreshed for you.
+After login it writes `configs/<profile>.json` and `credentials/<profile>.json`, and the SDK picks
+them up automatically — there is no static key anywhere, and tokens are short-lived and refreshed
+for you.
 
 On a machine with no browser, `ant auth login --no-browser` prints a URL and takes the code back on
 the terminal.
@@ -111,6 +127,42 @@ supported route is to let Claude Code do the analysis through Jafar's MCP server
 [When to use which](../mcp/WhenToUseWhich.md). A delegate backend that automates this is designed
 but not built; see [the handoff document](../plans/llm-in-the-shell-handoff.md).
 
+### A settings file, rather than the environment
+
+**For a long-lived key this is the better option, and it is what `llm status` points you at.** An
+environment variable is inherited by every process the shell starts, shows up in crash dumps and CI
+logs, and lands in your shell history if you export it inline. A file only you can read has none of
+those properties, and it survives opening a new terminal.
+
+```bash
+mkdir -p ~/.config/jafar
+cat > ~/.config/jafar/llm.properties <<'EOF'
+llm.backend=openai
+llm.api-key=sk-...
+EOF
+chmod 600 ~/.config/jafar/llm.properties
+```
+
+Keys are the same names `set` uses, so anything in the settings table below can go in the file.
+`llm status` prints the path, warns if the file is readable by anyone else, and — the part that
+matters when something misbehaves — says which layer each setting actually came from:
+
+```
+Settings file
+-------------
+  /home/you/.config/jafar/llm.properties
+  llm.api-key    from the settings file
+  llm.backend    from JAFAR_LLM_BACKEND (overrides the settings file)
+```
+
+Resolution order, first match wins: a `set` command in the shell, then an environment variable,
+then the settings file, then the default. The environment sits above the file deliberately, so CI
+can override without editing anything — but it means a stale variable silently shadows your file,
+which is exactly what that `from ...` line exists to show you.
+
+Other locations: `$JAFAR_LLM_CONFIG` points at a specific file, and
+`$XDG_CONFIG_HOME/jafar/llm.properties` is honoured if you set `XDG_CONFIG_HOME`.
+
 ### OpenAI
 
 ```bash
@@ -118,7 +170,8 @@ export OPENAI_API_KEY=sk-...
 jfr-shell recording.jfr
 ```
 
-Or `set llm.api-key = sk-...` in the shell, which takes precedence over the environment.
+Better, per the section above: put `llm.api-key` in `~/.config/jafar/llm.properties`. Or
+`set llm.api-key = sk-...` in the shell for a single session.
 
 ### Ollama — local
 
@@ -206,7 +259,8 @@ nothing.
 
 ## Settings
 
-All settable with `set`, and visible in `vars`:
+All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment variable, or a line in
+`~/.config/jafar/llm.properties` — and visible in `vars`:
 
 | Setting | Default | Meaning |
 |---|---|---|

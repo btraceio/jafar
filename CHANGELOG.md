@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Settings via `set`: `llm.enabled`, `llm.backend`, `llm.model`, `llm.base-url`, `llm.api-key`,
     `llm.max-tokens`, `llm.max-rows`, `llm.max-retries`, `llm.timeout`, `llm.confirm`, `llm.redact`,
     `llm.redact-fields`
+  - **A settings file**, `~/.config/jafar/llm.properties` (also `$JAFAR_LLM_CONFIG` or
+    `$XDG_CONFIG_HOME/jafar/`), using the same key names `set` uses. An environment variable is a
+    poor home for a long-lived credential — every child process inherits it, it appears in crash
+    dumps and CI logs, and exporting it inline puts it in shell history. `llm status` names the
+    file, warns when it is readable by anyone else, and reports which layer each setting came
+    from, so a stale environment variable shadowing the file is visible rather than baffling
   - **Tab completion and help**: `ask`, `explain` and `llm` complete as commands in both shells,
     `llm` completes its subcommands, `set llm.` completes all twelve settings with descriptions,
     `help` lists them as subjects, and `help ask` carries worked examples. A test reads

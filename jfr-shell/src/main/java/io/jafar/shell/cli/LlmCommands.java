@@ -193,6 +193,51 @@ public final class LlmCommands {
 
   // ── llm ───────────────────────────────────────────────────────────────────────
 
+  /**
+   * Says where settings come from.
+   *
+   * <p>Printed even when there is no file, because "no settings file" is the answer to the question
+   * someone asks when their file is not being read — and because it is the only place the shell can
+   * name the path it looks at without the user guessing.
+   */
+  private void reportSettingsFile(LlmConfig config) {
+    host.println("Settings file");
+    host.println("-------------");
+    var file = config.settingsFile();
+    if (file.isEmpty()) {
+      host.println("  none — create ~/.config/jafar/llm.properties to keep a key off the");
+      host.println("  environment, then chmod 600 it. Keys are the same names 'set' uses:");
+      host.println("      llm.backend=openai");
+      host.println("      llm.api-key=sk-...");
+    } else {
+      host.println("  " + file.get().path());
+      file.get().warning().ifPresent(w -> host.println("  !! " + w));
+      // A key that resolves from somewhere other than the file is the thing people get wrong.
+      for (String[] setting :
+          new String[][] {
+            {"llm.api-key", "JAFAR_LLM_API_KEY"},
+            {"llm.backend", "JAFAR_LLM_BACKEND"},
+            {"llm.model", "JAFAR_LLM_MODEL"},
+            {"llm.base-url", "JAFAR_LLM_BASE_URL"},
+          }) {
+        LlmConfig.Source source = config.sourceOf(setting[0], setting[1]);
+        if (source != LlmConfig.Source.DEFAULT) {
+          host.println("  %-14s from %s".formatted(setting[0], describe(source, setting[1])));
+        }
+      }
+    }
+    host.println("");
+  }
+
+  private static String describe(LlmConfig.Source source, String envVar) {
+    return switch (source) {
+      case SHELL_VARIABLE -> "a 'set' command in this shell";
+      case ENVIRONMENT -> envVar + " (overrides the settings file)";
+      case SETTINGS_FILE -> "the settings file";
+      case DEFAULT -> "the default";
+    };
+  }
+
   /** Dispatches {@code llm <subcommand>}. */
   public void llm(List<String> args) {
     String sub = args.isEmpty() ? "status" : args.get(0).toLowerCase(java.util.Locale.ROOT);
@@ -219,6 +264,8 @@ public final class LlmCommands {
     host.println("-------------");
     host.println(config.describe());
     host.println("");
+
+    reportSettingsFile(config);
 
     List<LlmBackend> backends = LlmBackend.discover();
     host.println("Backends");
