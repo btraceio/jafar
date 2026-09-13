@@ -119,6 +119,32 @@ public final class LlmService {
    *
    * @param validator checks a candidate query, returning an error message when it is invalid
    */
+  /**
+   * Runs one of the shell's built-in analyses.
+   *
+   * <p>These carry judgement the query language does not — USE saturation, thread-state analysis,
+   * the diagnosis thresholds. Before this the loop could only rebuild them, badly, out of queries.
+   */
+  public interface AnalysisRunner {
+    /** The analyses this host can run, e.g. {@code diagnose}. Empty when none are available. */
+    List<String> available();
+
+    Map<String, Object> run(String name) throws Exception;
+
+    AnalysisRunner NONE =
+        new AnalysisRunner() {
+          @Override
+          public List<String> available() {
+            return List.of();
+          }
+
+          @Override
+          public Map<String, Object> run(String name) {
+            throw new UnsupportedOperationException(name);
+          }
+        };
+  }
+
   /** Runs a query and returns its rows. The loop's only way to see the recording. */
   @FunctionalInterface
   public interface QueryRunner {
@@ -164,6 +190,21 @@ public final class LlmService {
       QueryValidator validator,
       FieldLookup fields,
       QueryRunner runner,
+      java.util.function.Consumer<Step> onStep)
+      throws LlmException {
+    return analyze(
+        question, moduleId, inventory, validator, fields, runner, AnalysisRunner.NONE, onStep);
+  }
+
+  /** As above, with the shell's built-in analyses available to the model. */
+  public Investigation analyze(
+      String question,
+      String moduleId,
+      List<PromptBuilder.TypeEntry> inventory,
+      QueryValidator validator,
+      FieldLookup fields,
+      QueryRunner runner,
+      AnalysisRunner analyses,
       java.util.function.Consumer<Step> onStep)
       throws LlmException {
     int maxSteps = config.maxSteps();
@@ -233,6 +274,41 @@ public final class LlmService {
               LlmRequest.Turn.user(
                   PromptBuilder.analysisResultMessage(
                       move.query(), redactor.redactRows(shown), total, shown.size(), stepsLeft)));
+        }
+        case ANALYSIS -> {
+          String name = move.text();
+          if (!analyses.available().contains(name)) {
+            turns.add(
+                LlmRequest.Turn.user(
+                    PromptBuilder.analysisUnavailable(name, analyses.available(), stepsLeft)));
+            break;
+          }
+          Map<String, Object> outcome;
+          try {
+            outcome = analyses.run(name);
+          } catch (Exception e) {
+            String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            steps.add(new Step("analysis:" + name, 0, detail));
+            if (onStep != null) {
+              onStep.accept(steps.get(steps.size() - 1));
+            }
+            turns.add(
+                LlmRequest.Turn.user(
+                    PromptBuilder.analysisQueryRejected("ANALYSIS: " + name, detail, stepsLeft)));
+            break;
+          }
+          steps.add(new Step("analysis:" + name, outcome.size(), null));
+          if (onStep != null) {
+            onStep.accept(steps.get(steps.size() - 1));
+          }
+          // Analysis output is recording-derived too — method names, thread names, paths — so it
+          // takes the same egress path as query rows rather than a shorter one.
+          Map<String, Object> redacted =
+              Redactor.forAnalysis(config).redactRows(List.of(outcome)).get(0);
+          turns.add(
+              LlmRequest.Turn.user(
+                  PromptBuilder.analysisResultMessage(
+                      name, redacted, stepsLeft, config.maxAnalysisChars())));
         }
         case UNKNOWN ->
             turns.add(

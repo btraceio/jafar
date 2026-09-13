@@ -231,12 +231,20 @@ public final class PromptBuilder {
             Returns those types' fields. This format is self-describing, so an event's fields are \
             whatever this recording declares — ask rather than guessing a field name.
 
+        ANALYSIS: <one of: diagnose, use, tsa, summary, hotmethods, exceptions>
+            Runs an analysis the shell already knows how to do, and returns what it found.
+            diagnose is the broad one: it applies the thresholds, runs USE and TSA, and reports
+            what the recording cannot answer as well as what it can. use looks at resource
+            saturation, tsa at thread states. Prefer these over rebuilding the same thing out of
+            queries — they encode judgement a query does not.
+
         ANSWER: <your conclusion>
             Ends the investigation. Everything after this line is shown to the user.
 
         You have at most %d steps. Spend them like someone who is billed for them:
 
-        - Start from what the question is actually asking, not from a survey of the recording.
+        - For an open question ("why is this slow", "where should I look"), start with
+        ANALYSIS: diagnose. For a specific one, go straight to the query that answers it.
         - Each query should test something you do not already know. If a result settles the \
         question, answer; do not confirm it twice.
         - Counts are not rates. If you need a rate, get the duration too.
@@ -285,6 +293,69 @@ public final class PromptBuilder {
             ? "No steps remain. Answer now with ANSWER:.\n"
             : stepsLeft + " step(s) remain. Answer with ANSWER: as soon as you can.\n");
     return sb.toString();
+  }
+
+  /** Names the analyses a host actually offers, when the model asks for one that does not exist. */
+  public static String analysisUnavailable(
+      String requested, List<String> available, int stepsLeft) {
+    return "There is no analysis called '"
+        + requested
+        + "'. Available: "
+        + (available.isEmpty() ? "(none for this session)" : String.join(", ", available))
+        + ".\n"
+        + (stepsLeft <= 0 ? "No steps remain. Answer now with ANSWER:.\n" : "");
+  }
+
+  /**
+   * What an analysis found.
+   *
+   * <p>Rendered as indented text rather than JSON: the structures are deep and mostly labels, and
+   * JSON spends a third of its tokens on punctuation the model does not need.
+   */
+  public static String analysisResultMessage(
+      String name, java.util.Map<String, Object> result, int stepsLeft, int maxChars) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("Result of ANALYSIS: ").append(name).append('\n');
+    sb.append(DATA_OPEN).append('\n');
+    StringBuilder rendered = new StringBuilder();
+    renderValue(rendered, result, 0);
+    if (rendered.length() > maxChars) {
+      sb.append(rendered, 0, maxChars).append("\n(truncated)\n");
+    } else {
+      sb.append(rendered);
+    }
+    sb.append(DATA_CLOSE).append('\n');
+    sb.append(
+        stepsLeft <= 0
+            ? "No steps remain. Answer now with ANSWER:.\n"
+            : stepsLeft + " step(s) remain. Answer with ANSWER: as soon as you can.\n");
+    return sb.toString();
+  }
+
+  private static void renderValue(StringBuilder sb, Object value, int depth) {
+    String pad = "  ".repeat(depth);
+    if (value instanceof java.util.Map<?, ?> map) {
+      for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+        Object v = entry.getValue();
+        if (v instanceof java.util.Map<?, ?> || v instanceof List<?>) {
+          sb.append(pad).append(entry.getKey()).append(":\n");
+          renderValue(sb, v, depth + 1);
+        } else {
+          sb.append(pad).append(entry.getKey()).append(": ").append(v).append('\n');
+        }
+      }
+    } else if (value instanceof List<?> list) {
+      for (Object element : list) {
+        if (element instanceof java.util.Map<?, ?> || element instanceof List<?>) {
+          sb.append(pad).append("-\n");
+          renderValue(sb, element, depth + 1);
+        } else {
+          sb.append(pad).append("- ").append(element).append('\n');
+        }
+      }
+    } else {
+      sb.append(pad).append(value).append('\n');
+    }
   }
 
   /** Tells the model its query was rejected, so it can correct rather than repeat. */

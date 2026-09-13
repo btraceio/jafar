@@ -26,6 +26,8 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
     QUERY,
     /** Tell me what fields these types have. */
     FIELDS,
+    /** Run one of the shell's built-in analyses and show me what it found. */
+    ANALYSIS,
     /** The investigation is finished; {@code text} is the answer. */
     ANSWER,
     /** Nothing usable in the reply. */
@@ -42,6 +44,13 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
 
   public static AnalysisStep fields(List<String> types) {
     return new AnalysisStep(Kind.FIELDS, null, types, null);
+  }
+
+  /**
+   * @param name one of the analyses the host offers, e.g. {@code diagnose}
+   */
+  public static AnalysisStep analysis(String name) {
+    return new AnalysisStep(Kind.ANALYSIS, null, List.of(), name);
   }
 
   public static AnalysisStep answer(String text) {
@@ -66,6 +75,7 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
     StringBuilder answer = new StringBuilder();
     boolean inAnswer = false;
     String query = null;
+    String analysis = null;
     List<String> types = new ArrayList<>();
 
     for (String rawLine : reply.split("\\R")) {
@@ -82,6 +92,8 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
         answer.append(answer.isEmpty() ? "" : "\n").append(rawLine.stripTrailing());
       } else if (upper.startsWith("QUERY:") && query == null) {
         query = stripFences(line.substring("QUERY:".length()).strip());
+      } else if (upper.startsWith("ANALYSIS:") && analysis == null) {
+        analysis = line.substring("ANALYSIS:".length()).strip().replaceAll("^[`'\"]+|[`'\"]+$", "");
       } else if (upper.startsWith("FIELDS:")) {
         for (String name : line.substring("FIELDS:".length()).split("[,\\s]+")) {
           String cleaned = name.trim().replaceAll("^[`'\"]+|[`'\"]+$", "");
@@ -110,6 +122,9 @@ public record AnalysisStep(Kind kind, String query, List<String> types, String t
     }
     if (query != null && !query.isBlank()) {
       return query(query);
+    }
+    if (analysis != null && !analysis.isBlank()) {
+      return analysis(analysis);
     }
     if (!types.isEmpty()) {
       return fields(types);

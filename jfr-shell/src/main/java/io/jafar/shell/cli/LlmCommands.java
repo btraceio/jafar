@@ -60,6 +60,16 @@ public final class LlmCommands {
       return List.of();
     }
 
+    /** Analyses this session can run, e.g. {@code diagnose}. Empty when none apply. */
+    default List<String> availableAnalyses() {
+      return List.of();
+    }
+
+    /** Runs one of {@link #availableAnalyses()} and returns what it found. */
+    default Map<String, Object> runAnalysis(String name) throws Exception {
+      throw new UnsupportedOperationException(name);
+    }
+
     /**
      * Records an investigation's queries as a re-runnable script.
      *
@@ -622,15 +632,33 @@ public final class LlmCommands {
                   host::validateQuery,
                   host::fieldsOf,
                   host::runQuery,
+                  new LlmService.AnalysisRunner() {
+                    @Override
+                    public List<String> available() {
+                      return host.availableAnalyses();
+                    }
+
+                    @Override
+                    public Map<String, Object> run(String name) throws Exception {
+                      return host.runAnalysis(name);
+                    }
+                  },
                   step -> {
                     host.println("");
-                    host.println("> " + step.query());
+                    host.println(
+                        step.query().startsWith("analysis:")
+                            ? "* " + step.query().substring("analysis:".length())
+                            : "> " + step.query());
                     if (step.error() != null) {
                       host.println("  rejected: " + step.error());
                     } else {
-                      host.println(
-                          "  " + step.rowCount() + (step.rowCount() == 1 ? " row" : " rows"));
-                      ranQueries.add(step.query());
+                      if (step.query().startsWith("analysis:")) {
+                        host.println("  done");
+                      } else {
+                        host.println(
+                            "  " + step.rowCount() + (step.rowCount() == 1 ? " row" : " rows"));
+                        ranQueries.add(step.query());
+                      }
                     }
                   });
 

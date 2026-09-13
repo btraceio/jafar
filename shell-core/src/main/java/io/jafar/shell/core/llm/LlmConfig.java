@@ -198,6 +198,17 @@ public final class LlmConfig {
     return intValue("llm.max-tokens", "JAFAR_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS);
   }
 
+  /**
+   * Characters of one analysis result shown to the model.
+   *
+   * <p>A full {@code diagnose} with its sub-analyses embedded dwarfs a query result and would
+   * swallow the step budget in a single move. Capped in characters rather than rows because these
+   * are nested structures.
+   */
+  public int maxAnalysisChars() {
+    return intValue("llm.max-analysis-chars", "JAFAR_LLM_MAX_ANALYSIS_CHARS", 6000);
+  }
+
   public int maxRows() {
     return intValue("llm.max-rows", "JAFAR_LLM_MAX_ROWS", DEFAULT_MAX_ROWS);
   }

@@ -84,4 +84,49 @@ class RedactorTest {
   void handlesNullRowList() {
     assertTrue(defaultRedactor().redactRows(null).isEmpty());
   }
+
+  @Test
+  void theParsersStringWrapperIsUnwrappedRatherThanRedactedWholesale() {
+    // The untyped parser delivers a string constant as {string=[B}. That inner key is structure,
+    // not a field name — but "string" is in the default redact list, so every wrapped constant was
+    // being replaced: class names, symbols, group-by keys. The model saw {string=<redacted>} for
+    // data that was never sensitive, and the redaction looked like it was working.
+    Redactor redactor = new Redactor(true, java.util.Set.of("string", "path"));
+
+    java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+    row.put("key", java.util.Map.of("string", "[B"));
+    row.put("count", 8519);
+
+    java.util.Map<String, Object> out = redactor.redactRows(java.util.List.of(row)).get(0);
+
+    assertEquals("[B", out.get("key"));
+    assertEquals(8519, out.get("count"));
+  }
+
+  @Test
+  void aWrappedValueUnderARedactedFieldIsStillRedacted() {
+    // Unwrapping must not become an escape hatch: the decision is taken on the outer field name,
+    // which is the one the redact list is about.
+    Redactor redactor = new Redactor(true, java.util.Set.of("path"));
+
+    java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+    row.put("path", java.util.Map.of("string", "/secrets/customer.key"));
+
+    java.util.Map<String, Object> out = redactor.redactRows(java.util.List.of(row)).get(0);
+
+    assertEquals(Redactor.PLACEHOLDER, out.get("path"));
+  }
+
+  @Test
+  void aGenuineMultiFieldMapIsLeftAlone() {
+    Redactor redactor = new Redactor(true, java.util.Set.of("path"));
+
+    java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+    row.put("frame", java.util.Map.of("string", "a", "line", 42));
+
+    java.util.Map<String, Object> out = redactor.redactRows(java.util.List.of(row)).get(0);
+
+    assertTrue(
+        out.get("frame") instanceof java.util.Map, "only the single-entry wrapper collapses");
+  }
 }

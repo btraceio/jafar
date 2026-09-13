@@ -62,6 +62,13 @@ Architecture, and the reasons it is shaped this way:
   rather than being truncated. Each run writes its queries to a `.jfrs` transcript — handoff §3.4
   argues that is the feature, since it converts the loop's non-determinism into something a human
   can re-run.
+- **`analyze` can call the analyses, not only run queries.** `ANALYSIS: <name>` reaches
+  `JfrAnalyses` in `shell-core` — the same code `jfr_diagnose` and the rest run, since the
+  extraction left one copy — so a shell investigation and an MCP one reach the same conclusions
+  rather than similar ones. Results take the same egress path as query rows, with one exception:
+  `Redactor.forAnalysis` leaves `description` alone, because in a `Finding` that is Jafar's own
+  explanation rather than recording content. Capped by `llm.max-analysis-chars`, and
+  `includeAnalysis=false` so a diagnosis does not embed USE and TSA the model can ask for itself.
 - **The model never sees raw events.** It composes a query; the shell runs it. Recording size does
   not affect cost. Do not add code paths that feed event data to the model.
 - `LanguageReference` strings are the **cached prompt prefix and must stay byte-stable** between

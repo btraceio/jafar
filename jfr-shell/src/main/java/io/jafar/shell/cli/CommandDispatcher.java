@@ -13,6 +13,9 @@ import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
+import io.jafar.shell.core.analysis.AnalysisTarget;
+import io.jafar.shell.core.analysis.JfrAnalyses;
+import io.jafar.shell.core.analysis.Progress;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -202,6 +205,18 @@ public class CommandDispatcher {
                 @Override
                 public List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames) {
                   return describeFields(typeNames);
+                }
+
+                @Override
+                public List<String> availableAnalyses() {
+                  return currentJfrSession() == null
+                      ? List.of()
+                      : List.of("diagnose", "use", "tsa", "summary", "hotmethods", "exceptions");
+                }
+
+                @Override
+                public Map<String, Object> runAnalysis(String name) throws Exception {
+                  return runJfrAnalysis(name);
                 }
 
                 @Override
@@ -612,6 +627,40 @@ public class CommandDispatcher {
       // The answer is already on screen; failing to file it away is not worth an error.
       io.println("(could not write the investigation transcript: " + e.getMessage() + ")");
     }
+  }
+
+  private JfrAnalyses jfrAnalyses;
+
+  /**
+   * Runs one of the shell's built-in analyses over the current recording.
+   *
+   * <p>These are the same implementations the MCP server exposes as {@code jfr_diagnose} and the
+   * rest — since they moved to {@code shell-core} there is one copy, so an investigation in the
+   * shell and one driven through MCP reach the same conclusions rather than merely similar ones.
+   */
+  private Map<String, Object> runJfrAnalysis(String name) throws Exception {
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null) {
+      throw new IllegalStateException("No JFR session is open");
+    }
+    if (jfrAnalyses == null) {
+      jfrAnalyses = new JfrAnalyses();
+    }
+    var target = AnalysisTarget.of(0, jfr);
+    var progress = Progress.NONE;
+    // Sub-analyses are not embedded: the loop can ask for `use` or `tsa` itself if it wants them,
+    // and a diagnosis that carried both would spend most of the step's character budget on data
+    // the model did not ask for.
+    Map<String, Object> args = Map.of("includeAnalysis", false);
+    return switch (name) {
+      case "diagnose" -> jfrAnalyses.diagnose(target, args, progress);
+      case "use" -> jfrAnalyses.use(target, args, progress);
+      case "tsa" -> jfrAnalyses.tsa(target, args, progress);
+      case "summary" -> jfrAnalyses.summary(target, progress);
+      case "hotmethods" -> jfrAnalyses.hotmethods(target, args, progress);
+      case "exceptions" -> jfrAnalyses.exceptions(target, args, progress);
+      default -> throw new IllegalArgumentException("No analysis called '" + name + "'");
+    };
   }
 
   /** Returns the global variable store. */
