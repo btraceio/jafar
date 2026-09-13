@@ -126,11 +126,11 @@ For a guided workflow — methodology skills and specialist analysis subagents o
 tools — install the bundled plugin, which also registers this server for you:
 
 ```
-/plugin marketplace add jbachorik/jafar-perf-box
+/plugin marketplace add btraceio/jafar-perf-box
 /plugin install jafar-perf@btraceio
 ```
 
-See [jbachorik/jafar-perf-box](https://github.com/jbachorik/jafar-perf-box).
+See [btraceio/jafar-perf-box](https://github.com/btraceio/jafar-perf-box).
 
 ## Build from Source
 
