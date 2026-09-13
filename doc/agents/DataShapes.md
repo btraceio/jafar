@@ -1,12 +1,12 @@
 # Shapes that lie
 
-Four bugs in this repository share one shape: code reads a structure by *assuming* what is inside
-it, the assumption is wrong, and nothing complains. No exception, no log line — just an empty list,
-a null, or a plausible wrong answer that survives review and testing.
+The bugs collected here share one shape: code reads a structure by *assuming* what is inside it,
+the assumption is wrong, and nothing complains. No exception, no log line — just an empty list, a
+null, or a plausible wrong answer that survives review and testing.
 
-They are collected here because the fifth one is coming, and it will look exactly like the first
-four. When you read a `Map`, a wrapped value, or a metadata list in this codebase, assume it is not
-the shape you expect and check.
+They are collected here because the next one is coming, and it will look exactly like these. When
+you read a `Map`, a wrapped value, or a metadata list in this codebase, assume it is not the shape
+you expect and check. Add what you find to this list.
 
 ---
 
@@ -34,7 +34,7 @@ the code and read what came out the far end — see
 
 ---
 
-## The four
+## The cases
 
 ### A string constant is not a string
 
@@ -88,6 +88,28 @@ unless you know that. `getEventTypeCounts()` is truthful only after a scan; for 
 Related: the numbers shown by `metadata --events-only` are **class IDs**, not counts.
 `jdk.ActiveRecording` displays as `1830` and has one event.
 
+### A missing column is not an error
+
+`Values.get(row, path)` returns `null` when the path names nothing, and `compareValues(null, null)`
+is `0`. A sort whose key resolves to nothing therefore succeeds, orders nothing, and returns the
+input order — which for `top(n, ...)` means the first n rows presented as the top n.
+
+`groupBy` names its output `key` and the aggregate after the function (`sum`, `count`, …), so
+
+```
+events/jdk.JavaMonitorEnter | groupBy(monitorClass, agg=sum, value=duration) | top(10, by=value)
+```
+
+had no `value` column to read and returned ten arbitrary monitors. That query is an example in
+`LanguageReference`, so it is a line every model was shown. `sortBy` caught the same mistake —
+it checks the first row and throws `field 'value' not found. Available: [sum, key]` — which is why
+this surfaced there first and stayed invisible in `top`.
+
+Both now read `value` as the aggregate column (`resolveAggregateAlias`), and `groupBy` rejects a key
+that matched no event rather than returning nothing. The general point stands for any new operator:
+**a path that resolves to null must be distinguishable from a value that is null.** Validate against
+the first row, as `applySortBy` does, or count what you consumed, as `aggregateGroupBy` does.
+
 ---
 
 ## Before you trust a shape
@@ -98,3 +120,5 @@ Related: the numbers shown by `metadata --events-only` are **class IDs**, not co
 - If it is a string from a recording, assume it is wrapped until you have seen otherwise.
 - If a structure has a display form and a data form, you want the data form, and the display form
   will not tell you that you took the wrong one.
+- If it is a column name, check it against a row before you sort or filter by it. Silence means the
+  column was absent, not that the data was uninteresting.

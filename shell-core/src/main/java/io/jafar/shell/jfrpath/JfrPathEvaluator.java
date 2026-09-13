@@ -1587,6 +1587,9 @@ public final class JfrPathEvaluator {
       boolean ascending)
       throws Exception {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+    // How many events the key was offered. Only used to tell "nothing matched the filter" apart
+    // from "the key path matched nothing in events that were there" — see reportUnmatchedKey.
+    long[] offered = {0L};
 
     // Pre-build path tokens for array iteration support
     List<Object> keyTokens = buildPathTokens(keyPath);
@@ -1609,6 +1612,7 @@ public final class JfrPathEvaluator {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
+              offered[0]++;
 
               // Extract all keys (handles arrays automatically)
               List<Object> keys = extractAllValues(map, keyTokens);
@@ -1644,6 +1648,7 @@ public final class JfrPathEvaluator {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
+              offered[0]++;
 
               // Extract all keys (handles arrays automatically)
               List<Object> keys = extractAllValues(map, keyTokens);
@@ -1702,6 +1707,10 @@ public final class JfrPathEvaluator {
       }
     }
 
+    if (groups.isEmpty() && offered[0] > 0) {
+      reportUnmatchedKey(session, query, keyPath, offered[0]);
+    }
+
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map.Entry<Object, GroupAccumulator> entry : groups.entrySet()) {
       Map<String, Object> row = new HashMap<>();
@@ -1716,6 +1725,58 @@ public final class JfrPathEvaluator {
     }
 
     return result;
+  }
+
+  /**
+   * Complains when a groupBy key matched nothing although events were there.
+   *
+   * <p>Grouping on a field the event does not have used to come back as an empty result, which
+   * reads exactly like "this recording has no such events" — so a caller (a person or a model)
+   * moves on instead of fixing the name. The two cases are worth telling apart: if events reached
+   * the grouping and none of them yielded a key, the key path is wrong, and the field list is the
+   * one thing that resolves it.
+   *
+   * <p>Only reached when the result would have been empty anyway, so no query that returns rows
+   * today can start failing because of this.
+   */
+  private void reportUnmatchedKey(JFRSession session, Query query, List<String> keyPath, long seen)
+      throws Exception {
+    String key = String.join("/", keyPath);
+    String types = String.join(", ", query.eventTypes);
+    StringBuilder msg =
+        new StringBuilder("groupBy: key '")
+            .append(key)
+            .append("' matched nothing in ")
+            .append(seen)
+            .append(seen == 1 ? " event of " : " events of ")
+            .append(types);
+    List<String> fields = topLevelFields(session, query.eventTypes);
+    if (!fields.isEmpty()) {
+      msg.append(". Available: ").append(fields);
+    }
+    throw new IllegalArgumentException(msg.toString());
+  }
+
+  /**
+   * The declared field names of the given event types, or an empty list when metadata is out of
+   * reach. Reads {@code fieldsByName} — the structured map — because {@code fields} holds rendered
+   * display strings.
+   */
+  private List<String> topLevelFields(JFRSession session, List<String> eventTypes) {
+    java.util.TreeSet<String> names = new java.util.TreeSet<>();
+    for (String type : eventTypes) {
+      try {
+        Map<String, Object> meta = MetadataProvider.loadClass(session.getRecordingPath(), type);
+        if (meta != null && meta.get("fieldsByName") instanceof Map<?, ?> byName) {
+          for (Object k : byName.keySet()) {
+            names.add(String.valueOf(k));
+          }
+        }
+      } catch (Exception e) {
+        // Metadata is a nicety here; the complaint above stands without it.
+      }
+    }
+    return new ArrayList<>(names);
   }
 
   private List<Map<String, Object>> collectAllRows(JFRSession session, Query query)
@@ -3117,11 +3178,19 @@ public final class JfrPathEvaluator {
   private List<Map<String, Object>> applyTop(
       List<Map<String, Object>> rows, int n, List<String> byPath, boolean ascending) {
     if (rows.isEmpty()) return rows;
+    // 'top(n, by=value)' over a groupBy result means the aggregate column, as it does in sortBy.
+    // Without this the path resolves to null for every row and the sort silently keeps input order.
+    List<String> path = byPath;
+    if (byPath.size() == 1) {
+      String column = resolveAggregateAlias(rows.get(0), byPath.get(0));
+      if (!column.equals(byPath.get(0))) path = List.of(column);
+    }
+    Object[] tokens = buildPathTokens(path).toArray();
     List<Map<String, Object>> sorted = new ArrayList<>(rows);
     sorted.sort(
         (a, b) -> {
-          Object aVal = Values.get(a, buildPathTokens(byPath).toArray());
-          Object bVal = Values.get(b, buildPathTokens(byPath).toArray());
+          Object aVal = Values.get(a, tokens);
+          Object bVal = Values.get(b, tokens);
           int cmp = compareValues(aVal, bVal);
           return ascending ? cmp : -cmp;
         });
@@ -3275,26 +3344,49 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, List<JfrPath.SortField> sortFields) {
     if (rows.isEmpty() || sortFields.isEmpty()) return rows;
 
-    // Validate all fields exist in first row
+    // Validate all fields exist in first row, resolving the aggregate alias first
+    List<String> columns = new ArrayList<>(sortFields.size());
     for (JfrPath.SortField sf : sortFields) {
-      if (!rows.get(0).containsKey(sf.field())) {
+      String column = resolveAggregateAlias(rows.get(0), sf.field());
+      if (!rows.get(0).containsKey(column)) {
         throw new IllegalArgumentException(
             "sortBy: field '" + sf.field() + "' not found. Available: " + rows.get(0).keySet());
       }
+      columns.add(column);
     }
 
     List<Map<String, Object>> result = new ArrayList<>(rows);
     Comparator<Map<String, Object>> comparator =
         (a, b) -> {
-          for (JfrPath.SortField sf : sortFields) {
-            int cmp = compareValues(a.get(sf.field()), b.get(sf.field()));
-            if (sf.descending()) cmp = -cmp;
+          for (int i = 0; i < sortFields.size(); i++) {
+            String column = columns.get(i);
+            int cmp = compareValues(a.get(column), b.get(column));
+            if (sortFields.get(i).descending()) cmp = -cmp;
             if (cmp != 0) return cmp;
           }
           return 0;
         };
     result.sort(comparator);
     return result;
+  }
+
+  /**
+   * Reads {@code value} as the aggregate column of a groupBy result.
+   *
+   * <p>{@code groupBy} names its output {@code key} and the aggregate after the function, so {@code
+   * groupBy(name, agg=sum, value=sumOfPauses)} yields {@code sum} — but its own {@code sortBy=}
+   * argument already spells that column {@code value}, and the pipeline stage {@code |
+   * sortBy(value)} is the same thought written the other way round. It used to be rejected. The
+   * alias only applies when there is no real column of that name and the rows are shaped the way
+   * groupBy shapes them, so it cannot shadow a field a recording actually has.
+   */
+  private static String resolveAggregateAlias(Map<String, Object> firstRow, String field) {
+    if (!"value".equals(field) || firstRow.containsKey("value")) return field;
+    if (firstRow.size() != 2 || !firstRow.containsKey("key")) return field;
+    for (String column : firstRow.keySet()) {
+      if (!"key".equals(column)) return column;
+    }
+    return field;
   }
 
   private List<Map<String, Object>> applyQuantiles(

@@ -78,6 +78,9 @@ public final class LanguageReference {
           sortBy(field[, asc=]), top(n[, by=path][, asc=]), head(n), tail(n), distinct()
         shaping: select(...), filter([predicate])
 
+      Group and filter only on fields the type actually has — ask with FIELDS: rather than
+      guessing from the event name. A key that matches no field is rejected, not empty.
+
       Hot methods: use stackprofile(), not groupBy over frames. A path inside a function
       argument cannot be indexed - groupBy(stackTrace/frames[0]/method/name) is a parse
       error - and the legal groupBy(stackTrace/frames/method/name) counts every frame on
@@ -89,12 +92,15 @@ public final class LanguageReference {
         value transforms: len, uppercase, lowercase, trim, abs, round, floor, ceil, contains,
           replace, formatDuration, asDateTime
 
-      Three rules that cause most invalid queries:
+      Four rules that cause most invalid queries:
         1. sortBy and top are DESCENDING by default. Pass asc=true for ascending — this matters
            for time series, where sortBy(startTime) gives the recording backwards.
         2. filter() takes a BRACKETED predicate, unlike a root filter:
              groupBy(path, agg=sum, value=bytes) | filter([sum>1048576])
         3. Terminal aggregations consume the stream; you cannot chain two of them.
+        4. groupBy emits two columns: 'key', and the aggregate named after the function —
+           agg=sum gives 'sum', agg=count gives 'count'. Later stages take either that name or
+           'value', so both filter([sum>1048576]) and sortBy(value) work on the same rows.
 
       Examples:
         events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
