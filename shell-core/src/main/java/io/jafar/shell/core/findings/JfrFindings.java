@@ -1,6 +1,5 @@
-package io.jafar.mcp.jfr;
+package io.jafar.shell.core.findings;
 
-import io.jafar.shell.core.findings.Finding;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -15,13 +14,13 @@ import java.util.Map;
  * already applied in {@code generateUseInsights} and {@code generateTsaInsights}; this class
  * deliberately introduces no new ones.
  */
-final class JfrFindings {
+public final class JfrFindings {
 
   private JfrFindings() {}
 
   /** Derives findings from a {@code jfr_use} resource-metrics map. */
   @SuppressWarnings("unchecked")
-  static List<Finding> fromUse(Map<String, Object> resourceMetrics, String source) {
+  public static List<Finding> fromUse(Map<String, Object> resourceMetrics, String source) {
     List<Finding> findings = new ArrayList<>();
     if (resourceMetrics == null) {
       return findings;
@@ -150,7 +149,7 @@ final class JfrFindings {
 
   /** Derives findings from a {@code jfr_tsa} result map. */
   @SuppressWarnings("unchecked")
-  static List<Finding> fromTsa(Map<String, Object> tsaResult, String source) {
+  public static List<Finding> fromTsa(Map<String, Object> tsaResult, String source) {
     List<Finding> findings = new ArrayList<>();
     if (tsaResult == null) {
       return findings;
