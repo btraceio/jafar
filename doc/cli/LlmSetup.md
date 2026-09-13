@@ -290,13 +290,29 @@ names listed, rather than silently becoming a variable.
 | `llm.model` | the backend's own default | Model id |
 | `llm.base-url` | the backend's own default | Endpoint, for the OpenAI-compatible backends |
 | `llm.api-key` | unset | Bearer token; overrides the provider's environment variable |
-| `llm.max-tokens` | `2048` | Output ceiling per request |
+| `llm.max-tokens` | `2048`, auto-raised | Output ceiling per request — see below |
 | `llm.max-rows` | `50` | Result rows shown to the model by `explain` |
 | `llm.max-retries` | `1` | Correction attempts after a query fails to parse (0–3) |
 | `llm.timeout` | `120` | Request timeout in seconds — raise it for a large local model |
 | `llm.confirm` | `false` | When true, `ask` prints the query but does not run it |
 | `llm.redact` | `true` | Redact sensitive fields before sending |
 | `llm.redact-fields` | see below | Replace the redaction list; a leading `+` extends it |
+
+**`llm.max-tokens` raises itself for a reasoning model.** The default is small because that is all
+an answer needs — a query and one line — and because the ceiling is what caps the bill when a model
+loops. A reasoning model spends that same budget *thinking* before it writes anything, hits the
+ceiling mid-thought, and returns no query at all. So when a reply says it stopped on its token
+limit without producing a query, the shell raises the ceiling to 16384, says so, and asks again:
+
+```
+jfr> ask which method is using most CPU
+# This model reasons before answering; raised llm.max-tokens to 16384 for this session.
+```
+
+It is remembered for that model for the rest of the session, so only the first question pays for
+the short attempt. Setting `llm.max-tokens` yourself to something larger disables the raise — your
+number is never lowered. The trigger is the reply's own stop reason, not a list of model names,
+which would be stale within a month and says nothing about a local model someone renamed.
 
 ```
 jfr> set llm.backed = ollama

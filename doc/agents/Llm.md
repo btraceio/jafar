@@ -29,6 +29,13 @@ Architecture, and the reasons it is shaped this way:
   system prompt declares it data, never instruction. Thread names and heap strings are
   attacker-controllable when the recording came from someone else.
 - Egress redaction reuses the same field-name model as the scrubber in `tools/`.
+- **The token ceiling discovers reasoning models rather than listing them.** `llm.max-tokens`
+  defaults to 2048, which is right for the answer and wrong for a model that thinks first: it is
+  cut off mid-thought and returns no query, having billed the full ceiling. `LlmService` escalates
+  to `LlmConfig.MAX_TOKENS_WHEN_THINKING` when a reply stops on `length` without a query, reports
+  the raise, and remembers it per model for the session. The signal is the reply's stop reason, not
+  the model's name — a name list would be stale within a month. A user-set ceiling is never
+  lowered.
 - **A candidate query is validated locally before it runs.** `LlmCommands.Host.validateQuery`
   parses it with the same parser that would execute it; on rejection `LlmService` sends the parser's
   own error back and asks for a correction, up to `llm.max-retries` (default 1, capped at 3). This

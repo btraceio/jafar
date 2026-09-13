@@ -35,8 +35,27 @@ public final class LlmConfig {
    */
   public static final int DEFAULT_MAX_RETRIES = 1;
 
-  /** Output ceiling for a single {@code ask}. Query plus rationale is small. */
+  /**
+   * Output ceiling for a single {@code ask}, before anything is known about the model.
+   *
+   * <p>Small on purpose. A query and one line of rationale really is small, and a ceiling is what
+   * caps the damage when a model loops — you are billed for what it generates, so a high ceiling
+   * everywhere makes a runaway eight times more expensive.
+   *
+   * <p>It is wrong for a reasoning model, which spends this budget thinking before it writes
+   * anything. Rather than guess from the model's name — a list that would be stale within a month —
+   * {@link LlmService} escalates when the reply itself says it was cut off mid-thought, and
+   * remembers that for the rest of the session. See {@link #MAX_TOKENS_WHEN_THINKING}.
+   */
   public static final int DEFAULT_MAX_TOKENS = 2048;
+
+  /**
+   * The ceiling used once a model has shown that it reasons before answering.
+   *
+   * <p>Reached by escalation, never by default: the evidence is a reply that stopped on its token
+   * limit without producing a query.
+   */
+  public static final int MAX_TOKENS_WHEN_THINKING = 16384;
 
   /**
    * Rows of a query result shown to the model by {@code explain}. Results are the one place where

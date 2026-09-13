@@ -24,6 +24,13 @@ public final class LlmService {
   private int requestCount;
   private int retryCount;
   private String lastValidationError;
+  private LlmResponse lastResponse;
+
+  // Raised once a reply proves the model reasons before answering; 0 until then. Session-scoped:
+  // the discovery is about the model in use, and changing llm.model starts the question over.
+  private int discoveredCeiling;
+  private String discoveredFor;
+  private boolean escalatedThisCall;
 
   public LlmService(LlmBackend backend, LlmConfig config) {
     this.backend = backend;
@@ -78,7 +85,7 @@ public final class LlmService {
     return new LlmRequest(
         PromptBuilder.translationSystemPrompt(language, reference),
         List.of(LlmRequest.Turn.user(PromptBuilder.translationUserMessage(question, inventory))),
-        config.maxTokens(),
+        effectiveMaxTokens(),
         "ask");
   }
 
@@ -113,9 +120,21 @@ public final class LlmService {
     // one, would make the caller refuse to run a query that is actually fine.
     lastValidationError = null;
 
+    escalatedThisCall = false;
     LlmRequest request = buildAskRequest(question, moduleId, inventory);
     LlmResponse response = send(request);
     QueryProposal proposal = QueryProposal.parse(response.text());
+
+    // The model reasons before answering, and the modest default cut it off mid-thought. The reply
+    // says so itself — no model-name list required — so raise the ceiling, remember it for this
+    // model, and ask once more. Without this the user sees "no query could be extracted" and is
+    // left to discover a setting they did not know existed.
+    if (!proposal.hasQuery() && stoppedOnLength(response) && noteThinkingModel()) {
+      escalatedThisCall = true;
+      request = buildAskRequest(question, moduleId, inventory);
+      response = send(request);
+      proposal = QueryProposal.parse(response.text());
+    }
 
     int retriesLeft = config.maxRetries();
     List<LlmRequest.Turn> turns = new ArrayList<>(request.messages());
@@ -162,8 +181,57 @@ public final class LlmService {
   }
 
   /** The parse error from the most recent {@code ask}, when the final query still did not parse. */
+  private static boolean stoppedOnLength(LlmResponse response) {
+    String stop = response.stopReason();
+    return "length".equalsIgnoreCase(stop) || "max_tokens".equalsIgnoreCase(stop);
+  }
+
+  /**
+   * Records that the model in use reasons before answering.
+   *
+   * @return true when this changed anything — false if the ceiling is already at least as high, so
+   *     a retry would send exactly the same request and waste a round trip
+   */
+  private boolean noteThinkingModel() {
+    String model = config.modelFor(backend);
+    if (LlmConfig.MAX_TOKENS_WHEN_THINKING <= effectiveMaxTokens()) {
+      return false;
+    }
+    discoveredCeiling = LlmConfig.MAX_TOKENS_WHEN_THINKING;
+    discoveredFor = model;
+    return true;
+  }
+
+  /** The ceiling to send: what was discovered for this model, else what is configured. */
+  public int effectiveMaxTokens() {
+    String model = config.modelFor(backend);
+    boolean stillTheSameModel = discoveredFor != null && discoveredFor.equals(model);
+    return stillTheSameModel ? Math.max(discoveredCeiling, config.maxTokens()) : config.maxTokens();
+  }
+
+  /**
+   * The ceiling this call raised itself to, when it discovered a reasoning model.
+   *
+   * <p>Reported rather than applied silently: the user configured a number, and something else
+   * overriding it without saying so is the kind of thing that is impossible to debug later.
+   */
+  public Optional<Integer> autoRaisedTo() {
+    return escalatedThisCall ? Optional.of(effectiveMaxTokens()) : Optional.empty();
+  }
+
   public Optional<String> lastValidationError() {
     return Optional.ofNullable(lastValidationError);
+  }
+
+  /**
+   * The most recent reply from the backend.
+   *
+   * <p>Exposed so that a failure to find a query in it can say *why* — the reply carries {@code
+   * finish_reason}, and discarding it turned "you hit the token ceiling mid-thought" into the far
+   * less useful "no query could be extracted".
+   */
+  public Optional<LlmResponse> lastResponse() {
+    return Optional.ofNullable(lastResponse);
   }
 
   /** How many correction round-trips this service has made. */
@@ -189,7 +257,7 @@ public final class LlmService {
         List.of(
             LlmRequest.Turn.user(
                 PromptBuilder.explanationUserMessage(query, redacted, total, redacted.size()))),
-        config.maxTokens(),
+        effectiveMaxTokens(),
         "explain");
   }
 
@@ -207,6 +275,7 @@ public final class LlmService {
     LlmResponse response = backend.complete(request, config);
     response.usage().ifPresent(usage -> sessionUsage = sessionUsage.plus(usage));
     requestCount++;
+    lastResponse = response;
     return response;
   }
 
