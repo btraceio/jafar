@@ -6,6 +6,7 @@ This directory contains comprehensive documentation for the Jafar project, organ
 
 ```
 doc/
+├── agents/              # Contributor & AI-assistant guidance (entry point: ../AGENTS.md)
 ├── parser/              # Parser API Documentation
 ├── cli/                 # JFR Shell (CLI) Documentation
 ├── mcp/                 # MCP Server Documentation
@@ -16,6 +17,28 @@ doc/
 
 ---
 
+## 🤖 Working on Jafar (`agents/`)
+
+Guidance for contributors and AI coding assistants. The entry point is
+[AGENTS.md](../AGENTS.md) in the repository root; these are the areas it links to.
+
+| Document | Description |
+|----------|-------------|
+| [Verification.md](agents/Verification.md) | **How to know a change works here** — the rules, and the case files behind each |
+| [Build.md](agents/Build.md) | Prerequisites, build and test commands, the Go parser's toolchain |
+| [Architecture.md](agents/Architecture.md) | Parser APIs, coding style, testing strategy, composite build |
+| [Shells.md](agents/Shells.md) | The shells, JfrPath, tab completion, backend plugins |
+| [Mcp.md](agents/Mcp.md) | MCP server tools, prompts, resources, findings contract |
+| [Llm.md](agents/Llm.md) | The `ask` command, the LLM SPI, and why it is shaped that way |
+| [Release.md](agents/Release.md) | Release process (see also [RELEASING.md](../RELEASING.md)) |
+
+**Start here if you want to:**
+- Make a change and have it actually work — read `Verification.md` first
+- Understand why a module is split the way it is
+- Add a shell module, a backend plugin, or an MCP tool
+
+---
+
 ## 📚 Parser API (`parser/`)
 
 Documentation for Jafar's typed and untyped parsing APIs.
@@ -23,7 +46,7 @@ Documentation for Jafar's typed and untyped parsing APIs.
 | Document | Description |
 |----------|-------------|
 | [TypedAPITutorial.md](parser/TypedAPITutorial.md) | Tutorial for strongly-typed JFR parsing with annotated interfaces |
-| [unTypedAPITutorial.md](parser/unTypedAPITutorial.md) | Tutorial for flexible map-based JFR parsing |
+| [UntypedAPITutorial.md](parser/UntypedAPITutorial.md) | Tutorial for flexible map-based JFR parsing |
 | [MapVariables.md](parser/MapVariables.md) | Guide to using map data structures in scripts |
 
 **Start here if you want to:**
@@ -127,7 +150,7 @@ Work-in-progress documentation and implementation notes.
 ### I want to...
 
 **Parse JFR files programmatically:**
-→ Start with [parser/TypedAPITutorial.md](parser/TypedAPITutorial.md) or [parser/unTypedAPITutorial.md](parser/unTypedAPITutorial.md)
+→ Start with [parser/TypedAPITutorial.md](parser/TypedAPITutorial.md) or [parser/UntypedAPITutorial.md](parser/UntypedAPITutorial.md)
 
 **Analyze JFR files interactively:**
 → Start with [cli/Tutorial.md](cli/Tutorial.md)

@@ -114,6 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (for example allocation profiling not enabled), stated separately from findings.
 - **`JfrQueryEvaluator` moved from `jfr-shell` to `shell-core`** (same package and FQN, no import changes)
   so that consumers without the interactive CLI can evaluate JfrPath against a JFR session.
+- **`AGENTS.md` is now an entry point rather than a manual.** It was 544 lines, of which one section
+  was 241; the areas it covered now live in `doc/agents/` and it links to them. New
+  `doc/agents/Verification.md` records how to know a change works in this repository — eight rules,
+  each with the case file that produced it, drawn from bugs that shipped or nearly shipped while
+  their tests were green.
 
 ### Fixed
 - **The MCP server reported the wrong version in its handshake.** `serverInfo.version` was a
