@@ -9,8 +9,8 @@ body:
         Have a question about using JAFAR? We're here to help!
 
         **Before asking:**
-        - Check the [README.md](https://github.com/jbachorik/jafar/blob/main/README.md) for basic usage
-        - Review [LIMITATIONS.md](https://github.com/jbachorik/jafar/blob/main/LIMITATIONS.md) for known limitations
+        - Check the [README.md](https://github.com/btraceio/jafar/blob/main/README.md) for basic usage
+        - Review [LIMITATIONS.md](https://github.com/btraceio/jafar/blob/main/LIMITATIONS.md) for known limitations
         - Search existing issues and discussions
 
   - type: dropdown

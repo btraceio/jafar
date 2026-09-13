@@ -235,7 +235,7 @@ Results are saved to: `benchmarks/build/results/jmh/results.json`
 
 ```bash
 # Clone repository
-git clone https://github.com/jbachorik/jafar.git
+git clone https://github.com/btraceio/jafar.git
 cd jafar
 
 # Fetch test resources

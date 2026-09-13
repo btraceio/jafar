@@ -107,8 +107,8 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Finding Work
 
-- Check issues labeled [`good first issue`](https://github.com/jbachorik/jafar/labels/good%20first%20issue) for beginner-friendly tasks
-- Look for [`help wanted`](https://github.com/jbachorik/jafar/labels/help%20wanted) issues
+- Check issues labeled [`good first issue`](https://github.com/btraceio/jafar/labels/good%20first%20issue) for beginner-friendly tasks
+- Look for [`help wanted`](https://github.com/btraceio/jafar/labels/help%20wanted) issues
 - Review the [LIMITATIONS.md](LIMITATIONS.md) for areas needing improvement
 
 ## Coding Standards
