@@ -80,6 +80,40 @@ class TypeInventoryTest {
   }
 
   @Test
+  void aTypeWithNoEventsIsMovedOutOfTheCandidateList() {
+    // The case this exists for: a recording whose samples come from an agent's own event type,
+    // while jdk.ExecutionSample is declared by the JVM and holds nothing. Listed side by side, a
+    // model picks the name it recognises and queries an empty type.
+    TypeEntry empty =
+        new TypeEntry("jdk.ExecutionSample", 0, "Java Execution Sample", null, List.of(), true);
+    TypeEntry real = new TypeEntry("datadog.ExecutionSample", 4242, null, null, List.of(), true);
+
+    String text = PromptBuilder.renderInventory(List.of(empty, real));
+
+    int candidates = text.indexOf("datadog.ExecutionSample");
+    int declared = text.indexOf("Declared by the JVM but holding no events");
+    assertTrue(candidates > 0 && declared > candidates, "empty types come after the real ones");
+    assertTrue(text.indexOf("jdk.ExecutionSample") > declared, "the empty type is in that list");
+    assertTrue(text.contains("4242 events"), text);
+  }
+
+  @Test
+  void theModelIsToldNotToJudgeATypeByItsPackage() {
+    TypeEntry vendor = new TypeEntry("datadog.ExecutionSample", 4242, null, null, List.of(), true);
+
+    String text = PromptBuilder.renderInventory(List.of(vendor));
+
+    assertTrue(text.contains("package says nothing about its relevance"), text);
+  }
+
+  @Test
+  void oneEventReadsAsSingular() {
+    TypeEntry single = new TypeEntry("jdk.ActiveRecording", 1, null, null, List.of(), true);
+
+    assertTrue(PromptBuilder.renderInventory(List.of(single)).contains("(1 event)"));
+  }
+
+  @Test
   void countsAreOmittedWhenUnknown() {
     // They always are: counting means scanning the recording, which ask must not do.
     String text = PromptBuilder.renderInventory(List.of(CPU_LOAD));

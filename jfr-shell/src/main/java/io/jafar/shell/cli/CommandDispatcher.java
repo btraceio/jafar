@@ -349,18 +349,97 @@ public class CommandDispatcher {
     if (byName.isEmpty()) {
       return names.stream().map(PromptBuilder.TypeEntry::of).toList();
     }
+    Map<String, Long> counts = eventCounts(jfr);
+    // A counted recording that never mentions a type holds none of it. Only when counting did not
+    // happen at all is the count unknown — the distinction is the whole point: 0 is a fact the
+    // model must act on, -1 is a silence it must not read anything into.
+    boolean counted = !counts.isEmpty();
 
     List<PromptBuilder.TypeEntry> entries = new ArrayList<>();
     for (String name : names) {
       Map<String, Object> clazz = byName.get(name);
+      long count = counts.getOrDefault(name, counted ? 0L : -1L);
       entries.add(
           clazz == null
-              ? PromptBuilder.TypeEntry.of(name)
-              : PromptBuilder.TypeEntry.documented(name, labelOf(clazz), descriptionOf(clazz)));
+              ? new PromptBuilder.TypeEntry(name, count, null, null, List.of(), true)
+              : new PromptBuilder.TypeEntry(
+                  name, count, labelOf(clazz), descriptionOf(clazz), List.of(), true));
     }
     describedTypesFor = key;
     describedTypesCache = List.copyOf(entries);
     return describedTypesCache;
+  }
+
+  // Events per type, counted once per recording. Empty when counting is off or failed, in which
+  // case every count reads as unknown and nothing is claimed about it.
+  private String countsFor;
+  private Map<String, Long> countsCache;
+
+  /**
+   * How many events of each type the recording actually holds.
+   *
+   * <p>Metadata declares every type the JVM registered, whether or not it emitted anything — so a
+   * recording produced by an agent that ships its own sampler lists {@code jdk.ExecutionSample}
+   * with nothing in it alongside a vendor type with thousands of events. Told only the names, a
+   * model picks the one it recognises and queries an empty type.
+   *
+   * <p>This is a full pass over the recording. It is done once per session and cached, and it is
+   * the same pass the query that follows the question will make anyway — {@code ask} answers with a
+   * query, and running that query streams every event regardless. Set {@code llm.count-events =
+   * false} to skip it on a recording large enough that one extra pass is not worth the accuracy.
+   */
+  private Map<String, Long> eventCounts(JFRSession jfr) {
+    if ("false".equalsIgnoreCase(readSetting("llm.count-events"))) {
+      return Map.of();
+    }
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(countsFor) && countsCache != null) {
+      return countsCache;
+    }
+    var cached = EventCountCache.read(jfr.getRecordingPath());
+    if (cached.isPresent()) {
+      countsCache = Map.copyOf(cached.get());
+      countsFor = key;
+      return countsCache;
+    }
+    try {
+      Map<String, Long> counted = new JfrPathEvaluator().countAllEventTypes(jfr);
+      EventCountCache.write(jfr.getRecordingPath(), counted);
+      countsCache = Map.copyOf(counted);
+      countsFor = key;
+    } catch (Exception e) {
+      // An unreadable recording is the query's problem to report, not the inventory's.
+      return Map.of();
+    }
+    return countsCache;
+  }
+
+  /** Reads an llm.* setting the same way the LLM host adapter does. */
+  private String readSetting(String name) {
+    var cur = sessions.current();
+    if (cur.isPresent()) {
+      VariableStore.Value value = cur.get().variables.get(name);
+      if (value != null) {
+        try {
+          Object raw = value.get();
+          if (raw != null) {
+            return String.valueOf(raw);
+          }
+        } catch (Exception ignored) {
+          // fall through to the global store
+        }
+      }
+    }
+    VariableStore.Value global = globalStore == null ? null : globalStore.get(name);
+    if (global != null) {
+      try {
+        Object raw = global.get();
+        return raw == null ? null : String.valueOf(raw);
+      } catch (Exception ignored) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // Raw metadata classes by name, parsed once per recording. Both the type inventory and the

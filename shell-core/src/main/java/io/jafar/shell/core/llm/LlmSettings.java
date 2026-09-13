@@ -37,7 +37,10 @@ public final class LlmSettings {
           new Setting("llm.timeout", "request timeout in seconds"),
           new Setting("llm.confirm", "when true, 'ask' prints the query but does not run it"),
           new Setting("llm.redact", "redact sensitive fields before sending"),
-          new Setting("llm.redact-fields", "replace the redaction list; a leading + extends it"));
+          new Setting("llm.redact-fields", "replace the redaction list; a leading + extends it"),
+          new Setting(
+              "llm.count-events",
+              "count events per type so empty ones are not offered (one pass)"));
 
   private LlmSettings() {}
 

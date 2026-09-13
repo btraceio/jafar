@@ -156,18 +156,46 @@ public final class PromptBuilder {
     }
     List<TypeEntry> events = new java.util.ArrayList<>();
     List<TypeEntry> fieldTypes = new java.util.ArrayList<>();
+    List<TypeEntry> empty = new java.util.ArrayList<>();
     for (TypeEntry entry : inventory) {
-      (entry.event() ? events : fieldTypes).add(entry);
+      if (!entry.event()) {
+        fieldTypes.add(entry);
+      } else if (entry.count() == 0) {
+        // Declared by the JVM but never emitted. Listing it beside the types that do have data is
+        // how a model ends up querying an empty jdk.ExecutionSample in a recording whose samples
+        // came from somewhere else.
+        empty.add(entry);
+      } else {
+        events.add(entry);
+      }
     }
     events.sort(java.util.Comparator.comparing(TypeEntry::name));
     fieldTypes.sort(java.util.Comparator.comparing(TypeEntry::name));
+    empty.sort(java.util.Comparator.comparing(TypeEntry::name));
 
     StringBuilder sb = new StringBuilder();
-    sb.append("\n\nEvent types in the recording under analysis, with the recording's own labels ");
-    sb.append("and descriptions. Choose from these; never invent a type.\n");
+    sb.append("\n\nEvent types that have events in the recording under analysis, with the ");
+    sb.append("recording's own labels and descriptions, and how many events each holds.\n");
+    sb.append("Choose from these; never invent a type. A type's package says nothing about its ");
+    sb.append("relevance: a recording may carry its samples in a vendor or application type ");
+    sb.append("rather than a jdk.* one, and the type that holds the data is the one to query.\n");
     sb.append(DATA_OPEN).append('\n');
     for (TypeEntry entry : events) {
       appendType(sb, entry);
+    }
+    if (!empty.isEmpty()) {
+      sb.append('\n');
+      sb.append(
+          "  Declared by the JVM but holding no events here — querying one returns nothing, ");
+      sb.append("so do not; if the question needs one, say so and name the setting that would ");
+      sb.append("capture it:\n    ");
+      for (int i = 0; i < empty.size(); i++) {
+        if (i > 0) {
+          sb.append(", ");
+        }
+        sb.append(empty.get(i).name());
+      }
+      sb.append('\n');
     }
     if (!fieldTypes.isEmpty()) {
       sb.append('\n');
@@ -224,7 +252,7 @@ public final class PromptBuilder {
       sb.append(" — ").append(entry.label().strip());
     }
     if (entry.count() >= 0) {
-      sb.append("  (").append(entry.count()).append(" events)");
+      sb.append("  (").append(entry.count()).append(entry.count() == 1 ? " event)" : " events)");
     }
     sb.append('\n');
     if (entry.description() != null && !entry.description().isBlank()) {
