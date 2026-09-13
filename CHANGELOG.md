@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Settings via `set`: `llm.enabled`, `llm.backend`, `llm.model`, `llm.base-url`, `llm.api-key`,
     `llm.max-tokens`, `llm.max-rows`, `llm.max-retries`, `llm.timeout`, `llm.confirm`, `llm.redact`,
     `llm.redact-fields`
+  - **Tab completion and help**: `ask`, `explain` and `llm` complete as commands in both shells,
+    `llm` completes its subcommands, `set llm.` completes all twelve settings with descriptions,
+    `help` lists them as subjects, and `help ask` carries worked examples. A test reads
+    `LlmConfig.java` and fails if a setting it reads is not offered, so the list cannot drift
   - Docs: [LlmSetup](doc/cli/LlmSetup.md), [AskTutorial](doc/cli/AskTutorial.md),
     [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
     [the handoff](doc/plans/llm-in-the-shell-handoff.md) describing the seams left for an agentic

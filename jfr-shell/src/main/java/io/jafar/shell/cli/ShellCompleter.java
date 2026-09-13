@@ -254,12 +254,44 @@ public final class ShellCompleter implements Completer {
       case "record" -> completeRecord(reader, line, candidates, wordIndex, words);
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       case "echo" -> completeEchoCommand(line, candidates);
+      case "llm" -> completeLlmCommand(line, candidates, wordIndex);
       default -> {
         // Default: suggest options
         String partial = line.word();
         if (partial.startsWith("--")) {
           suggestOptions(line, candidates, new String[] {"--help", "--version"});
         }
+      }
+    }
+  }
+
+  /**
+   * The {@code llm.*} settings, for the name position of {@code set}.
+   *
+   * <p>Kept in step with {@code LlmConfig} by {@code ShellCompleterLlmTest}, which fails if this
+   * list and the keys that class actually reads ever diverge — a setting that completes but is
+   * never read is worse than one that does not complete.
+   */
+  private static final String[][] LLM_SETTINGS = {
+    {"llm.enabled", "master switch"},
+    {"llm.backend", "anthropic | openai | ollama | auto"},
+    {"llm.model", "model id; defaults to the backend's own"},
+    {"llm.base-url", "endpoint, for the OpenAI-compatible backends"},
+    {"llm.api-key", "bearer token; overrides the provider's env var"},
+    {"llm.max-tokens", "output ceiling per request"},
+    {"llm.max-rows", "result rows shown to the model by 'explain'"},
+    {"llm.max-retries", "correction attempts after a query fails to parse (0-3)"},
+    {"llm.timeout", "request timeout in seconds"},
+    {"llm.confirm", "when true, 'ask' prints the query but does not run it"},
+    {"llm.redact", "redact sensitive fields before sending"},
+    {"llm.redact-fields", "replace the redaction list; a leading + extends it"},
+  };
+
+  private void completeLlmSettingNames(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    for (String[] setting : LLM_SETTINGS) {
+      if (setting[0].startsWith(partial)) {
+        candidates.add(new Candidate(setting[0], setting[0], null, setting[1], null, null, true));
       }
     }
   }
@@ -272,6 +304,28 @@ public final class ShellCompleter implements Completer {
     candidates.add(new Candidate("chunks"));
     candidates.add(new Candidate("chunk"));
     candidates.add(new Candidate("cp"));
+    candidates.add(new Candidate("ask"));
+    candidates.add(new Candidate("explain"));
+    candidates.add(new Candidate("llm"));
+  }
+
+  /** Subcommands of {@code llm}. Only offered in the subcommand position. */
+  private void completeLlmCommand(ParsedLine line, List<Candidate> candidates, int wordIndex) {
+    if (wordIndex != 1) {
+      // `llm dry-run <question>` takes free text; suggesting anything there would be noise.
+      return;
+    }
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    addIfMatching(candidates, partial, "status", "which backend is used, and why");
+    addIfMatching(candidates, partial, "dry-run", "print what 'ask' would send, and send nothing");
+    addIfMatching(candidates, partial, "cost", "token usage for this process");
+  }
+
+  private static void addIfMatching(
+      List<Candidate> candidates, String partial, String value, String description) {
+    if (value.startsWith(partial)) {
+      candidates.add(new Candidate(value, value, null, description, null, null, true));
+    }
   }
 
   private void completeOpen(LineReader reader, ParsedLine line, List<Candidate> candidates) {
@@ -453,8 +507,12 @@ public final class ShellCompleter implements Completer {
       if ("".equals(partial) || "=".startsWith(partial)) {
         candidates.add(new Candidate("="));
       }
+    } else if (wordIndex == 1) {
+      // A settable name can be any variable, so there is nothing to enumerate in general — but the
+      // llm.* settings are a closed, documented set, and they are the ones nobody can guess the
+      // spelling of.
+      completeLlmSettingNames(line, candidates);
     }
-    // wordIndex 1 is variable name - no completion needed
   }
 
   /**

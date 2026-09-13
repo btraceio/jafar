@@ -24,7 +24,18 @@ public final class ShellCompleter implements Completer {
 
   // Commands always available
   private static final String[] BASE_COMMANDS = {
-    "open", "sessions", "use", "close", "info", "modules", "help", "exit", "quit"
+    "open",
+    "sessions",
+    "use",
+    "close",
+    "info",
+    "modules",
+    "ask",
+    "explain",
+    "llm",
+    "help",
+    "exit",
+    "quit"
   };
 
   // Commands only available when session is open
@@ -50,6 +61,7 @@ public final class ShellCompleter implements Completer {
 
     switch (cmd) {
       case "show" -> completeShow(line, candidates);
+      case "llm" -> completeLlm(line, candidates, words, wordIndex);
       case "open" -> completeOpen(reader, line, candidates);
       case "use", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);
@@ -75,6 +87,26 @@ public final class ShellCompleter implements Completer {
         if (cmd.startsWith(partial)) {
           candidates.add(new Candidate(cmd));
         }
+      }
+    }
+  }
+
+  /** Subcommands of {@code llm}, offered only in the subcommand position. */
+  private void completeLlm(
+      ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
+    if (wordIndex != 1) {
+      // `llm dry-run <question>` takes free text.
+      return;
+    }
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    for (String[] sub :
+        new String[][] {
+          {"status", "which backend is used, and why"},
+          {"dry-run", "print what 'ask' would send, and send nothing"},
+          {"cost", "token usage for this process"},
+        }) {
+      if (sub[0].startsWith(partial)) {
+        candidates.add(new Candidate(sub[0], sub[0], null, sub[1], null, null, true));
       }
     }
   }

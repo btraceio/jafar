@@ -37,6 +37,9 @@ public final class CommandCompleter implements ContextCompleter {
     "endif", // Conditionals
     "script",
     "record", // Scripting
+    "ask",
+    "explain",
+    "llm", // LLM
     "help",
     "exit",
     "quit"

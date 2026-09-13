@@ -366,7 +366,19 @@ public final class LlmCommands {
         A query the parser rejects is never run: the parser's error goes back to the
         model for a correction, up to llm.max-retries times. Recording data sent to the
         model is redacted by default, and 'llm dry-run' shows exactly what would be
-        sent.""";
+        sent.
+
+        Examples:
+          ask which threads used the most CPU?
+          ask what allocated the most bytes, by class?
+          ask show me file reads slower than 10ms
+          explain                       # describe the result just printed
+          llm dry-run which threads used the most CPU?
+          llm status                    # before the first ask, to see what will be used
+
+          set llm.backend = ollama      # keep everything on this machine
+          set llm.confirm = true        # print the query, do not run it
+          set llm.max-rows = 10         # send fewer result rows to 'explain'""";
   }
 
   /** Exposed for tests: the redactor a given config would apply. */
