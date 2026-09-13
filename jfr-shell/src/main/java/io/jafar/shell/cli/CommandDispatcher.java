@@ -1480,6 +1480,7 @@ public class CommandDispatcher {
       io.println("");
       io.println("Ask (LLM, optional):");
       io.println("  ask <q>   - Turn a question into a query, show it, and run it");
+      io.println("  analyze <q> - Run several queries, read each result, and conclude");
       io.println("  explain   - Explain the most recent result");
       io.println("              (both take --dry-run: print the request, send nothing)");
       io.println("  llm       - status | cost");
@@ -1501,7 +1502,11 @@ public class CommandDispatcher {
       return;
     }
     String sub = args.get(0).toLowerCase(Locale.ROOT);
-    if ("ask".equals(sub) || "explain".equals(sub) || "llm".equals(sub)) {
+    if ("ask".equals(sub)
+        || "analyze".equals(sub)
+        || "investigate".equals(sub)
+        || "explain".equals(sub)
+        || "llm".equals(sub)) {
       io.println(LlmCommands.helpText());
       return;
     }

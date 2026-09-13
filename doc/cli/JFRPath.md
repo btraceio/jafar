@@ -454,7 +454,20 @@ Group results by key and apply aggregation function with optional sorting.
 - `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
 - `asc` - Sort ascending (default: `false`, descending)
 
-**Returns**: `{ "key": groupKey, "<agg>": result }`
+**Returns**: `{ "key": groupKey, "<agg>": result }` — so `agg=sum` produces a column called `sum`,
+`agg=count` one called `count`. Later stages accept either that name or `value`.
+
+**Unknown keys are rejected.** If events reach the grouping and none of them yields a key, the query
+fails with the field names the type does have, rather than returning an empty result that reads like
+"this recording has no such events":
+
+```
+jfr> events/jdk.GarbageCollection | groupBy(gcType, agg=count)
+Error: groupBy: key 'gcType' matched nothing in 218 events of jdk.GarbageCollection.
+       Available: [cause, duration, eventThread, gcId, longestPause, name, startTime, sumOfPauses]
+```
+
+A group-by over a type with no events at all is still an empty result, not an error.
 
 **Examples**:
 ```
@@ -485,7 +498,9 @@ Sort rows by any field in the current result set. Works after any operator that 
 
 **Key constraint**: Can only sort by fields available after previous operators:
 - After `select(a, b)` → only `a`, `b` available
-- After `groupBy(x)` → only `key`, `<aggFunc>` available
+- After `groupBy(x)` → only `key`, `<aggFunc>` available — plus `value` as an alias for the
+  aggregate column, so `groupBy(path, agg=sum, value=bytes) | sortBy(value)` and `| sortBy(sum)`
+  are the same sort. `top(n, by=value)` reads it the same way.
 - After `len(path)` → all original fields + `len`
 
 **Examples**:
