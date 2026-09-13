@@ -62,6 +62,16 @@ Architecture, and the reasons it is shaped this way:
   rather than being truncated. Each run writes its queries to a `.jfrs` transcript — handoff §3.4
   argues that is the feature, since it converts the loop's non-determinism into something a human
   can re-run.
+- **The command layer, not the loop, holds the rows.** `LlmService.Step` carries a row *count*; the
+  rows themselves pass through the caller's `QueryRunner`. `LlmCommands.analyze` therefore parks the
+  last rows in the runner and renders them from the step callback, which is what puts the table
+  under the `> query` line rather than above it. The same rows go to `Host.rememberResult`, so an
+  `explain` after an `analyze` describes what the investigation looked at — the shell keeps one
+  "last result" and previously only wrote to it from queries typed directly, which meant `ask` and
+  `analyze` results were invisible to `explain` and a stale one was described instead.
+- **`llm.confirm` disables `analyze` rather than modifying it.** The setting promises a query is
+  shown before it runs; a loop picks each query from the previous result, so there is nothing to
+  show in advance. It refuses before the backend is resolved, so nothing is sent.
 - **`analyze` can call the analyses, not only run queries.** `ANALYSIS: <name>` reaches
   `JfrAnalyses` in `shell-core` — the same code `jfr_diagnose` and the rest run, since the
   extraction left one copy — so a shell investigation and an MCP one reach the same conclusions
