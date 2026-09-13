@@ -1,5 +1,6 @@
 package io.jafar.shell.core.llm;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -11,7 +12,30 @@ import java.util.Optional;
  * this returns {@link #none} rather than guessing, because a fabricated query that happens to parse
  * is worse than an honest failure.
  */
-public record QueryProposal(String query, String rationale, boolean unanswerable) {
+public record QueryProposal(
+    String query, String rationale, boolean unanswerable, List<String> fieldsRequested) {
+
+  public QueryProposal {
+    fieldsRequested = fieldsRequested == null ? List.of() : List.copyOf(fieldsRequested);
+  }
+
+  public QueryProposal(String query, String rationale, boolean unanswerable) {
+    this(query, rationale, unanswerable, List.of());
+  }
+
+  /**
+   * The model asked what fields these types have before committing to a query.
+   *
+   * <p>JFR is self-describing, so this is the honest answer to "what is in this recording" rather
+   * than a failure: the fields of an event are whatever the recording declares.
+   */
+  public static QueryProposal needsFields(List<String> types) {
+    return new QueryProposal(null, null, false, types);
+  }
+
+  public boolean needsFields() {
+    return !fieldsRequested().isEmpty();
+  }
 
   /** The model said the recording cannot answer the question. {@code rationale} says why. */
   public static QueryProposal unanswerable(String rationale) {
@@ -39,6 +63,7 @@ public record QueryProposal(String query, String rationale, boolean unanswerable
     String query = null;
     StringBuilder why = new StringBuilder();
     boolean inWhy = false;
+    List<String> requested = new java.util.ArrayList<>();
 
     for (String rawLine : reply.split("\\R")) {
       String line = rawLine.strip();
@@ -46,7 +71,15 @@ public record QueryProposal(String query, String rationale, boolean unanswerable
         continue;
       }
       String upper = line.toUpperCase(java.util.Locale.ROOT);
-      if (upper.startsWith("QUERY:")) {
+      if (upper.startsWith("FIELDS:")) {
+        for (String name : line.substring("FIELDS:".length()).split("[,\\s]+")) {
+          String cleaned = name.trim().replaceAll("^[`'\"]+|[`'\"]+$", "");
+          if (!cleaned.isEmpty() && requested.size() < PromptBuilder.MAX_FIELD_REQUEST) {
+            requested.add(cleaned);
+          }
+        }
+        inWhy = false;
+      } else if (upper.startsWith("QUERY:")) {
         query = stripFences(line.substring("QUERY:".length()).strip());
         inWhy = false;
       } else if (upper.startsWith("WHY:")) {
@@ -56,6 +89,10 @@ public record QueryProposal(String query, String rationale, boolean unanswerable
       } else if (inWhy) {
         why.append(' ').append(line);
       }
+    }
+
+    if (query == null && !requested.isEmpty()) {
+      return needsFields(requested);
     }
 
     // Fall back to a fenced block when the model ignored the line format.

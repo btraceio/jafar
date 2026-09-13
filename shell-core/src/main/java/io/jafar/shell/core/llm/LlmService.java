@@ -32,6 +32,16 @@ public final class LlmService {
   private String discoveredFor;
   private boolean escalatedThisCall;
 
+  /**
+   * How many times one {@code ask} will answer a request for field metadata.
+   *
+   * <p>One is enough for the intended exchange — name the types, get the fields, write the query —
+   * and a model that asks again after being told is looping, not learning.
+   */
+  private static final int MAX_FIELD_ROUNDS = 1;
+
+  private int fieldRoundsUsed;
+
   public LlmService(LlmBackend backend, LlmConfig config) {
     this.backend = backend;
     this.config = config;
@@ -109,6 +119,15 @@ public final class LlmService {
    *
    * @param validator checks a candidate query, returning an error message when it is invalid
    */
+  /** Supplies the fields of named types, for a model that asked before guessing. */
+  @FunctionalInterface
+  public interface FieldLookup {
+    List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames);
+
+    /** No metadata available: the model is told so rather than left waiting. */
+    FieldLookup NONE = names -> List.of();
+  }
+
   public QueryProposal ask(
       String question,
       String moduleId,
@@ -119,6 +138,29 @@ public final class LlmService {
     // Cleared per call: a stale error from a previous ask, or from an earlier attempt in this
     // one, would make the caller refuse to run a query that is actually fine.
     lastValidationError = null;
+
+    return ask(question, moduleId, inventory, validator, FieldLookup.NONE);
+  }
+
+  /**
+   * Asks, answering a request for field metadata if the model makes one.
+   *
+   * <p>Two rounds rather than one because JFR is self-describing: an event's fields are whatever
+   * the recording declares, so they cannot be inferred from the type name, and sending every type's
+   * fields up front costs about 9,800 tokens on an ordinary recording — nearly all of it about
+   * types the question never touches, and unbounded on a recording full of custom events. The model
+   * sees what each type is *for* in the cached prefix, names the few it needs, and gets their
+   * fields.
+   */
+  public QueryProposal ask(
+      String question,
+      String moduleId,
+      List<PromptBuilder.TypeEntry> inventory,
+      QueryValidator validator,
+      FieldLookup fields)
+      throws LlmException {
+    lastValidationError = null;
+    fieldRoundsUsed = 0;
 
     escalatedThisCall = false;
     LlmRequest request = buildAskRequest(question, moduleId, inventory);
@@ -134,6 +176,23 @@ public final class LlmService {
       request = buildAskRequest(question, moduleId, inventory);
       response = send(request);
       proposal = QueryProposal.parse(response.text());
+    }
+
+    List<LlmRequest.Turn> conversation = new ArrayList<>(request.messages());
+    while (proposal.needsFields() && fieldRoundsUsed < MAX_FIELD_ROUNDS) {
+      fieldRoundsUsed++;
+      List<PromptBuilder.TypeEntry> described = fields.fieldsOf(proposal.fieldsRequested());
+      conversation.add(LlmRequest.Turn.assistant(response.text()));
+      conversation.add(LlmRequest.Turn.user(PromptBuilder.fieldsMessage(described)));
+      request =
+          new LlmRequest(
+              request.systemPrefix(), List.copyOf(conversation), effectiveMaxTokens(), "ask");
+      response = send(request);
+      proposal = QueryProposal.parse(response.text());
+    }
+    if (proposal.needsFields()) {
+      // It kept asking. Better to say so than to loop at the user's expense.
+      return proposal;
     }
 
     int retriesLeft = config.maxRetries();
@@ -215,6 +274,11 @@ public final class LlmService {
    * <p>Reported rather than applied silently: the user configured a number, and something else
    * overriding it without saying so is the kind of thing that is impossible to debug later.
    */
+  /** Whether this call spent a round trip fetching field metadata. */
+  public int fieldRounds() {
+    return fieldRoundsUsed;
+  }
+
   public Optional<Integer> autoRaisedTo() {
     return escalatedThisCall ? Optional.of(effectiveMaxTokens()) : Optional.empty();
   }

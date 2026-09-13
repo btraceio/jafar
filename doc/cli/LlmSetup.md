@@ -284,11 +284,26 @@ jdk.ExecutionSample — Java Execution Sample
 ```
 
 That is what lets it pick `jdk.ExecutionSample` for a CPU question rather than something whose name
-merely shares a word — and the description tells it what the type does *not* cover, which is often
-the difference between a right answer and a plausible one.
+merely shares a word — and the description tells it what the type does *not* cover.
+
+**Fields are fetched on demand, not sent up front.** JFR is self-describing: an event's fields are
+whatever *your* recording declares, so they cannot be guessed from the type name, and a custom event
+has fields nothing was ever trained on. Sending every type's fields would cost around 9,800 tokens a
+question, almost all of it about types the question never touches. So the model names the types it
+needs and gets their fields — with the types those fields lead to, so a path can be followed:
+
+```
+  jdk.ExecutionSample — Java Execution Sample
+      fields: sampledThread: java.lang.Thread, stackTrace: jdk.types.StackTrace, ...
+  java.lang.Thread
+      fields: group: ..., javaName: java.lang.String, javaThreadId: long, ...
+```
+
+That makes `sampledThread/javaName` something the model reads rather than invents. It costs one
+extra round trip, and about 1,200 characters instead of 24,000.
 
 No event data is sent, and no event counts: counting means reading the recording, and `ask` costs
-the same whether the file is 2 MB or 900 MB. `ask --dry-run` shows the whole thing.
+the same whether the file is 2 MB or 900 MB. `ask --dry-run` shows the first round in full.
 
 ## Settings
 
