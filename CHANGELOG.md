@@ -50,7 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     provider dependency at all and every other command is unchanged
   - Settings via `set`: `llm.enabled`, `llm.backend`, `llm.model`, `llm.base-url`, `llm.api-key`,
     `llm.max-tokens`, `llm.max-rows`, `llm.max-retries`, `llm.timeout`, `llm.confirm`, `llm.redact`,
-    `llm.redact-fields`
+    `llm.redact-fields`. `set` had to learn about them: it rejected every dotted name, since
+    `${a.b}` means field access in an expression, so `set llm.backend = ollama` answered
+    *"Invalid variable name"*. A setting's value is now stored as literal text rather than
+    evaluated — a bare word was being read as a query (*"Unknown root: ollama"*) and a bare
+    integer coerced to a double, so `set llm.max-rows = 20` stored `20.0` and silently fell back
+    to the default. A name starting with `llm.` that is not a setting is reported as a typo with
+    the real names listed
   - **A settings file**, `~/.config/jafar/llm.properties` (also `$JAFAR_LLM_CONFIG` or
     `$XDG_CONFIG_HOME/jafar/`), using the same key names `set` uses. An environment variable is a
     poor home for a long-lived credential — every child process inherits it, it appears in crash
