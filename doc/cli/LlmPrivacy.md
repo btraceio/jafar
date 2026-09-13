@@ -12,19 +12,24 @@ nothing in this document leaves the machine at all; see
 ## The short version
 
 - The **recording never leaves your machine.** The model composes queries; the shell runs them.
-- `ask` sends your question and the **list of event type names** in the recording. No event data.
+- `as-query` sends your question and the **list of event type names** in the recording. No event
+  data.
+- `ask` (`?`) sends the same, and then **the result rows of each query it runs**, up to
+  `llm.max-rows` per step and redacted exactly as `explain` redacts them. It is the command that
+  sends the most, because reading results is what it does.
 - `explain` sends **the query and up to 50 result rows**, with sensitive fields redacted.
-- `ask --dry-run <question>` prints the exact bytes that would be sent, and sends nothing.
-  `explain --dry-run` does the same for the explain request.
+- `<command> --dry-run <question>` prints the exact bytes that would be sent, and sends nothing.
+  For `ask` that is the opening request only: later steps depend on what earlier ones return.
 - Nothing is sent by any other command, or by opening a recording.
 
 ## Per command
 
 | Command | Sends | Does not send |
 |---|---|---|
-| `ask` | Your question; type names and counts; the language reference | Any event data |
+| `as-query` | Your question; type names and counts; the language reference | Any event data |
+| `ask` (`?`) | The same, plus each step's result rows and analysis output, redacted and capped at `llm.max-rows` | Rows beyond the cap; redacted fields |
 | `explain` | The query; up to `llm.max-rows` result rows, redacted | Rows beyond the cap; redacted fields |
-| `ask --dry-run` | nothing | — |
+| `<command> --dry-run` | nothing | — |
 | `explain --dry-run` | nothing | — |
 | `llm status` | nothing | — |
 | `llm cost` | nothing | — |
@@ -63,10 +68,10 @@ With redaction off, `llm status` says so in capitals, on purpose.
 ## Verify before you trust
 
 ```
-jfr> ask --dry-run which threads used the most CPU?
+jfr> as-query --dry-run which threads used the most CPU?
 ```
 
-It builds the request through the same code path a real `ask` uses — same prompt, same redaction —
+It builds the request through the same code path a real `as-query` uses — same prompt, same redaction —
 and prints it. The bytes shown are the bytes that would be transmitted. This is the check to run
 before approving the feature on a machine that holds production recordings, and it needs no
 credentials, so it can be run in a locked-down environment.
@@ -77,7 +82,7 @@ A JFR recording contains metadata about your application. A heap dump contains *
 actual data** — the strings in memory at the moment it was taken, which can include credentials,
 personal data, and payloads.
 
-`ask` on a heap dump only sends class names, which is usually fine. `explain` on a heap-dump result
+`as-query` on a heap dump only sends class names, which is usually fine. `explain` on a heap-dump result
 can send string values, which usually is not. The default redaction list includes `value` and
 `string` for this reason, but treat a heap dump as sensitive by default and use `dry-run` first.
 
@@ -95,12 +100,12 @@ The shell mitigates this rather than assuming it away:
 
 - All recording-derived content is wrapped in explicit `<<<RECORDING_DATA ... RECORDING_DATA>>>`
   markers, and the system prompt states that anything inside them is data and never an instruction.
-- The tool surface is read-only. `ask` can produce a query and nothing else — there is no file
+- The tool surface is read-only. These commands produce queries and nothing else — there is no file
   write, no network call, no way to modify a recording, and no shell command it can reach.
 - The worst realistic outcome is therefore a misleading answer, not an action taken on your behalf.
 
 That is mitigation, not a guarantee: prompt injection is not a solved problem. When you analyse a
-recording from an untrusted source, read the query `ask` prints before you trust the result, the
+recording from an untrusted source, read the queries the shell prints before you trust the result, the
 same way you would read a script someone sent you.
 
 ## Local models: nothing leaves the machine
@@ -123,7 +128,7 @@ Two honest caveats:
 - **A small local model writes wrong queries more often.** The shell validates every generated
   query against its own parser and asks for a correction before running anything (see
   [Wrong queries](LlmSetup.md#wrong-queries)), which is what makes this trade acceptable rather
-  than merely cheap — but read the query `ask` prints, as always.
+  than merely cheap — but read the queries the shell prints, as always.
 
 ## Turning it off entirely
 
@@ -135,7 +140,7 @@ Or leave `llm-anthropic` and `llm-openai` off the classpath, and no provider SDK
 one is present at all. Every other shell command is unaffected either way — no startup cost, no
 network call, no behaviour change. This is the intended configuration for air-gapped and regulated
 environments, and the shell is fully functional in it. (A local `ollama` backend is the other
-option for those environments, when you want `ask` to keep working.)
+option for those environments, when you want the LLM commands to keep working.)
 
 ## Where the data goes
 

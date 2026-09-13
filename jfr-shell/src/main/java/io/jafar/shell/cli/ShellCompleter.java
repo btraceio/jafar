@@ -256,7 +256,8 @@ public final class ShellCompleter implements Completer {
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       case "echo" -> completeEchoCommand(line, candidates);
       case "llm" -> completeLlmCommand(line, candidates, wordIndex);
-      case "ask", "explain" -> completeDryRunFlag(line, candidates);
+      case "ask", "as-query", "analyze", "investigate", "explain" ->
+          completeDryRunFlag(line, candidates);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -295,6 +296,7 @@ public final class ShellCompleter implements Completer {
     candidates.add(new Candidate("chunk"));
     candidates.add(new Candidate("cp"));
     candidates.add(new Candidate("ask"));
+    candidates.add(new Candidate("as-query"));
     candidates.add(new Candidate("explain"));
     candidates.add(new Candidate("analyze"));
     candidates.add(new Candidate("llm"));

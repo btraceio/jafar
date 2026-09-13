@@ -10,16 +10,16 @@ and why, and tells you what to do about the ones that are not ready.
 
 | Command | Does |
 |---|---|
-| `ask <question>` | Turns the question into a query, **prints the query**, and runs it |
-| `analyze <question>` | Runs several queries, reads each result, and concludes |
-| `ask --dry-run <question>` | Prints exactly what `ask` would send, and sends nothing |
+| `ask <question>` (or `? <question>`) | Runs several queries, reads each result, and concludes |
+| `as-query <question>` | Turns the question into one query, **prints the query**, and runs it |
+| `<command> --dry-run <question>` | Prints exactly what it would send, and sends nothing |
 | `explain` | Explains the most recent result |
 | `explain --dry-run` | Prints exactly what `explain` would send, and sends nothing |
 | `llm status` | Backends, readiness, credential source, and the active settings |
 | `llm cost` | Token usage for this process |
 
 Both `jfr-shell` (JFR recordings) and the unified `jafar-shell` (recordings, heap dumps, pprof and
-OTLP profiles) have these commands. `ask` uses whichever query language the current session needs,
+OTLP profiles) have these commands. They use whichever query language the current session needs,
 so in `jafar-shell` it reaches HdumpPath and the samples grammar as well as JfrPath. `jafar-shell`
 has no `set` command yet, so configure it there with the `JAFAR_LLM_*` environment variables.
 
@@ -61,9 +61,9 @@ The cost is accuracy: a 7B model gets the query language wrong more often, which
 shell validates the query locally and asks for a correction — see [Wrong queries](#wrong-queries).
 
 **A hosted frontier model** (`anthropic`, `openai`) gets the query right more often and needs no
-GPU. Every `ask` sends the question and the recording's type list to a third party.
+GPU. Every question sends the question and the recording's type list to a third party.
 
-Nothing stops you moving between them mid-session: `set llm.backend = ollama` and the next `ask`
+Nothing stops you moving between them mid-session: `set llm.backend = ollama` and the next question
 goes local.
 
 ## Authenticating
@@ -266,16 +266,16 @@ the query language. The shell does not run it and does not make you deal with it
    to correct it;
 3. the corrected query is validated again, and only then run.
 
-`ask` prints `1 correction(s)` alongside the token usage when this happens, so the round trip is
+The shell prints `1 correction(s)` alongside the token usage when this happens, so the round trip is
 visible rather than hidden. `llm.max-retries` controls it: default 1, `0` disables it, and it is
 capped at 3 — beyond that a model is not going to converge and you are paying for it to fail.
 
-If the retry does not rescue the query, `ask` prints the query and the parser's complaint and runs
+If the retry does not rescue the query, `as-query` prints the query and the parser's complaint and runs
 nothing.
 
 ## What the model knows about your recording
 
-`ask` sends the list of event types in the recording together with the recording's own
+Both commands send the list of event types in the recording together with the recording's own
 documentation for them — JFR annotates its event classes, so the model sees:
 
 ```
@@ -306,7 +306,7 @@ extra round trip, and about 1,200 characters instead of 24,000.
 **Types with no events are separated out.** JFR metadata declares every type the JVM registered,
 whether or not it emitted anything — so a recording made with an agent that ships its own sampler
 lists an empty `jdk.ExecutionSample` next to a vendor type holding thousands of events, and a model
-told only the names picks the one it recognises. `ask` counts the events once, lists the types that
+told only the names picks the one it recognises. The shell counts the events once, lists the types that
 have data with their counts, and collapses the rest into one line the model is told not to query.
 
 That count is a pass over the recording, done once and then cached under
@@ -316,16 +316,17 @@ count. It is the same pass the query answering your question makes anyway. Set
 `llm.count-events = false` to skip it on a recording large enough that one extra pass is not worth
 the accuracy.
 
-No event data is sent. `ask --dry-run` shows the first round in full.
+No event data is sent. `as-query --dry-run` shows the first round in full.
 
-## `analyze` — more than one query
+## `ask` — more than one query
 
-`ask` is one question, one query. That answers "how many execution samples are there"; almost no
-real performance question is of that shape. `analyze` runs several: it looks, reads the result,
-decides what to look at next, and concludes.
+`as-query` is one question, one query. That answers "how many execution samples are there"; almost
+no real performance question is of that shape. `ask` runs several: it looks, reads the result,
+decides what to look at next, and concludes. `?` is short for it, with or without a space after it,
+and `analyze` and `investigate` are word aliases.
 
 ```
-jfr> analyze why is this workload slow
+jfr> ask why is this workload slow
 > events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
   3 rows
 | count | key       |
@@ -346,7 +347,7 @@ Execution samples concentrate on the main thread, and allocation samples are dom
 byte[]. The workload is allocation-heavy on a single thread, so the next step is to look at
 the allocation call sites rather than adding parallelism.
 
-Transcript: ~/.jafar/investigations/analyze-20260913-202249.jfrs
+Transcript: ~/.jafar/investigations/ask-20260913-202249.jfrs
 ```
 
 Every query is printed as it runs, with the rows it returned underneath — the investigation is not
@@ -362,7 +363,7 @@ one copy, since these moved into `shell-core` — so the model gets the threshol
 passes, and the `capabilityGaps` rather than trying to rebuild that judgement out of queries:
 
 ```
-jfr> analyze why is this workload slow
+jfr> ask why is this workload slow
 * diagnose
   done
 
@@ -377,15 +378,15 @@ It is bounded on two axes, because an unbounded loop against a paid API loses mo
 `llm.max-steps` (default 6) caps the moves and `llm.max-total-tokens` (default 200000) caps the
 spend. The model is told how many steps remain, so it concludes rather than being cut off. Result
 rows are redacted and truncated on every step exactly as `explain` does — this path sends far more
-recording data than `ask`, so it matters more here, not less.
+recording data than `as-query`, so it matters more here, not less.
 
-`analyze --dry-run` shows the first request; later steps depend on what earlier ones return, so they
+`ask --dry-run` shows the first request; later steps depend on what earlier ones return, so they
 cannot be shown in advance.
 
-`llm.confirm` turns `analyze` off rather than changing it. The setting means "show me a query before
+`llm.confirm` turns `ask` off rather than changing it. The setting means "show me a query before
 it runs", and an investigation chooses each query from the result of the last one, so there is no
-query to show in advance. With it on, `analyze` says so and sends nothing; use `ask` for a single
-query you approve, or `analyze --dry-run` to read the opening request.
+query to show in advance. With it on, `ask` says so and sends nothing; use `as-query` for a single
+query you approve, or `ask --dry-run` to read the opening request.
 
 ## Settings
 
@@ -409,12 +410,12 @@ names listed, rather than silently becoming a variable.
 | `llm.max-rows` | `50` | Result rows shown to the model by `explain` |
 | `llm.max-retries` | `1` | Correction attempts after a query fails to parse (0–3) |
 | `llm.timeout` | `120` | Request timeout in seconds — raise it for a large local model |
-| `llm.confirm` | `false` | When true, `ask` prints the query but does not run it |
+| `llm.confirm` | `false` | When true, `as-query` prints the query but does not run it, and `ask` refuses |
 | `llm.redact` | `true` | Redact sensitive fields before sending |
 | `llm.redact-fields` | see below | Replace the redaction list; a leading `+` extends it |
 | `llm.count-events` | `true` | Count events per type so empty types can be excluded; one pass, cached |
-| `llm.max-steps` | `6` | Moves one `analyze` may make (1–20) |
-| `llm.max-total-tokens` | `200000` | Token ceiling for a whole `analyze` run; `0` = no cap |
+| `llm.max-steps` | `6` | Moves one `ask` may make (1–20) |
+| `llm.max-total-tokens` | `200000` | Token ceiling for a whole `ask` run; `0` = no cap |
 | `llm.max-analysis-chars` | `6000` | Characters of one analysis result shown to the model |
 
 **`llm.max-tokens` raises itself for a reasoning model.** The default is small because that is all
@@ -424,7 +425,7 @@ ceiling mid-thought, and returns no query at all. So when a reply says it stoppe
 limit without producing a query, the shell raises the ceiling to 16384, says so, and asks again:
 
 ```
-jfr> ask which method is using most CPU
+jfr> as-query which method is using most CPU
 # This model reasons before answering; raised llm.max-tokens to 16384 for this session.
 ```
 
@@ -469,7 +470,7 @@ then failed to run, because the request was paid for either way.
 
 ## Verifying without spending anything
 
-`ask --dry-run <question>` builds the identical request and prints it instead of sending it — same
+`as-query --dry-run <question>` builds the identical request and prints it instead of sending it — same
 prompt, same redaction, same bytes. `explain --dry-run` does the same for the explain request. Use it to see what would leave the machine before you let
 anything leave the machine. It needs no credentials.
 

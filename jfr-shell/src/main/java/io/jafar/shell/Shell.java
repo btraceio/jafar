@@ -472,10 +472,13 @@ public final class Shell implements AutoCloseable {
     // Listed even when no backend module is on the classpath: each command says so itself, and a
     // command absent from 'help' is a command nobody finds.
     terminal.writer().println("Ask (LLM, optional):");
-    terminal.writer().println("  ask <question>                 One question, one query, run it");
     terminal
         .writer()
-        .println("  analyze <question>             Several queries, read each, conclude");
+        .println("  ask <question>                 Several queries, read each, then conclude");
+    terminal.writer().println("  ? <question>                   Short for 'ask'");
+    terminal
+        .writer()
+        .println("  as-query <question>            Turn a question into one query and run it");
     terminal.writer().println("  explain                        Explain the most recent result");
     terminal.writer().println("  llm status|cost                Backends, readiness, token usage");
     terminal.writer().println();
@@ -522,7 +525,7 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("For more info:");
     terminal.writer().println("  Type 'help show' for JfrPath query syntax");
-    terminal.writer().println("  Type 'help ask' for the LLM commands and their settings");
+    terminal.writer().println("  Type 'help ?' for the LLM commands and their settings");
     terminal.writer().println("  See example scripts in jfr-shell/src/main/resources/examples/");
     terminal.writer().println("  Visit: https://github.com/btraceio/jafar");
     terminal.flush();

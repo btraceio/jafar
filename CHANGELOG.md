@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`ask` — an LLM inside the shell** (`llm-anthropic` and `llm-openai` modules,
   `io.jafar.shell.core.llm` in `shell-core`)
-  - `ask <question>` turns a question into a query, **prints it**, and runs it; `explain` describes
-    the last result; `llm status` and `llm cost` cover setup and cost. Either verb takes
-    `--dry-run` — `ask --dry-run <question>`, `explain --dry-run` — to print what would be sent
+  - `ask <question>` — shortcut `?`, word aliases `analyze` and `investigate` — runs several
+    queries, reads each result and concludes; `as-query <question>` is the one-shot form, which
+    turns a question into a single query, **prints it**, and runs it. `explain` describes the last
+    result; `llm status` and `llm cost` cover setup and cost. Every verb takes `--dry-run` to print
+    what would be sent without sending it
   - Wired into `jfr-shell` (JFR recordings) and the unified `jafar-shell`, which is the entry point
-    that opens all four formats — `ask` there uses whichever language the current session needs:
+    that opens all four formats — they use whichever language the current session needs:
     JfrPath, HdumpPath, or the shared pprof/OTLP samples grammar
   - **Three backends, no privileged provider**: `anthropic` (Anthropic Java SDK), `openai` and
     `ollama` (OpenAI chat-completions over the JDK HTTP client, no provider SDK). `llm.backend`
@@ -71,13 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     constant reaching the model was replaced, class names and group-by keys included, while the
     redaction looked like it was working. The wrapper is now unwrapped before the decision, which is
     taken on the real field name; a wrapped value under a genuinely redacted field is still redacted
-  - **`analyze <question>` — an investigation, not a translation.** `ask` turns a question into one
-    query; `analyze` runs several, reads each result and decides what to look at next, then
-    concludes. Every query is printed as it runs and the sequence is written to a re-runnable
-    `.jfrs` transcript, so a conclusion produced by a model leaves behind evidence a human can
-    check. Bounded by `llm.max-steps` (6) and `llm.max-total-tokens` (200000); rows are redacted
-    and truncated on every step. It speaks the same line-prefixed text protocol as `ask` rather
-    than a provider's tool-calling API, so it works on every backend including a small local model
+  - **`ask <question>` — an investigation, not a translation.** `as-query` turns a question into
+    one query; `ask` runs several, reads each result and decides what to look at next, then
+    concludes. Every query is printed as it runs, with the rows it returned underneath — the same
+    rows the model was given, capped at `llm.max-rows` — and the sequence is written to a
+    re-runnable `.jfrs` transcript, so a conclusion produced by a model leaves behind evidence a
+    human can check. A following `explain` describes the last result it looked at. Bounded by
+    `llm.max-steps` (6) and `llm.max-total-tokens` (200000); rows are redacted and truncated on
+    every step, and `llm.confirm` turns it off, since a loop cannot show a query it has not decided
+    on yet. It speaks the same line-prefixed text protocol as `as-query` rather than a provider's
+    tool-calling API, so it works on every backend including a small local model
   - **`Finding` moved from `jfr-mcp` to `shell-core`** (`io.jafar.shell.core.findings`), so the
     shell and the MCP server share one output shape and a shell investigation can merge with an
     MCP one
@@ -118,9 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     OpenAI-compatible ones, because that backend asked the SDK alone, so a key sitting in the
     settings file produced "No credentials found". A configured key takes precedence over
     `ANTHROPIC_API_KEY`, which may be left over from something else in the same terminal
-  - **Tab completion and help**: `ask`, `explain` and `llm` complete as commands in both shells,
-    `llm` completes its subcommands, `set llm.` completes all twelve settings with descriptions,
-    `help` lists them as subjects, and `help ask` carries worked examples. A test reads
+  - **Tab completion and help**: `ask`, `as-query`, `explain` and `llm` complete as commands in
+    both shells, `llm` completes its subcommands, `set llm.` completes all twelve settings with
+    descriptions, `help` lists them as subjects (including in the interactive shell's own `help`,
+    which listed none of them), and `help ask` carries worked examples. A test reads
     `LlmConfig.java` and fails if a setting it reads is not offered, so the list cannot drift
   - Docs: [LlmSetup](doc/cli/LlmSetup.md), [AskTutorial](doc/cli/AskTutorial.md),
     [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
@@ -172,6 +178,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their tests were green.
 
 ### Fixed
+- **`groupBy` on a field the event type does not have returned zero rows and no complaint.** An
+  empty result reads exactly like "this recording has no such events", so the reader moves on
+  rather than fixing the name. It now counts the events the key was offered and, when none of them
+  yielded a key, names the key, the count and the fields the type does have:
+  `groupBy: key 'gcType' matched nothing in 218 events of jdk.GarbageCollection. Available:
+  [cause, duration, eventThread, gcId, longestPause, name, startTime, sumOfPauses]`. A group-by
+  over a type with no events at all is still an empty result, so nothing that returns rows today
+  can start failing
+- **`sortBy(value)` and `top(n, by=value)` now read the aggregate column of a `groupBy` result.**
+  `groupBy` names its output `key` and the aggregate after the function, so
+  `groupBy(name, agg=sum, value=sumOfPauses) | sortBy(value)` was rejected with
+  `field 'value' not found. Available: [sum, key]` — even though `groupBy`'s own `sortBy=`
+  argument already spells that column `value`. `top` had the same gap and failed silently instead:
+  an unresolved path yields null for every row, so the sort kept the input order and returned the
+  first n rows as the top n. Both `top(10, by=value)` examples in the model-facing language
+  reference were affected. The alias applies only where there is no real column of that name, so a
+  recording's own `value` field is never shadowed
 - **The MCP server reported the wrong version in its handshake.** `serverInfo.version` was a
   literal `"0.10.0"` that was never updated, so every release from 0.10.0 onwards - 0.26.2
   included - told clients it was 0.10.0, and anything gating on it was misled. The version is now

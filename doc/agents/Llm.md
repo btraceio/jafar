@@ -1,11 +1,18 @@
-# LLM in the shell (`ask`)
+# LLM in the shell (`ask`, `as-query`)
 
 The SPI, the backends, and the decisions that shaped them.
 
-## LLM in the Shell (`ask`)
-`jfr-shell` can translate a question into a query and run it: `ask <question>`, `explain`,
-`llm status`, `llm cost`. Either verb takes `--dry-run` (`ask --dry-run <question>`,
-`explain --dry-run`) to print exactly what would be sent without sending it.
+## LLM in the Shell
+`jfr-shell` can answer a question about the open recording: `ask <question>` (shortcut `?`, word
+aliases `analyze` and `investigate`) investigates over several queries and concludes;
+`as-query <question>` is the one-shot form, which turns the question into a single query, prints
+it, and runs it. Also `explain`, `llm status`, `llm cost`. Each verb takes `--dry-run` to print
+exactly what would be sent without sending it.
+
+**The command names and the method names differ, deliberately.** `LlmCommands.asQuery` implements
+`as-query` and `LlmCommands.analyze` implements `ask`: the methods are named after what they do,
+the commands after what a user is doing. `CommandDispatcher`'s switch is the mapping, and `?` is
+taken before the line is split into words so `?why is this slow` is one command.
 
 Architecture, and the reasons it is shaped this way:
 - The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. Backends
@@ -23,7 +30,7 @@ Architecture, and the reasons it is shaped this way:
   as a named id is a new `Profile`, not new transport code.
 - **The model is told what each event type is for, from the recording's own metadata.** JFR
   annotates event classes with `@Label` and `@Description` ("CPU Load", "Information about the
-  recent CPU usage of the JVM process"), and `ask` sends those so a type is chosen on meaning
+  recent CPU usage of the JVM process"), and the shell sends those so a type is chosen on meaning
   rather than on a name that happens to share a word with the question. It lives in the **cached
   system prefix**, because it is fixed for a recording — which means `PromptBuilder.renderInventory`
   must stay byte-stable, so it sorts. Event counts are *not* sent: `JFRSession` only accumulates
@@ -50,7 +57,7 @@ Architecture, and the reasons it is shaped this way:
   than guessed. Bounded by `PromptBuilder.MAX_FIELD_REQUEST` types and `MAX_FIELD_ROUNDS` rounds; a
   model that keeps asking is reported, not looped on. `fieldsByName` is the structured field map —
   `fields` is a list of rendered display strings, and reading it yields an empty list with no error.
-- **`analyze` is a loop; `ask` is not.** `LlmService.analyze` runs up to `llm.max-steps` moves,
+- **`ask` is a loop; `as-query` is not.** `LlmService.analyze` runs up to `llm.max-steps` moves,
   each one a `QUERY:`, `FIELDS:` or `ANSWER:` line, feeding redacted and truncated rows back
   between them. It uses the **text protocol, not native tool calling** — a deliberate departure
   from the handoff document's §3.1, which expected `completeWithTools` on `LlmBackend`: tool use
@@ -66,13 +73,13 @@ Architecture, and the reasons it is shaped this way:
   rows themselves pass through the caller's `QueryRunner`. `LlmCommands.analyze` therefore parks the
   last rows in the runner and renders them from the step callback, which is what puts the table
   under the `> query` line rather than above it. The same rows go to `Host.rememberResult`, so an
-  `explain` after an `analyze` describes what the investigation looked at — the shell keeps one
-  "last result" and previously only wrote to it from queries typed directly, which meant `ask` and
-  `analyze` results were invisible to `explain` and a stale one was described instead.
-- **`llm.confirm` disables `analyze` rather than modifying it.** The setting promises a query is
+  `explain` after an `ask` describes what the investigation looked at — the shell keeps one
+  "last result" and previously only wrote to it from queries typed directly, which meant the LLM
+  commands' results were invisible to `explain` and a stale one was described instead.
+- **`llm.confirm` disables `ask` rather than modifying it.** The setting promises a query is
   shown before it runs; a loop picks each query from the previous result, so there is nothing to
   show in advance. It refuses before the backend is resolved, so nothing is sent.
-- **`analyze` can call the analyses, not only run queries.** `ANALYSIS: <name>` reaches
+- **`ask` can call the analyses, not only run queries.** `ANALYSIS: <name>` reaches
   `JfrAnalyses` in `shell-core` — the same code `jfr_diagnose` and the rest run, since the
   extraction left one copy — so a shell investigation and an MCP one reach the same conclusions
   rather than similar ones. Results take the same egress path as query rows, with one exception:
@@ -106,7 +113,7 @@ Architecture, and the reasons it is shaped this way:
 - **`CommandDispatcher` has two query paths and the LLM host adapter must know both.** With a
   `JfrSelector` it delegates; without one (how the interactive `io.jafar.shell.Shell` builds it) it
   parses and evaluates JfrPath directly. `LlmHostAdapterTest` guards this: an adapter that knows
-  only the selector leaves `ask` broken in the interactive shell while every fake-host unit test
+  only the selector leaves the LLM commands broken in the interactive shell while every fake-host unit test
   stays green.
 
 For the Anthropic backend both authentication modes are the SDK's job

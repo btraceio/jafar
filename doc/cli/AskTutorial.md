@@ -1,7 +1,8 @@
 # Asking a recording a question
 
-This tutorial is about `ask`, and about the fact that `ask` is a JfrPath teacher rather than a
-JfrPath replacement.
+This tutorial is about `as-query`, and about the fact that `as-query` is a JfrPath teacher rather
+than a JfrPath replacement. Its sibling `ask` — `?` for short — investigates over several queries
+and is covered in [LLM setup](LlmSetup.md#ask--more-than-one-query).
 
 Prerequisite: [LLM setup](LlmSetup.md), and `llm status` reporting READY.
 
@@ -13,7 +14,7 @@ there with the `JAFAR_LLM_*` environment variables.
 
 ```
 $ jfr-shell recording.jfr
-jfr> ask which threads used the most CPU?
+jfr> as-query which threads used the most CPU?
 ```
 
 ```
@@ -56,7 +57,7 @@ If you want the query without running it:
 
 ```
 jfr> set llm.confirm = true
-jfr> ask how long were the GC pauses?
+jfr> as-query how long were the GC pauses?
 ```
 
 ## Following up
@@ -77,7 +78,7 @@ answer is not built on a silent sample. See [what leaves your machine](LlmPrivac
 A good answer is sometimes "you did not record that":
 
 ```
-jfr> ask which methods allocate the most?
+jfr> as-query which methods allocate the most?
 ```
 
 ```
@@ -93,17 +94,17 @@ conclusion and an easy one to draw.
 
 ## Working across formats
 
-`ask` follows the current session and uses the query language that session needs — JfrPath for
+`as-query` follows the current session and uses the query language that session needs — JfrPath for
 recordings, HdumpPath for heap dumps, the samples language for pprof and OTLP profiles.
 
-**Which shell you are in matters here.** `jfr-shell` only opens JFR recordings, so `ask` there is
-always JfrPath. The unified `jafar-shell` opens all four formats, and that is where `ask` reaches
+**Which shell you are in matters here.** `jfr-shell` only opens JFR recordings, so `as-query` there
+is always JfrPath. The unified `jafar-shell` opens all four formats, and that is where it reaches
 the other languages:
 
 ```
 $ jafar-shell
 jafar> open heap.hprof
-hdump> ask what is holding the most memory?
+hdump> as-query what is holding the most memory?
 ```
 
 ```
@@ -126,18 +127,18 @@ Well:
 
 Less well:
 
-- "why is my app slow?" — too open for a single query. Run `jfr_diagnose` through the MCP server,
-  or the `perf-lead` agent from the [plugin](https://github.com/btraceio/jafar-perf-box), which are built
-  for open-ended investigation. A multi-step `analyze` in the shell is
-  [designed but not built](../plans/llm-in-the-shell-handoff.md).
+- "why is my app slow?" — too open for a single query, so use `ask` (or `?`) instead: it runs
+  several, reads each result, and concludes. `jfr_diagnose` through the MCP server and the
+  `perf-lead` agent from the [plugin](https://github.com/btraceio/jafar-perf-box) do the same from
+  outside the shell.
 - "is this normal?" — nothing in the recording says what normal is. Compare two recordings instead.
-- "fix the regression" — `ask` composes queries; it does not change code.
+- "fix the regression" — these commands compose queries; they do not change code.
 
 ## What it costs
 
 The recording never leaves your machine, so recording size does not affect cost. The language
 reference dominates each request and is cached after the first call — the `cached` figure in the
-usage line is that working. A typical `ask` is a few hundred uncached tokens.
+usage line is that working. A typical `as-query` is a few hundred uncached tokens.
 
 ```
 jfr> llm cost
@@ -149,5 +150,5 @@ tokens   : 1608 in, 402 out, 32416 cached
 
 - [What leaves your machine](LlmPrivacy.md)
 - [JfrPath reference](JFRPath.md) — for when you want the language properly
-- [Scripting](Scripting.md) — `ask` is interactive; scripts should carry the real query, so that
+- [Scripting](Scripting.md) — `as-query` is interactive; scripts should carry the real query, so that
   they are reproducible

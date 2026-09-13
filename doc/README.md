@@ -30,7 +30,7 @@ Guidance for contributors and AI coding assistants. The entry point is
 | [Architecture.md](agents/Architecture.md) | Parser APIs, coding style, testing strategy, composite build |
 | [Shells.md](agents/Shells.md) | The shells, JfrPath, tab completion, backend plugins |
 | [Mcp.md](agents/Mcp.md) | MCP server tools, prompts, resources, findings contract |
-| [Llm.md](agents/Llm.md) | The `ask` command, the LLM SPI, and why it is shaped that way |
+| [Llm.md](agents/Llm.md) | The `ask` and `as-query` commands, the LLM SPI, and why they are shaped that way |
 | [Release.md](agents/Release.md) | Release process (see also [RELEASING.md](../RELEASING.md)) |
 
 **Start here if you want to:**
@@ -72,7 +72,7 @@ Documentation for the interactive shell command-line interface (JFR, pprof, heap
 | [BackendQuickstart.md](cli/BackendQuickstart.md) | Build a custom backend in 10 minutes |
 | [CommandRecording.md](cli/CommandRecording.md) | Recording and replaying command workflows |
 | [ScriptExecution.md](cli/ScriptExecution.md) | Executing scripts for batch analysis |
-| [LlmSetup.md](cli/LlmSetup.md) | Setting up the `ask` command: API key and keyless auth, settings, cost |
+| [LlmSetup.md](cli/LlmSetup.md) | Setting up `ask` and `as-query`: API key and keyless auth, settings, cost |
 | [AskTutorial.md](cli/AskTutorial.md) | Asking a recording questions in plain language (and learning JfrPath by doing it) |
 | [LlmPrivacy.md](cli/LlmPrivacy.md) | Exactly what leaves your machine, redaction, and untrusted recordings |
 | [pprof-shell-tutorial.md](cli/pprof-shell-tutorial.md) | Tutorial for pprof profile analysis |

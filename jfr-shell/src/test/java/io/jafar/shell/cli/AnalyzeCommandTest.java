@@ -16,7 +16,10 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * What {@code analyze} does with a result, driven against a scripted backend.
+ * What the {@code ask} command does with a result, driven against a scripted backend.
+ *
+ * <p>Named for {@link LlmCommands#analyze}, which implements it: the method is named after what it
+ * does and the command after what a user is doing.
  *
  * <p>{@link LlmCommandsTest} covers the paths that stop before a backend is reached. These are the
  * ones after: an investigation that ran a query has rows in hand, and used to print only how many
@@ -188,11 +191,11 @@ class AnalyzeCommandTest {
   }
 
   @Test
-  void askAlsoHandsBackTheResultItRan() {
+  void asQueryAlsoHandsBackTheResultItRan() {
     Host host = new Host();
     ScriptedBackend backend = new ScriptedBackend("QUERY: events/jdk.GarbageCollection | count()");
 
-    commands(host, backend).ask("how many collections?");
+    commands(host, backend).asQuery("how many collections?");
 
     // 'ask' kept the result only on its own instance, while 'explain' was primed from the shell's
     // memory — so an 'explain' after an 'ask' described the last query the user had typed.
