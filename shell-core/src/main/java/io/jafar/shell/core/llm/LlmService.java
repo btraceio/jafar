@@ -83,8 +83,8 @@ public final class LlmService {
     String language = LanguageReference.languageName(moduleId);
     String reference = LanguageReference.forModule(moduleId);
     return new LlmRequest(
-        PromptBuilder.translationSystemPrompt(language, reference),
-        List.of(LlmRequest.Turn.user(PromptBuilder.translationUserMessage(question, inventory))),
+        PromptBuilder.translationSystemPrompt(language, reference, inventory),
+        List.of(LlmRequest.Turn.user(PromptBuilder.translationUserMessage(question))),
         effectiveMaxTokens(),
         "ask");
   }

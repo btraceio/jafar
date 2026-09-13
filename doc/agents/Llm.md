@@ -21,6 +21,16 @@ Architecture, and the reasons it is shaped this way:
   `Profile` (id, display name, default base URL, default model, key env vars, whether a key is
   required) plus the wire code; `openai` and `ollama` are two instances of it. Adding vLLM or Groq
   as a named id is a new `Profile`, not new transport code.
+- **The model is told what each event type is for, from the recording's own metadata.** JFR
+  annotates event classes with `@Label` and `@Description` ("CPU Load", "Information about the
+  recent CPU usage of the JVM process"), and `ask` sends those so a type is chosen on meaning
+  rather than on a name that happens to share a word with the question. It lives in the **cached
+  system prefix**, because it is fixed for a recording — which means `PromptBuilder.renderInventory`
+  must stay byte-stable, so it sorts. Event counts are *not* sent: `JFRSession` only accumulates
+  them while a query runs, so before one they are all zero, and computing them for real means
+  scanning the recording. Type names and descriptions are attacker-controllable in a recording you
+  did not produce, so they stay inside the `RECORDING_DATA` fence even though they now sit in the
+  system prompt.
 - **The model never sees raw events.** It composes a query; the shell runs it. Recording size does
   not affect cost. Do not add code paths that feed event data to the model.
 - `LanguageReference` strings are the **cached prompt prefix and must stay byte-stable** between

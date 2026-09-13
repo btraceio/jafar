@@ -39,6 +39,24 @@ public final class PromptBuilder {
    * @param languageReference the grammar summary for that language
    */
   public static String translationSystemPrompt(String languageName, String languageReference) {
+    return translationSystemPrompt(languageName, languageReference, List.of());
+  }
+
+  /**
+   * The system prompt, including the types available in the recording.
+   *
+   * <p>The inventory lives here rather than in the user message because it is fixed for a recording
+   * and the system prefix is the cached block: the first question pays for it, every question after
+   * reads it from cache. That only holds if the rendering is byte-stable, which is why the entries
+   * are sorted — an inventory that reorders between calls silently costs full price every time.
+   *
+   * <p>It is still fenced as recording data. Type names, labels and descriptions come out of the
+   * artifact under analysis: a custom event type can be named or documented by whoever produced the
+   * recording, and that text must not be read as instructions merely because it now sits in the
+   * system prompt.
+   */
+  public static String translationSystemPrompt(
+      String languageName, String languageReference, List<TypeEntry> inventory) {
     return """
         You translate a performance engineer's question into a single %s query for the Jafar \
         analysis shell, which then runs it locally and shows the result.
@@ -67,8 +85,9 @@ public final class PromptBuilder {
         %s query language reference:
 
         %s"""
-        .formatted(
-            languageName, languageName, DATA_OPEN, DATA_CLOSE, languageName, languageReference);
+            .formatted(
+                languageName, languageName, DATA_OPEN, DATA_CLOSE, languageName, languageReference)
+        + renderInventory(inventory);
   }
 
   /** System prefix for explaining a result table. */
@@ -102,19 +121,45 @@ public final class PromptBuilder {
    * @param inventory event or object types available, with counts where known
    */
   public static String translationUserMessage(String question, List<TypeEntry> inventory) {
+    // The inventory moved into the cached system prefix; this overload stays so a caller that
+    // still passes one is not silently dropping it.
+    return renderInventory(inventory).isEmpty()
+        ? translationUserMessage(question)
+        : translationUserMessage(question) + renderInventory(inventory);
+  }
+
+  public static String translationUserMessage(String question) {
+    return "Question: " + question + "\n";
+  }
+
+  /**
+   * Renders the type inventory, sorted so the text is identical between calls.
+   *
+   * <p>A type with no label is still listed: an unannotated custom event is exactly the one the
+   * model has no other way to learn about.
+   */
+  static String renderInventory(List<TypeEntry> inventory) {
+    if (inventory == null || inventory.isEmpty()) {
+      return "";
+    }
+    List<TypeEntry> sorted = new java.util.ArrayList<>(inventory);
+    sorted.sort(java.util.Comparator.comparing(TypeEntry::name));
+
     StringBuilder sb = new StringBuilder();
-    sb.append("Question: ").append(question).append("\n\n");
-    sb.append("Types available in this session:\n");
+    sb.append("\n\nEvent types in the recording under analysis, with the recording's own labels ");
+    sb.append("and descriptions. Choose from these; never invent a type.\n");
     sb.append(DATA_OPEN).append('\n');
-    if (inventory.isEmpty()) {
-      sb.append("(no types reported)\n");
-    } else {
-      for (TypeEntry entry : inventory) {
-        sb.append("  ").append(entry.name());
-        if (entry.count() >= 0) {
-          sb.append("  (").append(entry.count()).append(" events)");
-        }
-        sb.append('\n');
+    for (TypeEntry entry : sorted) {
+      sb.append("  ").append(entry.name());
+      if (entry.label() != null && !entry.label().isBlank()) {
+        sb.append(" — ").append(entry.label().strip());
+      }
+      if (entry.count() >= 0) {
+        sb.append("  (").append(entry.count()).append(" events)");
+      }
+      sb.append('\n');
+      if (entry.description() != null && !entry.description().isBlank()) {
+        sb.append("      ").append(entry.description().strip()).append('\n');
       }
     }
     sb.append(DATA_CLOSE).append('\n');
@@ -192,9 +237,24 @@ public final class PromptBuilder {
   }
 
   /** One available type and, where known, how many events it has. */
-  public record TypeEntry(String name, long count) {
+  /**
+   * One event type as the model sees it.
+   *
+   * <p>{@code label} and {@code description} come from the recording's own metadata — JFR carries
+   * {@code @Label("CPU Load")} and {@code @Description("Information about the recent CPU usage of
+   * the JVM process")} on the event class — and are what let the model pick a type on meaning
+   * rather than on a lucky name match. Both may be null; not every type is annotated.
+   *
+   * <p>{@code count} is -1 when unknown, which in practice is always: counting events means
+   * scanning the recording, and {@code ask} is deliberately independent of recording size.
+   */
+  public record TypeEntry(String name, long count, String label, String description) {
     public static TypeEntry of(String name) {
-      return new TypeEntry(name, -1);
+      return new TypeEntry(name, -1, null, null);
+    }
+
+    public static TypeEntry documented(String name, String label, String description) {
+      return new TypeEntry(name, -1, label, description);
     }
   }
 }
