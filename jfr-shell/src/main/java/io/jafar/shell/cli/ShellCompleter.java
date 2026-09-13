@@ -255,6 +255,7 @@ public final class ShellCompleter implements Completer {
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       case "echo" -> completeEchoCommand(line, candidates);
       case "llm" -> completeLlmCommand(line, candidates, wordIndex);
+      case "ask", "explain" -> completeDryRunFlag(line, candidates);
       default -> {
         // Default: suggest options
         String partial = line.word();
@@ -307,6 +308,21 @@ public final class ShellCompleter implements Completer {
     candidates.add(new Candidate("ask"));
     candidates.add(new Candidate("explain"));
     candidates.add(new Candidate("llm"));
+  }
+
+  /**
+   * The {@code --dry-run} flag for {@code ask} and {@code explain}.
+   *
+   * <p>Only offered once the user has typed a leading dash: the argument to {@code ask} is a
+   * question in prose, and suggesting a flag into the middle of a sentence is noise.
+   */
+  private void completeDryRunFlag(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word();
+    if (partial.startsWith("-") && "--dry-run".startsWith(partial)) {
+      candidates.add(
+          new Candidate(
+              "--dry-run", "--dry-run", null, "print the request, send nothing", null, null, true));
+    }
   }
 
   /** Subcommands of {@code llm}. Only offered in the subcommand position. */

@@ -51,7 +51,7 @@ public record LlmRequest(String systemPrefix, List<Turn> messages, int maxTokens
     ASSISTANT
   }
 
-  /** Total characters that would be sent. Used by {@code llm dry-run} and for rough sizing. */
+  /** Total characters that would be sent. Used by {@code ask --dry-run} and for rough sizing. */
   public int characterCount() {
     int total = systemPrefix.length();
     for (Turn turn : messages) {

@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ask` — an LLM inside the shell** (`llm-anthropic` and `llm-openai` modules,
   `io.jafar.shell.core.llm` in `shell-core`)
   - `ask <question>` turns a question into a query, **prints it**, and runs it; `explain` describes
-    the last result; `llm status`, `llm dry-run <question>` and `llm cost` cover setup and egress
+    the last result; `llm status` and `llm cost` cover setup and cost. Either verb takes
+    `--dry-run` — `ask --dry-run <question>`, `explain --dry-run` — to print what would be sent
   - Wired into `jfr-shell` (JFR recordings) and the unified `jafar-shell`, which is the entry point
     that opens all four formats — `ask` there uses whichever language the current session needs:
     JfrPath, HdumpPath, or the shared pprof/OTLP samples grammar
@@ -39,8 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
     prefix
   - **Egress control**: result rows are redacted by field name before leaving the process (paths,
-    addresses, hosts, messages, string values), truncated to `llm.max-rows`, and `llm dry-run`
-    prints the exact bytes a real call would send without sending them
+    addresses, hosts, messages, string values), truncated to `llm.max-rows`, and `--dry-run` on
+    either verb prints the exact bytes a real call would send without sending them
   - **Recording content is treated as untrusted input**: thread names, exception messages and heap
     string values are attacker-controllable when the recording came from a third party, so they are
     fenced in explicit data markers and the tool surface is read-only

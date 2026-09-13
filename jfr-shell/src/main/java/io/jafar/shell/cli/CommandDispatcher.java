@@ -67,6 +67,12 @@ public class CommandDispatcher {
   private QueryEvaluator moduleEvaluator;
   private LlmCommands llmCommands;
 
+  // The last query typed by hand and its rows, so `explain` can describe what you are looking at.
+  // Held here rather than pushed into LlmCommands on every query, because constructing that is
+  // what loads the LLM machinery — a shell that never runs an LLM command should never pay for it.
+  private String lastResultQuery;
+  private List<Map<String, Object>> lastResultRows;
+
   public CommandDispatcher(
       SessionManager<? extends Session> sessions, IO io, SessionChangeListener listener) {
     this(sessions, io, listener, null, null, true);
@@ -128,6 +134,20 @@ public class CommandDispatcher {
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     return false;
+  }
+
+  private void rememberResult(String query, List<Map<String, Object>> rows) {
+    this.lastResultQuery = query;
+    this.lastResultRows = rows;
+  }
+
+  /** The LLM commands, primed with the most recent result so {@code explain} has something. */
+  private LlmCommands llmCommandsWithLastResult() {
+    LlmCommands commands = llmCommands();
+    if (lastResultQuery != null && lastResultRows != null) {
+      commands.noteResult(lastResultQuery, lastResultRows);
+    }
+    return commands;
   }
 
   /**
@@ -367,7 +387,7 @@ public class CommandDispatcher {
           llmCommands().ask(String.join(" ", args));
           return true;
         case "explain":
-          llmCommands().explain();
+          llmCommandsWithLastResult().explain(String.join(" ", args));
           return true;
         case "llm":
           llmCommands().llm(args);
@@ -782,6 +802,7 @@ public class CommandDispatcher {
     if (selector != null && cur.get().session instanceof JFRSession jfrSession) {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rememberResult(expr, rows);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
@@ -801,6 +822,7 @@ public class CommandDispatcher {
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rememberResult(expr, rows);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
@@ -1084,7 +1106,8 @@ public class CommandDispatcher {
       io.println("Ask (LLM, optional):");
       io.println("  ask <q>   - Turn a question into a query, show it, and run it");
       io.println("  explain   - Explain the most recent result");
-      io.println("  llm       - status | dry-run <q> | cost");
+      io.println("              (both take --dry-run: print the request, send nothing)");
+      io.println("  llm       - status | cost");
       if (isJfr) {
         io.println("");
         io.println("System:");

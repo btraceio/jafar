@@ -400,7 +400,8 @@ See [jfr-mcp/README.md](jfr-mcp/README.md) and [doc/mcp/Tutorial.md](doc/mcp/Tut
 
 ### LLM in the Shell (`ask`)
 `jfr-shell` can translate a question into a query and run it: `ask <question>`, `explain`,
-`llm status`, `llm dry-run <question>`, `llm cost`.
+`llm status`, `llm cost`. Either verb takes `--dry-run` (`ask --dry-run <question>`,
+`explain --dry-run`) to print exactly what would be sent without sending it.
 
 Architecture, and the reasons it is shaped this way:
 - The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. Backends

@@ -75,7 +75,7 @@ class LlmCommandsTest {
   void askWithoutAQuestionShowsUsage() {
     FakeHost host = new FakeHost();
     new LlmCommands(host).ask("   ");
-    assertTrue(host.text().contains("Usage: ask <question>"));
+    assertTrue(host.text().contains("Usage: ask [--dry-run] <question>"));
     assertTrue(host.queriesRun.isEmpty());
   }
 
@@ -139,10 +139,12 @@ class LlmCommandsTest {
   }
 
   @Test
-  void dryRunWithoutAQuestionShowsUsage() {
+  void theOldLlmDryRunStillWorksAsAnAlias() {
+    // `llm dry-run` is kept working but no longer advertised, so anyone who learned it from an
+    // early draft is not left with a broken command. It points at the new form.
     FakeHost host = new FakeHost();
     new LlmCommands(host).llm(List.of("dry-run"));
-    assertTrue(host.text().contains("Usage: llm dry-run"));
+    assertTrue(host.text().contains("Usage: ask --dry-run <question>"), host.text());
   }
 
   @Test
@@ -173,13 +175,72 @@ class LlmCommandsTest {
   @Test
   void helpTextNamesTheCommandsAndTheAuthModes() {
     String help = LlmCommands.helpText();
-    assertTrue(help.contains("ask <question>"));
-    assertTrue(help.contains("llm dry-run"));
+    assertTrue(help.contains("ask [--dry-run] <q>"), help);
+    assertTrue(help.contains("--dry-run"), help);
     // Provider-neutral: naming one vendor's environment variable here would go stale the moment a
     // second backend shipped, which is exactly what happened. 'llm status' is the live answer.
     assertTrue(help.contains("llm status"), help);
     assertTrue(help.contains("llm.backend"), help);
     assertTrue(help.contains("llm.base-url"), help);
     assertFalse(help.contains("%s"), "the template placeholder was never formatted: " + help);
+  }
+
+  // ── --dry-run as a flag ────────────────────────────────────────────────────
+
+  @Test
+  void askStripsTheDryRunFlagFromTheQuestion() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).ask("--dry-run which threads used the most CPU?");
+
+    // The backend is unreachable in tests, so the interesting assertion is that the flag never
+    // reached the question: if it had, the shell would ask the model about "--dry-run".
+    String all = String.join("\n", host.output);
+    assertFalse(all.contains("--dry-run which threads"), all);
+    assertTrue(host.queriesRun.isEmpty(), "a dry run must not run a query");
+  }
+
+  @Test
+  void theFlagIsRecognisedAfterTheQuestionToo() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).ask("which threads used the most CPU? --dry-run");
+
+    // Someone typing the flag at the end means it, and treating it as part of the question would
+    // send the very request they were trying not to send.
+    assertTrue(host.queriesRun.isEmpty(), "a dry run must not run a query");
+  }
+
+  @Test
+  void askWithOnlyTheFlagShowsUsage() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).ask("--dry-run");
+
+    String all = String.join("\n", host.output);
+    assertTrue(all.contains("Usage: ask [--dry-run] <question>"), all);
+  }
+
+  @Test
+  void explainDryRunNeedsSomethingToExplain() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).explain("--dry-run");
+
+    String all = String.join("\n", host.output);
+    assertTrue(all.contains("Nothing to explain yet"), all);
+  }
+
+  @Test
+  void plainExplainStillWorks() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).explain("");
+
+    String all = String.join("\n", host.output);
+    assertTrue(all.contains("Nothing to explain yet"), all);
+  }
+
+  @Test
+  void helpTextDocumentsTheFlagAndNotTheOldSubcommand() {
+    String help = LlmCommands.helpText();
+    assertTrue(help.contains("ask [--dry-run]"), help);
+    assertTrue(help.contains("explain [--dry-run]"), help);
+    assertFalse(help.contains("llm dry-run"), "the old form should not be advertised: " + help);
   }
 }

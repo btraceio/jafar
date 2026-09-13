@@ -51,6 +51,12 @@ public final class Shell implements AutoCloseable {
       completerCache; // Cache completers per module
   private io.jafar.shell.cli.LlmCommands llmCommands;
 
+  // The most recent query result, so 'explain' has something to explain after a hand-typed query
+  // and not only after 'ask'. Kept here rather than inside LlmCommands because the LLM handler is
+  // built lazily — recording a result must not be what loads a backend.
+  private String lastResultQuery;
+  private List<Map<String, Object>> lastResultRows;
+
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
     this.modules = ShellModuleLoader.loadAll();
@@ -201,8 +207,8 @@ public final class Shell implements AutoCloseable {
           continue;
         }
 
-        if (input.equals("explain")) {
-          llmCommands().explain();
+        if (input.equals("explain") || input.startsWith("explain ")) {
+          llmCommandsWithLastResult().explain(input.length() > 7 ? input.substring(8).trim() : "");
           continue;
         }
 
@@ -516,12 +522,37 @@ public final class Shell implements AutoCloseable {
       if (limit != null && result instanceof List<?> list) {
         result = list.subList(0, Math.min(limit, list.size()));
       }
+      rememberResult(cleanQuery, result);
       printResult(result, format);
     } catch (Exception e) {
       terminal.writer().println("Query error: " + e.getMessage());
       e.printStackTrace();
       terminal.flush();
     }
+  }
+
+  /**
+   * Records a query result for a later {@code explain}.
+   *
+   * <p>Only row-shaped results are kept: {@code explain} sends rows to the model, and a scalar or a
+   * tree rendering has nothing it could serialise.
+   */
+  @SuppressWarnings("unchecked")
+  private void rememberResult(String query, Object result) {
+    if (result instanceof List<?> list
+        && (list.isEmpty() || list.get(0) instanceof java.util.Map<?, ?>)) {
+      this.lastResultQuery = query;
+      this.lastResultRows = (List<Map<String, Object>>) list;
+    }
+  }
+
+  /** The LLM commands, primed with the most recent result so {@code explain} has something. */
+  private io.jafar.shell.cli.LlmCommands llmCommandsWithLastResult() {
+    io.jafar.shell.cli.LlmCommands commands = llmCommands();
+    if (lastResultQuery != null && lastResultRows != null) {
+      commands.noteResult(lastResultQuery, lastResultRows);
+    }
+    return commands;
   }
 
   /**
@@ -804,7 +835,8 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Ask (LLM, optional):");
     terminal.writer().println("  ask <question>     Turn a question into a query, show it, run it");
     terminal.writer().println("  explain            Explain the most recent result");
-    terminal.writer().println("  llm                status | dry-run <question> | cost");
+    terminal.writer().println("                     (both take --dry-run: print, send nothing)");
+    terminal.writer().println("  llm                status | cost");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");
