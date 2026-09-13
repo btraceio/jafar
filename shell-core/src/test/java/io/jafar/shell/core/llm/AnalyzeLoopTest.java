@@ -214,6 +214,107 @@ class AnalyzeLoopTest {
     assertTrue(backend.requests.get(1).messages().get(2).text().contains("step(s) remain"));
   }
 
+  /** An analysis runner offering one analysis, recording what was asked for. */
+  private static final class FakeAnalyses implements LlmService.AnalysisRunner {
+    final List<String> ran = new ArrayList<>();
+
+    @Override
+    public List<String> available() {
+      return List.of("diagnose");
+    }
+
+    @Override
+    public Map<String, Object> run(String name) {
+      ran.add(name);
+      return Map.of(
+          "headlines",
+          List.of("HIGH GC PRESSURE: 609 collections"),
+          "description",
+          "Compare total pause against the recording wall clock.");
+    }
+  }
+
+  private static LlmService.Investigation runWith(
+      LlmService service, LlmService.QueryRunner runner, LlmService.AnalysisRunner analyses)
+      throws Exception {
+    return service.analyze(
+        "why slow?",
+        "jfr",
+        INVENTORY,
+        LlmService.QueryValidator.NONE,
+        LlmService.FieldLookup.NONE,
+        runner,
+        analyses,
+        null);
+  }
+
+  @Test
+  void theModelCanRunABuiltInAnalysis() throws Exception {
+    ScriptedBackend backend = new ScriptedBackend("ANALYSIS: diagnose", "ANSWER: done");
+    FakeAnalyses analyses = new FakeAnalyses();
+
+    LlmService.Investigation result =
+        runWith(service(backend, Map.of()), query -> List.of(), analyses);
+
+    assertEquals(List.of("diagnose"), analyses.ran);
+    assertTrue(result.complete());
+    assertEquals("analysis:diagnose", result.steps().get(0).query());
+  }
+
+  @Test
+  void whatTheAnalysisFoundReachesTheModel() throws Exception {
+    ScriptedBackend backend = new ScriptedBackend("ANALYSIS: diagnose", "ANSWER: done");
+
+    runWith(service(backend, Map.of()), query -> List.of(), new FakeAnalyses());
+
+    String second = backend.requests.get(1).messages().get(2).text();
+    assertTrue(second.contains("HIGH GC PRESSURE: 609 collections"), second);
+  }
+
+  @Test
+  void aFindingsOwnDescriptionIsNotRedacted() throws Exception {
+    // `description` is redacted in an event row, where it can carry application data. In a Finding
+    // it is Jafar's explanation of what it found, and redacting it keeps the numbers and throws
+    // away the reasoning.
+    ScriptedBackend backend = new ScriptedBackend("ANALYSIS: diagnose", "ANSWER: done");
+
+    runWith(service(backend, Map.of()), query -> List.of(), new FakeAnalyses());
+
+    String second = backend.requests.get(1).messages().get(2).text();
+    assertTrue(second.contains("Compare total pause against the recording wall clock"), second);
+  }
+
+  @Test
+  void askingForAnAnalysisThatDoesNotExistNamesTheOnesThatDo() throws Exception {
+    ScriptedBackend backend = new ScriptedBackend("ANALYSIS: telepathy", "ANSWER: fine");
+
+    LlmService.Investigation result =
+        runWith(service(backend, Map.of()), query -> List.of(), new FakeAnalyses());
+
+    String second = backend.requests.get(1).messages().get(2).text();
+    assertTrue(second.contains("no analysis called 'telepathy'"), second);
+    assertTrue(second.contains("diagnose"), second);
+    // A name it invented must not count as work done.
+    assertTrue(result.steps().isEmpty(), result.steps().toString());
+  }
+
+  @Test
+  void withNoAnalysesAvailableTheModelIsToldSoRatherThanFailing() throws Exception {
+    ScriptedBackend backend = new ScriptedBackend("ANALYSIS: diagnose", "ANSWER: fine");
+
+    LlmService.Investigation result = run(service(backend, Map.of()), query -> List.of());
+
+    assertTrue(result.complete());
+    assertTrue(
+        backend.requests.get(1).messages().get(2).text().contains("(none for this session)"));
+  }
+
+  @Test
+  void anAnalysisVerbIsParsed() {
+    assertEquals(AnalysisStep.Kind.ANALYSIS, AnalysisStep.parse("ANALYSIS: diagnose").kind());
+    assertEquals("diagnose", AnalysisStep.parse("ANALYSIS: `diagnose`").text());
+  }
+
   @Test
   void aDirectiveSmuggledInsideAQueryLineIsReadAsTheDirective() {
     // Seen in a real run: the model wrote "QUERY: FIELDS: jdk.types.StackFrame, jdk.types.Symbol".

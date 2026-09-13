@@ -36,6 +36,20 @@ public final class Redactor {
     this.fields = fields;
   }
 
+  /**
+   * A redactor for analysis output rather than event rows.
+   *
+   * <p>Identical except that {@code description} is left alone. In an event row that key can carry
+   * application data and is redacted by default; in a {@link io.jafar.shell.core.findings.Finding}
+   * it is Jafar's own explanation of what it found, and redacting it removes the reasoning while
+   * leaving the numbers — the least useful half.
+   */
+  public static Redactor forAnalysis(LlmConfig config) {
+    Set<String> fields = new java.util.LinkedHashSet<>(config.redactFields());
+    fields.remove("description");
+    return new Redactor(config.redactionEnabled(), fields);
+  }
+
   public static Redactor from(LlmConfig config) {
     return new Redactor(config.redactionEnabled(), config.redactFields());
   }
@@ -61,8 +75,32 @@ public final class Redactor {
     return out;
   }
 
+  /**
+   * Collapses the untyped parser's string wrapper.
+   *
+   * <p>A string constant arrives as a single-entry map {@code {string=[B}} rather than as {@code
+   * [B}. That inner key is the parser's structure, not a field name — but {@code string} is in the
+   * default redact list, so every wrapped constant was being replaced wholesale: class names,
+   * symbols, group-by keys. The model received {@code {string=<redacted>}} for data that was never
+   * sensitive, and the redaction looked like it was working.
+   *
+   * <p>Unwrapping here rather than at the renderer means the decision is taken on the field's real
+   * name — the outer key — which is what the redact list is about.
+   */
+  private static Object unwrapString(Object value) {
+    if (value instanceof Map<?, ?> map && map.size() == 1) {
+      Object inner = map.get("string");
+      if (inner == null) {
+        return value;
+      }
+      return inner instanceof CharSequence ? inner : value;
+    }
+    return value;
+  }
+
   @SuppressWarnings("unchecked")
   private Object redactValue(Object value) {
+    value = unwrapString(value);
     // Rows can nest: a decorated event carries $decorator.* fields, and heap rows carry paths.
     // Redaction has to follow the structure or it only protects the top level.
     if (value instanceof Map<?, ?> map) {

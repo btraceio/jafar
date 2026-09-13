@@ -42,7 +42,9 @@ public final class LlmSettings {
               "llm.count-events", "count events per type so empty ones are not offered (one pass)"),
           new Setting("llm.max-steps", "moves one 'analyze' may make (1-20)"),
           new Setting(
-              "llm.max-total-tokens", "token ceiling for a whole 'analyze' run; 0 = no cap"));
+              "llm.max-total-tokens", "token ceiling for a whole 'analyze' run; 0 = no cap"),
+          new Setting(
+              "llm.max-analysis-chars", "characters of one analysis result shown to the model"));
 
   private LlmSettings() {}
 

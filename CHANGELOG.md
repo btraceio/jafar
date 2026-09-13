@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fence: a custom type is labelled by whoever produced the recording. Event counts are not
     included, because computing them means scanning the recording and `ask` is deliberately
     independent of recording size
+  - **`analyze` runs the analyses, not just queries.** `ANALYSIS: diagnose` (also `use`, `tsa`,
+    `summary`, `hotmethods`, `exceptions`) reaches the same implementations the MCP server exposes,
+    so the model gets the USE and TSA passes, the thresholds and the capability gaps instead of
+    rebuilding that judgement out of queries
+  - **Fixed: the untyped parser's string wrapper was being redacted wholesale.** A string constant
+    arrives as `{string=[B}`, and `string` is in the default redact list — so every wrapped
+    constant reaching the model was replaced, class names and group-by keys included, while the
+    redaction looked like it was working. The wrapper is now unwrapped before the decision, which is
+    taken on the real field name; a wrapped value under a genuinely redacted field is still redacted
   - **`analyze <question>` — an investigation, not a translation.** `ask` turns a question into one
     query; `analyze` runs several, reads each result and decides what to look at next, then
     concludes. Every query is printed as it runs and the sequence is written to a re-runnable

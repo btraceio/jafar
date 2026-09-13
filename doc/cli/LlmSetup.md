@@ -344,6 +344,23 @@ sequence is written to a **re-runnable `.jfrs` script**. That is the part worth 
 conclusion came from a model and is not reproducible, but the evidence is a file you can open, run,
 and disagree with.
 
+**It can run the analyses, not just queries.** `ANALYSIS: diagnose` (also `use`, `tsa`, `summary`,
+`hotmethods`, `exceptions`) runs the same implementation the MCP server exposes as `jfr_diagnose` —
+one copy, since these moved into `shell-core` — so the model gets the thresholds, the USE and TSA
+passes, and the `capabilityGaps` rather than trying to rebuild that judgement out of queries:
+
+```
+jfr> analyze why is this workload slow
+* diagnose
+  done
+
+> events/jdk.ObjectAllocationSample | groupBy(objectClass/name) | top(3, by=count)
+  3 rows
+
+The diagnosis flagged high GC pressure (609 collections, 20.2 ms average pause) and the
+allocation breakdown is dominated by byte[]. Look at the allocation call sites.
+```
+
 It is bounded on two axes, because an unbounded loop against a paid API loses money quietly:
 `llm.max-steps` (default 6) caps the moves and `llm.max-total-tokens` (default 200000) caps the
 spend. The model is told how many steps remain, so it concludes rather than being cut off. Result
@@ -381,6 +398,7 @@ names listed, rather than silently becoming a variable.
 | `llm.count-events` | `true` | Count events per type so empty types can be excluded; one pass, cached |
 | `llm.max-steps` | `6` | Moves one `analyze` may make (1–20) |
 | `llm.max-total-tokens` | `200000` | Token ceiling for a whole `analyze` run; `0` = no cap |
+| `llm.max-analysis-chars` | `6000` | Characters of one analysis result shown to the model |
 
 **`llm.max-tokens` raises itself for a reasoning model.** The default is small because that is all
 an answer needs — a query and one line — and because the ceiling is what caps the bill when a model
