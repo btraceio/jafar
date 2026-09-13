@@ -9,7 +9,6 @@ import io.jafar.shell.core.llm.LlmService;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.core.llm.QueryProposal;
 import io.jafar.shell.core.llm.Redactor;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +35,18 @@ public final class LlmCommands {
 
     /** Type names available in the current session; empty when no session is open. */
     List<String> availableTypes();
+
+    /**
+     * The same types, carrying whatever the artifact's metadata says each one is for.
+     *
+     * <p>JFR annotates event classes with {@code @Label} and {@code @Description}; feeding those to
+     * the model is the difference between choosing a type on meaning and choosing it because its
+     * name happened to contain a word from the question. Defaults to names only, so a format whose
+     * metadata carries no documentation needs no implementation.
+     */
+    default List<PromptBuilder.TypeEntry> documentedTypes() {
+      return availableTypes().stream().map(PromptBuilder.TypeEntry::of).toList();
+    }
 
     /** Runs a query against the current session and returns the rows. */
     List<Map<String, Object>> runQuery(String query) throws Exception;
@@ -484,11 +495,7 @@ public final class LlmCommands {
   // ── helpers ───────────────────────────────────────────────────────────────────
 
   private List<PromptBuilder.TypeEntry> inventory() {
-    List<PromptBuilder.TypeEntry> entries = new ArrayList<>();
-    for (String type : host.availableTypes()) {
-      entries.add(PromptBuilder.TypeEntry.of(type));
-    }
-    return entries;
+    return host.documentedTypes();
   }
 
   /**

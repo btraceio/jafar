@@ -14,6 +14,7 @@ import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.core.llm.LlmSettings;
+import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -192,6 +193,11 @@ public class CommandDispatcher {
                 }
 
                 @Override
+                public List<PromptBuilder.TypeEntry> documentedTypes() {
+                  return describedTypes();
+                }
+
+                @Override
                 public List<Map<String, Object>> runQuery(String query) throws Exception {
                   JFRSession jfr = currentJfrSession();
                   if (jfr != null) {
@@ -291,6 +297,87 @@ public class CommandDispatcher {
       return jfr;
     }
     return null;
+  }
+
+  // The recording's own documentation for its event types, read once per recording. Parsing
+  // metadata is cheap next to a question round trip, but it is not free, and `ask` is asked
+  // repeatedly against the same file.
+  private String describedTypesFor;
+  private List<PromptBuilder.TypeEntry> describedTypesCache;
+
+  /**
+   * Event types annotated with what the recording says each one is for.
+   *
+   * <p>JFR carries {@code @Label} and {@code @Description} on event classes — "CPU Load",
+   * "Information about the recent CPU usage of the JVM process" — which is exactly the knowledge a
+   * model needs to pick a type for a question, and which no amount of guessing from the type name
+   * reliably reproduces.
+   *
+   * <p>Event counts are deliberately not included. {@code JFRSession} only accumulates them while a
+   * query runs, so before one has they are all zero, and producing real ones means scanning the
+   * recording — which would make {@code ask} cost grow with file size, the one thing this design
+   * exists to avoid.
+   */
+  private List<PromptBuilder.TypeEntry> describedTypes() {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      return List.of();
+    }
+    List<String> names;
+    try {
+      names = cur.get().session.getAvailableTypes().stream().sorted().toList();
+    } catch (Exception e) {
+      return List.of();
+    }
+
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null) {
+      return names.stream().map(PromptBuilder.TypeEntry::of).toList();
+    }
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(describedTypesFor) && describedTypesCache != null) {
+      return describedTypesCache;
+    }
+
+    Map<String, String[]> docs = new HashMap<>();
+    try {
+      for (Map<String, Object> clazz : MetadataProvider.loadAllClasses(jfr.getRecordingPath())) {
+        Object name = clazz.get("name");
+        Object annotations = clazz.get("classAnnotations");
+        if (name == null || !(annotations instanceof List<?> list)) {
+          continue;
+        }
+        String label = null;
+        String description = null;
+        for (Object a : list) {
+          String text = String.valueOf(a);
+          if (text.startsWith("@Label(") && text.endsWith(")")) {
+            label = text.substring("@Label(".length(), text.length() - 1);
+          } else if (text.startsWith("@Description(") && text.endsWith(")")) {
+            description = text.substring("@Description(".length(), text.length() - 1);
+          }
+        }
+        if (label != null || description != null) {
+          docs.put(String.valueOf(name), new String[] {label, description});
+        }
+      }
+    } catch (Exception e) {
+      // Metadata is an enrichment: without it the model still gets the type names, which is what
+      // it had before. A backend that cannot read annotations must not break `ask`.
+      return names.stream().map(PromptBuilder.TypeEntry::of).toList();
+    }
+
+    List<PromptBuilder.TypeEntry> entries = new ArrayList<>();
+    for (String name : names) {
+      String[] doc = docs.get(name);
+      entries.add(
+          doc == null
+              ? PromptBuilder.TypeEntry.of(name)
+              : PromptBuilder.TypeEntry.documented(name, doc[0], doc[1]));
+    }
+    describedTypesFor = key;
+    describedTypesCache = List.copyOf(entries);
+    return describedTypesCache;
   }
 
   /** Returns the global variable store. */

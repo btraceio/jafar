@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     execute it, and on rejection the parser's own error goes back to the model with a request to
     correct itself (`llm.max-retries`, default 1, capped at 3). `ask` prints the correction count
     with the token usage. This is what makes a small local model usable for the job
+  - **`ask` tells the model what each event type is for.** A recording documents itself — JFR puts
+    `@Label` and `@Description` on event classes — and that text is now sent with the type list, so
+    a type is chosen on meaning rather than on a name that shares a word with the question. It sits
+    in the cached prompt prefix, being fixed per recording, and stays inside the recording-data
+    fence: a custom type is labelled by whoever produced the recording. Event counts are not
+    included, because computing them means scanning the recording and `ask` is deliberately
+    independent of recording size
   - **The model never sees raw events.** It composes a query and the shell runs it, so a 900 MB
     recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
     prefix

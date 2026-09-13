@@ -272,6 +272,24 @@ capped at 3 — beyond that a model is not going to converge and you are paying 
 If the retry does not rescue the query, `ask` prints the query and the parser's complaint and runs
 nothing.
 
+## What the model knows about your recording
+
+`ask` sends the list of event types in the recording together with the recording's own
+documentation for them — JFR annotates its event classes, so the model sees:
+
+```
+jdk.ExecutionSample — Java Execution Sample
+    Snapshot of a thread executing Java code. Threads that are not executing Java code,
+    including those waiting or executing native code, are not included.
+```
+
+That is what lets it pick `jdk.ExecutionSample` for a CPU question rather than something whose name
+merely shares a word — and the description tells it what the type does *not* cover, which is often
+the difference between a right answer and a plausible one.
+
+No event data is sent, and no event counts: counting means reading the recording, and `ask` costs
+the same whether the file is 2 MB or 900 MB. `ask --dry-run` shows the whole thing.
+
 ## Settings
 
 All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment variable, or a line in
