@@ -86,6 +86,17 @@ public final class LlmCommands {
     /** Renders rows the way the shell's own commands do. */
     void renderRows(List<Map<String, Object>> rows);
 
+    /**
+     * Tells the shell which result is now the most recent, so {@code explain} describes it.
+     *
+     * <p>The shell keeps its own "last result" for queries typed directly, and primes this handler
+     * from it. Without this call the reverse never happens: a query run by {@code ask} or {@code
+     * analyze} left that memory untouched, so an {@code explain} afterwards described whichever
+     * query the user had typed before — older, unrelated, and reported as if it were the one just
+     * run. Default does nothing, for a host that keeps no such memory.
+     */
+    default void rememberResult(String query, List<Map<String, Object>> rows) {}
+
     /** Resolves a shell setting, e.g. {@code llm.model}. */
     String setting(String name);
 
@@ -130,6 +141,7 @@ public final class LlmCommands {
   }
 
   private LlmService.Result<LlmService> cachedService;
+  private boolean servicePinned;
   private String cachedBackendId;
 
   /**
@@ -142,12 +154,27 @@ public final class LlmCommands {
    * changes; only a different {@code llm.backend} needs a new one.
    */
   private LlmService.Result<LlmService> service(LlmConfig config) {
+    if (servicePinned) {
+      return cachedService;
+    }
     String backendId = config.backendId();
     if (cachedService == null || !backendId.equals(cachedBackendId)) {
       cachedService = LlmService.create(config);
       cachedBackendId = backendId;
     }
     return cachedService;
+  }
+
+  /**
+   * Runs these commands against a service the caller supplies, instead of discovering one.
+   *
+   * <p>Package-private, for tests: without it the command layer can only be exercised on the paths
+   * that stop before a backend is reached, which leaves what the commands do with a *result* —
+   * render it, remember it for {@code explain} — covered nowhere.
+   */
+  void pinService(LlmService service) {
+    this.cachedService = LlmService.Result.success(service);
+    this.servicePinned = true;
   }
 
   /** Whether {@code --dry-run} appears as a whole word in the argument. */
@@ -288,6 +315,7 @@ public final class LlmCommands {
   private void runAndRender(String query) throws Exception {
     List<Map<String, Object>> rows = host.runQuery(query);
     noteResult(query, rows);
+    host.rememberResult(query, rows);
     host.renderRows(rows);
   }
 
@@ -590,6 +618,15 @@ public final class LlmCommands {
     }
 
     LlmConfig config = config();
+    if (config.confirmBeforeRun() && !hasDryRunFlag(argument)) {
+      // llm.confirm says: show me a query before it runs. An investigation picks its next query
+      // from the last result, so there is no honest way to honour that and still investigate.
+      // Checked before the backend is resolved, so this costs nothing and sends nothing.
+      host.println("llm.confirm is on, and 'analyze' cannot ask before each of several queries.");
+      host.println("Use 'ask' for one query you approve, or 'analyze --dry-run' to see the first");
+      host.println("request. Nothing was sent.");
+      return;
+    }
     LlmService.Result<LlmService> service = service(config);
     if (!service.isPresent()) {
       reportUnavailable(service);
@@ -621,6 +658,10 @@ public final class LlmCommands {
     }
 
     List<String> ranQueries = new ArrayList<>();
+    // The loop hands the step callback a row count; the runner is where the rows themselves pass
+    // through. Parking the last ones here lets the step line print first and its table under it.
+    List<List<Map<String, Object>>> justRan = new ArrayList<>(1);
+    String[] lastRan = {null};
     try {
       LlmService.Investigation result =
           service
@@ -631,7 +672,13 @@ public final class LlmCommands {
                   inventory(),
                   host::validateQuery,
                   host::fieldsOf,
-                  host::runQuery,
+                  query -> {
+                    justRan.clear();
+                    List<Map<String, Object>> rows = host.runQuery(query);
+                    justRan.add(rows);
+                    lastRan[0] = query;
+                    return rows;
+                  },
                   new LlmService.AnalysisRunner() {
                     @Override
                     public List<String> available() {
@@ -658,6 +705,7 @@ public final class LlmCommands {
                         host.println(
                             "  " + step.rowCount() + (step.rowCount() == 1 ? " row" : " rows"));
                         ranQueries.add(step.query());
+                        renderStepRows(justRan.isEmpty() ? List.of() : justRan.get(0), config);
                       }
                     }
                   });
@@ -673,6 +721,11 @@ public final class LlmCommands {
       if (!ranQueries.isEmpty()) {
         host.saveTranscript(question, ranQueries);
       }
+      if (lastRan[0] != null && !justRan.isEmpty()) {
+        // So 'explain' after an 'analyze' describes the last thing the investigation looked at.
+        noteResult(lastRan[0], justRan.get(0));
+        host.rememberResult(lastRan[0], justRan.get(0));
+      }
       printUsage(service.value());
 
     } catch (LlmException e) {
@@ -681,6 +734,22 @@ public final class LlmCommands {
         host.println("-> " + e.remedy());
       }
       printUsage(service.value());
+    }
+  }
+
+  /**
+   * Shows what a step actually returned, capped at {@code llm.max-rows}.
+   *
+   * <p>An investigation used to print only "3 rows", which is the one thing about a result that
+   * cannot be checked. The numbers are the evidence for the conclusion underneath, and they are
+   * already in memory — the same rows, and only as many as were sent to the model.
+   */
+  private void renderStepRows(List<Map<String, Object>> rows, LlmConfig config) {
+    if (rows.isEmpty()) return;
+    int cap = config.maxRows();
+    host.renderRows(rows.size() > cap ? rows.subList(0, cap) : rows);
+    if (rows.size() > cap) {
+      host.println("  (" + cap + " of " + rows.size() + " rows shown)");
     }
   }
 
@@ -727,9 +796,12 @@ public final class LlmCommands {
 
         'ask' is one question, one query. 'analyze' runs several: it reads each
         result and decides what to look at next, which is what most real questions
-        need. It prints every query as it goes and writes them to a re-runnable
-        .jfrs script, so the conclusion can be checked rather than trusted. It is
-        bounded by llm.max-steps and llm.max-total-tokens.
+        need. It prints every query and the rows it returned, up to llm.max-rows —
+        the same rows the model was given — and writes the queries to a re-runnable
+        .jfrs script, so the conclusion can be checked rather than trusted. Its last
+        result is what a following 'explain' describes. It is bounded by
+        llm.max-steps and llm.max-total-tokens, and llm.confirm turns it off, since
+        an investigation cannot ask before a query it has not decided on yet.
 
         The query language is whichever one the current session uses: JfrPath for a
         recording, HdumpPath for a heap dump, the samples grammar for pprof and OTLP.

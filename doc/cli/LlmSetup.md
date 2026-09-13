@@ -328,9 +328,19 @@ decides what to look at next, and concludes.
 jfr> analyze why is this workload slow
 > events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
   3 rows
+| count | key       |
++-------+-----------+
+| 8412  | main      |
+| 210   | worker-1  |
+| 97    | scheduler |
 
 > events/jdk.ObjectAllocationSample | groupBy(objectClass/name) | top(3, by=count)
   3 rows
+| count | key                |
++-------+--------------------+
+| 5109  | byte[]             |
+| 812   | java.lang.String   |
+| 344   | java.util.HashMap  |
 
 Execution samples concentrate on the main thread, and allocation samples are dominated by
 byte[]. The workload is allocation-heavy on a single thread, so the next step is to look at
@@ -339,10 +349,12 @@ the allocation call sites rather than adding parallelism.
 Transcript: ~/.jafar/investigations/analyze-20260913-202249.jfrs
 ```
 
-Every query is printed as it runs — the investigation is not hidden behind its conclusion — and the
-sequence is written to a **re-runnable `.jfrs` script**. That is the part worth caring about: the
-conclusion came from a model and is not reproducible, but the evidence is a file you can open, run,
-and disagree with.
+Every query is printed as it runs, with the rows it returned underneath — the investigation is not
+hidden behind its conclusion, and those are the same rows the model was given, capped at
+`llm.max-rows`. The sequence is also written to a **re-runnable `.jfrs` script**. That is the part
+worth caring about: the conclusion came from a model and is not reproducible, but the evidence is a
+file you can open, run, and disagree with. `explain` afterwards describes the last result the
+investigation looked at.
 
 **It can run the analyses, not just queries.** `ANALYSIS: diagnose` (also `use`, `tsa`, `summary`,
 `hotmethods`, `exceptions`) runs the same implementation the MCP server exposes as `jfr_diagnose` —
@@ -369,6 +381,11 @@ recording data than `ask`, so it matters more here, not less.
 
 `analyze --dry-run` shows the first request; later steps depend on what earlier ones return, so they
 cannot be shown in advance.
+
+`llm.confirm` turns `analyze` off rather than changing it. The setting means "show me a query before
+it runs", and an investigation chooses each query from the result of the last one, so there is no
+query to show in advance. With it on, `analyze` says so and sends nothing; use `ask` for a single
+query you approve, or `analyze --dry-run` to read the opening request.
 
 ## Settings
 

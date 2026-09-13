@@ -225,6 +225,11 @@ public class CommandDispatcher {
                 }
 
                 @Override
+                public void rememberResult(String query, List<Map<String, Object>> rows) {
+                  CommandDispatcher.this.rememberResult(query, rows);
+                }
+
+                @Override
                 public List<Map<String, Object>> runQuery(String query) throws Exception {
                   JFRSession jfr = currentJfrSession();
                   if (jfr != null) {
