@@ -25,6 +25,11 @@ import java.util.Optional;
  * Identity Federation, then the default profile on disk. So an API key and a keyless OAuth profile
  * are the same code path here, and neither needs configuration from us.
  *
+ * <p>One thing the SDK cannot know about is {@code llm.api-key} — a key set in this shell or in the
+ * settings file. That is applied explicitly and takes precedence, because a key configured for this
+ * tool was chosen deliberately, while {@code ANTHROPIC_API_KEY} may be left over from something
+ * else in the same terminal.
+ *
  * <p>What the SDK does <em>not</em> do is fail fast when it finds no credentials at all: the client
  * constructs happily and the request goes out unauthenticated, surfacing as a 401 from the server.
  * That is why {@link #readiness} inspects the environment itself — a user with nothing configured
@@ -36,6 +41,7 @@ import java.util.Optional;
 public final class AnthropicBackend implements LlmBackend {
 
   private volatile AnthropicClient client;
+  private volatile String clientKey;
 
   @Override
   public String id() {
@@ -56,11 +62,20 @@ public final class AnthropicBackend implements LlmBackend {
 
   @Override
   public String credentialHelp() {
-    return "Set ANTHROPIC_API_KEY, or run `ant auth login` for keyless use.";
+    return "Put llm.api-key in the settings file, set ANTHROPIC_API_KEY, or run `ant auth login` "
+        + "for keyless use.";
   }
 
   @Override
   public Readiness readiness(LlmConfig config) {
+    // A key set through `set llm.api-key` or the settings file was configured for this tool
+    // deliberately, so it wins over whatever happens to be in the environment. Without this the
+    // settings file worked for the OpenAI-compatible backends and silently did nothing here.
+    String configured = config.apiKey();
+    if (isSet(configured)) {
+      return Readiness.ready("llm.api-key (" + describeSource(config) + ")");
+    }
+
     String apiKey = System.getenv("ANTHROPIC_API_KEY");
     String authToken = System.getenv("ANTHROPIC_AUTH_TOKEN");
 
@@ -95,9 +110,10 @@ public final class AnthropicBackend implements LlmBackend {
     }
 
     return Readiness.notReady(
-        "No credentials found: no ANTHROPIC_API_KEY, no ANTHROPIC_AUTH_TOKEN, and no OAuth "
-            + "profile on disk.",
-        "Run `ant auth login` for keyless use, or export ANTHROPIC_API_KEY=...");
+        "No credentials found: no llm.api-key, no ANTHROPIC_API_KEY, no ANTHROPIC_AUTH_TOKEN, and "
+            + "no OAuth profile on disk.",
+        "Put 'llm.api-key = sk-ant-...' in ~/.config/jafar/llm.properties (chmod 600), or export "
+            + "ANTHROPIC_API_KEY=..., or run `ant auth login` for keyless use.");
   }
 
   @Override
@@ -124,7 +140,7 @@ public final class AnthropicBackend implements LlmBackend {
         }
       }
 
-      Message message = client().messages().create(params.build());
+      Message message = client(config).messages().create(params.build());
       return toResponse(message, config);
 
     } catch (RuntimeException e) {
@@ -151,18 +167,39 @@ public final class AnthropicBackend implements LlmBackend {
         text.toString().strip(), Optional.of(accounting), config.modelFor(this), stopReason);
   }
 
-  private AnthropicClient client() {
+  /**
+   * The SDK client, built once per distinct credential.
+   *
+   * <p>{@code fromEnv()} alone would ignore a key supplied through {@code set llm.api-key} or the
+   * settings file, so a configured key is applied explicitly. The key is remembered alongside the
+   * client because {@code set llm.api-key} mid-session must not keep using the old one.
+   */
+  private AnthropicClient client(LlmConfig config) {
+    String configured = isSet(config.apiKey()) ? config.apiKey() : null;
     AnthropicClient local = client;
-    if (local == null) {
-      synchronized (this) {
-        local = client;
-        if (local == null) {
-          local = AnthropicOkHttpClient.fromEnv();
-          client = local;
-        }
-      }
+    if (local != null && java.util.Objects.equals(configured, clientKey)) {
+      return local;
     }
-    return local;
+    synchronized (this) {
+      if (client == null || !java.util.Objects.equals(configured, clientKey)) {
+        client =
+            configured == null
+                ? AnthropicOkHttpClient.fromEnv()
+                : AnthropicOkHttpClient.builder().apiKey(configured).build();
+        clientKey = configured;
+      }
+      return client;
+    }
+  }
+
+  /** Where a configured {@code llm.api-key} came from, for {@code llm status}. */
+  private static String describeSource(LlmConfig config) {
+    return switch (config.sourceOf("llm.api-key", "JAFAR_LLM_API_KEY")) {
+      case SHELL_VARIABLE -> "set in this shell";
+      case ENVIRONMENT -> "JAFAR_LLM_API_KEY";
+      case SETTINGS_FILE -> "settings file";
+      case DEFAULT -> "configured";
+    };
   }
 
   private static boolean isSet(String value) {

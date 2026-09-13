@@ -523,12 +523,22 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 The query is always printed — so a wrong guess is visible, and you learn JfrPath as you go.
 The recording itself never leaves your machine: the model composes the query, the shell runs it.
 
-Authenticate with an API key or keylessly with an OAuth profile:
+Three ways to authenticate, in the order most people want them:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # or:
-ant auth login                        # keyless; no static secret to manage
+# 1. A key in a file only you can read — no environment variable, no CLI to install
+mkdir -p ~/.config/jafar
+printf 'llm.api-key = sk-ant-...\n' > ~/.config/jafar/llm.properties
+chmod 600 ~/.config/jafar/llm.properties
+
+# 2. Or the provider's environment variable
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 3. Or keylessly, if you have the Anthropic CLI (optional — note the plural 'anthropics')
+brew install anthropics/tap/ant && ant auth login
 ```
+
+Or none of the above: `set llm.backend = ollama` runs a local model, and nothing leaves the machine.
 
 `ask --dry-run <question>` prints exactly what would be sent without sending it, and result data is
 redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,

@@ -90,19 +90,33 @@ secret to store and rotate.
 
 **Mode 2 — keyless, with an OAuth profile**
 
-This needs the [Anthropic CLI](https://github.com/anthropics/anthropic-cli), which is **not
-installed by default** — `ant: command not found` means you have not installed it yet:
+Entirely optional: it is a second way to authenticate, not a requirement. If installing it is
+awkward, use Mode 1 and skip this section.
+
+It needs the [Anthropic CLI](https://github.com/anthropics/anthropic-cli), which is **not installed
+by default** — `ant: command not found` means you have not installed it yet:
 
 ```bash
-brew install anthropics/tap/ant                                    # macOS
-go install 'github.com/anthropics/anthropic-cli/cmd/ant@latest'    # Go 1.22+, any platform
+brew install anthropics/tap/ant                                  # macOS
+go install github.com/anthropics/anthropic-cli/cmd/ant@latest    # Go 1.25+, any platform
 ```
 
 The Go route installs into `$(go env GOPATH)/bin`, which has to be on your `PATH`.
 
-> **If `ant` runs but does something odd**, check which one you have: `ant -version` printing
-> *"Apache Ant"* means your `ant` is the Java build tool, which has owned that name for two decades.
-> Put the Anthropic CLI earlier on your `PATH`, or invoke it by its full path.
+> **Two traps, both of which look like the install failed when it did not.**
+>
+> The tap owner is `anthropics`, **plural**. `brew install anthropic/tap/ant` fails with
+> *"Repository not found"* on `github.com/anthropic/homebrew-tap` — the missing `s` is the whole
+> problem.
+>
+> And do not fall back to plain `brew install ant`. That is **Apache Ant**, the Java build tool,
+> which has owned the name for two decades; it installs cleanly, and then `ant auth login` makes
+> no sense to it. `ant -version` printing *"Apache Ant"* means you have the wrong one — put the
+> Anthropic CLI earlier on your `PATH`, or invoke it by its full path.
+
+There is **no macOS release tarball** — as of v1.32.0 the published binaries cover Linux and
+Windows, so on macOS it is Homebrew or `go install`. On an Intel Mac, Homebrew now warns that
+x86_64 is unsupported and may build from source; `go install` avoids that entirely.
 
 Then:
 

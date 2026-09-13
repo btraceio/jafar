@@ -56,7 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     poor home for a long-lived credential — every child process inherits it, it appears in crash
     dumps and CI logs, and exporting it inline puts it in shell history. `llm status` names the
     file, warns when it is readable by anyone else, and reports which layer each setting came
-    from, so a stale environment variable shadowing the file is visible rather than baffling
+    from, so a stale environment variable shadowing the file is visible rather than baffling.
+    `llm.api-key` now reaches the Anthropic backend too — it previously worked only for the
+    OpenAI-compatible ones, because that backend asked the SDK alone, so a key sitting in the
+    settings file produced "No credentials found". A configured key takes precedence over
+    `ANTHROPIC_API_KEY`, which may be left over from something else in the same terminal
   - **Tab completion and help**: `ask`, `explain` and `llm` complete as commands in both shells,
     `llm` completes its subcommands, `set llm.` completes all twelve settings with descriptions,
     `help` lists them as subjects, and `help ask` carries worked examples. A test reads
