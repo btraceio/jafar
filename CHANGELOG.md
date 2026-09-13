@@ -62,6 +62,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fence: a custom type is labelled by whoever produced the recording. Event counts are not
     included, because computing them means scanning the recording and `ask` is deliberately
     independent of recording size
+  - **`analyze <question>` — an investigation, not a translation.** `ask` turns a question into one
+    query; `analyze` runs several, reads each result and decides what to look at next, then
+    concludes. Every query is printed as it runs and the sequence is written to a re-runnable
+    `.jfrs` transcript, so a conclusion produced by a model leaves behind evidence a human can
+    check. Bounded by `llm.max-steps` (6) and `llm.max-total-tokens` (200000); rows are redacted
+    and truncated on every step. It speaks the same line-prefixed text protocol as `ask` rather
+    than a provider's tool-calling API, so it works on every backend including a small local model
+  - **`Finding` moved from `jfr-mcp` to `shell-core`** (`io.jafar.shell.core.findings`), so the
+    shell and the MCP server share one output shape and a shell investigation can merge with an
+    MCP one
   - **The model asks what fields a type has instead of guessing.** JFR is self-describing, so an
     event's fields are whatever the recording declares — unknowable from the type name, and for a
     custom event unknowable at all. A reply may be `FIELDS: <types>`, answered with those types'

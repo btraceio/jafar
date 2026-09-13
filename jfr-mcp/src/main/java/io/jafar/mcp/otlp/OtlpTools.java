@@ -1,7 +1,5 @@
 package io.jafar.mcp.otlp;
 
-import io.jafar.mcp.findings.Findings;
-import io.jafar.mcp.findings.SamplingFindings;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.tool.ProgressReporter;
@@ -11,6 +9,8 @@ import io.jafar.otlp.shell.OtlpSession;
 import io.jafar.otlp.shell.otlppath.OtlpPathEvaluator;
 import io.jafar.otlp.shell.otlppath.OtlpPathParseException;
 import io.jafar.otlp.shell.otlppath.OtlpPathParser;
+import io.jafar.shell.core.findings.Findings;
+import io.jafar.shell.core.findings.SamplingFindings;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;

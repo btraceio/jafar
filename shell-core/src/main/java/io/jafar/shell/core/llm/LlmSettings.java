@@ -39,8 +39,10 @@ public final class LlmSettings {
           new Setting("llm.redact", "redact sensitive fields before sending"),
           new Setting("llm.redact-fields", "replace the redaction list; a leading + extends it"),
           new Setting(
-              "llm.count-events",
-              "count events per type so empty ones are not offered (one pass)"));
+              "llm.count-events", "count events per type so empty ones are not offered (one pass)"),
+          new Setting("llm.max-steps", "moves one 'analyze' may make (1-20)"),
+          new Setting(
+              "llm.max-total-tokens", "token ceiling for a whole 'analyze' run; 0 = no cap"));
 
   private LlmSettings() {}
 

@@ -9,6 +9,7 @@ import io.jafar.shell.core.llm.LlmService;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.core.llm.QueryProposal;
 import io.jafar.shell.core.llm.Redactor;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -58,6 +59,16 @@ public final class LlmCommands {
     default List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames) {
       return List.of();
     }
+
+    /**
+     * Records an investigation's queries as a re-runnable script.
+     *
+     * <p>The loop's weakest property is that it is not reproducible. Writing the queries it ran to
+     * a {@code .jfrs} script turns that around: the conclusion may have been produced by a model,
+     * but the evidence is a file a person can read, re-run, and disagree with. Default does
+     * nothing, for a host with no recorder.
+     */
+    default void saveTranscript(String question, List<String> queries) {}
 
     /** Runs a query against the current session and returns the rows. */
     List<Map<String, Object>> runQuery(String query) throws Exception;
@@ -551,6 +562,100 @@ public final class LlmCommands {
     return flat.length() <= 200 ? flat : flat.substring(0, 200) + "…";
   }
 
+  /**
+   * Investigates a question over several steps, showing the work.
+   *
+   * <p>Every query is printed before it runs, exactly as {@code ask} prints its one query. The
+   * point is not to hide the investigation behind a conclusion: a reader who disagrees with the
+   * answer needs to see which queries produced it, and a reader who agrees still has to be able to
+   * re-run them.
+   */
+  public void analyze(String argument) {
+    String question = stripDryRunFlag(argument);
+    if (question.isBlank()) {
+      host.println("Usage: analyze [--dry-run] <question>");
+      host.println("Runs several queries, reads each result, and concludes. 'ask' is the one-shot");
+      host.println("form; this one is for questions a single query cannot answer.");
+      return;
+    }
+
+    LlmConfig config = config();
+    LlmService.Result<LlmService> service = service(config);
+    if (!service.isPresent()) {
+      reportUnavailable(service);
+      return;
+    }
+    if (host.currentModuleId().isEmpty()) {
+      host.println("No session open. Use 'open <file>' first.");
+      return;
+    }
+    String moduleId = host.currentModuleId().get();
+
+    if (hasDryRunFlag(argument)) {
+      host.println("Nothing was sent. This is the first request an 'analyze' would transmit;");
+      host.println("later steps depend on what the earlier ones return, so they cannot be shown.");
+      printRequest(
+          "analyze",
+          new LlmRequest(
+              io.jafar.shell.core.llm.PromptBuilder.analysisSystemPrompt(
+                  io.jafar.shell.core.llm.LanguageReference.languageName(moduleId),
+                  io.jafar.shell.core.llm.LanguageReference.forModule(moduleId),
+                  inventory(),
+                  config.maxSteps()),
+              List.of(LlmRequest.Turn.user("Question: " + question)),
+              config.maxTokens(),
+              "analyze"),
+          config,
+          service.value());
+      return;
+    }
+
+    List<String> ranQueries = new ArrayList<>();
+    try {
+      LlmService.Investigation result =
+          service
+              .value()
+              .analyze(
+                  question,
+                  moduleId,
+                  inventory(),
+                  host::validateQuery,
+                  host::fieldsOf,
+                  host::runQuery,
+                  step -> {
+                    host.println("");
+                    host.println("> " + step.query());
+                    if (step.error() != null) {
+                      host.println("  rejected: " + step.error());
+                    } else {
+                      host.println(
+                          "  " + step.rowCount() + (step.rowCount() == 1 ? " row" : " rows"));
+                      ranQueries.add(step.query());
+                    }
+                  });
+
+      host.println("");
+      if (result.answer() != null) {
+        host.println(result.answer());
+      } else {
+        host.println(
+            "The investigation ran out of budget before reaching a conclusion. "
+                + "Raise llm.max-steps, or ask a narrower question.");
+      }
+      if (!ranQueries.isEmpty()) {
+        host.saveTranscript(question, ranQueries);
+      }
+      printUsage(service.value());
+
+    } catch (LlmException e) {
+      host.println(e.getMessage());
+      if (e.remedy() != null) {
+        host.println("-> " + e.remedy());
+      }
+      printUsage(service.value());
+    }
+  }
+
   private void printUsage(LlmService service) {
     LlmResponse.Usage usage = service.sessionUsage();
     if (usage.totalTokens() > 0) {
@@ -582,6 +687,7 @@ public final class LlmCommands {
         provider a credential):
           ask [--dry-run] <q>   Turn a question into a query, show it, and run it
           explain [--dry-run]   Explain the most recent result
+          analyze [--dry-run] <q>  Investigate over several queries and conclude
           llm status            Backends, readiness, credential source, settings
           llm cost              Token usage for this process
 
@@ -590,6 +696,12 @@ public final class LlmCommands {
         verbs above: same input, same bytes, differing only in whether they
         leave the machine. On 'explain' it is the one worth reaching for, since
         that is the command that puts result rows into a prompt.
+
+        'ask' is one question, one query. 'analyze' runs several: it reads each
+        result and decides what to look at next, which is what most real questions
+        need. It prints every query as it goes and writes them to a re-runnable
+        .jfrs script, so the conclusion can be checked rather than trusted. It is
+        bounded by llm.max-steps and llm.max-total-tokens.
 
         The query language is whichever one the current session uses: JfrPath for a
         recording, HdumpPath for a heap dump, the samples grammar for pprof and OTLP.
