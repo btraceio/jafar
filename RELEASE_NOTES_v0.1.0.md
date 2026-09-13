@@ -103,7 +103,7 @@ See [LIMITATIONS.md](LIMITATIONS.md) for complete list and workarounds.
 
 ## Documentation
 
-- **README**: https://github.com/jbachorik/jafar#readme
+- **README**: https://github.com/btraceio/jafar#readme
 - **Examples**: `examples/` directory in the repository
 - **Javadoc**: Comprehensive API documentation on all public classes
 
@@ -111,7 +111,7 @@ See [LIMITATIONS.md](LIMITATIONS.md) for complete list and workarounds.
 
 We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-To report bugs or request features, use our [GitHub issue templates](https://github.com/jbachorik/jafar/issues/new/choose).
+To report bugs or request features, use our [GitHub issue templates](https://github.com/btraceio/jafar/issues/new/choose).
 
 For security vulnerabilities, see [SECURITY.md](SECURITY.md) (do not create public issues).
 
@@ -136,4 +136,4 @@ Built with:
 
 ---
 
-**Full Changelog**: https://github.com/jbachorik/jafar/blob/v0.1.0/CHANGELOG.md
+**Full Changelog**: https://github.com/btraceio/jafar/blob/v0.1.0/CHANGELOG.md

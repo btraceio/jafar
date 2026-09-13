@@ -340,8 +340,8 @@ See parent project license.
 
 ## Links
 
-- **Project:** https://github.com/jbachorik/jafar
-- **Issues:** https://github.com/jbachorik/jafar/issues
+- **Project:** https://github.com/btraceio/jafar
+- **Issues:** https://github.com/btraceio/jafar/issues
 - **JFR Documentation:** https://docs.oracle.com/en/java/javase/21/jfapi/
 
 ---
