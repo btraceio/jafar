@@ -1,4 +1,4 @@
-package io.jafar.mcp.findings;
+package io.jafar.shell.core.findings;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

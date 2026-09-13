@@ -163,6 +163,37 @@ public final class LlmConfig {
     return resolve("llm.backend", "JAFAR_LLM_BACKEND", "auto");
   }
 
+  /**
+   * How many moves one {@code analyze} may make.
+   *
+   * <p>Six is enough for a real investigation — look, narrow, confirm, conclude — and small enough
+   * that a loop which learns nothing stops before it costs much. The model is told the remaining
+   * count each turn, so the cap shapes its behaviour rather than merely truncating it.
+   */
+  public int maxSteps() {
+    int value = intValue("llm.max-steps", "JAFAR_LLM_MAX_STEPS", 6);
+    return Math.max(1, Math.min(value, 20));
+  }
+
+  /**
+   * Token ceiling for a whole {@code analyze} run, across every step. Zero means no cap.
+   *
+   * <p>The step cap alone does not bound spend: a step that sends fifty rows of a wide result costs
+   * many times one that sends a single number. This is the backstop that makes an investigation
+   * safe to start without watching it.
+   */
+  public long maxTotalTokens() {
+    String value = resolve("llm.max-total-tokens", "JAFAR_LLM_MAX_TOTAL_TOKENS", null);
+    if (value == null) {
+      return 200_000;
+    }
+    try {
+      return Math.max(0, Long.parseLong(value));
+    } catch (NumberFormatException e) {
+      return 200_000;
+    }
+  }
+
   public int maxTokens() {
     return intValue("llm.max-tokens", "JAFAR_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS);
   }

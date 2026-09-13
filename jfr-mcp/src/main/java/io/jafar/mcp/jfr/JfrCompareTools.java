@@ -1,11 +1,11 @@
 package io.jafar.mcp.jfr;
 
-import io.jafar.mcp.findings.Finding;
-import io.jafar.mcp.findings.Findings;
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.shell.core.findings.Finding;
+import io.jafar.shell.core.findings.Findings;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;

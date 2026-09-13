@@ -296,6 +296,7 @@ public final class ShellCompleter implements Completer {
     candidates.add(new Candidate("cp"));
     candidates.add(new Candidate("ask"));
     candidates.add(new Candidate("explain"));
+    candidates.add(new Candidate("analyze"));
     candidates.add(new Candidate("llm"));
   }
 

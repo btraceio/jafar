@@ -39,6 +39,7 @@ public final class CommandCompleter implements ContextCompleter {
     "record", // Scripting
     "ask",
     "explain",
+    "analyze",
     "llm", // LLM
     "help",
     "exit",

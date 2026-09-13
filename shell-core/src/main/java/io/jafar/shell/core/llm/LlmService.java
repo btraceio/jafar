@@ -119,6 +119,133 @@ public final class LlmService {
    *
    * @param validator checks a candidate query, returning an error message when it is invalid
    */
+  /** Runs a query and returns its rows. The loop's only way to see the recording. */
+  @FunctionalInterface
+  public interface QueryRunner {
+    List<Map<String, Object>> run(String query) throws Exception;
+  }
+
+  /** One completed move, for the transcript and for showing the user what was done. */
+  public record Step(String query, int rowCount, String error) {}
+
+  /**
+   * The outcome of an investigation.
+   *
+   * @param answer the model's conclusion, or null when it never reached one
+   * @param steps every query actually run, in order — the replayable part
+   * @param complete whether it answered, as opposed to running out of budget
+   */
+  public record Investigation(String answer, List<Step> steps, boolean complete) {
+    public Investigation {
+      steps = steps == null ? List.of() : List.copyOf(steps);
+    }
+  }
+
+  /**
+   * Investigates a question over several steps.
+   *
+   * <p>{@code ask} translates; this one *looks*. It runs a query, reads the result, and decides
+   * what to do next — which is what separates answering "how many execution samples are there" from
+   * answering "why is this slow", and almost no real question is the former.
+   *
+   * <p>Bounded on two axes, because an unbounded loop against a paid API is a way to lose money
+   * quietly: {@code llm.max-steps} caps the moves, and {@code llm.max-total-tokens} caps the spend
+   * across the whole investigation. Both are checked before each request, and the model is told how
+   * many steps remain so it can conclude rather than be cut off.
+   *
+   * <p>Every result goes through {@link Redactor} and the {@code llm.max-rows} cap on the way back,
+   * exactly as {@code explain} does. This loop sends far more recording data than {@code ask} ever
+   * does, so that matters more here, not less.
+   */
+  public Investigation analyze(
+      String question,
+      String moduleId,
+      List<PromptBuilder.TypeEntry> inventory,
+      QueryValidator validator,
+      FieldLookup fields,
+      QueryRunner runner,
+      java.util.function.Consumer<Step> onStep)
+      throws LlmException {
+    int maxSteps = config.maxSteps();
+    long tokenCap = config.maxTotalTokens();
+    long startingTokens = sessionUsage.totalTokens();
+
+    String language = LanguageReference.languageName(moduleId);
+    String reference = LanguageReference.forModule(moduleId);
+    String system = PromptBuilder.analysisSystemPrompt(language, reference, inventory, maxSteps);
+
+    List<LlmRequest.Turn> turns = new ArrayList<>();
+    turns.add(LlmRequest.Turn.user("Question: " + question));
+    List<Step> steps = new ArrayList<>();
+
+    for (int step = 0; step < maxSteps; step++) {
+      if (tokenCap > 0 && sessionUsage.totalTokens() - startingTokens >= tokenCap) {
+        return new Investigation(null, steps, false);
+      }
+
+      LlmResponse response =
+          send(new LlmRequest(system, List.copyOf(turns), effectiveMaxTokens(), "analyze"));
+      AnalysisStep move = AnalysisStep.parse(response.text());
+      turns.add(LlmRequest.Turn.assistant(response.text()));
+      int stepsLeft = maxSteps - step - 1;
+
+      switch (move.kind()) {
+        case ANSWER -> {
+          return new Investigation(move.text(), steps, true);
+        }
+        case FIELDS ->
+            turns.add(
+                LlmRequest.Turn.user(PromptBuilder.fieldsMessage(fields.fieldsOf(move.types()))));
+        case QUERY -> {
+          Optional<String> invalid = validator.validate(move.query());
+          if (invalid.isPresent()) {
+            steps.add(new Step(move.query(), 0, invalid.get()));
+            if (onStep != null) {
+              onStep.accept(steps.get(steps.size() - 1));
+            }
+            turns.add(
+                LlmRequest.Turn.user(
+                    PromptBuilder.analysisQueryRejected(move.query(), invalid.get(), stepsLeft)));
+            break;
+          }
+          List<Map<String, Object>> rows;
+          try {
+            rows = runner.run(move.query());
+          } catch (Exception e) {
+            String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            steps.add(new Step(move.query(), 0, detail));
+            if (onStep != null) {
+              onStep.accept(steps.get(steps.size() - 1));
+            }
+            turns.add(
+                LlmRequest.Turn.user(
+                    PromptBuilder.analysisQueryRejected(move.query(), detail, stepsLeft)));
+            break;
+          }
+          steps.add(new Step(move.query(), rows.size(), null));
+          if (onStep != null) {
+            onStep.accept(steps.get(steps.size() - 1));
+          }
+          int total = rows.size();
+          List<Map<String, Object>> shown =
+              total > config.maxRows() ? rows.subList(0, config.maxRows()) : rows;
+          turns.add(
+              LlmRequest.Turn.user(
+                  PromptBuilder.analysisResultMessage(
+                      move.query(), redactor.redactRows(shown), total, shown.size(), stepsLeft)));
+        }
+        case UNKNOWN ->
+            turns.add(
+                LlmRequest.Turn.user(
+                    "That reply had no QUERY:, FIELDS: or ANSWER: line. "
+                        + (stepsLeft <= 0
+                            ? "No steps remain — answer now with ANSWER:.\n"
+                            : stepsLeft + " step(s) remain.\n")));
+      }
+    }
+    return new Investigation(null, steps, false);
+  }
+
   /** Supplies the fields of named types, for a model that asked before guessing. */
   @FunctionalInterface
   public interface FieldLookup {

@@ -1,4 +1,4 @@
-package io.jafar.mcp.findings;
+package io.jafar.shell.core.findings;
 
 import java.util.ArrayList;
 import java.util.Comparator;

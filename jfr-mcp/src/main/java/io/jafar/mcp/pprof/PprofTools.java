@@ -1,7 +1,5 @@
 package io.jafar.mcp.pprof;
 
-import io.jafar.mcp.findings.Findings;
-import io.jafar.mcp.findings.SamplingFindings;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.tool.ProgressReporter;
@@ -12,6 +10,8 @@ import io.jafar.pprof.shell.PprofSession;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
 import io.jafar.pprof.shell.pprofpath.PprofPathParseException;
 import io.jafar.pprof.shell.pprofpath.PprofPathParser;
+import io.jafar.shell.core.findings.Findings;
+import io.jafar.shell.core.findings.SamplingFindings;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;

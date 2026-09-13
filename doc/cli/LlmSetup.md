@@ -11,6 +11,7 @@ and why, and tells you what to do about the ones that are not ready.
 | Command | Does |
 |---|---|
 | `ask <question>` | Turns the question into a query, **prints the query**, and runs it |
+| `analyze <question>` | Runs several queries, reads each result, and concludes |
 | `ask --dry-run <question>` | Prints exactly what `ask` would send, and sends nothing |
 | `explain` | Explains the most recent result |
 | `explain --dry-run` | Prints exactly what `explain` would send, and sends nothing |
@@ -317,6 +318,41 @@ the accuracy.
 
 No event data is sent. `ask --dry-run` shows the first round in full.
 
+## `analyze` — more than one query
+
+`ask` is one question, one query. That answers "how many execution samples are there"; almost no
+real performance question is of that shape. `analyze` runs several: it looks, reads the result,
+decides what to look at next, and concludes.
+
+```
+jfr> analyze why is this workload slow
+> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
+  3 rows
+
+> events/jdk.ObjectAllocationSample | groupBy(objectClass/name) | top(3, by=count)
+  3 rows
+
+Execution samples concentrate on the main thread, and allocation samples are dominated by
+byte[]. The workload is allocation-heavy on a single thread, so the next step is to look at
+the allocation call sites rather than adding parallelism.
+
+Transcript: ~/.jafar/investigations/analyze-20260913-202249.jfrs
+```
+
+Every query is printed as it runs — the investigation is not hidden behind its conclusion — and the
+sequence is written to a **re-runnable `.jfrs` script**. That is the part worth caring about: the
+conclusion came from a model and is not reproducible, but the evidence is a file you can open, run,
+and disagree with.
+
+It is bounded on two axes, because an unbounded loop against a paid API loses money quietly:
+`llm.max-steps` (default 6) caps the moves and `llm.max-total-tokens` (default 200000) caps the
+spend. The model is told how many steps remain, so it concludes rather than being cut off. Result
+rows are redacted and truncated on every step exactly as `explain` does — this path sends far more
+recording data than `ask`, so it matters more here, not less.
+
+`analyze --dry-run` shows the first request; later steps depend on what earlier ones return, so they
+cannot be shown in advance.
+
 ## Settings
 
 All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment variable, or a line in
@@ -343,6 +379,8 @@ names listed, rather than silently becoming a variable.
 | `llm.redact` | `true` | Redact sensitive fields before sending |
 | `llm.redact-fields` | see below | Replace the redaction list; a leading `+` extends it |
 | `llm.count-events` | `true` | Count events per type so empty types can be excluded; one pass, cached |
+| `llm.max-steps` | `6` | Moves one `analyze` may make (1–20) |
+| `llm.max-total-tokens` | `200000` | Token ceiling for a whole `analyze` run; `0` = no cap |
 
 **`llm.max-tokens` raises itself for a reasoning model.** The default is small because that is all
 an answer needs — a query and one line — and because the ceiling is what caps the bill when a model

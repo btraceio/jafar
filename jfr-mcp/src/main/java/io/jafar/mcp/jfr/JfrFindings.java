@@ -1,6 +1,6 @@
 package io.jafar.mcp.jfr;
 
-import io.jafar.mcp.findings.Finding;
+import io.jafar.shell.core.findings.Finding;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
