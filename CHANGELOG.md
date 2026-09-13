@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     execute it, and on rejection the parser's own error goes back to the model with a request to
     correct itself (`llm.max-retries`, default 1, capped at 3). `ask` prints the correction count
     with the token usage. This is what makes a small local model usable for the job
+  - **`ask` no longer offers event types that hold no events.** JFR metadata declares every type the
+    JVM registered, so a recording produced with an agent that ships its own sampler lists an empty
+    `jdk.ExecutionSample` beside a vendor type carrying thousands of events — and a model told only
+    the names picks the one it recognises and queries nothing. Events are now counted once per
+    recording, cached across sessions under `$XDG_CACHE_HOME/jafar/event-counts` (keyed on path,
+    size and modification time), and types with no events are collapsed into a single line the
+    model is told not to query. The prompt also states that a type's package says nothing about its
+    relevance. `llm.count-events = false` skips the pass
   - **`ask` tells the model what each event type is for.** A recording documents itself — JFR puts
     `@Label` and `@Description` on event classes — and that text is now sent with the type list, so
     a type is chosen on meaning rather than on a name that shares a word with the question. It sits

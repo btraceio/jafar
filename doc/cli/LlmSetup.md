@@ -302,8 +302,20 @@ needs and gets their fields — with the types those fields lead to, so a path c
 That makes `sampledThread/javaName` something the model reads rather than invents. It costs one
 extra round trip, and about 1,200 characters instead of 24,000.
 
-No event data is sent, and no event counts: counting means reading the recording, and `ask` costs
-the same whether the file is 2 MB or 900 MB. `ask --dry-run` shows the first round in full.
+**Types with no events are separated out.** JFR metadata declares every type the JVM registered,
+whether or not it emitted anything — so a recording made with an agent that ships its own sampler
+lists an empty `jdk.ExecutionSample` next to a vendor type holding thousands of events, and a model
+told only the names picks the one it recognises. `ask` counts the events once, lists the types that
+have data with their counts, and collapses the rest into one line the model is told not to query.
+
+That count is a pass over the recording, done once and then cached under
+`$XDG_CACHE_HOME/jafar/event-counts` (else `~/.cache/jafar/`), keyed by the file's path, size and
+modification time, so later sessions reuse it and a replaced file does not answer from a stale
+count. It is the same pass the query answering your question makes anyway. Set
+`llm.count-events = false` to skip it on a recording large enough that one extra pass is not worth
+the accuracy.
+
+No event data is sent. `ask --dry-run` shows the first round in full.
 
 ## Settings
 
@@ -330,6 +342,7 @@ names listed, rather than silently becoming a variable.
 | `llm.confirm` | `false` | When true, `ask` prints the query but does not run it |
 | `llm.redact` | `true` | Redact sensitive fields before sending |
 | `llm.redact-fields` | see below | Replace the redaction list; a leading `+` extends it |
+| `llm.count-events` | `true` | Count events per type so empty types can be excluded; one pass, cached |
 
 **`llm.max-tokens` raises itself for a reasoning model.** The default is small because that is all
 an answer needs — a query and one line — and because the ceiling is what caps the bill when a model

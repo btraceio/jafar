@@ -31,6 +31,16 @@ Architecture, and the reasons it is shaped this way:
   scanning the recording. Type names and descriptions are attacker-controllable in a recording you
   did not produce, so they stay inside the `RECORDING_DATA` fence even though they now sit in the
   system prompt.
+- **Event counts decide which types are offered at all.** `scanMetadata` reads only the first
+  chunk's metadata, so `getAvailableTypes` is everything the JVM *declared* — including types that
+  emitted nothing. A recording from an agent with its own sampler carries an empty
+  `jdk.ExecutionSample` beside a vendor type with thousands of events, and a model given only names
+  picks the familiar one. `CommandDispatcher.eventCounts` counts once via
+  `JfrPathEvaluator.countAllEventTypes`, caches in-session and across sessions
+  (`EventCountCache`, keyed on path+size+mtime), and `renderInventory` puts zero-count types in a
+  separate "do not query" line. A type absent from a *successful* count is 0, not unknown — the
+  distinction matters, since -1 means counting did not happen and the model must infer nothing.
+  Disable with `llm.count-events = false`.
 - **Fields are fetched in a second round, not shipped in the prefix.** JFR is self-describing, so a
   field name cannot be inferred from a type name — the fields are whatever the recording declares,
   and a custom event's are unknowable in advance. Sending all of them costs ~9,800 tokens on an
