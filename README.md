@@ -510,18 +510,38 @@ See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-jo
 
 ## Ask Your Recording a Question
 
-`jfr-shell` can turn a question into a query, show you the query, and run it:
+`ask` — or `?` for short — investigates: it runs a query, reads the result, decides what to look at
+next, and concludes.
 
 ```
-jfr> ask which threads used the most CPU?
+jfr> ? why is this workload slow
+> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
+  3 rows
+| count | key      |
++-------+----------+
+| 8412  | main     |
+| 210   | worker-1 |
+
+The samples concentrate on one thread, so the next step is that thread's call sites
+rather than more parallelism.
+
+Transcript: ~/.jafar/investigations/ask-20260913-202249.jfrs
+```
+
+`as-query` is the one-shot form — one question, one query, shown and run:
+
+```
+jfr> as-query which threads used the most CPU?
 
 # Groups execution samples by thread name and ranks the ten busiest.
 
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 ```
 
-The query is always printed — so a wrong guess is visible, and you learn JfrPath as you go.
-The recording itself never leaves your machine: the model composes the query, the shell runs it.
+Every query is printed either way — so a wrong guess is visible, and you learn JfrPath as you go —
+and an investigation writes the queries it ran to a re-runnable `.jfrs` script, so its conclusion
+can be checked rather than trusted. The recording itself never leaves your machine: the model
+composes the queries, the shell runs them.
 
 Three ways to authenticate, in the order most people want them:
 

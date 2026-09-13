@@ -73,7 +73,7 @@ with an agent that ships its own sampler lists an empty `jdk.ExecutionSample` be
 holding thousands of events.
 
 This is not a bug in the session; it is what metadata means. It becomes a bug when something
-downstream treats the list as "what is in this recording" — which is how `ask` came to offer a model
+downstream treats the list as "what is in this recording" — which is how `as-query` came to offer a model
 an empty `jdk.ExecutionSample` and watch it query that instead of `datadog.ExecutionSample`. The
 model chose correctly from a list that was wrong.
 

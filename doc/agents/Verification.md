@@ -14,7 +14,7 @@ the output read. Not the unit test. Not the completer. The actual binary.
 
 ```bash
 ./gradlew :jfr-shell:shadowJar
-printf 'open rec.jfr\nask --dry-run which threads used the most CPU?\nexit\n' \
+printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\n' \
   | java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 ```
 
@@ -24,8 +24,8 @@ printf 'open rec.jfr\nask --dry-run which threads used the most CPU?\nexit\n' \
 > `[a-zA-Z_][a-zA-Z0-9_]*` and a setting is dotted. Every test passed, because every test called the
 > completer or the config directly. Tab completion was *offering names the shell would then refuse*.
 
-> **Case file — `ask` in the interactive shell.** Every `LlmCommandsTest` was green against a fake
-> host while `ask` answered "No query evaluator available for this session" in the real shell.
+> **Case file — `as-query` in the interactive shell.** Every `LlmCommandsTest` was green against a fake
+> host while it answered "No query evaluator available for this session" in the real shell.
 > The fake host was never the thing that was broken.
 
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
@@ -181,7 +181,7 @@ back: the bytes on the wire, the rows the model received, the JSON the tool retu
 Every bug in [DataShapes.md](DataShapes.md) survived a green test run, and each was caught the same
 way — by looking at a value rather than at control flow.
 
-> **Case file — the redaction that looked like it was working.** Driving `analyze` against a stub
+> **Case file — the redaction that looked like it was working.** Driving `ask` against a stub
 > and reading what the stub received showed:
 >
 > ```

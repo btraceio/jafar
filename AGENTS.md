@@ -73,7 +73,7 @@ Key components:
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
 | Shells, JfrPath, tab completion, backend plugins | [doc/agents/Shells.md](doc/agents/Shells.md) |
 | MCP server, tools, findings contract | [doc/agents/Mcp.md](doc/agents/Mcp.md) |
-| `ask` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
+| `ask` / `as-query` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
 | Release process | [doc/agents/Release.md](doc/agents/Release.md), [RELEASING.md](RELEASING.md) |
 | User-facing documentation | [doc/README.md](doc/README.md) |
 

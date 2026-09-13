@@ -38,6 +38,7 @@ public final class CommandCompleter implements ContextCompleter {
     "script",
     "record", // Scripting
     "ask",
+    "as-query",
     "explain",
     "analyze",
     "llm", // LLM

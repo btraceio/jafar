@@ -223,18 +223,19 @@ public final class LlmCommands {
    * flag rather than a separate command because it is a mode of this one: same question, same
    * bytes, differing only in whether they leave the machine.
    */
-  public void ask(String argument) {
+  public void asQuery(String argument) {
     boolean dryRun = hasDryRunFlag(argument);
     String question = stripDryRunFlag(argument);
 
     if (question == null || question.isBlank()) {
-      host.println("Usage: ask [--dry-run] <question>");
-      host.println("  e.g. ask which threads used the most CPU?");
-      host.println("       ask --dry-run which threads used the most CPU?");
+      host.println("Usage: as-query [--dry-run] <question>");
+      host.println("  e.g. as-query which threads used the most CPU?");
+      host.println("       as-query --dry-run which threads used the most CPU?");
+      host.println("  For a question one query cannot answer, use 'ask <question>'.");
       return;
     }
     if (dryRun) {
-      dryRunAsk(question);
+      dryRunAsQuery(question);
       return;
     }
 
@@ -409,7 +410,7 @@ public final class LlmCommands {
       case "cost" -> cost();
       default -> {
         host.println("Unknown: llm " + sub);
-        host.println("Usage: llm [status | cost]   (dry-run moved to 'ask --dry-run')");
+        host.println("Usage: llm [status | cost]   (dry-run moved to 'as-query --dry-run')");
       }
     }
   }
@@ -461,16 +462,16 @@ public final class LlmCommands {
    * production recordings.
    */
   public void dryRun(String question) {
-    // Retained for `llm dry-run`, which is an undocumented alias for `ask --dry-run`.
+    // Retained for `llm dry-run`, which is an undocumented alias for `as-query --dry-run`.
     if (question == null || question.isBlank()) {
-      host.println("Usage: ask --dry-run <question>");
+      host.println("Usage: as-query --dry-run <question>");
       return;
     }
-    dryRunAsk(question);
+    dryRunAsQuery(question);
   }
 
   /** Prints what an {@code ask} would send, and sends nothing. */
-  private void dryRunAsk(String question) {
+  private void dryRunAsQuery(String question) {
     LlmConfig config = config();
     LlmService.Result<LlmService> service = service(config);
     if (!service.isPresent()) {
@@ -585,7 +586,7 @@ public final class LlmCommands {
       host.println("The endpoint returned an empty reply. Nothing was run.");
       host.println(
           "Some models put their output in a separate reasoning field, which is not read here. "
-              + "Try a different model, or 'ask --dry-run' to check what is being sent.");
+              + "Try a different model, or 'as-query --dry-run' to check what is being sent.");
       return;
     }
 
@@ -611,9 +612,9 @@ public final class LlmCommands {
   public void analyze(String argument) {
     String question = stripDryRunFlag(argument);
     if (question.isBlank()) {
-      host.println("Usage: analyze [--dry-run] <question>");
-      host.println("Runs several queries, reads each result, and concludes. 'ask' is the one-shot");
-      host.println("form; this one is for questions a single query cannot answer.");
+      host.println("Usage: ask [--dry-run] <question>   ('?' is short for it)");
+      host.println("Runs several queries, reads each result, and concludes. 'as-query' is the");
+      host.println("one-shot form; this one is for questions a single query cannot answer.");
       return;
     }
 
@@ -622,8 +623,8 @@ public final class LlmCommands {
       // llm.confirm says: show me a query before it runs. An investigation picks its next query
       // from the last result, so there is no honest way to honour that and still investigate.
       // Checked before the backend is resolved, so this costs nothing and sends nothing.
-      host.println("llm.confirm is on, and 'analyze' cannot ask before each of several queries.");
-      host.println("Use 'ask' for one query you approve, or 'analyze --dry-run' to see the first");
+      host.println("llm.confirm is on, and 'ask' cannot show each of several queries first.");
+      host.println("Use 'as-query' for one query you approve, or 'ask --dry-run' to see the first");
       host.println("request. Nothing was sent.");
       return;
     }
@@ -782,11 +783,15 @@ public final class LlmCommands {
     return """
         LLM commands (require a backend module on the classpath, and for a hosted
         provider a credential):
-          ask [--dry-run] <q>   Turn a question into a query, show it, and run it
-          explain [--dry-run]   Explain the most recent result
-          analyze [--dry-run] <q>  Investigate over several queries and conclude
-          llm status            Backends, readiness, credential source, settings
-          llm cost              Token usage for this process
+          ask [--dry-run] <q>      Investigate over several queries and conclude
+          as-query [--dry-run] <q> Turn a question into one query, show it, run it
+          explain [--dry-run]      Explain the most recent result
+          llm status               Backends, readiness, credential source, settings
+          llm cost                 Token usage for this process
+
+        '?' is short for 'ask' and takes the rest of the line, with or without a
+        space: '?why is this slow' and 'ask why is this slow' are the same command.
+        'analyze' and 'investigate' are word aliases for it.
 
         --dry-run builds the identical request and prints it instead of sending
         it. It is a flag rather than a command because it is a mode of the two
@@ -794,7 +799,7 @@ public final class LlmCommands {
         leave the machine. On 'explain' it is the one worth reaching for, since
         that is the command that puts result rows into a prompt.
 
-        'ask' is one question, one query. 'analyze' runs several: it reads each
+        'as-query' is one question, one query. 'ask' runs several: it reads each
         result and decides what to look at next, which is what most real questions
         need. It prints every query and the rows it returned, up to llm.max-rows —
         the same rows the model was given — and writes the queries to a re-runnable
@@ -823,13 +828,15 @@ public final class LlmCommands {
         sent.
 
         Examples:
-          ask which threads used the most CPU?
-          ask what allocated the most bytes, by class?
-          ask show me file reads slower than 10ms
+          ask why is this workload slow
+          ? gc behaviour in detail
+          as-query which threads used the most CPU?
+          as-query what allocated the most bytes, by class?
+          as-query show me file reads slower than 10ms
           explain                       # describe the result just printed
-          ask --dry-run which threads used the most CPU?
+          as-query --dry-run which threads used the most CPU?
           explain --dry-run             # see the result rows before they are sent
-          llm status                    # before the first ask, to see what will be used
+          llm status                    # before the first question, to see what is used
 
           set llm.backend = ollama      # keep everything on this machine
           set llm.confirm = true        # print the query, do not run it

@@ -72,27 +72,27 @@ class LlmCommandsTest {
   }
 
   @Test
-  void askWithoutAQuestionShowsUsage() {
+  void asQueryWithoutAQuestionShowsUsage() {
     FakeHost host = new FakeHost();
-    new LlmCommands(host).ask("   ");
-    assertTrue(host.text().contains("Usage: ask [--dry-run] <question>"));
+    new LlmCommands(host).asQuery("   ");
+    assertTrue(host.text().contains("Usage: as-query [--dry-run] <question>"));
     assertTrue(host.queriesRun.isEmpty());
   }
 
   @Test
-  void askReportsWhenDisabledRatherThanFailingObscurely() {
+  void asQueryReportsWhenDisabledRatherThanFailingObscurely() {
     FakeHost host = new FakeHost();
     host.settings.put("llm.enabled", "false");
-    new LlmCommands(host).ask("why slow?");
+    new LlmCommands(host).asQuery("why slow?");
     assertTrue(host.text().contains("disabled"));
     assertTrue(host.text().contains("set llm.enabled = true"));
     assertTrue(host.queriesRun.isEmpty(), "nothing may run when the feature is off");
   }
 
   @Test
-  void askReportsAnUnknownBackendIdWithTheAvailableOnes() {
+  void asQueryReportsAnUnknownBackendIdWithTheAvailableOnes() {
     FakeHost host = new FakeHost();
-    new LlmCommands(host).ask("why slow?");
+    new LlmCommands(host).asQuery("why slow?");
     String text = host.text();
     assertTrue(text.contains("No LLM backend with id 'test-nonexistent'"), text);
     assertTrue(text.contains("Available:"), text);
@@ -144,7 +144,7 @@ class LlmCommandsTest {
     // early draft is not left with a broken command. It points at the new form.
     FakeHost host = new FakeHost();
     new LlmCommands(host).llm(List.of("dry-run"));
-    assertTrue(host.text().contains("Usage: ask --dry-run <question>"), host.text());
+    assertTrue(host.text().contains("Usage: as-query --dry-run <question>"), host.text());
   }
 
   @Test
@@ -190,7 +190,7 @@ class LlmCommandsTest {
   @Test
   void askStripsTheDryRunFlagFromTheQuestion() {
     FakeHost host = new FakeHost();
-    new LlmCommands(host).ask("--dry-run which threads used the most CPU?");
+    new LlmCommands(host).asQuery("--dry-run which threads used the most CPU?");
 
     // The backend is unreachable in tests, so the interesting assertion is that the flag never
     // reached the question: if it had, the shell would ask the model about "--dry-run".
@@ -202,7 +202,7 @@ class LlmCommandsTest {
   @Test
   void theFlagIsRecognisedAfterTheQuestionToo() {
     FakeHost host = new FakeHost();
-    new LlmCommands(host).ask("which threads used the most CPU? --dry-run");
+    new LlmCommands(host).asQuery("which threads used the most CPU? --dry-run");
 
     // Someone typing the flag at the end means it, and treating it as part of the question would
     // send the very request they were trying not to send.
@@ -212,10 +212,10 @@ class LlmCommandsTest {
   @Test
   void askWithOnlyTheFlagShowsUsage() {
     FakeHost host = new FakeHost();
-    new LlmCommands(host).ask("--dry-run");
+    new LlmCommands(host).asQuery("--dry-run");
 
     String all = String.join("\n", host.output);
-    assertTrue(all.contains("Usage: ask [--dry-run] <question>"), all);
+    assertTrue(all.contains("Usage: as-query [--dry-run] <question>"), all);
   }
 
   @Test

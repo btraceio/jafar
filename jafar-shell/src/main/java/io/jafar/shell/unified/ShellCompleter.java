@@ -31,6 +31,7 @@ public final class ShellCompleter implements Completer {
     "info",
     "modules",
     "ask",
+    "as-query",
     "explain",
     "llm",
     "help",
@@ -62,7 +63,8 @@ public final class ShellCompleter implements Completer {
     switch (cmd) {
       case "show" -> completeShow(line, candidates);
       case "llm" -> completeLlm(line, candidates, words, wordIndex);
-      case "ask", "explain" -> completeDryRunFlag(line, candidates);
+      case "ask", "as-query", "analyze", "investigate", "explain" ->
+          completeDryRunFlag(line, candidates);
       case "open" -> completeOpen(reader, line, candidates);
       case "use", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);

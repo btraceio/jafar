@@ -202,8 +202,22 @@ public final class Shell implements AutoCloseable {
           continue;
         }
 
-        if (input.startsWith("ask ") || input.equals("ask")) {
-          llmCommands().ask(input.length() > 3 ? input.substring(4).trim() : "");
+        // '?' is short for 'ask', with or without a space after it, so '?why is this slow' and
+        // 'ask why is this slow' are one command. No query language here starts with it.
+        if (input.startsWith("?")) {
+          llmCommands().analyze(input.substring(1).trim());
+          continue;
+        }
+
+        if (matchesCommand(input, "ask")
+            || matchesCommand(input, "analyze")
+            || matchesCommand(input, "investigate")) {
+          llmCommands().analyze(argumentOf(input));
+          continue;
+        }
+
+        if (matchesCommand(input, "as-query")) {
+          llmCommands().asQuery(argumentOf(input));
           continue;
         }
 
@@ -546,6 +560,17 @@ public final class Shell implements AutoCloseable {
     }
   }
 
+  /** Whether the line is exactly this command, or this command followed by arguments. */
+  private static boolean matchesCommand(String input, String command) {
+    return input.equals(command) || input.startsWith(command + " ");
+  }
+
+  /** Everything after the first word, trimmed; empty when the line is the command alone. */
+  private static String argumentOf(String input) {
+    int space = input.indexOf(' ');
+    return space < 0 ? "" : input.substring(space + 1).trim();
+  }
+
   /** The LLM commands, primed with the most recent result so {@code explain} has something. */
   private io.jafar.shell.cli.LlmCommands llmCommandsWithLastResult() {
     io.jafar.shell.cli.LlmCommands commands = llmCommands();
@@ -626,6 +651,11 @@ public final class Shell implements AutoCloseable {
                 @Override
                 public void renderRows(List<Map<String, Object>> rows) {
                   printResult(rows);
+                }
+
+                @Override
+                public void rememberResult(String query, List<Map<String, Object>> rows) {
+                  Shell.this.rememberResult(query, rows);
                 }
 
                 @Override
@@ -833,9 +863,14 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  show <query>       Execute a query on current session");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");
-    terminal.writer().println("  ask <question>     Turn a question into a query, show it, run it");
+    terminal
+        .writer()
+        .println("  ask <question>     Several queries, read each, conclude ('?' for short)");
+    terminal
+        .writer()
+        .println("  as-query <question> Turn a question into one query, show it, run it");
     terminal.writer().println("  explain            Explain the most recent result");
-    terminal.writer().println("                     (both take --dry-run: print, send nothing)");
+    terminal.writer().println("                     (each takes --dry-run: print, send nothing)");
     terminal.writer().println("  llm                status | cost");
     terminal.writer().println();
     terminal.writer().println("General:");
