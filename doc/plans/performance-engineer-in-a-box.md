@@ -53,8 +53,9 @@ which tool answers it, what counts as evidence, and how to report. Claude Code's
   (`JfrAnalysisTools.java:3032-3110`). It *recommends* `jfr_use` and `jfr_tsa` rather than running
   them (:3066, :3109, :3129).
 - **G7: Docs understate the surface.** `jfr-mcp/README.md:50-66` and `doc/mcp/Tutorial.md:20-34`
-  list 13 JFR tools; the server registers 36 across four formats. `AGENTS.md:364-372` is the only
-  accurate list and it also omits `hdump_*`.
+  list 13 JFR tools; the server registers 36 across four formats. The agent-facing tool list
+  ([doc/agents/Mcp.md](../agents/Mcp.md#mcp-server-jfr-mcp), which was in `AGENTS.md` when this was
+  written) is the only accurate one and it also omits `hdump_*`.
 - **G8: `jafar-shell` lacks scripting.** `jafar-shell/.../unified/Shell.java` wires `open`,
   `sessions`, `use`, `close`, `info`, `show`, `checkLeaks`, `modules`; the `set`/`vars`/`if`
   machinery from `jfr-shell`'s `CommandDispatcher` is not connected. Cross-format investigations
@@ -210,8 +211,9 @@ Claude Code is already the code-change half.
 - `perf-regression-gate` workflow for CI: a GitHub Action that runs the benchmark with JFR on
   the PR and on the base, uploads both recordings, and invokes the agent (Claude Code Action or
   Agent SDK) to comment on the PR with attributable regressions and the query that shows each.
-  The `bench/**` branch convention in `AGENTS.md:121-132` is a precedent for exactly this kind of
-  gated benchmark run.
+  The `bench/**` branch convention
+  ([doc/agents/Build.md](../agents/Build.md#go-parser-commands), in `AGENTS.md` when this was
+  written) is a precedent for exactly this kind of gated benchmark run.
 - Hooks in `hooks/hooks.json`: a `PostToolUse` hook on `jfr_compare` that persists the result
   JSON under the plugin data dir, so a `Stop` hook can refuse to end a `perf-fix` turn that
   claims a win without a stored significant comparison. This encodes the "prove it" rule
