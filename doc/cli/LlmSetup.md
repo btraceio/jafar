@@ -275,7 +275,13 @@ nothing.
 ## Settings
 
 All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment variable, or a line in
-`~/.config/jafar/llm.properties` — and visible in `vars`:
+`~/.config/jafar/llm.properties` — and visible in `vars`.
+
+A setting's value is taken as **literal text**, unlike an ordinary `set`, whose right-hand side is
+an expression. So `set llm.base-url = http://localhost:11434/v1` needs no quotes, and
+`set llm.max-rows = 20` stores the integer rather than coercing it. Quotes are stripped if you use
+them. A name that is not a setting but starts with `llm.` is reported as a typo, with the real
+names listed, rather than silently becoming a variable.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -293,6 +299,10 @@ All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment vari
 | `llm.redact-fields` | see below | Replace the redaction list; a leading `+` extends it |
 
 ```
+jfr> set llm.backed = ollama
+Unknown setting: llm.backed
+Settings are: llm.enabled, llm.backend, llm.model, ...
+
 jfr> set llm.backend = ollama
 jfr> set llm.model = qwen2.5-coder:14b
 jfr> set llm.redact-fields = +sessionId,userId

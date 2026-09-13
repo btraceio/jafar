@@ -24,6 +24,7 @@ import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
 import io.jafar.shell.cli.completion.completers.VariableReferenceCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.llm.LlmSettings;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -273,26 +274,14 @@ public final class ShellCompleter implements Completer {
    * list and the keys that class actually reads ever diverge — a setting that completes but is
    * never read is worse than one that does not complete.
    */
-  private static final String[][] LLM_SETTINGS = {
-    {"llm.enabled", "master switch"},
-    {"llm.backend", "anthropic | openai | ollama | auto"},
-    {"llm.model", "model id; defaults to the backend's own"},
-    {"llm.base-url", "endpoint, for the OpenAI-compatible backends"},
-    {"llm.api-key", "bearer token; overrides the provider's env var"},
-    {"llm.max-tokens", "output ceiling per request"},
-    {"llm.max-rows", "result rows shown to the model by 'explain'"},
-    {"llm.max-retries", "correction attempts after a query fails to parse (0-3)"},
-    {"llm.timeout", "request timeout in seconds"},
-    {"llm.confirm", "when true, 'ask' prints the query but does not run it"},
-    {"llm.redact", "redact sensitive fields before sending"},
-    {"llm.redact-fields", "replace the redaction list; a leading + extends it"},
-  };
-
   private void completeLlmSettingNames(ParsedLine line, List<Candidate> candidates) {
     String partial = line.word().toLowerCase(Locale.ROOT);
-    for (String[] setting : LLM_SETTINGS) {
-      if (setting[0].startsWith(partial)) {
-        candidates.add(new Candidate(setting[0], setting[0], null, setting[1], null, null, true));
+    // Same list the `set` command validates against — see LlmSettings for why it is shared.
+    for (LlmSettings.Setting setting : LlmSettings.all()) {
+      if (setting.name().startsWith(partial)) {
+        candidates.add(
+            new Candidate(
+                setting.name(), setting.name(), null, setting.description(), null, null, true));
       }
     }
   }

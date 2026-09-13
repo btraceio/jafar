@@ -13,6 +13,7 @@ import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
+import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -2208,11 +2209,51 @@ public class CommandDispatcher {
       return;
     }
     if (!varName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-      io.error("Invalid variable name: " + varName);
-      return;
+      // LLM settings are dotted and hyphenated on purpose ('llm.base-url'), which the variable
+      // rule cannot allow in general: in an expression '${a.b}' means field b of variable a. They
+      // are settings, never substituted, so they are admitted by name instead.
+      if (LlmSettings.isSetting(varName)) {
+        varName = varName.trim().toLowerCase(java.util.Locale.ROOT);
+      } else if (LlmSettings.looksLikeSetting(varName)) {
+        io.error("Unknown setting: " + varName);
+        io.error("Settings are: " + String.join(", ", LlmSettings.names()));
+        return;
+      } else {
+        io.error("Invalid variable name: " + varName);
+        io.error(
+            "Names may contain letters, digits and underscores, and cannot start with a digit.");
+        return;
+      }
     }
 
     VariableStore store = getTargetStore(isGlobal);
+
+    if (LlmSettings.isSetting(varName)) {
+      // A setting's value is text, and must not go through the expression machinery below. That
+      // machinery reads a bare word as a variable reference and then as a query — so
+      // 'set llm.backend = ollama' answered "Unknown root: ollama" — and it coerces a bare integer
+      // to a double, so 'set llm.max-rows = 20' stored 20.0, which then failed to parse as an int
+      // and silently fell back to the default. Both looked like they had worked.
+      String literal = exprPart;
+      if (VariableSubstitutor.hasVariables(literal)) {
+        try {
+          literal = new VariableSubstitutor(getSessionStore(), globalStore).substitute(literal);
+        } catch (Exception e) {
+          io.error("Variable substitution failed: " + e.getMessage());
+          return;
+        }
+      }
+      if (literal.length() >= 2
+          && ((literal.startsWith("\"") && literal.endsWith("\""))
+              || (literal.startsWith("'") && literal.endsWith("'")))) {
+        literal = literal.substring(1, literal.length() - 1);
+      }
+      store.set(varName, new ScalarValue(literal));
+      if (verbose) {
+        io.println("Set " + varName + " = " + literal);
+      }
+      return;
+    }
 
     // Check for map literal first (before substitution)
     if (exprPart.startsWith("{")) {
