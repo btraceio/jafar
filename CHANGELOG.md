@@ -124,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     settings file produced "No credentials found". A configured key takes precedence over
     `ANTHROPIC_API_KEY`, which may be left over from something else in the same terminal
   - **Tab completion and help**: `ask`, `as-query`, `explain` and `llm` complete as commands in
-    both shells, `llm` completes its subcommands, `set llm.` completes all twelve settings with
+    both shells, `llm` completes its subcommands, `set llm.` completes every setting with
     descriptions, `help` lists them as subjects (including in the interactive shell's own `help`,
     which listed none of them), and `help ask` carries worked examples. A test reads
     `LlmConfig.java` and fails if a setting it reads is not offered, so the list cannot drift
