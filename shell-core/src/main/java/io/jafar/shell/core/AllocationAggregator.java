@@ -1,5 +1,6 @@
 package io.jafar.shell.core;
 
+import io.jafar.parser.api.Values;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -82,7 +83,7 @@ public final class AllocationAggregator {
   }
 
   private static String extractClassName(Map<String, Object> row) {
-    // Try objectClass.name first (flattened field from JFR)
+    // Try objectClass.name first (flattened field, produced by some callers and by tests)
     Object v = row.get("objectClass.name");
     if (v instanceof String s && !s.isEmpty()) {
       return s;
@@ -92,12 +93,46 @@ public final class AllocationAggregator {
     if (v instanceof String s && !s.isEmpty()) {
       return s;
     }
-    // Try objectClass as a map with a "name" key
+    // The shape the untyped parser actually produces: objectClass is a complex value whose
+    // "name" field is itself a wrapped java.lang.String constant, i.e.
+    // {objectClass: {name: {value: {string: "[B"}}}}. Values.get unwraps the complex nodes,
+    // and the trailing "string" step reaches the constant's payload.
+    String nested = deepString(Values.get(row, "objectClass", "name"));
+    if (nested != null) {
+      return nested;
+    }
+    // Try objectClass as a plain map with a "name" key
     if (v instanceof Map<?, ?> m) {
-      Object name = m.get("name");
-      if (name instanceof String s && !s.isEmpty()) {
-        return s;
+      String name = deepString(m.get("name"));
+      if (name != null) {
+        return name;
       }
+    }
+    return null;
+  }
+
+  /**
+   * Resolves a possibly-wrapped string value.
+   *
+   * <p>String constants arrive wrapped by the parser — as {@code {string: "..."}}, and behind a
+   * {@code value} indirection when the field is a complex type. Both layers can nest, so this
+   * unwraps until it reaches a string or runs out of wrappers.
+   */
+  private static String deepString(Object value) {
+    Object current = value;
+    for (int depth = 0; depth < 8 && current != null; depth++) {
+      if (current instanceof String s) {
+        return s.isEmpty() ? null : s;
+      }
+      if (current instanceof Map<?, ?> map) {
+        Object next = map.containsKey("string") ? map.get("string") : map.get("value");
+        if (next == null) {
+          return null;
+        }
+        current = next;
+        continue;
+      }
+      return null;
     }
     return null;
   }
@@ -117,8 +152,25 @@ public final class AllocationAggregator {
       int nl = s.indexOf('\n');
       return nl > 0 ? s.substring(0, nl).trim() : s.trim();
     }
+
+    // The shape the untyped parser produces: frames is an array node, and each frame's method
+    // and declaring type carry wrapped string names. Values.get unwraps the complex and array
+    // nodes; deepString peels the string constants. Values.get throws when the container is not
+    // an array, so an unexpected shape falls through to the plain-list handling below rather
+    // than failing the whole aggregation.
+    try {
+      String topMethod = deepString(Values.get(row, "stackTrace", "frames", 0, "method", "name"));
+      if (topMethod != null) {
+        String topType =
+            deepString(Values.get(row, "stackTrace", "frames", 0, "method", "type", "name"));
+        return formatSite(topType, topMethod);
+      }
+    } catch (RuntimeException ignored) {
+      // Not the array-node shape; try the plain-list shape below.
+    }
+
     if (v instanceof Map<?, ?> m) {
-      // stackTrace may be a structured object; try "frames" list
+      // stackTrace may be a structured object holding a plain list of frames
       Object frames = m.get("frames");
       if (frames instanceof List<?> list && !list.isEmpty()) {
         Object top = list.get(0);
@@ -127,17 +179,36 @@ public final class AllocationAggregator {
           Object method = fm.get("method");
           if (method instanceof String s) return s;
           if (method instanceof Map<?, ?> mm) {
-            Object mName = mm.get("name");
-            Object mType = mm.get("type");
-            if (mName != null && mType != null) {
-              return mType + "." + mName;
+            String mName = deepString(mm.get("name"));
+            String mType = deepString(nestedName(mm.get("type")));
+            if (mName != null) {
+              return formatSite(mType, mName);
             }
-            if (mName != null) return String.valueOf(mName);
           }
         }
       }
     }
     return null;
+  }
+
+  /** Reaches the {@code name} of a possibly-wrapped type node. */
+  private static Object nestedName(Object typeNode) {
+    Object current = typeNode;
+    for (int depth = 0; depth < 4 && current != null; depth++) {
+      if (current instanceof Map<?, ?> map) {
+        if (map.containsKey("name")) {
+          return map.get("name");
+        }
+        current = map.get("value");
+        continue;
+      }
+      return current;
+    }
+    return null;
+  }
+
+  private static String formatSite(String type, String method) {
+    return type != null ? type.replace('/', '.') + "." + method : method;
   }
 
   /**

@@ -508,9 +508,87 @@ jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=mon
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.
 
+## Ask Your Recording a Question
+
+`ask` — or `?` for short — investigates: it runs a query, reads the result, decides what to look at
+next, and concludes.
+
+```
+jfr> ? why is this workload slow
+> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)
+  3 rows
+| count | key      |
++-------+----------+
+| 8412  | main     |
+| 210   | worker-1 |
+
+The samples concentrate on one thread, so the next step is that thread's call sites
+rather than more parallelism.
+
+Transcript: ~/.jafar/investigations/ask-20260913-202249.jfrs
+```
+
+`as-query` is the one-shot form — one question, one query, shown and run:
+
+```
+jfr> as-query which threads used the most CPU?
+
+# Groups execution samples by thread name and ranks the ten busiest.
+
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
+```
+
+Every query is printed either way — so a wrong guess is visible, and you learn JfrPath as you go —
+and an investigation writes the queries it ran to a re-runnable `.jfrs` script, so its conclusion
+can be checked rather than trusted. The recording itself never leaves your machine: the model
+composes the queries, the shell runs them.
+
+Three ways to authenticate, in the order most people want them:
+
+```bash
+# 1. A key in a file only you can read — no environment variable, no CLI to install
+mkdir -p ~/.config/jafar
+printf 'llm.api-key = sk-ant-...\n' > ~/.config/jafar/llm.properties
+chmod 600 ~/.config/jafar/llm.properties
+
+# 2. Or the provider's environment variable
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 3. Or keylessly, if you have the Anthropic CLI (optional — note the plural 'anthropics')
+brew install anthropics/tap/ant && ant auth login
+```
+
+Or none of the above: `set llm.backend = ollama` runs a local model, and nothing leaves the machine.
+
+`ask --dry-run <question>` prints exactly what would be sent without sending it, and result data is
+redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
+**[the tutorial](doc/cli/AskTutorial.md)** and **[what leaves your machine](doc/cli/LlmPrivacy.md)**.
+
+## Claude Code Plugin
+
+`jafar-perf` adds the methodology the tools do not carry: nine skills (`triage`, `cpu`, `latency`,
+`gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`) and seven agents that know *which*
+analysis to run on an unfamiliar recording or heap dump, not just how to run one.
+
+```
+/plugin marketplace add btraceio/jafar-perf-box
+/plugin install jafar-perf@btraceio
+```
+
+The plugin bundles `.mcp.json`, so installing it **also registers the `jafar` MCP server** described
+below — no separate `claude mcp add` is needed. [JBang](https://www.jbang.dev) must be on your PATH;
+it fetches the server on first use.
+
+It lives in **[btraceio/jafar-perf-box](https://github.com/btraceio/jafar-perf-box)**, not in this
+repository: adding a marketplace clones its repository, and there is no reason to pull Jafar's
+binary test recordings onto a machine that only wants the skills.
+
 ## MCP Server
 
 JAFAR includes an MCP (Model Context Protocol) server that enables AI agents like Claude to analyze JFR recordings. See **[jfr-mcp/README.md](jfr-mcp/README.md)** for details.
+
+Installing the plugin above already registers it; the rest of this section is for using the server
+on its own, or from a client other than Claude Code.
 
 ### Quick Install
 

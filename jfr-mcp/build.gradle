@@ -189,7 +189,13 @@ shadowJar {
     mergeServiceFiles()
 
     manifest {
-        attributes 'Main-Class': 'io.jafar.mcp.JafarMcpServer'
+        attributes(
+            'Main-Class': 'io.jafar.mcp.JafarMcpServer',
+            // Read back at runtime for the MCP handshake's serverInfo.version. Without it the
+            // server has to carry a literal, which is how it came to advertise 0.10.0 for sixteen
+            // releases.
+            'Implementation-Version': component_version,
+        )
     }
 }
 

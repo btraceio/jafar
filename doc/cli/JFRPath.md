@@ -106,6 +106,42 @@ events/jdk.FileRead[path~"/tmp/.*"]
 metadata/jdk.types.Method[name="toString"]
 ```
 
+### Numeric Literals and Units
+
+Numeric literals accept unit suffixes, so a filter reads the way the value does.
+
+**Size suffixes** are binary and apply to byte-valued fields:
+
+| Suffix | Multiplier |
+|--------|-----------|
+| `K`, `KB` | 1024 |
+| `M`, `MB` | 1024² |
+| `G`, `GB` | 1024³ |
+
+**Duration suffixes** convert to nanoseconds, which is how JFR stores durations:
+
+| Suffix | Value in nanoseconds |
+|--------|---------------------|
+| `ns` | 1 |
+| `us` | 1 000 |
+| `ms` | 1 000 000 |
+| `s` | 1 000 000 000 |
+
+Suffixes are case-insensitive, and work with decimals (`1.5ms` is 1 500 000 ns). A bare
+number carries the field's own unit, so `[duration>10000000]` and `[duration>10ms]` are the
+same filter.
+
+There is deliberately no minute suffix: `m` already means mebibytes, and a silently wrong
+unit is worse than a parse error.
+
+**Examples**:
+```
+events/jdk.FileRead[bytes>1MB]
+events/jdk.GCPhasePause[duration>10ms]
+events/jdk.JavaMonitorEnter[duration>1ms] | count()
+events/jdk.SocketRead[duration>500us and bytes>4KB]
+```
+
 ### Boolean Expression Filters
 
 Complex conditions with functions and logic:
@@ -418,7 +454,20 @@ Group results by key and apply aggregation function with optional sorting.
 - `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
 - `asc` - Sort ascending (default: `false`, descending)
 
-**Returns**: `{ "key": groupKey, "<agg>": result }`
+**Returns**: `{ "key": groupKey, "<agg>": result }` — so `agg=sum` produces a column called `sum`,
+`agg=count` one called `count`. Later stages accept either that name or `value`.
+
+**Unknown keys are rejected.** If events reach the grouping and none of them yields a key, the query
+fails with the field names the type does have, rather than returning an empty result that reads like
+"this recording has no such events":
+
+```
+jfr> events/jdk.GarbageCollection | groupBy(gcType, agg=count)
+Error: groupBy: key 'gcType' matched nothing in 218 events of jdk.GarbageCollection.
+       Available: [cause, duration, eventThread, gcId, longestPause, name, startTime, sumOfPauses]
+```
+
+A group-by over a type with no events at all is still an empty result, not an error.
 
 **Examples**:
 ```
@@ -449,7 +498,9 @@ Sort rows by any field in the current result set. Works after any operator that 
 
 **Key constraint**: Can only sort by fields available after previous operators:
 - After `select(a, b)` → only `a`, `b` available
-- After `groupBy(x)` → only `key`, `<aggFunc>` available
+- After `groupBy(x)` → only `key`, `<aggFunc>` available — plus `value` as an alias for the
+  aggregate column, so `groupBy(path, agg=sum, value=bytes) | sortBy(value)` and `| sortBy(sum)`
+  are the same sort. `top(n, by=value)` reads it the same way.
 - After `len(path)` → all original fields + `len`
 
 **Examples**:

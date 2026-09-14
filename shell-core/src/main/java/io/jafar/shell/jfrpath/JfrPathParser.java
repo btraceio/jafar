@@ -435,9 +435,26 @@ public final class JfrPathParser {
     if (pos == start) throw error("Expected literal");
     String num = input.substring(start, pos);
 
-    // Size suffixes: KB/K, MB/M, GB/G (case-insensitive)
+    // Duration suffixes: ns, us, ms, s (case-insensitive) -> nanoseconds, matching how JFR
+    // stores durations. Checked before the size suffixes so that "10ms" is not read as "10M"
+    // followed by a stray "s". There is deliberately no minute suffix: "m" already means
+    // mebibytes here, and a silently wrong unit is worse than a parse error.
     long multiplier = 1;
-    if (startsWithIgnoreCase("KB") && isWordBoundaryAt(pos + 2)) {
+    if (startsWithIgnoreCase("ns") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      // nanoseconds: multiplier stays 1
+    } else if (startsWithIgnoreCase("us") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1_000L;
+    } else if (startsWithIgnoreCase("ms") && isWordBoundaryAt(pos + 2)) {
+      pos += 2;
+      multiplier = 1_000_000L;
+    } else if (startsWithIgnoreCase("s") && isWordBoundaryAt(pos + 1)) {
+      pos += 1;
+      multiplier = 1_000_000_000L;
+    }
+    // Size suffixes: KB/K, MB/M, GB/G (case-insensitive)
+    else if (startsWithIgnoreCase("KB") && isWordBoundaryAt(pos + 2)) {
       pos += 2;
       multiplier = 1024;
     } else if (startsWithIgnoreCase("MB") && isWordBoundaryAt(pos + 2)) {

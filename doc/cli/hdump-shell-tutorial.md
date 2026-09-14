@@ -662,13 +662,13 @@ hdump> open recording.jfr
 hdump> open dump.hprof
 
 # Enrich class histogram with allocation data from JFR
-hdump> classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+hdump> classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample")
 
 # Find high-churn classes: many allocations but few survivors in the heap
-hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
 
 # Top classes by total allocation weight
-hdump> classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
+hdump> classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(10)
 ```
 
 The JFR correlation adds enrichment columns: `allocCount`, `allocWeight`, `allocRate`,

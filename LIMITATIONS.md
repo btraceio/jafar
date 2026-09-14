@@ -176,7 +176,7 @@ exec.submit(() -> p.run()); // ❌ Don't share parser across threads
 ## Reporting Issues
 
 If you encounter limitations not documented here, please report them at:
-https://github.com/jbachorik/jafar/issues
+https://github.com/btraceio/jafar/issues
 
 When reporting, please include:
 - JAFAR version

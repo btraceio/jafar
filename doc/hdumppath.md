@@ -794,13 +794,13 @@ open recording.jfr
 open dump.hprof
 
 # Enrich class histogram with JFR allocation data
-classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample")
 
 # Find high-alloc, low-retention classes (churn)
-classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000 and retained < 1MB)
+classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000 and retained < 1MB)
 
 # Top classes by allocation weight
-classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(20)
+classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(20)
 ```
 
 ## Complete Examples
@@ -883,13 +883,13 @@ open recording.jfr
 open dump.hprof
 
 # Enrich class histogram with allocation data from JFR
-classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample", by=class)
+classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample")
 
 # Find high-churn classes: many allocations but few survivors
-classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
+classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000) | sortBy(survivalRatio asc) | head(20)
 
 # Top allocation weight classes
-classes | join(session=1, root="jdk.ObjectAllocationSample", by=class) | sortBy(allocWeight desc) | top(10)
+classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(10)
 ```
 
 ### Finding Specific Objects

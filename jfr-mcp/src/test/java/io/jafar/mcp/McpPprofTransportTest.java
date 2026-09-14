@@ -81,7 +81,8 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofCloseSucceeds() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\",\"alias\":\"p\"}");
+    assertSuccess(
+        harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\",\"alias\":\"p\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_close", "{\"sessionId\":\"p\"}");
     assertSuccess(resp, 2);
   }
@@ -92,7 +93,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofQueryCountReturnsResult() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_query", "{\"query\":\"samples | count\"}");
     assertSuccess(resp, 2);
   }
@@ -103,7 +104,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofSummaryReturnsSampleTypes() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_summary", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("sampleTypes"));
@@ -115,7 +116,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofFlamegraphReturnsRows() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_flamegraph", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("rows"));
@@ -127,7 +128,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofHotmethodsReturnsTopMethods() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_hotmethods", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("topMethods"));
@@ -139,7 +140,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofUseReturnsReport() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_use", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("USE"));
@@ -151,7 +152,7 @@ class McpPprofTransportTest extends McpTransportTestBase {
 
   @Test
   void pprofTsaReturnsThreadDistribution() throws Exception {
-    harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}");
+    assertSuccess(harness.callTool(1, "pprof_open", "{\"path\":\"" + profilePath + "\"}"), 1);
     JsonNode resp = harness.callTool(2, "pprof_tsa", "{}");
     assertSuccess(resp, 2);
     assertTrue(resp.at("/result/content/0/text").asText().contains("TSA"));
