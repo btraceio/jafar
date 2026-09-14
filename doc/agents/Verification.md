@@ -150,7 +150,7 @@ named failing set — so a reader can tell growth from regression.
 If a list is duplicated, the copies will disagree, and the disagreement will be invisible until a
 user hits it.
 
-> **Case file — the twelve settings.** `ShellCompleter` held a private `LLM_SETTINGS` table; `set`
+> **Case file — the `llm.*` settings.** `ShellCompleter` held a private `LLM_SETTINGS` table; `set`
 > validated against a regex that matched none of them. They are now
 > `io.jafar.shell.core.llm.LlmSettings` in `shell-core`, read by the completer, the `set`
 > validation, and the error message that lists valid names.
