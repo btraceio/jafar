@@ -288,8 +288,12 @@ public final class StreamingChunkParser implements AutoCloseable {
       long headerSize) {
     return executor.submit(
         () -> {
-          processChunk(chunkStream, chunkHeader, listener, headerSize);
-          return true;
+          try {
+            processChunk(chunkStream, chunkHeader, listener, headerSize);
+            return true;
+          } finally {
+            chunkStream.close();
+          }
         });
   }
 
