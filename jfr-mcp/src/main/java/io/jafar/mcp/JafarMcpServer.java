@@ -69,6 +69,7 @@ import tools.jackson.databind.ObjectMapper;
  *   <li>{@code jfr_hotmethods} - Hot method identification
  *   <li>{@code jfr_use} - USE Method resource analysis (Utilization, Saturation, Errors)
  *   <li>{@code jfr_tsa} - Thread State Analysis (TSA Method)
+ *   <li>{@code jfr_compare} - Compare two recordings for regression detection
  *   <li>{@code jfr_diagnose} - Automated performance diagnosis
  *   <li>{@code jfr_stackprofile} - Structured stack profiling with time-series and thread breakdown
  * </ul>
@@ -576,6 +577,7 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrHotmethodsTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrUseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrTsaTool()));
+    tools.add(withActivityTracking(jfrAnalysisTools.createJfrCompareTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpOpenTool()));
