@@ -319,7 +319,8 @@ Together they provide a powerful interactive environment for JFR analysis:
 - **Session-based**: Open JFR files and maintain analysis state
 - **JfrPath Query Language**: Concise path-based queries with filtering, aggregation, and transformations
 - **Event Decoration**: Join/correlate events by time overlap or correlation keys
-- **Built-in Commands**: `show`, `metadata`, `chunks`, `cp`, `open`, `sessions`, `info`, `help`
+- **Session Export/Import**: Save and share complete analysis sessions (variables, queries, settings)
+- **Built-in Commands**: `show`, `metadata`, `chunks`, `cp`, `open`, `sessions`, `info`, `export`, `import`, `help`
 - **Multiple Output Formats**: Table (default) and JSON
 - **Example Scripts**: Pre-built analysis examples in `jfr-shell/src/main/resources/examples/`
 
@@ -345,6 +346,14 @@ Note: the event path is always `events/<EventTypeName>`, not `show <EventTypeNam
 - Decorator fields accessed via `$decorator.` prefix
 - Memory-efficient lazy evaluation
 - Examples: monitor contention analysis, request tracing, GC impact assessment
+
+**Session Export/Import**
+- Export complete session state to JSON (variables, queries, settings, recording info)
+- Import previously exported sessions to restore analysis state
+- Options: `--include-results` to cache query results, `--max-rows` to limit result size
+- Path remapping for sharing across machines: `--remap-path` on import
+- Use cases: save progress, share analysis templates, document incidents
+- Example: `export --include-results analysis.json` then `import --alias restored analysis.json`
 
 #### JFR Shell Usage:
 ```bash
