@@ -1,6 +1,7 @@
 package io.jafar.mcp.session;
 
 import io.jafar.hdump.shell.HeapSession;
+import io.jafar.shell.core.RequestScope;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
 import java.io.IOException;
@@ -53,7 +54,13 @@ public final class HeapSessionRegistry {
   private int nextId = 1;
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
-  private Integer currentSessionId = null;
+
+  /**
+   * "Current session" pointer, keyed by {@link RequestScope#current()} rather than a single
+   * JVM-wide value — see {@link RequestScope} for why this matters when one registry instance
+   * serves several concurrent MCP clients (SSE/daemon mode).
+   */
+  private final Map<String, Integer> currentSessionIdByScope = new HashMap<>();
 
   /**
    * Opens a heap dump file and creates a new session.
@@ -80,7 +87,7 @@ public final class HeapSessionRegistry {
     if (alias != null) {
       idsByAlias.put(alias, id);
     }
-    currentSessionId = id;
+    currentSessionIdByScope.put(RequestScope.current(), id);
 
     LOG.info("Opened heap session {} for: {}", id, path);
     return info;
@@ -111,6 +118,7 @@ public final class HeapSessionRegistry {
    * @return the current session, or empty if none
    */
   public synchronized Optional<SessionInfo> getCurrent() {
+    Integer currentSessionId = currentSessionIdByScope.get(RequestScope.current());
     if (currentSessionId == null) {
       return Optional.empty();
     }
@@ -179,8 +187,13 @@ public final class HeapSessionRegistry {
     } catch (IOException e) {
       LOG.warn("Error closing heap session {}: {}", info.id(), e.getMessage());
     }
-    if (currentSessionId != null && currentSessionId == info.id()) {
-      currentSessionId = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
+    // Any scope whose "current" pointed at the closed session falls back to another remaining
+    // session (arbitrary choice, matching pre-existing behavior), or to no current session at all.
+    Integer fallback = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
+    for (Map.Entry<String, Integer> entry : currentSessionIdByScope.entrySet()) {
+      if (entry.getValue() != null && entry.getValue() == info.id()) {
+        entry.setValue(fallback);
+      }
     }
     LOG.info("Closed heap session {}", info.id());
   }

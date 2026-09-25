@@ -93,6 +93,11 @@ Server endpoints:
 - **SSE**: `http://localhost:3000/mcp/sse`
 - **Message**: `http://localhost:3000/mcp/message`
 
+By default the server binds to `127.0.0.1` only and requires every request to carry the bearer
+token it writes to `~/.jafar/mcp-sse.token` on startup. To run this mode unattended and
+auto-restarting instead of in a foreground terminal, see [Daemon.md](Daemon.md) — it also
+documents `-Dmcp.host` and the token file in full.
+
 ### STDIO Mode (Claude Desktop)
 
 For Claude Desktop integration:
@@ -256,15 +261,20 @@ jfr-mcp-dev               # Development
 
 ### Running in Docker
 
+The server binds to `127.0.0.1` by default (see [Daemon.md](Daemon.md#security-properties-of-sse-mode)),
+which `docker run -p` cannot forward into — pass `-Dmcp.host=0.0.0.0` so the container's own
+network isolation stands in for the loopback restriction:
+
 ```bash
 # JBang works in containers
 docker run -it --rm -p 3000:3000 jbangdev/jbang-action \
-  jbang jfr-mcp@btraceio
+  jbang jfr-mcp@btraceio -Dmcp.host=0.0.0.0
 ```
 
 ### GitHub Actions
 
-Use in CI/CD pipelines:
+Use in CI/CD pipelines. The server also requires a bearer token on every request (written to
+`~/.jafar/mcp-sse.token` on startup):
 
 ```yaml
 - name: Start Jafar MCP Server
@@ -275,7 +285,7 @@ Use in CI/CD pipelines:
 
 - name: Test MCP Server
   run: |
-    curl -s http://localhost:3000/mcp/sse
+    curl -s -H "Authorization: Bearer $(cat ~/.jafar/mcp-sse.token)" http://localhost:3000/mcp/sse
 ```
 
 ## Troubleshooting

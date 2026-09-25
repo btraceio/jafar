@@ -4,6 +4,8 @@ import io.jafar.mcp.hdump.HdumpTools;
 import io.jafar.mcp.jfr.JfrAnalysisTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.mcp.jfr.JfrSessionTools;
+import io.jafar.mcp.lifecycle.BearerAuthFilter;
+import io.jafar.mcp.lifecycle.SseAuthToken;
 import io.jafar.mcp.lifecycle.SsePortRegistry;
 import io.jafar.mcp.otlp.OtlpTools;
 import io.jafar.mcp.pprof.PprofTools;
@@ -32,17 +34,21 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
 import io.modelcontextprotocol.spec.McpServerSession;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Servlet;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.ee10.servlet.FilterHolder;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -127,6 +133,9 @@ public final class JafarMcpServer {
 
   /** Stores the port of a running SSE server so a second launch can report it and exit. */
   private static final SsePortRegistry SSE_PORT_REGISTRY = SsePortRegistry.defaultRegistry(LOG);
+
+  /** Generates and persists the bearer token required to call the SSE daemon's endpoints. */
+  private static final SseAuthToken SSE_AUTH_TOKEN = SseAuthToken.defaultToken(LOG);
 
   private final SessionRegistry sessionRegistry;
   private final HeapSessionRegistry heapSessionRegistry;
@@ -310,11 +319,19 @@ public final class JafarMcpServer {
   /** Run server with HTTP/SSE transport (for web clients). */
   public void runSse() {
     int port = Integer.getInteger("mcp.port", 3000);
+    // Loopback by default: this endpoint has no authentication beyond the bearer token below,
+    // and open JFR/heap-dump/pprof/otlp sessions can hold sensitive process data. Widening this
+    // is an explicit opt-in (e.g. -Dmcp.host=0.0.0.0), never the default.
+    String bindHost = System.getProperty("mcp.host", "127.0.0.1");
+    boolean authDisabled = Boolean.getBoolean("mcp.auth.disable");
 
     // Check if a Jafar SSE server is already running (via port file).
     int runningPort = SSE_PORT_REGISTRY.detectRunningServer();
     if (runningPort > 0) {
       System.out.println(SSE_PORT_REGISTRY.url(runningPort));
+      if (!authDisabled) {
+        System.out.println("Auth token file: " + SSE_AUTH_TOKEN.path());
+      }
       return;
     }
 
@@ -362,14 +379,33 @@ public final class JafarMcpServer {
         LOG.warn("Could not wrap session factory for eager init: {}", e.getMessage());
       }
 
-      // Set up Jetty
-      Server jettyServer = new Server(port);
+      // Set up Jetty, bound explicitly to bindHost rather than Jetty's default wildcard address.
+      Server jettyServer = new Server();
+      ServerConnector connector = new ServerConnector(jettyServer);
+      connector.setPort(port);
+      connector.setHost(bindHost);
+      jettyServer.addConnector(connector);
       ServletContextHandler context = new ServletContextHandler(ServletContextHandler.SESSIONS);
       context.setContextPath("/");
       jettyServer.setHandler(context);
 
       // Register MCP servlet
       context.addServlet(new ServletHolder((Servlet) transportProvider), "/mcp/*");
+
+      String authToken = null;
+      if (!authDisabled) {
+        authToken = SSE_AUTH_TOKEN.generateAndWrite();
+        context.addFilter(
+            new FilterHolder(new BearerAuthFilter(authToken)),
+            "/mcp/*",
+            EnumSet.of(DispatcherType.REQUEST));
+      } else {
+        LOG.warn(
+            "SSE auth disabled via -Dmcp.auth.disable=true — anything that can reach {}:{} can"
+                + " read or manipulate open sessions.",
+            bindHost,
+            port);
+      }
 
       // Shutdown hook
       Runtime.getRuntime()
@@ -378,6 +414,7 @@ public final class JafarMcpServer {
                   () -> {
                     LOG.info("Shutting down...");
                     SSE_PORT_REGISTRY.delete();
+                    SSE_AUTH_TOKEN.delete();
                     broadcastSseShutdownNotice(transportProvider);
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
@@ -403,13 +440,23 @@ public final class JafarMcpServer {
 
       // Intentionally NOT calling startIdleWatchdog() in SSE mode: the watchdog's stated purpose
       // is stdio-orphan cleanup, and self-terminating an SSE daemon strands every connected
-      // client with a stale session ID that the new JVM does not recognize. The launchd service
-      // (KeepAlive=true) keeps the daemon up; idle resource usage is negligible.
+      // client with a stale session ID that the new JVM does not recognize. When installed as a
+      // supervised service (see install.sh --daemon and doc/mcp/Daemon.md), the service manager's
+      // restart policy (systemd Restart=on-failure, launchd KeepAlive) keeps the daemon up instead;
+      // idle resource usage is negligible either way.
       // Start server
       jettyServer.start();
       SSE_PORT_REGISTRY.write(port);
       System.out.println(SSE_PORT_REGISTRY.url(port));
-      LOG.info("Jafar MCP Server started — SSE: {}", SSE_PORT_REGISTRY.url(port));
+      if (authToken != null) {
+        System.out.println("Auth token file: " + SSE_AUTH_TOKEN.path());
+        System.out.println(
+            "Every request needs header: Authorization: Bearer <contents of that file>");
+      }
+      LOG.info(
+          "Jafar MCP Server started — SSE: {} (bound to {})",
+          SSE_PORT_REGISTRY.url(port),
+          bindHost);
       jettyServer.join();
 
     } catch (Exception e) {
