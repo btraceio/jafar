@@ -1,6 +1,6 @@
 package io.jafar.shell.core.sampling;
 
-import io.jafar.shell.core.RequestScope;
+import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,14 +51,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
   private int nextId = 1;
   private final Map<Integer, SessionInfo<S>> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
-
-  /**
-   * "Current session" pointer, keyed by {@link RequestScope#current()} rather than a single
-   * JVM-wide value. This registry may be shared by several concurrent callers (e.g. an MCP daemon
-   * serving multiple client connections); without per-caller scoping, one caller's {@code open}
-   * would silently redirect another caller's session-less lookups.
-   */
-  private final Map<String, Integer> currentSessionIdByScope = new HashMap<>();
+  private final ScopedCurrentSession current = new ScopedCurrentSession();
 
   /**
    * Opens the file at {@code path} and returns a new session. Implemented by each format subclass.
@@ -95,7 +89,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
     if (alias != null) {
       idsByAlias.put(alias, id);
     }
-    currentSessionIdByScope.put(RequestScope.current(), id);
+    current.opened(id);
 
     log.info("Opened {} session {} for: {}", formatName(), id, path);
     return info;
@@ -125,7 +119,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
    * @return the current session info, or empty if no sessions are open
    */
   public synchronized Optional<SessionInfo<S>> getCurrent() {
-    Integer currentSessionId = currentSessionIdByScope.get(RequestScope.current());
+    Integer currentSessionId = current.current();
     if (currentSessionId == null) {
       return Optional.empty();
     }
@@ -194,15 +188,13 @@ public abstract class SamplingSessionRegistry<S extends Session> {
     } catch (Exception e) {
       log.warn("Error closing {} session {}: {}", formatName(), info.id(), e.getMessage());
     }
-    // Any scope whose "current" pointed at the closed session falls back to another remaining
-    // session (arbitrary choice, matching pre-existing behavior), or to no current session at all.
-    Integer fallback = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
-    for (Map.Entry<String, Integer> entry : currentSessionIdByScope.entrySet()) {
-      if (entry.getValue() != null && entry.getValue() == info.id()) {
-        entry.setValue(fallback);
-      }
-    }
+    current.closed(info.id());
     log.info("Closed {} session {}", formatName(), info.id());
+  }
+
+  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
+  public void retainScopes(Set<String> liveScopes) {
+    current.retainScopes(liveScopes);
   }
 
   /** Returns the number of open sessions. */

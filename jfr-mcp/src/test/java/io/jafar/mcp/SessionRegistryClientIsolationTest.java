@@ -95,4 +95,20 @@ class SessionRegistryClientIsolationTest extends BaseJfrTest {
         registry.getOrCurrent(null).id(),
         "closing clientB's current session must not disturb clientA's current session");
   }
+
+  @Test
+  void closingOwnCurrentSessionDoesNotFallBackToAnotherScopesSession() throws Exception {
+    RequestScope.set("clientA");
+    SessionRegistry.SessionInfo sessionA = registry.open(Paths.get(getComprehensiveJfr()), null);
+
+    RequestScope.set("clientB");
+    registry.open(Paths.get(getComprehensiveJfr()), null);
+
+    RequestScope.set("clientA");
+    registry.close(String.valueOf(sessionA.id()));
+
+    assertTrue(
+        registry.getCurrent().isEmpty(),
+        "clientA must not inherit clientB's session after closing its own");
+  }
 }

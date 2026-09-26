@@ -43,6 +43,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.ee10.servlet.FilterHolder;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
@@ -316,6 +317,13 @@ public final class JafarMcpServer {
     }
   }
 
+  void retainClientScopes(Set<String> liveScopes) {
+    sessionRegistry.retainScopes(liveScopes);
+    heapSessionRegistry.retainScopes(liveScopes);
+    pprofSessionRegistry.retainScopes(liveScopes);
+    otlpSessionRegistry.retainScopes(liveScopes);
+  }
+
   /** Run server with HTTP/SSE transport (for web clients). */
   public void runSse() {
     int port = Integer.getInteger("mcp.port", 3000);
@@ -367,10 +375,20 @@ public final class JafarMcpServer {
         factoryField.setAccessible(true);
         McpServerSession.Factory originalFactory =
             (McpServerSession.Factory) factoryField.get(transportProvider);
+        // The transport drops a session from this map on every disconnect path (close, graceful
+        // close, failed write), without a callback we can hook. So on each new connection, drop
+        // the per-client "current session" state of clients that are no longer connected.
+        Field sessionsField =
+            HttpServletSseServerTransportProvider.class.getDeclaredField("sessions");
+        sessionsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, McpServerSession> liveSessions =
+            (Map<String, McpServerSession>) sessionsField.get(transportProvider);
         factoryField.set(
             transportProvider,
             (McpServerSession.Factory)
                 transport -> {
+                  retainClientScopes(Set.copyOf(liveSessions.keySet()));
                   McpServerSession session = originalFactory.create(transport);
                   eagarlyInitExchange(session);
                   return session;
@@ -392,9 +410,8 @@ public final class JafarMcpServer {
       // Register MCP servlet
       context.addServlet(new ServletHolder((Servlet) transportProvider), "/mcp/*");
 
-      String authToken = null;
       if (!authDisabled) {
-        authToken = SSE_AUTH_TOKEN.generateAndWrite();
+        String authToken = SSE_AUTH_TOKEN.generateAndWrite();
         context.addFilter(
             new FilterHolder(new BearerAuthFilter(authToken)),
             "/mcp/*",
@@ -448,7 +465,7 @@ public final class JafarMcpServer {
       jettyServer.start();
       SSE_PORT_REGISTRY.write(port);
       System.out.println(SSE_PORT_REGISTRY.url(port));
-      if (authToken != null) {
+      if (!authDisabled) {
         System.out.println("Auth token file: " + SSE_AUTH_TOKEN.path());
         System.out.println(
             "Every request needs header: Authorization: Bearer <contents of that file>");

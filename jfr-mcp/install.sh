@@ -18,8 +18,10 @@
 set -euo pipefail
 
 ALIAS="jfr-mcp"
+SERVICE_SUFFIX=""
 if [ "${JFR_MCP_DEV:-}" = "1" ]; then
   ALIAS="jfr-mcp-dev"
+  SERVICE_SUFFIX="-dev"
 fi
 
 INSTALL_DAEMON="${JFR_MCP_DAEMON:-0}"
@@ -68,10 +70,7 @@ fi
 # in the repo, which contain the same units for users who prefer to install them manually.
 install_systemd_user_service() {
   local unit_dir="${HOME}/.config/systemd/user"
-  local unit_name="jafar-mcp.service"
-  if [ "${ALIAS}" = "jfr-mcp-dev" ]; then
-    unit_name="jafar-mcp-dev.service"
-  fi
+  local unit_name="jafar-mcp${SERVICE_SUFFIX}.service"
   mkdir -p "${unit_dir}"
   cat > "${unit_dir}/${unit_name}" <<UNIT
 [Unit]
@@ -97,10 +96,7 @@ UNIT
 
 install_launchd_service() {
   local plist_dir="${HOME}/Library/LaunchAgents"
-  local label="io.btrace.jafar-mcp"
-  if [ "${ALIAS}" = "jfr-mcp-dev" ]; then
-    label="io.btrace.jafar-mcp-dev"
-  fi
+  local label="io.btrace.jafar-mcp${SERVICE_SUFFIX}"
   local plist="${plist_dir}/${label}.plist"
   mkdir -p "${plist_dir}" "${HOME}/.jafar"
   cat > "${plist}" <<PLIST

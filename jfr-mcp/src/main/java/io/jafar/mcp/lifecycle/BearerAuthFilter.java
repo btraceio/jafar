@@ -20,10 +20,10 @@ public final class BearerAuthFilter implements Filter {
 
   private static final String BEARER_PREFIX = "Bearer ";
 
-  private final String expectedToken;
+  private final byte[] expectedToken;
 
   public BearerAuthFilter(String expectedToken) {
-    this.expectedToken = expectedToken;
+    this.expectedToken = expectedToken.getBytes(StandardCharsets.UTF_8);
   }
 
   @Override
@@ -33,7 +33,8 @@ public final class BearerAuthFilter implements Filter {
     HttpServletResponse httpResponse = (HttpServletResponse) response;
 
     String presented = extractToken(httpRequest.getHeader("Authorization"));
-    if (presented == null || !constantTimeEquals(presented, expectedToken)) {
+    if (presented == null
+        || !MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8), expectedToken)) {
       httpResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
       httpResponse.setContentType("text/plain; charset=utf-8");
       httpResponse.getWriter().write("Unauthorized: missing or invalid bearer token");
@@ -47,10 +48,5 @@ public final class BearerAuthFilter implements Filter {
       return null;
     }
     return authorizationHeader.substring(BEARER_PREFIX.length()).trim();
-  }
-
-  private static boolean constantTimeEquals(String a, String b) {
-    return MessageDigest.isEqual(
-        a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
   }
 }

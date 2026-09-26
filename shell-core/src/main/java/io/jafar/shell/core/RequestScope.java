@@ -3,15 +3,16 @@ package io.jafar.shell.core;
 /**
  * Thread-local scope key identifying the caller issuing the current request.
  *
- * <p>Session registries (e.g. {@code SamplingSessionRegistry}) use this to key their "current
- * session" convenience pointer per caller instead of a single JVM-wide value. This matters when one
- * registry instance is shared by multiple concurrent callers, such as an MCP server process
- * handling several client connections at once: without a per-caller scope, one caller's {@code
- * *_open} silently changes which session another caller's session-less tool calls resolve to.
+ * <p>Session registries use this, via {@link ScopedCurrentSession}, to key their "current session"
+ * convenience pointer per caller instead of a single JVM-wide value. This matters when one registry
+ * instance is shared by multiple concurrent callers, such as an MCP server process handling several
+ * client connections at once: without a per-caller scope, one caller's {@code *_open} silently
+ * changes which session another caller's session-less tool calls resolve to.
  *
- * <p>A single-caller process (a CLI shell, or an MCP server run over stdio, which only ever talks
- * to one client) never sets a scope key, so {@link #current()} returns {@code null} and every
- * caller shares the same (only) bucket — identical to the pre-existing behavior.
+ * <p>The MCP server sets the scope to the MCP session id around every tool call, in stdio and SSE
+ * mode alike (stdio sessions also get an id). Code that never sets it, such as a CLI shell or
+ * registry work done outside a tool call, sees {@code null}. The scope is not propagated to other
+ * threads: registry calls made off the tool-call thread fall into the {@code null} scope.
  */
 public final class RequestScope {
 

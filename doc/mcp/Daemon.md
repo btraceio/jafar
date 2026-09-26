@@ -19,6 +19,12 @@ mode relies on.
 curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | bash -s -- --daemon
 ```
 
+Setting `JFR_MCP_DAEMON=1` in the environment is equivalent to passing `--daemon`:
+
+```bash
+curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | JFR_MCP_DAEMON=1 bash
+```
+
 This installs `jfr-mcp` as usual, then additionally installs and starts a supervised background
 service:
 
@@ -38,7 +44,7 @@ You can also copy the unit files from the repository and install them yourself:
 
 Both units only restart the process on a crash or non-zero exit — not on the clean `exit 0` that
 happens when a second `jfr-mcp` invocation detects the daemon is already running (see
-"Automatic Port Detection" in [JBANGUsage.md](JBANGUsage.md)) and exits immediately.
+"Port Detection" in [JBANGUsage.md](JBANGUsage.md#port-detection)) and exits immediately.
 
 ### Managing the service
 
@@ -63,8 +69,9 @@ tail -f ~/.jafar/mcp-sse.log ~/.jafar/mcp-sse.err.log
 The daemon writes its port to `~/.jafar/mcp-sse.port` and, unless auth is disabled, a bearer
 token to `~/.jafar/mcp-sse.token` (see below) on startup, and deletes both on clean shutdown. Any
 `jfr-mcp` invocation — including the one the service manager runs on restart — checks this port
-file first: if a server is already reachable there, it prints the URL and exits 0 instead of
-starting a second daemon. This is what makes it safe for `Restart=on-failure` / `KeepAlive` to
+file first: if a server is already reachable there, it prints the URL — plus, unless auth is
+disabled, a second line `Auth token file: <path>` — and exits 0 instead of starting a second
+daemon. This is what makes it safe for `Restart=on-failure` / `KeepAlive` to
 re-run the exact same command after a crash: the file is stale in that case (the old process is
 gone), so the restarted process proceeds to actually bind the port.
 
