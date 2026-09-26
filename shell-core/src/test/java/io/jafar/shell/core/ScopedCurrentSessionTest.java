@@ -62,7 +62,7 @@ class ScopedCurrentSessionTest {
   }
 
   @Test
-  void retainScopesDropsDisconnectedClientsOnly() {
+  void disconnectedClientsSessionsBecomeFallbackForReconnectingClient() {
     current.opened(9);
     RequestScope.set("gone");
     current.opened(1);
@@ -71,10 +71,22 @@ class ScopedCurrentSessionTest {
 
     current.retainScopes(Set.of("live"));
 
-    assertEquals(2, current.current());
-    RequestScope.set("gone");
-    assertNull(current.current());
+    assertEquals(2, current.current(), "a connected client keeps its own session");
+    RequestScope.set("reconnected");
+    assertEquals(1, current.current(), "a reconnecting client falls back to the orphaned session");
     RequestScope.clear();
-    assertEquals(9, current.current());
+    assertEquals(9, current.current(), "the unscoped caller keeps its own session");
+  }
+
+  @Test
+  void closingAnOrphanedSessionRemovesItAsFallback() {
+    RequestScope.set("gone");
+    current.opened(1);
+    current.retainScopes(Set.of());
+
+    current.closed(1);
+
+    RequestScope.set("reconnected");
+    assertNull(current.current());
   }
 }

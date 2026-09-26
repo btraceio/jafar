@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Set;
@@ -39,28 +41,56 @@ public final class SseAuthToken {
     return tokenFile;
   }
 
-  /** Generates a fresh random token and writes it to {@link #path()}, owner-readable only. */
-  public String generateAndWrite() {
+  /** Returns a fresh random token. Nothing is written; see {@link #write(String)}. */
+  public static String generate() {
     byte[] bytes = new byte[TOKEN_BYTES];
     new SecureRandom().nextBytes(bytes);
-    String token = HexFormat.of().formatHex(bytes);
-    try {
-      Files.createDirectories(tokenFile.getParent());
-      Files.writeString(tokenFile, token, StandardCharsets.US_ASCII);
-      restrictToOwner();
-    } catch (IOException e) {
-      logger.warn("Cannot write SSE auth token file: {}", e.getMessage());
-    }
-    return token;
+    return HexFormat.of().formatHex(bytes);
   }
 
-  private void restrictToOwner() {
+  /**
+   * Writes {@code token} to {@link #path()}, replacing any previous token.
+   *
+   * <p>The secret goes into a temporary file that is owner-read/write from the moment it is
+   * created, which is then renamed over {@link #path()}, so the token is never readable by other
+   * users, even briefly, and a reader never sees a partially written file. On filesystems without
+   * POSIX permissions the file gets the default permissions.
+   */
+  public void write(String token) {
+    Path tmp = null;
     try {
-      Files.setPosixFilePermissions(
-          tokenFile, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-    } catch (UnsupportedOperationException | IOException e) {
-      // Non-POSIX filesystem (e.g. some Windows setups) — best effort only.
-      logger.debug("Could not restrict SSE auth token file permissions: {}", e.getMessage());
+      Path dir = tokenFile.toAbsolutePath().getParent();
+      Files.createDirectories(dir);
+      tmp = createOwnerOnlyTempFile(dir);
+      Files.writeString(tmp, token, StandardCharsets.US_ASCII);
+      Files.move(
+          tmp, tokenFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      tmp = null;
+    } catch (IOException e) {
+      logger.warn("Cannot write SSE auth token file: {}", e.getMessage());
+    } finally {
+      if (tmp != null) {
+        try {
+          Files.deleteIfExists(tmp);
+        } catch (IOException ignored) {
+          // best effort
+        }
+      }
+    }
+  }
+
+  private Path createOwnerOnlyTempFile(Path dir) throws IOException {
+    String prefix = "." + tokenFile.getFileName();
+    try {
+      return Files.createTempFile(
+          dir,
+          prefix,
+          ".tmp",
+          PosixFilePermissions.asFileAttribute(
+              Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)));
+    } catch (UnsupportedOperationException e) {
+      logger.debug("POSIX permissions unsupported; SSE auth token file uses default permissions");
+      return Files.createTempFile(dir, prefix, ".tmp");
     }
   }
 

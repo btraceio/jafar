@@ -32,9 +32,15 @@ class SseAuthTokenTest {
     Files.deleteIfExists(tokenFile.getParent());
   }
 
+  private String generateAndWrite() {
+    String token = SseAuthToken.generate();
+    auth.write(token);
+    return token;
+  }
+
   @Test
-  void generateAndWriteCreatesAReadableTokenFile() {
-    String token = auth.generateAndWrite();
+  void writeCreatesTheTokenFile() {
+    String token = generateAndWrite();
 
     assertTrue(Files.exists(tokenFile));
     assertFalse(token.isBlank());
@@ -42,7 +48,7 @@ class SseAuthTokenTest {
 
   @Test
   void writtenTokenFileContentsMatchReturnedToken() throws Exception {
-    String token = auth.generateAndWrite();
+    String token = generateAndWrite();
 
     String onDisk = Files.readString(tokenFile);
     assertEquals(token, onDisk);
@@ -50,15 +56,15 @@ class SseAuthTokenTest {
 
   @Test
   void successiveTokensAreDifferent() {
-    String first = auth.generateAndWrite();
-    String second = auth.generateAndWrite();
+    String first = generateAndWrite();
+    String second = generateAndWrite();
 
     assertNotEquals(first, second);
   }
 
   @Test
   void tokenFileIsOwnerOnlyOnPosixFilesystems() throws Exception {
-    auth.generateAndWrite();
+    generateAndWrite();
 
     var view =
         Files.getFileAttributeView(tokenFile, java.nio.file.attribute.PosixFileAttributeView.class);
@@ -70,8 +76,25 @@ class SseAuthTokenTest {
   }
 
   @Test
+  void overwriteKeepsOwnerOnlyPermissionsAndLeavesNoTempFile() throws Exception {
+    Files.writeString(tokenFile, "stale");
+    String token = generateAndWrite();
+
+    assertEquals(token, Files.readString(tokenFile));
+    try (var files = Files.list(tokenFile.getParent())) {
+      assertEquals(1, files.count(), "only the token file should remain");
+    }
+    if (Files.getFileAttributeView(tokenFile, java.nio.file.attribute.PosixFileAttributeView.class)
+        != null) {
+      assertEquals(
+          Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+          Files.getPosixFilePermissions(tokenFile));
+    }
+  }
+
+  @Test
   void deleteRemovesTheTokenFile() {
-    auth.generateAndWrite();
+    generateAndWrite();
     assertTrue(Files.exists(tokenFile));
 
     auth.delete();

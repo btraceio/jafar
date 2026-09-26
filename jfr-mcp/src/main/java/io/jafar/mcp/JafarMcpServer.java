@@ -44,6 +44,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.ee10.servlet.FilterHolder;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
@@ -334,9 +335,9 @@ public final class JafarMcpServer {
     boolean authDisabled = Boolean.getBoolean("mcp.auth.disable");
 
     // Check if a Jafar SSE server is already running (via port file).
-    int runningPort = SSE_PORT_REGISTRY.detectRunningServer();
-    if (runningPort > 0) {
-      System.out.println(SSE_PORT_REGISTRY.url(runningPort));
+    SsePortRegistry.Endpoint running = SSE_PORT_REGISTRY.detectRunningServer();
+    if (running != null) {
+      System.out.println(SSE_PORT_REGISTRY.url(running));
       if (!authDisabled) {
         System.out.println("Auth token file: " + SSE_AUTH_TOKEN.path());
       }
@@ -344,7 +345,9 @@ public final class JafarMcpServer {
     }
 
     // Bail if the desired port is taken by a foreign process.
-    if (SSE_PORT_REGISTRY.isPortInUse(port)) {
+    SsePortRegistry.Endpoint endpoint =
+        new SsePortRegistry.Endpoint(SsePortRegistry.clientHost(bindHost), port);
+    if (SSE_PORT_REGISTRY.isPortInUse(endpoint.host(), port)) {
       System.err.println(
           "Port " + port + " is in use by another process. Use -Dmcp.port=<port> to override.");
       System.exit(1);
@@ -410,8 +413,10 @@ public final class JafarMcpServer {
       // Register MCP servlet
       context.addServlet(new ServletHolder((Servlet) transportProvider), "/mcp/*");
 
+      // The token file is written only once this process owns the port (see below), so a second
+      // instance that loses the bind race cannot overwrite the running daemon's token.
+      String authToken = authDisabled ? null : SseAuthToken.generate();
       if (!authDisabled) {
-        String authToken = SSE_AUTH_TOKEN.generateAndWrite();
         context.addFilter(
             new FilterHolder(new BearerAuthFilter(authToken)),
             "/mcp/*",
@@ -424,14 +429,20 @@ public final class JafarMcpServer {
             port);
       }
 
+      // Set once this process has bound the port and written the marker files. A process that
+      // loses the bind race must not delete files that belong to the daemon that won it.
+      AtomicBoolean ownsMarkerFiles = new AtomicBoolean(false);
+
       // Shutdown hook
       Runtime.getRuntime()
           .addShutdownHook(
               new Thread(
                   () -> {
                     LOG.info("Shutting down...");
-                    SSE_PORT_REGISTRY.delete();
-                    SSE_AUTH_TOKEN.delete();
+                    if (ownsMarkerFiles.get()) {
+                      SSE_PORT_REGISTRY.delete();
+                      SSE_AUTH_TOKEN.delete();
+                    }
                     broadcastSseShutdownNotice(transportProvider);
                     sessionRegistry.shutdown();
                     heapSessionRegistry.shutdown();
@@ -463,8 +474,12 @@ public final class JafarMcpServer {
       // idle resource usage is negligible either way.
       // Start server
       jettyServer.start();
-      SSE_PORT_REGISTRY.write(port);
-      System.out.println(SSE_PORT_REGISTRY.url(port));
+      if (authToken != null) {
+        SSE_AUTH_TOKEN.write(authToken);
+      }
+      SSE_PORT_REGISTRY.write(endpoint);
+      ownsMarkerFiles.set(true);
+      System.out.println(SSE_PORT_REGISTRY.url(endpoint));
       if (!authDisabled) {
         System.out.println("Auth token file: " + SSE_AUTH_TOKEN.path());
         System.out.println(
@@ -472,7 +487,7 @@ public final class JafarMcpServer {
       }
       LOG.info(
           "Jafar MCP Server started — SSE: {} (bound to {})",
-          SSE_PORT_REGISTRY.url(port),
+          SSE_PORT_REGISTRY.url(endpoint),
           bindHost);
       jettyServer.join();
 

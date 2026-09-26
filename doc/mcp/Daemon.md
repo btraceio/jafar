@@ -66,8 +66,11 @@ tail -f ~/.jafar/mcp-sse.log ~/.jafar/mcp-sse.err.log
 
 ### How this interacts with port/token detection
 
-The daemon writes its port to `~/.jafar/mcp-sse.port` and, unless auth is disabled, a bearer
-token to `~/.jafar/mcp-sse.token` (see below) on startup, and deletes both on clean shutdown. Any
+Once it has bound its port, the daemon writes the port and the address clients should use (an IP
+literal such as `127.0.0.1`, not `localhost`, which may resolve to `::1` first) to
+`~/.jafar/mcp-sse.port` and, unless auth is disabled, a bearer token to `~/.jafar/mcp-sse.token`
+(see below). It deletes both on clean shutdown. A second instance that loses the race for the port
+neither writes nor deletes these files, so it cannot disturb the running daemon. Any
 `jfr-mcp` invocation — including the one the service manager runs on restart — checks this port
 file first: if a server is already reachable there, it prints the URL — plus, unless auth is
 disabled, a second line `Auth token file: <path>` — and exits 0 instead of starting a second
@@ -86,7 +89,8 @@ can reach its port could otherwise read or manipulate open JFR/heap-dump/pprof/o
    on a network you trust, and prefer combining it with the bearer token below rather than
    disabling auth.
 2. **Bearer token auth.** On startup the daemon generates a random token, writes it to
-   `~/.jafar/mcp-sse.token` (owner-read/write only, where the filesystem supports it), and rejects
+   `~/.jafar/mcp-sse.token` (created owner-read/write only before the token is written, where the
+   filesystem supports POSIX permissions), and rejects
    any request to `/mcp/*` that doesn't present it as `Authorization: Bearer <token>`. Configure
    your MCP client to read that file and send the header; see the manual `curl` example in
    [Tutorial.md](Tutorial.md#manual-testing). Disable with `-Dmcp.auth.disable=true` if you
@@ -94,4 +98,6 @@ can reach its port could otherwise read or manipulate open JFR/heap-dump/pprof/o
 
 Per-client session isolation is also part of SSE mode's safety story: each MCP connection has its
 own "current session" pointer, so one client opening a recording does not redirect another
-client's session-less tool calls. This requires no configuration.
+client's session-less tool calls. A client that reconnects gets a new connection, and the sessions
+its previous connection left open become a fallback, so its session-less calls keep resolving to
+the recording it had open. This requires no configuration.
