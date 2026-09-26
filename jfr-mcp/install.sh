@@ -155,6 +155,12 @@ if [ "${INSTALL_DAEMON}" = "1" ]; then
   esac
 fi
 
+# The top-level install.sh registers the jafar-perf plugin, which already brings the MCP server;
+# the manual client config below would register it a second time.
+if [ "${JFR_MCP_SKIP_CLIENT_HINTS:-}" = "1" ]; then
+  exit 0
+fi
+
 echo ""
 info "Quick start:"
 echo "    ${ALIAS} --stdio          # STDIO mode (Claude Desktop / Claude Code)"

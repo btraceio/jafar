@@ -515,12 +515,38 @@ JAFAR includes an MCP (Model Context Protocol) server that enables AI agents lik
 ### Quick Install
 
 ```bash
-curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | bash
+curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/install.sh | bash
 ```
 
-This installs [JBang](https://www.jbang.dev) (if needed) and the `jfr-mcp` command in one step.
+This installs [JBang](https://www.jbang.dev) (if needed) and the `jfr-mcp` command, then registers
+the [jafar-perf](https://github.com/btraceio/jafar-perf-box) plugin with every supported agent
+harness on your PATH. The plugin brings the MCP server plus analysis skills (and, in Claude Code,
+specialist subagents), so no separate MCP registration is needed.
 
-### Claude Code
+| Harness | What the installer does |
+|---------|-------------------------|
+| Claude Code (`claude`) | `claude plugin marketplace add btraceio/jafar-perf-box`, then `claude plugin install jafar-perf@btraceio` |
+| pi (`pi`) | `pi install npm:pi-mcp-adapter` (pi has no built-in MCP support), then `pi install git:github.com/btraceio/jafar-perf-box`. The Claude Code subagents are not available in pi. |
+
+Options go after `bash -s --`:
+
+```bash
+curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/install.sh | bash -s -- --harness claude
+```
+
+| Option | Effect |
+|--------|--------|
+| `--harness <list>` | Register only these harnesses (`claude`, `pi`, or `all`) |
+| `--no-harness` | Install `jfr-mcp` only |
+| `--daemon` | Also run `jfr-mcp` as a supervised SSE daemon ([doc/mcp/Daemon.md](doc/mcp/Daemon.md)) |
+| `--dev` | Install the development snapshot (`jfr-mcp-dev`); the harness plugins still run the stable release |
+
+Re-running the installer updates everything in place. To install only the server, use
+`jfr-mcp/install.sh`, which takes `--daemon` and `JFR_MCP_DEV=1` the same way.
+
+### Claude Code (MCP server only)
+
+Without the plugin, register just the server:
 
 ```bash
 claude mcp add jafar -- jbang jfr-mcp@btraceio --stdio
