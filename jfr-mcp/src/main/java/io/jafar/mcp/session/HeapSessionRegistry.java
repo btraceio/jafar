@@ -1,6 +1,7 @@
 package io.jafar.mcp.session;
 
 import io.jafar.hdump.shell.HeapSession;
+import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +55,7 @@ public final class HeapSessionRegistry {
   private int nextId = 1;
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
-  private Integer currentSessionId = null;
+  private final ScopedCurrentSession current = new ScopedCurrentSession();
 
   /**
    * Opens a heap dump file and creates a new session.
@@ -80,7 +82,7 @@ public final class HeapSessionRegistry {
     if (alias != null) {
       idsByAlias.put(alias, id);
     }
-    currentSessionId = id;
+    current.opened(id);
 
     LOG.info("Opened heap session {} for: {}", id, path);
     return info;
@@ -111,6 +113,7 @@ public final class HeapSessionRegistry {
    * @return the current session, or empty if none
    */
   public synchronized Optional<SessionInfo> getCurrent() {
+    Integer currentSessionId = current.current();
     if (currentSessionId == null) {
       return Optional.empty();
     }
@@ -179,10 +182,13 @@ public final class HeapSessionRegistry {
     } catch (IOException e) {
       LOG.warn("Error closing heap session {}: {}", info.id(), e.getMessage());
     }
-    if (currentSessionId != null && currentSessionId == info.id()) {
-      currentSessionId = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
-    }
+    current.closed(info.id());
     LOG.info("Closed heap session {}", info.id());
+  }
+
+  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
+  public void retainScopes(Set<String> liveScopes) {
+    current.retainScopes(liveScopes);
   }
 
   /** Returns the number of open sessions. */

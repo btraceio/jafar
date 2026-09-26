@@ -2,6 +2,7 @@ package io.jafar.mcp.session;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.ScopedCurrentSession;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,7 +63,8 @@ public final class SessionRegistry {
   private final AtomicInteger nextId = new AtomicInteger(1);
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
-  private Integer currentSessionId = null;
+  private final ScopedCurrentSession current = new ScopedCurrentSession();
+
   private final SessionPersistenceStore persistenceStore = new SessionPersistenceStore();
 
   public SessionRegistry() {
@@ -87,7 +90,8 @@ public final class SessionRegistry {
         if (entry.alias() != null) {
           idsByAlias.put(entry.alias(), id);
         }
-        currentSessionId = id;
+        // Restored sessions belong to no client; they are every client's fallback.
+        current.restored(id);
         // Ensure nextId is always beyond any restored ID.
         nextId.updateAndGet(cur -> Math.max(cur, id + 1));
         LOG.info("Restored session {} for recording: {}", id, path);
@@ -135,7 +139,7 @@ public final class SessionRegistry {
     if (alias != null) {
       idsByAlias.put(alias, id);
     }
-    currentSessionId = id;
+    current.opened(id);
     persistenceStore.upsert(id, path.toString(), alias);
 
     LOG.info("Opened session {} for recording: {}", id, path);
@@ -170,6 +174,7 @@ public final class SessionRegistry {
    * @return The current session, or empty if none
    */
   public synchronized Optional<SessionInfo> getCurrent() {
+    Integer currentSessionId = current.current();
     if (currentSessionId == null) {
       return Optional.empty();
     }
@@ -242,12 +247,14 @@ public final class SessionRegistry {
     info.session().close();
     persistenceStore.remove(info.id());
 
-    // Update current session
-    if (currentSessionId != null && currentSessionId == info.id()) {
-      currentSessionId = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
-    }
+    current.closed(info.id());
 
     LOG.info("Closed session {}", info.id());
+  }
+
+  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
+  public void retainScopes(Set<String> liveScopes) {
+    current.retainScopes(liveScopes);
   }
 
   /** Returns the number of open sessions. */

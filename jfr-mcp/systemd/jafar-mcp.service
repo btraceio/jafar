@@ -1,0 +1,15 @@
+[Unit]
+Description=Jafar MCP Server (SSE/daemon mode)
+After=network.target
+
+[Service]
+Type=simple
+# Replace jfr-mcp with jfr-mcp-dev below to run the development snapshot instead.
+ExecStart=%h/.jbang/bin/jfr-mcp
+# Only restarts on crash/non-zero exit — a clean `exit 0` (e.g. this same command run a second
+# time detects the daemon already running via ~/.jafar/mcp-sse.port and exits 0) is not a failure.
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target

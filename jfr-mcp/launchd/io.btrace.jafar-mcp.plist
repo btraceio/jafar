@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.btrace.jafar-mcp</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Replace jfr-mcp with jfr-mcp-dev below to run the development snapshot instead. -->
+        <string>__HOME__/.jbang/bin/jfr-mcp</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Only restarts on crash/non-zero exit; see jfr-mcp/systemd/jafar-mcp.service. -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.jafar/mcp-sse.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.jafar/mcp-sse.err.log</string>
+</dict>
+</plist>

@@ -4,16 +4,32 @@
 #
 # Usage:
 #   curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | bash
+#   curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/jfr-mcp/install.sh | bash -s -- --daemon
 #
 # Options (via environment variables):
-#   JFR_MCP_DEV=1    Install development snapshot instead of stable release
+#   JFR_MCP_DEV=1      Install development snapshot instead of stable release
+#   JFR_MCP_DAEMON=1   Same as passing --daemon
+#
+# Flags:
+#   --daemon           Also install and start jfr-mcp as a supervised background service
+#                       (systemd --user on Linux, launchd on macOS) running in SSE mode. Default
+#                       behavior (no flag) is unchanged: install the command only, run manually.
 #
 set -euo pipefail
 
 ALIAS="jfr-mcp"
+SERVICE_SUFFIX=""
 if [ "${JFR_MCP_DEV:-}" = "1" ]; then
   ALIAS="jfr-mcp-dev"
+  SERVICE_SUFFIX="-dev"
 fi
+
+INSTALL_DAEMON="${JFR_MCP_DAEMON:-0}"
+for arg in "$@"; do
+  if [ "$arg" = "--daemon" ]; then
+    INSTALL_DAEMON=1
+  fi
+done
 
 info()  { printf '  \033[1;34m>\033[0m %s\n' "$*"; }
 ok()    { printf '  \033[1;32m✔\033[0m %s\n' "$*"; }
@@ -47,6 +63,96 @@ if command -v "${ALIAS}" >/dev/null 2>&1; then
   ok "${ALIAS} is on PATH: $(command -v "${ALIAS}")"
 else
   ok "Installed. Run with: jbang ${ALIAS}@btraceio --stdio"
+fi
+
+# --- Optional: install as a supervised background daemon (SSE mode) ---
+# Keep in sync with jfr-mcp/systemd/jafar-mcp.service and jfr-mcp/launchd/io.btrace.jafar-mcp.plist
+# in the repo, which contain the same units for users who prefer to install them manually.
+install_systemd_user_service() {
+  local unit_dir="${HOME}/.config/systemd/user"
+  local unit_name="jafar-mcp${SERVICE_SUFFIX}.service"
+  mkdir -p "${unit_dir}"
+  cat > "${unit_dir}/${unit_name}" <<UNIT
+[Unit]
+Description=Jafar MCP Server (SSE/daemon mode)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${HOME}/.jbang/bin/${ALIAS}
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload
+  systemctl --user enable --now "${unit_name}"
+  ok "Installed and started ${unit_name}"
+  info "Check status: systemctl --user status ${unit_name}"
+  info "Stop it:      systemctl --user stop ${unit_name}"
+  info "Logs:         journalctl --user -u ${unit_name} -f"
+}
+
+install_launchd_service() {
+  local plist_dir="${HOME}/Library/LaunchAgents"
+  local label="io.btrace.jafar-mcp${SERVICE_SUFFIX}"
+  local plist="${plist_dir}/${label}.plist"
+  mkdir -p "${plist_dir}" "${HOME}/.jafar"
+  cat > "${plist}" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/.jbang/bin/${ALIAS}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.jafar/mcp-sse.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.jafar/mcp-sse.err.log</string>
+</dict>
+</plist>
+PLIST
+  launchctl unload "${plist}" >/dev/null 2>&1 || true
+  launchctl load -w "${plist}"
+  ok "Installed and started ${label}"
+  info "Check status: launchctl list | grep ${label}"
+  info "Stop it:      launchctl unload ${plist}"
+  info "Logs:         ${HOME}/.jafar/mcp-sse.log"
+}
+
+if [ "${INSTALL_DAEMON}" = "1" ]; then
+  echo ""
+  info "Installing ${ALIAS} as a supervised background daemon (SSE mode) ..."
+  case "$(uname -s)" in
+    Linux)
+      if command -v systemctl >/dev/null 2>&1; then
+        install_systemd_user_service
+      else
+        err "systemctl not found — cannot install a systemd --user service on this system."
+        err "See jfr-mcp/systemd/jafar-mcp.service in the repo to install one manually."
+        exit 1
+      fi
+      ;;
+    Darwin)
+      install_launchd_service
+      ;;
+    *)
+      err "Daemon supervision is only supported on Linux (systemd --user) and macOS (launchd)."
+      exit 1
+      ;;
+  esac
 fi
 
 echo ""

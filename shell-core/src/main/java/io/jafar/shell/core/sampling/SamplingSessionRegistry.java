@@ -1,5 +1,6 @@
 package io.jafar.shell.core.sampling;
 
+import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,7 +51,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
   private int nextId = 1;
   private final Map<Integer, SessionInfo<S>> sessionsById = new LinkedHashMap<>();
   private final Map<String, Integer> idsByAlias = new HashMap<>();
-  private Integer currentSessionId = null;
+  private final ScopedCurrentSession current = new ScopedCurrentSession();
 
   /**
    * Opens the file at {@code path} and returns a new session. Implemented by each format subclass.
@@ -87,7 +89,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
     if (alias != null) {
       idsByAlias.put(alias, id);
     }
-    currentSessionId = id;
+    current.opened(id);
 
     log.info("Opened {} session {} for: {}", formatName(), id, path);
     return info;
@@ -117,6 +119,7 @@ public abstract class SamplingSessionRegistry<S extends Session> {
    * @return the current session info, or empty if no sessions are open
    */
   public synchronized Optional<SessionInfo<S>> getCurrent() {
+    Integer currentSessionId = current.current();
     if (currentSessionId == null) {
       return Optional.empty();
     }
@@ -185,10 +188,13 @@ public abstract class SamplingSessionRegistry<S extends Session> {
     } catch (Exception e) {
       log.warn("Error closing {} session {}: {}", formatName(), info.id(), e.getMessage());
     }
-    if (currentSessionId != null && currentSessionId == info.id()) {
-      currentSessionId = sessionsById.isEmpty() ? null : sessionsById.keySet().iterator().next();
-    }
+    current.closed(info.id());
     log.info("Closed {} session {}", formatName(), info.id());
+  }
+
+  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
+  public void retainScopes(Set<String> liveScopes) {
+    current.retainScopes(liveScopes);
   }
 
   /** Returns the number of open sessions. */

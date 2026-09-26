@@ -422,13 +422,21 @@ After configuration, restart Claude Desktop. You can then ask Claude to analyze 
 
 You can test the MCP server manually using curl and the SSE protocol.
 
+By default the server only accepts requests bound for `127.0.0.1` and carrying the bearer token
+it wrote to `~/.jafar/mcp-sse.token` on startup — every `curl` call below needs
+`-H "Authorization: Bearer $TOKEN"`. See [Daemon.md](Daemon.md#security-properties-of-sse-mode)
+for how to widen the bind address or (not recommended) disable the token check.
+
 ### Test Script
 
 ```bash
 #!/bin/bash
 
+TOKEN=$(cat ~/.jafar/mcp-sse.token)
+AUTH_HEADER="Authorization: Bearer $TOKEN"
+
 # Start SSE connection in background
-curl -s -N http://localhost:3000/mcp/sse > /tmp/sse_output.txt &
+curl -s -N -H "$AUTH_HEADER" http://localhost:3000/mcp/sse > /tmp/sse_output.txt &
 SSE_PID=$!
 sleep 2
 
@@ -438,25 +446,25 @@ ENDPOINT="http://localhost:3000/mcp/message?sessionId=$SESSION_ID"
 
 # Initialize (required by MCP protocol)
 curl -s -X POST "$ENDPOINT" \
-    -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' &
 sleep 1
 
 # Send initialized notification (required before tool calls)
 curl -s -X POST "$ENDPOINT" \
-    -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' &
 sleep 1
 
 # Open a recording
 curl -s -X POST "$ENDPOINT" \
-    -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jfr_open","arguments":{"path":"/path/to/recording.jfr"}}}' &
 sleep 2
 
 # Run a query
 curl -s -X POST "$ENDPOINT" \
-    -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"jfr_query","arguments":{"query":"events/jdk.ExecutionSample | count()"}}}' &
 sleep 2
 
@@ -650,6 +658,7 @@ Ensure port 3000 (or your custom port) is accessible.
 
 ## See Also
 
+- [Daemon.md](Daemon.md) - Running SSE mode as a supervised background service, and its security model
 - [JFR Shell Tutorial](../cli/Tutorial.md) - Interactive CLI for JFR analysis
 - [JfrPath Query Language](../cli/JFRPath.md) - Complete query language reference
 - [MCP Specification](https://modelcontextprotocol.io) - Official MCP documentation

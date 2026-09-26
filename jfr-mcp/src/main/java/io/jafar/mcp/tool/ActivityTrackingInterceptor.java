@@ -1,5 +1,6 @@
 package io.jafar.mcp.tool;
 
+import io.jafar.shell.core.RequestScope;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.util.function.BooleanSupplier;
@@ -40,6 +41,11 @@ public final class ActivityTrackingInterceptor implements ToolInterceptor {
           if (!beginRequest.getAsBoolean()) {
             return errorResult.apply("Server is shutting down");
           }
+          // Scope "current session" lookups (SessionRegistry, HeapSessionRegistry,
+          // SamplingSessionRegistry) to this MCP client's connection for the duration of the
+          // call, so concurrent clients on a shared daemon (SSE mode) never see or overwrite
+          // each other's implicit "current" session.
+          RequestScope.set(exchange == null ? null : exchange.sessionId());
           try {
             touchActivity.run();
             return spec.callHandler().apply(exchange, args);
@@ -51,6 +57,7 @@ public final class ActivityTrackingInterceptor implements ToolInterceptor {
             return errorResult.apply(
                 "Internal error in " + spec.tool().name() + ": " + t.getClass().getSimpleName());
           } finally {
+            RequestScope.clear();
             endRequest.run();
             touchActivity.run();
           }

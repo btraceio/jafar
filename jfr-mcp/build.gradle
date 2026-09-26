@@ -71,6 +71,7 @@ test {
         exclude '**/JafarMcpServer*Test.class'
         exclude '**/HandlerLogicIntegrationTest.class'
         exclude '**/SessionRegistryTest.class'
+        exclude '**/SessionRegistryClientIsolationTest.class'
     }
 
     // Configure Mockito as Java agent for inline mocking in Java 25
