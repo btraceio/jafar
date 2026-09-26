@@ -672,7 +672,6 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrHotmethodsTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrUseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrTsaTool()));
-    tools.add(withActivityTracking(jfrAnalysisTools.createJfrCompareTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
     tools.add(withActivityTracking(jfrCompareTools.createJfrCompareTool()));
