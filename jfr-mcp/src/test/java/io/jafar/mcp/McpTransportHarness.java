@@ -187,10 +187,28 @@ final class McpTransportHarness implements AutoCloseable {
     }
   }
 
-  /** Asserts that a tool response is a successful, non-error result. */
+  /**
+   * Asserts that a tool response is a successful, non-error result.
+   *
+   * <p>Every message carries the response itself. Without it a failure here says only that
+   * something went wrong — not whether the call timed out, was rejected by the transport, or came
+   * back as a tool error with a message that names the cause. On a run that cannot be reproduced
+   * locally, that difference is the whole investigation.
+   */
   static void assertSuccess(JsonNode resp, int id) {
-    assertNotNull(resp, "tool call id=" + id + " must return a response");
-    assertFalse(resp.has("error"), "must not be a JSON-RPC error");
-    assertFalse(resp.at("/result/isError").asBoolean(), "result.isError must be false");
+    assertNotNull(
+        resp,
+        () ->
+            "tool call id="
+                + id
+                + " returned no response within "
+                + RESPONSE_TIMEOUT_MS
+                + "ms (raise -Dmcp.test.timeout.ms if the machine is loaded)");
+    assertFalse(resp.has("error"), () -> "must not be a JSON-RPC error, but was: " + resp);
+    assertFalse(
+        resp.at("/result/isError").asBoolean(),
+        () ->
+            "result.isError must be false, but the tool reported: "
+                + resp.at("/result/content/0/text").asText());
   }
 }

@@ -24,6 +24,7 @@ import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
 import io.jafar.shell.cli.completion.completers.VariableReferenceCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.llm.LlmSettings;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -254,12 +255,34 @@ public final class ShellCompleter implements Completer {
       case "record" -> completeRecord(reader, line, candidates, wordIndex, words);
       case "set", "let" -> completeSetCommand(line, candidates, words, wordIndex);
       case "echo" -> completeEchoCommand(line, candidates);
+      case "llm" -> completeLlmCommand(line, candidates, wordIndex);
+      case "ask", "as-query", "analyze", "investigate", "explain" ->
+          completeDryRunFlag(line, candidates);
       default -> {
         // Default: suggest options
         String partial = line.word();
         if (partial.startsWith("--")) {
           suggestOptions(line, candidates, new String[] {"--help", "--version"});
         }
+      }
+    }
+  }
+
+  /**
+   * The {@code llm.*} settings, for the name position of {@code set}.
+   *
+   * <p>Kept in step with {@code LlmConfig} by {@code ShellCompleterLlmTest}, which fails if this
+   * list and the keys that class actually reads ever diverge — a setting that completes but is
+   * never read is worse than one that does not complete.
+   */
+  private void completeLlmSettingNames(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    // Same list the `set` command validates against — see LlmSettings for why it is shared.
+    for (LlmSettings.Setting setting : LlmSettings.all()) {
+      if (setting.name().startsWith(partial)) {
+        candidates.add(
+            new Candidate(
+                setting.name(), setting.name(), null, setting.description(), null, null, true));
       }
     }
   }
@@ -272,6 +295,45 @@ public final class ShellCompleter implements Completer {
     candidates.add(new Candidate("chunks"));
     candidates.add(new Candidate("chunk"));
     candidates.add(new Candidate("cp"));
+    candidates.add(new Candidate("ask"));
+    candidates.add(new Candidate("as-query"));
+    candidates.add(new Candidate("explain"));
+    candidates.add(new Candidate("analyze"));
+    candidates.add(new Candidate("llm"));
+  }
+
+  /**
+   * The {@code --dry-run} flag for {@code ask} and {@code explain}.
+   *
+   * <p>Only offered once the user has typed a leading dash: the argument to {@code ask} is a
+   * question in prose, and suggesting a flag into the middle of a sentence is noise.
+   */
+  private void completeDryRunFlag(ParsedLine line, List<Candidate> candidates) {
+    String partial = line.word();
+    if (partial.startsWith("-") && "--dry-run".startsWith(partial)) {
+      candidates.add(
+          new Candidate(
+              "--dry-run", "--dry-run", null, "print the request, send nothing", null, null, true));
+    }
+  }
+
+  /** Subcommands of {@code llm}. Only offered in the subcommand position. */
+  private void completeLlmCommand(ParsedLine line, List<Candidate> candidates, int wordIndex) {
+    if (wordIndex != 1) {
+      // `llm dry-run <question>` takes free text; suggesting anything there would be noise.
+      return;
+    }
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    addIfMatching(candidates, partial, "status", "which backend is used, and why");
+    addIfMatching(candidates, partial, "dry-run", "print what 'ask' would send, and send nothing");
+    addIfMatching(candidates, partial, "cost", "token usage for this process");
+  }
+
+  private static void addIfMatching(
+      List<Candidate> candidates, String partial, String value, String description) {
+    if (value.startsWith(partial)) {
+      candidates.add(new Candidate(value, value, null, description, null, null, true));
+    }
   }
 
   private void completeOpen(LineReader reader, ParsedLine line, List<Candidate> candidates) {
@@ -453,8 +515,12 @@ public final class ShellCompleter implements Completer {
       if ("".equals(partial) || "=".startsWith(partial)) {
         candidates.add(new Candidate("="));
       }
+    } else if (wordIndex == 1) {
+      // A settable name can be any variable, so there is nothing to enumerate in general — but the
+      // llm.* settings are a closed, documented set, and they are the ones nobody can guess the
+      // spelling of.
+      completeLlmSettingNames(line, candidates);
     }
-    // wordIndex 1 is variable name - no completion needed
   }
 
   /**

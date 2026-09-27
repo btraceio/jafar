@@ -9,6 +9,8 @@ import io.jafar.otlp.shell.OtlpSession;
 import io.jafar.otlp.shell.otlppath.OtlpPathEvaluator;
 import io.jafar.otlp.shell.otlppath.OtlpPathParseException;
 import io.jafar.otlp.shell.otlppath.OtlpPathParser;
+import io.jafar.shell.core.findings.Findings;
+import io.jafar.shell.core.findings.SamplingFindings;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
@@ -522,6 +524,9 @@ public final class OtlpTools {
 
       sendProgress(exchange, progressToken, step, totalSteps, "Generating insights...");
       result.put("insights", generateOtlpUseInsights(resourceMetrics));
+      result.put(
+          "findings",
+          Findings.toMaps(Findings.merge(SamplingFindings.fromUse(resourceMetrics, "otlp_use"))));
 
       sendProgress(exchange, progressToken, totalSteps, totalSteps, "Done");
       return successResult(result);

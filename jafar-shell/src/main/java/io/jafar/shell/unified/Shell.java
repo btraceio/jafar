@@ -49,6 +49,13 @@ public final class Shell implements AutoCloseable {
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
   private final Map<String, org.jline.reader.Completer>
       completerCache; // Cache completers per module
+  private io.jafar.shell.cli.LlmCommands llmCommands;
+
+  // The most recent query result, so 'explain' has something to explain after a hand-typed query
+  // and not only after 'ask'. Kept here rather than inside LlmCommands because the LLM handler is
+  // built lazily — recording a result must not be what loads a backend.
+  private String lastResultQuery;
+  private List<Map<String, Object>> lastResultRows;
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -192,6 +199,36 @@ public final class Shell implements AutoCloseable {
 
         if (input.startsWith("info")) {
           handleInfo(input);
+          continue;
+        }
+
+        // '?' is short for 'ask', with or without a space after it, so '?why is this slow' and
+        // 'ask why is this slow' are one command. No query language here starts with it.
+        if (input.startsWith("?")) {
+          llmCommands().analyze(input.substring(1).trim());
+          continue;
+        }
+
+        if (matchesCommand(input, "ask")
+            || matchesCommand(input, "analyze")
+            || matchesCommand(input, "investigate")) {
+          llmCommands().analyze(argumentOf(input));
+          continue;
+        }
+
+        if (matchesCommand(input, "as-query")) {
+          llmCommands().asQuery(argumentOf(input));
+          continue;
+        }
+
+        if (input.equals("explain") || input.startsWith("explain ")) {
+          llmCommandsWithLastResult().explain(input.length() > 7 ? input.substring(8).trim() : "");
+          continue;
+        }
+
+        if (input.equals("llm") || input.startsWith("llm ")) {
+          String rest = input.length() > 3 ? input.substring(4).trim() : "";
+          llmCommands().llm(rest.isEmpty() ? List.of() : List.of(rest.split("\\s+")));
           continue;
         }
 
@@ -499,12 +536,169 @@ public final class Shell implements AutoCloseable {
       if (limit != null && result instanceof List<?> list) {
         result = list.subList(0, Math.min(limit, list.size()));
       }
+      rememberResult(cleanQuery, result);
       printResult(result, format);
     } catch (Exception e) {
       terminal.writer().println("Query error: " + e.getMessage());
       e.printStackTrace();
       terminal.flush();
     }
+  }
+
+  /**
+   * Records a query result for a later {@code explain}.
+   *
+   * <p>Only row-shaped results are kept: {@code explain} sends rows to the model, and a scalar or a
+   * tree rendering has nothing it could serialise.
+   */
+  @SuppressWarnings("unchecked")
+  private void rememberResult(String query, Object result) {
+    if (result instanceof List<?> list
+        && (list.isEmpty() || list.get(0) instanceof java.util.Map<?, ?>)) {
+      this.lastResultQuery = query;
+      this.lastResultRows = (List<Map<String, Object>>) list;
+    }
+  }
+
+  /** Whether the line is exactly this command, or this command followed by arguments. */
+  private static boolean matchesCommand(String input, String command) {
+    return input.equals(command) || input.startsWith(command + " ");
+  }
+
+  /** Everything after the first word, trimmed; empty when the line is the command alone. */
+  private static String argumentOf(String input) {
+    int space = input.indexOf(' ');
+    return space < 0 ? "" : input.substring(space + 1).trim();
+  }
+
+  /** The LLM commands, primed with the most recent result so {@code explain} has something. */
+  private io.jafar.shell.cli.LlmCommands llmCommandsWithLastResult() {
+    io.jafar.shell.cli.LlmCommands commands = llmCommands();
+    if (lastResultQuery != null && lastResultRows != null) {
+      commands.noteResult(lastResultQuery, lastResultRows);
+    }
+    return commands;
+  }
+
+  /**
+   * Builds the LLM command handler, adapting the unified shell to {@link
+   * io.jafar.shell.cli.LlmCommands.Host}.
+   *
+   * <p>This shell is the one that can hold sessions of every format, so it is where {@code ask}
+   * reaches HdumpPath and the pprof/OTLP samples grammar as well as JfrPath — the module of the
+   * current session picks the language.
+   *
+   * <p>Settings resolve from the global variable store and then from environment variables. This
+   * shell has no {@code set} command yet, so in practice {@code JAFAR_LLM_*} environment variables
+   * are how you configure it here; the store is consulted first so that {@code set} works the day
+   * it is added.
+   */
+  private io.jafar.shell.cli.LlmCommands llmCommands() {
+    if (llmCommands == null) {
+      llmCommands =
+          new io.jafar.shell.cli.LlmCommands(
+              new io.jafar.shell.cli.LlmCommands.Host() {
+                @Override
+                public void println(String line) {
+                  terminal.writer().println(line);
+                  terminal.flush();
+                }
+
+                @Override
+                public Optional<String> currentModuleId() {
+                  return sessions.getCurrent().map(ref -> ref.session.getType());
+                }
+
+                @Override
+                public List<String> availableTypes() {
+                  return sessions
+                      .getCurrent()
+                      .map(
+                          ref -> {
+                            try {
+                              return ref.session.getAvailableTypes().stream().sorted().toList();
+                            } catch (Exception e) {
+                              return List.<String>of();
+                            }
+                          })
+                      .orElseGet(List::of);
+                }
+
+                @Override
+                @SuppressWarnings("unchecked")
+                public List<Map<String, Object>> runQuery(String query) throws Exception {
+                  Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+                  if (current.isEmpty()) {
+                    throw new IllegalStateException("No session open");
+                  }
+                  SessionManager.SessionRef<Session> ref = current.get();
+                  ShellModule module = moduleById.get(ref.session.getType());
+                  if (module == null || module.getQueryEvaluator() == null) {
+                    throw new IllegalStateException(
+                        "No query evaluator for session type: " + ref.session.getType());
+                  }
+                  // Parse first: an evaluator's contract is to take the parsed query, and only
+                  // some of them also accept the raw string.
+                  QueryEvaluator evaluator = module.getQueryEvaluator();
+                  Object result =
+                      evaluator.evaluate(
+                          ref.session, evaluator.parse(query), buildCrossSessionContext());
+                  return result instanceof List<?> list
+                      ? (List<Map<String, Object>>) list
+                      : List.of();
+                }
+
+                @Override
+                public void renderRows(List<Map<String, Object>> rows) {
+                  printResult(rows);
+                }
+
+                @Override
+                public void rememberResult(String query, List<Map<String, Object>> rows) {
+                  Shell.this.rememberResult(query, rows);
+                }
+
+                @Override
+                public Optional<String> validateQuery(String query) {
+                  // Use the current module's own parser, so each format validates in its own
+                  // language and the model is corrected with a message it can act on.
+                  try {
+                    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+                    if (current.isEmpty()) {
+                      return Optional.empty();
+                    }
+                    ShellModule module = moduleById.get(current.get().session.getType());
+                    if (module == null || module.getQueryEvaluator() == null) {
+                      return Optional.empty();
+                    }
+                    module.getQueryEvaluator().parse(query);
+                    return Optional.empty();
+                  } catch (RuntimeException e) {
+                    String message = e.getMessage();
+                    return Optional.of(
+                        message == null || message.isBlank() ? e.toString() : message);
+                  }
+                }
+
+                @Override
+                public String setting(String name) {
+                  if (globalStore == null) {
+                    return null;
+                  }
+                  VariableStore.Value value = globalStore.get(name);
+                  if (value == null) {
+                    return null;
+                  }
+                  try {
+                    Object raw = value.get();
+                    return raw == null ? null : String.valueOf(raw);
+                  } catch (Exception e) {
+                    return null;
+                  }
+                }
+              });
+    }
+    return llmCommands;
   }
 
   private CrossSessionContext buildCrossSessionContext() {
@@ -667,6 +861,17 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Query:");
     terminal.writer().println("  show <query>       Execute a query on current session");
+    terminal.writer().println();
+    terminal.writer().println("Ask (LLM, optional):");
+    terminal
+        .writer()
+        .println("  ask <question>     Several queries, read each, conclude ('?' for short)");
+    terminal
+        .writer()
+        .println("  as-query <question> Turn a question into one query, show it, run it");
+    terminal.writer().println("  explain            Explain the most recent result");
+    terminal.writer().println("                     (each takes --dry-run: print, send nothing)");
+    terminal.writer().println("  llm                status | cost");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");

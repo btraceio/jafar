@@ -380,6 +380,48 @@ class JfrPathParserTest {
     }
   }
 
+  private static long literalOf(JfrPath.Query q) {
+    var pred = q.predicates.get(0);
+    if (pred instanceof JfrPath.FieldPredicate p) {
+      return ((Number) p.literal).longValue();
+    }
+    var ce = (JfrPath.CompExpr) ((JfrPath.ExprPredicate) pred).expr;
+    return ((Number) ce.literal).longValue();
+  }
+
+  @Test
+  void parsesDurationUnitMs() {
+    var q = JfrPathParser.parse("events/jdk.GCPhasePause[duration > 10ms]");
+    assertEquals(1, q.predicates.size());
+    assertEquals(10L * 1_000_000, literalOf(q));
+  }
+
+  @Test
+  void parsesDurationUnitsNsUsAndS() {
+    assertEquals(500L, literalOf(JfrPathParser.parse("events/jdk.FileRead[duration > 500ns]")));
+    assertEquals(
+        250L * 1_000, literalOf(JfrPathParser.parse("events/jdk.FileRead[duration > 250us]")));
+    assertEquals(
+        2L * 1_000_000_000, literalOf(JfrPathParser.parse("events/jdk.FileRead[duration > 2s]")));
+  }
+
+  @Test
+  void durationUnitsAreCaseInsensitive() {
+    assertEquals(10L * 1_000_000, literalOf(JfrPathParser.parse("events/x[duration > 10MS]")));
+  }
+
+  @Test
+  void durationSuffixDoesNotShadowMegabyteSuffix() {
+    // "1M" must stay mebibytes; only "1ms" is a duration.
+    assertEquals(1L * 1024 * 1024, literalOf(JfrPathParser.parse("events/x[bytes > 1M]")));
+    assertEquals(1L * 1_000_000, literalOf(JfrPathParser.parse("events/x[duration > 1ms]")));
+  }
+
+  @Test
+  void parsesDurationUnitWithDecimal() {
+    assertEquals(1_500_000L, literalOf(JfrPathParser.parse("events/x[duration > 1.5ms]")));
+  }
+
   @Test
   void parsesSizeUnitMB() {
     var q = JfrPathParser.parse("events/jdk.FileRead[bytes > 1MB]");

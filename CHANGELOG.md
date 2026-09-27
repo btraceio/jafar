@@ -8,6 +8,222 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`ask` — an LLM inside the shell** (`llm-anthropic` and `llm-openai` modules,
+  `io.jafar.shell.core.llm` in `shell-core`)
+  - `ask <question>` — shortcut `?`, word aliases `analyze` and `investigate` — runs several
+    queries, reads each result and concludes; `as-query <question>` is the one-shot form, which
+    turns a question into a single query, **prints it**, and runs it. `explain` describes the last
+    result; `llm status` and `llm cost` cover setup and cost. Every verb takes `--dry-run` to print
+    what would be sent without sending it
+  - Wired into `jfr-shell` (JFR recordings) and the unified `jafar-shell`, which is the entry point
+    that opens all four formats — they use whichever language the current session needs:
+    JfrPath, HdumpPath, or the shared pprof/OTLP samples grammar
+  - **Three backends, no privileged provider**: `anthropic` (Anthropic Java SDK), `openai` and
+    `ollama` (OpenAI chat-completions over the JDK HTTP client, no provider SDK). `llm.backend`
+    selects one; `auto` takes the first that reports ready. Each supplies its own default model, so
+    there is no cross-provider default to get wrong
+  - **`llm.base-url` reaches anything that speaks the same protocol** — vLLM, LM Studio, Groq,
+    Together, OpenRouter, Ollama Cloud — without new code. A loopback endpoint is probed with
+    `GET /models` so `llm status` says "reachable" or "cannot reach" instead of hanging later
+  - **A local model means nothing leaves the machine.** `set llm.backend = ollama` and the question,
+    the type names and the result rows all stay on loopback — the configuration for recordings you
+    did not produce, and for environments where a hosted call is not allowed
+  - **Both Anthropic authentication modes come from the SDK**: `ANTHROPIC_API_KEY`, or a keyless
+    OAuth profile written by `ant auth login`. Jafar adds no auth code, only diagnostics — the SDK
+    does not fail fast when credentials are missing, so `llm status` reports which source wins and
+    catches the three traps (a stale key shadowing a profile, an empty-but-set key, both credentials
+    at once). The OpenAI-compatible backends send no `Authorization` header at all when there is no
+    key, because an empty bearer breaks several local servers
+  - **The output ceiling adapts to reasoning models.** `llm.max-tokens` stays at 2048 — the size of
+    an answer, and the cap on a runaway — but a model that reasons before answering spends that
+    budget thinking, hits the ceiling mid-thought and returns no query, billing the full amount for
+    nothing. When a reply stops on its token limit without a query, the shell raises the ceiling to
+    16384, says so, retries, and remembers it for that model for the session. The trigger is the
+    reply's stop reason rather than a list of model names. A ceiling you set yourself is never
+    lowered
+  - **A failure to find a query now says why.** Both backends read `finish_reason` and nothing
+    consumed it, so a reply truncated mid-thought reported only "No query could be extracted from
+    the model's reply" — with the token count that would have explained it sitting in the same
+    output
+  - **A generated query is validated before it runs**: parsed with the same parser that would
+    execute it, and on rejection the parser's own error goes back to the model with a request to
+    correct itself (`llm.max-retries`, default 1, capped at 3). `ask` prints the correction count
+    with the token usage. This is what makes a small local model usable for the job
+  - **`ask` no longer offers event types that hold no events.** JFR metadata declares every type the
+    JVM registered, so a recording produced with an agent that ships its own sampler lists an empty
+    `jdk.ExecutionSample` beside a vendor type carrying thousands of events — and a model told only
+    the names picks the one it recognises and queries nothing. Events are now counted once per
+    recording, cached across sessions under `$XDG_CACHE_HOME/jafar/event-counts` (keyed on path,
+    size and modification time), and types with no events are collapsed into a single line the
+    model is told not to query. The prompt also states that a type's package says nothing about its
+    relevance. `llm.count-events = false` skips the pass
+  - **`ask` tells the model what each event type is for.** A recording documents itself — JFR puts
+    `@Label` and `@Description` on event classes — and that text is now sent with the type list, so
+    a type is chosen on meaning rather than on a name that shares a word with the question. It sits
+    in the cached prompt prefix, being fixed per recording, and stays inside the recording-data
+    fence: a custom type is labelled by whoever produced the recording. Event counts are not
+    included, because computing them means scanning the recording and `ask` is deliberately
+    independent of recording size
+  - **`analyze` runs the analyses, not just queries.** `ANALYSIS: diagnose` (also `use`, `tsa`,
+    `summary`, `hotmethods`, `exceptions`) reaches the same implementations the MCP server exposes,
+    so the model gets the USE and TSA passes, the thresholds and the capability gaps instead of
+    rebuilding that judgement out of queries
+  - **Fixed: the untyped parser's string wrapper was being redacted wholesale.** A string constant
+    arrives as `{string=[B}`, and `string` is in the default redact list — so every wrapped
+    constant reaching the model was replaced, class names and group-by keys included, while the
+    redaction looked like it was working. The wrapper is now unwrapped before the decision, which is
+    taken on the real field name; a wrapped value under a genuinely redacted field is still redacted
+  - **`ask <question>` — an investigation, not a translation.** `as-query` turns a question into
+    one query; `ask` runs several, reads each result and decides what to look at next, then
+    concludes. Every query is printed as it runs, with the rows it returned underneath — the same
+    rows the model was given, capped at `llm.max-rows` — and the sequence is written to a
+    re-runnable `.jfrs` transcript, so a conclusion produced by a model leaves behind evidence a
+    human can check. A following `explain` describes the last result it looked at. Bounded by
+    `llm.max-steps` (6) and `llm.max-total-tokens` (200000); rows are redacted and truncated on
+    every step, and `llm.confirm` turns it off, since a loop cannot show a query it has not decided
+    on yet. It speaks the same line-prefixed text protocol as `as-query` rather than a provider's
+    tool-calling API, so it works on every backend including a small local model
+  - **`Finding` moved from `jfr-mcp` to `shell-core`** (`io.jafar.shell.core.findings`), so the
+    shell and the MCP server share one output shape and a shell investigation can merge with an
+    MCP one
+  - **The model asks what fields a type has instead of guessing.** JFR is self-describing, so an
+    event's fields are whatever the recording declares — unknowable from the type name, and for a
+    custom event unknowable at all. A reply may be `FIELDS: <types>`, answered with those types'
+    fields and the types those fields lead to, so `sampledThread/javaName` is read rather than
+    invented. One extra round trip and ~1,200 characters, against ~9,800 tokens to send every
+    type's fields up front. Capped at 8 types and one round
+  - **The model never sees raw events.** It composes a query and the shell runs it, so a 900 MB
+    recording costs the same as a 2 MB one. The query-language reference is the cacheable prompt
+    prefix
+  - **Egress control**: result rows are redacted by field name before leaving the process (paths,
+    addresses, hosts, messages, string values), truncated to `llm.max-rows`, and `--dry-run` on
+    either verb prints the exact bytes a real call would send without sending them
+  - **Recording content is treated as untrusted input**: thread names, exception messages and heap
+    string values are attacker-controllable when the recording came from a third party, so they are
+    fenced in explicit data markers and the tool surface is read-only
+  - Optional at runtime: the SPI is in `shell-core` with no new dependencies and backends are
+    discovered via `ServiceLoader`, so a build without `llm-anthropic` and `llm-openai` carries no
+    provider dependency at all and every other command is unchanged
+  - Settings via `set`: `llm.enabled`, `llm.backend`, `llm.model`, `llm.base-url`, `llm.api-key`,
+    `llm.max-tokens`, `llm.max-rows`, `llm.max-retries`, `llm.timeout`, `llm.confirm`, `llm.redact`,
+    `llm.redact-fields`. `set` had to learn about them: it rejected every dotted name, since
+    `${a.b}` means field access in an expression, so `set llm.backend = ollama` answered
+    *"Invalid variable name"*. A setting's value is now stored as literal text rather than
+    evaluated — a bare word was being read as a query (*"Unknown root: ollama"*) and a bare
+    integer coerced to a double, so `set llm.max-rows = 20` stored `20.0` and silently fell back
+    to the default. A name starting with `llm.` that is not a setting is reported as a typo with
+    the real names listed
+  - **A settings file**, `~/.config/jafar/llm.properties` (also `$JAFAR_LLM_CONFIG` or
+    `$XDG_CONFIG_HOME/jafar/`), using the same key names `set` uses. An environment variable is a
+    poor home for a long-lived credential — every child process inherits it, it appears in crash
+    dumps and CI logs, and exporting it inline puts it in shell history. `llm status` names the
+    file, warns when it is readable by anyone else, and reports which layer each setting came
+    from, so a stale environment variable shadowing the file is visible rather than baffling.
+    `llm.api-key` now reaches the Anthropic backend too — it previously worked only for the
+    OpenAI-compatible ones, because that backend asked the SDK alone, so a key sitting in the
+    settings file produced "No credentials found". A configured key takes precedence over
+    `ANTHROPIC_API_KEY`, which may be left over from something else in the same terminal
+  - **Tab completion and help**: `ask`, `as-query`, `explain` and `llm` complete as commands in
+    both shells, `llm` completes its subcommands, `set llm.` completes every setting with
+    descriptions, `help` lists them as subjects (including in the interactive shell's own `help`,
+    which listed none of them), and `help ask` carries worked examples. A test reads
+    `LlmConfig.java` and fails if a setting it reads is not offered, so the list cannot drift
+  - Docs: [LlmSetup](doc/cli/LlmSetup.md), [AskTutorial](doc/cli/AskTutorial.md),
+    [LlmPrivacy](doc/cli/LlmPrivacy.md), [WhenToUseWhich](doc/mcp/WhenToUseWhich.md), and
+    [the handoff](doc/plans/llm-in-the-shell-handoff.md) describing the seams left for an agentic
+    mode
+  - `jafar-shell` has no `set` command yet, so settings there come from `JAFAR_LLM_*` environment
+    variables. The whole path — including the correction loop — is verified in both built shells
+    against a real recording and a real local HTTP server, but no hosted provider has been called
+    from this repository; see the handoff, section 6
+- **`jafar-perf` Claude Code plugin** - methodology layer over the MCP server, published from
+  [btraceio/jafar-perf-box](https://github.com/btraceio/jafar-perf-box)
+  - Nine skills: `triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`
+  - Seven agents: `perf-lead` coordinator, `perf-engineer`, and five specialists with narrow tool allowlists
+  - Bundles `.mcp.json`, so installing the plugin registers the MCP server too
+  - Kept in its own repository because `/plugin marketplace add` clones the marketplace repository:
+    the plugin is 160 KB of Markdown and this repository is ~18 MB, 9.6 MB of it binary JFR test
+    recordings
+- **`jfr_compare` MCP tool** - compares a candidate recording against a baseline
+  - Event counts normalised to per-second rates using each recording's own observed span; stack frames
+    compared as a share of that recording's samples, so different sampling intervals stay comparable
+  - Reports a `comparability` block (different profiler event types, durations differing by more than
+    3x, low sample counts) rather than silently producing a plausible-looking number
+  - Changes below a configurable noise floor (`minDeltaPct`, default 1.0 percentage points) are withheld
+- **Unified findings model** (`io.jafar.mcp.findings.Finding`) - `jfr_diagnose`, `jfr_use`, `jfr_tsa`,
+  `jfr_compare`, `pprof_use`, `otlp_use` and `hdump_report` now all return a `findings` array with a
+  stable `id`, `severity`, `category`, `title`, `evidence`, `action` and follow-up `query`. Findings from
+  different tools de-duplicate and merge (`Findings.merge`). Findings derived from heuristics — the
+  keyword-inferred thread states in the pprof and OTLP tools — record `heuristic=true`.
+- **MCP prompts and resources** - the server now advertises both capabilities
+  - Prompts: `triage`, `compare`, `leak-hunt`, `latency` (surfaced as `/mcp__jafar__<name>` in Claude Code)
+  - Resources: `jafar://sessions`, `jafar://help/jfrpath`, `jafar://help/hdumppath`, `jafar://help/tools`
+- **JfrPath duration unit suffixes** - `ns`, `us`, `ms`, `s` in numeric literals, converting to
+  nanoseconds (`events/jdk.GCPhasePause[duration>10ms]`). These were already documented in the MCP
+  `jfr_help` output and in `doc/mcp/Tutorial.md`, but the parser rejected them. No minute suffix: `m`
+  already means mebibytes. Size suffixes are unchanged.
+
+### Changed
+- **`jfr_diagnose` runs the analyses it previously only recommended** - it now executes the USE and TSA
+  passes in-process and merges their findings. New `depth` parameter (`quick` skips both). The response
+  keeps `recommendations` and moves the old human-readable strings to `headlines`; `findings` is now the
+  structured array, matching `hdump_report`. New `capabilityGaps` lists what the recording cannot answer
+  (for example allocation profiling not enabled), stated separately from findings.
+- **`JfrQueryEvaluator` moved from `jfr-shell` to `shell-core`** (same package and FQN, no import changes)
+  so that consumers without the interactive CLI can evaluate JfrPath against a JFR session.
+- **`AGENTS.md` is now an entry point rather than a manual.** It was 544 lines, of which one section
+  was 241; the areas it covered now live in `doc/agents/` and it links to them. New
+  `doc/agents/Verification.md` records how to know a change works in this repository — eight rules,
+  each with the case file that produced it, drawn from bugs that shipped or nearly shipped while
+  their tests were green.
+
+### Fixed
+- **`groupBy` on a field the event type does not have returned zero rows and no complaint.** An
+  empty result reads exactly like "this recording has no such events", so the reader moves on
+  rather than fixing the name. It now counts the events the key was offered and, when none of them
+  yielded a key, names the key, the count and the fields the type does have:
+  `groupBy: key 'gcType' matched nothing in 218 events of jdk.GarbageCollection. Available:
+  [cause, duration, eventThread, gcId, longestPause, name, startTime, sumOfPauses]`. A group-by
+  over a type with no events at all is still an empty result, so nothing that returns rows today
+  can start failing
+- **`sortBy(value)` and `top(n, by=value)` now read the aggregate column of a `groupBy` result.**
+  `groupBy` names its output `key` and the aggregate after the function, so
+  `groupBy(name, agg=sum, value=sumOfPauses) | sortBy(value)` was rejected with
+  `field 'value' not found. Available: [sum, key]` — even though `groupBy`'s own `sortBy=`
+  argument already spells that column `value`. `top` had the same gap and failed silently instead:
+  an unresolved path yields null for every row, so the sort kept the input order and returned the
+  first n rows as the top n. Both `top(10, by=value)` examples in the model-facing language
+  reference were affected. The alias applies only where there is no real column of that name, so a
+  recording's own `value` field is never shadowed
+- **The MCP server reported the wrong version in its handshake.** `serverInfo.version` was a
+  literal `"0.10.0"` that was never updated, so every release from 0.10.0 onwards - 0.26.2
+  included - told clients it was 0.10.0, and anything gating on it was misled. The version is now
+  read from the jar manifest (`Implementation-Version`, added to the shadow jar), which cannot go
+  stale; outside a jar it reports `unknown` rather than a number that might be wrong
+- `JfrQueryEvaluator.evaluate` now accepts a raw query string as well as a parsed
+  `JfrPath.Query`, matching what the `QueryEvaluator` interface documents and what the Hdump, pprof
+  and OTLP evaluators already did. It previously threw `Expected JfrPath.Query`, so a caller holding
+  only the query text had to know which implementation it had
+- **Heap-to-JFR correlation now works over MCP** - `hdump_query` was passed a bare `SessionResolver`, so
+  `join(session=..., root="jdk.ObjectAllocationSample", by=class)` failed with "Cross-type join requires a
+  CrossSessionContext" and the correlation was reachable only from `jafar-shell`. The server now supplies
+  an `McpCrossSessionContext` spanning the heap and JFR registries.
+- **Allocation correlation produced only null columns** - `AllocationAggregator` read
+  `objectClass.name` as a plain string, but the untyped parser wraps string constants
+  (`{objectClass: {name: {value: {string: "[B"}}}}`), so every real recording aggregated to an empty
+  map and the heap-to-JFR join filled `allocCount`, `allocWeight`, `allocRate`, `topAllocSite` and
+  `survivalRatio` with nulls for every class. Allocation-site extraction had the same problem with
+  wrapped frame and type names. Verified end to end against a real recording and heap dump:
+  `byte[]` now correlates to 3494 allocation samples with `topAllocSite` resolved. The existing
+  tests missed this because they all fed a flattened `objectClass.name` string shape the parser
+  never emits; regression tests now cover the real shape.
+- **`by=class` was wrong in the documented cross-type join examples** - on the `classes` root the
+  join key field is `name` (`by=class` applies to the `objects` root), so the documented queries
+  silently matched nothing. The examples now let the key be inferred.
+- **Documentation understated the MCP server** - `jfr-mcp/README.md` and `doc/mcp/Tutorial.md` listed 13
+  JFR-only tools; the server registers 37 across JFR, HPROF, pprof and OTLP. `AGENTS.md` omitted the
+  `hdump_*` family.
+
 - **go-parser module** - Pure Go port of the untyped JFR parser (`github.com/btraceio/jafar/go-parser`)
   - Standalone Go module in `go-parser/`, kept out of the Gradle build; no external dependencies
   - Same value model as the Java untyped API: events as `map[string]any`, lazy per-chunk
@@ -317,6 +533,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This is the first public release of JAFAR.
 
-[Unreleased]: https://github.com/jbachorik/jafar/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/jbachorik/jafar/releases/tag/v0.2.0
-[0.1.0]: https://github.com/jbachorik/jafar/releases/tag/v0.1.0
+[Unreleased]: https://github.com/btraceio/jafar/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/btraceio/jafar/releases/tag/v0.2.0
+[0.1.0]: https://github.com/btraceio/jafar/releases/tag/v0.1.0

@@ -128,7 +128,7 @@ We will credit reporters in release notes (unless they prefer to remain anonymou
 ## Security Updates
 
 Security updates will be announced via:
-- GitHub Security Advisories: https://github.com/jbachorik/jafar/security/advisories
+- GitHub Security Advisories: https://github.com/btraceio/jafar/security/advisories
 - Release notes in CHANGELOG.md
 - Git tags with security fix annotations
 

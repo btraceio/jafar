@@ -171,4 +171,86 @@ class AllocationAggregatorTest {
     assertEquals("java.lang.String", AllocationAggregator.normalizeClassName("java.lang.String"));
     assertNull(AllocationAggregator.normalizeClassName(null));
   }
+
+  // ───────────────────────────────────────────────────────────────────────────────
+  // Row shapes as the untyped parser actually produces them.
+  //
+  // Every other test in this class feeds a flattened "objectClass.name" string, which is a shape
+  // the parser never emits: string constants arrive wrapped, as {string: "..."} behind a "value"
+  // indirection. The aggregator used to return an empty map for real rows, which made the
+  // heap-to-JFR allocation correlation silently produce null columns for every class.
+  // ───────────────────────────────────────────────────────────────────────────────
+
+  /** {@code {value: {string: name}}} — a string constant behind a complex-value indirection. */
+  private static Map<String, Object> wrappedString(String value) {
+    return Map.of("value", Map.of("string", value));
+  }
+
+  private static Map<String, Object> parserShapedRow(String jvmClassName, long weight) {
+    Map<String, Object> row = new HashMap<>();
+    row.put("objectClass", Map.of("name", wrappedString(jvmClassName)));
+    row.put("weight", weight);
+    return row;
+  }
+
+  @Test
+  void aggregatesRowsInTheShapeTheParserEmits() {
+    Map<String, Map<String, Object>> result =
+        AllocationAggregator.aggregate(
+            List.of(parserShapedRow("[B", 1024L), parserShapedRow("[B", 2048L)));
+
+    Map<String, Object> stats = result.get("byte[]");
+    assertNotNull(stats, "wrapped objectClass.name must resolve; got keys " + result.keySet());
+    assertEquals(2L, stats.get("allocCount"));
+    assertEquals(3072L, stats.get("allocWeight"));
+  }
+
+  @Test
+  void normalisesWrappedNamesToSourceForm() {
+    Map<String, Map<String, Object>> result =
+        AllocationAggregator.aggregate(
+            List.of(
+                parserShapedRow("[B", 1L),
+                parserShapedRow("[C", 1L),
+                parserShapedRow("java/util/ArrayList$Itr", 1L),
+                parserShapedRow("[Ljava/lang/String;", 1L)));
+
+    // These are the names the heap-dump `classes` root uses, so the join key matches.
+    assertEquals(
+        java.util.Set.of("byte[]", "char[]", "java.util.ArrayList$Itr", "java.lang.String[]"),
+        result.keySet());
+  }
+
+  @Test
+  void resolvesTopAllocationSiteFromWrappedFrames() {
+    Map<String, Object> row = new HashMap<>();
+    row.put("objectClass", Map.of("name", wrappedString("[B")));
+    row.put("weight", 512L);
+    row.put(
+        "stackTrace",
+        Map.of(
+            "frames",
+            List.of(
+                Map.of(
+                    "method",
+                    Map.of(
+                        "name", wrappedString("main"),
+                        "type", Map.of("name", wrappedString("Workload")))))));
+
+    Map<String, Object> stats = AllocationAggregator.aggregate(List.of(row)).get("byte[]");
+    assertNotNull(stats);
+    assertEquals("Workload.main", stats.get("topAllocSite"));
+  }
+
+  @Test
+  void toleratesRowsWithNoResolvableClassName() {
+    Map<String, Object> unusable = new HashMap<>();
+    unusable.put("objectClass", Map.of("name", Map.of("value", Map.of())));
+    unusable.put("weight", 64L);
+
+    Map<String, Map<String, Object>> result =
+        AllocationAggregator.aggregate(List.of(unusable, parserShapedRow("[B", 8L)));
+
+    assertEquals(java.util.Set.of("byte[]"), result.keySet());
+  }
 }

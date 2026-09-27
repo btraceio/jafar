@@ -13,12 +13,18 @@ import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
+import io.jafar.shell.core.analysis.AnalysisTarget;
+import io.jafar.shell.core.analysis.JfrAnalyses;
+import io.jafar.shell.core.analysis.Progress;
+import io.jafar.shell.core.llm.LlmSettings;
+import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -28,6 +34,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -65,6 +72,13 @@ public class CommandDispatcher {
 
   private final JfrSelector selector;
   private QueryEvaluator moduleEvaluator;
+  private LlmCommands llmCommands;
+
+  // The last query typed by hand and its rows, so `explain` can describe what you are looking at.
+  // Held here rather than pushed into LlmCommands on every query, because constructing that is
+  // what loads the LLM machinery — a shell that never runs an LLM command should never pay for it.
+  private String lastResultQuery;
+  private List<Map<String, Object>> lastResultRows;
 
   public CommandDispatcher(
       SessionManager<? extends Session> sessions, IO io, SessionChangeListener listener) {
@@ -129,6 +143,182 @@ public class CommandDispatcher {
     return false;
   }
 
+  private void rememberResult(String query, List<Map<String, Object>> rows) {
+    this.lastResultQuery = query;
+    this.lastResultRows = rows;
+  }
+
+  /** The LLM commands, primed with the most recent result so {@code explain} has something. */
+  private LlmCommands llmCommandsWithLastResult() {
+    LlmCommands commands = llmCommands();
+    if (lastResultQuery != null && lastResultRows != null) {
+      commands.noteResult(lastResultQuery, lastResultRows);
+    }
+    return commands;
+  }
+
+  /**
+   * Builds the LLM command handler on first use, adapting this dispatcher to {@link
+   * LlmCommands.Host}. Construction is lazy so a shell that never runs an LLM command never loads
+   * the backend.
+   *
+   * <p>Package-private rather than private so that a test can drive the adapter — in particular
+   * {@code runQuery} — without needing a backend.
+   */
+  LlmCommands llmCommands() {
+    if (llmCommands == null) {
+      llmCommands =
+          new LlmCommands(
+              new LlmCommands.Host() {
+                @Override
+                public void println(String line) {
+                  io.println(line);
+                }
+
+                @Override
+                public java.util.Optional<String> currentModuleId() {
+                  var cur = sessions.current();
+                  if (cur.isEmpty()) {
+                    return java.util.Optional.empty();
+                  }
+                  return java.util.Optional.of(cur.get().session.getType());
+                }
+
+                @Override
+                public List<String> availableTypes() {
+                  var cur = sessions.current();
+                  if (cur.isEmpty()) {
+                    return List.of();
+                  }
+                  try {
+                    return cur.get().session.getAvailableTypes().stream().sorted().toList();
+                  } catch (Exception e) {
+                    return List.of();
+                  }
+                }
+
+                @Override
+                public List<PromptBuilder.TypeEntry> documentedTypes() {
+                  return describedTypes();
+                }
+
+                @Override
+                public List<PromptBuilder.TypeEntry> fieldsOf(List<String> typeNames) {
+                  return describeFields(typeNames);
+                }
+
+                @Override
+                public List<String> availableAnalyses() {
+                  return currentJfrSession() == null
+                      ? List.of()
+                      : List.of("diagnose", "use", "tsa", "summary", "hotmethods", "exceptions");
+                }
+
+                @Override
+                public Map<String, Object> runAnalysis(String name) throws Exception {
+                  return runJfrAnalysis(name);
+                }
+
+                @Override
+                public void saveTranscript(String question, List<String> queries) {
+                  writeInvestigationScript(question, queries);
+                }
+
+                @Override
+                public void rememberResult(String query, List<Map<String, Object>> rows) {
+                  CommandDispatcher.this.rememberResult(query, rows);
+                }
+
+                @Override
+                public List<Map<String, Object>> runQuery(String query) throws Exception {
+                  JFRSession jfr = currentJfrSession();
+                  if (jfr != null) {
+                    if (selector != null) {
+                      return selector.select(jfr, query);
+                    }
+                    // The interactive shell constructs this dispatcher without a selector and
+                    // evaluates JfrPath directly (see cmdQuery). Mirroring that here is what makes
+                    // 'ask' work in the shell people actually type into, not only under -e.
+                    // Default match mode: the model's query carries no --match flag.
+                    return new JfrPathEvaluator().evaluate(jfr, JfrPathParser.parse(query));
+                  }
+                  var cur = sessions.current();
+                  if (cur.isPresent() && moduleEvaluator != null) {
+                    Object parsed = moduleEvaluator.parse(query);
+                    Object result = moduleEvaluator.evaluate(cur.get().session, parsed);
+                    if (result instanceof List<?> list) {
+                      @SuppressWarnings("unchecked")
+                      List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
+                      return rows;
+                    }
+                    return List.of();
+                  }
+                  throw new IllegalStateException("No query evaluator available for this session");
+                }
+
+                @Override
+                public void renderRows(List<Map<String, Object>> rows) {
+                  if (rows.isEmpty()) {
+                    io.println("(empty result)");
+                    return;
+                  }
+                  TableRenderer.render(rows, io);
+                }
+
+                @Override
+                public java.util.Optional<String> validateQuery(String query) {
+                  // Parse with the same parser that will run it, so a bad query is caught before
+                  // execution and the model gets the parser's own message to correct against.
+                  try {
+                    if (currentJfrSession() != null) {
+                      JfrPathParser.parse(query);
+                      return java.util.Optional.empty();
+                    }
+                    if (moduleEvaluator != null) {
+                      moduleEvaluator.parse(query);
+                      return java.util.Optional.empty();
+                    }
+                    return java.util.Optional.empty();
+                  } catch (RuntimeException e) {
+                    String message = e.getMessage();
+                    return java.util.Optional.of(
+                        message == null || message.isBlank() ? e.toString() : message);
+                  }
+                }
+
+                @Override
+                public String setting(String name) {
+                  // Session-scoped settings win over global ones, matching how 'set' behaves.
+                  var cur = sessions.current();
+                  if (cur.isPresent()) {
+                    String value = readVar(cur.get().variables, name);
+                    if (value != null) {
+                      return value;
+                    }
+                  }
+                  return readVar(globalStore, name);
+                }
+
+                private String readVar(VariableStore store, String name) {
+                  if (store == null) {
+                    return null;
+                  }
+                  VariableStore.Value value = store.get(name);
+                  if (value == null) {
+                    return null;
+                  }
+                  try {
+                    Object raw = value.get();
+                    return raw == null ? null : String.valueOf(raw);
+                  } catch (Exception e) {
+                    return null;
+                  }
+                }
+              });
+    }
+    return llmCommands;
+  }
+
   /**
    * Returns the current session as a {@link JFRSession}, or {@code null} if no session is open or
    * the current session is not a JFR session.
@@ -139,6 +329,343 @@ public class CommandDispatcher {
       return jfr;
     }
     return null;
+  }
+
+  // The recording's own documentation for its event types, read once per recording. Parsing
+  // metadata is cheap next to a question round trip, but it is not free, and `ask` is asked
+  // repeatedly against the same file.
+  private String describedTypesFor;
+  private List<PromptBuilder.TypeEntry> describedTypesCache;
+
+  /**
+   * Event types annotated with what the recording says each one is for.
+   *
+   * <p>JFR carries {@code @Label} and {@code @Description} on event classes — "CPU Load",
+   * "Information about the recent CPU usage of the JVM process" — which is exactly the knowledge a
+   * model needs to pick a type for a question, and which no amount of guessing from the type name
+   * reliably reproduces.
+   *
+   * <p>Event counts are deliberately not included. {@code JFRSession} only accumulates them while a
+   * query runs, so before one has they are all zero, and producing real ones means scanning the
+   * recording — which would make {@code ask} cost grow with file size, the one thing this design
+   * exists to avoid.
+   */
+  private List<PromptBuilder.TypeEntry> describedTypes() {
+    var cur = sessions.current();
+    if (cur.isEmpty()) {
+      return List.of();
+    }
+    List<String> names;
+    try {
+      names = cur.get().session.getAvailableTypes().stream().sorted().toList();
+    } catch (Exception e) {
+      return List.of();
+    }
+
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null) {
+      return names.stream().map(PromptBuilder.TypeEntry::of).toList();
+    }
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(describedTypesFor) && describedTypesCache != null) {
+      return describedTypesCache;
+    }
+
+    Map<String, Map<String, Object>> byName = metadataByName(jfr);
+    if (byName.isEmpty()) {
+      return names.stream().map(PromptBuilder.TypeEntry::of).toList();
+    }
+    Map<String, Long> counts = eventCounts(jfr);
+    // A counted recording that never mentions a type holds none of it. Only when counting did not
+    // happen at all is the count unknown — the distinction is the whole point: 0 is a fact the
+    // model must act on, -1 is a silence it must not read anything into.
+    boolean counted = !counts.isEmpty();
+
+    List<PromptBuilder.TypeEntry> entries = new ArrayList<>();
+    for (String name : names) {
+      Map<String, Object> clazz = byName.get(name);
+      long count = counts.getOrDefault(name, counted ? 0L : -1L);
+      entries.add(
+          clazz == null
+              ? new PromptBuilder.TypeEntry(name, count, null, null, List.of(), true)
+              : new PromptBuilder.TypeEntry(
+                  name, count, labelOf(clazz), descriptionOf(clazz), List.of(), true));
+    }
+    describedTypesFor = key;
+    describedTypesCache = List.copyOf(entries);
+    return describedTypesCache;
+  }
+
+  // Events per type, counted once per recording. Empty when counting is off or failed, in which
+  // case every count reads as unknown and nothing is claimed about it.
+  private String countsFor;
+  private Map<String, Long> countsCache;
+
+  /**
+   * How many events of each type the recording actually holds.
+   *
+   * <p>Metadata declares every type the JVM registered, whether or not it emitted anything — so a
+   * recording produced by an agent that ships its own sampler lists {@code jdk.ExecutionSample}
+   * with nothing in it alongside a vendor type with thousands of events. Told only the names, a
+   * model picks the one it recognises and queries an empty type.
+   *
+   * <p>This is a full pass over the recording. It is done once per session and cached, and it is
+   * the same pass the query that follows the question will make anyway — {@code ask} answers with a
+   * query, and running that query streams every event regardless. Set {@code llm.count-events =
+   * false} to skip it on a recording large enough that one extra pass is not worth the accuracy.
+   */
+  private Map<String, Long> eventCounts(JFRSession jfr) {
+    if ("false".equalsIgnoreCase(readSetting("llm.count-events"))) {
+      return Map.of();
+    }
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(countsFor) && countsCache != null) {
+      return countsCache;
+    }
+    var cached = EventCountCache.read(jfr.getRecordingPath());
+    if (cached.isPresent()) {
+      countsCache = Map.copyOf(cached.get());
+      countsFor = key;
+      return countsCache;
+    }
+    try {
+      Map<String, Long> counted = new JfrPathEvaluator().countAllEventTypes(jfr);
+      EventCountCache.write(jfr.getRecordingPath(), counted);
+      countsCache = Map.copyOf(counted);
+      countsFor = key;
+    } catch (Exception e) {
+      // An unreadable recording is the query's problem to report, not the inventory's.
+      return Map.of();
+    }
+    return countsCache;
+  }
+
+  /** Reads an llm.* setting the same way the LLM host adapter does. */
+  private String readSetting(String name) {
+    var cur = sessions.current();
+    if (cur.isPresent()) {
+      VariableStore.Value value = cur.get().variables.get(name);
+      if (value != null) {
+        try {
+          Object raw = value.get();
+          if (raw != null) {
+            return String.valueOf(raw);
+          }
+        } catch (Exception ignored) {
+          // fall through to the global store
+        }
+      }
+    }
+    VariableStore.Value global = globalStore == null ? null : globalStore.get(name);
+    if (global != null) {
+      try {
+        Object raw = global.get();
+        return raw == null ? null : String.valueOf(raw);
+      } catch (Exception ignored) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Raw metadata classes by name, parsed once per recording. Both the type inventory and the
+  // per-question field lookup read it, and a recording is asked about repeatedly.
+  private String metadataFor;
+  private Map<String, Map<String, Object>> metadataCache;
+
+  private Map<String, Map<String, Object>> metadataByName(JFRSession jfr) {
+    String key = String.valueOf(jfr.getRecordingPath());
+    if (key.equals(metadataFor) && metadataCache != null) {
+      return metadataCache;
+    }
+    Map<String, Map<String, Object>> byName = new HashMap<>();
+    try {
+      for (Map<String, Object> clazz : MetadataProvider.loadAllClasses(jfr.getRecordingPath())) {
+        Object name = clazz.get("name");
+        if (name != null) {
+          byName.put(String.valueOf(name), clazz);
+        }
+      }
+    } catch (Exception e) {
+      // Metadata is an enrichment; without it the model still gets type names.
+      return Map.of();
+    }
+    metadataFor = key;
+    metadataCache = Map.copyOf(byName);
+    return metadataCache;
+  }
+
+  /**
+   * The fields of the named types, and of the types those fields lead to.
+   *
+   * <p>One level of following is what makes a path work: knowing {@code jdk.ExecutionSample} has
+   * {@code sampledThread: java.lang.Thread} is only useful alongside {@code java.lang.Thread}'s own
+   * fields, which is where {@code javaName} comes from. Going deeper is not free and has not been
+   * needed — the model can ask again if it is.
+   */
+  private List<PromptBuilder.TypeEntry> describeFields(List<String> typeNames) {
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null || typeNames == null || typeNames.isEmpty()) {
+      return List.of();
+    }
+    Map<String, Map<String, Object>> byName = metadataByName(jfr);
+    if (byName.isEmpty()) {
+      return List.of();
+    }
+
+    List<PromptBuilder.TypeEntry> result = new ArrayList<>();
+    Set<String> referenced = new LinkedHashSet<>();
+    Set<String> seen = new LinkedHashSet<>();
+
+    for (String requested : typeNames) {
+      Map<String, Object> clazz = byName.get(requested);
+      if (clazz == null || !seen.add(requested)) {
+        continue;
+      }
+      List<PromptBuilder.FieldEntry> fields = fieldsOf(clazz, referenced);
+      result.add(
+          PromptBuilder.TypeEntry.event(requested, labelOf(clazz), descriptionOf(clazz), fields));
+    }
+
+    for (String name : referenced) {
+      Map<String, Object> clazz = byName.get(name);
+      if (clazz == null || !seen.add(name)) {
+        continue;
+      }
+      result.add(PromptBuilder.TypeEntry.fieldType(name, fieldsOf(clazz, new LinkedHashSet<>())));
+    }
+    return result;
+  }
+
+  /** Reads a class's fields, recording the non-primitive types they lead to. */
+  private static List<PromptBuilder.FieldEntry> fieldsOf(
+      Map<String, Object> clazz, Set<String> referenced) {
+    // "fields" is a list of rendered display strings; "fieldsByName" carries the structured
+    // name/type/dimension. Reading the wrong one yields an empty list and no error at all.
+    Object raw = clazz.get("fieldsByName");
+    if (!(raw instanceof Map<?, ?> byName)) {
+      return List.of();
+    }
+    List<PromptBuilder.FieldEntry> fields = new ArrayList<>();
+    for (Object entry : byName.values()) {
+      if (!(entry instanceof Map<?, ?> field)) {
+        continue;
+      }
+      Object name = field.get("name");
+      Object type = field.get("type");
+      if (name == null) {
+        continue;
+      }
+      String rendered = type == null ? "" : String.valueOf(type);
+      Object dimension = field.get("dimension");
+      if (dimension instanceof Number n && n.intValue() > 0) {
+        rendered += "[]".repeat(n.intValue());
+      }
+      if (type != null && String.valueOf(type).indexOf('.') > 0) {
+        referenced.add(String.valueOf(type));
+      }
+      fields.add(new PromptBuilder.FieldEntry(String.valueOf(name), rendered));
+    }
+    // fieldsByName is a HashMap, so its iteration order is arbitrary. Sort, so the same recording
+    // and the same question produce the same prompt twice running.
+    fields.sort(java.util.Comparator.comparing(PromptBuilder.FieldEntry::name));
+    return fields;
+  }
+
+  private static String labelOf(Map<String, Object> clazz) {
+    return annotationValue(clazz, "@Label(");
+  }
+
+  private static String descriptionOf(Map<String, Object> clazz) {
+    return annotationValue(clazz, "@Description(");
+  }
+
+  private static String annotationValue(Map<String, Object> clazz, String prefix) {
+    if (!(clazz.get("classAnnotations") instanceof List<?> list)) {
+      return null;
+    }
+    for (Object a : list) {
+      String text = String.valueOf(a);
+      if (text.startsWith(prefix) && text.endsWith(")")) {
+        return text.substring(prefix.length(), text.length() - 1);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Writes an investigation's queries to a {@code .jfrs} script beside the recording's directory.
+   *
+   * <p>An investigation driven by a model is not reproducible; the script it ran is. This is the
+   * artifact that makes the conclusion checkable — open the recording, run the script, see the same
+   * numbers — and it is a normal shell script, so it can be edited, extended, or used as the
+   * starting point for a real analysis.
+   */
+  private void writeInvestigationScript(String question, List<String> queries) {
+    if (queries == null || queries.isEmpty()) {
+      return;
+    }
+    try {
+      Path directory = Paths.get(System.getProperty("user.home"), ".jafar", "investigations");
+      Files.createDirectories(directory);
+      String stamp =
+          java.time.LocalDateTime.now()
+              .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+      Path script = directory.resolve("ask-" + stamp + ".jfrs");
+
+      StringBuilder sb = new StringBuilder();
+      sb.append("# Investigation transcript\n");
+      sb.append("# Question: ").append(question.replace('\n', ' ')).append('\n');
+      sb.append("# Generated by 'ask'. The conclusion came from a model; these queries are\n");
+      sb.append("# what it actually ran, and re-running them is how you check it.\n");
+      var current = sessions.current();
+      if (current.isPresent()) {
+        sb.append("open ").append(current.get().session.getFilePath()).append('\n');
+      }
+      for (String query : queries) {
+        sb.append(query).append('\n');
+      }
+      Files.writeString(script, sb.toString());
+      io.println("");
+      io.println("Transcript: " + script);
+    } catch (Exception e) {
+      // The answer is already on screen; failing to file it away is not worth an error.
+      io.println("(could not write the investigation transcript: " + e.getMessage() + ")");
+    }
+  }
+
+  private JfrAnalyses jfrAnalyses;
+
+  /**
+   * Runs one of the shell's built-in analyses over the current recording.
+   *
+   * <p>These are the same implementations the MCP server exposes as {@code jfr_diagnose} and the
+   * rest — since they moved to {@code shell-core} there is one copy, so an investigation in the
+   * shell and one driven through MCP reach the same conclusions rather than merely similar ones.
+   */
+  private Map<String, Object> runJfrAnalysis(String name) throws Exception {
+    JFRSession jfr = currentJfrSession();
+    if (jfr == null) {
+      throw new IllegalStateException("No JFR session is open");
+    }
+    if (jfrAnalyses == null) {
+      jfrAnalyses = new JfrAnalyses();
+    }
+    var target = AnalysisTarget.of(0, jfr);
+    var progress = Progress.NONE;
+    // Sub-analyses are not embedded: the loop can ask for `use` or `tsa` itself if it wants them,
+    // and a diagnosis that carried both would spend most of the step's character budget on data
+    // the model did not ask for.
+    Map<String, Object> args = Map.of("includeAnalysis", false);
+    return switch (name) {
+      case "diagnose" -> jfrAnalyses.diagnose(target, args, progress);
+      case "use" -> jfrAnalyses.use(target, args, progress);
+      case "tsa" -> jfrAnalyses.tsa(target, args, progress);
+      case "summary" -> jfrAnalyses.summary(target, progress);
+      case "hotmethods" -> jfrAnalyses.hotmethods(target, args, progress);
+      case "exceptions" -> jfrAnalyses.exceptions(target, args, progress);
+      default -> throw new IllegalArgumentException("No analysis called '" + name + "'");
+    };
   }
 
   /** Returns the global variable store. */
@@ -152,6 +679,15 @@ public class CommandDispatcher {
   }
 
   public boolean dispatch(String line) {
+    // '?' is 'ask', with or without a space after it. Taken before the line is split
+    // into words so that '?why is this slow' and '? why is this slow' are the same command; no
+    // query can begin with it, since every root is a bare word.
+    String questioned = line.trim();
+    if (questioned.startsWith("?")) {
+      llmCommands().analyze(questioned.substring(1).trim());
+      return true;
+    }
+
     String[] parts = line.trim().split("\\s+");
     if (parts.length == 0 || parts[0].isEmpty()) return true;
 
@@ -232,6 +768,20 @@ public class CommandDispatcher {
       }
 
       switch (cmd) {
+        case "as-query":
+          llmCommands().asQuery(String.join(" ", args));
+          return true;
+        case "explain":
+          llmCommandsWithLastResult().explain(String.join(" ", args));
+          return true;
+        case "ask":
+        case "analyze":
+        case "investigate":
+          llmCommands().analyze(String.join(" ", args));
+          return true;
+        case "llm":
+          llmCommands().llm(args);
+          return true;
         case "open":
           cmdOpen(args);
           return true;
@@ -642,6 +1192,7 @@ public class CommandDispatcher {
     if (selector != null && cur.get().session instanceof JFRSession jfrSession) {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rememberResult(expr, rows);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
@@ -661,6 +1212,7 @@ public class CommandDispatcher {
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rememberResult(expr, rows);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
@@ -940,6 +1492,13 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
+      io.println("");
+      io.println("Ask (LLM, optional):");
+      io.println("  ask <q>   - Several queries, read each result, and conclude ('?' for short)");
+      io.println("  as-query <q> - Turn a question into one query, show it, and run it");
+      io.println("  explain   - Explain the most recent result");
+      io.println("              (both take --dry-run: print the request, send nothing)");
+      io.println("  llm       - status | cost");
       if (isJfr) {
         io.println("");
         io.println("System:");
@@ -958,6 +1517,16 @@ public class CommandDispatcher {
       return;
     }
     String sub = args.get(0).toLowerCase(Locale.ROOT);
+    if ("as-query".equals(sub)
+        || "ask".equals(sub)
+        || "?".equals(sub)
+        || "analyze".equals(sub)
+        || "investigate".equals(sub)
+        || "explain".equals(sub)
+        || "llm".equals(sub)) {
+      io.println(LlmCommands.helpText());
+      return;
+    }
     if ("events".equals(sub)) {
       io.println("Usage: events/<type>[filter] [--limit N] [--format table|json|csv|tui]");
       io.println("Alias for 'show events'. Queries events from the current recording.");
@@ -2036,11 +2605,51 @@ public class CommandDispatcher {
       return;
     }
     if (!varName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-      io.error("Invalid variable name: " + varName);
-      return;
+      // LLM settings are dotted and hyphenated on purpose ('llm.base-url'), which the variable
+      // rule cannot allow in general: in an expression '${a.b}' means field b of variable a. They
+      // are settings, never substituted, so they are admitted by name instead.
+      if (LlmSettings.isSetting(varName)) {
+        varName = varName.trim().toLowerCase(java.util.Locale.ROOT);
+      } else if (LlmSettings.looksLikeSetting(varName)) {
+        io.error("Unknown setting: " + varName);
+        io.error("Settings are: " + String.join(", ", LlmSettings.names()));
+        return;
+      } else {
+        io.error("Invalid variable name: " + varName);
+        io.error(
+            "Names may contain letters, digits and underscores, and cannot start with a digit.");
+        return;
+      }
     }
 
     VariableStore store = getTargetStore(isGlobal);
+
+    if (LlmSettings.isSetting(varName)) {
+      // A setting's value is text, and must not go through the expression machinery below. That
+      // machinery reads a bare word as a variable reference and then as a query — so
+      // 'set llm.backend = ollama' answered "Unknown root: ollama" — and it coerces a bare integer
+      // to a double, so 'set llm.max-rows = 20' stored 20.0, which then failed to parse as an int
+      // and silently fell back to the default. Both looked like they had worked.
+      String literal = exprPart;
+      if (VariableSubstitutor.hasVariables(literal)) {
+        try {
+          literal = new VariableSubstitutor(getSessionStore(), globalStore).substitute(literal);
+        } catch (Exception e) {
+          io.error("Variable substitution failed: " + e.getMessage());
+          return;
+        }
+      }
+      if (literal.length() >= 2
+          && ((literal.startsWith("\"") && literal.endsWith("\""))
+              || (literal.startsWith("'") && literal.endsWith("'")))) {
+        literal = literal.substring(1, literal.length() - 1);
+      }
+      store.set(varName, new ScalarValue(literal));
+      if (verbose) {
+        io.println("Set " + varName + " = " + literal);
+      }
+      return;
+    }
 
     // Check for map literal first (before substitution)
     if (exprPart.startsWith("{")) {

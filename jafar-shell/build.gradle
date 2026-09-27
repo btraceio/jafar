@@ -28,6 +28,10 @@ java {
 dependencies {
     implementation project(':shell-core')
     implementation project(':jfr-shell')
+    // Optional LLM support, same arrangement as jfr-shell: SPI in shell-core, backend discovered
+    // via ServiceLoader, so removing this line removes the Anthropic SDK entirely.
+    runtimeOnly project(':llm-anthropic')
+    runtimeOnly project(':llm-openai')
     implementation project(':hdump-shell')
     implementation project(':pprof-shell')
     implementation project(':otlp-shell')

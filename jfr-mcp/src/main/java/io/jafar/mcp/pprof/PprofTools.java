@@ -10,6 +10,8 @@ import io.jafar.pprof.shell.PprofSession;
 import io.jafar.pprof.shell.pprofpath.PprofPathEvaluator;
 import io.jafar.pprof.shell.pprofpath.PprofPathParseException;
 import io.jafar.pprof.shell.pprofpath.PprofPathParser;
+import io.jafar.shell.core.findings.Findings;
+import io.jafar.shell.core.findings.SamplingFindings;
 import io.jafar.shell.core.sampling.SamplingSessionRegistry;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
@@ -522,6 +524,9 @@ public final class PprofTools {
 
       sendProgress(exchange, progressToken, step, totalSteps, "Generating insights...");
       result.put("insights", generatePprofUseInsights(resourceMetrics, profile));
+      result.put(
+          "findings",
+          Findings.toMaps(Findings.merge(SamplingFindings.fromUse(resourceMetrics, "pprof_use"))));
 
       sendProgress(exchange, progressToken, totalSteps, totalSteps, "Done");
       return successResult(result);

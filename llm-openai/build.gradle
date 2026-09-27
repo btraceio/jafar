@@ -1,0 +1,38 @@
+plugins {
+    id 'java-library'
+}
+
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    // No provider SDK: the OpenAI chat-completions shape is small enough to speak directly with
+    // the JDK's HttpClient. Gson is declared here because shell-core keeps it `implementation`
+    // scoped, but it is the same version already on every shell's runtime classpath, so this adds
+    // no jar a user did not already have. That matters because this is the backend an air-gapped
+    // user running a local model would install.
+    api project(':shell-core')
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testImplementation 'com.google.code.gson:gson:2.10.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+group = 'io.btrace'
+version = component_version
+description = 'OpenAI-compatible LLM backend for the Jafar shells (OpenAI, Ollama, vLLM, LM Studio)'
