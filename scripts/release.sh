@@ -38,13 +38,6 @@ run() {
     fi
 }
 
-# Portable sed-in-place (macOS vs GNU)
-if sed --version 2>/dev/null | grep -q GNU; then
-    sed_i() { sed -i "$@"; }
-else
-    sed_i() { sed -i '' "$@"; }
-fi
-
 # ── 1. Preflight ──────────────────────────────────────────────────────────
 
 echo "--- Preflight checks ---"
@@ -73,28 +66,39 @@ echo "Branch OK: $CURRENT_BRANCH"
 
 # ── 2. Version detection ──────────────────────────────────────────────────
 
+# Version is tag-derived (gradle/version-from-tag.gradle; the shell mirror is
+# scripts/derive-version.sh): the project version comes from git tags, never
+# from a number baked into a build script. The newest vX.Y.Z tag in the repo is
+# the base for the next release, and after tagging, main and release branches
+# automatically report <base>-SNAPSHOT. No version numbers are edited anywhere
+# in this script.
+
 echo "--- Detecting current version ---"
 
-CURRENT_VERSION=$(sed -n 's/^project\.version="\(.*\)"/\1/p' build.gradle)
-[[ -n "$CURRENT_VERSION" ]] || die "Could not parse project.version from build.gradle"
-echo "Current version: $CURRENT_VERSION"
+DERIVED_VERSION=$(scripts/derive-version.sh --newest)
+if [[ "$DERIVED_VERSION" == "0.0.0" ]]; then
+    # No local release tags: either a fresh clone without fetched tags or a repo
+    # that never released. Fetch once before giving up, so the error is
+    # actionable rather than a bare "no tags found".
+    echo "No local vX.Y.Z release tags - fetching tags from origin"
+    git fetch --tags origin || die "Could not fetch tags from origin. Run 'git fetch --tags' and retry."
+    DERIVED_VERSION=$(scripts/derive-version.sh --newest)
+fi
+
+CURRENT_VERSION="$DERIVED_VERSION"
+[[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "Could not determine the latest release version (derived: '$DERIVED_VERSION'). Is this a repository with vX.Y.Z release tags?"
+
+echo "Latest release tag: v$CURRENT_VERSION"
 
 # ── 3. Version derivation ─────────────────────────────────────────────────
 
-IFS='.' read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "${CURRENT_VERSION%-SNAPSHOT}"
+IFS='.' read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "$CURRENT_VERSION"
 
 case "$RELEASE_TYPE" in
-    major) RELEASE_VERSION="${CUR_MAJOR}.0.0" ;;
-    minor) RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.0" ;;
-    patch)
-        if [[ "$CURRENT_VERSION" == *-SNAPSHOT ]]; then
-            # Normal flow: release the current SNAPSHOT version as-is
-            RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.${CUR_PATCH}"
-        else
-            # Fresh release branch (no SNAPSHOT yet): bump Z
-            RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.$((CUR_PATCH + 1))"
-        fi
-        ;;
+    major) RELEASE_VERSION="$((CUR_MAJOR + 1)).0.0" ;;
+    minor) RELEASE_VERSION="${CUR_MAJOR}.$((CUR_MINOR + 1)).0" ;;
+    patch) RELEASE_VERSION="${CUR_MAJOR}.${CUR_MINOR}.$((CUR_PATCH + 1))" ;;
 esac
 echo "Release version: $RELEASE_VERSION"
 
@@ -104,13 +108,22 @@ RELEASE_TAG="v${RELEASE_VERSION}"
 RELEASE_BRANCH="release/${MAJOR}.${MINOR}._"
 
 case "$RELEASE_TYPE" in
-    major|minor) NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0-SNAPSHOT" ;;
-    patch)       NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-SNAPSHOT" ;;
+    patch)
+        # The plugin catalog must never be downgraded (see RELEASING.md), so the
+        # automation only supports patching the newest release line. The branch
+        # (required to be release/X.Y._ by the preflight) must match the line of
+        # the newest tag — deriving the release version from anything else would
+        # silently tag a version on the wrong line.
+        [[ "$CURRENT_BRANCH" =~ ^release/([0-9]+)\.([0-9]+)\._$ ]] \
+            || die "patch releases must be on a release/X.Y._ branch (currently on '$CURRENT_BRANCH')"
+        BR_LINE="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+        [[ "$BR_LINE" == "${CUR_MAJOR}.${CUR_MINOR}" ]] \
+            || die "patch releases must continue the newest release line (latest tag is v$CURRENT_VERSION on line ${CUR_MAJOR}.${CUR_MINOR}, but this is release/$BR_LINE)"
+        ;;
 esac
 
 echo "Release tag:    $RELEASE_TAG"
 echo "Release branch: $RELEASE_BRANCH"
-echo "Next version:   $NEXT_VERSION"
 
 # ── 4. Branch management ──────────────────────────────────────────────────
 
@@ -129,89 +142,30 @@ case "$RELEASE_TYPE" in
         ;;
 esac
 
-# ── 5. Version replacement ────────────────────────────────────────────────
+# ── 5. Tag ─────────────────────────────────────────────────────────────────
 
-echo "--- Updating versions: $CURRENT_VERSION -> $RELEASE_VERSION ---"
-
-ESCAPED_OLD=$(printf '%s' "$CURRENT_VERSION" | sed 's/[.]/\\./g')
-ESCAPED_NEW="$RELEASE_VERSION"
-
-if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[DRY RUN] sed s/${ESCAPED_OLD}/${ESCAPED_NEW}/g <tracked files>"
-else
-    # Replace version in all tracked files that contain it
-    while IFS= read -r file; do
-        sed_i "s/${ESCAPED_OLD}/${ESCAPED_NEW}/g" "$file"
-    done < <(git ls-files -z | xargs -0 grep -lF "$CURRENT_VERSION" 2>/dev/null)
-
-    # Update jfr-shell-plugins.json catalog version (only upgrade, never downgrade)
-    if [[ -f jfr-shell-plugins.json ]]; then
-        CATALOG_VERSION=$(sed -n 's/.*"latestVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' jfr-shell-plugins.json | head -1)
-        if [[ -n "$CATALOG_VERSION" ]]; then
-            IFS='.' read -r CAT_MAJOR CAT_MINOR CAT_PATCH <<< "$CATALOG_VERSION"
-            if (( MAJOR > CAT_MAJOR \
-               || (MAJOR == CAT_MAJOR && MINOR > CAT_MINOR) \
-               || (MAJOR == CAT_MAJOR && MINOR == CAT_MINOR && PATCH >= CAT_PATCH) )); then
-                echo "Updating jfr-shell-plugins.json: $CATALOG_VERSION -> $RELEASE_VERSION"
-                ESCAPED_CAT=$(printf '%s' "$CATALOG_VERSION" | sed 's/[.]/\\./g')
-                sed_i "s/\"latestVersion\": \"${ESCAPED_CAT}\"/\"latestVersion\": \"${RELEASE_VERSION}\"/g" jfr-shell-plugins.json
-            else
-                echo "Skipping jfr-shell-plugins.json update: catalog $CATALOG_VERSION >= release $RELEASE_VERSION"
-            fi
-        fi
-    fi
-fi
-
-# ── 6. Commit ──────────────────────────────────────────────────────────────
-
-echo "--- Committing release ---"
-run git -c commit.gpgsign=false commit --no-verify -am "Preparing release ${RELEASE_VERSION}"
-
-# ── 7. Tag ─────────────────────────────────────────────────────────────────
+# Nothing to edit or commit: the version lives in the tag. Commits already made
+# on the release branch (stabilization fixes) are pushed as-is.
 
 echo "--- Tagging $RELEASE_TAG ---"
-run git -c tag.gpgsign=false tag -a "$RELEASE_TAG" -m "Release ${RELEASE_VERSION}"
+run git tag -a "$RELEASE_TAG" -m "Release ${RELEASE_VERSION}"
 
-# ── 8. Push ────────────────────────────────────────────────────────────────
+# ── 6. Push ────────────────────────────────────────────────────────────────
 
 echo "--- Pushing ---"
 run git push --no-verify origin "$RELEASE_BRANCH"
 run git push --no-verify origin "$RELEASE_TAG"
 
-# ── 9. GitHub release ─────────────────────────────────────────────────────
+# ── 7. GitHub release ─────────────────────────────────────────────────────
 
 echo "--- Creating GitHub release ---"
 run gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
 
-# ── 10. Post-release bump ──────────────────────────────────────────────────
+# ── 8. Post-release ────────────────────────────────────────────────────────
 
-ESCAPED_REL=$(printf '%s' "$RELEASE_VERSION" | sed 's/[.]/\\./g')
-
-if [[ "$RELEASE_TYPE" == "patch" ]]; then
-    echo "--- Post-release: bumping $RELEASE_BRANCH to $NEXT_VERSION ---"
-    if [[ "$DRY_RUN" == "1" ]]; then
-        echo "[DRY RUN] sed s/${ESCAPED_REL}/${NEXT_VERSION}/g <*.gradle files>"
-    else
-        while IFS= read -r file; do
-            sed_i "s/${ESCAPED_REL}/${NEXT_VERSION}/g" "$file"
-        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lF "$RELEASE_VERSION" 2>/dev/null)
-    fi
-    run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
-    run git push --no-verify origin "$RELEASE_BRANCH"
-else
-    echo "--- Post-release: bumping $DEFAULT_BRANCH to $NEXT_VERSION ---"
-    run git checkout "$DEFAULT_BRANCH"
-    # On main the files still have the old SNAPSHOT version, not the release version
-    ESCAPED_CUR=$(printf '%s' "$CURRENT_VERSION" | sed 's/[.]/\\./g')
-    if [[ "$DRY_RUN" == "1" ]]; then
-        echo "[DRY RUN] sed s/${ESCAPED_CUR}/${NEXT_VERSION}/g <*.gradle files>"
-    else
-        while IFS= read -r file; do
-            sed_i "s/${ESCAPED_CUR}/${NEXT_VERSION}/g" "$file"
-        done < <(git ls-files -z -- '*.gradle' | xargs -0 grep -lF "$CURRENT_VERSION" 2>/dev/null)
-    fi
-    run git -c commit.gpgsign=false commit --no-verify -am "Opening work on ${NEXT_VERSION}"
-    run git push --no-verify origin "$DEFAULT_BRANCH"
-fi
+# No post-release version bump: main and release branches derive their
+# development version (<latest tag>-SNAPSHOT) from git automatically via
+# gradle/version-from-tag.gradle, and the release workflow commits the
+# jfr-shell-plugins.json catalog update to main (see RELEASING.md).
 
 echo "--- Release $RELEASE_TAG complete! ---"
