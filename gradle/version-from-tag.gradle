@@ -1,0 +1,54 @@
+// Derives the project version from git release tags instead of a number baked
+// into a build script. This is the single source of truth for versioning: it is
+// applied by the root build (build.gradle) and by the jafar-gradle-plugin
+// included build (jafar-gradle-plugin/build.gradle), which cannot see the root
+// build's version because it is a separate Gradle build.
+//
+//   exactly on tag vX.Y.Z         -> X.Y.Z            (release build)
+//   elsewhere, git metadata found -> X.Y.Z-SNAPSHOT   (development build)
+//   no git metadata (src tarball) -> 0.0.0-SNAPSHOT
+//
+// A release is therefore made by tagging vX.Y.Z; no version numbers are edited.
+// See RELEASING.md ("Version Numbering").
+
+def jafarGit(String... args) {
+    try {
+        return providers.exec {
+            commandLine(['git'] + args.toList())
+        }.standardOutput.asText.get().trim()
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+// Only well-formed vX.Y.Z tags count as release tags; any other v* tag is
+// ignored. The for-each-ref glob 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' is looser
+// than this pattern (fnmatch '*' matches any characters, so v1.2.3-rc1 also
+// matches), so every glob hit is re-checked against the strict pattern and the
+// newest conforming one wins.
+def releaseTagPattern = ~/^v(\d+\.\d+\.\d+)$/
+
+def exactTag = jafarGit('describe', '--tags', '--exact-match', '--match', 'v[0-9]*')
+def exactMatch = exactTag == null ? null : releaseTagPattern.matcher(exactTag)
+if (exactMatch != null && exactMatch.matches()) {
+    project.version = exactMatch.group(1)
+} else {
+    // Newest release tag in the repo, not just one reachable from HEAD: release
+    // tags may sit on release branches, and a development build on main is still
+    // a post-<latest-release> build.
+    def newestRelease = null
+    def tagList = jafarGit('for-each-ref', 'refs/tags/v[0-9]*.[0-9]*.[0-9]*',
+                           '--sort=-v:refname', '--format=%(refname:short)')
+    if (tagList != null) {
+        for (candidate in tagList.split('\n')) {
+            def m = releaseTagPattern.matcher(candidate.trim())
+            if (m.matches()) {
+                newestRelease = m.group(1)
+                break
+            }
+        }
+    }
+    project.version = (newestRelease != null ? newestRelease : '0.0.0') + '-SNAPSHOT'
+}
+
+logger.lifecycle("Version derived from git tags: ${project.version}")

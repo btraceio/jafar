@@ -44,3 +44,6 @@ gradle.properties
 
 # Temporary documentation
 doc/temp/
+
+# Sphinx review session state (credentials, reports)
+.sphinx/

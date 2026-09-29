@@ -4,7 +4,10 @@ plugins {
     id 'com.vanniktech.maven.publish' version '0.35.0' apply false
 }
 
-project.version="0.28.0-SNAPSHOT"
+// Version is derived from git release tags (gradle/version-from-tag.gradle):
+// exactly on vX.Y.Z -> X.Y.Z, otherwise X.Y.Z-SNAPSHOT. Releasing is done by
+// tagging; no version numbers are edited (see RELEASING.md).
+apply from: rootProject.file('gradle/version-from-tag.gradle')
 
 repositories {
     mavenLocal()

@@ -5,7 +5,19 @@ plugins {
 }
 
 group = "io.btrace"
-version = "0.28.0-SNAPSHOT"
+// Same tag-derived version as the main build; the shared script is the single
+// source of truth (this is a separate Gradle build, so it cannot read the root
+// build's version). The relative path assumes the composite layout — the
+// plugin build living inside the main repository checkout. A standalone
+// checkout has no repo tags to derive from, so fall back to 0.0.0-SNAPSHOT
+// instead of failing configuration with a cryptic missing-file error.
+def versionScript = file("$rootDir/../gradle/version-from-tag.gradle")
+if (versionScript.exists()) {
+    apply from: versionScript
+} else {
+    version = "0.0.0-SNAPSHOT"
+    logger.lifecycle("jafar-gradle-plugin: version script not found at $versionScript; using $version")
+}
 
 def libraryName = "jafar-gradle-plugin"
 def component_version = version
