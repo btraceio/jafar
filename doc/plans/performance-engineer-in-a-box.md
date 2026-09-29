@@ -304,6 +304,6 @@ decides which of B's primitives to invest in, not as a project to start.
 - `HdumpTools.java:293`: pass a `CrossSessionContext` so the documented heap-to-JFR join works
   over MCP.
 - `jafar-shell/.../unified/Main.java` reports `version = "0.10.0"` while `build.gradle:7` is
-  `0.27.0-SNAPSHOT`.
+  `0.27.0`.
 - `CHANGELOG.md`: newest released entry is `[0.10.0] - 2026-02-14`; the shells for heap dumps,
   pprof, and OTLP were never announced.
