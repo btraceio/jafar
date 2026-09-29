@@ -164,15 +164,13 @@ jobs:
         run: |
           VERSION="${{ steps.process.outputs.version }}"
 
-          # Read the next snapshot version from main branch build.gradle so the
-          # -latest wrappers track the current development version. Same approach
-          # as the release workflow's update-jbang-catalog step.
-          NEXT_SNAPSHOT=$(curl -sf "https://raw.githubusercontent.com/${{ github.repository }}/main/build.gradle" | grep "^project.version=" | cut -d'"' -f2)
-          if [ -z "$NEXT_SNAPSHOT" ] || [[ "$NEXT_SNAPSHOT" != *-SNAPSHOT ]]; then
-            echo "ERROR: Could not determine next snapshot version from main branch (got: '$NEXT_SNAPSHOT')"
-            exit 1
-          fi
-          echo "Released: $VERSION, next snapshot: $NEXT_SNAPSHOT"
+          # The JBang -latest wrappers track the current main-branch development
+          # version, which under tag-derived versioning is always the latest
+          # release tag + -SNAPSHOT (gradle/version-from-tag.gradle derives the
+          # same version for main builds). Same approach as the release
+          # workflow's update-jbang-catalog step.
+          NEXT_SNAPSHOT="${VERSION}-SNAPSHOT"
+          echo "Released: $VERSION, latest wrappers track: $NEXT_SNAPSHOT"
 
           cd catalog
 

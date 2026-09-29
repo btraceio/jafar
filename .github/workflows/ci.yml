@@ -21,17 +21,26 @@ jobs:
       ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_MAVENCENTRALPASSWORD }}
     steps:
       - uses: actions/checkout@v3
+        with:
+          # Full history and tags: the project version is derived from git tags
+          # by gradle/version-from-tag.gradle, and snapshot publishing needs the
+          # real version, not the 0.0.0-SNAPSHOT tarball fallback
+          fetch-depth: 0
+          fetch-tags: true
       - name: Check version
         id: version-check
         run: |
-          VERSION=$(grep 'project.version=' build.gradle | cut -d'"' -f2)
+          # Tag-derived versioning (scripts/derive-version.sh mirrors
+          # gradle/version-from-tag.gradle): main builds are always the latest
+          # release tag + -SNAPSHOT
+          VERSION=$(scripts/derive-version.sh)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          if [[ "$VERSION" == *"SNAPSHOT"* ]]; then
+          if [[ "$VERSION" == *"-SNAPSHOT" ]]; then
             echo "is_snapshot=true" >> $GITHUB_OUTPUT
             echo "Version $VERSION is a snapshot - will publish"
           else
             echo "is_snapshot=false" >> $GITHUB_OUTPUT
-            echo "Version $VERSION is not a snapshot - skipping publish"
+            echo "Version $VERSION is a release - skipping publish"
           fi
       - name: Prepare test JDK
         if: steps.version-check.outputs.is_snapshot == 'true'

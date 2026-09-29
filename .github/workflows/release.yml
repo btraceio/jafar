@@ -39,14 +39,23 @@ jobs:
     steps:
       - name: Extract version
         id: version
+        env:
+          # Manual-input versions are user-supplied; keep them out of the script
+          # text and validate the format before they are echoed anywhere
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          PUBLISH_BACKENDS_ONLY_INPUT: ${{ github.event.inputs.publish_backends_only }}
+          UPDATE_CATALOG_ONLY_INPUT: ${{ github.event.inputs.update_catalog_only }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Manual trigger - use input version
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="$INPUT_VERSION"
+            if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "ERROR: version input '$VERSION' is not X.Y.Z"; exit 1
+            fi
             TAG="v${VERSION}"
             IS_MANUAL="true"
-            PUBLISH_BACKENDS_ONLY="${{ github.event.inputs.publish_backends_only }}"
-            UPDATE_CATALOG_ONLY="${{ github.event.inputs.update_catalog_only }}"
+            PUBLISH_BACKENDS_ONLY="$PUBLISH_BACKENDS_ONLY_INPUT"
+            UPDATE_CATALOG_ONLY="$UPDATE_CATALOG_ONLY_INPUT"
 
             if [ "$PUBLISH_BACKENDS_ONLY" = "true" ]; then
               echo "Manual backend artifacts publishing for version: $VERSION"
@@ -84,6 +93,11 @@ jobs:
       ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the project version is derived from git tags
+          # by gradle/version-from-tag.gradle
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -94,13 +108,40 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Verify version matches tag
+      - name: Verify tag-derived version
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_TAG: ${{ needs.prepare.outputs.version_tag }}
         run: |
-          PROJECT_VERSION=$(grep "^project.version=" build.gradle | cut -d'"' -f2)
-          if [ "$PROJECT_VERSION" != "${{ needs.prepare.outputs.version }}" ]; then
-            echo "ERROR: Project version ($PROJECT_VERSION) doesn't match tag version (${{ needs.prepare.outputs.version }})"
+          # Same well-formed vX.Y.Z rule as gradle/version-from-tag.gradle —
+          # scripts/derive-version.sh is its shell mirror
+          DERIVED=$(scripts/derive-version.sh)
+          case "$DERIVED" in
+            *[!0-9.]*) echo "ERROR: derived version '$DERIVED' is not a plain X.Y.Z release version"; exit 1 ;;
+          esac
+          if [ "$DERIVED" != "$EXPECTED_VERSION" ]; then
+            echo "ERROR: git-derived version ($DERIVED) does not match tag version ($EXPECTED_VERSION)"
             exit 1
           fi
+          echo "Version $DERIVED derived from tag $EXPECTED_TAG"
+
+      - name: Point bundled plugin catalog at this release
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # The released jfr-shell jar bundles jfr-shell-plugins.json as an
+          # offline fallback (PluginRegistry normally fetches it from main at
+          # runtime). The tag commit still holds the previous release's catalog;
+          # update the working tree so the jar built here bundles this release's
+          # version. The tag itself is not rewritten, so a checkout of the tag
+          # will NOT reproduce this one bundled file — the diff is recorded in
+          # the step summary below for auditability.
+          jq --arg ver "$RELEASE_VERSION" '.plugins[].latestVersion = $ver' jfr-shell-plugins.json > tmp.json && mv tmp.json jfr-shell-plugins.json
+          cat jfr-shell-plugins.json
+          echo "### Bundled plugin catalog deviation from tag ${GITHUB_REF_NAME:-}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git diff -- jfr-shell-plugins.json >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish parser to Maven Local (for gradle plugin dependency)
         run: |
@@ -125,6 +166,72 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_SIGNINGINMEMORYKEYPASSWORD }}
 
+  # Keep jfr-shell-plugins.json on main pointing at the released version. It is
+  # fetched at runtime from main by PluginRegistry to resolve backend plugin
+  # versions, so it must always hold the latest release (never a SNAPSHOT).
+  # Automating it here removes the last manually edited version number.
+  update-plugin-catalog:
+    needs: [prepare, publish-maven]
+    if: always() && !cancelled() && needs.prepare.outputs.is_manual == 'false' && needs.publish-maven.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.JBANG_CATALOG_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Update jfr-shell-plugins.json to the released version
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          VERSION="$RELEASE_VERSION"
+          CURRENT=$(jq -r '.plugins[].latestVersion' jfr-shell-plugins.json | sort -V | tail -1)
+          echo "Catalog currently points at: $CURRENT"
+
+          # The catalog must never be downgraded (e.g. a patch release of an
+          # older line must not pull it back).
+          NEWEST=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)
+          if [ "$NEWEST" != "$VERSION" ]; then
+            echo "Skipping update: catalog ($CURRENT) is newer than release ($VERSION)"
+            exit 0
+          fi
+
+          jq --arg ver "$VERSION" '.plugins[].latestVersion = $ver' jfr-shell-plugins.json > tmp.json && mv tmp.json jfr-shell-plugins.json
+          git diff
+
+      - name: Commit and push catalog update
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add jfr-shell-plugins.json
+          if git diff --cached --quiet; then
+            echo "Catalog already at $RELEASE_VERSION; nothing to commit"
+            exit 0
+          fi
+          git commit -m "Set plugin catalog to $RELEASE_VERSION"
+
+          # Retry on non-fast-forward: something may merge to main between the
+          # checkout above and this push, and a lost catalog update leaves
+          # released backend plugins unresolvable until a manual fix.
+          PUSHED=0
+          for attempt in 1 2 3; do
+            if git push origin main; then
+              PUSHED=1
+              break
+            fi
+            echo "Push rejected (attempt $attempt/3) - rebasing on origin/main and retrying"
+            git fetch origin main
+            git rebase origin/main || { echo "::error::Rebase onto origin/main failed; resolve manually."; exit 1; }
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::error::Failed to push jfr-shell-plugins.json update to main. Update it manually."
+            exit 1
+          fi
+          echo "✅ Plugin catalog updated to $RELEASE_VERSION"
+
   # Publish backend plugins only (for manual emergency releases)
   publish-backends-only:
     needs: prepare
@@ -140,6 +247,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.version_tag }}
+          # Full history and tags: the project version is derived from git tags
+          # by gradle/version-from-tag.gradle
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -246,15 +357,12 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="${{ needs.prepare.outputs.version_tag }}"
 
-          # Read the next snapshot version from main branch build.gradle
-          # (developer bumps this right after cutting the release tag)
-          NEXT_SNAPSHOT=$(curl -sf "https://raw.githubusercontent.com/${{ github.repository }}/main/build.gradle" | grep "^project.version=" | cut -d'"' -f2)
-          if [ -z "$NEXT_SNAPSHOT" ] || [[ "$NEXT_SNAPSHOT" != *-SNAPSHOT ]]; then
-            echo "ERROR: Could not determine next snapshot version from main branch (got: '$NEXT_SNAPSHOT')"
-            exit 1
-          fi
-
-          echo "Released: $VERSION, next snapshot: $NEXT_SNAPSHOT"
+          # The JBang -latest wrappers track the current main-branch development
+          # version, which under tag-derived versioning is always the latest
+          # release tag + -SNAPSHOT (gradle/version-from-tag.gradle derives the
+          # same version for main builds).
+          NEXT_SNAPSHOT="${VERSION}-SNAPSHOT"
+          echo "Released: $VERSION, latest wrappers track: $NEXT_SNAPSHOT"
 
           cd catalog
 
