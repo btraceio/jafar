@@ -7,10 +7,13 @@ The project uses a fully automated release workflow. See [RELEASING.md](../../RE
 
 ## Quick Release Steps
 
-1. **Update versions** in `build.gradle`, `jafar-gradle-plugin/build.gradle`, and `jfr-shell-plugins.json` (remove `-SNAPSHOT`)
-2. **Update CHANGELOG.md** with release notes for the new version
-3. **Commit and push** changes to main branch
-4. **Create and push tag**:
+The project version is **derived from git tags** (`gradle/version-from-tag.gradle`): exactly on
+`vX.Y.Z` → `X.Y.Z`, elsewhere → `<newest tag>-SNAPSHOT`. No version numbers are ever edited;
+a release is made by tagging. See [RELEASING.md](../../RELEASING.md).
+
+1. **Update CHANGELOG.md** with release notes for the new version, commit and push to main
+2. **Create and push tag** (or run `scripts/release.sh [--dry-run] <major|minor|patch>`, which
+   derives the version from the newest tag and handles the release branch):
    ```bash
    git tag -a v0.4.0 -m "Release v0.4.0"
    git push origin v0.4.0
@@ -20,40 +23,34 @@ The project uses a fully automated release workflow. See [RELEASING.md](../../RE
 
 The release workflow (`.github/workflows/release.yml`) automatically:
 - Tags the Go module as `go-parser/vX.Y.Z` (validated first: a Go module version is immutable once
-  the proxy has served it) - see [RELEASING.md](../../RELEASING.md) section 5.6
+  the proxy has served it) - see [RELEASING.md](../../RELEASING.md) section 5
 - Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
 - Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
 - Publishes `jfr-shell` to GitHub Packages
 - Triggers JitPack build and waits for completion
+- Commits the `jfr-shell-plugins.json` plugin catalog update to `main` (never downgrades)
 - Updates [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog) with new version
 - Creates GitHub Release with changelog notes
 
 ## Version Management
 
-- **Root version**: Defined in `build.gradle` as `project.version="X.Y.Z"`
+- **Single source of truth**: `gradle/version-from-tag.gradle` — derives the version from git tags
+  (exactly on `vX.Y.Z` → `X.Y.Z`; elsewhere → `<newest vX.Y.Z tag anywhere>-SNAPSHOT`; no git
+  metadata → `0.0.0-SNAPSHOT`). Applied by the root `build.gradle` and by
+  `jafar-gradle-plugin/build.gradle` (a separate Gradle build, cannot read the root's version)
+- **Subprojects**: Use `rootProject.version` (automatic sync)
 - **Go module**: no version in a file; it is the `go-parser/vX.Y.Z` git tag, created by the release
   workflow from the Java version. Plain `vX.Y.Z` tags do **not** version the Go module - a
   subdirectory module needs the directory prefix
-- **Subprojects**: Use `rootProject.version` (automatic sync)
-- **Gradle plugin**: Has separate version in `jafar-gradle-plugin/build.gradle`
-- **Backend plugins registry**: `jfr-shell-plugins.json` (must always point to the latest **released** version, never SNAPSHOT — see below)
-- **Development versions**: Use `-SNAPSHOT` suffix (e.g., `0.4.0-SNAPSHOT`)
+- **Backend plugins registry**: `jfr-shell-plugins.json` — updated automatically by the release
+  workflow (must always point to the latest **released** version, never SNAPSHOT — see below)
+- **Development versions**: `<latest tag>-SNAPSHOT` automatically; no bump commits
 
 ## Post-Release
 
-After release completes, prepare for next development iteration:
-
-```bash
-# Update to next SNAPSHOT version
-# Edit build.gradle: project.version="0.5.0-SNAPSHOT"
-# Edit jafar-gradle-plugin/build.gradle: version = "0.5.0-SNAPSHOT"
-# Do NOT update jfr-shell-plugins.json — it must keep pointing to the latest release
-# Update CHANGELOG.md with [Unreleased] section
-
-git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
-git commit -m "Prepare for next development iteration"
-git push origin main
-```
+Nothing to do. There is no "prepare for next development iteration" step: main and release
+branches report `<latest tag>-SNAPSHOT` automatically as soon as the release tag exists, and the
+release workflow commits the `jfr-shell-plugins.json` update to `main`.
 
 ## Plugin Catalog Versioning Rule
 

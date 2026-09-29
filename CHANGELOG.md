@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Release versioning is tag-derived** — the project version comes from git tags
+  (`gradle/version-from-tag.gradle`), not from a number baked into `build.gradle`. A build exactly
+  on `vX.Y.Z` reports `X.Y.Z`; any other build reports `<newest vX.Y.Z tag>-SNAPSHOT`. Releasing
+  means cutting a tag; the manual version bumps in `build.gradle`,
+  `jafar-gradle-plugin/build.gradle`, the post-release SNAPSHOT bump and the pre-tag
+  `jfr-shell-plugins.json` edit are all gone — the release workflow commits the plugin catalog
+  update to `main` itself
+
 ### Added
 - **`ask` — an LLM inside the shell** (`llm-anthropic` and `llm-openai` modules,
   `io.jafar.shell.core.llm` in `shell-core`)

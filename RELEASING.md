@@ -2,6 +2,11 @@
 
 This document describes the automated release process for JAFAR.
 
+The project version is **derived from git tags** (`gradle/version-from-tag.gradle`), not stored in
+any build file: a build exactly on tag `vX.Y.Z` reports version `X.Y.Z`, any other build (main, a
+release branch, local) reports `X.Y.Z-SNAPSHOT` based on the newest `vX.Y.Z` tag in the repo. A
+release is therefore made by tagging — no version numbers are edited anywhere.
+
 ## Prerequisites
 
 Before releasing, ensure:
@@ -13,40 +18,9 @@ Before releasing, ensure:
 
 ## Release Steps
 
-### 1. Update Version
+### 1. Update CHANGELOG.md
 
-Edit `build.gradle` and update the version:
-
-```gradle
-project.version="0.4.0"  // Remove -SNAPSHOT suffix for releases
-```
-
-Also update `jafar-gradle-plugin/build.gradle`:
-
-```gradle
-version = "0.4.0"  // Remove -SNAPSHOT suffix
-```
-
-Update `jfr-shell-plugins.json` with the release version for both backend plugins:
-
-```json
-{
-  "plugins": {
-    "jdk": {
-      "latestVersion": "0.4.0",
-      ...
-    },
-    "jafar": {
-      "latestVersion": "0.4.0",
-      ...
-    }
-  }
-}
-```
-
-### 2. Update CHANGELOG.md
-
-Ensure the changelog has an entry for the new version:
+Ensure the changelog has an entry for the version being released:
 
 ```markdown
 ## [0.4.0] - 2025-01-15
@@ -59,15 +33,12 @@ Ensure the changelog has an entry for the new version:
 - Bug Z
 ```
 
-### 3. Commit and Push
+Commit and push it to `main`.
 
-```bash
-git add build.gradle jafar-gradle-plugin/build.gradle jfr-shell-plugins.json CHANGELOG.md
-git commit -m "Prepare for release v0.4.0"
-git push origin main
-```
+### 2. Create and Push Release Tag
 
-### 4. Create and Push Release Tag
+Or run `scripts/release.sh [--dry-run] <major|minor|patch>`, which derives the version from the
+newest tag and does the steps below (including the release branch).
 
 ```bash
 git tag -a v0.4.0 -m "Release v0.4.0"
@@ -78,16 +49,23 @@ git push origin v0.4.0
 1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
 2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
 3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
-4. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
-5. ✅ Create GitHub Release with changelog notes
+4. ✅ Commit the `jfr-shell-plugins.json` plugin catalog update to `main`
+5. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
+6. ✅ Create GitHub Release with changelog notes
 
-### 5. Monitor Release Workflow
+> **Bundled catalog note:** the released `jfr-shell` jar bundles
+> `jfr-shell-plugins.json` (offline fallback for `PluginRegistry`). The publish job patches that
+> one file in the working tree to point at the release being published — the tag itself is not
+> rewritten, so checking out the tag shows the previous release's catalog in that one file. The
+> exact diff applied at release time is recorded in the workflow run's step summary.
+
+### 3. Monitor Release Workflow
 
 Watch the workflow at: https://github.com/btraceio/jafar/actions
 
 The release workflow typically takes 10-15 minutes to complete all steps.
 
-### 5.5. JBang Catalog Update Timing
+### 4. JBang Catalog Update Timing
 
 The JBang catalog is updated automatically once artifacts are available on Maven Central:
 
@@ -109,7 +87,7 @@ The JBang catalog is updated automatically once artifacts are available on Maven
 - This file is automatically created if Maven Central is not immediately available
 - It's removed once the catalog is updated or an issue is created
 
-### 5.6. Go Module Tag
+### 5. Go Module Tag
 
 The `tag-go-module` job creates a second tag, `go-parser/vX.Y.Z`, pointing at the same commit as
 the release tag. It runs only for tag-triggered releases, after `publish-maven`.
@@ -151,46 +129,21 @@ jbang --fresh jfr-shell@btraceio --version
 ```
 
 **Expected Timeline:**
-- **Immediately (0-15 min)**: GitHub Release created, artifacts published to Sonatype, Go module tag pushed
+- **Immediately (0-15 min)**: GitHub Release created, artifacts published to Sonatype, Go module tag pushed, plugin catalog committed to `main`
 - **Within 2 hours**: Artifacts appear on Maven Central
 - **Within 2.5 hours**: JBang catalog updated automatically (if Maven Central sync completes)
 
-### 7. Prepare for Next Development Iteration
-
-Update versions to next SNAPSHOT:
-
-Edit `build.gradle`:
-```gradle
-project.version="0.5.0-SNAPSHOT"
-```
-
-Edit `jafar-gradle-plugin/build.gradle`:
-```gradle
-version = "0.5.0-SNAPSHOT"
-```
-
-> **Do NOT update `jfr-shell-plugins.json`** — it was already set to the release version in step 1 and must stay that way. The plugin catalog is fetched at runtime from the `main` branch by `PluginRegistry` and must always point to the latest released version available on Maven Central. Setting it to a SNAPSHOT version breaks backend installation for all users.
-
-Update CHANGELOG.md:
-```markdown
-## [Unreleased]
-
-(empty for now)
-
-## [0.4.0] - 2025-01-15
-...
-```
-
-Commit:
-```bash
-git add build.gradle jafar-gradle-plugin/build.gradle CHANGELOG.md
-git commit -m "Prepare for next development iteration"
-git push origin main
-```
+There is no "prepare for next development iteration" step: main and release branches report
+`<latest tag>-SNAPSHOT` automatically as soon as the tag exists, and the release workflow commits
+the `jfr-shell-plugins.json` update to `main`.
 
 ### Plugin Catalog Version Rule
 
-The `jfr-shell-plugins.json` catalog version must never be downgraded across major/minor boundaries. For example, if the catalog already points to `0.12.0` and a patch release `0.11.5` is published, the catalog must remain at `0.12.0`.
+`jfr-shell-plugins.json` is fetched at runtime from the `main` branch by `PluginRegistry` to
+resolve backend plugin versions for installation. It must always point to the latest released
+version — the release workflow commits the update and refuses to downgrade it.
+
+The catalog version must never be downgraded across major/minor boundaries. For example, if the catalog already points to `0.12.0` and a patch release `0.11.5` is published, the catalog must remain at `0.12.0`.
 
 ## Troubleshooting
 
@@ -261,7 +214,19 @@ Follow [Semantic Versioning](https://semver.org/):
 - **Minor (0.X.0)**: New features, backward compatible
 - **Patch (0.0.X)**: Bug fixes, backward compatible
 
-Development versions use `-SNAPSHOT` suffix (e.g., `0.4.0-SNAPSHOT`).
+The version is **derived from git tags** by `gradle/version-from-tag.gradle`, applied by both the
+root build and the `jafar-gradle-plugin` included build (the single source of truth for both):
+
+| Build context | Version |
+|---|---|
+| Exactly on tag `vX.Y.Z` (release workflow, JitPack) | `X.Y.Z` |
+| Anywhere else with git metadata (main, release branches, local) | `<newest vX.Y.Z tag>-SNAPSHOT` |
+| No git metadata (source tarball) | `0.0.0-SNAPSHOT` |
+
+The `newest vX.Y.Z tag` is the newest release tag anywhere in the repo, not just one reachable
+from HEAD, because release tags live on `release/X.Y._` branches. Only well-formed `vX.Y.Z` tags
+count; other `v*` tags are ignored. Builds never edit version numbers; bumping a version means
+cutting the next tag.
 
 The Go module tracks the same version as the Java artifacts, so `go-parser/v0.27.0` and
 `io.btrace:jafar-parser:0.27.0` are the same commit. The parity rule in [AGENTS.md](AGENTS.md) is
