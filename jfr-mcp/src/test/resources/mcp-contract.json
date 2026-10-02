@@ -1,0 +1,802 @@
+{
+  "tools" : [ {
+    "name" : "hdump_close",
+    "description" : "Closes one or all open heap dump sessions.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias to close; omit to close the current session"
+        },
+        "closeAll" : {
+          "type" : "boolean",
+          "description" : "If true, close every open heap dump session"
+        }
+      }
+    }
+  }, {
+    "name" : "hdump_help",
+    "description" : "HdumpPath query language documentation. Topics: overview, roots, filters, operators, examples, patterns, tools. Call hdump_help(topic=\"tools\") to see all hdump_* MCP tools.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "topic" : {
+          "type" : "string",
+          "description" : "Help topic: overview, roots, filters, operators, examples, patterns, tools. Omit for full reference.",
+          "enum" : [ "overview", "roots", "filters", "operators", "examples", "patterns", "tools" ]
+        }
+      }
+    }
+  }, {
+    "name" : "hdump_open",
+    "description" : "Opens an HPROF heap dump file (.hprof) for analysis. Returns a session ID used by other hdump_* tools. If no sessionId is supplied to other tools, the most recently opened session is used.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Absolute path to the HPROF heap dump file"
+        },
+        "alias" : {
+          "type" : "string",
+          "description" : "Optional human-readable alias for the session"
+        }
+      },
+      "required" : [ "path" ]
+    }
+  }, {
+    "name" : "hdump_query",
+    "description" : "Executes an HdumpPath query against an open heap dump session.\n\nQUERY SYNTAX\n  <root>[/<type>][<predicates>] [| <operator>]*\n\nROOT TYPES\n  objects    — heap object instances\n               fields: id, class, shallow, retained, arrayLength, stringValue\n  classes    — class metadata\n               fields: id, name, simpleName, instanceCount, instanceSize, superClass, isArray\n  gcroots    — GC root references\n               fields: type, objectId, object, shallow, retained\n               types: JNI_GLOBAL, JNI_LOCAL, JAVA_FRAME, NATIVE_STACK, STICKY_CLASS,\n                      THREAD_BLOCK, MONITOR_USED, THREAD_OBJ\n  clusters   — graph-based leak clusters (expensive first time)\n               fields: id, objectCount, retainedSize, score, dominantClass, anchorType\n  duplicates — structurally-identical subgraphs; depth=N controls fingerprint depth (default 3)\n               fields: id, rootClass, copies, uniqueSize, wastedBytes, depth, nodeCount\n  ages       — objects enriched with estimated age score\n               fields: all object fields + estimatedAge, ageBucket, ageSignals\n\nTYPE SPECIFIERS (after /)\n  objects/java.lang.String\n  objects/java.util.*                        (glob)\n  objects/instanceof/java.util.Map           (subtypes)\n  objects/int[]  or  objects/[I              (arrays)\n\nPREDICATES   [field op value]\n  ops: =  !=  >  >=  <  <=  ~(regex)\n  boolean: and, or, not, ()\n  size units: K KB M MB G GB\n  functions: contains(f,\"s\")  startsWith(f,\"p\")  between(f,lo,hi)  exists(f)\n  examples:  [shallow > 1MB]  [class = \"java.lang.String\"]\n\nPIPELINE OPERATORS  (chained with |)\n  top(n [,field] [,asc|desc])      sortBy(field [asc|desc])\n  filter(predicate)                head(n)  tail(n)\n  groupBy(field [,agg=count|sum|avg|min|max] [,value=expr])\n  count  sum(field)  stats(field)  select(f1, f2 as alias, ...)  distinct(field)\n  waste()               — Map/List capacity waste: capacity, size, wastedBytes\n  cacheStats()          — Map cache stats: entryCount, fillRatio, costPerEntry, isLruMode\n  checkLeaks([detector=\"name\"] [,minSize=N])\n                        — detectors: threadlocal-leak  classloader-leak  duplicate-strings\n                                     growing-collections  listener-leak  finalizer-queue\n  pathToRoot()          — trace object to nearest GC root\n  retentionPaths()      — merged class-level retention paths\n  retainedBreakdown([depth=N])   — dominator subtree by class\n  dominators([groupBy=\"class\"|\"package\"] [,minRetained=size])\n  threadOwner()         — enrich with ownerThread, ownership\n  dominatedSize()       — for THREAD_OBJ roots: threadName, dominated, dominatedCount\n  estimateAge()         — estimatedAge, ageBucket, ageSignals\n  whatif()              — simulate removal: freedBytes, freedPct, remainingRetained\n  join(session=id|alias [,root=\"eventType\", by=field])\n                        — heap diff (two hprof) or JFR correlation\n\nNOTE: retained-size queries trigger approximate retained-size computation on first use.\nFor large heaps (>500K objects) this may take several minutes.\n\nCOMMON PATTERNS\n  Top 10 memory hogs:      objects | top(10, retained)\n  Duplicate waste:         duplicates | sortBy(wastedBytes desc) | top(20)\n  Leak clusters:           clusters | sortBy(score desc) | head(10)\n  String duplicates:       checkLeaks(detector=\"duplicate-strings\")\n  Thread memory:           gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)\n  Collection waste:        objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes)\n  Heap diff:               classes | join(session=1) | sortBy(instanceCountDelta desc)\n  Retention paths:         objects[retained > 100MB] | retentionPaths()",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "query" : {
+          "type" : "string",
+          "description" : "HdumpPath query string"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum rows to return (default: 100)"
+        }
+      },
+      "required" : [ "query" ]
+    }
+  }, {
+    "name" : "hdump_report",
+    "description" : "Full heap health report. Triggers retained-size computation, leak detection, and duplicate subgraph analysis. May take several minutes on large heaps. Returns severity-ranked findings (CRITICAL > WARNING > INFO) with suggested queries. Use 'focus' to limit analyses: leaks, waste, duplicates, histogram.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "focus" : {
+          "type" : "string",
+          "description" : "Comma-separated subset of analyses to run: leaks, waste, duplicates, histogram. Omit to run all."
+        },
+        "format" : {
+          "type" : "string",
+          "description" : "Output format: text (default) or markdown",
+          "enum" : [ "text", "markdown" ]
+        }
+      }
+    }
+  }, {
+    "name" : "hdump_summary",
+    "description" : "Quick overview of an open heap dump. Does NOT trigger retained-size computation. Returns object/class counts, heap size, top classes by instance count, and GC root types.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_callgraph",
+    "description" : "Generates a call graph showing caller-callee relationships from stack traces. Unlike flamegraph (which preserves full paths), this shows which methods call which, revealing convergence points where multiple callers invoke the same method. DOT format can be visualized with graphviz. JSON format includes node and edge data.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "eventType" : {
+          "type" : "string",
+          "description" : "Event type to analyze (e.g., jdk.ExecutionSample, jdk.ObjectAllocationSample)"
+        },
+        "format" : {
+          "type" : "string",
+          "description" : "Output format: dot (graphviz) or json",
+          "enum" : [ "dot", "json" ],
+          "default" : "dot"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "minWeight" : {
+          "type" : "integer",
+          "description" : "Minimum edge weight to include (default: 1)"
+        }
+      },
+      "required" : [ "eventType" ]
+    }
+  }, {
+    "name" : "jfr_close",
+    "description" : "Closes a JFR recording session and releases resources. Options: provide sessionId for specific session, closeAll=true for all sessions, or neither to close the current session.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias to close"
+        },
+        "closeAll" : {
+          "type" : "boolean",
+          "description" : "Close all open sessions"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_compare",
+    "description" : "Compares a candidate JFR recording against a baseline and reports what changed: event rates per second, GC and exception rates, and per-frame CPU self-time shares. Normalises for recording duration and sampling rate, flags changes below the noise floor as insignificant, and warns when the two recordings are not comparable. Use for before/after regression checks; open both recordings with jfr_open first.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "baselineSessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias of the baseline (the 'before' recording). Required."
+        },
+        "candidateSessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias of the candidate (the 'after' recording). Defaults to the current session."
+        },
+        "eventType" : {
+          "type" : "string",
+          "description" : "Execution sample event type. Auto-detected per recording when omitted."
+        },
+        "minDeltaPct" : {
+          "type" : "number",
+          "description" : "Noise floor in percentage points for per-frame changes (default: 1.0)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of changed frames to return (default: 25)"
+        }
+      },
+      "required" : [ "baselineSessionId" ]
+    }
+  }, {
+    "name" : "jfr_diagnose",
+    "description" : "Diagnoses performance issues in a JFR recording by running the appropriate analyses and merging their results. Covers exception rates, GC pressure, CPU hotspots, resource bottlenecks (USE) and thread states (TSA), and returns severity-ranked structured findings plus the capability gaps that limit what this recording can answer. Use this as the first step on an unfamiliar recording; pass depth=quick to skip the USE and TSA passes on very large files.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "includeAnalysis" : {
+          "type" : "boolean",
+          "description" : "Include full analysis results from triggered tools (default: true)"
+        },
+        "depth" : {
+          "type" : "string",
+          "enum" : [ "quick", "full" ],
+          "description" : "quick = summary-derived thresholds only; full (default) also runs the USE and TSA analyses in-process and merges their findings"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_exceptions",
+    "description" : "Analyzes exception events in a JFR recording. Extracts exception types from stack traces, groups by exception class, and identifies throw sites. Works with both JDK exception events (jdk.JavaExceptionThrow) and profiler exception samples (datadog.ExceptionSample). Returns exception type counts, throw site locations, and patterns.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "eventType" : {
+          "type" : "string",
+          "description" : "Exception event type (e.g., datadog.ExceptionSample, jdk.JavaExceptionThrow). Auto-detects if not specified."
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "minCount" : {
+          "type" : "integer",
+          "description" : "Minimum exception count to include in results (default: 1)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of exception types to return (default: 50)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_flamegraph",
+    "description" : "Generates aggregated stack trace data for flamegraph-style analysis. Returns stack paths with sample counts in folded or tree format. Use direction=bottom-up to see hot methods (where time is spent), or direction=top-down to see call paths from entry points. Folded format is semicolon-separated paths compatible with standard flamegraph tools.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "eventType" : {
+          "type" : "string",
+          "description" : "Event type to analyze (e.g., jdk.ExecutionSample, jdk.ObjectAllocationSample)"
+        },
+        "direction" : {
+          "type" : "string",
+          "description" : "Stack direction: bottom-up (hot methods at root) or top-down (entry points at root)",
+          "enum" : [ "bottom-up", "top-down" ],
+          "default" : "bottom-up"
+        },
+        "format" : {
+          "type" : "string",
+          "description" : "Output format: folded (semicolon-separated) or tree (JSON)",
+          "enum" : [ "folded", "tree" ],
+          "default" : "folded"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "minSamples" : {
+          "type" : "integer",
+          "description" : "Minimum sample count to include in output (default: 1)"
+        },
+        "maxDepth" : {
+          "type" : "integer",
+          "description" : "Maximum stack depth to include (default: unlimited)"
+        }
+      },
+      "required" : [ "eventType" ]
+    }
+  }, {
+    "name" : "jfr_help",
+    "description" : "Returns JfrPath query language documentation. Call without arguments for overview, or specify a topic for detailed help. Topics: overview, filters, pipeline, functions, examples, event_types, tools.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "topic" : {
+          "type" : "string",
+          "description" : "Help topic: overview, filters, pipeline, functions, examples, event_types, tools",
+          "enum" : [ "overview", "filters", "pipeline", "functions", "examples", "event_types", "tools" ]
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_hotmethods",
+    "description" : "Returns the hottest methods (leaf frames) from CPU profiling samples. Simpler and more compact than full flamegraph - just shows which methods are consuming CPU. Useful for quick CPU hotspot identification.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "eventType" : {
+          "type" : "string",
+          "description" : "Execution sample event type (e.g., datadog.ExecutionSample, jdk.ExecutionSample). Auto-detects if not specified."
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of methods to return (default: 20)"
+        },
+        "includeNative" : {
+          "type" : "boolean",
+          "description" : "Include native/VM methods (default: true)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_list_types",
+    "description" : "Lists all event types available in a JFR recording. By default returns type names from metadata (fast). Use scan=true to get actual event counts (scans the entire recording). Categories: jdk.* (JDK events), jdk.jfr.* (JFR infrastructure), custom app events.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "filter" : {
+          "type" : "string",
+          "description" : "Filter for event type names (case-insensitive)"
+        },
+        "scan" : {
+          "type" : "boolean",
+          "description" : "Scan recording to get accurate event counts (may be slow for large files)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_open",
+    "description" : "Opens a JFR (Java Flight Recording) file (.jfr) for analysis. Returns a session ID that can be used with other jfr_* tools. If no session ID is provided to other tools, they use the most recently opened session.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Absolute path to the JFR recording file"
+        },
+        "alias" : {
+          "type" : "string",
+          "description" : "Optional alias for the session"
+        }
+      },
+      "required" : [ "path" ]
+    }
+  }, {
+    "name" : "jfr_query",
+    "description" : "Executes a JfrPath query against a JFR recording. JfrPath forms: events/<eventType>, events/<eventType>[filter], events/<eventType> | pipeline. Common types: jdk.ExecutionSample, jdk.GCPhasePause, jdk.MonitorEnter, jdk.FileRead. Pipeline ops: count(), groupBy(field), top(n), select(f1,f2), stats(field). Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10)",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "query" : {
+          "type" : "string",
+          "description" : "JfrPath query expression"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum results to return (default: 100)"
+        }
+      },
+      "required" : [ "query" ]
+    }
+  }, {
+    "name" : "jfr_stackprofile",
+    "description" : "Returns structured stack profiling data with time-series distribution and per-thread breakdown for each frame. Unlike jfr_flamegraph (which returns aggregated stack paths for visualization), this tool returns machine-readable JSON with: (1) raw time-bucket arrays showing how each method's samples distribute over the recording duration — use this to detect bursty vs steady hotspots and N+1 query patterns; (2) per-thread sample counts revealing thread affinity; (3) numeric percentage fields and a derived category (normal/hotspot/steady-hotspot). Choose jfr_stackprofile when you need to programmatically analyze CPU behavior over time or across threads. Choose jfr_flamegraph when you need aggregated call-path data for visualization or simple hotspot listing.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "eventType" : {
+          "type" : "string",
+          "description" : "Execution sample event type (e.g., jdk.ExecutionSample, datadog.ExecutionSample). Auto-detects if not specified."
+        },
+        "direction" : {
+          "type" : "string",
+          "description" : "Stack direction: top-down (entry points first) or bottom-up (hot methods first)",
+          "enum" : [ "top-down", "bottom-up" ],
+          "default" : "top-down"
+        },
+        "buckets" : {
+          "type" : "integer",
+          "description" : "Number of time buckets for temporal distribution (default: 10)"
+        },
+        "minPct" : {
+          "type" : "number",
+          "description" : "Minimum percentage threshold to include a frame (default: 1.0)"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of frames to return (default: 200)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_summary",
+    "description" : "Provides a quick overview of a JFR recording including duration, event counts, and key highlights like GC statistics, exception rates, and top CPU consumers. Useful for getting oriented with a new recording before deeper analysis.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_tsa",
+    "description" : "Analyzes JFR recording using Thread State Analysis (TSA) methodology. Shows how threads spend their time across different states (RUNNABLE, WAITING, BLOCKED, etc.). Identifies problematic threads and correlates blocking states with contended locks/monitors.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "startTime" : {
+          "type" : "integer",
+          "description" : "Start time in nanoseconds from recording start (optional)"
+        },
+        "endTime" : {
+          "type" : "integer",
+          "description" : "End time in nanoseconds from recording start (optional)"
+        },
+        "topThreads" : {
+          "type" : "integer",
+          "description" : "Number of top threads to analyze per state (default: 10)"
+        },
+        "minSamples" : {
+          "type" : "integer",
+          "description" : "Minimum samples for a thread to be included (default: 5)"
+        },
+        "correlateBlocking" : {
+          "type" : "boolean",
+          "description" : "Correlate blocking states with lock/monitor events (default: true)"
+        },
+        "includeInsights" : {
+          "type" : "boolean",
+          "description" : "Include actionable insights and recommendations (default: true)"
+        }
+      }
+    }
+  }, {
+    "name" : "jfr_use",
+    "description" : "Analyzes JFR recording using Brendan Gregg's USE Method (Utilization, Saturation, Errors). Examines CPU, Memory, Threads/Locks, and I/O resources to identify bottlenecks. Returns metrics for utilization (how busy), saturation (queued work), and errors for each resource.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias (uses current if not specified)"
+        },
+        "startTime" : {
+          "type" : "integer",
+          "description" : "Start time in nanoseconds from recording start (optional)"
+        },
+        "endTime" : {
+          "type" : "integer",
+          "description" : "End time in nanoseconds from recording start (optional)"
+        },
+        "resources" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string",
+            "enum" : [ "cpu", "memory", "threads", "io", "all" ]
+          },
+          "description" : "Which resources to analyze (default: all)"
+        },
+        "includeInsights" : {
+          "type" : "boolean",
+          "description" : "Include actionable insights and recommendations (default: true)"
+        }
+      }
+    }
+  }, {
+    "name" : "otlp_close",
+    "description" : "Closes an otlp session and releases its resources.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias to close. Omit to close the current session."
+        }
+      }
+    }
+  }, {
+    "name" : "otlp_flamegraph",
+    "description" : "Produces folded stack profile data suitable for flame graph visualization. Returns rows of {stack: 'root;parent;leaf', <valueField>: N} sorted by value descending. Stack frames are separated by ';' with root frame first.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "valueField" : {
+          "type" : "string",
+          "description" : "Value type to aggregate (e.g. 'cpu'). Defaults to first sample type."
+        },
+        "filter" : {
+          "type" : "string",
+          "description" : "Optional filter predicate, e.g. \"thread='main'\""
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of stack entries to return (default: 50)"
+        }
+      }
+    }
+  }, {
+    "name" : "otlp_help",
+    "description" : "Returns OtlpPath query language documentation and examples.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : { }
+    }
+  }, {
+    "name" : "otlp_open",
+    "description" : "Opens an OpenTelemetry profiling file (.otlp) for analysis. Returns a session ID and profile metadata (sample type, duration, counts). Use the returned session ID with other otlp_* tools.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Absolute path to the OTLP profiles file (.otlp)"
+        },
+        "alias" : {
+          "type" : "string",
+          "description" : "Optional alias for the session"
+        }
+      },
+      "required" : [ "path" ]
+    }
+  }, {
+    "name" : "otlp_query",
+    "description" : "Executes an OtlpPath query against an open OTLP profile. Query syntax: 'samples[predicate] | operator(args)'. Examples: 'samples | count()', 'samples | top(10, cpu)', 'samples | groupBy(thread, sum(cpu))', 'samples[thread='main'] | head(5)'. Use otlp_help for full query language reference.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "query" : {
+          "type" : "string",
+          "description" : "OtlpPath query string, e.g. 'samples | top(10, cpu)'"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of results to return (default: 100)"
+        }
+      },
+      "required" : [ "query" ]
+    }
+  }, {
+    "name" : "otlp_summary",
+    "description" : "Returns a quick overview of an OTLP profile: sample type, counts, duration, and top functions by the primary value type.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        }
+      }
+    }
+  }, {
+    "name" : "otlp_use",
+    "description" : "Analyzes an OTLP profile using Brendan Gregg's USE Method (Utilization, Saturation, Errors). CPU: utilization stats and top consuming functions. Threads: distribution across threads to identify serial bottlenecks. Errors: heuristic scan of hot function names for error-related patterns.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "resources" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string",
+            "enum" : [ "cpu", "threads", "errors" ]
+          },
+          "description" : "Resources to analyze. Defaults to all: cpu, threads, errors."
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_close",
+    "description" : "Closes a pprof session and releases its resources.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias to close. Omit to close the current session."
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_flamegraph",
+    "description" : "Produces folded stack profile data suitable for flame graph visualization. Returns rows of {stack: 'root;parent;leaf', <valueField>: N} sorted by value descending. Stack frames are separated by ';' with root frame first.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "valueField" : {
+          "type" : "string",
+          "description" : "Value type to aggregate (e.g. 'cpu', 'alloc_space'). Defaults to first sample type."
+        },
+        "filter" : {
+          "type" : "string",
+          "description" : "Optional filter predicate, e.g. \"thread='main'\""
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of stack entries to return (default: 50)"
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_help",
+    "description" : "Returns PprofPath query language documentation and examples.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : { }
+    }
+  }, {
+    "name" : "pprof_hotmethods",
+    "description" : "Identifies the hottest methods by direct (leaf-frame) cost. Groups samples by the leaf function name and sums the chosen value type. Shows what each function is directly responsible for (not including callees). Use pprof_flamegraph for inclusive (total) cost breakdown.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "topN" : {
+          "type" : "integer",
+          "description" : "Number of top methods to return (default: 20)"
+        },
+        "valueField" : {
+          "type" : "string",
+          "description" : "Value type to rank by (e.g. 'cpu', 'alloc_objects'). Defaults to first sample type."
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_open",
+    "description" : "Opens a pprof profile file (.pb.gz or .pprof) for analysis. Returns a session ID and profile metadata (sample types, duration, counts). Use the returned session ID with other pprof_* tools.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Absolute path to the pprof profile file (.pb.gz or .pprof)"
+        },
+        "alias" : {
+          "type" : "string",
+          "description" : "Optional alias for the session"
+        }
+      },
+      "required" : [ "path" ]
+    }
+  }, {
+    "name" : "pprof_query",
+    "description" : "Executes a PprofPath query against an open pprof profile. Query syntax: 'samples[predicate] | operator(args)'. Examples: 'samples | count()', 'samples | top(10, cpu)', 'samples | groupBy(thread, sum(cpu))', 'samples[thread='main'] | head(5)'. Use pprof_help for full query language reference.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "query" : {
+          "type" : "string",
+          "description" : "PprofPath query string, e.g. 'samples | top(10, cpu)'"
+        },
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of results to return (default: 100)"
+        }
+      },
+      "required" : [ "query" ]
+    }
+  }, {
+    "name" : "pprof_summary",
+    "description" : "Returns a quick overview of a pprof profile: sample types, counts, duration, and top functions by the primary value type.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_tsa",
+    "description" : "Thread State Analysis for pprof profiles. Shows how threads distribute their samples and infers thread states (RUNNING, WAITING, IO_BLOCKED, LOCK_BLOCKED) from leaf function names. Useful for identifying serial bottlenecks, blocking patterns, and I/O-heavy threads. Note: state inference is heuristic since pprof does not record explicit thread states.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "topThreads" : {
+          "type" : "integer",
+          "description" : "Number of top threads to profile in detail (default: 10)"
+        },
+        "includeInsights" : {
+          "type" : "boolean",
+          "description" : "Whether to include generated insights (default: true)"
+        }
+      }
+    }
+  }, {
+    "name" : "pprof_use",
+    "description" : "Analyzes a pprof profile using Brendan Gregg's USE Method (Utilization, Saturation, Errors). CPU: utilization stats and top consuming functions. Memory: saturation analysis if allocation sample types are present. Threads: distribution across threads to identify serial bottlenecks. Errors: heuristic scan of hot function names for error-related patterns.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "sessionId" : {
+          "type" : "string",
+          "description" : "Session ID or alias. Omit to use the current session."
+        },
+        "resources" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string",
+            "enum" : [ "cpu", "memory", "threads", "errors" ]
+          },
+          "description" : "Resources to analyze. Defaults to all: cpu, memory, threads, errors."
+        }
+      }
+    }
+  } ],
+  "prompts" : [ {
+    "name" : "compare",
+    "description" : "Decide whether a candidate recording regressed against a baseline, and attribute the change.",
+    "arguments" : [ {
+      "name" : "baseline",
+      "description" : "Path to the baseline recording",
+      "required" : false
+    }, {
+      "name" : "candidate",
+      "description" : "Path to the candidate recording",
+      "required" : false
+    } ],
+    "renderedText" : "Compare the baseline (baseline) against the candidate (candidate).\n\n1. jfr_open both, giving each a clear alias.\n2. Call jfr_compare with baselineSessionId and candidateSessionId.\n3. Read the `comparability` block before anything else. If it reports different execution-sample event types, very different durations, or low sample counts, say so in your answer and temper every conclusion accordingly.\n4. Treat `frames` as shares of samples, not wall-clock time. A frame growing from 3% to 9% of samples means the profile shifted; it is evidence of a slowdown only together with a rate or duration change.\n5. Changes below `minDeltaPct` are withheld deliberately. Do not go looking for smaller ones and present them as findings.\n\nConclude with either a named regression and the frame or metric that carries it, or an explicit \"no regression above the noise floor\". Never claim an improvement without the measurement that shows it.\n\n"
+  }, {
+    "name" : "latency",
+    "description" : "Investigate response-time problems that are not CPU-bound: contention, parking, queue saturation and blocking I/O.",
+    "arguments" : [ {
+      "name" : "path",
+      "description" : "Path to the JFR recording",
+      "required" : false
+    } ],
+    "renderedText" : "Investigate latency in the recording.\n\nLatency is usually waiting, and waiting produces no execution samples — so a healthy\nflamegraph proves nothing here.\n\n1. jfr_tsa with correlateBlocking=true. Read stateDistribution first: if most time is RUNNABLE this is a CPU problem, and you should switch to hot-method analysis.\n2. jfr_use resources=all. Look at insights.bottlenecks, and treat queue_saturation as first-class: work waiting in an executor queue cannot be recovered by making methods faster.\n3. Separate jdk.JavaMonitorEnter (blocked acquiring) from jdk.JavaMonitorWait (waiting on a condition) — they mean different things. Rank monitors by summed duration relative to the recording's wall clock, never by event count.\n4. For the code that contends, correlate samples with the wait window on the same thread using decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration).\n5. Check jdk.ThreadPark grouped by parked class. A pool parked on its own queue is idle and healthy; a request thread parked on a future or a connection pool is the bug.\n\nRemember JFR's monitor events have a duration threshold, so absence of events is not absence of contention. Report time-overlap correlations as \"concurrent with\", never as proof of cause.\n\n"
+  }, {
+    "name" : "leak-hunt",
+    "description" : "Find unintended retention in a heap dump, and attribute it to the code that allocated it.",
+    "arguments" : [ {
+      "name" : "dump",
+      "description" : "Path to the .hprof heap dump",
+      "required" : false
+    }, {
+      "name" : "recording",
+      "description" : "Optional JFR recording from the same interval",
+      "required" : false
+    } ],
+    "renderedText" : "Hunt for a memory leak in the heap dump.\n\n1. hdump_open, then hdump_summary to orient.\n2. hdump_report focus=leaks. Work the findings from highest severity with the largest retainedSize.\n3. Rank by retained size, not shallow size: hdump_query \"classes | sortBy(retained desc) | top(20)\". A large char[] or byte[] population is normal; its dominator is the finding.\n4. Try the named detectors for known patterns (threadlocal-leak, classloader-leak, growing-collections, listener-leak, duplicate-strings, finalizer-queue), then `clusters` for patterns nobody wrote a detector for.\n5. Prove retention with a path to a GC root — pathToRoot() per object, or retentionPaths() merged at class level. A leak claim without a root path is a guess. The field named in that path is the fix.\n\nDistinguish a leak from intended retention: a cache that is configured to be large is working as designed, and the finding is then about its sizing, not a bug.\n\n"
+  }, {
+    "name" : "triage",
+    "description" : "Establish what an unfamiliar JFR recording, profile or heap dump contains and which investigation to run next.",
+    "arguments" : [ {
+      "name" : "path",
+      "description" : "Absolute path to the artifact to analyse",
+      "required" : false
+    } ],
+    "renderedText" : "Triage the recording.\n\n1. Open it with the tool matching its type: jfr_open for .jfr, hdump_open for .hprof, pprof_open for .pprof/.pb.gz, otlp_open for .otlp.\n2. Run the summary tool (jfr_summary / hdump_summary / ...) and read the event or object mix before forming any hypothesis.\n3. For JFR, run jfr_diagnose. It returns severity-ranked findings, the analyses it ran, and capabilityGaps. Read capabilityGaps first: a negative result about something the recording never captured is not a negative result.\n4. Establish the recording's duration and convert every count you plan to quote into a rate. Absolute counts across recordings of different lengths are not comparable.\n5. Route to the specific investigation the findings point at — CPU, latency and contention, GC and allocation, or heap retention — rather than running everything.\n\nReport findings ranked by impact. For each one give the tool call that produced it, the numbers, your interpretation, and a confidence level. Do not quote a number you did not measure in this session, and label sampled data as sampled.\n\n"
+  } ],
+  "resources" : [ {
+    "uri" : "jafar://help/hdumppath",
+    "name" : "HdumpPath reference",
+    "description" : "Query language for hdump_query: roots, predicates and heap analysis operators.",
+    "mimeType" : "text/markdown",
+    "renderedText" : "# HdumpPath Query Language\n\nHdumpPath is a path-based query language for heap dump analysis. Queries select a\nroot data set, optionally filter by type and predicates, then apply a pipeline of\ntransformation operators.\n\n## Query Structure\n```\n<root>[/<type>][<predicates>] [| <operator>]*\n```\n\n## Roots\n- `objects`    — all heap object instances\n- `classes`    — class metadata (no retained-size needed)\n- `gcroots`    — GC root references\n- `clusters`   — graph-based leak clusters (triggers retained-size on first use)\n- `duplicates` — structurally-identical subgraphs (cached after first run)\n- `ages`       — objects annotated with estimated age\n\n## Quick Examples\n```\nobjects | top(10, retained)\nclasses | top(20, instanceCount)\nobjects/java.lang.String | count\nobjects/instanceof/java.util.Map | waste() | top(10, wastedBytes)\nduplicates | sortBy(wastedBytes desc) | top(20)\ngcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)\ncheckLeaks(detector=\"duplicate-strings\")\nclusters | sortBy(score desc) | head(10)\n```\n\n## Performance Notes\nOperators that compute retained sizes (retained, pathToRoot, retentionPaths,\ndominators, waste, cacheStats, checkLeaks) trigger approximate retained-size\ncomputation on first use. For large heaps (>500K objects) this may take minutes.\nResults are cached; subsequent queries on the same session are fast.\n\n"
+  }, {
+    "uri" : "jafar://help/jfrpath",
+    "name" : "JfrPath reference",
+    "description" : "Query language for jfr_query: roots, filters, units, pipeline operators and correlation.",
+    "mimeType" : "text/markdown",
+    "renderedText" : "# JfrPath Query Language\n\nJfrPath is a path-based query language for navigating and querying JFR files.\n\n## Basic Syntax\n```\nevents/<eventType>[filters] | pipeline_operator\n```\n\n## Query Roots\n- `events/<type>` - Access event data (e.g., events/jdk.ExecutionSample)\n- `metadata/<type>` - Access type metadata\n- `chunks` - Access chunk information\n- `constants/<type>` - Access constant pool entries\n\n## Field Navigation\n- Simple: `events/jdk.FileRead/path`\n- Nested: `events/jdk.ExecutionSample/stackTrace/frames`\n- Array index: `events/jdk.ExecutionSample/stackTrace/frames/0`\n\n## Quick Examples\n```\nevents/jdk.ExecutionSample | count()\nevents/jdk.FileRead[bytes>1000] | top(10)\nevents/jdk.GCPhasePause | stats(duration)\nevents/jdk.ExecutionSample | groupBy(eventThread/javaName)\n```\n\n## Help Topics\nCall jfr_help with topic parameter for detailed documentation:\n- filters: Filter syntax and operators\n- pipeline: Aggregation operators (count, groupBy, top, stats, etc.)\n- functions: Built-in functions for filters and select\n- examples: Common query patterns\n- event_types: Common JDK event types\n- tools: When to use each jfr_* tool (flamegraph vs stackprofile vs hotmethods, etc.)\n\n\n# JfrPath Filters\n\nFilters use square brackets `[...]` to constrain results.\n\n## Comparison Operators\n- `=` : Equal\n- `!=` : Not equal\n- `>` : Greater than\n- `>=` : Greater than or equal\n- `<` : Less than\n- `<=` : Less than or equal\n- `~` : Regex match\n\n## Examples\n```\nevents/jdk.FileRead[bytes>1000]\nevents/jdk.ExecutionSample[eventThread/javaName=\"main\"]\nevents/jdk.FileRead[path~\"/tmp/.*\"]\nevents/jdk.GCPhasePause[duration>10000000]\n```\n\n## Boolean Expressions\n```\nevents/jdk.FileRead[bytes>1000 and path~\"/tmp/.*\"]\nevents/jdk.ExecutionSample[eventThread/javaName=\"main\" or eventThread/javaName=\"worker\"]\nevents/jdk.FileRead[not (bytes<100)]\n```\n\n## Filter Functions\n- `contains(field, \"substr\")` - String contains\n- `startsWith(field, \"prefix\")` - String starts with\n- `endsWith(field, \"suffix\")` - String ends with\n- `matches(field, \"regex\")` - Regex match\n- `exists(field)` - Field is not null\n- `empty(field)` - String/list is empty\n- `between(field, min, max)` - Numeric range\n- `len(field)` - Length (use in comparisons)\n\n## Duration Values\nDurations can be specified with units:\n- `10ms` - 10 milliseconds\n- `1s` - 1 second\n- `500us` - 500 microseconds\n- `100ns` - 100 nanoseconds\n\nExample: `events/jdk.GCPhasePause[duration>10ms]`\n\n## List Matching\n- `any:` (default) - Any element matches\n- `all:` - All elements match\n- `none:` - No elements match\n\nExample: `events/jdk.ExecutionSample[any:stackTrace/frames/method/type/name/string ~ \".*MyClass.*\"]`\n\n\n# JfrPath Pipeline Operators\n\nPipeline operators transform or aggregate results. Append with `|`:\n\n## count()\nCount matching events.\n```\nevents/jdk.ExecutionSample | count()\n→ { \"count\": 12345 }\n```\n\n## top(n[, by=field, asc=false])\nReturn top N results sorted by field.\n```\nevents/jdk.FileRead | top(10, by=bytes)\nevents/jdk.GCPhasePause | top(5, by=duration)\nevents/jdk.FileRead | top(10, by=bytes, asc=true)  # smallest first\n```\n\n## groupBy(field[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])\nGroup by field and aggregate.\n```\nevents/jdk.ExecutionSample | groupBy(eventThread/javaName)\nevents/jdk.FileRead | groupBy(path, agg=sum, value=bytes)\nevents/jdk.ExecutionSample | groupBy(eventThread/javaName, sortBy=value)\n```\n\n## stats([field])\nCompute min, max, avg, stddev, count.\n```\nevents/jdk.FileRead | stats(bytes)\nevents/jdk.GCPhasePause | stats(duration)\n→ { \"min\": 100, \"max\": 50000, \"avg\": 5000, \"stddev\": 2500, \"count\": 200 }\n```\n\n## sum([field])\nSum numeric values.\n```\nevents/jdk.FileRead | sum(bytes)\n→ { \"sum\": 1234567, \"count\": 100 }\n```\n\n## quantiles(q1, q2, ...[, path=field])\nCompute percentiles (0.0 to 1.0).\n```\nevents/jdk.GCPhasePause | quantiles(0.5, 0.9, 0.99, path=duration)\n→ { \"p50\": 1000, \"p90\": 5000, \"p99\": 20000 }\n```\n\n## select(field1, field2, expr as alias, ...)\nProject specific fields or compute expressions.\n```\nevents/jdk.FileRead | select(path, bytes)\nevents/jdk.FileRead | select(path, bytes / 1024 as kb)\nevents/jdk.ExecutionSample | select(eventThread/javaName as thread, startTime)\n```\n\n## sortBy(field[, asc=false])\nSort results by field.\n```\nevents/jdk.FileRead | select(path, bytes) | sortBy(bytes)\n```\n\n## decorateByTime(eventType, fields=f1,f2[, threadPath=..., decoratorThreadPath=...])\nJoin with time-overlapping events on same thread.\n```\nevents/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)\n```\n\n## decorateByKey(eventType, key=path, decoratorKey=path, fields=f1,f2)\nJoin using correlation keys.\n```\nevents/jdk.ExecutionSample | decorateByKey(RequestStart, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)\n```\n\n\n# JfrPath Functions\n\n## Filter Functions\n\n### String Functions\n- `contains(field, \"substr\")` - Check if contains substring\n- `startsWith(field, \"prefix\")` - Check if starts with prefix\n- `endsWith(field, \"suffix\")` - Check if ends with suffix\n- `matches(field, \"regex\")` - Check if matches regex\n- `matches(field, \"regex\", \"i\")` - Case-insensitive regex\n\n### Existence Functions\n- `exists(field)` - Field is present and not null\n- `empty(field)` - String or list is empty\n\n### Numeric Functions\n- `between(field, min, max)` - Value in range (inclusive)\n- `len(field)` - Length of string or array\n\n## Select Expression Functions\n\n### Conditional\n- `if(condition, trueValue, falseValue)` - Conditional expression\n\n### String Functions\n- `upper(string)` - Convert to uppercase\n- `lower(string)` - Convert to lowercase\n- `substring(string, start[, length])` - Extract substring\n- `length(string)` - String length\n- `coalesce(v1, v2, ...)` - First non-null value\n\n### Arithmetic\n- `+`, `-`, `*`, `/` - Basic arithmetic\n- Parentheses for grouping: `(bytes * count) / 1024`\n\n### String Templates\nUse `${...}` for interpolation:\n```\nevents/jdk.FileRead | select(\"${path}: ${bytes / 1024} KB\" as info)\n```\n\n## Transform Operators (after |)\n- `| len()` - String/list length\n- `| uppercase()` - Convert to uppercase\n- `| lowercase()` - Convert to lowercase\n- `| trim()` - Trim whitespace\n- `| abs()` - Absolute value\n- `| round()` - Round to integer\n- `| floor()` - Round down\n- `| ceil()` - Round up\n\n\n# JfrPath Query Examples\n\n## CPU/Execution Analysis\n```\n# Count execution samples\nevents/jdk.ExecutionSample | count()\n\n# Samples by thread\nevents/jdk.ExecutionSample | groupBy(eventThread/javaName)\n\n# Top threads by sample count\nevents/jdk.ExecutionSample | groupBy(eventThread/javaName, sortBy=value) | top(10)\n\n# Samples for specific thread\nevents/jdk.ExecutionSample[eventThread/javaName=\"main\"] | count()\n```\n\n## GC Analysis\n```\n# GC pause statistics\nevents/jdk.GCPhasePause | stats(duration)\n\n# Longest GC pauses\nevents/jdk.GCPhasePause | top(10, by=duration)\n\n# GC pauses over 10ms\nevents/jdk.GCPhasePause[duration>10ms] | count()\n\n# Heap usage after GC\nevents/jdk.GCHeapSummary[when/when=\"After GC\"] | select(heapUsed, heapSpace/committedSize)\n```\n\n## I/O Analysis\n```\n# File read statistics\nevents/jdk.FileRead | stats(bytes)\n\n# Largest file reads\nevents/jdk.FileRead | top(10, by=bytes)\n\n# Reads by file path\nevents/jdk.FileRead | groupBy(path, agg=sum, value=bytes)\n\n# Slow file operations (>10ms)\nevents/jdk.FileRead[duration>10ms] | top(10)\n\n# Socket reads by host\nevents/jdk.SocketRead | groupBy(host)\n```\n\n## Lock Contention\n```\n# Monitor enter events\nevents/jdk.JavaMonitorEnter | count()\n\n# Longest lock waits\nevents/jdk.JavaMonitorEnter | top(10, by=duration)\n\n# Contention by monitor class\nevents/jdk.JavaMonitorEnter | groupBy(monitorClass)\n\n# Lock waits over 1ms\nevents/jdk.JavaMonitorEnter[duration>1ms] | count()\n```\n\n## Memory Analysis\n```\n# Allocation samples\nevents/jdk.ObjectAllocationSample | count()\n\n# Allocations by class\nevents/jdk.ObjectAllocationSample | groupBy(objectClass/name)\n\n# Large allocations\nevents/jdk.ObjectAllocationOutsideTLAB | top(10, by=allocationSize)\n```\n\n## Thread Analysis\n```\n# Thread starts\nevents/jdk.ThreadStart | count()\n\n# Thread CPU load\nevents/jdk.ThreadCPULoad | top(10, by=user)\n\n# Thread sleep events\nevents/jdk.ThreadSleep | stats(time)\n```\n\n## Correlation/Decoration\n```\n# Samples during lock waits\nevents/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)\n\n# Group samples by lock class\nevents/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorEnter, fields=monitorClass) | groupBy($decorator.monitorClass)\n```\n\n"
+  }, {
+    "uri" : "jafar://help/tools",
+    "name" : "Choosing the right tool",
+    "description" : "Which analysis tool answers which question, and when to prefer one over another.",
+    "mimeType" : "text/markdown",
+    "renderedText" : "# Choosing the Right jfr_* Tool\n\nStart every JFR workflow with `jfr_open`: give it the recording path (and, when useful, an\nalias), then pass the returned session id or alias to the tools below. Use `jfr_close` when\nthe investigation is finished.\n\n## CPU Profiling Tools\n\n### jfr_hotmethods\nBest for: Quick identification of which methods consume the most CPU.\nReturns: Flat ranked list of leaf methods with sample counts and percentages.\nUse when: You need a fast answer to \"where is CPU time going?\" without call-path context.\n\n### jfr_flamegraph\nBest for: Understanding call paths and how code reaches hot methods.\nReturns: Aggregated stack traces in folded (semicolon-separated) or tree (JSON) format.\nUse when: You need to see the full call hierarchy — which callers lead to a hotspot,\nor which entry points fan out into expensive subtrees. Output is designed for\nvisualization tools or structural call-path reasoning.\n\n### jfr_stackprofile\nBest for: Detecting temporal patterns and thread affinity in CPU hotspots.\nReturns: Structured JSON with per-frame time-bucket arrays, per-thread sample counts,\nnumeric percentages, and a derived category (normal / hotspot / steady-hotspot).\nUse when: You need to programmatically analyze how a method's CPU usage changes over\nthe recording duration (bursty vs steady), identify N+1 query patterns (steady hotspots),\nor determine which threads are contributing to a hotspot. The time-bucket arrays let you\ndetect intermittent load spikes that would be invisible in aggregated flamegraph data.\n\n### Decision Guide\n```\nNeed a quick \"top CPU consumers\" list?          → jfr_hotmethods\nNeed to understand call paths / callers?        → jfr_flamegraph\nNeed temporal patterns or thread breakdown?     → jfr_stackprofile\nNeed all of the above for deep investigation?   → Start with jfr_stackprofile,\n                                                  then jfr_flamegraph for call paths\n```\n\n## Other Specialized Tools\n\n### jfr_summary\nRecording overview: duration, event counts, JVM info. Start here for orientation.\n\n### jfr_diagnose\nAutomated performance triage. Runs multiple checks and returns findings + recommendations.\n\n### jfr_use\nUSE Method analysis (Utilization, Saturation, Errors) for CPU, memory, threads, and I/O.\n\n### jfr_tsa\nThread State Analysis. Breaks down what threads are doing: running, blocked, waiting, I/O.\n\n### jfr_exceptions\nException pattern analysis: types, frequencies, and common throw sites.\n\n### jfr_callgraph\nCall graph between methods. Shows caller→callee relationships with sample weights.\n\n### jfr_query\nGeneral-purpose JfrPath queries for anything not covered by specialized tools.\nUse jfr_help(topic=\"pipeline\") and jfr_help(topic=\"filters\") for query syntax.\n\n"
+  }, {
+    "uri" : "jafar://sessions",
+    "name" : "Open sessions",
+    "description" : "Recordings, heap dumps and profiles currently open, with their ids and aliases.",
+    "mimeType" : "text/markdown",
+    "renderedText" : "# Open sessions\n\n## JFR recordings\n_none open_\n\n## Heap dumps\n_none open_\n\n## pprof profiles\n_none open_\n\n## OTLP profiles\n_none open_\n\nA session id or alias can be passed as `sessionId` to any tool of the matching family, and named in cross-session operators such as `join(session=...)`.\n\n"
+  } ]
+}
