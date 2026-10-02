@@ -3,20 +3,24 @@
     "jdk": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jdk",
-      "latestVersion": "0.16.0",
+      "latestVersion": "0.28.0",
       "repository": "maven-central",
       "depends": [],
       "recommends": [],
-      "provides": ["jfr-backend"]
+      "provides": [
+        "jfr-backend"
+      ]
     },
     "jafar": {
       "groupId": "io.btrace",
       "artifactId": "jfr-shell-jafar",
-      "latestVersion": "0.16.0",
+      "latestVersion": "0.28.0",
       "repository": "maven-central",
       "depends": [],
       "recommends": [],
-      "provides": ["jfr-backend"]
+      "provides": [
+        "jfr-backend"
+      ]
     }
   }
 }
