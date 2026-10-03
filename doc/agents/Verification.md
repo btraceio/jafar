@@ -145,6 +145,22 @@ diff /tmp/fail_base.txt /tmp/fail_now.txt && echo "zero new failures"
 Record the baseline **before** you start changing code. Report both numbers — total tests and the
 named failing set — so a reader can tell growth from regression.
 
+> **Case file — the diagnose deadline between green and failure.**
+> `McpJfrTransportTest.jfrDiagnoseReturnsReport` failed on every run while every sibling passed.
+> Not flaky, not environmental, not a hang: `jfr_diagnose` (default `depth=full`,
+> `includeAnalysis=true`) legitimately re-parses the whole recording for each of its six
+> sub-analyses. A warm full untyped parse of the 2.2 MB test recording measures 0.45–0.73 s
+> (0.53–0.73 s with the coverage/mocking agents attached — their probes show up directly in the
+> profile as `$jacocoInit` in the parse loop; agents cost 15–40 % measured paired), and diagnose
+> makes ~10–12 such passes: 13–21 s under load, versus a 15 s harness deadline. Heap (unchanged at
+> 8 GB), GC (longest pause 26 ms) and logging (parser at WARN in both contexts) were ruled out with
+> data before anything was touched; three green runs under a raised deadline settled slow-not-hung.
+> The fix was one number (deadline 15 s → 60 s). Two habits to keep: **classify a slow test by
+> measuring its actual response time under a raised deadline before calling it flaky** — three
+> measurements beat three hypotheses — and **when a harness advertises an override in its own
+> failure message (`-Dmcp.test.timeout.ms`, "raise if the machine is loaded"), forward it from the
+> Gradle task**: advice that the build silently ignores is R3's fallback in disguise.
+
 ## R7. One source of truth for any list two places must agree on
 
 If a list is duplicated, the copies will disagree, and the disagreement will be invisible until a
