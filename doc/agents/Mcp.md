@@ -32,17 +32,19 @@ findings in this shape rather than inventing another one.
 
 See [jfr-mcp/README.md](../../jfr-mcp/README.md) and [doc/mcp/Tutorial.md](../../doc/mcp/Tutorial.md) for full documentation.
 
-## Claude Code Plugin (`btraceio/jafar-perf-box`, a separate repository)
+## Claude Code Plugin (`btraceio/agent-plugins`, a separate repository)
 A Claude Code plugin turns the MCP server into a guided performance analyst: methodology skills
 (`triage`, `cpu`, `latency`, `gc`, `memory-leak`, `heap-diff`, `compare`, `jfrpath`, `report`) and
 subagents (`perf-lead` plus five specialists). It bundles `.mcp.json`, so installing it registers
 the MCP server too.
 
-**It lives in [btraceio/jafar-perf-box](https://github.com/btraceio/jafar-perf-box), not here.**
-Adding a marketplace clones its repository, and this one carries several megabytes of binary test
-recordings a plugin user has no use for. That split has a cost, and it is the one thing to
-remember:
+**It lives in [btraceio/agent-plugins](https://github.com/btraceio/agent-plugins) (as
+`plugins/jafar-perf`), not here.** Adding a marketplace clones its repository, and this one carries
+several megabytes of binary test recordings a plugin user has no use for. That split has a cost, and
+it is the one thing to remember:
 
 > **When changing an MCP tool's name, parameters or response shape, update the affected skill files
-> in `btraceio/jafar-perf-box`.** They name tools and parameters explicitly, they are not covered
+> in `btraceio/agent-plugins`.** They name tools and parameters explicitly, they are not covered
 > by this repository's tests, and stale guidance sends an agent down a path that no longer works.
+> That repository's weekly `Tool drift` workflow (`scripts/check-tool-references.js`) catches a
+> renamed or removed tool after a release, but not a changed parameter.

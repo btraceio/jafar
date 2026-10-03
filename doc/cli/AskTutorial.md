@@ -129,7 +129,7 @@ Less well:
 
 - "why is my app slow?" — too open for a single query, so use `ask` (or `?`) instead: it runs
   several, reads each result, and concludes. `jfr_diagnose` through the MCP server and the
-  `perf-lead` agent from the [plugin](https://github.com/btraceio/jafar-perf-box) do the same from
+  `perf-lead` agent from the [plugin](https://github.com/btraceio/agent-plugins/tree/main/plugins/jafar-perf) do the same from
   outside the shell.
 - "is this normal?" — nothing in the recording says what normal is. Compare two recordings instead.
 - "fix the regression" — these commands compose queries; they do not change code.
