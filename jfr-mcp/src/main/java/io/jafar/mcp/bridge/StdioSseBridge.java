@@ -60,6 +60,8 @@ public final class StdioSseBridge {
   private static final int INTERNAL_ERROR = -32603;
   private static final int CONNECT_TIMEOUT_MS = 5_000;
   private static final int POST_TIMEOUT_MS = 30_000;
+  private static final int DELIVERY_ATTEMPTS = 3;
+  private static final long RECONNECT_RETRY_DELAY_MS = 25;
 
   private final DaemonSupplier daemon;
   private final InputStream stdin;
@@ -168,10 +170,13 @@ public final class StdioSseBridge {
     }
   }
 
-  /** Delivers one client message, reconnecting once if the daemon dropped the session. */
+  /**
+   * Delivers one client message, retrying a bounded number of times if the daemon drops the
+   * session.
+   */
   private synchronized boolean post(String line, String idKey) {
     IOException last = null;
-    for (int attempt = 0; attempt < 2; attempt++) {
+    for (int attempt = 0; attempt < DELIVERY_ATTEMPTS; attempt++) {
       if (attempt > 0 && idKey != null && !inFlight.containsKey(idKey)) {
         return false; // already failed to the client while we were reconnecting; don't answer twice
       }
@@ -192,6 +197,15 @@ public final class StdioSseBridge {
         last = e;
         if (connection != null) {
           dropConnection(connection, idKey);
+        }
+        if (attempt + 1 < DELIVERY_ATTEMPTS) {
+          try {
+            Thread.sleep(RECONNECT_RETRY_DELAY_MS);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            fail(idKey, "interrupted while reconnecting to the jfr-mcp daemon");
+            return false;
+          }
         }
       }
     }
