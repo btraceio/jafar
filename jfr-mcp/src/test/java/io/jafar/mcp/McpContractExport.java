@@ -7,10 +7,10 @@ import java.nio.file.Path;
  * Writes the MCP guidance contract JSON to a path, for consumers outside the test suite.
  *
  * <p>Run via {@code ./gradlew :jfr-mcp:exportMcpContract}. The output is byte-identical to the
- * committed snapshot ({@code src/test/resources/mcp-contract.json}), so btraceio/jafar-perf-box's
- * {@code check_tool_references.py} can validate its skills against the in-development server rather
- * than waiting for a published release — the drift is caught before it ships, not by the weekly
- * cron after.
+ * committed snapshot ({@code src/test/resources/mcp-contract.json}), so the jafar-perf plugin in
+ * btraceio/agent-plugins (weekly Tool-drift check, scripts/check-tool-references.js) can validate
+ * its skills against the in-development server rather than waiting for a published release — the
+ * drift is caught before it ships, not by the weekly cron after.
  */
 public final class McpContractExport {
 

@@ -17,10 +17,10 @@ import tools.jackson.databind.node.ObjectNode;
  * <p>One rendering serves three consumers, so they can never disagree (one source of truth): the
  * golden-snapshot test ({@code ToolCatalogSnapshotTest}) compares it against the committed {@code
  * src/test/resources/mcp-contract.json}; a change there must be conscious, because the diff is
- * exactly what every MCP client — and the jafar-perf-box plugin skills, which name tools and
- * parameters explicitly — will experience. The {@code exportMcpContract} task writes the same JSON
- * to the build directory so out-of-repo consumers (perf-box's tool-drift check) can diff their
- * skills against the in-development server instead of waiting for a release.
+ * exactly what every MCP client — and the agent-plugins jafar-perf plugin skills, which name tools
+ * and parameters explicitly — will experience. The {@code exportMcpContract} task writes the same
+ * JSON to the build directory so out-of-repo consumers (agent-plugins' tool-drift check) can diff
+ * their skills against the in-development server instead of waiting for a release.
  *
  * <p>Keys are sorted and tools are ordered by name, so cosmetic reordering in the Java sources does
  * not churn the file — only real contract changes do.

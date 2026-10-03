@@ -144,8 +144,8 @@ tasks.register('endToEndTest', Test) {
 }
 
 // Writes the MCP guidance contract JSON (tool names, descriptions, input schemas, prompts,
-// resources) so out-of-repo consumers can check against the in-development server. The jafar-perf-box
-// plugin's tool-drift workflow consumes this instead of waiting for a published release.
+// resources) so out-of-repo consumers can check against the in-development server. The jafar-perf
+// plugin (btraceio/agent-plugins) consumes this instead of waiting for a published release.
 // Run with: ./gradlew :jfr-mcp:exportMcpContract
 // The output is byte-identical to the committed src/test/resources/mcp-contract.json snapshot.
 tasks.register('exportMcpContract', JavaExec) {

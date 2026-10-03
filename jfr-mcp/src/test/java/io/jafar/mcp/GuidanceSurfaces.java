@@ -5,8 +5,12 @@ import io.jafar.mcp.hdump.HdumpTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.otlp.shell.otlppath.OtlpPathParser;
 import io.jafar.pprof.shell.pprofpath.PprofPathParser;
+import io.jafar.shell.core.RequestScope;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -179,13 +183,31 @@ final class GuidanceSurfaces {
     return resources.createResourceSpecifications();
   }
 
+  /**
+   * The fixed client scope the contract is rendered in.
+   *
+   * <p>Since the server scopes session visibility to the MCP client session (see {@link
+   * RequestScope}), surfaces must be read as a caller, not as a raw thread. A single synthetic id
+   * keeps the rendered contract deterministic: it is never used to open anything, so every surface
+   * renders the fresh-client view.
+   */
+  private static final String RENDER_SCOPE = "guidance-contract-render";
+
+  /** A real exchange carrying {@link #RENDER_SCOPE}, built the way the runtime does it. */
+  private static McpSyncServerExchange renderExchange() {
+    return new McpSyncServerExchange(
+        new McpAsyncServerExchange(RENDER_SCOPE, null, null, null, McpTransportContext.EMPTY));
+  }
+
   /** Prompt texts, rendered by invoking each prompt handler with empty arguments. */
   Map<String, String> promptTexts() {
     Map<String, String> out = new LinkedHashMap<>();
+    var exchange = renderExchange();
     for (var spec : promptSpecs()) {
       String name = spec.prompt().name();
+      RequestScope.clear();
       McpSchema.GetPromptResult result =
-          spec.promptHandler().apply(null, new McpSchema.GetPromptRequest(name, Map.of()));
+          spec.promptHandler().apply(exchange, new McpSchema.GetPromptRequest(name, Map.of()));
       StringBuilder text = new StringBuilder();
       for (var message : result.messages()) {
         if (message.content() instanceof McpSchema.TextContent content) {
@@ -202,8 +224,9 @@ final class GuidanceSurfaces {
     Map<String, String> out = new LinkedHashMap<>();
     for (var spec : resourceSpecs()) {
       String uri = spec.resource().uri();
+      RequestScope.clear();
       McpSchema.ReadResourceResult result =
-          spec.readHandler().apply(null, new McpSchema.ReadResourceRequest(uri));
+          spec.readHandler().apply(renderExchange(), new McpSchema.ReadResourceRequest(uri));
       StringBuilder text = new StringBuilder();
       for (var content : result.contents()) {
         if (content instanceof McpSchema.TextResourceContents textContent) {

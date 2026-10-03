@@ -35,6 +35,7 @@ final class McpStdioProcessHarness implements AutoCloseable {
   private final Path root;
   private final Path sessionsFile;
   private final Path home;
+  private final Path stateDir;
   private final Process process;
   private final PrintWriter stdin;
   private final BlockingQueue<JsonNode> pending = new LinkedBlockingQueue<>();
@@ -50,8 +51,10 @@ final class McpStdioProcessHarness implements AutoCloseable {
     root = Files.createTempDirectory(parent, testName.replaceAll("[^A-Za-z0-9_.-]", "_") + "-");
     sessionsFile = root.resolve("sessions.json").normalize();
     home = root.resolve("home").normalize();
-    assertOwned(root, sessionsFile, home);
+    stateDir = root.resolve("state").normalize();
+    assertOwned(root, sessionsFile, home, stateDir);
     Files.createDirectories(home);
+    Files.createDirectories(stateDir);
 
     String java = ProcessHandle.current().info().command().orElse("java");
     process =
@@ -59,6 +62,10 @@ final class McpStdioProcessHarness implements AutoCloseable {
                 java,
                 "-Djafar.mcp.sessions.file=" + sessionsFile,
                 "-Duser.home=" + home,
+                // The child is a separate JVM, so the Gradle test JVM's isolation does not reach
+                // it. Belt and braces: an explicit state dir for daemon files (port marker, auth
+                // token, persisted sessions) next to the redirected home that is its default.
+                "-Djafar.state.dir=" + stateDir,
                 "-jar",
                 findShadowJar().toString(),
                 "--stdio")
@@ -85,6 +92,10 @@ final class McpStdioProcessHarness implements AutoCloseable {
 
   Path home() {
     return home;
+  }
+
+  Path stateDir() {
+    return stateDir;
   }
 
   JsonNode call(String tool, Map<String, Object> arguments) throws Exception {
@@ -131,7 +142,7 @@ final class McpStdioProcessHarness implements AutoCloseable {
    * actually honoured them rather than merely receiving private paths on its command line.
    */
   void assertFreshSessions(String... aliasesThatMustBeAbsent) throws Exception {
-    assertOwned(root, sessionsFile, home);
+    assertOwned(root, sessionsFile, home, stateDir);
     assertTrue(Files.exists(root), () -> "E2E root disappeared before session check: " + root);
     JsonNode response = readResource("jafar://sessions");
     String sessions = contentText(response);
@@ -271,10 +282,11 @@ final class McpStdioProcessHarness implements AutoCloseable {
     }
   }
 
-  private static void assertOwned(Path root, Path sessionsFile, Path home) {
+  private static void assertOwned(Path root, Path sessionsFile, Path home, Path stateDir) {
     Path normalizedRoot = root.toAbsolutePath().normalize();
     assertTrue(sessionsFile.toAbsolutePath().normalize().startsWith(normalizedRoot));
     assertTrue(home.toAbsolutePath().normalize().startsWith(normalizedRoot));
+    assertTrue(stateDir.toAbsolutePath().normalize().startsWith(normalizedRoot));
   }
 
   @Override

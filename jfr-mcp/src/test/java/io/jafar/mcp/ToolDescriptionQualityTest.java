@@ -131,7 +131,7 @@ class ToolDescriptionQualityTest {
         problems.isEmpty(),
         () ->
             "tool parameter surface drifted from the pinned contract (update the pin deliberately"
-                + " when adding a parameter, and remember the perf-box skills name parameters"
+                + " when adding a parameter, and remember the agent-plugins jafar-perf skills name parameters"
                 + " too):%n"
                 + String.join("%n", problems));
   }

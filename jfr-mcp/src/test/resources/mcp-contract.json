@@ -11,7 +11,7 @@
         },
         "closeAll" : {
           "type" : "boolean",
-          "description" : "If true, close every open heap dump session"
+          "description" : "If true, close all of your open heap dump sessions and any shared ones restored after a restart (never another client's)"
         }
       }
     }
@@ -128,7 +128,7 @@
     }
   }, {
     "name" : "jfr_close",
-    "description" : "Closes a JFR recording session and releases resources. Options: provide sessionId for specific session, closeAll=true for all sessions, or neither to close the current session.",
+    "description" : "Closes a JFR recording session and releases resources. Options: provide sessionId for specific session, closeAll=true for all of your sessions, or neither to close the current session.",
     "inputSchema" : {
       "type" : "object",
       "properties" : {
@@ -138,7 +138,7 @@
         },
         "closeAll" : {
           "type" : "boolean",
-          "description" : "Close all open sessions"
+          "description" : "Close all of your open sessions and any shared ones restored after a restart (never another client's)"
         }
       }
     }

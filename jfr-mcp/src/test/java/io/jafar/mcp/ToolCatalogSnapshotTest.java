@@ -17,11 +17,11 @@ import org.junit.jupiter.api.parallel.Resources;
  * <p>Tool descriptions are prompts: they are the only thing an agent routes by, and a change to one
  * changes agent behaviour in ways no unit test notices. The snapshot turns every such change into a
  * visible diff that must be consciously accepted, the same discipline applied to prompt text
- * anywhere else. It is also the artifact the jafar-perf-box plugin's tool-drift check diffs its
- * skills against.
+ * anywhere else. It is also the artifact the weekly Tool-drift check of the jafar-perf plugin
+ * (btraceio/agent-plugins, scripts/check-tool-references.js) diffs its skills against.
  *
- * <p>To accept a change, review the diff, update any skill file in btraceio/jafar-perf-box that
- * names the changed tool or parameter, then run:
+ * <p>To accept a change, review the diff, update any skill file in btraceio/agent-plugins
+ * (plugins/jafar-perf) that names the changed tool or parameter, then run:
  *
  * <pre>./gradlew :jfr-mcp:test --tests ToolCatalogSnapshotTest -Dmcp.updateSnapshot=true</pre>
  */
@@ -56,11 +56,11 @@ class ToolCatalogSnapshotTest {
         McpContractJson.parse(committed),
         McpContractJson.parse(current),
         () ->
-            "The MCP guidance contract changed. Every MCP client and the jafar-perf-box skills"
-                + " experience this diff. Review it, update any perf-box skill that names the"
+            "The MCP guidance contract changed. Every MCP client and the agent-plugins jafar-perf"
+                + " skills experience this diff. Review it, update any jafar-perf skill that names the"
                 + " changed tool or parameter, then accept it with"
-                + " -Dmcp.updateSnapshot=true.%n--- committed ---%n%s%n--- current ---%n%s"
-                    .formatted(previewDiff(committed, current)));
+                + " -Dmcp.updateSnapshot=true.\n"
+                + previewDiff(committed, current));
   }
 
   @Test
@@ -76,19 +76,35 @@ class ToolCatalogSnapshotTest {
   }
 
   private static String previewDiff(String committed, String current) {
-    // The full contract is large; surface the tool names that differ so the failure message is
-    // readable without scrolling through the whole JSON.
-    var committedTools = new java.util.HashMap<String, String>();
-    for (var tool : McpContractJson.parse(committed).path("tools")) {
-      committedTools.put(tool.path("name").asString(), tool.toString());
-    }
-    var changed = new java.util.ArrayList<String>();
-    for (var tool : McpContractJson.parse(current).path("tools")) {
-      String name = tool.path("name").asString();
-      if (!tool.toString().equals(committedTools.get(name))) {
-        changed.add(name);
+    // The full contract is large; surface WHICH entries differ (tools, prompts, resources) so the
+    // failure message names them without scrolling through the whole JSON.
+    var committedByKind = new java.util.HashMap<String, String>();
+    var committedTree = McpContractJson.parse(committed);
+    for (var kind : java.util.List.of("tools", "prompts", "resources")) {
+      var key = "tools".equals(kind) ? "name" : ("resources".equals(kind) ? "uri" : "name");
+      for (var entry : committedTree.path(kind)) {
+        committedByKind.put(kind + ":" + entry.path(key).asString(), entry.toString());
       }
     }
-    return "changed tools: " + changed;
+    var changed = new java.util.ArrayList<String>();
+    var currentTree = McpContractJson.parse(current);
+    for (var kind : java.util.List.of("tools", "prompts", "resources")) {
+      var key = "tools".equals(kind) ? "name" : ("resources".equals(kind) ? "uri" : "name");
+      for (var entry : currentTree.path(kind)) {
+        String name = kind + ":" + entry.path(key).asString();
+        String old = committedByKind.remove(name);
+        if (old == null) {
+          changed.add(name + " (added)");
+        } else if (!entry.toString().equals(old)) {
+          changed.add(name + " (modified)");
+        }
+      }
+    }
+    for (String name : new java.util.TreeSet<>(committedByKind.keySet())) {
+      changed.add(name + " (removed)");
+    }
+    return changed.isEmpty()
+        ? "no top-level entry differs by toString comparison — compare raw JSON"
+        : "changed entries: " + String.join(", ", changed);
   }
 }
