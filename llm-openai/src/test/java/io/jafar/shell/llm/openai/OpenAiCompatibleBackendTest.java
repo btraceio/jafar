@@ -82,7 +82,10 @@ class OpenAiCompatibleBackendTest {
   private LlmConfig config(Map<String, String> extra) {
     Map<String, String> settings = new HashMap<>(extra);
     settings.putIfAbsent("llm.base-url", baseUrl);
-    return new LlmConfig(settings::get);
+    // No settings-file fallback: a developer machine with a real ~/.config/jafar/llm.properties
+    // (llm.model=…) must not leak into these assertions — the model then overrides the profile
+    // default and the test fails everywhere except on machines without the file.
+    return new LlmConfig(settings::get, java.util.Optional::empty);
   }
 
   private static LlmRequest request() {

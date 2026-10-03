@@ -214,7 +214,7 @@ public final class OtlpTools {
             "Executes an OtlpPath query against an open OTLP profile. "
                 + "Query syntax: 'samples[predicate] | operator(args)'. "
                 + "Examples: 'samples | count()', 'samples | top(10, cpu)', "
-                + "'samples | groupBy(thread, sum(cpu))', 'samples[thread=\\'main\\'] | head(5)'. "
+                + "'samples | groupBy(thread, sum(cpu))', 'samples[thread='main'] | head(5)'. "
                 + "Use otlp_help for full query language reference.",
             schema),
         (exchange, args) -> handleOtlpQuery(args.arguments()));

@@ -1,8 +1,13 @@
 plugins {
     id 'java-library'
+    id 'java-test-fixtures'
     id 'maven-publish'
     id 'com.vanniktech.maven.publish'
 }
+
+// SyntheticHeapDumpGenerator is a build-time fixture, never a published parser capability.
+components.java.withVariantsFromConfiguration(configurations.testFixturesApiElements) { skip() }
+components.java.withVariantsFromConfiguration(configurations.testFixturesRuntimeElements) { skip() }
 
 def libraryName = "hdump-parser"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version

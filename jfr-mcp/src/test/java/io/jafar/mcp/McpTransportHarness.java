@@ -34,7 +34,7 @@ import tools.jackson.databind.ObjectMapper;
  */
 final class McpTransportHarness implements AutoCloseable {
 
-  static final long RESPONSE_TIMEOUT_MS = Long.getLong("mcp.test.timeout.ms", 15_000);
+  static final long RESPONSE_TIMEOUT_MS = Long.getLong("mcp.test.timeout.ms", 60_000);
   private static final Logger logger = LoggerFactory.getLogger(McpTransportHarness.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 

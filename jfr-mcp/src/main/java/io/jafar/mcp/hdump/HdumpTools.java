@@ -101,7 +101,7 @@ public final class HdumpTools {
     return new McpServerFeatures.SyncToolSpecification(
         buildTool(
             "hdump_open",
-            "Opens an HPROF heap dump file for analysis. "
+            "Opens an HPROF heap dump file (.hprof) for analysis. "
                 + "Returns a session ID used by other hdump_* tools. "
                 + "If no sessionId is supplied to other tools, the most recently opened session is used.",
             schema),
@@ -817,9 +817,6 @@ public final class HdumpTools {
 
         ## Leak Detection
         ```
-        # Run all leak detectors
-        checkLeaks()
-
         # Thread-local leak detection
         checkLeaks(detector="threadlocal-leak")
 
@@ -828,6 +825,8 @@ public final class HdumpTools {
 
         # Graph-based leak clusters
         clusters | sortBy(score desc) | head(10)
+
+        # All detectors at once: hdump_report runs every analysis and ranks the findings
         ```
 
         ## Collection Waste

@@ -215,7 +215,7 @@ public final class PprofTools {
             "Executes a PprofPath query against an open pprof profile. "
                 + "Query syntax: 'samples[predicate] | operator(args)'. "
                 + "Examples: 'samples | count()', 'samples | top(10, cpu)', "
-                + "'samples | groupBy(thread, sum(cpu))', 'samples[thread=\\'main\\'] | head(5)'. "
+                + "'samples | groupBy(thread, sum(cpu))', 'samples[thread='main'] | head(5)'. "
                 + "Use pprof_help for full query language reference.",
             schema),
         (exchange, args) -> handlePprofQuery(args.arguments()));

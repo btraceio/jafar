@@ -241,16 +241,18 @@ For list and array fields, control how filters apply to elements:
 
 **Syntax**:
 ```
-[any:<listField>[condition]]
-[all:<listField>[condition]]
-[none:<listField>[condition]]
+[any:<fieldPath> <op> <value>]
+[all:<fieldPath> <op> <value>]
+[none:<fieldPath> <op> <value>]
 ```
+
+The condition applies when the field path resolves to a list; each element is tested in turn.
 
 **Examples**:
 ```
-events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Foo.*")]]
-events/jdk.ExecutionSample[all:stackTrace/frames[lineNumber>0]]
-events/jdk.ExecutionSample[none:stackTrace/frames[matches(method/name/string, ".*Test.*")]]
+events/jdk.ExecutionSample[any:stackTrace/frames/method/name/string ~ ".*Foo.*"]
+events/jdk.ExecutionSample[all:stackTrace/frames/lineNumber > 0]
+events/jdk.ExecutionSample[none:stackTrace/frames/method/name/string ~ ".*Test.*"]
 ```
 
 ### Interleaved Filters
