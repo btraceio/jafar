@@ -571,17 +571,19 @@ redacted by default. See **[LLM setup](doc/cli/LlmSetup.md)**,
 analysis to run on an unfamiliar recording or heap dump, not just how to run one.
 
 ```
-/plugin marketplace add btraceio/jafar-perf-box
-/plugin install jafar-perf@btraceio
+/plugin marketplace add btraceio/agent-plugins
+/plugin install jafar-perf@btraceio-agent-plugins
 ```
 
 The plugin bundles `.mcp.json`, so installing it **also registers the `jafar` MCP server** described
 below — no separate `claude mcp add` is needed. [JBang](https://www.jbang.dev) must be on your PATH;
 it fetches the server on first use.
 
-It lives in **[btraceio/jafar-perf-box](https://github.com/btraceio/jafar-perf-box)**, not in this
-repository: adding a marketplace clones its repository, and there is no reason to pull Jafar's
-binary test recordings onto a machine that only wants the skills.
+It lives in **[btraceio/agent-plugins](https://github.com/btraceio/agent-plugins)**, the btraceio
+agent-plugin marketplace, not in this repository: adding a marketplace clones its repository, and
+there is no reason to pull Jafar's binary test recordings onto a machine that only wants the skills.
+(It used to live in `btraceio/jafar-perf-box`; re-running the installer below moves such an install
+over, or switch by hand with `/plugin marketplace remove btraceio` and the two commands above.)
 
 ## MCP Server
 
@@ -597,14 +599,14 @@ curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/install.sh | bash
 ```
 
 This installs [JBang](https://www.jbang.dev) (if needed) and the `jfr-mcp` command, then registers
-the [jafar-perf](https://github.com/btraceio/jafar-perf-box) plugin with every supported agent
+the [jafar-perf](https://github.com/btraceio/agent-plugins/tree/main/plugins/jafar-perf) plugin with every supported agent
 harness on your PATH. The plugin brings the MCP server plus analysis skills (and, in Claude Code,
 specialist subagents), so no separate MCP registration is needed.
 
 | Harness | What the installer does |
 |---------|-------------------------|
-| Claude Code (`claude`) | `claude plugin marketplace add btraceio/jafar-perf-box`, then `claude plugin install jafar-perf@btraceio` |
-| pi (`pi`) | `pi install npm:pi-mcp-adapter` (pi has no built-in MCP support), then `pi install git:github.com/btraceio/jafar-perf-box`. The Claude Code subagents are not available in pi. |
+| Claude Code (`claude`) | `claude plugin marketplace add btraceio/agent-plugins`, then `claude plugin install jafar-perf@btraceio-agent-plugins` |
+| pi (`pi`) | `pi install npm:pi-mcp-adapter` (pi has no built-in MCP support), then `pi install git:github.com/btraceio/agent-plugins` (which also brings the other btraceio skills). The Claude Code subagents are not available in pi. |
 
 Options go after `bash -s --`:
 

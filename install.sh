@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Jafar installer: installs the jfr-mcp server, then registers the jafar-perf plugin
-# (btraceio/jafar-perf-box) with every supported agent harness it finds.
+# (btraceio/agent-plugins) with every supported agent harness it finds.
 #
 # Usage:
 #   curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/install.sh | bash
@@ -16,20 +16,29 @@
 #   -h, --help         Show this help.
 #
 # Supported harnesses:
-#   claude   Claude Code: adds the btraceio marketplace and installs jafar-perf@btraceio
-#            (skills, agents, and the jafar MCP server).
+#   claude   Claude Code: adds the btraceio-agent-plugins marketplace and installs
+#            jafar-perf@btraceio-agent-plugins (skills, agents, and the jafar MCP server).
 #   pi       pi coding agent: installs the pi-mcp-adapter extension (pi has no built-in MCP
-#            support) and the jafar-perf-box package (skills and the jafar MCP server).
+#            support) and the btraceio/agent-plugins package (its skills, including
+#            jafar-perf's, and the jafar MCP server).
 #
-# Re-running is safe: already-installed pieces are updated in place.
+# Re-running is safe: already-installed pieces are updated in place. A machine set up from the
+# plugin's old home, btraceio/jafar-perf-box, is migrated: the old copy is removed once the new
+# one is installed, so the skills and agents are not loaded twice.
 set -euo pipefail
 
 JAFAR_REF="${JAFAR_REF:-main}"
-MARKETPLACE_REPO="btraceio/jafar-perf-box"
-MARKETPLACE_NAME="btraceio"
+MARKETPLACE_REPO="btraceio/agent-plugins"
+MARKETPLACE_NAME="btraceio-agent-plugins"
 PLUGIN="jafar-perf@${MARKETPLACE_NAME}"
 PI_PACKAGE="git:github.com/${MARKETPLACE_REPO}"
 PI_MCP_ADAPTER="npm:pi-mcp-adapter"
+
+# Where the plugin lived before it moved into btraceio/agent-plugins.
+OLD_MARKETPLACE_REPO="btraceio/jafar-perf-box"
+OLD_MARKETPLACE_NAME="btraceio"
+OLD_PLUGIN="jafar-perf@${OLD_MARKETPLACE_NAME}"
+OLD_PI_PACKAGE="git:github.com/${OLD_MARKETPLACE_REPO}"
 
 # To add a harness: append its name here and define harness_<name>_detect (exit 0 when the
 # harness is installed) and harness_<name>_register.
@@ -65,6 +74,27 @@ harness_claude_register() {
   claude plugin install "${PLUGIN}" || return 1
   claude plugin update "${PLUGIN}" || return 1
   ok "Claude Code: ${PLUGIN} installed (restart running Claude Code sessions to load it)"
+  harness_claude_migrate
+}
+
+# Removes the copy installed from the plugin's old home, only after the new one is in place so a
+# failed install never leaves the machine without the plugin. Best effort: a failure here leaves
+# duplicate skills, which is worth saying but not worth failing the install over.
+harness_claude_migrate() {
+  if claude plugin list --json 2>/dev/null | grep -q "\"${OLD_PLUGIN}\""; then
+    if claude plugin uninstall "${OLD_PLUGIN}" >/dev/null 2>&1; then
+      ok "Claude Code: removed ${OLD_PLUGIN}, which moved into ${MARKETPLACE_REPO}"
+    else
+      warn "Could not remove ${OLD_PLUGIN}; run: claude plugin uninstall ${OLD_PLUGIN}"
+    fi
+  fi
+  if claude plugin marketplace list 2>/dev/null | grep -q "${OLD_MARKETPLACE_REPO}"; then
+    if claude plugin marketplace remove "${OLD_MARKETPLACE_NAME}" >/dev/null 2>&1; then
+      ok "Claude Code: removed the old ${OLD_MARKETPLACE_REPO} marketplace"
+    else
+      warn "Could not remove the old marketplace; run: claude plugin marketplace remove ${OLD_MARKETPLACE_NAME}"
+    fi
+  fi
 }
 
 # --- Harness: pi --------------------------------------------------------------------------------
@@ -77,9 +107,21 @@ harness_pi_register() {
     pi install "${source}" || return 1
     pi update "${source}" || return 1
   done
-  ok "pi: jafar-perf-box skills and the jafar MCP server installed (via ${PI_MCP_ADAPTER})"
+  ok "pi: ${MARKETPLACE_REPO} skills and the jafar MCP server installed (via ${PI_MCP_ADAPTER})"
   info "pi reaches jafar's tools through the adapter's mcp proxy tool; the Claude Code agents"
-  info "(subagents) are not available in pi."
+  info "(subagents) are not available in pi. The package also brings the other btraceio skills."
+  harness_pi_migrate
+}
+
+# As for Claude Code: drop the copy from the plugin's old home once the new package is installed.
+harness_pi_migrate() {
+  if pi list 2>/dev/null | grep -q "${OLD_MARKETPLACE_REPO}"; then
+    if pi remove "${OLD_PI_PACKAGE}" >/dev/null 2>&1; then
+      ok "pi: removed ${OLD_PI_PACKAGE}, which moved into ${MARKETPLACE_REPO}"
+    else
+      warn "Could not remove ${OLD_PI_PACKAGE}; run: pi remove ${OLD_PI_PACKAGE}"
+    fi
+  fi
 }
 
 # --- Arguments ----------------------------------------------------------------------------------
@@ -137,8 +179,8 @@ else
     | bash -s -- ${MCP_ARGS[@]+"${MCP_ARGS[@]}"}
 fi
 
-# The harness plugins start the server with `jbang jfr-mcp@btraceio --stdio`, so they need
-# jbang on the PATH of the harness process, and they always run the stable release.
+# The harness plugins start the server with `jbang jfr-mcp@btraceio --stdio --attach`, so they
+# need jbang on the PATH of the harness process, and they always run the stable release.
 if [ -x "${HOME}/.jbang/bin/jbang" ]; then
   export PATH="${HOME}/.jbang/bin:${PATH}"
 fi
