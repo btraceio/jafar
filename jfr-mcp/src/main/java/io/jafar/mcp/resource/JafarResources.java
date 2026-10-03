@@ -6,6 +6,7 @@ import io.jafar.mcp.session.HeapSessionRegistry;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.shell.core.RequestScope;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.ArrayList;
@@ -107,10 +108,18 @@ public final class JafarResources {
 
     return new McpServerFeatures.SyncResourceSpecification(
         resource,
-        (exchange, request) ->
-            new McpSchema.ReadResourceResult(
+        (exchange, request) -> {
+          // A resource read runs outside any tool call, so it has no caller scope of its own, and
+          // an unscoped caller sees every client's sessions. Run it as the client that asked.
+          RequestScope.set(exchange.sessionId());
+          try {
+            return new McpSchema.ReadResourceResult(
                 List.of(
-                    new McpSchema.TextResourceContents(request.uri(), mimeType, supplier.get()))));
+                    new McpSchema.TextResourceContents(request.uri(), mimeType, supplier.get())));
+          } finally {
+            RequestScope.clear();
+          }
+        });
   }
 
   private String renderSessions() {

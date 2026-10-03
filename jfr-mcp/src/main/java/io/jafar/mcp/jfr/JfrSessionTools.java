@@ -361,7 +361,7 @@ public final class JfrSessionTools {
             },
             "closeAll": {
               "type": "boolean",
-              "description": "Close all open sessions"
+              "description": "Close all of your open sessions and any shared ones restored after a restart (never another client's)"
             }
           }
         }
@@ -371,7 +371,7 @@ public final class JfrSessionTools {
         buildTool(
             "jfr_close",
             "Closes a JFR recording session and releases resources. "
-                + "Options: provide sessionId for specific session, closeAll=true for all sessions, "
+                + "Options: provide sessionId for specific session, closeAll=true for all of your sessions, "
                 + "or neither to close the current session.",
             schema),
         (exchange, args) -> handleJfrClose(args.arguments()));
@@ -383,9 +383,8 @@ public final class JfrSessionTools {
 
     try {
       if (closeAll != null && closeAll) {
-        int count = sessionRegistry.size();
-        sessionRegistry.closeAll();
-        LOG.info("Closed all {} sessions", count);
+        int count = sessionRegistry.closeAll();
+        LOG.info("Closed all {} sessions of the caller", count);
         return successResult(
             Map.of(
                 "success",
@@ -393,7 +392,7 @@ public final class JfrSessionTools {
                 "message",
                 "Closed " + count + " session(s)",
                 "remainingSessions",
-                0));
+                sessionRegistry.list().size()));
       }
 
       if (sessionId == null || sessionId.isBlank()) {
@@ -414,7 +413,7 @@ public final class JfrSessionTools {
                 "message",
                 "Session " + sessionId + " closed successfully",
                 "remainingSessions",
-                sessionRegistry.size()));
+                sessionRegistry.list().size()));
       } else {
         return errorResult("Session not found: " + sessionId);
       }

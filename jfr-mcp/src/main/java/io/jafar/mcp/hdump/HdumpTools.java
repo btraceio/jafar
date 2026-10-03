@@ -153,7 +153,7 @@ public final class HdumpTools {
             },
             "closeAll": {
               "type": "boolean",
-              "description": "If true, close every open heap dump session"
+              "description": "If true, close all of your open heap dump sessions and any shared ones restored after a restart (never another client's)"
             }
           }
         }
@@ -170,12 +170,11 @@ public final class HdumpTools {
 
     try {
       if (closeAll) {
-        int count = heapSessionRegistry.size();
-        heapSessionRegistry.closeAll();
+        int count = heapSessionRegistry.closeAll();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("message", "Closed " + count + " session(s)");
-        result.put("remainingSessions", 0);
+        result.put("remainingSessions", heapSessionRegistry.list().size());
         return successResult(result);
       }
 
@@ -185,7 +184,7 @@ public final class HdumpTools {
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("success", true);
       result.put("message", "Closed heap session " + info.id());
-      result.put("remainingSessions", heapSessionRegistry.size());
+      result.put("remainingSessions", heapSessionRegistry.list().size());
       return successResult(result);
 
     } catch (IllegalArgumentException e) {
@@ -954,7 +953,7 @@ public final class HdumpTools {
         Returns: sessionId, objectCount, classCount, heapSize
 
         ## hdump_close
-        Closes one or all heap dump sessions.
+        Closes one or all of your heap dump sessions.
         Parameters: sessionId (optional), closeAll (boolean, optional)
         Returns: success, message, remainingSessions
 
