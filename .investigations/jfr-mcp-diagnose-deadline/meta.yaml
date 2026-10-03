@@ -1,0 +1,13 @@
+name: jfr-mcp-diagnose-deadline
+description: >
+  McpJfrTransportTest.jfrDiagnoseReturnsReport failed on every run with no response within the
+  15s harness deadline. Investigation established it was slow-not-hung (jfr_diagnose depth=full
+  re-parses the whole recording ~10-12x), ruled heap/GC/logging out with data, measured the
+  agent tax, and fixed it by raising the default deadline to 60s + forwarding the advertised
+  -Dmcp.test.timeout.ms. Parser perf cost profile left as an open follow-up question.
+status: done
+created: 2026-10-03
+updated: 2026-10-03
+completed: 2026-10-03
+last_commit: 292056b8350f1204a73bcad16d350650883d9005
+last_session: jafar-mcp-guidance-agent-workflows
