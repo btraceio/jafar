@@ -19,8 +19,7 @@ public final class SsePortRegistry {
   }
 
   public static SsePortRegistry defaultRegistry(Logger logger) {
-    return new SsePortRegistry(
-        Path.of(System.getProperty("user.home"), ".jafar", "mcp-sse.port"), logger);
+    return new SsePortRegistry(StateDir.resolve().resolve("mcp-sse.port"), logger);
   }
 
   /**
