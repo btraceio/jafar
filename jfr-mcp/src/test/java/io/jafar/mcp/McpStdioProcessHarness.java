@@ -124,6 +124,30 @@ final class McpStdioProcessHarness implements AutoCloseable {
     return response;
   }
 
+  /**
+   * Proves this child starts with no inherited session state before a workflow opens its fixture.
+   *
+   * <p>The per-child JVM properties are defensive containment; this resource read proves the server
+   * actually honoured them rather than merely receiving private paths on its command line.
+   */
+  void assertFreshSessions(String... aliasesThatMustBeAbsent) throws Exception {
+    assertOwned(root, sessionsFile, home);
+    assertTrue(Files.exists(root), () -> "E2E root disappeared before session check: " + root);
+    JsonNode response = readResource("jafar://sessions");
+    String sessions = contentText(response);
+    assertTrue(
+        sessions.contains("## JFR recordings\n_none open_")
+            && sessions.contains("## Heap dumps\n_none open_")
+            && sessions.contains("## pprof profiles\n_none open_")
+            && sessions.contains("## OTLP profiles\n_none open_"),
+        () -> "fresh child has inherited open sessions: " + sessions);
+    for (String alias : aliasesThatMustBeAbsent) {
+      assertFalse(
+          sessions.contains(alias),
+          () -> "fresh child leaked alias '" + alias + "' through jafar://sessions: " + sessions);
+    }
+  }
+
   JsonNode contentJson(JsonNode response) throws IOException {
     JsonNode content = response.path("result").path("content");
     assertTrue(
@@ -131,6 +155,16 @@ final class McpStdioProcessHarness implements AutoCloseable {
     String text = content.get(0).path("text").asString();
     assertFalse(text.isBlank(), () -> "empty MCP text payload: " + response);
     return MAPPER.readTree(text);
+  }
+
+  String contentText(JsonNode response) {
+    JsonNode contents = response.path("result").path("contents");
+    assertTrue(
+        contents.isArray() && !contents.isEmpty(),
+        () -> "resources/read returned no content: " + response);
+    String text = contents.get(0).path("text").asString();
+    assertFalse(text.isBlank(), () -> "resources/read returned empty text content: " + response);
+    return text;
   }
 
   void assertProgress(int expectedToken) {

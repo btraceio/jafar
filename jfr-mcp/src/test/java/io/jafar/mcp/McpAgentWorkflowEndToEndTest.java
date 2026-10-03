@@ -1,5 +1,6 @@
 package io.jafar.mcp;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,17 +19,31 @@ import tools.jackson.databind.JsonNode;
 @Tag("e2e")
 class McpAgentWorkflowEndToEndTest {
 
+  private static final String[] WORKFLOW_ALIASES = {
+    "jfr-workflow", "hprof-workflow", "pprof-workflow", "otlp-workflow"
+  };
+
   @Test
   @Timeout(120)
   void jfrWorkflowReadsFixtureAndKeepsTheServerUsable() throws Exception {
     try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("jfr-workflow")) {
+      mcp.assertFreshSessions(WORKFLOW_ALIASES);
+      Path fixture = McpEndToEndTest.findTestJfr();
       JsonNode open =
-          mcp.call(
-              "jfr_open",
-              Map.of("path", McpEndToEndTest.findTestJfr().toString(), "alias", "jfr-workflow"));
-      assertTrue(mcp.contentJson(open).path("id").isIntegralNumber(), () -> "open=" + open);
+          mcp.call("jfr_open", Map.of("path", fixture.toString(), "alias", "jfr-workflow"));
+      JsonNode openPayload = mcp.contentJson(open);
+      assertEquals(1, openPayload.path("id").asInt(), () -> "open=" + open);
+      assertEquals("jfr-workflow", openPayload.path("alias").asString(), () -> "open=" + open);
+      assertEquals(fixture.toString(), openPayload.path("path").asString(), () -> "open=" + open);
+      assertEquals(204, openPayload.path("availableTypes").asInt(), () -> "open=" + open);
+      assertEquals(2, openPayload.path("chunkCount").asInt(), () -> "open=" + open);
       JsonNode summary = mcp.call("jfr_summary", Map.of("sessionId", "jfr-workflow"));
-      assertFalse(mcp.contentJson(summary).isEmpty(), () -> "summary=" + summary);
+      JsonNode summaryPayload = mcp.contentJson(summary);
+      assertEquals(1, summaryPayload.path("sessionId").asInt(), () -> "summary=" + summary);
+      assertEquals(
+          fixture.toString(),
+          summaryPayload.path("recordingPath").asString(),
+          () -> "summary=" + summary);
       JsonNode query =
           mcp.call(
               "jfr_query",
@@ -37,7 +52,13 @@ class McpAgentWorkflowEndToEndTest {
                   "jfr-workflow",
                   "query",
                   "events/jdk.JVMInformation | select(jvmVersion, jvmName)"));
-      assertFalse(mcp.contentJson(query).path("results").isMissingNode(), () -> "query=" + query);
+      JsonNode queryPayload = mcp.contentJson(query);
+      assertEquals(2, queryPayload.path("resultCount").asInt(), () -> "query=" + query);
+      assertEquals(2, queryPayload.path("results").size(), () -> "query=" + query);
+      assertEquals(
+          "OpenJDK 64-Bit Server VM",
+          queryPayload.at("/results/0/jvmName").asString(),
+          () -> "query=" + query);
       JsonNode diagnose = mcp.call("jfr_diagnose", Map.of("sessionId", "jfr-workflow"), 4);
       assertTrue(mcp.contentJson(diagnose).has("findings"), () -> "diagnose=" + diagnose);
       mcp.assertProgress(4);
@@ -50,19 +71,31 @@ class McpAgentWorkflowEndToEndTest {
   @Timeout(120)
   void hprofWorkflowUsesPromotedSyntheticWriter() throws Exception {
     try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("hprof-workflow")) {
+      mcp.assertFreshSessions(WORKFLOW_ALIASES);
       Path fixture = mcp.root().resolve("tier1-seven-objects.hprof");
       SyntheticHeapDumpGenerator.generateMinimalHeapDump(fixture, 7);
       JsonNode open =
           mcp.call("hdump_open", Map.of("path", fixture.toString(), "alias", "hprof-workflow"));
-      assertTrue(mcp.contentJson(open).path("id").isIntegralNumber(), () -> "open=" + open);
+      JsonNode openPayload = mcp.contentJson(open);
+      assertEquals(1, openPayload.path("id").asInt(), () -> "open=" + open);
+      assertEquals("hprof-workflow", openPayload.path("alias").asString(), () -> "open=" + open);
+      assertEquals(7, openPayload.path("objectCount").asInt(), () -> "open=" + open);
+      assertEquals(2, openPayload.path("classCount").asInt(), () -> "open=" + open);
       JsonNode summary = mcp.call("hdump_summary", Map.of("sessionId", "hprof-workflow"));
-      assertTrue(
-          mcp.contentJson(summary).path("objectCount").asInt() >= 7, () -> "summary=" + summary);
+      JsonNode summaryPayload = mcp.contentJson(summary);
+      assertEquals(7, summaryPayload.path("objectCount").asInt(), () -> "summary=" + summary);
+      assertEquals(2, summaryPayload.path("classCount").asInt(), () -> "summary=" + summary);
       JsonNode query =
           mcp.call(
               "hdump_query",
               Map.of("sessionId", "hprof-workflow", "query", "classes | top(10, instanceCount)"));
-      assertTrue(mcp.contentJson(query).path("resultCount").asInt() > 0, () -> "query=" + query);
+      JsonNode queryPayload = mcp.contentJson(query);
+      assertEquals(2, queryPayload.path("resultCount").asInt(), () -> "query=" + query);
+      assertEquals(2, queryPayload.path("results").size(), () -> "query=" + query);
+      assertTrue(
+          queryPayload.path("results").toString().contains("java.lang.Object")
+              && queryPayload.path("results").toString().contains("java.lang.String"),
+          () -> "query=" + query);
       JsonNode report =
           mcp.call("hdump_report", Map.of("sessionId", "hprof-workflow", "focus", "histogram"));
       assertTrue(mcp.contentJson(report).has("findings"), () -> "report=" + report);
@@ -75,10 +108,11 @@ class McpAgentWorkflowEndToEndTest {
   @Timeout(120)
   void pprofWorkflowPreservesDistinctiveFunctionThroughStdio() throws Exception {
     try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("pprof-workflow")) {
+      mcp.assertFreshSessions(WORKFLOW_ALIASES);
       Path fixture = pprofFixture(mcp.root());
       JsonNode open =
           mcp.call("pprof_open", Map.of("path", fixture.toString(), "alias", "pprof-workflow"));
-      assertTrue(mcp.contentJson(open).path("id").isIntegralNumber(), () -> "open=" + open);
+      assertEquals(1, mcp.contentJson(open).path("id").asInt(), () -> "open=" + open);
       JsonNode summary = mcp.call("pprof_summary", Map.of("sessionId", "pprof-workflow"));
       assertTrue(
           mcp.contentJson(summary).toString().contains("tier1.pprof.UniqueCpuMethod"),
@@ -87,9 +121,15 @@ class McpAgentWorkflowEndToEndTest {
           mcp.call(
               "pprof_query",
               Map.of("sessionId", "pprof-workflow", "query", "samples | top(10, cpu)"));
-      assertTrue(
-          mcp.contentJson(query).toString().contains("tier1.pprof.UniqueCpuMethod"),
+      JsonNode queryPayload = mcp.contentJson(query);
+      assertEquals(1, queryPayload.path("resultCount").asInt(), () -> "query=" + query);
+      assertEquals(4242L, queryPayload.at("/results/0/cpu").asLong(), () -> "query=" + query);
+      assertEquals(
+          "tier1.pprof.UniqueCpuMethod",
+          queryPayload.at("/results/0/stackTrace/0/name").asString(),
           () -> "query=" + query);
+      assertEquals(
+          42, queryPayload.at("/results/0/stackTrace/0/line").asInt(), () -> "query=" + query);
       JsonNode use = mcp.call("pprof_use", Map.of("sessionId", "pprof-workflow"), 5);
       assertFalse(mcp.contentJson(use).isEmpty(), () -> "use=" + use);
       mcp.assertProgress(5);
@@ -102,10 +142,11 @@ class McpAgentWorkflowEndToEndTest {
   @Timeout(120)
   void otlpWorkflowPreservesDistinctiveFunctionThroughStdio() throws Exception {
     try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("otlp-workflow")) {
+      mcp.assertFreshSessions(WORKFLOW_ALIASES);
       Path fixture = otlpFixture(mcp.root());
       JsonNode open =
           mcp.call("otlp_open", Map.of("path", fixture.toString(), "alias", "otlp-workflow"));
-      assertTrue(mcp.contentJson(open).path("id").isIntegralNumber(), () -> "open=" + open);
+      assertEquals(1, mcp.contentJson(open).path("id").asInt(), () -> "open=" + open);
       JsonNode summary = mcp.call("otlp_summary", Map.of("sessionId", "otlp-workflow"));
       assertTrue(
           mcp.contentJson(summary).toString().contains("tier1.otlp.UniqueCpuMethod"),
@@ -114,9 +155,17 @@ class McpAgentWorkflowEndToEndTest {
           mcp.call(
               "otlp_query",
               Map.of("sessionId", "otlp-workflow", "query", "samples | top(10, cpu)"));
-      assertTrue(
-          mcp.contentJson(query).toString().contains("tier1.otlp.UniqueCpuMethod"),
+      JsonNode queryPayload = mcp.contentJson(query);
+      assertEquals(1, queryPayload.path("resultCount").asInt(), () -> "query=" + query);
+      assertEquals(4343L, queryPayload.at("/results/0/cpu").asLong(), () -> "query=" + query);
+      assertEquals(
+          "tier1-main", queryPayload.at("/results/0/thread").asString(), () -> "query=" + query);
+      assertEquals(
+          "tier1.otlp.UniqueCpuMethod",
+          queryPayload.at("/results/0/stackTrace/0/name").asString(),
           () -> "query=" + query);
+      assertEquals(
+          42, queryPayload.at("/results/0/stackTrace/0/line").asInt(), () -> "query=" + query);
       JsonNode use = mcp.call("otlp_use", Map.of("sessionId", "otlp-workflow"), 6);
       assertFalse(mcp.contentJson(use).isEmpty(), () -> "use=" + use);
       mcp.assertProgress(6);
