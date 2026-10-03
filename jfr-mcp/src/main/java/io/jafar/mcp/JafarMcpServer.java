@@ -258,6 +258,13 @@ public final class JafarMcpServer {
   }
 
   public static void main(String[] args) {
+    // The jar's Main-Class is io.jafar.mcp.Main, which handles --attach before this class is even
+    // loaded. This covers callers that invoke JafarMcpServer.main directly: correct, but they pay
+    // for loading the server first.
+    if (io.jafar.mcp.bridge.BridgeMain.requested(args)) {
+      System.exit(io.jafar.mcp.bridge.BridgeMain.run());
+    }
+
     var server = new JafarMcpServer();
 
     // Check for --stdio flag
