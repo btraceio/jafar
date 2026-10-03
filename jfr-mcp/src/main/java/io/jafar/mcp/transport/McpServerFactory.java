@@ -22,6 +22,11 @@ public final class McpServerFactory {
    */
   private static final String SERVER_VERSION = resolveVersion();
 
+  /** The server version, as reported in the MCP handshake and by the daemon's health endpoint. */
+  public static String serverVersion() {
+    return SERVER_VERSION;
+  }
+
   private static String resolveVersion() {
     String version = McpServerFactory.class.getPackage().getImplementationVersion();
     return version != null && !version.isBlank() ? version : "unknown";

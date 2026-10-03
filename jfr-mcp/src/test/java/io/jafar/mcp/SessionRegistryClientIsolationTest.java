@@ -31,7 +31,7 @@ class SessionRegistryClientIsolationTest extends BaseJfrTest {
 
   @AfterEach
   void tearDown() throws Exception {
-    registry.closeAll();
+    registry.shutdown(); // closeAll() is per-client now; the test cleanup is the server itself
     RequestScope.clear();
   }
 

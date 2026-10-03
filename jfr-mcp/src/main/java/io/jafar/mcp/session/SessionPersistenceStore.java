@@ -1,9 +1,9 @@
 package io.jafar.mcp.session;
 
+import io.jafar.mcp.lifecycle.StateDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,11 +33,11 @@ final class SessionPersistenceStore {
       this.storeFile = Path.of(override);
       return;
     }
-    Path dir = Paths.get(System.getProperty("user.home"), ".jafar");
+    Path dir = StateDir.resolve();
     try {
       Files.createDirectories(dir);
     } catch (IOException e) {
-      LOG.warn("Cannot create ~/.jafar dir: {}", e.getMessage());
+      LOG.warn("Cannot create state dir {}: {}", dir, e.getMessage());
     }
     this.storeFile = dir.resolve("mcp-sessions.json");
   }

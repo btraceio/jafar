@@ -155,13 +155,16 @@ class McpEndToEndTest {
   // ─────────────────────────────────────────────────────────────────────────────
 
   private static Process startServer(Path jar) throws IOException {
+    // The child is a separate JVM, so the isolation Gradle gives the test JVM does not reach it:
+    // without this it reads and rewrites the developer's real ~/.jafar (persisted sessions).
+    String isolatedState = "-Djafar.state.dir=" + Files.createTempDirectory("jafar-e2e-state");
     List<String> cmd;
     if (Boolean.getBoolean("mcp.e2e.use.jbang")) {
       String jbang = System.getProperty("mcp.e2e.jbang.cmd", "jbang");
-      cmd = List.of(jbang, "jfr-mcp@btraceio", "--stdio");
+      cmd = List.of(jbang, isolatedState, "jfr-mcp@btraceio", "--stdio");
     } else {
       String java = ProcessHandle.current().info().command().orElse("java");
-      cmd = List.of(java, "-jar", jar.toAbsolutePath().toString(), "--stdio");
+      cmd = List.of(java, isolatedState, "-jar", jar.toAbsolutePath().toString(), "--stdio");
     }
 
     ProcessBuilder pb = new ProcessBuilder(cmd);

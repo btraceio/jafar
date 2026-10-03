@@ -3,11 +3,11 @@ package io.jafar.mcp.session;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.ScopedCurrentSession;
+import io.jafar.shell.core.SessionOwnership;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,12 +62,24 @@ public final class SessionRegistry {
   private final ParsingContext parsingContext;
   private final AtomicInteger nextId = new AtomicInteger(1);
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
-  private final Map<String, Integer> idsByAlias = new HashMap<>();
   private final ScopedCurrentSession current = new ScopedCurrentSession();
+  private final SessionOwnership ownership = new SessionOwnership();
+  private final SessionOpener opener;
 
   private final SessionPersistenceStore persistenceStore = new SessionPersistenceStore();
 
+  /** Builds the {@link JFRSession} for a recording; the seam that lets a test make an open slow. */
+  @FunctionalInterface
+  public interface SessionOpener {
+    JFRSession open(Path path, ParsingContext context) throws Exception;
+  }
+
   public SessionRegistry() {
+    this(JFRSession::new);
+  }
+
+  public SessionRegistry(SessionOpener opener) {
+    this.opener = opener;
     this.parsingContext = ParsingContext.create();
     LOG.info("SessionRegistry created with ParsingContext");
     restorePersistedSessions();
@@ -87,10 +99,8 @@ public final class SessionRegistry {
         int id = entry.id();
         SessionInfo info = new SessionInfo(id, entry.alias(), path, Instant.now(), session);
         sessionsById.put(id, info);
-        if (entry.alias() != null) {
-          idsByAlias.put(entry.alias(), id);
-        }
         // Restored sessions belong to no client; they are every client's fallback.
+        ownership.addUnowned(id, entry.alias());
         current.restored(id);
         // Ensure nextId is always beyond any restored ID.
         nextId.updateAndGet(cur -> Math.max(cur, id + 1));
@@ -106,66 +116,65 @@ public final class SessionRegistry {
   public void shutdown() {
     LOG.info("Shutting down SessionRegistry, closing {} sessions", size());
     try {
-      closeAll();
+      closeIds(new ArrayList<>(sessionsById.keySet()));
     } catch (Exception e) {
       LOG.warn("Error during SessionRegistry shutdown: {}", e.getMessage());
     }
   }
 
   /**
-   * Opens a JFR recording file and creates a new session.
+   * Opens a JFR recording file and creates a new session, owned by the calling client.
+   *
+   * <p>The recording is opened outside the registry lock, so one client opening a large file does
+   * not stall every other client's lookups.
    *
    * @param path Path to the JFR recording file
-   * @param alias Optional alias for the session
+   * @param alias Optional alias, unique among the caller's own sessions
    * @return Information about the opened session
    * @throws Exception if the recording cannot be opened
    */
-  public synchronized SessionInfo open(Path path, String alias) throws Exception {
-    // Validate alias uniqueness
-    if (alias != null && !alias.isBlank()) {
-      if (idsByAlias.containsKey(alias)) {
-        throw new IllegalArgumentException("Alias already in use: " + alias);
+  public SessionInfo open(Path path, String alias) throws Exception {
+    String name = alias == null || alias.isBlank() ? null : alias;
+    synchronized (this) {
+      ownership.requireAliasFree(name); // fail before parsing a large recording, not after
+    }
+
+    JFRSession session = opener.open(path, parsingContext);
+
+    synchronized (this) {
+      int id = nextId.get();
+      try {
+        ownership.add(id, name); // re-checks: another open may have taken the alias meanwhile
+      } catch (IllegalArgumentException lostTheRace) {
+        try {
+          session.close();
+        } catch (Exception e) {
+          LOG.warn("Error closing session that lost an alias race: {}", e.getMessage());
+        }
+        throw lostTheRace;
       }
-    } else {
-      alias = null; // Normalize empty to null
+      nextId.incrementAndGet();
+
+      SessionInfo info = new SessionInfo(id, name, path, Instant.now(), session);
+      sessionsById.put(id, info);
+      current.opened(id);
+      persistenceStore.upsert(id, path.toString(), name);
+
+      LOG.info("Opened session {} for recording: {}", id, path);
+      return info;
     }
-
-    // Create session directly
-    JFRSession session = new JFRSession(path, parsingContext);
-    int id = nextId.getAndIncrement();
-
-    SessionInfo info = new SessionInfo(id, alias, path, Instant.now(), session);
-    sessionsById.put(id, info);
-    if (alias != null) {
-      idsByAlias.put(alias, id);
-    }
-    current.opened(id);
-    persistenceStore.upsert(id, path.toString(), alias);
-
-    LOG.info("Opened session {} for recording: {}", id, path);
-    return info;
   }
 
   /**
-   * Gets a session by ID or alias.
+   * Gets a session by ID or alias, among those the calling client may see: its own and any shared
+   * ones.
    *
    * @param idOrAlias Session ID (as string) or alias
    * @return The session info, or empty if not found
    */
   public synchronized Optional<SessionInfo> get(String idOrAlias) {
-    if (idOrAlias == null || idOrAlias.isBlank()) {
-      return Optional.empty();
-    }
-
-    // Try parsing as ID
-    try {
-      int id = Integer.parseInt(idOrAlias);
-      return Optional.ofNullable(sessionsById.get(id));
-    } catch (NumberFormatException e) {
-      // Not a number, try as alias
-      Integer id = idsByAlias.get(idOrAlias);
-      return id == null ? Optional.empty() : Optional.ofNullable(sessionsById.get(id));
-    }
+    Integer id = ownership.resolve(idOrAlias);
+    return id == null ? Optional.empty() : Optional.ofNullable(sessionsById.get(id));
   }
 
   /**
@@ -198,12 +207,16 @@ public final class SessionRegistry {
   }
 
   /**
-   * Lists all open sessions.
+   * Lists the open sessions the calling client may see: its own and any shared ones.
    *
    * @return List of session information
    */
   public synchronized List<SessionInfo> list() {
-    return new ArrayList<>(sessionsById.values());
+    List<SessionInfo> out = new ArrayList<>();
+    for (int id : ownership.visibleIds(sessionsById.keySet())) {
+      out.add(sessionsById.get(id));
+    }
+    return out;
   }
 
   /**
@@ -225,25 +238,36 @@ public final class SessionRegistry {
   }
 
   /**
-   * Closes all open sessions.
+   * Closes every session the calling client can see: its own and the shared ones restored after a
+   * restart, never another client's. A caller with no scope is the server itself and closes
+   * everything.
    *
-   * @throws Exception if closing fails
+   * @return how many sessions were closed
    */
-  public synchronized void closeAll() throws Exception {
-    for (SessionInfo info : new ArrayList<>(sessionsById.values())) {
+  public synchronized int closeAll() {
+    return closeIds(ownership.closableByCaller(new ArrayList<>(sessionsById.keySet())));
+  }
+
+  private int closeIds(List<Integer> ids) {
+    int closed = 0;
+    for (int id : ids) {
+      SessionInfo info = sessionsById.get(id);
+      if (info == null) {
+        continue;
+      }
       try {
         closeSession(info);
+        closed++;
       } catch (Exception e) {
-        LOG.warn("Error closing session {}: {}", info.id(), e.getMessage());
+        LOG.warn("Error closing session {}: {}", id, e.getMessage());
       }
     }
+    return closed;
   }
 
   private void closeSession(SessionInfo info) throws Exception {
     sessionsById.remove(info.id());
-    if (info.alias() != null) {
-      idsByAlias.remove(info.alias());
-    }
+    ownership.remove(info.id());
     info.session().close();
     persistenceStore.remove(info.id());
 
@@ -252,9 +276,16 @@ public final class SessionRegistry {
     LOG.info("Closed session {}", info.id());
   }
 
-  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
-  public void retainScopes(Set<String> liveScopes) {
+  /**
+   * Forgets the state of clients whose scope is not in {@code liveScopes}, and closes the sessions
+   * they left behind, which nobody can reach any more.
+   */
+  public synchronized void retainScopes(Set<String> liveScopes) {
     current.retainScopes(liveScopes);
+    int released = closeIds(ownership.ownedByScopesOutside(liveScopes));
+    if (released > 0) {
+      LOG.info("Released {} session(s) of disconnected clients", released);
+    }
   }
 
   /** Returns the number of open sessions. */

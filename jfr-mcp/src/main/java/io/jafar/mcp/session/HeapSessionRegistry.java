@@ -3,12 +3,12 @@ package io.jafar.mcp.session;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.SessionOwnership;
 import io.jafar.shell.core.SessionResolver;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,57 +54,61 @@ public final class HeapSessionRegistry {
 
   private int nextId = 1;
   private final Map<Integer, SessionInfo> sessionsById = new LinkedHashMap<>();
-  private final Map<String, Integer> idsByAlias = new HashMap<>();
   private final ScopedCurrentSession current = new ScopedCurrentSession();
+  private final SessionOwnership ownership = new SessionOwnership();
 
   /**
-   * Opens a heap dump file and creates a new session.
+   * Opens a heap dump file and creates a new session, owned by the calling client.
+   *
+   * <p>The dump is opened outside the registry lock, so one client opening a large heap dump does
+   * not stall every other client's lookups.
    *
    * @param path path to the HPROF file
-   * @param alias optional alias for the session
+   * @param alias optional alias, unique among the caller's own sessions
    * @return information about the opened session
    * @throws IOException if the file cannot be opened
    */
-  public synchronized SessionInfo open(Path path, String alias) throws IOException {
-    if (alias != null && !alias.isBlank()) {
-      if (idsByAlias.containsKey(alias)) {
-        throw new IllegalArgumentException("Alias already in use: " + alias);
-      }
-    } else {
-      alias = null;
+  public SessionInfo open(Path path, String alias) throws IOException {
+    String name = alias == null || alias.isBlank() ? null : alias;
+    synchronized (this) {
+      ownership.requireAliasFree(name); // fail before parsing a large dump, not after
     }
 
     HeapSession session = HeapSession.open(path);
-    int id = nextId++;
 
-    SessionInfo info = new SessionInfo(id, alias, path, Instant.now(), session);
-    sessionsById.put(id, info);
-    if (alias != null) {
-      idsByAlias.put(alias, id);
+    synchronized (this) {
+      int id = nextId;
+      try {
+        ownership.add(id, name); // re-checks: another open may have taken the alias meanwhile
+      } catch (IllegalArgumentException lostTheRace) {
+        try {
+          session.close();
+        } catch (IOException e) {
+          LOG.warn("Error closing heap session that lost an alias race: {}", e.getMessage());
+        }
+        throw lostTheRace;
+      }
+      nextId++;
+
+      SessionInfo info = new SessionInfo(id, name, path, Instant.now(), session);
+      sessionsById.put(id, info);
+      current.opened(id);
+
+      LOG.info("Opened heap session {} for: {}", id, path);
+      return info;
     }
-    current.opened(id);
-
-    LOG.info("Opened heap session {} for: {}", id, path);
-    return info;
   }
 
   /**
-   * Gets a session by ID or alias.
+   * Gets a session by ID or alias, among those the calling client may see: its own and any shared
+   * ones.
    *
    * @param idOrAlias session ID (as string) or alias
    * @return the session info, or empty if not found
    */
   public synchronized Optional<SessionInfo> get(String idOrAlias) {
-    if (idOrAlias == null || idOrAlias.isBlank()) {
-      return Optional.empty();
-    }
-    try {
-      int id = Integer.parseInt(idOrAlias);
-      return Optional.ofNullable(sessionsById.get(id));
-    } catch (NumberFormatException e) {
-      Integer id = idsByAlias.get(idOrAlias);
-      return id == null ? Optional.empty() : Optional.ofNullable(sessionsById.get(id));
-    }
+    Integer id = ownership.resolve(idOrAlias);
+    return id == null ? Optional.empty() : Optional.ofNullable(sessionsById.get(id));
   }
 
   /**
@@ -138,12 +142,16 @@ public final class HeapSessionRegistry {
   }
 
   /**
-   * Lists all open sessions.
+   * Lists the open sessions the calling client may see: its own and any shared ones.
    *
    * @return list of session information
    */
   public synchronized List<SessionInfo> list() {
-    return new ArrayList<>(sessionsById.values());
+    List<SessionInfo> out = new ArrayList<>();
+    for (int id : ownership.visibleIds(sessionsById.keySet())) {
+      out.add(sessionsById.get(id));
+    }
+    return out;
   }
 
   /**
@@ -161,22 +169,37 @@ public final class HeapSessionRegistry {
     return true;
   }
 
-  /** Closes all open sessions. */
-  public synchronized void closeAll() {
-    for (SessionInfo info : new ArrayList<>(sessionsById.values())) {
+  /**
+   * Closes every session the calling client can see: its own and the shared ones restored after a
+   * restart, never another client's. A caller with no scope is the server itself and closes
+   * everything.
+   *
+   * @return how many sessions were closed
+   */
+  public synchronized int closeAll() {
+    return closeIds(ownership.closableByCaller(new ArrayList<>(sessionsById.keySet())));
+  }
+
+  private int closeIds(List<Integer> ids) {
+    int closed = 0;
+    for (int id : ids) {
+      SessionInfo info = sessionsById.get(id);
+      if (info == null) {
+        continue;
+      }
       try {
         closeSession(info);
+        closed++;
       } catch (Exception e) {
-        LOG.warn("Error closing heap session {}: {}", info.id(), e.getMessage());
+        LOG.warn("Error closing heap session {}: {}", id, e.getMessage());
       }
     }
+    return closed;
   }
 
   private void closeSession(SessionInfo info) {
     sessionsById.remove(info.id());
-    if (info.alias() != null) {
-      idsByAlias.remove(info.alias());
-    }
+    ownership.remove(info.id());
     try {
       info.session().close();
     } catch (IOException e) {
@@ -186,9 +209,16 @@ public final class HeapSessionRegistry {
     LOG.info("Closed heap session {}", info.id());
   }
 
-  /** Forgets the current-session state of callers whose scope is not in {@code liveScopes}. */
-  public void retainScopes(Set<String> liveScopes) {
+  /**
+   * Forgets the state of clients whose scope is not in {@code liveScopes}, and closes the sessions
+   * they left behind, which nobody can reach any more.
+   */
+  public synchronized void retainScopes(Set<String> liveScopes) {
     current.retainScopes(liveScopes);
+    int released = closeIds(ownership.ownedByScopesOutside(liveScopes));
+    if (released > 0) {
+      LOG.info("Released {} heap session(s) of disconnected clients", released);
+    }
   }
 
   /** Returns the number of open sessions. */
@@ -214,6 +244,8 @@ public final class HeapSessionRegistry {
   /** Shuts down the registry, closing all sessions. */
   public void shutdown() {
     LOG.info("Shutting down HeapSessionRegistry, closing {} sessions", size());
-    closeAll();
+    synchronized (this) {
+      closeIds(new ArrayList<>(sessionsById.keySet()));
+    }
   }
 }

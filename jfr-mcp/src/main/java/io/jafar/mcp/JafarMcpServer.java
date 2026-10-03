@@ -6,6 +6,9 @@ import io.jafar.mcp.jfr.JfrCompareTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.mcp.jfr.JfrSessionTools;
 import io.jafar.mcp.lifecycle.BearerAuthFilter;
+import io.jafar.mcp.lifecycle.HealthServlet;
+import io.jafar.mcp.lifecycle.IdleExitWatchdog;
+import io.jafar.mcp.lifecycle.ShutdownServlet;
 import io.jafar.mcp.lifecycle.SseAuthToken;
 import io.jafar.mcp.lifecycle.SsePortRegistry;
 import io.jafar.mcp.otlp.OtlpTools;
@@ -49,6 +52,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 import org.eclipse.jetty.ee10.servlet.FilterHolder;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
@@ -135,6 +140,29 @@ public final class JafarMcpServer {
    * entirely (see {@link #runSse()}).
    */
   private static final int DEFAULT_IDLE_TIMEOUT_MINUTES = 0;
+
+  /** Set by the stdio bridge on the daemon it spawns; a supervised daemon never has it. */
+  static final String AUTOSTARTED_PROPERTY = "mcp.daemon.autostarted";
+
+  /** Minutes without a connected client before an auto-started daemon exits; 0 disables. */
+  static final String DAEMON_IDLE_TIMEOUT_PROPERTY = "mcp.daemon.idle.timeout.minutes";
+
+  private static final int DEFAULT_DAEMON_IDLE_TIMEOUT_MINUTES = 30;
+
+  /**
+   * Seconds between keep-alive pings on each SSE stream. The transport drops a session only when a
+   * write to it fails, and nothing writes to an idle stream, so without pings a client that went
+   * away stays "connected" forever — inflating the session count that the health endpoint reports
+   * and the idle exit depends on. {@code 0} disables pings.
+   */
+  static final String SSE_KEEPALIVE_PROPERTY = "mcp.sse.keepalive.seconds";
+
+  private static final int DEFAULT_SSE_KEEPALIVE_SECONDS = 30;
+
+  private static Duration sseKeepAlive() {
+    int seconds = Integer.getInteger(SSE_KEEPALIVE_PROPERTY, DEFAULT_SSE_KEEPALIVE_SECONDS);
+    return seconds > 0 ? Duration.ofSeconds(seconds) : null;
+  }
 
   /** Stores the port of a running SSE server so a second launch can report it and exit. */
   private static final SsePortRegistry SSE_PORT_REGISTRY = SsePortRegistry.defaultRegistry(LOG);
@@ -231,6 +259,13 @@ public final class JafarMcpServer {
   }
 
   public static void main(String[] args) {
+    // The jar's Main-Class is io.jafar.mcp.Main, which handles --attach before this class is even
+    // loaded. This covers callers that invoke JafarMcpServer.main directly: correct, but they pay
+    // for loading the server first.
+    if (io.jafar.mcp.bridge.BridgeMain.requested(args)) {
+      System.exit(io.jafar.mcp.bridge.BridgeMain.run());
+    }
+
     var server = new JafarMcpServer();
 
     // Check for --stdio flag
@@ -386,6 +421,7 @@ public final class JafarMcpServer {
           HttpServletSseServerTransportProvider.builder()
               .jsonMapper(McpJsonDefaults.getMapper())
               .messageEndpoint("/mcp/message")
+              .keepAliveInterval(sseKeepAlive())
               .build();
 
       // Build MCP server
@@ -395,6 +431,10 @@ public final class JafarMcpServer {
               createToolSpecifications(),
               jafarPrompts.createPromptSpecifications(),
               jafarResources.createResourceSpecifications());
+
+      // Filled in below once the transport's live-session map has been reached by reflection;
+      // until then (or if reflection fails) the health endpoint reports -1 = unknown.
+      AtomicReference<IntSupplier> liveSessionCount = new AtomicReference<>(() -> -1);
 
       // Wrap the session factory AFTER build so every new session gets a pre-initialized
       // exchangeSink. The MCP SDK waits on exchangeSink.asMono() before dispatching non-initialize
@@ -415,6 +455,7 @@ public final class JafarMcpServer {
         @SuppressWarnings("unchecked")
         Map<String, McpServerSession> liveSessions =
             (Map<String, McpServerSession>) sessionsField.get(transportProvider);
+        liveSessionCount.set(liveSessions::size);
         factoryField.set(
             transportProvider,
             (McpServerSession.Factory)
@@ -440,6 +481,21 @@ public final class JafarMcpServer {
 
       // Register MCP servlet
       context.addServlet(new ServletHolder((Servlet) transportProvider), "/mcp/*");
+
+      // Exact-path mapping wins over "/mcp/*", and the bearer filter below covers both.
+      boolean autostarted = Boolean.getBoolean(AUTOSTARTED_PROPERTY);
+      context.addServlet(
+          new ServletHolder(
+              new HealthServlet(
+                  McpServerFactory.serverVersion(),
+                  autostarted,
+                  () -> liveSessionCount.get().getAsInt())),
+          "/mcp/health");
+      context.addServlet(
+          new ServletHolder(
+              new ShutdownServlet(
+                  autostarted, () -> liveSessionCount.get().getAsInt(), this::exitSoon)),
+          "/mcp/shutdown");
 
       if (!authDisabled) {
         String authToken = SSE_AUTH_TOKEN.generateAndWrite();
@@ -494,6 +550,9 @@ public final class JafarMcpServer {
       // idle resource usage is negligible either way.
       // Start server
       jettyServer.start();
+      if (autostarted) {
+        startDaemonIdleExit(liveSessionCount.get());
+      }
       SSE_PORT_REGISTRY.write(port);
       System.out.println(SSE_PORT_REGISTRY.url(port));
       if (!authDisabled) {
@@ -553,6 +612,54 @@ public final class JafarMcpServer {
   /** Updates the last-activity timestamp. Called on every tool invocation. */
   private void touchActivity() {
     lastActivityNanos = System.nanoTime();
+  }
+
+  /**
+   * Exits shortly, so the reply to the request that asked for it can leave first. A plain {@code
+   * System.exit} runs the shutdown hook, which removes the port and token files and, for a daemon
+   * that was training an AOT cache, lets the JVM write it.
+   */
+  private void exitSoon() {
+    Thread t =
+        new Thread(
+            () -> {
+              try {
+                Thread.sleep(200);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              System.exit(0);
+            },
+            "mcp-daemon-shutdown");
+    t.setDaemon(true);
+    t.start();
+  }
+
+  /**
+   * Makes an auto-started SSE daemon exit once no client has been connected for {@code
+   * mcp.daemon.idle.timeout.minutes} (default {@value DEFAULT_DAEMON_IDLE_TIMEOUT_MINUTES}; {@code
+   * 0} disables it). A supervised daemon is never auto-started, so it never takes this path.
+   */
+  private void startDaemonIdleExit(IntSupplier liveSessions) {
+    int timeoutMinutes =
+        Integer.getInteger(DAEMON_IDLE_TIMEOUT_PROPERTY, DEFAULT_DAEMON_IDLE_TIMEOUT_MINUTES);
+    if (timeoutMinutes <= 0) {
+      LOG.info("Daemon idle exit disabled ({}={})", DAEMON_IDLE_TIMEOUT_PROPERTY, timeoutMinutes);
+      return;
+    }
+    if (liveSessions.getAsInt() < 0) {
+      // Without a session count the daemon cannot tell "idle" from "busy"; exiting could strand
+      // clients, so staying up is the safe failure.
+      LOG.warn("Daemon idle exit disabled: cannot count connected sessions");
+      return;
+    }
+    Duration timeout = Duration.ofMinutes(timeoutMinutes);
+    IdleExitWatchdog.start(
+        new IdleExitWatchdog(liveSessions, timeout, System::nanoTime),
+        Duration.ofSeconds(Math.min(30, timeout.toSeconds())),
+        () -> System.exit(0),
+        LOG);
+    LOG.info("Daemon idle exit armed (timeout={}m)", timeoutMinutes);
   }
 
   /**

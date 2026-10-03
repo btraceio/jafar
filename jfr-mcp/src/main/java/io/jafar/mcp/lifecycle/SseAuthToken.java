@@ -31,8 +31,7 @@ public final class SseAuthToken {
   }
 
   public static SseAuthToken defaultToken(Logger logger) {
-    return new SseAuthToken(
-        Path.of(System.getProperty("user.home"), ".jafar", "mcp-sse.token"), logger);
+    return new SseAuthToken(StateDir.resolve().resolve("mcp-sse.token"), logger);
   }
 
   public Path path() {
