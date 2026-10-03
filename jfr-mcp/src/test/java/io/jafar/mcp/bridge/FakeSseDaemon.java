@@ -51,6 +51,12 @@ final class FakeSseDaemon implements AutoCloseable {
   private final List<String> sessionsOpened = new CopyOnWriteArrayList<>();
   private final List<String> authHeaders = new CopyOnWriteArrayList<>();
   private volatile boolean answerInitialize = true;
+  private volatile String version = "fake";
+  private volatile boolean autostarted;
+  private volatile Integer reportedSessions; // null: report the real number of open streams
+  private volatile boolean healthPresent = true;
+  private volatile boolean shutdownAccepted = true;
+  private final AtomicInteger shutdownCalls = new AtomicInteger();
   private Server server;
   private int port;
 
@@ -94,6 +100,30 @@ final class FakeSseDaemon implements AutoCloseable {
 
   List<String> authHeaders() {
     return authHeaders;
+  }
+
+  /** What /mcp/health reports, as a real daemon would. */
+  FakeSseDaemon reporting(String version, boolean autostarted, Integer activeSessions) {
+    this.version = version;
+    this.autostarted = autostarted;
+    this.reportedSessions = activeSessions;
+    return this;
+  }
+
+  /** Makes /mcp/health answer 404, like a daemon from before it existed. */
+  FakeSseDaemon withoutHealthEndpoint() {
+    this.healthPresent = false;
+    return this;
+  }
+
+  /** Whether POST /mcp/shutdown is honoured (and stops this server) or refused with 409. */
+  FakeSseDaemon shutdownAccepted(boolean accepted) {
+    this.shutdownAccepted = accepted;
+    return this;
+  }
+
+  int shutdownCalls() {
+    return shutdownCalls.get();
   }
 
   /** When false, {@code initialize} requests are accepted but never answered. */
@@ -143,12 +173,20 @@ final class FakeSseDaemon implements AutoCloseable {
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
       authHeaders.add(String.valueOf(req.getHeader("Authorization")));
       if ("/health".equals(req.getPathInfo())) {
+        if (!healthPresent) {
+          resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+          return;
+        }
         resp.setContentType("application/json");
         resp.getWriter()
             .write(
-                "{\"version\":\"fake\",\"pid\":1,\"activeSessions\":"
-                    + streams.size()
-                    + ",\"autostarted\":false}");
+                "{\"version\":\""
+                    + version
+                    + "\",\"pid\":1,\"activeSessions\":"
+                    + (reportedSessions != null ? reportedSessions : streams.size())
+                    + ",\"autostarted\":"
+                    + autostarted
+                    + "}");
         return;
       }
       String sessionId = "s" + sessionSeq.incrementAndGet();
@@ -166,6 +204,27 @@ final class FakeSseDaemon implements AutoCloseable {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
       authHeaders.add(String.valueOf(req.getHeader("Authorization")));
+      if ("/shutdown".equals(req.getPathInfo())) {
+        shutdownCalls.incrementAndGet();
+        if (!shutdownAccepted) {
+          resp.setStatus(HttpServletResponse.SC_CONFLICT);
+          return;
+        }
+        resp.setStatus(HttpServletResponse.SC_ACCEPTED);
+        Thread stopper =
+            new Thread(
+                () -> {
+                  try {
+                    Thread.sleep(100); // let the reply out first, as the real daemon does
+                    close();
+                  } catch (Exception ignored) {
+                    // already stopped
+                  }
+                });
+        stopper.setDaemon(true);
+        stopper.start();
+        return;
+      }
       String sessionId = req.getParameter("sessionId");
       if (sessionId == null || !streams.containsKey(sessionId)) {
         resp.setStatus(HttpServletResponse.SC_NOT_FOUND);

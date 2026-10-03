@@ -47,6 +47,19 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
+### Sharing one server between clients
+
+Each plain `--stdio` client starts its own JVM. Add `--attach` and they all use one shared
+daemon (started on demand), which answers in a fraction of the time and gives every client its own
+sessions:
+
+```bash
+claude mcp add jafar -- jbang jfr-mcp@btraceio --stdio --attach
+```
+
+See [Daemon.md](../doc/mcp/Daemon.md#one-shared-daemon-for-many-stdio-clients---attach) for what
+it does and how to tune it.
+
 ## Available Tools
 
 The server exposes 37 tools across four artifact formats. Every family shares the same

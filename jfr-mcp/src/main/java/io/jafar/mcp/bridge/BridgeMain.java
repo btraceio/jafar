@@ -46,7 +46,9 @@ public final class BridgeMain {
             new DaemonLauncher(StateDir.resolve()),
             Duration.ofSeconds(
                 Long.getLong("mcp.attach.start.timeout.seconds", DEFAULT_START_TIMEOUT_SECONDS)),
-            Duration.ofMillis(100));
+            Duration.ofMillis(100),
+            BridgeMain.class.getPackage().getImplementationVersion(),
+            System.err);
     return new StdioSseBridge(locator, System.in, protocolOut, System.err, Duration.ofSeconds(10))
         .run();
   }

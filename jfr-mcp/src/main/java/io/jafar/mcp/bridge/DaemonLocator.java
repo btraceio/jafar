@@ -2,6 +2,7 @@ package io.jafar.mcp.bridge;
 
 import io.jafar.mcp.lifecycle.SsePortRegistry;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.channels.FileChannel;
@@ -14,6 +15,10 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Set;
 import org.slf4j.helpers.NOPLogger;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.json.JsonFactory;
 
 /**
  * Finds the user's shared SSE daemon, starting it if nobody has.
@@ -45,21 +50,47 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
   private final Launcher launcher;
   private final Duration startTimeout;
   private final Duration pollInterval;
+  private final String ownVersion;
+  private final PrintStream diag;
+  private boolean warned;
 
-  DaemonLocator(Path stateDir, Launcher launcher, Duration startTimeout, Duration pollInterval) {
+  /**
+   * @param ownVersion this bridge's version, or {@code null} when unknown (an IDE or test run), in
+   *     which case a running daemon is never second-guessed
+   * @param diag where to say that a daemon of another version is being used
+   */
+  DaemonLocator(
+      Path stateDir,
+      Launcher launcher,
+      Duration startTimeout,
+      Duration pollInterval,
+      String ownVersion,
+      PrintStream diag) {
     this.stateDir = stateDir;
     this.launcher = launcher;
     this.startTimeout = startTimeout;
     this.pollInterval = pollInterval;
+    this.ownVersion = ownVersion;
+    this.diag = diag;
   }
+
+  /**
+   * What /mcp/health says; the whole thing is {@code null} for a daemon that has no such endpoint.
+   */
+  record Health(String version, int activeSessions, boolean autostarted) {}
+
+  private record Running(StdioSseBridge.DaemonEndpoint endpoint, Health health) {}
 
   @Override
   public StdioSseBridge.DaemonEndpoint ensureRunning() throws IOException {
-    StdioSseBridge.DaemonEndpoint running = probe();
-    if (running != null) {
-      return running;
+    Running running = probe();
+    if (running != null && !shouldReplace(running)) {
+      warnIfSkewed(running);
+      return running.endpoint();
     }
 
+    // Either nothing is running or what is running is stale and idle: both change what is running,
+    // so both happen under the lock, one bridge at a time.
     Files.createDirectories(stateDir);
     long deadline = System.nanoTime() + startTimeout.toNanos();
     try (FileChannel channel =
@@ -68,16 +99,21 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE);
         FileLock ignored = acquire(channel, deadline)) {
-      // Someone holding the lock before us may have brought the daemon up.
+      // Someone holding the lock before us may have started or replaced it.
       running = probe();
       if (running != null) {
-        return running;
+        if (!shouldReplace(running) || !stop(running)) {
+          // Current, or a client connected since we looked and the daemon refused to stop.
+          warnIfSkewed(running);
+          return running.endpoint();
+        }
+        awaitGone(deadline);
       }
       launcher.launch();
       while (System.nanoTime() < deadline) {
         running = probe();
         if (running != null) {
-          return running;
+          return running.endpoint();
         }
         sleep(pollInterval);
       }
@@ -87,6 +123,87 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
             + startTimeout.toSeconds()
             + "s; see "
             + stateDir.resolve("mcp-sse.err.log"));
+  }
+
+  private static boolean known(String version) {
+    return version != null && !version.isBlank() && !version.startsWith("unknown");
+  }
+
+  private boolean skewed(Running running) {
+    return known(ownVersion)
+        && running.health() != null
+        && known(running.health().version())
+        && !ownVersion.equals(running.health().version());
+  }
+
+  /**
+   * Only a daemon that a bridge started, that has no client connected, and that is the wrong
+   * version is worth replacing. A supervised one is its supervisor's to restart, and one with
+   * clients would take their sessions with it.
+   */
+  private boolean shouldReplace(Running running) {
+    return skewed(running)
+        && running.health().autostarted()
+        && running.health().activeSessions() == 0;
+  }
+
+  /** Asks the stale daemon to stop; false if it declined, e.g. because a client just connected. */
+  private boolean stop(Running running) throws IOException {
+    int status = post(running.endpoint(), "/mcp/shutdown");
+    return status == 202;
+  }
+
+  private void awaitGone(long deadline) throws IOException {
+    while (System.nanoTime() < deadline) {
+      try {
+        if (probe() == null) {
+          return;
+        }
+      } catch (IOException stillShuttingDown) {
+        // its token file goes before its port does, which probe() reports as a rejected token
+      }
+      sleep(pollInterval);
+    }
+    throw new IOException(
+        "the out-of-date jfr-mcp daemon did not stop within "
+            + startTimeout.toSeconds()
+            + "s; see "
+            + stateDir.resolve("mcp-sse.err.log"));
+  }
+
+  /** Says once per process why a daemon of another version (or an unknowable one) is in use. */
+  private void warnIfSkewed(Running running) {
+    if (warned || !known(ownVersion)) {
+      return;
+    }
+    Health h = running.health();
+    String message;
+    if (h == null) {
+      message =
+          "the jfr-mcp daemon on port "
+              + running.endpoint().base().getPort()
+              + " predates /mcp/health, so its version cannot be verified against this bridge's "
+              + ownVersion
+              + "; restart it if it misbehaves";
+    } else if (skewed(running)) {
+      String why =
+          !h.autostarted()
+              ? "it was not started by a bridge, so restart it to upgrade"
+              : h.activeSessions() > 0
+                  ? h.activeSessions() + " client(s) are connected; it is replaced once they leave"
+                  : "it could not be replaced just now";
+      message =
+          "using a jfr-mcp daemon of version "
+              + h.version()
+              + " although this bridge is "
+              + ownVersion
+              + ": "
+              + why;
+    } else {
+      return;
+    }
+    warned = true;
+    diag.println("jfr-mcp bridge: " + message);
   }
 
   private FileLock acquire(FileChannel channel, long deadline) throws IOException {
@@ -106,10 +223,10 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
   }
 
   /**
-   * Returns the daemon's endpoint if one is up, {@code null} if not, or throws if one is up but
+   * Returns the running daemon if one is up, {@code null} if not, or throws if one is up but
    * unusable.
    */
-  private StdioSseBridge.DaemonEndpoint probe() throws IOException {
+  private Running probe() throws IOException {
     int port =
         new SsePortRegistry(stateDir.resolve("mcp-sse.port"), NOPLogger.NOP_LOGGER)
             .detectRunningServer();
@@ -118,11 +235,12 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
     }
     String token = readToken();
     URI base = URI.create("http://127.0.0.1:" + port);
-    int status = healthStatus(base, token);
-    if (status == 200) {
-      return new StdioSseBridge.DaemonEndpoint(base, token);
+    StdioSseBridge.DaemonEndpoint endpoint = new StdioSseBridge.DaemonEndpoint(base, token);
+    HealthReply reply = fetchHealth(endpoint);
+    if (reply.status() == 200) {
+      return new Running(endpoint, parseHealth(reply.body()));
     }
-    if (status == 401) {
+    if (reply.status() == 401) {
       throw new IOException(
           "the daemon on port "
               + port
@@ -130,24 +248,75 @@ final class DaemonLocator implements StdioSseBridge.DaemonSupplier {
               + stateDir.resolve("mcp-sse.token")
               + " (HTTP 401): is the token file stale, or is another daemon using this port?");
     }
-    if (status == 404) {
+    if (reply.status() == 404) {
       // A daemon from before /mcp/health existed: it is up and speaks the same protocol.
-      return new StdioSseBridge.DaemonEndpoint(base, token);
+      return new Running(endpoint, null);
     }
     return null; // port open but not answering HTTP yet: still starting
   }
 
-  private int healthStatus(URI base, String token) {
+  private record HealthReply(int status, String body) {}
+
+  private HealthReply fetchHealth(StdioSseBridge.DaemonEndpoint endpoint) {
     // HttpURLConnection, not HttpClient: this runs on every attach, and building an HttpClient
     // initialises the TLS stack (about 300ms) for a plain-http loopback request.
     try {
       HttpURLConnection http =
-          (HttpURLConnection) base.resolve("/mcp/health").toURL().openConnection();
+          (HttpURLConnection) endpoint.base().resolve("/mcp/health").toURL().openConnection();
       http.setConnectTimeout(2_000);
       http.setReadTimeout(3_000);
       http.setInstanceFollowRedirects(false);
-      if (token != null) {
-        http.setRequestProperty("Authorization", "Bearer " + token);
+      if (endpoint.token() != null) {
+        http.setRequestProperty("Authorization", "Bearer " + endpoint.token());
+      }
+      try {
+        int status = http.getResponseCode();
+        String body = status == 200 ? new String(http.getInputStream().readAllBytes()) : "";
+        return new HealthReply(status, body);
+      } finally {
+        http.disconnect();
+      }
+    } catch (IOException e) {
+      return new HealthReply(-1, "");
+    }
+  }
+
+  /** The fields the policy needs; a reply it cannot read counts as an unknown version. */
+  static Health parseHealth(String json) {
+    String version = null;
+    int sessions = -1;
+    boolean autostarted = false;
+    try (JsonParser p = new JsonFactory().createParser(json)) {
+      if (p.nextToken() != JsonToken.START_OBJECT) {
+        return new Health(null, -1, false);
+      }
+      while (p.nextToken() == JsonToken.PROPERTY_NAME) {
+        String name = p.currentName();
+        JsonToken value = p.nextToken();
+        switch (name) {
+          case "version" -> version = value == JsonToken.VALUE_STRING ? p.getString() : null;
+          case "activeSessions" ->
+              sessions = value == JsonToken.VALUE_NUMBER_INT ? p.getIntValue() : -1;
+          case "autostarted" -> autostarted = value == JsonToken.VALUE_TRUE;
+          default -> p.skipChildren();
+        }
+      }
+    } catch (JacksonException e) {
+      return new Health(null, -1, false);
+    }
+    return new Health(version, sessions, autostarted);
+  }
+
+  private int post(StdioSseBridge.DaemonEndpoint endpoint, String path) {
+    try {
+      HttpURLConnection http =
+          (HttpURLConnection) endpoint.base().resolve(path).toURL().openConnection();
+      http.setRequestMethod("POST");
+      http.setConnectTimeout(2_000);
+      http.setReadTimeout(5_000);
+      http.setInstanceFollowRedirects(false);
+      if (endpoint.token() != null) {
+        http.setRequestProperty("Authorization", "Bearer " + endpoint.token());
       }
       try {
         return http.getResponseCode();

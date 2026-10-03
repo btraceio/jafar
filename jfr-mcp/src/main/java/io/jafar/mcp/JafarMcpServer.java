@@ -8,6 +8,7 @@ import io.jafar.mcp.jfr.JfrSessionTools;
 import io.jafar.mcp.lifecycle.BearerAuthFilter;
 import io.jafar.mcp.lifecycle.HealthServlet;
 import io.jafar.mcp.lifecycle.IdleExitWatchdog;
+import io.jafar.mcp.lifecycle.ShutdownServlet;
 import io.jafar.mcp.lifecycle.SseAuthToken;
 import io.jafar.mcp.lifecycle.SsePortRegistry;
 import io.jafar.mcp.otlp.OtlpTools;
@@ -490,6 +491,11 @@ public final class JafarMcpServer {
                   autostarted,
                   () -> liveSessionCount.get().getAsInt())),
           "/mcp/health");
+      context.addServlet(
+          new ServletHolder(
+              new ShutdownServlet(
+                  autostarted, () -> liveSessionCount.get().getAsInt(), this::exitSoon)),
+          "/mcp/shutdown");
 
       if (!authDisabled) {
         String authToken = SSE_AUTH_TOKEN.generateAndWrite();
@@ -606,6 +612,27 @@ public final class JafarMcpServer {
   /** Updates the last-activity timestamp. Called on every tool invocation. */
   private void touchActivity() {
     lastActivityNanos = System.nanoTime();
+  }
+
+  /**
+   * Exits shortly, so the reply to the request that asked for it can leave first. A plain {@code
+   * System.exit} runs the shutdown hook, which removes the port and token files and, for a daemon
+   * that was training an AOT cache, lets the JVM write it.
+   */
+  private void exitSoon() {
+    Thread t =
+        new Thread(
+            () -> {
+              try {
+                Thread.sleep(200);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              System.exit(0);
+            },
+            "mcp-daemon-shutdown");
+    t.setDaemon(true);
+    t.start();
   }
 
   /**
