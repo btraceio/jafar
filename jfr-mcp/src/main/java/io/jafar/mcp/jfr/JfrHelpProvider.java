@@ -98,7 +98,7 @@ public final class JfrHelpProvider {
         - `all:` - All elements match
         - `none:` - No elements match
 
-        Example: `events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/type/name/string, ".*MyClass.*")]]`
+        Example: `events/jdk.ExecutionSample[any:stackTrace/frames/method/type/name/string ~ ".*MyClass.*"]`
         """;
   }
 
@@ -399,6 +399,10 @@ public final class JfrHelpProvider {
   public String getToolsHelp() {
     return """
         # Choosing the Right jfr_* Tool
+
+        Start every JFR workflow with `jfr_open`: give it the recording path (and, when useful, an
+        alias), then pass the returned session id or alias to the tools below. Use `jfr_close` when
+        the investigation is finished.
 
         ## CPU Profiling Tools
 

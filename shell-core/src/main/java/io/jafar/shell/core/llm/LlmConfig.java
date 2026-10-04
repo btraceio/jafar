@@ -85,8 +85,13 @@ public final class LlmConfig {
     this(lookup, LlmSettingsFile::find);
   }
 
-  /** Package-private seam: lets a test supply a settings file without setting an env var. */
-  LlmConfig(
+  /**
+   * Creates a config with an explicitly supplied settings-file source.
+   *
+   * <p>This seam lets integrations and tests control settings-file discovery without mutating
+   * process-wide environment variables.
+   */
+  public LlmConfig(
       Function<String, String> lookup,
       java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile) {
     this.lookup = lookup == null ? name -> null : lookup;

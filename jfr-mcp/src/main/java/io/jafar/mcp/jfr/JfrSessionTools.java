@@ -95,7 +95,7 @@ public final class JfrSessionTools {
     return new McpServerFeatures.SyncToolSpecification(
         buildTool(
             "jfr_open",
-            "Opens a JFR (Java Flight Recording) file for analysis. "
+            "Opens a JFR (Java Flight Recording) file (.jfr) for analysis. "
                 + "Returns a session ID that can be used with other jfr_* tools. "
                 + "If no session ID is provided to other tools, they use the most recently opened session.",
             schema),

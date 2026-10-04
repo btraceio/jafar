@@ -29,6 +29,7 @@ dependencies {
     implementation project(':shell-core')
     implementation project(':parser')
     implementation project(':hdump-shell')
+    testImplementation(testFixtures(project(':hdump-parser')))
     implementation project(':pprof-parser')
     implementation project(':pprof-shell')
     testImplementation(testFixtures(project(':pprof-parser')))
@@ -56,11 +57,19 @@ dependencies {
 }
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'e2e'
+    }
     // Allocate sufficient heap for tests that load real JFR files
     jvmArgs '-Xmx2g', '-Xms512m'
     // Isolate session persistence from real ~/.jafar data during tests
     systemProperty 'jafar.mcp.sessions.file', "${System.getProperty('java.io.tmpdir')}/jafar-mcp-test-sessions.json"
+    // McpTransportHarness advertises -Dmcp.test.timeout.ms to raise its per-response deadline;
+    // forward it so that advice actually works.
+    systemProperties System.properties.subMap(['mcp.test.timeout.ms'])
+    if (System.getProperty('mcp.updateSnapshot') != null) {
+        systemProperty 'mcp.updateSnapshot', System.getProperty('mcp.updateSnapshot')
+    }
 
     // Stress tests are a separate concept from integration tests; always exclude from default `test`.
     exclude '**/JafarMcpStressTest.class'
@@ -107,7 +116,6 @@ tasks.register('integrationTest', Test) {
 
 // End-to-end tests — spawn the MCP server subprocess and drive the real analysis workflow.
 // Run with: ./gradlew :jfr-mcp:endToEndTest
-// To test the published release: ./gradlew :jfr-mcp:endToEndTest -Dmcp.e2e.use.jbang=true
 // To test a specific JFR file:  ./gradlew :jfr-mcp:endToEndTest -Dmcp.e2e.jfr=/path/to/file.jfr
 tasks.register('endToEndTest', Test) {
     description = 'Spawns the MCP server as a subprocess and drives the real tool sequence'
@@ -120,7 +128,7 @@ tasks.register('endToEndTest', Test) {
         includeTags 'e2e'
     }
 
-    systemProperties System.properties.subMap(['mcp.e2e.use.jbang', 'mcp.e2e.jbang.cmd', 'mcp.e2e.jfr'])
+    systemProperties System.properties.subMap(['mcp.e2e.jfr'])
 
     jvmArgs '-Xmx512m', '-Xms256m'
 
@@ -135,6 +143,23 @@ tasks.register('endToEndTest', Test) {
     jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
 
     dependsOn shadowJar
+    shouldRunAfter test
+}
+
+// Writes the MCP guidance contract JSON (tool names, descriptions, input schemas, prompts,
+// resources) so out-of-repo consumers can check against the in-development server. The jafar-perf
+// plugin (btraceio/agent-plugins) consumes this instead of waiting for a published release.
+// Run with: ./gradlew :jfr-mcp:exportMcpContract
+// The output is byte-identical to the committed src/test/resources/mcp-contract.json snapshot.
+tasks.register('exportMcpContract', JavaExec) {
+    description = 'Writes the MCP guidance contract JSON for out-of-repo consumers'
+    group = 'verification'
+
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.jafar.mcp.McpContractExport'
+    args = [ layout.buildDirectory.file('mcp-contract/mcp-contract.json').get().asFile.absolutePath ]
+
+    dependsOn testClasses
     shouldRunAfter test
 }
 
