@@ -2,7 +2,7 @@
 
 Fast, modern JFR (Java Flight Recorder) parser for the JVM with a small, focused API.
 
-**Status**: Early public release (v0.11.0) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
+**Status**: Early public release (0.x) - API may evolve based on feedback. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for parsing JFR recordings with minimal ceremony. It emphasizes performance, low allocation, and ease of use.
 
@@ -741,6 +741,37 @@ See **[doc/hdump-shell-quickstart.md](doc/hdump-shell-quickstart.md)** for quick
 - **[PERFORMANCE.md](PERFORMANCE.md)** - Performance benchmarks and tuning tips
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute to JAFAR
 - **[SECURITY.md](SECURITY.md)** - Security policy and vulnerability reporting
+
+## Releasing
+
+Releases are split into planes: each plane has its own tag, its own version and publishes only
+its own artifacts to Maven Central, so a parser-only fix re-ships ~1 MiB and does not
+re-publish the shells or the LLM plugins.
+
+| Plane | Tag | Publishes |
+|---|---|---|
+| shell | `vX.Y.Z` | `jafar-shell` (the interactive shell), `jfr-shell-jdk`, `jfr-shell-jafar` plugins |
+| core | `core/vX.Y.Z` | `jafar-parser` (+core/codegen), `jafar-tools`, `jafar-gradle-plugin`; also tags `go-parser/vX.Y.Z` |
+| mcp | `mcp/vX.Y.Z` | `jfr-mcp` |
+| llm-anthropic | `llm-anthropic/vX.Y.Z` | `llm-anthropic` |
+| llm-openai | `llm-openai/vX.Y.Z` | `llm-openai` |
+
+To release a plane: update `CHANGELOG.md`, commit to `main`, then
+`scripts/release.sh [--dry-run] [plane] <major|minor|patch>`. The script derives the version
+from the newest tag of that plane (the version script is the single source of truth: no version
+is ever stored in a build file), pushes the tag, and the release workflow publishes that plane's
+artifacts, moves that plane's plugin-catalog and JBang-catalog entries, and tags the Go module
+on core releases.
+
+Every artifact is self-contained or declares its dependencies: the two fat jars (the shell and
+the MCP server) record the exact io.btrace modules and versions they embed in their manifest
+(`unzip -p jar META-INF/MANIFEST.MF | grep Embedded-Modules`), so an app's release notes tell
+you which parser it got. Backend and LLM plugins resolve the shell's interfaces at run time, so
+they release independently unless the SPI breaks - then every SPI-consuming plane tags the same
+day, each with its own number.
+
+Development builds report `<newest tag of the plane>-SNAPSHOT`; the full process, including the
+bootstrap of the plane tags and emergency releases, is in [RELEASING.md](RELEASING.md).
 
 ## Contributing
 

@@ -5,12 +5,15 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 // SyntheticHeapDumpGenerator is a build-time fixture, never a published parser capability.
 components.java.withVariantsFromConfiguration(configurations.testFixturesApiElements) { skip() }
 components.java.withVariantsFromConfiguration(configurations.testFixturesRuntimeElements) { skip() }
 
 def libraryName = "hdump-parser"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()
@@ -31,7 +34,7 @@ dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
 
     // Fast primitive collections (same as parser module)
-    implementation 'it.unimi.dsi:fastutil:8.5.12'
+    implementation 'it.unimi.dsi:fastutil-core:8.5.12'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'

@@ -6,8 +6,12 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// The shared helper that records which io.btrace modules this fat jar embeds in its manifest
+apply from: rootProject.file('gradle/embedded-modules.gradle')
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 def libraryName = "jfr-mcp"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()
@@ -205,6 +209,140 @@ configurations.runtimeClasspath {
     exclude group: 'org.slf4j', module: 'slf4j-simple'
 }
 
+// Deterministic trimmed fastutil: the embedded copy keeps only the static closure of classes the
+// server's code actually references. jdeps over the runtime classpath finds every it.unimi
+// reference across embed code and dependencies; walking fastutil's own reference graph from those
+// entry points yields exactly the classes that can ever load. fastutil ships pure collections
+// with no reflection, and the heap code invokes it through direct imports only (verified: no
+// Class.forName/loadClass over fastutil), so the static closure is complete by construction, and
+// it re-derives on every classpath change — a newly referenced fastutil type cannot ship missing.
+def fastutilClosurePatterns() {
+    def classpathFiles = configurations.runtimeClasspath.resolve()
+    def coreJar = classpathFiles.find { it.name.startsWith('fastutil-core-') && it.name.endsWith('.jar') }
+    if (coreJar == null) {
+        throw new IllegalStateException(
+            'fastutil-core expected on the runtime classpath to trim the embedded copy')
+    }
+    def jdepsPath = new File(System.getProperty('java.home'), 'bin/jdeps')
+    def proc = new ProcessBuilder(
+        [jdepsPath.path, '-verbose:class', '--multi-release', '21']
+            + classpathFiles.collect { it.path })
+        .redirectErrorStream(false)
+        .start()
+    def stdout = proc.inputStream.text
+    def stderr = proc.errorStream.text
+    if (proc.waitFor() != 0) {
+        throw new IllegalStateException('jdeps failed while deriving the fastutil closure: ' + stderr)
+    }
+    def fastutilPrefix = 'it.unimi.dsi.fastutil.'
+    def edges = [:]
+    def entries = [] as Set
+    logger.lifecycle("fastutil trim: jdeps over ${classpathFiles.size()} classpath elements")
+    stdout.eachLine { line ->
+        def m = line =~ /^\s*(\S+)\s+->\s+(\S+)\s+(.*)$/
+        if (m.matches() && m.group(2).startsWith(fastutilPrefix)) {
+            if (m.group(1).startsWith(fastutilPrefix)) {
+                edges.computeIfAbsent(m.group(1), { [] as Set }).add(m.group(2))
+            } else {
+                entries.add(m.group(2))
+            }
+        }
+    }
+    if (entries.isEmpty()) {
+        throw new IllegalStateException('No fastutil references found on the runtime classpath; refusing to trim blindly')
+    }
+    def keep = new HashSet(entries)
+    def queue = new ArrayDeque(entries)
+    while (!queue.isEmpty()) {
+        def current = queue.poll()
+        (edges[current] ?: []).each { next ->
+            if (keep.add(next)) {
+                queue.add(next)
+            }
+        }
+    }
+    // jdeps does not report superclass and superinterface references at all — a map's
+    // `extends AbstractX2YMap` or its implemented interface never appear in its output, and a
+    // class cannot load without them. Neither does the JVM resolve types that appear only in
+    // field or method descriptors when a class file is merely inspected — those descriptors are
+    // read at first use. This exactly broke hdump_open and hdump_summary at runtime with the
+    // first trims (NoClassDefFoundError for AbstractLong2ObjectMap, then AbstractObjectCollection).
+    // So the closure is walked by LOADING every kept class from the core jar with initialization
+    // suppressed: no static state runs, and the walk closes over the hierarchy, declared fields,
+    // method and constructor signatures, and nested classes of each class. Loading every kept
+    // class doubles as the completeness check: a name absent from the core jar fails the build
+    // here, not hdump_open at a user's terminal.
+    def classLoader = new URLClassLoader([coreJar.toURI().toURL()] as URL[], (ClassLoader) null)
+    try {
+        def classes = new ArrayDeque(keep)
+        def walked = new HashSet()
+        def addFastutilType = { Class<?> t ->
+            if (t != null && t.name.startsWith(fastutilPrefix) && keep.add(t.name)) {
+                classes.add(t.name)
+            }
+        }
+        while (!classes.isEmpty()) {
+            def fq = classes.poll()
+            def cls
+            try {
+                cls = Class.forName(fq, false, classLoader)
+            } catch (Throwable t) {
+                throw new IllegalStateException('fastutil class in the closure is not in the core jar: ' + fq, t)
+            }
+            if (!walked.add(fq)) {
+                continue
+            }
+            addFastutilType(cls.superclass)
+            cls.interfaces.each { t -> addFastutilType(t) }
+            cls.declaredFields.each { f -> addFastutilType(f.type) }
+            cls.constructors.each { c -> c.parameterTypes.each { t -> addFastutilType(t) } }
+            cls.methods.each { m ->
+                addFastutilType(m.returnType)
+                m.parameterTypes.each { t -> addFastutilType(t) }
+                m.exceptionTypes.each { t -> addFastutilType(t) }
+            }
+            cls.classes.each { t -> addFastutilType(t) }
+        }
+    } finally {
+        classLoader.close()
+    }
+    def fileNames = keep.collect { it.replace('.', '/') + '.class' }.sort()
+    def classFiles = jarFileEntries(coreJar).count { it.endsWith('.class') }
+    logger.lifecycle("fastutil trim: kept ${keep.size()} of the core jar's ${classFiles} classes (${fileNames.size()} include entries)")
+    return [coreJar, fileNames]
+}
+
+def jarFileEntries(File jar) {
+    def list = []
+    new java.util.jar.JarFile(jar).withCloseable { jf ->
+        def e = jf.entries()
+        while (e.hasMoreElements()) {
+            def n = e.nextElement().name
+            if (!n.endsWith('/')) {
+                list << n
+            }
+        }
+    }
+    list
+}
+
+def fastutilTrimDir = layout.buildDirectory.dir('fastutil-trimmed')
+
+tasks.register('trimFastutil') {
+    group = 'Build'
+    description = 'Trims the embedded fastutil-core copy to the jdeps-derived static closure'
+    inputs.files(configurations.runtimeClasspath) // any class change re-derives the closure
+    outputs.dir(fastutilTrimDir)
+    doLast {
+        def (coreJar, patterns) = fastutilClosurePatterns()
+        project.copy {
+            from zipTree(coreJar)
+            include patterns
+            into fastutilTrimDir
+        }
+    }
+}
+
 // Shadow JAR for standalone distribution
 shadowJar {
     group 'Build'
@@ -213,6 +351,32 @@ shadowJar {
     archiveClassifier.set('all')
 
     mergeServiceFiles()
+
+    // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
+    recordEmbeddedModules(manifest)
+
+    dependencies {
+        // The shells' terminal stack does not exist inside an MCP server: the tools talk to the
+        // engine classes (sessions, path evaluators, report generators), which import no jline, and
+        // the CLI/UI adapters implementing ShellModule.getCompleter are never loaded here.
+        exclude(dependency('org.jline:jline'))
+        exclude(dependency('org.jline:jline-terminal'))
+        exclude(dependency('org.jline:jline-reader'))
+        // The plugin install machinery (aether resolver, HTTP transports, commons-logging) loads
+        // lazily since the MCP server never installs plugins, so it can stay out of the jar.
+        // The backend registry only reads the plugin directory, which needs no Maven resolver.
+        exclude(dependency('org.apache.maven:.*'))
+        exclude(dependency('org.apache.maven.resolver:.*'))
+        exclude(dependency('org.apache.httpcomponents:.*'))
+        exclude(dependency('org.apache.commons:commons-logging'))
+        // The embedded fastutil-core copy is replaced by the jdeps-trimmed subset (trimFastutil):
+        // the static closure of what the embedded code references (~100 classes) instead of the
+        // 16,204 the core jar ships. See the trim task for why this is exact, not a heuristic.
+        exclude(dependency('it.unimi.dsi:fastutil-core'))
+    }
+
+    from(trimFastutil)
+
 
     manifest {
         attributes(
@@ -243,8 +407,11 @@ afterEvaluate {
     publishing {
         publications {
             maven(MavenPublication) {
-                // Remove the regular jar artifact added by vanniktech plugin
-                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Remove the thin jar artifact added by the vanniktech plugin, and the shadow
+                // artifact the plugin adds under classifier 'all': the same file is re-added
+                // below as the main (classifier '') artifact, and publishing both sent every
+                // fat jar to Maven Central twice per release.
+                artifacts.removeIf { it.extension == 'jar' && (it.classifier == null || it.classifier == 'all') && !it.file.name.endsWith('-sources.jar') && !it.file.name.endsWith('-javadoc.jar') }
                 // Add shadow JAR as main artifact
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier

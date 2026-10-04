@@ -16,6 +16,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.eclipse.aether.artifact.Artifact;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,11 +144,18 @@ final class PluginInstaller {
     PluginMetadata metadata = definition.toMetadata();
     log.debug("Found plugin metadata: {}:{}", metadata.artifactId(), metadata.version());
 
-    // 2. Resolve artifact via MavenResolver
+    // 2. Resolve the artifact and everything its POM needs on the classpath. The installer copies
+    // the dependency jars into the plugin's storage directory next to the root jar; the plugin
+    // classloader includes them, so plugins can be thin jars that depend on real libraries.
     log.debug("Resolving Maven artifact");
-    Path downloadedJar =
-        resolver.resolveArtifact(metadata.groupId(), metadata.artifactId(), metadata.version());
-    log.debug("Artifact resolved: {}", downloadedJar);
+    MavenResolver.ResolvedPlugin resolved =
+        resolver.resolveWithDependencies(
+            metadata.groupId(), metadata.artifactId(), metadata.version());
+    Path downloadedJar = resolved.rootJar();
+    log.debug(
+        "Artifact resolved: {} (with {} dependencies)",
+        downloadedJar,
+        resolved.dependencies().size());
 
     // 3. Download and verify checksum
     log.debug("Verifying checksum");
@@ -161,6 +169,33 @@ final class PluginInstaller {
     try {
       Files.createDirectories(targetVersionDir);
       Files.copy(downloadedJar, targetJar, StandardCopyOption.REPLACE_EXISTING);
+
+      // Dependency jars go into a deps/ subdirectory of the version directory: flat names would
+      // risk collisions between differing coordinates sharing an artifactId-version pair.
+      if (!resolved.dependencies().isEmpty()) {
+        Path dependenciesDir = targetVersionDir.resolve("deps");
+        for (Artifact dependency : resolved.dependencies()) {
+          Path targetPath =
+              dependenciesDir
+                  .resolve(dependency.getGroupId().replace('.', '/'))
+                  .resolve(dependency.getArtifactId())
+                  .resolve(dependency.getBaseVersion())
+                  .resolve(dependency.getArtifactId() + "-" + dependency.getBaseVersion() + ".jar");
+          Files.createDirectories(targetPath.getParent());
+          if (dependency.getFile() == null) {
+            throw new PluginInstallException(
+                "Resolved dependency has no file: "
+                    + dependency.getGroupId()
+                    + ":"
+                    + dependency.getArtifactId()
+                    + ":"
+                    + dependency.getBaseVersion());
+          }
+          Files.copy(
+              dependency.getFile().toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+          log.debug("Dependency jar written: {}", targetPath);
+        }
+      }
 
       // 5. Update installed.json
       PluginMetadata installedMetadata =

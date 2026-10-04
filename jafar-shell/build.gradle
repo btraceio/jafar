@@ -4,8 +4,11 @@ plugins {
     id 'com.gradleup.shadow' version '9.0.0'
 }
 
+// The shared helper that records which io.btrace modules this fat jar embeds in its manifest
+apply from: rootProject.file('gradle/embedded-modules.gradle')
+
 group = 'io.btrace'
-version = rootProject.version
+version = project.version
 
 repositories {
     mavenCentral()
@@ -28,10 +31,8 @@ java {
 dependencies {
     implementation project(':shell-core')
     implementation project(':jfr-shell')
-    // Optional LLM support, same arrangement as jfr-shell: SPI in shell-core, backend discovered
-    // via ServiceLoader, so removing this line removes the Anthropic SDK entirely.
-    runtimeOnly project(':llm-anthropic')
-    runtimeOnly project(':llm-openai')
+    // Optional LLM support, same arrangement as jfr-shell: no backend is bundled, the cataloged
+    // plugins install at first explicit use
     implementation project(':hdump-shell')
     implementation project(':pprof-shell')
     implementation project(':otlp-shell')
@@ -54,6 +55,9 @@ shadowJar {
     archiveBaseName = 'jafar-shell'
     archiveClassifier = 'all'
     mergeServiceFiles()
+
+    // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
+    recordEmbeddedModules(manifest)
 }
 
 tasks.named('test') {

@@ -2,10 +2,11 @@
 
 This document describes the automated release process for JAFAR.
 
-The project version is **derived from git tags** (`gradle/version-from-tag.gradle`), not stored in
-any build file: a build exactly on tag `vX.Y.Z` reports version `X.Y.Z`, any other build (main, a
-release branch, local) reports `X.Y.Z-SNAPSHOT` based on the newest `vX.Y.Z` tag in the repo. A
-release is therefore made by tagging — no version numbers are edited anywhere.
+The project releases in **version planes** (see ["Version planes"](#version-planes) below):
+each plane tags independently and publishes only its own artifacts. Versions are **derived from
+tags** (`gradle/version-from-tag.gradle`), never stored in any build file: a build exactly on a
+plane's tag reports `X.Y.Z`, any other build reports `X.Y.Z-SNAPSHOT` from that plane's newest
+tag. A release is therefore made by tagging - no version numbers are edited anywhere.
 
 ## Prerequisites
 
@@ -20,40 +21,43 @@ Before releasing, ensure:
 
 ### 1. Update CHANGELOG.md
 
-Ensure the changelog has an entry for the version being released:
+Add a section for the release being cut. The header carries the tag; the section holds only
+that release's notes:
 
 ```markdown
-## [0.4.0] - 2025-01-15
-
-### Added
-- Feature X
-- Feature Y
+## [core/v0.29.1] - 2025-01-15
 
 ### Fixed
 - Bug Z
 ```
 
-Commit and push it to `main`.
+Pre-split sections keep the bare-version header (`## [0.29.0]`) and still match. Commit and
+push it to `main`.
 
-### 2. Create and Push Release Tag
+### 2. Tag the plane's release
 
-Or run `scripts/release.sh [--dry-run] <major|minor|patch>`, which derives the version from the
-newest tag and does the steps below (including the release branch).
+Run `scripts/release.sh [--dry-run] [plane] <major|minor|patch>` - it derives the version from
+that plane's newest tag, applies the branch policy (release branches are a shell-plane thing;
+every other plane tags from the default branch) and pushes. Dry-run first. Hand-tagging
+`git tag <plane>/vX.Y.Z` is a fallback for when the script cannot be used (see the bootstrap in
+"Version planes"); do not hand-tag as a habit.
 
-```bash
-git tag -a v0.4.0 -m "Release v0.4.0"
-git push origin v0.4.0
-```
+**A plane's tag triggers the release workflow**, which publishes **that plane's artifacts
+only** (that is the point of the split: a tag re-ships what changed in it, not every artifact at
+a shared root version):
+1. Publish that plane to Maven Central (Sonatype): shell = jafar-shell + the two backend
+   plugins; core = jafar-parser/jafar-tools + jafar-gradle-plugin (and tags go-parser/vX.Y.Z);
+   mcp = jfr-mcp; the llm planes = their one artifact
+2. Move only that plane's entries: commit the jfr-shell-plugins.json plugin-catalog update to
+   main (per-plugin, never a downgrade), update btraceio/jbang-catalog aliases for the planes
+   that have them
+3. Create the GitHub Release with the changelog section matched by the tag
 
-**This triggers the automated release workflow** which will:
-1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
-2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
-3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
-4. ✅ Commit the `jfr-shell-plugins.json` plugin catalog update to `main`
-5. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
-6. ✅ Create GitHub Release with changelog notes
+> There is no separate binary distribution channel: no release assets are attached to GitHub
+> releases, and nothing is published to GitHub Packages. JBang resolves the Maven artifacts, and
+> the `jfr-shell-plugins.json` catalog points users at the installable backend plugins.
 
-> **Bundled catalog note:** the released `jfr-shell` jar bundles
+> **Bundled catalog note:** the released `jafar-shell` jar bundles
 > `jfr-shell-plugins.json` (offline fallback for `PluginRegistry`). The publish job patches that
 > one file in the working tree to point at the release being published — the tag itself is not
 > rewritten, so checking out the tag shows the previous release's catalog in that one file. The
@@ -117,10 +121,10 @@ out. See [Go major version suffixes](https://go.dev/ref/mod#major-version-suffix
 After the workflow completes, verify:
 
 ```bash
-# Test the Go module (available as soon as the tag is pushed - no Maven Central wait)
+# Test the Go module (core-plane releases only; available as soon as the tag is pushed)
 go list -m github.com/btraceio/jafar/go-parser@X.Y.Z
 
-# Test JBang installation (may work immediately via GitHub Packages, or after Maven Central sync)
+# Test JBang installation (available as soon as Maven Central syncs)
 jbang --fresh jfr-shell@btraceio --version
 
 # Test Maven artifact directly from Maven Central
@@ -139,11 +143,13 @@ the `jfr-shell-plugins.json` update to `main`.
 
 ### Plugin Catalog Version Rule
 
-`jfr-shell-plugins.json` is fetched at runtime from the `main` branch by `PluginRegistry` to
-resolve backend plugin versions for installation. It must always point to the latest released
-version — the release workflow commits the update and refuses to downgrade it.
-
-The catalog version must never be downgraded across major/minor boundaries. For example, if the catalog already points to `0.12.0` and a patch release `0.11.5` is published, the catalog must remain at `0.12.0`.
+Each plugin entry in `jfr-shell-plugins.json` carries its own version (the planes release
+independently) and `"repository": "maven-central"`; the release workflow's update job moves
+**only the released plane's entries** (shell: jdk/jafar; llm-anthropic: anthropic;
+llm-openai: openai/ollama) and skips the core/mcp planes, which publish nothing in it. The
+catalog is consumed from main at runtime by PluginRegistry, so an entry must never be a
+SNAPSHOT, and must never be downgraded within its plane: if `anthropic` already points to
+`0.12.0`, a tag `llm-anthropic/v0.11.5` leaves the catalog at `0.12.0`.
 
 ## Troubleshooting
 
@@ -192,48 +198,64 @@ The catalog update process has multiple fallbacks:
 If automated workflow fails, you can manually release:
 
 ```bash
-# 1. Publish to Sonatype
-SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
+# 1. Publish the main artifacts (same set the workflow publishes)
+SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx \
+  ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository :llm-anthropic:shadowJar :llm-anthropic:publishAllPublicationsToMavenCentralRepository
 
-# 2. Publish jfr-shell to GitHub Packages
-GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
+# 1b. Publish backend plugins
+./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
-# 3. Trigger JitPack manually
-curl "https://jitpack.io/com/github/btraceio/jafar/v0.4.0/build.log"
-
-# 4. Update JBang catalog manually
+# 2. Update JBang catalog manually
 # Clone btraceio/jbang-catalog and update version in:
 # - jbang-catalog.json
-# - jfr-shell.java
+# - jafar-shell.java
 ```
 
-## Version Numbering
+## Version planes
 
-Follow [Semantic Versioning](https://semver.org/):
-- **Major (X.0.0)**: Breaking API changes
-- **Minor (0.X.0)**: New features, backward compatible
-- **Patch (0.0.X)**: Bug fixes, backward compatible
+Releases are split into planes: each plane tags and publishes only its own artifacts, so a
+parser-only change re-ships ~1 MiB and does not re-publish the 29-MiB LLM plugin, and vice
+versa. The version is **derived from git tags** per plane by `gradle/version-from-tag.gradle`
+(single source of truth: the root build, every subproject, and the `jafar-gradle-plugin`
+included build all apply it). Builds never edit version numbers; releasing a plane means
+cutting its next tag.
 
-The version is **derived from git tags** by `gradle/version-from-tag.gradle`, applied by both the
-root build and the `jafar-gradle-plugin` included build (the single source of truth for both):
+| Plane | Tag shape | Publishes | Cost | Branch policy |
+|---|---|---|---|---|
+| shell | `vX.Y.Z` | `jafar-shell` (fat), `jfr-shell-jdk`, `jfr-shell-jafar` | ~10 MiB | release branches (`release/X.Y._`): minor/major from the default branch, patches continue the line |
+| core | `core/vX.Y.Z` | `jafar-parser` (+parser-core/codegen), `jafar-tools`, `jafar-gradle-plugin`; tags `go-parser/vX.Y.Z` | ~1 MiB | tags from the default branch, patches included |
+| mcp | `mcp/vX.Y.Z` | `jfr-mcp` | ~14 MiB | tags from the default branch |
+| llm-anthropic | `llm-anthropic/vX.Y.Z` | `llm-anthropic` | ~29 MiB | tags from the default branch |
+| llm-openai | `llm-openai/vX.Y.Z` | `llm-openai` | ~0.1 MiB | tags from the default branch |
+
+Per-project context:
 
 | Build context | Version |
 |---|---|
-| Exactly on tag `vX.Y.Z` (release workflow, JitPack) | `X.Y.Z` |
-| Anywhere else with git metadata (main, release branches, local) | `<newest vX.Y.Z tag>-SNAPSHOT` |
+| Exactly on the plane's tag | `X.Y.Z` |
+| Anywhere else with git metadata | `<newest tag of the plane's shape>-SNAPSHOT`; a plane never tagged rides the newest `vX.Y.Z` number until its first tag lands |
 | No git metadata (source tarball) | `0.0.0-SNAPSHOT` |
 
-The `newest vX.Y.Z tag` is the newest release tag anywhere in the repo, not just one reachable
-from HEAD, because release tags live on `release/X.Y._` branches. Only well-formed `vX.Y.Z` tags
-count; other `v*` tags are ignored. Builds never edit version numbers; bumping a version means
-cutting the next tag.
+Only well-formed tags count (`vX.Y.Z` / `<plane>/vX.Y.Z`); loose globs can match rc tags, so
+every hit is re-checked. Tag names carry the plane, so no two planes' tags can collide.
 
-The Go module tracks the same version as the Java artifacts, so `go-parser/v0.27.0` and
-`io.btrace:jafar-parser:0.27.0` are the same commit. The parity rule in [AGENTS.md](AGENTS.md) is
-what makes that meaningful: the two untyped parsers are kept in step, so the shared number is not a
-fiction. A release where `go-parser/` did not change still gets a tag - a tag on unchanged code
-costs nothing and keeps the two version lines aligned.
+Coupling rules — what a change implies:
 
-Note that Go treats `v0.x.y` as having no compatibility guarantees, which matches the project's
-experimental status. The first `v1.0.0` release is the point at which the Go module's API becomes a
-compatibility promise.
+- **Self-contained planes release independently.** The shell and MCP fat jars embed their
+dependencies; their manifests record exactly which (`Embedded-Modules:
+io.btrace:parser@X,...` — read back with `unzip -p jar META-INF/MANIFEST.MF`). App releases pick
+up core-plane changes at their own cadence, so a shell release notes tell the users which
+parser they are getting.
+- **Backend plugins and the LLM plugins resolve their SPI from the shell at run time** (the
+plugin classloader parents to the app), so a *non-breaking* shell-core change ships nothing
+outside the shell and MCP planes; an **API-breaking change** (japicmp = major version bump
+required by the plugin API policy) means tagging every SPI-consuming plane (shell, mcp,
+llm-anthropic, llm-openai) the same day, each with its own number.
+- **The Go module versions with the core plane**: `go-parser/vX.Y.Z` is created by a
+core-plane release at the same commit as the Java parser. The parity rule in
+[AGENTS.md](AGENTS.md) (the two untyped parsers kept in step) is what makes the shared number
+meaningful.
+
+Semantic versioning applies per plane: major = breaking API, minor = features, patch = fixes.
+All planes are 0.x — no compatibility guarantees yet; the first `v1.0.0` per plane is where the
+compatibility promise starts (Go's own rules agree: v0.x = experimental).

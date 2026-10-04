@@ -21,6 +21,39 @@
       "provides": [
         "jfr-backend"
       ]
+    },
+    "anthropic": {
+      "groupId": "io.btrace",
+      "artifactId": "llm-anthropic",
+      "latestVersion": "0.29.0",
+      "repository": "maven-central",
+      "depends": [],
+      "recommends": [],
+      "provides": [
+        "llm-backend"
+      ]
+    },
+    "openai": {
+      "groupId": "io.btrace",
+      "artifactId": "llm-openai",
+      "latestVersion": "0.29.0",
+      "repository": "maven-central",
+      "depends": [],
+      "recommends": [],
+      "provides": [
+        "llm-backend"
+      ]
+    },
+    "ollama": {
+      "groupId": "io.btrace",
+      "artifactId": "llm-openai",
+      "latestVersion": "0.29.0",
+      "repository": "maven-central",
+      "depends": [],
+      "recommends": [],
+      "provides": [
+        "llm-backend"
+      ]
     }
   }
 }

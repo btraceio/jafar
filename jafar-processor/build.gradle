@@ -2,6 +2,9 @@ plugins {
     id 'java'
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 description = 'Jafar Annotation Processor - Build-time handler generation'
 
 repositories {

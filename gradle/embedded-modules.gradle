@@ -1,0 +1,25 @@
+// Records, in the fat jar's manifest, exactly which io.btrace modules (and versions) the build
+// embedded. A fat jar is a snapshot of its dependencies, so its version number alone does not
+// tell the user which parser or SPI it runs; this line does. Unpacked with:
+//
+//   unzip -p jafar-shell-<v>.jar META-INF/MANIFEST.MF | grep Embedded-Modules
+//
+// Resolves the runtime classpath when the manifest is written (task execution) and reports every
+// io.btrace artifact on it as group:artifact@version, sorted for byte-stable jars.
+ext.embeddedModulesAttribute = { ->
+    def coordinates = configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts
+        .findAll { a -> a.moduleVersion.id.getGroup() == 'io.btrace' }
+        .collect { a ->
+            def id = a.moduleVersion.id
+            "${id.getGroup()}:${id.getName()}@${id.getVersion()}"
+        }
+    return coordinates.unique().sort().join(', ')
+}
+
+// Adds the attribute to a manifest; call it inside a ShadowJar task's config as
+// `recordEmbeddedModules(manifest)`. The deferred GString pushes the classpath resolution to the
+// manifest merge, so nothing resolves at configuration time.
+ext.recordEmbeddedModules = { manifest ->
+    manifest.attributes(
+        'Embedded-Modules': "${ -> embeddedModulesAttribute() }")
+}

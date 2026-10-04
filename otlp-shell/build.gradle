@@ -2,8 +2,11 @@ plugins {
     id 'java-library'
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 def libraryName = "otlp-shell"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()

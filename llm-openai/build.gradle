@@ -1,8 +1,13 @@
 plugins {
     id 'java-library'
+    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
 }
 
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()
@@ -17,11 +22,10 @@ java {
 
 dependencies {
     // No provider SDK: the OpenAI chat-completions shape is small enough to speak directly with
-    // the JDK's HttpClient. Gson is declared here because shell-core keeps it `implementation`
-    // scoped, but it is the same version already on every shell's runtime classpath, so this adds
-    // no jar a user did not already have. That matters because this is the backend an air-gapped
-    // user running a local model would install.
-    api project(':shell-core')
+    // the JDK's HttpClient. The shell provides shell-core (the SPI) at runtime, so this module's
+    // jar alone resolves everything it needs off its POM at install time.
+    compileOnly project(':shell-core')
+    testImplementation project(':shell-core')
     implementation 'com.google.code.gson:gson:2.10.1'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'

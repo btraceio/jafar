@@ -84,11 +84,31 @@ public interface LlmBackend {
    */
   static List<LlmBackend> discover() {
     List<LlmBackend> backends = new java.util.ArrayList<>();
-    for (LlmBackend backend : ServiceLoader.load(LlmBackend.class)) {
+    for (LlmBackend backend : ServiceLoader.load(LlmBackend.class, discoveryClassLoader())) {
       backends.add(backend);
     }
     backends.sort(java.util.Comparator.comparing(LlmBackend::id));
     return List.copyOf(backends);
+  }
+
+  /**
+   * The classloader discovery runs with: the shell's plugin-aware one when the plugin system is
+   * initialized — so a backend installed from the plugin catalog, such as the Anthropic adapter the
+   * release artifacts stopped bundling, is found at ask time — else the fallback the JFR backend
+   * registry uses (thread context, then own class).
+   *
+   * <p>The fallback order matters for tests: provider-architecture tests run before the plugin
+   * system is initialized and locate providers via the thread context classloader instead.
+   */
+  private static ClassLoader discoveryClassLoader() {
+    ClassLoader loader;
+    try {
+      loader = io.jafar.shell.plugin.PluginManager.getInstance().getPluginClassLoader();
+    } catch (IllegalStateException e) {
+      // Plugin system not initialized — fall back the way BackendRegistry does.
+      loader = Thread.currentThread().getContextClassLoader();
+    }
+    return loader != null ? loader : LlmBackend.class.getClassLoader();
   }
 
   /** Selects a backend by id. Exact match only; {@code auto} is not handled here. */

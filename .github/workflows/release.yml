@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       publish_backends_only:
-        description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar)'
+        description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar, llm-anthropic)'
         required: false
         type: boolean
         default: false
@@ -43,16 +43,21 @@ jobs:
           # Manual-input versions are user-supplied; keep them out of the script
           # text and validate the format before they are echoed anywhere
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_PLANE: ${{ github.event.inputs.plane }}
           PUBLISH_BACKENDS_ONLY_INPUT: ${{ github.event.inputs.publish_backends_only }}
           UPDATE_CATALOG_ONLY_INPUT: ${{ github.event.inputs.update_catalog_only }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Manual trigger - use input version
+            # Manual trigger - use input version and plane
             VERSION="$INPUT_VERSION"
             if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
               echo "ERROR: version input '$VERSION' is not X.Y.Z"; exit 1
             fi
-            TAG="v${VERSION}"
+            case "$INPUT_PLANE" in
+              ''|shell) PLANE="shell"; TAG="v${VERSION}" ;;
+              core|mcp|llm-anthropic|llm-openai) PLANE="$INPUT_PLANE"; TAG="${PLANE}/v${VERSION}" ;;
+              *) echo "ERROR: unknown plane input '$INPUT_PLANE' (shell, core, mcp, llm-anthropic, llm-openai)"; exit 1 ;;
+            esac
             IS_MANUAL="true"
             PUBLISH_BACKENDS_ONLY="$PUBLISH_BACKENDS_ONLY_INPUT"
             UPDATE_CATALOG_ONLY="$UPDATE_CATALOG_ONLY_INPUT"
@@ -65,17 +70,27 @@ jobs:
               echo "Manual workflow trigger for version: $VERSION"
             fi
           else
-            # Tag trigger - extract from tag
+            # Tag trigger - the tag names its plane: bare vX.Y.Z = shell (the
+            # original project-wide line), <plane>/vX.Y.Z = everything else
             TAG="${{ github.ref_name }}"
-            VERSION="${TAG#v}"
+            case "$TAG" in
+              v[0-9]*) PLANE="shell" ;;
+              core/v[0-9]*) PLANE="core" ;;
+              mcp/v[0-9]*) PLANE="mcp" ;;
+              llm-anthropic/v[0-9]*) PLANE="llm-anthropic" ;;
+              llm-openai/v[0-9]*) PLANE="llm-openai" ;;
+              *) echo "ERROR: tag '$TAG' is not a release tag (vX.Y.Z or <plane>/vX.Y.Z with plane core, mcp, llm-anthropic, llm-openai)"; exit 1 ;;
+            esac
+            VERSION="${TAG##*/v}"
             IS_MANUAL="false"
             PUBLISH_BACKENDS_ONLY="false"
             UPDATE_CATALOG_ONLY="false"
-            echo "Release version: $VERSION"
+            echo "Release plane $PLANE, version $VERSION"
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "plane=$PLANE" >> $GITHUB_OUTPUT
           echo "is_manual=$IS_MANUAL" >> $GITHUB_OUTPUT
           echo "publish_backends_only=$PUBLISH_BACKENDS_ONLY" >> $GITHUB_OUTPUT
           echo "update_catalog_only=$UPDATE_CATALOG_ONLY" >> $GITHUB_OUTPUT
@@ -113,9 +128,9 @@ jobs:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
           EXPECTED_TAG: ${{ needs.prepare.outputs.version_tag }}
         run: |
-          # Same well-formed vX.Y.Z rule as gradle/version-from-tag.gradle —
-          # scripts/derive-version.sh is its shell mirror
-          DERIVED=$(scripts/derive-version.sh)
+          # Same per-plane rule as gradle/version-from-tag.gradle —
+          # scripts/derive-version.sh --plane is its shell mirror
+          DERIVED=$(scripts/derive-version.sh --plane "${{ needs.prepare.outputs.plane }}")
           case "$DERIVED" in
             *[!0-9.]*) echo "ERROR: derived version '$DERIVED' is not a plain X.Y.Z release version"; exit 1 ;;
           esac
@@ -144,18 +159,41 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish parser to Maven Local (for gradle plugin dependency)
+        if: needs.prepare.outputs.plane == 'core'
         run: |
           ./gradlew :parser-core:publishToMavenLocal :parser-codegen:publishToMavenLocal :parser:publishToMavenLocal --no-daemon --stacktrace
 
-      - name: Publish parser, tools, jfr-shell, jfr-mcp to Maven Central
+      # Each plane publishes only its own artifacts: a tag re-ships what changed in
+      # that tag, not every artifact at the repo's root version (the split releases
+      # are the point; see RELEASING.md "Version planes")
+      - name: Publish shell plane to Maven Central
+        if: needs.prepare.outputs.plane == 'shell'
         run: |
-          ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
-
-      - name: Publish backend plugins to Maven Central
-        run: |
+          ./gradlew :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
           ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
+      - name: Publish core plane to Maven Central
+        if: needs.prepare.outputs.plane == 'core'
+        run: |
+          ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
+      - name: Publish mcp plane to Maven Central
+        if: needs.prepare.outputs.plane == 'mcp'
+        run: |
+          ./gradlew :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
+      - name: Publish llm-anthropic to Maven Central
+        if: needs.prepare.outputs.plane == 'llm-anthropic'
+        run: |
+          ./gradlew :llm-anthropic:shadowJar :llm-anthropic:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
+      - name: Publish llm-openai to Maven Central
+        if: needs.prepare.outputs.plane == 'llm-openai'
+        run: |
+          ./gradlew :llm-openai:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+
       - name: Publish gradle plugin to Maven Central
+        if: needs.prepare.outputs.plane == 'core'
         run: |
           cd jafar-gradle-plugin
           ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
@@ -172,7 +210,11 @@ jobs:
   # Automating it here removes the last manually edited version number.
   update-plugin-catalog:
     needs: [prepare, publish-maven]
-    if: always() && !cancelled() && needs.prepare.outputs.is_manual == 'false' && needs.publish-maven.result == 'success'
+    # The plugin catalog lists the backend and LLM plugins; the core and mcp
+    # planes publish nothing in it
+    if: always() && !cancelled() && needs.prepare.outputs.is_manual == 'false'
+        && needs.publish-maven.result == 'success'
+        && (needs.prepare.outputs.plane == 'shell' || needs.prepare.outputs.plane == 'llm-anthropic' || needs.prepare.outputs.plane == 'llm-openai')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -265,7 +307,7 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           echo "Publishing backend plugins for version $VERSION"
-          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository :llm-anthropic:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
           echo "✅ Backend plugins published successfully"
 
   # Update JBang catalog automatically or manually
@@ -283,7 +325,17 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           IS_MANUAL="${{ needs.prepare.outputs.is_manual }}"
-          ARTIFACT_URL="https://repo1.maven.org/maven2/io/btrace/jafar-shell/${VERSION}/jafar-shell-${VERSION}.pom"
+          # Every published plane has JBang aliases pinned at a version; this job
+          # updates only the current plane's aliases, keyed on the artifact their
+          # script -ref resolves
+          case "${{ needs.prepare.outputs.plane }}" in
+            shell) ARTIFACT="jafar-shell";  ALIASES='["jafar-shell", "jfr-shell", "jafar-shell-latest", "jfr-shell-latest"]' ;;
+            mcp)   ARTIFACT="jfr-mcp";      ALIASES='["jfr-mcp", "jfr-mcp-latest"]' ;;
+            core)  ARTIFACT="jafar-tools";  ALIASES='["jafar-tools-latest"]' ;;
+            *)     echo "The ${{ needs.prepare.outputs.plane }} plane has no JBang catalog aliases; nothing to update"
+                   exit 0 ;;
+          esac
+          ARTIFACT_URL="https://repo1.maven.org/maven2/io/btrace/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.pom"
 
           if [ "$IS_MANUAL" = "true" ]; then
             echo "🔧 Manual catalog update mode"
@@ -300,7 +352,7 @@ jobs:
           ATTEMPT=1
           AVAILABLE=false
 
-          echo "🔍 Checking Maven Central for jafar-shell:${VERSION}"
+          echo "🔍 Checking Maven Central for ${ARTIFACT}:${VERSION}"
           echo "URL: $ARTIFACT_URL"
 
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
@@ -366,17 +418,23 @@ jobs:
 
           cd catalog
 
-          # Update stable aliases to released version
-          jq --arg ver "$VERSION" '.aliases["jafar-shell"]["script-ref"] = "io.btrace:jafar-shell:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
-          jq --arg ver "$VERSION" '.aliases["jfr-mcp"]["script-ref"] = "io.btrace:jfr-mcp:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
-
-          # Update jafar-shell.java stable wrapper to released version
-          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
-
-          # Bump -latest wrappers to the next snapshot version
-          sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$NEXT_SNAPSHOT|g" jafar-shell-latest.java
-          sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$NEXT_SNAPSHOT|g" jfr-mcp-latest.java
-          sed -i.bak "s|//DEPS io.btrace:jafar-tools:.*|//DEPS io.btrace:jafar-tools:$NEXT_SNAPSHOT|g" jafar-tools-latest.java
+          # A plane's release moves only that plane's aliases; -latest wrappers
+          # track this plane's new dev version (the newest plane tag + -SNAPSHOT,
+          # what main derives under tag-based versioning)
+          case "${{ needs.prepare.outputs.plane }}" in
+            shell)
+              jq --arg ver "$VERSION" '.aliases["jafar-shell"]["script-ref"] = "io.btrace:jafar-shell:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
+              sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$VERSION|g" jafar-shell.java
+              sed -i.bak "s|//DEPS io.btrace:jafar-shell:.*|//DEPS io.btrace:jafar-shell:$NEXT_SNAPSHOT|g" jafar-shell-latest.java
+              ;;
+            mcp)
+              jq --arg ver "$VERSION" '.aliases["jfr-mcp"]["script-ref"] = "io.btrace:jfr-mcp:\($ver)"' jbang-catalog.json > tmp.json && mv tmp.json jbang-catalog.json
+              sed -i.bak "s|//DEPS io.btrace:jfr-mcp:.*|//DEPS io.btrace:jfr-mcp:$NEXT_SNAPSHOT|g" jfr-mcp-latest.java
+              ;;
+            core)
+              sed -i.bak "s|//DEPS io.btrace:jafar-tools:.*|//DEPS io.btrace:jafar-tools:$NEXT_SNAPSHOT|g" jafar-tools-latest.java
+              ;;
+          esac
 
           # Clean up backup files
           rm -f *.bak
@@ -432,8 +490,24 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
 
-          # Extract changelog section for this version
-          awk "/## \[$VERSION\]/,/## \[/{if(/## \[/ && !/## \[$VERSION\]/)exit;print}" CHANGELOG.md > /tmp/release-notes.md
+          # Extract the changelog section for this release: the header carries the
+          # release tag (vX.Y.Z for the shell plane, <plane>/vX.Y.Z for the rest).
+          # Fall back to the bare version header, the pre-split changelog layout.
+          TAG="${{ needs.prepare.outputs.version_tag }}"
+          awk -v tag="$TAG" -v ver="$VERSION" '
+            section == 0 && /^## \[/ {
+              h = $0
+              sub(/^## \[/, "", h)
+              sub(/\].*$/, "", h)
+              # the header carries the release tag (vX.Y.Z for the shell plane,
+              # <plane>/vX.Y.Z for the rest); the bare version matches the
+              # pre-split changelog layout
+              if (h == tag || h == ver) {
+                section = 1
+              }
+            }
+            section == 1 { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
 
           # If empty, use a default message
           if [ ! -s /tmp/release-notes.md ]; then
@@ -446,8 +520,9 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version_tag }}
           name: Release ${{ needs.prepare.outputs.version }}
           body_path: /tmp/release-notes.md
-          files: |
-            **/build/libs/*.jar
+          # No asset attachment: the publishing channel is Maven Central and the
+          # jars live there; this checkout builds nothing, so there is nothing to
+          # attach (the dead files: glob used to silently match nothing)
           draft: false
           prerelease: false
         env:
@@ -562,7 +637,8 @@ jobs:
   tag-go-module:
     name: Tag Go module
     needs: [prepare, publish-maven]
-    if: needs.prepare.outputs.is_manual == 'false'
+    # The Go module versions with the parser (core plane), not with every plane
+    if: needs.prepare.outputs.is_manual == 'false' && needs.prepare.outputs.plane == 'core'
     runs-on: ubuntu-latest
     permissions:
       contents: write

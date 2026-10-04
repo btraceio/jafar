@@ -41,18 +41,53 @@ public final class PluginManager {
   private static final PluginManager INSTANCE = new PluginManager();
 
   private final PluginStorageManager storageManager;
-  private final PluginRegistry registry;
-  private final MavenResolver resolver;
-  private final PluginInstaller installer;
-  private final UpdateChecker updateChecker;
+  private volatile PluginRegistry registry;
+  private volatile MavenResolver resolver;
+  private volatile PluginInstaller installer;
+  private volatile UpdateChecker updateChecker;
   private ClassLoader pluginClassLoader;
 
   private PluginManager() {
     this.storageManager = new PluginStorageManager();
-    this.resolver = new MavenResolver();
-    this.registry = new PluginRegistry(storageManager);
-    this.installer = new PluginInstaller(registry, resolver, storageManager);
-    this.updateChecker = new UpdateChecker(registry);
+  }
+
+  /**
+   * The registry and the rest of the install machinery load lazily: constructing them means the
+   * Maven resolver stack (aether, the HTTP transport, the maven provider), while the most common
+   * plugin-system touchpoints — backend discovery via the plugin classloader, the installed jar
+   * scan, local plugin installs — need none of that. The MCP server, which never installs anything,
+   * then runs without ever loading the resolver stack.
+   */
+  private PluginRegistry registry() {
+    PluginRegistry r = registry;
+    if (r == null) {
+      synchronized (this) {
+        r = registry;
+        if (r == null) {
+          resolver = new MavenResolver();
+          r = new PluginRegistry(storageManager);
+          registry = r;
+          installer = new PluginInstaller(r, resolver, storageManager);
+          updateChecker = new UpdateChecker(r);
+        }
+      }
+    }
+    return r;
+  }
+
+  private MavenResolver resolver() {
+    registry();
+    return resolver;
+  }
+
+  private PluginInstaller installer() {
+    registry();
+    return installer;
+  }
+
+  private UpdateChecker updateChecker() {
+    registry();
+    return updateChecker;
   }
 
   /**
@@ -160,8 +195,20 @@ public final class PluginManager {
    * @return true if plugin can be installed
    */
   public boolean canInstall(String pluginId) {
-    registry.refreshIfNeeded();
-    return registry.get(pluginId).isPresent();
+    PluginRegistry reg = registry();
+    reg.refreshIfNeeded();
+    return reg.get(pluginId).isPresent();
+  }
+
+  /**
+   * Whether a plugin is known from sources needing no network: the bundled catalog and the local
+   * Maven snapshot scan done at plugin-system start.
+   *
+   * <p>The ask-time install gate uses this — deciding whether a selected backend can be installed
+   * must not block on a registry fetch; the install itself refreshes explicitly.
+   */
+  public boolean canInstallOffline(String pluginId) {
+    return registry().isKnownOffline(pluginId);
   }
 
   /**
@@ -174,7 +221,7 @@ public final class PluginManager {
    * @throws PluginInstallException if installation fails
    */
   public void installPlugin(String pluginId) throws PluginInstallException {
-    installer.install(pluginId);
+    installer().install(pluginId);
   }
 
   /**
@@ -196,7 +243,7 @@ public final class PluginManager {
       Function<List<String>, List<String>> confirmRecommendations,
       Consumer<String> progressCallback)
       throws PluginInstallException {
-    return installer.installWithDependencies(pluginId, confirmRecommendations, progressCallback);
+    return installer().installWithDependencies(pluginId, confirmRecommendations, progressCallback);
   }
 
   /**
@@ -218,8 +265,8 @@ public final class PluginManager {
       }
 
       // Check for dependents
-      DependencyResolver resolver = new DependencyResolver(registry, installed);
-      List<String> dependents = resolver.findDependents(pluginId.toLowerCase());
+      DependencyResolver dependencyResolver = new DependencyResolver(registry(), installed);
+      List<String> dependents = dependencyResolver.findDependents(pluginId.toLowerCase());
 
       if (!dependents.isEmpty() && !force) {
         throw new PluginInstallException(
@@ -270,7 +317,7 @@ public final class PluginManager {
    * @return List of hard dependencies, or empty list if plugin not found
    */
   public List<String> getPluginDependencies(String pluginId) {
-    return registry.get(pluginId).map(PluginRegistry.PluginDefinition::depends).orElse(List.of());
+    return registry().get(pluginId).map(PluginRegistry.PluginDefinition::depends).orElse(List.of());
   }
 
   /**
@@ -293,7 +340,10 @@ public final class PluginManager {
    * @return List of capabilities, or empty list if plugin not found
    */
   public List<String> getPluginProvides(String pluginId) {
-    return registry.get(pluginId).map(PluginRegistry.PluginDefinition::provides).orElse(List.of());
+    return registry()
+        .get(pluginId)
+        .map(PluginRegistry.PluginDefinition::provides)
+        .orElse(List.of());
   }
 
   /**
@@ -315,12 +365,16 @@ public final class PluginManager {
       throw new PluginInstallException("File must be a JAR: " + fileName);
     }
 
-    // Validate JAR contains ServiceLoader config
+    // Validate JAR contains a backend ServiceLoader config (JFR or LLM)
     try (JarFile jar = new JarFile(jarPath.toFile())) {
-      ZipEntry serviceEntry = jar.getEntry("META-INF/services/io.jafar.shell.backend.JfrBackend");
-      if (serviceEntry == null) {
+      boolean hasBackendProvider =
+          jar.getEntry("META-INF/services/io.jafar.shell.backend.JfrBackend") != null
+              || jar.getEntry("META-INF/services/io.jafar.shell.core.llm.LlmBackend") != null;
+      if (!hasBackendProvider) {
         throw new PluginInstallException(
-            "JAR does not contain a JfrBackend service provider (META-INF/services/io.jafar.shell.backend.JfrBackend)");
+            "JAR does not contain a backend service provider"
+                + " (expected META-INF/services/io.jafar.shell.backend.JfrBackend"
+                + " or META-INF/services/io.jafar.shell.core.llm.LlmBackend)");
       }
 
       // Parse artifactId and version from filename: {artifactId}-{version}.jar
@@ -524,7 +578,7 @@ public final class PluginManager {
 
                 List<UpdateChecker.PluginUpdate> updates;
                 try {
-                  updates = updateChecker.checkForUpdates(installed);
+                  updates = updateChecker().checkForUpdates(installed);
                 } catch (Exception e) {
                   log.debug("Failed to check for updates", e);
                   return;
@@ -547,7 +601,7 @@ public final class PluginManager {
                         "Downloading update in background: {} {}",
                         update.pluginId(),
                         update.availableVersion());
-                    installer.install(update.pluginId());
+                    installer().install(update.pluginId());
                     log.info(
                         "Plugin updated to {}. Restart jfr-shell to use new version.",
                         update.availableVersion());

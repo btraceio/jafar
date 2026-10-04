@@ -1,15 +1,38 @@
-// Derives the project version from git release tags instead of a number baked
-// into a build script. This is the single source of truth for versioning: it is
-// applied by the root build (build.gradle) and by the jafar-gradle-plugin
-// included build (jafar-gradle-plugin/build.gradle), which cannot see the root
-// build's version because it is a separate Gradle build.
+// Derives artifact versions from git release tags instead of a number baked
+// into a build script. This is the single source of truth for versioning: the
+// root build applies it, every subproject re-applies it to get its own plane's
+// version, and the jafar-gradle-plugin included build applies it too (it cannot
+// see the root build's version — a separate Gradle build).
 //
-//   exactly on tag vX.Y.Z         -> X.Y.Z            (release build)
-//   elsewhere, git metadata found -> X.Y.Z-SNAPSHOT   (development build)
-//   no git metadata (src tarball) -> 0.0.0-SNAPSHOT
+// Releases are split into planes; each plane releases from its own tags, so a
+// parser-only change does not re-publish the LLM plugin and vice versa.
 //
-// A release is therefore made by tagging vX.Y.Z; no version numbers are edited.
-// See RELEASING.md ("Version Numbering").
+//   plane          tag shape             publishes
+//   shell          vX.Y.Z                jafar-shell, jfr-shell-jdk, jfr-shell-jafar,
+//                                        the unified jafar-shell app, shell-core, hdump-*
+//   core           core/vX.Y.Z           jafar-parser (parser-core/parser-codegen),
+//                                        jafar-tools, jafar-gradle-plugin; also tags
+//                                        go-parser/vX.Y.Z at the same commit
+//   mcp            mcp/vX.Y.Z            jfr-mcp
+//   llm-anthropic  llm-anthropic/vX.Y.Z    llm-anthropic
+//   llm-openai     llm-openai/vX.Y.Z         llm-openai
+//
+// Per project, via the plane map below:
+//   exactly on the plane's tag      -> X.Y.Z            (release build)
+//   elsewhere, tags exist           -> X.Y.Z-SNAPSHOT   (development build), where
+//     X.Y.Z = the newest tag of the plane's own shape, falling back to the newest
+//     bare vX.Y.Z tag while the plane has never been tagged
+//   no git metadata (src tarball)   -> 0.0.0-SNAPSHOT
+//
+// Coupling rules live in RELEASING.md ("Version planes"). In short: everything
+// self-contained (the shell fat jar, the MCP fat jar) releases independently; a
+// release-API breaking change (japicmp major) tags every SPI-consuming plane
+// the same day, each with its own number.
+//
+// RELEASING.md ("Version Planes") is the documentation; scripts/derive-version.sh
+// (--plane <name>) is the shell mirror used by the workflows.
+
+import java.util.regex.Pattern
 
 def jafarGit(String... args) {
     try {
@@ -21,34 +44,104 @@ def jafarGit(String... args) {
     }
 }
 
-// Only well-formed vX.Y.Z tags count as release tags; any other v* tag is
-// ignored. The for-each-ref glob 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' is looser
-// than this pattern (fnmatch '*' matches any characters, so v1.2.3-rc1 also
-// matches), so every glob hit is re-checked against the strict pattern and the
-// newest conforming one wins.
-def releaseTagPattern = ~/^v(\d+\.\d+\.\d+)$/
+// Only well-formed tags count: vX.Y.Z for the shell plane (the project's
+// original shape — all existing history), <plane>/vX.Y.Z for the rest. Loose
+// for-each-ref globs match things like vX.Y.Z-rc1 too, so every glob hit is
+// re-checked against strict patterns in newestVersionOf().
+def planeByProject = [
+    // shell plane: the plain vX.Y.Z tags (the original project-wide line)
+    'shell-core': 'shell', 'jfr-shell': 'shell', 'jafar-shell': 'shell',
+    'jfr-shell-jdk': 'shell', 'jfr-shell-jafar': 'shell', 'jfr-shell-tck': 'shell',
+    'hdump-parser': 'shell', 'hdump-shell': 'shell',
+    // core plane: parser + tools + the gradle plugin (whose included build names
+    // its root project 'gradle-plugin')
+    'parser': 'core', 'parser-core': 'core', 'parser-codegen': 'core', 'tools': 'core',
+    'jafar-gradle-plugin': 'core', 'gradle-plugin': 'core',
+    // mcp plane
+    'jfr-mcp': 'mcp',
+    // llm planes
+    'llm-anthropic': 'llm-anthropic', 'llm-openai': 'llm-openai',
+]
+def plane = planeByProject.getOrDefault(project.name, 'shell')
 
-def exactTag = jafarGit('describe', '--tags', '--exact-match', '--match', 'v[0-9]*')
-def exactMatch = exactTag == null ? null : releaseTagPattern.matcher(exactTag)
-if (exactMatch != null && exactMatch.matches()) {
-    project.version = exactMatch.group(1)
-} else {
-    // Newest release tag in the repo, not just one reachable from HEAD: release
-    // tags may sit on release branches, and a development build on main is still
-    // a post-<latest-release> build.
-    def newestRelease = null
-    def tagList = jafarGit('for-each-ref', 'refs/tags/v[0-9]*.[0-9]*.[0-9]*',
-                           '--sort=-v:refname', '--format=%(refname:short)')
-    if (tagList != null) {
-        for (candidate in tagList.split('\n')) {
-            def m = releaseTagPattern.matcher(candidate.trim())
-            if (m.matches()) {
-                newestRelease = m.group(1)
-                break
+// exactMatch: is the current commit exactly on this plane's release tag?
+// The newest X.Y.Z among well-formed v-tag names in the list, or null. Self-contained: script
+// methods cannot see script-body locals, so it compiles its own patterns. Numeric-tuple compare
+// rather than git's -v:refname, which mis-orders <plane>/v0.29.1 against <plane>/v0.29.0 (the
+// leading 'core/v' is not version-shaped for git).
+def newestVersionOf(tags, String planeName) {
+    // The conforming shape is vX.Y.Z for the shell plane (the project's original line),
+    // <plane>/vX.Y.Z for every other plane (git's for-each-ref short name keeps the prefix).
+    def planeRelease = planeName == 'shell'
+        ? { t -> t ==~ /^v\d+\.\d+\.\d+$/ }
+        : { t -> t ==~ /^\Q${planeName}\E\/v\d+\.\d+\.\d+$/ }
+    def tailNum = { String t ->
+        def last = t.substring(t.lastIndexOf('/') + 1)
+        def clean = last.startsWith('v') ? last.substring(1) : last
+        clean.split('[.]').collect { it.toInteger() }
+    }
+    def cmpTriple = { String x, String y ->
+        def nx = tailNum(x), ny = tailNum(y)
+        for (i in 0..2) {
+            if (nx[i] != ny[i]) {
+                return nx[i] < ny[i] ? -1 : 1
             }
         }
+        0
     }
-    project.version = (newestRelease != null ? newestRelease : '0.0.0') + '-SNAPSHOT'
+    def best = null
+    for (candidate in tags) {
+        def c = candidate.trim()
+        if (!planeRelease(c)) {
+            continue
+        }
+        if (best == null || cmpTriple(c, best) > 0) {
+            best = c
+        }
+    }
+    if (best == null) {
+        return null
+    }
+    // vX.Y.Z or <plane>/vX.Y.Z -> X.Y.Z
+    def last = best.substring(best.lastIndexOf('/') + 1)
+    return last.startsWith('v') ? last.substring(1) : last
 }
 
-logger.lifecycle("Version derived from git tags: ${project.version}")
+def exactTag = plane == 'shell'
+    ? jafarGit('describe', '--tags', '--exact-match', '--match', 'v[0-9]*')
+    : jafarGit('describe', '--tags', '--exact-match', '--match', "${plane}/v[0-9]*")
+
+def releaseVersion = null       // X.Y.Z when exactly on the plane's tag
+def newestPlaneVersion = null   // X.Y.Z of the newest conforming plane tag anywhere
+
+releaseVersion = newestVersionOf([exactTag ?: '-'], plane)
+
+if (newestPlaneVersion == null) {
+    def refSpec = plane == 'shell'
+        ? 'refs/tags/v[0-9]*.[0-9]*.[0-9]*'
+        : "refs/tags/${plane}/v[0-9]*.[0-9]*.[0-9]*"
+    def tagList = jafarGit('for-each-ref', refSpec, '--format=%(refname:short)')
+    if (tagList != null) {
+        newestPlaneVersion = newestVersionOf(tagList.split('\n'), plane)
+    }
+    if (newestPlaneVersion == null && plane != 'shell') {
+        // This plane has never been tagged: ride the shared vX.Y.Z line's newest
+        // number so a development build still means something until the first
+        // plane tag lands
+        def plainList = jafarGit('for-each-ref', 'refs/tags/v[0-9]*.[0-9]*.[0-9]*',
+                                 '--format=%(refname:short)')
+        if (plainList != null) {
+            newestPlaneVersion = newestVersionOf(plainList.split('\n'), 'shell')
+        }
+    }
+}
+
+project.version = releaseVersion != null
+    ? releaseVersion
+    : (newestPlaneVersion != null ? newestPlaneVersion + '-SNAPSHOT' : '0.0.0-SNAPSHOT')
+
+if (!(project.version ==~ /^\d+\.\d+\.\d+(-SNAPSHOT)?$/)) {
+    throw new GradleException("version-from-tag: derived version '${project.version}' for ${project.name} is not X.Y.Z or X.Y.Z-SNAPSHOT")
+}
+
+logger.lifecycle("Version derived from git tags for ${project.name} (plane ${plane}): ${project.version}")

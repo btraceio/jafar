@@ -5,8 +5,12 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// The shared helper that records which io.btrace modules this fat jar embeds in its manifest
+apply from: rootProject.file('gradle/embedded-modules.gradle')
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 def libraryName = "jfr-shell"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 def generateVersionSource = tasks.register('generateVersionSource') {
     def outDir = layout.buildDirectory.dir('generated/sources/version/main/java')
@@ -50,11 +54,11 @@ java {
 
 dependencies {
     api project(':shell-core')
-    // LLM support is optional at runtime: the SPI lives in shell-core and the backend is
-    // discovered via ServiceLoader, so dropping this line removes the Anthropic SDK entirely
-    // and the ask/explain commands degrade to a clear message.
-    runtimeOnly project(':llm-anthropic')
-    runtimeOnly project(':llm-openai')
+    // No LLM backend ships inside the jar: both the Anthropic and the OpenAI-compatible backends
+    // (OpenAI, Ollama, ...) are standalone plugins under the llm tags, cataloged in
+    // jfr-shell-plugins.json and installed at first explicit use. The SPI lives in shell-core,
+    // discovery is ServiceLoader, and with no backend installed the ask/explain commands degrade
+    // to a clear message.
 
     // Backend plugins available for testing (discovered via ServiceLoader)
     testRuntimeOnly project(':jfr-shell-jafar')
@@ -112,6 +116,9 @@ shadowJar {
 
     // Merge service files for ServiceLoader discovery
     mergeServiceFiles()
+
+    // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
+    recordEmbeddedModules(manifest)
 
     // Relocate dependencies to avoid conflicts with plugin JARs
     relocate 'org.apache.maven.resolver', 'io.jafar.shaded.resolver'
@@ -284,8 +291,11 @@ afterEvaluate {
     publishing {
         publications {
             maven(MavenPublication) {
-                // Remove the regular jar artifact added by vanniktech plugin
-                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Remove the thin jar artifact added by the vanniktech plugin, and the shadow
+                // artifact the plugin adds under classifier 'all': the same file is re-added
+                // below as the main (classifier '') artifact, and publishing both sent every
+                // fat jar to Maven Central twice per release.
+                artifacts.removeIf { it.extension == 'jar' && (it.classifier == null || it.classifier == 'all') && !it.file.name.endsWith('-sources.jar') && !it.file.name.endsWith('-javadoc.jar') }
                 // Add shadow JAR as main artifact
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier
