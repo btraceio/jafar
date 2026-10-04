@@ -272,7 +272,7 @@ def fastutilClosurePatterns() {
     // method and constructor signatures, and nested classes of each class. Loading every kept
     // class doubles as the completeness check: a name absent from the core jar fails the build
     // here, not hdump_open at a user's terminal.
-    def classLoader = new URLClassLoader([coreJar.toURI().toURL()] as URL[], null)
+    def classLoader = new URLClassLoader([coreJar.toURI().toURL()] as URL[], (ClassLoader) null)
     try {
         def classes = new ArrayDeque(keep)
         def walked = new HashSet()
