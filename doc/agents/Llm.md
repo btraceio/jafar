@@ -15,15 +15,15 @@ the commands after what a user is doing. `CommandDispatcher`'s switch is the map
 taken before the line is split into words so `?why is this slow` is one command.
 
 Architecture, and the reasons it is shaped this way:
-- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. The
-  `openai` backend (chat-completions over the JDK HTTP client, no provider SDK) ships with the
-  shells as `runtimeOnly`; the `anthropic` backend (Anthropic Java SDK) ships as a **plugin**: it
-  is published as its own thin artifact, the plugin catalog carries it (`anthropic`), and shells
-  install it when a user explicitly selects the backend — automatic selection never installs
-  anything. Discovery consults the plugin-aware classloader (the same seam the JFR backends
-  already used), so an installed plugin is found without a restart. Dropping even the OpenAI
-  dependency removes every provider SDK and the commands degrade to a clear message — air-gapped
-  use is a supported configuration, not an accident.
+- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. **No
+  backend is bundled with the released shells**: `llm-anthropic` (Anthropic Java SDK) and
+  `llm-openai` (chat-completions over the JDK HTTP client, `openai`/`ollama` being two profiles
+  of the same artifact) are standalone plugins under the llm tags, cataloged in
+  `jfr-shell-plugins.json`, and installed when a user explicitly selects the backend —
+  automatic selection never installs anything. Discovery consults the plugin-aware classloader
+  (the same seam the JFR backends already used), so an installed plugin is found without a
+  restart. Dropping even that machinery leaves the commands degrading to a clear message —
+  air-gapped use is a supported configuration, not an accident.
 - **No provider is privileged.** `llm.backend` selects one by id (`anthropic`, `openai`, `ollama`);
   `auto` takes the first that reports ready. Each backend supplies its own `defaultModel()`, so
   `LlmConfig` holds no cross-provider model default — setting `llm.model` for one provider and then

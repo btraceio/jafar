@@ -90,29 +90,26 @@ class LlmCommandsTest {
   }
 
   @Test
-  void asQueryReportsAnUnknownBackendIdWithTheAvailableOnes() {
+  void asQueryWithoutBackendsInstalledReportsTheInstallRemedy() {
     FakeHost host = new FakeHost();
     new LlmCommands(host).asQuery("why slow?");
     String text = host.text();
-    assertTrue(text.contains("No LLM backend with id 'test-nonexistent'"), text);
-    assertTrue(text.contains("Available:"), text);
+    assertTrue(text.contains("No LLM backend is installed."), text);
+    assertTrue(text.contains("plugin catalog"), text);
     assertTrue(host.queriesRun.isEmpty());
   }
 
   @Test
-  void theShellArtifactBundlesOnlyTheOpenAICompatibleBackend() {
-    // The release jar slimmed: the Anthropic backend and its SDK — which alone outweighed the
-    // rest of the jar — install from the plugin catalog instead. If the SDK sneaks back into the
-    // shell classpath, discovery re-lists it here; the bundle must stay out.
+  void theShellArtifactBundlesNoLlmBackends() {
+    // The release jar slimmed: NO LLM backend ships with the shell — the Anthropic and the
+    // OpenAI-compatible ones install from the plugin catalog on first explicit use. If a backend
+    // sneaks back into the shell classpath, discovery re-lists it here and the jar grows back.
     List<io.jafar.shell.core.llm.LlmBackend> backends =
         io.jafar.shell.core.llm.LlmBackend.discover();
     assertTrue(
-        backends.stream().noneMatch(b -> "anthropic".equals(b.id())),
-        "the shell must not bundle the anthropic backend (it installs from the plugin catalog): "
+        backends.isEmpty(),
+        "the shell must not bundle LLM backends (they install from the plugin catalog): "
             + backends.stream().map(io.jafar.shell.core.llm.LlmBackend::id).toList());
-    assertTrue(
-        backends.stream().anyMatch(b -> "openai".equals(b.id()) || "ollama".equals(b.id())),
-        "the OpenAI-compatible backend still ships with the shell");
   }
 
   @Test
@@ -123,16 +120,13 @@ class LlmCommandsTest {
   }
 
   @Test
-  void statusShowsConfigurationAndEveryDiscoveredBackend() {
+  void statusWithNoBackendsInstalledSaysHowToInstall() {
     FakeHost host = new FakeHost();
     new LlmCommands(host).status();
     String text = host.text();
     assertTrue(text.contains("Configuration"));
-    // Discovered backends state their own default models and a READINESS verdict (env-dependent
-    // on credentials, so the verdict is what is asserted, not which backend is ready).
-    assertTrue(text.contains("default model:"), text);
-    assertTrue(text.contains("Backends"));
-    assertTrue(text.contains("READY"), text);
+    assertTrue(text.contains("none installed"), text);
+    assertTrue(text.contains("set llm.backend"), text);
   }
 
   @Test
@@ -174,7 +168,6 @@ class LlmCommandsTest {
     commands.explain();
     // It cannot explain without a resolvable backend, but it must get past the guard.
     assertFalse(host.text().contains("Nothing to explain yet"));
-    assertTrue(host.text().contains("No LLM backend with id"));
   }
 
   @Test

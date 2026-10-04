@@ -63,8 +63,9 @@ public final class LlmService {
       if (available.isEmpty()) {
         return Result.failure(
             "No LLM backend is installed.",
-            "The Anthropic backend installs from the plugin catalog on first explicit use —"
-                + " set llm.backend = anthropic, then ask again. See doc/cli/LlmSetup.md.");
+            "The backends install from the plugin catalog on first explicit use — set"
+                + " llm.backend = anthropic | openai | ollama, then ask again. See"
+                + " doc/cli/LlmSetup.md.");
       }
       // Distinguishing these two matters: a typo in llm.backend and a missing module need
       // completely different fixes, and reporting both as "not installed" sends the user hunting

@@ -6,6 +6,9 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// The shared helper that records which io.btrace modules this fat jar embeds in its manifest
+apply from: rootProject.file('gradle/embedded-modules.gradle')
+
 def libraryName = "jfr-mcp"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
@@ -347,6 +350,9 @@ shadowJar {
     archiveClassifier.set('all')
 
     mergeServiceFiles()
+
+    // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
+    recordEmbeddedModules(manifest)
 
     dependencies {
         // The shells' terminal stack does not exist inside an MCP server: the tools talk to the

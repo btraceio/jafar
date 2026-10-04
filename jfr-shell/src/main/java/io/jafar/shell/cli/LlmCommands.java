@@ -470,8 +470,8 @@ public final class LlmCommands {
     host.println("--------");
     if (backends.isEmpty()) {
       host.println(
-          "  none installed — select one (set llm.backend = anthropic) to install it from the"
-              + " plugin catalog, or add a backend to the classpath");
+          "  none installed — select one (set llm.backend = anthropic | openai | ollama) and it"
+              + " installs from the plugin catalog on first use; see doc/cli/LlmSetup.md");
       return;
     }
     for (LlmBackend backend : backends) {

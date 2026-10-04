@@ -50,13 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `shell-core` now loads lazily — backend discovery only reads the plugin directory.
   jetty (the `--attach` SSE bridge) and the MCP SDK's jackson/reactor/schema stack remain by
   design
-- **The Anthropic LLM backend no longer ships inside the shell.** Its SDK alone outweighed the
-  rest of the release jar: `jafar-shell` drops from a 38.2 MiB artifact (96.5 MiB unpacked) to
-  9.3 MiB. The backend now installs on first explicit use: select it (`set llm.backend =
-  anthropic`) and the first `ask` prints the same "Downloading from Maven repositories..." step
-  the JFR backend selection already has; `llm.backend = auto` never installs anything; air-gapped
-  machines take the self-contained `llm-anthropic-X.Y.Z-all.jar` via `--install-plugin`. The
-  no-backend configuration remains fully supported — the SPI degrades to a clear message
+- **No LLM backend ships inside the shell.** The Anthropic backend's SDK alone outweighed the
+  rest of the release jar; the OpenAI-compatible backend (`openai` and `ollama` — two profiles
+  of one small JDK-HttpClient adapter) never needed the jar at all. Both are standalone
+  artifacts on the llm releases now (`llm-anthropic`, `llm-openai`), cataloged and installed at
+  the first explicit use: select a backend (`set llm.backend = anthropic | openai | ollama`)
+  and the first `ask` prints the same "Downloading from Maven repositories..." step the JFR
+  backend selection already has; `llm.backend = auto` never installs anything; air-gapped
+  machines install from files (`--install-plugin`, recipe in doc/cli/LlmSetup.md). The
+  no-backend configuration remains fully supported — the SPI degrades to a clear message.
+  `jafar-shell` drops to a 9.3 MiB artifact whose manifest's `Embedded-Modules` line names every
+  io.btrace module and version the build embedded
 - **Release versioning is tag-derived** — the project version comes from git tags
   (`gradle/version-from-tag.gradle`), not from a number baked into `build.gradle`. A build exactly
   on `vX.Y.Z` reports `X.Y.Z`; any other build reports `<newest vX.Y.Z tag>-SNAPSHOT`. Releasing

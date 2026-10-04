@@ -5,6 +5,9 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// The shared helper that records which io.btrace modules this fat jar embeds in its manifest
+apply from: rootProject.file('gradle/embedded-modules.gradle')
+
 def libraryName = "jfr-shell"
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
 
@@ -50,11 +53,11 @@ java {
 
 dependencies {
     api project(':shell-core')
-    // LLM support is optional at runtime: the SPI lives in shell-core, backends are discovered
-    // via ServiceLoader, and the Anthropic backend installs from the plugin catalog on first
-    // explicit use. Dropping the OpenAI backend here removes the provider SDK entirely and the
-    // ask/explain commands degrade to a clear message.
-    runtimeOnly project(':llm-openai')
+    // No LLM backend ships inside the jar: both the Anthropic and the OpenAI-compatible backends
+    // (OpenAI, Ollama, ...) are standalone plugins under the llm tags, cataloged in
+    // jfr-shell-plugins.json and installed at first explicit use. The SPI lives in shell-core,
+    // discovery is ServiceLoader, and with no backend installed the ask/explain commands degrade
+    // to a clear message.
 
     // Backend plugins available for testing (discovered via ServiceLoader)
     testRuntimeOnly project(':jfr-shell-jafar')
@@ -112,6 +115,9 @@ shadowJar {
 
     // Merge service files for ServiceLoader discovery
     mergeServiceFiles()
+
+    // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
+    recordEmbeddedModules(manifest)
 
     // Relocate dependencies to avoid conflicts with plugin JARs
     relocate 'org.apache.maven.resolver', 'io.jafar.shaded.resolver'
