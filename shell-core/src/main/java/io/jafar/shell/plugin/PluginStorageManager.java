@@ -128,6 +128,16 @@ final class PluginStorageManager {
       if (Files.exists(jarPath)) {
         jars.add(jarPath);
       }
+      // Dependencies the installer resolved from the plugin's POM live in a deps/ subdirectory
+      // of the version directory; they join the root jar on the plugin classloader.
+      Path dependenciesDir = getPluginVersionDir(metadata).resolve("deps");
+      if (Files.isDirectory(dependenciesDir)) {
+        try (java.util.stream.Stream<Path> deps = Files.walk(dependenciesDir)) {
+          deps.filter(p -> p.toString().endsWith(".jar")).sorted().forEach(jars::add);
+        } catch (java.io.UncheckedIOException e) {
+          throw new IOException("Failed to scan dependency jars of " + metadata.artifactId(), e);
+        }
+      }
     }
 
     return jars;

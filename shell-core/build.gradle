@@ -91,12 +91,33 @@ task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask) {
 // Run japicmp as part of check
 tasks.named('check') {
     dependsOn japicmp
+    dependsOn 'pluginSystemTest'
 }
 
 test {
     useJUnitPlatform()
     // Enable Byte Buddy experimental support for Java 25 when used by Mockito
     systemProperty 'net.bytebuddy.experimental', 'true'
+    // Bound to the PluginManager singleton (see pluginSystemTest below); excluded so the plain
+    // test task cannot bind it to the developer's real ~/.jfr-shell.
+    exclude 'io/jafar/shell/plugin/PluginManagerLlmInstallTest.class'
+}
+
+// Plugin-system tests that bind process-global state run in their own JVM: the PluginManager
+// singleton binds plugin storage and the Maven repository at class-load time, and the registry
+// refreshes remotely at construction. Task-level system properties decide all three before any
+// test runs, so these tests are deterministic and never touch the developer's ~/.jfr-shell.
+tasks.register('pluginSystemTest', Test) {
+    group = 'verification'
+    description = 'Runs the PluginManager-singleton tests in their own JVM with fixture directories'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/shell/plugin/PluginManagerLlmInstallTest.class'
+    dependsOn testClasses
+    systemProperty 'jfr.shell.plugin.dir', "${layout.buildDirectory.get().asFile}/plugin-system-test/plugins"
+    systemProperty 'jfr.shell.registry.remote', 'false'
+    systemProperty 'user.home', "${layout.buildDirectory.get().asFile}/plugin-system-test/home"
+    useJUnitPlatform()
 }
 
 group = 'io.btrace'

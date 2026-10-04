@@ -165,6 +165,17 @@ public final class PluginManager {
   }
 
   /**
+   * Whether a plugin is known from sources needing no network: the bundled catalog and the local
+   * Maven snapshot scan done at plugin-system start.
+   *
+   * <p>The ask-time install gate uses this — deciding whether a selected backend can be installed
+   * must not block on a registry fetch; the install itself refreshes explicitly.
+   */
+  public boolean canInstallOffline(String pluginId) {
+    return registry.isKnownOffline(pluginId);
+  }
+
+  /**
    * Install a plugin from Maven repositories (simple, no dependency handling).
    *
    * <p>This downloads the plugin JAR from Maven Central/Sonatype, verifies its checksum, and
@@ -315,12 +326,16 @@ public final class PluginManager {
       throw new PluginInstallException("File must be a JAR: " + fileName);
     }
 
-    // Validate JAR contains ServiceLoader config
+    // Validate JAR contains a backend ServiceLoader config (JFR or LLM)
     try (JarFile jar = new JarFile(jarPath.toFile())) {
-      ZipEntry serviceEntry = jar.getEntry("META-INF/services/io.jafar.shell.backend.JfrBackend");
-      if (serviceEntry == null) {
+      boolean hasBackendProvider =
+          jar.getEntry("META-INF/services/io.jafar.shell.backend.JfrBackend") != null
+              || jar.getEntry("META-INF/services/io.jafar.shell.core.llm.LlmBackend") != null;
+      if (!hasBackendProvider) {
         throw new PluginInstallException(
-            "JAR does not contain a JfrBackend service provider (META-INF/services/io.jafar.shell.backend.JfrBackend)");
+            "JAR does not contain a backend service provider"
+                + " (expected META-INF/services/io.jafar.shell.backend.JfrBackend"
+                + " or META-INF/services/io.jafar.shell.core.llm.LlmBackend)");
       }
 
       // Parse artifactId and version from filename: {artifactId}-{version}.jar

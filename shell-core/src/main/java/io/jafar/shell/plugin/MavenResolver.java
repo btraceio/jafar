@@ -4,22 +4,36 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.collection.DependencyCollectionContext;
+import org.eclipse.aether.collection.DependencySelector;
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
+import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
 import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.transport.http.HttpTransporterFactory;
+import org.eclipse.aether.util.graph.transformer.ConflictResolver;
+import org.eclipse.aether.util.graph.transformer.JavaScopeDeriver;
+import org.eclipse.aether.util.graph.transformer.JavaScopeSelector;
+import org.eclipse.aether.util.graph.transformer.NearestVersionSelector;
+import org.eclipse.aether.util.graph.transformer.SimpleOptionalitySelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -124,6 +138,104 @@ final class MavenResolver {
     } catch (ArtifactResolutionException e) {
       // Checksum files may not exist - return null
       return null;
+    }
+  }
+
+  /** The root jar of a resolution, plus every dependency artifact it needs on the classpath. */
+  record ResolvedPlugin(Path rootJar, List<Artifact> dependencies) {}
+
+  /**
+   * Resolve an artifact together with the jars its POM declares as compile or runtime dependencies,
+   * Maven-style: scopes are filtered (test/provided/system dependencies are not copied into plugin
+   * storage) and version conflicts resolve nearest-wins.
+   *
+   * <p>Resolution always runs, even when the root jar is already in the local repository: its
+   * dependencies may well not be.
+   *
+   * @param groupId Maven groupId
+   * @param artifactId Maven artifactId
+   * @param version Version string
+   * @return the root jar path and the dependency artifacts, each carrying its own file path
+   * @throws PluginInstallException if resolution fails
+   */
+  ResolvedPlugin resolveWithDependencies(String groupId, String artifactId, String version)
+      throws PluginInstallException {
+    try {
+      DefaultRepositorySystemSession session = newSession(system);
+      // The bare MavenRepositorySystemUtils session applies no scope filtering and no conflict
+      // resolution: collecting every scope verbatim would copy test jars and duplicate versions
+      // into plugin storage, so both are wired explicitly, mirroring what Maven configures.
+      session.setDependencySelector(new CompileRuntimeDependencySelector());
+      session.setDependencyGraphTransformer(
+          new ConflictResolver(
+              new NearestVersionSelector(),
+              new JavaScopeSelector(),
+              new SimpleOptionalitySelector(),
+              new JavaScopeDeriver()));
+
+      Artifact artifact = new DefaultArtifact(groupId + ":" + artifactId + ":jar:" + version);
+      CollectRequest collect = new CollectRequest();
+      collect.setRoot(new Dependency(artifact, "compile"));
+      collect.setRepositories(repositories);
+      DependencyRequest request = new DependencyRequest(collect, null);
+
+      DependencyNode root = system.resolveDependencies(session, request).getRoot();
+      if (root == null || root.getArtifact() == null) {
+        throw new PluginInstallException(
+            "Failed to resolve artifact: " + groupId + ":" + artifactId + ":" + version);
+      }
+      List<Artifact> deps = new ArrayList<>();
+      collectJarDependencies(root, deps, new HashSet<>());
+      return new ResolvedPlugin(root.getArtifact().getFile().toPath(), List.copyOf(deps));
+    } catch (DependencyResolutionException e) {
+      throw new PluginInstallException(
+          "Failed to resolve artifact with dependencies: "
+              + groupId
+              + ":"
+              + artifactId
+              + ":"
+              + version,
+          e);
+    }
+  }
+
+  /** Selects compile-runtime dependencies — what a published POM means when Maven builds it. */
+  private static final class CompileRuntimeDependencySelector implements DependencySelector {
+
+    @Override
+    public boolean selectDependency(Dependency dependency) {
+      String scope = dependency.getScope();
+      // Scopes that were never mediable would have no mediable transitive consequences: a
+      // missing scope defaults to compile, and null means the dependency has no declared scope.
+      return scope == null
+          || switch (scope) {
+            case "", "compile", "runtime" -> true;
+            default -> false;
+          };
+    }
+
+    @Override
+    public DependencySelector deriveChildSelector(DependencyCollectionContext context) {
+      return this;
+    }
+  }
+
+  /** Collect the resolved jar artifacts below {@code node}; the root's own jar is excluded. */
+  private void collectJarDependencies(DependencyNode node, List<Artifact> out, Set<String> seen) {
+    for (DependencyNode child : node.getChildren()) {
+      Dependency dependency = child.getDependency();
+      if (dependency == null || dependency.isOptional()) {
+        continue;
+      }
+      Artifact dep = child.getArtifact();
+      if (dep == null || !"jar".equals(dep.getExtension())) {
+        // Type poms / BOM imports are scope and version carriers, not classpath entries
+        continue;
+      }
+      if (seen.add(dep.getGroupId() + ":" + dep.getArtifactId() + ":" + dep.getBaseVersion())) {
+        out.add(dep);
+      }
+      collectJarDependencies(child, out, seen);
     }
   }
 

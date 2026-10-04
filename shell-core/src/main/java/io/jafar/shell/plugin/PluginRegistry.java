@@ -123,6 +123,7 @@ final class PluginRegistry {
 
     PluginDefinition remote = remotePlugins.get(pluginId.toLowerCase());
     PluginDefinition localMaven = localMavenPlugins.get(pluginId.toLowerCase());
+    PluginDefinition bundled = bundledPlugins.get(pluginId.toLowerCase());
 
     // Prefer local Maven when it has a newer version than remote (e.g. local SNAPSHOT builds)
     if (localMaven != null && remote != null) {
@@ -143,10 +144,30 @@ final class PluginRegistry {
 
     if (localMaven != null) {
       log.debug("Found plugin '{}' in local Maven: {}", pluginId, localMaven.version());
-    } else {
-      log.debug("Plugin '{}' not found in registry", pluginId);
+      return Optional.of(localMaven);
     }
-    return Optional.ofNullable(localMaven);
+
+    // Nothing found remotely and the installed plugin was not scanned locally: the bundled
+    // catalog is the offline fallback — the offline user must still be able to install the
+    // default backend from the already-cached artifact.
+    if (bundled != null) {
+      log.debug("Found plugin '{}' in bundled catalog: {}", pluginId, bundled.version());
+      return Optional.of(bundled);
+    }
+    log.debug("Plugin '{}' not found in registry", pluginId);
+    return Optional.empty();
+  }
+
+  /**
+   * Whether the plugin is known from sources available without any network: the catalog bundled in
+   * the application jar and the local Maven snapshot scan done at registration time.
+   *
+   * <p>The ask-time install gate uses this so deciding whether a backend is installable never waits
+   * on a network fetch; the install itself refreshes the registry explicitly.
+   */
+  boolean isKnownOffline(String pluginId) {
+    String id = pluginId.toLowerCase();
+    return bundledPlugins.containsKey(id) || localMavenPlugins.containsKey(id);
   }
 
   /** Refresh plugin discovery if cache is stale. */
@@ -193,6 +214,21 @@ final class PluginRegistry {
   }
 
   /** Discover plugins from local Maven repository. */
+  /**
+   * Plugin id for a Maven artifact directory: {@code jfr-shell-jdk} → {@code jdk} (the JFR
+   * backends), {@code llm-anthropic} → {@code anthropic} (the LLM backends); null for anything
+   * else, which keeps other io.btrace artifacts out of the registry.
+   */
+  private static String pluginIdForArtifact(String artifactId) {
+    if (artifactId.startsWith("jfr-shell-")) {
+      return artifactId.substring("jfr-shell-".length());
+    }
+    if (artifactId.startsWith("llm-")) {
+      return artifactId.substring("llm-".length());
+    }
+    return null;
+  }
+
   private Map<String, PluginDefinition> discoverLocalMavenPlugins() {
     Map<String, PluginDefinition> plugins = new HashMap<>();
 
@@ -208,13 +244,13 @@ final class PluginRegistry {
       try (var stream = Files.list(btraceRepo)) {
         stream
             .filter(Files::isDirectory)
-            .filter(p -> p.getFileName().toString().startsWith("jfr-shell-"))
             .forEach(
                 artifactDir -> {
                   String artifactId = artifactDir.getFileName().toString();
-
-                  // Extract plugin ID from artifact ID (e.g., "jfr-shell-jdk" -> "jdk")
-                  String pluginId = artifactId.substring("jfr-shell-".length());
+                  String pluginId = pluginIdForArtifact(artifactId);
+                  if (pluginId == null) {
+                    return;
+                  }
 
                   // Find latest version
                   String latestVersion = findLatestVersion(artifactDir);
@@ -411,6 +447,14 @@ final class PluginRegistry {
 
   /** Load remote plugin registry from GitHub or cache. */
   private void loadRemotePlugins() {
+    if ("false".equals(System.getProperty("jfr.shell.registry.remote", "true"))) {
+      // Test isolation / air-gapped builds: the remote fetch fires at plugin-system construction,
+      // so tests that bind the singleton to fixture directories shut it off at task level.
+      log.debug("Remote plugin registry disabled (jfr.shell.registry.remote=false)");
+      this.remotePlugins = new HashMap<>();
+      this.lastRemoteFetch = Instant.now();
+      return;
+    }
     try {
       log.debug("Loading remote plugin registry");
       // Try loading from cache first
