@@ -1,5 +1,11 @@
 plugins {
     id 'java-library'
+    // The release publishes a thin main jar (the plugin installer resolves the POM's transitive
+    // dependencies at install time) and this module's self-contained jar under the 'all'
+    // classifier, which the air-gapped --install-plugin route takes as a single file.
+    id 'com.gradleup.shadow' version '9.0.0'
+    id 'maven-publish'
+    id 'com.vanniktech.maven.publish'
 }
 
 def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
@@ -16,9 +22,10 @@ java {
 }
 
 dependencies {
-    // The SPI lives in shell-core; only this module sees the Anthropic SDK, so a shell that
-    // does not depend on llm-core carries no LLM dependency at all.
-    api project(':shell-core')
+    // The SPI lives in shell-core (provided by the shell at runtime) — compileOnly, like
+    // jfr-shell-jdk and jfr-shell-jafar, so the published plugin jar bundles only the SDK.
+    compileOnly project(':shell-core')
+    testImplementation project(':shell-core')
     implementation 'com.anthropic:anthropic-java:2.34.0'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
@@ -32,3 +39,21 @@ test {
 group = 'io.btrace'
 version = component_version
 description = 'Anthropic API backend for the Jafar shells'
+
+shadowJar {
+    group 'Build'
+    archiveVersion = component_version
+    // The plugin-isolated classloader delegates to the shell's classpath for the SPI, so the
+    // interface module stays out of the self-contained jar. The Anthropic SDK and its transport
+    // deps ship un-relocated: this jar must be self-contained for --install-plugin installs.
+    mergeServiceFiles()
+    dependencies {
+        exclude(dependency('io.btrace:shell-core'))
+    }
+    manifest {
+        attributes(
+            'Implementation-Title': 'llm-anthropic',
+            'Implementation-Version': component_version
+        )
+    }
+}

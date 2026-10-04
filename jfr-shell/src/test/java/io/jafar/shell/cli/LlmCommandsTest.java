@@ -100,13 +100,19 @@ class LlmCommandsTest {
   }
 
   @Test
-  void theAnthropicBackendIsDiscoverableOnTheShellClasspath() {
-    // Proves the ServiceLoader registration in llm-core is wired correctly, without making a
-    // request: discovery is metadata only.
+  void theShellArtifactBundlesOnlyTheOpenAICompatibleBackend() {
+    // The release jar slimmed: the Anthropic backend and its SDK — which alone outweighed the
+    // rest of the jar — install from the plugin catalog instead. If the SDK sneaks back into the
+    // shell classpath, discovery re-lists it here; the bundle must stay out.
+    List<io.jafar.shell.core.llm.LlmBackend> backends =
+        io.jafar.shell.core.llm.LlmBackend.discover();
     assertTrue(
-        io.jafar.shell.core.llm.LlmBackend.discover().stream()
-            .anyMatch(b -> "anthropic".equals(b.id())),
-        "llm-core should contribute the anthropic backend");
+        backends.stream().noneMatch(b -> "anthropic".equals(b.id())),
+        "the shell must not bundle the anthropic backend (it installs from the plugin catalog): "
+            + backends.stream().map(io.jafar.shell.core.llm.LlmBackend::id).toList());
+    assertTrue(
+        backends.stream().anyMatch(b -> "openai".equals(b.id()) || "ollama".equals(b.id())),
+        "the OpenAI-compatible backend still ships with the shell");
   }
 
   @Test
@@ -122,11 +128,10 @@ class LlmCommandsTest {
     new LlmCommands(host).status();
     String text = host.text();
     assertTrue(text.contains("Configuration"));
-    assertTrue(text.contains("claude-opus-5"), "default model should be shown");
+    // Discovered backends state their own default models and a READINESS verdict (env-dependent
+    // on credentials, so the verdict is what is asserted, not which backend is ready).
+    assertTrue(text.contains("default model:"), text);
     assertTrue(text.contains("Backends"));
-    // status lists what is installed regardless of the configured id, so a typo is visible.
-    assertTrue(text.contains("anthropic"), text);
-    // Readiness depends on the machine's credentials, so assert only that a verdict was printed.
     assertTrue(text.contains("READY"), text);
   }
 

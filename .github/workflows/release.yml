@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       publish_backends_only:
-        description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar)'
+        description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar, llm-anthropic)'
         required: false
         type: boolean
         default: false
@@ -149,7 +149,7 @@ jobs:
 
       - name: Publish parser, tools, jfr-shell, jfr-mcp to Maven Central
         run: |
-          ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository :llm-anthropic:shadowJar :llm-anthropic:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
       - name: Publish backend plugins to Maven Central
         run: |
@@ -265,7 +265,7 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           echo "Publishing backend plugins for version $VERSION"
-          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
+          ./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository :llm-anthropic:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
           echo "✅ Backend plugins published successfully"
 
   # Update JBang catalog automatically or manually

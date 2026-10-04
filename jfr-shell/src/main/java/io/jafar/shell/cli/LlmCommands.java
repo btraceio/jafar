@@ -1,5 +1,6 @@
 package io.jafar.shell.cli;
 
+import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.core.llm.LlmBackend;
 import io.jafar.shell.core.llm.LlmConfig;
 import io.jafar.shell.core.llm.LlmException;
@@ -9,6 +10,7 @@ import io.jafar.shell.core.llm.LlmService;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.core.llm.QueryProposal;
 import io.jafar.shell.core.llm.Redactor;
+import io.jafar.shell.plugin.PluginManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -159,10 +161,43 @@ public final class LlmCommands {
     }
     String backendId = config.backendId();
     if (cachedService == null || !backendId.equals(cachedBackendId)) {
-      cachedService = LlmService.create(config);
+      cachedService = createOrInstall(config);
       cachedBackendId = backendId;
     }
     return cachedService;
+  }
+
+  /**
+   * Builds the service, with one escape hatch: when the explicitly selected backend is missing but
+   * the plugin catalog can install it, installs it on the spot and retries. The Anthropic backend
+   * is the reason this exists: not bundled with the shell (its SDK alone is most of the release
+   * jar's weight), its catalog entry installs on first explicit use. Automatic selection never
+   * reaches for the network on the user's behalf — {@code auto} stays on whatever backends are
+   * already present and reports the remedy instead.
+   */
+  private LlmService.Result<LlmService> createOrInstall(LlmConfig config) {
+    LlmService.Result<LlmService> result = LlmService.create(config);
+    if (result.isPresent()) {
+      return result;
+    }
+    String backendId = config.backendId();
+    boolean explicit =
+        backendId != null && !backendId.isBlank() && !"auto".equalsIgnoreCase(backendId);
+    if (!explicit || !PluginManager.getInstance().canInstallOffline(backendId)) {
+      return result;
+    }
+    System.err.println("Backend not found: " + backendId);
+    System.err.print("Downloading from Maven repositories... ");
+    try {
+      PluginManager.getInstance().installPlugin(backendId);
+      PluginManager.reinitialize();
+      BackendRegistry.getInstance().rediscover();
+      System.err.println("done.");
+    } catch (Exception e) {
+      System.err.println("failed: " + e.getMessage());
+      return result;
+    }
+    return LlmService.create(config);
   }
 
   /**
@@ -434,7 +469,9 @@ public final class LlmCommands {
     host.println("Backends");
     host.println("--------");
     if (backends.isEmpty()) {
-      host.println("  none installed — the llm-core module is not on the classpath");
+      host.println(
+          "  none installed — select one (set llm.backend = anthropic) to install it from the"
+              + " plugin catalog, or add a backend to the classpath");
       return;
     }
     for (LlmBackend backend : backends) {
