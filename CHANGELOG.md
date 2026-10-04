@@ -28,8 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies every dependency jar into the plugin's storage, where the plugin classloader already
   looks
 
+- **Javadoc jars drop ~4 MiB each.** They were up to 90% javadoc's own bundled DejaVu web fonts
+  and chrome; `--no-fonts` (set for every subproject's javadoc) keeps the HTML, drops the fonts
+  and the search page weight: jfr-mcp 4.18 -> 0.32 MiB, jafar-shell 4.23 -> 0.37 MiB, and the
+  `jfr-shell-jdk`/`jfr-shell-jafar` backend artifacts 3.96 -> ~0.13 MiB, which were mostly
+  javadoc
+
 ### Changed
-- **The MCP server jar drops from 38.2 MiB to 13.2 MiB.** Four cuts, all content-level (the jar
+- **The MCP server jar drops from 38.2 MiB to 13.2 MiB.**** Four cuts, all content-level (the jar
   stays self-contained for `java -jar` and the E2E harness): the heap tools depend on
   `it.unimi.dsi:fastutil-core` (the subset fastutil itself publishes — the full jar was 51% of
   the server jar); the embedded fastutil copy is then trimmed to the exact static closure of
