@@ -29,14 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looks
 
 ### Changed
-- **The MCP server jar drops from 38.2 MiB to 18.7 MiB.** Three cuts: the heap tools depend on
-  `it.unimi.dsi:fastutil-core` (the subset fastutil itself publishes — 9 used types instead of
-  16,204 shipped classes; the full jar was 51% of the server jar); the shells' jline terminal
-  stack, which nothing the server loads ever references (its tools use the engine classes, and
-  the `ShellModule.getCompleter` adapters are never instantiated there); and the Maven resolver
-  stack, which stays out of the server because the plugin install machinery inside `shell-core`
-  now loads lazily — backend discovery only reads the plugin directory. jetty (the `--attach`
-  SSE bridge) and the MCP SDK's jackson/reactor/schema stack remain by design
+- **The MCP server jar drops from 38.2 MiB to 13.2 MiB.** Four cuts, all content-level (the jar
+  stays self-contained for `java -jar` and the E2E harness): the heap tools depend on
+  `it.unimi.dsi:fastutil-core` (the subset fastutil itself publishes — the full jar was 51% of
+  the server jar); the embedded fastutil copy is then trimmed to the exact static closure of
+  what the embedded code loads, derived by jdeps at build time over the runtime classpath and
+  closed by actually loading every kept class and walking its hierarchy, field types and method
+  signatures (first-generation trims missed the superclass and inner-class chains and
+  `NoClassDefFoundError`'d in `hdump_open`/`hdump_summary`; the fixpoint derives on every build,
+  so a newly referenced type cannot ship missing — the four-format E2E is the runtime net); the
+  shells' jline terminal stack, which nothing the server loads references (its tools use the
+  engine classes, and the `ShellModule.getCompleter` adapters are never initialized there); and
+  the Maven resolver stack, which stays out of the server because the plugin install machinery
+  inside `shell-core` now loads lazily — backend discovery only reads the plugin directory.
+  jetty (the `--attach` SSE bridge) and the MCP SDK's jackson/reactor/schema stack remain by
+  design
 - **The Anthropic LLM backend no longer ships inside the shell.** Its SDK alone outweighed the
   rest of the release jar: `jafar-shell` drops from a 38.2 MiB artifact (96.5 MiB unpacked) to
   9.3 MiB. The backend now installs on first explicit use: select it (`set llm.backend =
