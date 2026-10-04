@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
+  (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
+  the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that
+  was about 77 MiB per release (the shell artifact published ~180 MB per release in total). The
+  publication now carries one jar: the `-all` variant stays only where it is a genuinely
+  different artifact (a self-contained installer jar for the LLM plugin), never a duplicate of
+  the main one
+- **The bundled plugin catalog is actually used now.** `PluginRegistry.get` never looked at the
+  catalog bundled in the jar — the advertised offline fallback was dead data, so an offline user
+  could not install backends at all unless the remote registry fetch happened to succeed. `get`
+  now falls back to the bundled catalog, and `canInstallOffline` answers the ask-time install
+  gate without any network
+- **The plugin system resolves a plugin jar's Maven dependencies.** The installer used to
+  download exactly one jar per plugin, silently assuming every plugin is dependency-free; a thin
+  jar depending on a real library (now possible: `llm-anthropic` is a plugin) would fail at first
+  use with `NoClassDefFoundError`. The installer now collects the dependency graph of the
+  plugin's POM (compile and runtime scopes, nearest-wins conflicts, BOM-managed versions) and
+  copies every dependency jar into the plugin's storage, where the plugin classloader already
+  looks
+
 ### Changed
+- **The Anthropic LLM backend no longer ships inside the shell.** Its SDK alone outweighed the
+  rest of the release jar: `jafar-shell` drops from a 38.2 MiB artifact (96.5 MiB unpacked) to
+  9.3 MiB. The backend now installs on first explicit use: select it (`set llm.backend =
+  anthropic`) and the first `ask` prints the same "Downloading from Maven repositories..." step
+  the JFR backend selection already has; `llm.backend = auto` never installs anything; air-gapped
+  machines take the self-contained `llm-anthropic-X.Y.Z-all.jar` via `--install-plugin`. The
+  no-backend configuration remains fully supported — the SPI degrades to a clear message
 - **Release versioning is tag-derived** — the project version comes from git tags
   (`gradle/version-from-tag.gradle`), not from a number baked into `build.gradle`. A build exactly
   on `vX.Y.Z` reports `X.Y.Z`; any other build reports `<newest vX.Y.Z tag>-SNAPSHOT`. Releasing

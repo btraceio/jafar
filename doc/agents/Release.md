@@ -24,10 +24,9 @@ a release is made by tagging. See [RELEASING.md](../../RELEASING.md).
 The release workflow (`.github/workflows/release.yml`) automatically:
 - Tags the Go module as `go-parser/vX.Y.Z` (validated first: a Go module version is immutable once
   the proxy has served it) - see [RELEASING.md](../../RELEASING.md) section 5
-- Publishes `jafar-parser` and `jafar-tools` to Maven Central (Sonatype)
+- Publishes `jafar-parser`, `jafar-tools`, `jafar-shell` (built by the `jfr-shell` module),
+  `jfr-mcp` and `llm-anthropic` to Maven Central (Sonatype)
 - Publishes `jafar-gradle-plugin` to Maven Central (Sonatype)
-- Publishes `jfr-shell` to GitHub Packages
-- Triggers JitPack build and waits for completion
 - Commits the `jfr-shell-plugins.json` plugin catalog update to `main` (never downgrades)
 - Updates [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog) with new version
 - Creates GitHub Release with changelog notes
@@ -72,9 +71,7 @@ jbang --fresh jfr-shell@btraceio --version
 
 If automated workflow fails:
 ```bash
-# Publish to Sonatype
-SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
-
-# Publish jfr-shell to GitHub Packages
-GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
+# Publish to Sonatype (the same steps the workflow's publish job runs)
+SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx \
+  ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository :llm-anthropic:shadowJar :llm-anthropic:publishAllPublicationsToMavenCentralRepository
 ```

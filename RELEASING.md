@@ -46,14 +46,18 @@ git push origin v0.4.0
 ```
 
 **This triggers the automated release workflow** which will:
-1. ✅ Publish `jafar-parser`, `jafar-tools`, and `jfr-shell` to Maven Central (Sonatype)
+1. ✅ Publish `jafar-parser`, `jafar-tools`, `jafar-shell`, `jfr-mcp` and `llm-anthropic` to
+   Maven Central (Sonatype)
 2. ✅ Publish `jafar-gradle-plugin` to Maven Central (Sonatype)
-3. ✅ Publish `jfr-shell` to GitHub Packages (backup distribution)
-4. ✅ Commit the `jfr-shell-plugins.json` plugin catalog update to `main`
-5. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
-6. ✅ Create GitHub Release with changelog notes
+3. ✅ Commit the `jfr-shell-plugins.json` plugin catalog update to `main`
+4. ⏳ Wait for Maven Central sync, then update [btraceio/jbang-catalog](https://github.com/btraceio/jbang-catalog)
+5. ✅ Create GitHub Release with changelog notes
 
-> **Bundled catalog note:** the released `jfr-shell` jar bundles
+> There is no separate binary distribution channel: no release assets are attached to GitHub
+> releases, and nothing is published to GitHub Packages. JBang resolves the Maven artifacts, and
+> the `jfr-shell-plugins.json` catalog points users at the installable backend plugins.
+
+> **Bundled catalog note:** the released `jafar-shell` jar bundles
 > `jfr-shell-plugins.json` (offline fallback for `PluginRegistry`). The publish job patches that
 > one file in the working tree to point at the release being published — the tag itself is not
 > rewritten, so checking out the tag shows the previous release's catalog in that one file. The
@@ -120,7 +124,7 @@ After the workflow completes, verify:
 # Test the Go module (available as soon as the tag is pushed - no Maven Central wait)
 go list -m github.com/btraceio/jafar/go-parser@X.Y.Z
 
-# Test JBang installation (may work immediately via GitHub Packages, or after Maven Central sync)
+# Test JBang installation (available as soon as Maven Central syncs)
 jbang --fresh jfr-shell@btraceio --version
 
 # Test Maven artifact directly from Maven Central
@@ -192,19 +196,17 @@ The catalog update process has multiple fallbacks:
 If automated workflow fails, you can manually release:
 
 ```bash
-# 1. Publish to Sonatype
-SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx ./gradlew publish -x :jfr-shell:publish
+# 1. Publish the main artifacts (same set the workflow publishes)
+SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx \
+  ./gradlew :parser:shadowJar :parser:publishAllPublicationsToMavenCentralRepository :tools:shadowJar :tools:publishAllPublicationsToMavenCentralRepository :jfr-shell:shadowJar :jfr-shell:publishAllPublicationsToMavenCentralRepository :jfr-mcp:shadowJar :jfr-mcp:publishAllPublicationsToMavenCentralRepository :llm-anthropic:shadowJar :llm-anthropic:publishAllPublicationsToMavenCentralRepository
 
-# 2. Publish jfr-shell to GitHub Packages
-GITHUB_ACTOR=xxx GITHUB_TOKEN=xxx ./gradlew :jfr-shell:publishMavenPublicationToGitHubPackagesRepository
+# 1b. Publish backend plugins
+./gradlew :jfr-shell-jdk:publishAllPublicationsToMavenCentralRepository :jfr-shell-jafar:publishAllPublicationsToMavenCentralRepository --no-daemon --stacktrace
 
-# 3. Trigger JitPack manually
-curl "https://jitpack.io/com/github/btraceio/jafar/v0.4.0/build.log"
-
-# 4. Update JBang catalog manually
+# 2. Update JBang catalog manually
 # Clone btraceio/jbang-catalog and update version in:
 # - jbang-catalog.json
-# - jfr-shell.java
+# - jafar-shell.java
 ```
 
 ## Version Numbering

@@ -29,14 +29,25 @@ calls out to the network unless you run one of the commands above.
 
 ## Choosing a provider
 
-Three backend ids ship in the box. `llm.backend` picks one; the default, `auto`, takes the first
+Three backend ids exist. `llm.backend` picks one; the default, `auto`, takes the first
 that reports ready.
 
 | `llm.backend` | Module | Talks to | Default model | Credential |
 |---|---|---|---|---|
-| `anthropic` | `llm-anthropic` | api.anthropic.com | `claude-opus-5` | API key **or** keyless OAuth profile |
-| `openai` | `llm-openai` | api.openai.com | `gpt-4o-mini` | `OPENAI_API_KEY` |
-| `ollama` | `llm-openai` | `http://localhost:11434/v1` | `qwen2.5-coder:7b` | none locally; an API key for Ollama Cloud |
+| `anthropic` | `llm-anthropic` — installed from the plugin catalog, see below | api.anthropic.com | `claude-opus-5` | API key **or** keyless OAuth profile |
+| `openai` | `llm-openai` (ships with the shell) | api.openai.com | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| `ollama` | `llm-openai` (ships with the shell) | `http://localhost:11434/v1` | `qwen2.5-coder:7b` | none locally; an API key for Ollama Cloud |
+
+**The Anthropic backend installs on first explicit use.** It is not bundled with the shell: its
+SDK alone outweighs the rest of the jar. Select it (`set llm.backend = anthropic`) and the first
+`ask` says so and installs it from Maven Central (the same "Downloading from Maven
+repositories..." step the JFR backend flow uses). Automatic selection never installs anything.
+Air-gapped machines get the self-contained jar instead — `llm-anthropic-X.Y.Z-all.jar` from the
+artifact's Maven listing — and register it manually:
+
+```bash
+jafar-shell --install-plugin /path/to/llm-anthropic-X.Y.Z-all.jar
+```
 
 Each backend supplies its own default model, so there is no cross-provider default to get wrong:
 leave `llm.model` unset and you get something sensible for whichever backend you selected.

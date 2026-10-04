@@ -15,11 +15,15 @@ the commands after what a user is doing. `CommandDispatcher`'s switch is the map
 taken before the line is split into words so `?why is this slow` is one command.
 
 Architecture, and the reasons it is shaped this way:
-- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. Backends
-  live in **llm-anthropic** (Anthropic Java SDK) and **llm-openai** (chat-completions over the JDK
-  HTTP client, no provider SDK), which both shells take as `runtimeOnly` and discover via
-  `ServiceLoader`. Dropping those dependencies removes every provider SDK and the commands degrade
-  to a clear message — air-gapped use is a supported configuration, not an accident.
+- The SPI (`io.jafar.shell.core.llm`) lives in **shell-core with no new dependencies**. The
+  `openai` backend (chat-completions over the JDK HTTP client, no provider SDK) ships with the
+  shells as `runtimeOnly`; the `anthropic` backend (Anthropic Java SDK) ships as a **plugin**: it
+  is published as its own thin artifact, the plugin catalog carries it (`anthropic`), and shells
+  install it when a user explicitly selects the backend — automatic selection never installs
+  anything. Discovery consults the plugin-aware classloader (the same seam the JFR backends
+  already used), so an installed plugin is found without a restart. Dropping even the OpenAI
+  dependency removes every provider SDK and the commands degrade to a clear message — air-gapped
+  use is a supported configuration, not an accident.
 - **No provider is privileged.** `llm.backend` selects one by id (`anthropic`, `openai`, `ollama`);
   `auto` takes the first that reports ready. Each backend supplies its own `defaultModel()`, so
   `LlmConfig` holds no cross-provider model default — setting `llm.model` for one provider and then
@@ -105,11 +109,13 @@ Architecture, and the reasons it is shaped this way:
   parses it with the same parser that would execute it; on rejection `LlmService` sends the parser's
   own error back and asks for a correction, up to `llm.max-retries` (default 1, capped at 3). This
   is the difference between the feature working and not working on a small local model.
-- **Unit tests must never reach a real backend.** `llm-anthropic` and `llm-openai` are both on
-  `jfr-shell`'s test runtime classpath, so `LlmCommandsTest` pins `llm.backend` to a non-existent
-  id; without that, a machine with `ANTHROPIC_API_KEY` set would make live billable calls during
-  the test suite. `llm-openai`'s own tests drive a `com.sun.net.httpserver.HttpServer` bound to
-  loopback — a real socket, no provider account.
+- **Unit tests must never reach a real backend.** `llm-openai` is on `jfr-shell`'s test runtime
+  classpath (the Anthropic backend stopped shipping with the shell — it installs from the plugin
+  catalog), so `LlmCommandsTest` pins `llm.backend` to a non-existent id; without that, a machine
+  with `ANTHROPIC_API_KEY` set could make live billable calls during the test suite, and a
+  machine with Ollama running would change which backend `auto` picks. `llm-openai`'s own tests
+  drive a `com.sun.net.httpserver.HttpServer` bound to loopback — a real socket, no provider
+  account.
 - **`CommandDispatcher` has two query paths and the LLM host adapter must know both.** With a
   `JfrSelector` it delegates; without one (how the interactive `io.jafar.shell.Shell` builds it) it
   parses and evaluates JfrPath directly. `LlmHostAdapterTest` guards this: an adapter that knows
