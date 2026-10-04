@@ -214,6 +214,22 @@ shadowJar {
 
     mergeServiceFiles()
 
+    dependencies {
+        // The shells' terminal stack does not exist inside an MCP server: the tools talk to the
+        // engine classes (sessions, path evaluators, report generators), which import no jline, and
+        // the CLI/UI adapters implementing ShellModule.getCompleter are never loaded here.
+        exclude(dependency('org.jline:jline'))
+        exclude(dependency('org.jline:jline-terminal'))
+        exclude(dependency('org.jline:jline-reader'))
+        // The plugin install machinery (aether resolver, HTTP transports, commons-logging) loads
+        // lazily since the MCP server never installs plugins, so it can stay out of the jar.
+        // The backend registry only reads the plugin directory, which needs no Maven resolver.
+        exclude(dependency('org.apache.maven:.*'))
+        exclude(dependency('org.apache.maven.resolver:.*'))
+        exclude(dependency('org.apache.httpcomponents:.*'))
+        exclude(dependency('org.apache.commons:commons-logging'))
+    }
+
     manifest {
         attributes(
             'Main-Class': 'io.jafar.mcp.Main',
