@@ -3,9 +3,12 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 def libraryName = "jfr-shell-jdk"
 // Backend plugins sync with main project version
-def component_version = rootProject.version
+def component_version = project.version
 
 repositories {
     mavenCentral()

@@ -4,7 +4,10 @@ plugins {
     id 'com.vanniktech.maven.publish'
 }
 
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()

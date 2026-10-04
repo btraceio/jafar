@@ -8,7 +8,7 @@ plugins {
 apply from: rootProject.file('gradle/embedded-modules.gradle')
 
 group = 'io.btrace'
-version = rootProject.version
+version = project.version
 
 repositories {
     mavenCentral()

@@ -5,10 +5,13 @@ plugins {
     id "io.github.goooler.shadow" version "8.1.8"
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 evaluationDependsOn ':parser-core'
 
 def libraryName = "jafar-tools"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()

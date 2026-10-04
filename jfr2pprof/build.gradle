@@ -3,6 +3,9 @@ plugins {
     id 'com.gradleup.shadow' version '9.0.0'
 }
 
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
@@ -39,5 +42,5 @@ shadowJar {
 }
 
 group = 'io.btrace'
-version = rootProject.version
+version = project.version
 description = 'JFR -> pprof converter'

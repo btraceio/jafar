@@ -8,9 +8,10 @@ plugins {
 
 // The shared helper that records which io.btrace modules this fat jar embeds in its manifest
 apply from: rootProject.file('gradle/embedded-modules.gradle')
+apply from: rootProject.file('gradle/version-from-tag.gradle')
 
 def libraryName = "jfr-mcp"
-def component_version = project.hasProperty("jafar_version") ? project.jafar_version : rootProject.version
+def component_version = project.hasProperty("jafar_version") ? project.jafar_version : project.version
 
 repositories {
     mavenCentral()

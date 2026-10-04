@@ -209,33 +209,51 @@ SONATYPE_USERNAME=xxx SONATYPE_PASSWORD=xxx \
 # - jafar-shell.java
 ```
 
-## Version Numbering
+## Version planes
 
-Follow [Semantic Versioning](https://semver.org/):
-- **Major (X.0.0)**: Breaking API changes
-- **Minor (0.X.0)**: New features, backward compatible
-- **Patch (0.0.X)**: Bug fixes, backward compatible
+Releases are split into planes: each plane tags and publishes only its own artifacts, so a
+parser-only change re-ships ~1 MiB and does not re-publish the 29-MiB LLM plugin, and vice
+versa. The version is **derived from git tags** per plane by `gradle/version-from-tag.gradle`
+(single source of truth: the root build, every subproject, and the `jafar-gradle-plugin`
+included build all apply it). Builds never edit version numbers; releasing a plane means
+cutting its next tag.
 
-The version is **derived from git tags** by `gradle/version-from-tag.gradle`, applied by both the
-root build and the `jafar-gradle-plugin` included build (the single source of truth for both):
+| Plane | Tag shape | Publishes | Cost | Branch policy |
+|---|---|---|---|---|
+| shell | `vX.Y.Z` | `jafar-shell` (fat), `jfr-shell-jdk`, `jfr-shell-jafar` | ~10 MiB | release branches (`release/X.Y._`): minor/major from the default branch, patches continue the line |
+| core | `core/vX.Y.Z` | `jafar-parser` (+parser-core/codegen), `jafar-tools`, `jafar-gradle-plugin`; tags `go-parser/vX.Y.Z` | ~1 MiB | tags from the default branch, patches included |
+| mcp | `mcp/vX.Y.Z` | `jfr-mcp` | ~14 MiB | tags from the default branch |
+| llm-anthropic | `llm-anthropic/vX.Y.Z` | `llm-anthropic` | ~29 MiB | tags from the default branch |
+| llm-openai | `llm-openai/vX.Y.Z` | `llm-openai` | ~0.1 MiB | tags from the default branch |
+
+Per-project context:
 
 | Build context | Version |
 |---|---|
-| Exactly on tag `vX.Y.Z` (release workflow, JitPack) | `X.Y.Z` |
-| Anywhere else with git metadata (main, release branches, local) | `<newest vX.Y.Z tag>-SNAPSHOT` |
+| Exactly on the plane's tag | `X.Y.Z` |
+| Anywhere else with git metadata | `<newest tag of the plane's shape>-SNAPSHOT`; a plane never tagged rides the newest `vX.Y.Z` number until its first tag lands |
 | No git metadata (source tarball) | `0.0.0-SNAPSHOT` |
 
-The `newest vX.Y.Z tag` is the newest release tag anywhere in the repo, not just one reachable
-from HEAD, because release tags live on `release/X.Y._` branches. Only well-formed `vX.Y.Z` tags
-count; other `v*` tags are ignored. Builds never edit version numbers; bumping a version means
-cutting the next tag.
+Only well-formed tags count (`vX.Y.Z` / `<plane>/vX.Y.Z`); loose globs can match rc tags, so
+every hit is re-checked. Tag names carry the plane, so no two planes' tags can collide.
 
-The Go module tracks the same version as the Java artifacts, so `go-parser/v0.27.0` and
-`io.btrace:jafar-parser:0.27.0` are the same commit. The parity rule in [AGENTS.md](AGENTS.md) is
-what makes that meaningful: the two untyped parsers are kept in step, so the shared number is not a
-fiction. A release where `go-parser/` did not change still gets a tag - a tag on unchanged code
-costs nothing and keeps the two version lines aligned.
+Coupling rules — what a change implies:
 
-Note that Go treats `v0.x.y` as having no compatibility guarantees, which matches the project's
-experimental status. The first `v1.0.0` release is the point at which the Go module's API becomes a
-compatibility promise.
+- **Self-contained planes release independently.** The shell and MCP fat jars embed their
+dependencies; their manifests record exactly which (`Embedded-Modules:
+io.btrace:parser@X,...` — read back with `unzip -p jar META-INF/MANIFEST.MF`). App releases pick
+up core-plane changes at their own cadence, so a shell release notes tell the users which
+parser they are getting.
+- **Backend plugins and the LLM plugins resolve their SPI from the shell at run time** (the
+plugin classloader parents to the app), so a *non-breaking* shell-core change ships nothing
+outside the shell and MCP planes; an **API-breaking change** (japicmp = major version bump
+required by the plugin API policy) means tagging every SPI-consuming plane (shell, mcp,
+llm-anthropic, llm-openai) the same day, each with its own number.
+- **The Go module versions with the core plane**: `go-parser/vX.Y.Z` is created by a
+core-plane release at the same commit as the Java parser. The parity rule in
+[AGENTS.md](AGENTS.md) (the two untyped parsers kept in step) is what makes the shared number
+meaningful.
+
+Semantic versioning applies per plane: major = breaking API, minor = features, patch = fixes.
+All planes are 0.x — no compatibility guarantees yet; the first `v1.0.0` per plane is where the
+compatibility promise starts (Go's own rules agree: v0.x = experimental).
