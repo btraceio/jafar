@@ -120,7 +120,8 @@ final class McpStdioProcessHarness implements AutoCloseable {
         response.has("error"),
         () -> tool + " JSON-RPC error: " + response + "\nstderr:\n" + stderrText());
     assertFalse(
-        response.at("/result/isError").asBoolean(), () -> tool + " tool error: " + response);
+        response.at("/result/isError").asBoolean(),
+        () -> tool + " tool error: " + response + "\nstderr:\n" + stderrText());
     return response;
   }
 
