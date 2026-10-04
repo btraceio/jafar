@@ -284,8 +284,11 @@ afterEvaluate {
     publishing {
         publications {
             maven(MavenPublication) {
-                // Remove the regular jar artifact added by vanniktech plugin
-                artifacts.removeIf { it.classifier == null && it.extension == 'jar' && !it.file.name.contains('-all') }
+                // Remove the thin jar artifact added by the vanniktech plugin, and the shadow
+                // artifact the plugin adds under classifier 'all': the same file is re-added
+                // below as the main (classifier '') artifact, and publishing both sent every
+                // fat jar to Maven Central twice per release.
+                artifacts.removeIf { it.extension == 'jar' && (it.classifier == null || it.classifier == 'all') && !it.file.name.endsWith('-sources.jar') && !it.file.name.endsWith('-javadoc.jar') }
                 // Add shadow JAR as main artifact
                 artifact(shadowJar) {
                     classifier = ''  // Publish without classifier
