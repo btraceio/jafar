@@ -78,14 +78,18 @@ subprojects {
     // Set group for all subprojects BEFORE plugin configuration
     group = 'io.btrace'
 
-    // Keep published javadoc jars small: javadoc's default DejaVu web fonts added ~1.9 MiB to
-    // every artifact's javadoc jar. Gradle prefixes option names with a single dash, so the name
-    // here carries the dash of --no-fonts itself; javadoc rejects the single-dash spelling.
+    // Keep published javadoc jars small: javadoc bundles ~4 MiB of DejaVu web fonts into
+    // every otherwise-small javadoc jar (90% of the backend plugins' docs). Excluded at Jar
+    // packaging level - inside the javadoc invocation itself the flag is mode-dependent
+    // (--release 8 runs reject it), and the Jar tasks are uniform per module.
     plugins.withId('java') {
-        tasks.withType(Javadoc).configureEach {
-            options.addBooleanOption('-no-fonts', true)
+        tasks.withType(Jar).configureEach {
+            if (name.toLowerCase().contains('javadoc')) {
+                exclude 'resource-files/fonts/**'
+            }
         }
     }
+
 
     plugins.withId('com.vanniktech.maven.publish') {
         mavenPublishing {
