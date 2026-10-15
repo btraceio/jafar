@@ -22,6 +22,22 @@ java {
     }
 }
 
+sourceSets {
+    jmh {
+        java {
+            srcDirs = ["src/main/jmh/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    jmhImplementation {
+        extendsFrom configurations.implementation
+    }
+}
+
 dependencies {
     // Shared protobuf wire-format decoding (ProtoUtil)
     implementation project(':parser-core')
@@ -29,10 +45,27 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 }
 
 test {
     useJUnitPlatform()
+}
+
+// JMH benchmark task
+tasks.register('jmh', JavaExec) {
+    description = 'Runs JMH benchmarks'
+    group = 'verification'
+    dependsOn compileJmhJava
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass.set('org.openjdk.jmh.Main')
+    workingDir = rootProject.projectDir
+
+    if (project.hasProperty('jmhArgs')) {
+        setArgs(Arrays.asList(project.jmhArgs.split(' ')))
+    }
 }
 
 javadoc {

@@ -123,9 +123,9 @@ class MultiValueLabelConversionTest {
     // Each sample must have 2 values (one per value type column)
     assertThat(sample.values()).hasSize(2);
     // alloc-samples uses @count -> 1
-    assertThat(sample.values().get(0)).isEqualTo(1L);
+    assertThat(sample.values()[0]).isEqualTo(1L);
     // alloc-space uses weight field -> 4096
-    assertThat(sample.values().get(1)).isEqualTo(4096L);
+    assertThat(sample.values()[1]).isEqualTo(4096L);
 
     // Must have both a numeric and a string label
     assertThat(sample.labels()).hasSize(2);

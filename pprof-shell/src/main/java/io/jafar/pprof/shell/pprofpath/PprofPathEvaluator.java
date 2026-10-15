@@ -75,9 +75,9 @@ public final class PprofPathEvaluator {
       Map<String, Object> row = new LinkedHashMap<>();
 
       // Value type fields
-      List<Long> values = sample.values();
-      for (int i = 0; i < values.size() && i < sampleTypes.size(); i++) {
-        row.put(sampleTypes.get(i).type(), values.get(i));
+      long[] values = sample.values();
+      for (int i = 0; i < values.length && i < sampleTypes.size(); i++) {
+        row.put(sampleTypes.get(i).type(), values[i]);
       }
 
       // sampleType: comma-separated list of value type names present in this profile
@@ -103,11 +103,11 @@ public final class PprofPathEvaluator {
   }
 
   private static List<Map<String, Object>> buildStack(
-      List<Long> locationIds,
+      long[] locationIds,
       Map<Long, PprofProfile.Location> locationById,
       Map<Long, PprofProfile.Function> functionById) {
     List<Map<String, Object>> stack = new ArrayList<>();
-    for (Long locId : locationIds) {
+    for (long locId : locationIds) {
       PprofProfile.Location loc = locationById.get(locId);
       if (loc == null) continue;
       for (PprofProfile.Line line : loc.lines()) {

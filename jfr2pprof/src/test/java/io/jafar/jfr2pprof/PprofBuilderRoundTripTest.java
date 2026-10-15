@@ -51,8 +51,8 @@ class PprofBuilderRoundTripTest {
     assertThat(p.durationNanos()).isEqualTo(1_000_000L);
 
     // Verify individual sample values
-    long val1 = p.samples().get(0).values().get(0);
-    long val2 = p.samples().get(1).values().get(0);
+    long val1 = p.samples().get(0).values()[0];
+    long val2 = p.samples().get(1).values()[0];
     assertThat(val1 + val2).isEqualTo(49L); // 42 + 7
   }
 
@@ -73,7 +73,7 @@ class PprofBuilderRoundTripTest {
     PprofProfile.Profile p = buildAndRead(b, valueTypes);
 
     assertThat(p.samples()).hasSize(1);
-    assertThat(p.samples().get(0).values().get(0)).isEqualTo(52L); // 42 + 10
+    assertThat(p.samples().get(0).values()[0]).isEqualTo(52L); // 42 + 10
   }
 
   @Test
@@ -104,10 +104,10 @@ class PprofBuilderRoundTripTest {
     assertThat(p.sampleTypes()).hasSize(2);
     assertThat(p.samples()).hasSize(1);
 
-    List<Long> vals = p.samples().get(0).values();
+    long[] vals = p.samples().get(0).values();
     assertThat(vals).hasSize(2);
-    assertThat(vals.get(0)).isEqualTo(100L);
-    assertThat(vals.get(1)).isEqualTo(200L);
+    assertThat(vals[0]).isEqualTo(100L);
+    assertThat(vals[1]).isEqualTo(200L);
   }
 
   private static Map<String, Object> frame(String className, String methodName, int lineNumber) {

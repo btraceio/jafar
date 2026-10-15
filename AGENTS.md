@@ -47,6 +47,7 @@ The short version, expanded with evidence in that file:
 | **R8** | State plainly what you did not verify. |
 | **R9** | Inspect the payload, not the exit status. A green command proves nothing about what it sent. |
 | **R10** | Before a refactor, find what actually covers the code here — then prove that net fails. |
+| **R11** | Split cursor arithmetic that mixes a field with a side-effecting call — operands evaluate left to right. |
 
 ## Project Overview
 

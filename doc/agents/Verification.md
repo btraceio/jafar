@@ -247,6 +247,32 @@ A refactor that removes a JSON round trip, a duplicated helper or a copied const
 on its own — `diagnose` serialised five sub-analyses to JSON and parsed them back — but do it as a
 step you can point at, not mixed into the move.
 
+## R11. Split cursor arithmetic that mixes a field with a side-effecting call
+
+In an expression like `pos + readLen(end)`, Java evaluates the left operand first
+([JLS 15.7.1](https://docs.oracle.com/javase/specs/jls/se21/html/jls-15.html#jls-15.7.1)): `pos`
+is captured **before** `readLen` runs and advances it. A cursor parser full of `pos = …`
+assignments makes this easy to write and invisible in review — it reads as ordinary arithmetic.
+Read the side effect into a local first, then compute with it; never let one expression both read
+and move the cursor.
+
+> **Case file — pprof submessage ends short by the len varint.** `PprofReader` computes each
+> submessage end as `int msgEnd = pos + readLen(end);` — the intended `readLen`-then-`pos + len`
+> collapsed into one expression, so `msgEnd` was short by the length prefix (usually one byte).
+> Valid Go-generated profiles threw `java.io.IOException: Truncated protobuf: varint extends past
+> message end` from `parseLabel`, while every `PprofParserTest` stayed green: `MinimalPprofBuilder`
+> always emits labels and lines as the *last* field of the enclosing message, so a short or
+> over-drifted cursor skips nothing the test could see. The same rewrite had already hidden one
+cursor bug behind the same fixture — a "simplified" `pos += len` after a sub-parser that owned the
+cursor — caught only when the JMH benchmark (real profiles, fields after submessages) failed with
+> `Cannot skip unknown wire type 4`. Locked by `fieldsAfterSubmessageAreParsed`, which hand-encodes
+> location-id, value and isFolded fields *after* nested submessages — a shape the builder cannot
+> produce.
+
+**Corollary:** a fixture that can only emit one field order is not a net for cursor bugs; parse data
+> with submessages in the middle, and keep a real-profile parse in the loop (benchmark, integration
+> test) as the backstop.
+
 ---
 
 ## Keeping this file honest
