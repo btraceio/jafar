@@ -1,5 +1,6 @@
 package io.jafar.pprof.api;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -40,11 +41,50 @@ public final class PprofProfile {
   /**
    * A single profiling sample with a call stack and associated values.
    *
+   * <p>{@code locationIds} and {@code values} are primitive arrays on purpose: a CPU profile
+   * commonly holds tens of stack entries per sample, and boxing every entry as {@code Long} would
+   * dominate the parser's allocation profile. The generated record {@code equals}/{@code hashCode}
+   * would compare arrays by identity, so they are overridden below for value semantics.
+   *
    * @param locationIds call stack from leaf to root (location IDs)
    * @param values sample values in the same order as {@link Profile#sampleTypes()}
    * @param labels key-value annotations on this sample
    */
-  public record Sample(List<Long> locationIds, List<Long> values, List<Label> labels) {}
+  public record Sample(long[] locationIds, long[] values, List<Label> labels) {
+
+    /** Value semantics: arrays are compared by content, not by identity. */
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (!(o instanceof Sample other)) {
+        return false;
+      }
+      return Arrays.equals(locationIds, other.locationIds)
+          && Arrays.equals(values, other.values)
+          && labels.equals(other.labels);
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Arrays.hashCode(locationIds);
+      result = 31 * result + Arrays.hashCode(values);
+      result = 31 * result + labels.hashCode();
+      return result;
+    }
+
+    @Override
+    public String toString() {
+      return "Sample[locationIds="
+          + Arrays.toString(locationIds)
+          + ", values="
+          + Arrays.toString(values)
+          + ", labels="
+          + labels
+          + "]";
+    }
+  }
 
   /**
    * A code location (may represent an inlined call chain via multiple {@link Line}s).
