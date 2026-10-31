@@ -286,7 +286,12 @@ mavenPublishing {
     coordinates('io.btrace', 'jafar-shell', version.toString())
 }
 
-// Override publication to use shadow JAR instead of regular JAR
+// io.btrace:jafar-shell is the unified jar built by the jafar-shell module: this module's own fat
+// jar knows JFR only, and shipping it made every heap dump, pprof and OTLP example fail. The
+// publication stays here, so the release and CI task paths keep working.
+evaluationDependsOn(':jafar-shell')
+
+// Override publication to use the unified shadow JAR instead of regular JAR
 afterEvaluate {
     publishing {
         publications {
@@ -296,33 +301,18 @@ afterEvaluate {
                 // below as the main (classifier '') artifact, and publishing both sent every
                 // fat jar to Maven Central twice per release.
                 artifacts.removeIf { it.extension == 'jar' && (it.classifier == null || it.classifier == 'all') && !it.file.name.endsWith('-sources.jar') && !it.file.name.endsWith('-javadoc.jar') }
-                // Add shadow JAR as main artifact
-                artifact(shadowJar) {
+                // Add the unified shadow JAR as main artifact
+                artifact(project(':jafar-shell').tasks.named('shadowJar')) {
                     classifier = ''  // Publish without classifier
                 }
-                // Remove all internal and shaded dependencies from POM
-                // The shadow JAR is self-contained; only picocli, jline, and slf4j are kept
-                // as they are not relocated and consumers may need version visibility.
+                pom {
+                    name = 'jafar-shell'
+                    description = 'Interactive CLI for JFR recordings, heap dumps, pprof profiles and OTLP profiles'
+                }
+                // The shadow JAR is self-contained: nothing for a consumer to resolve
                 pom.withXml {
                     def deps = asNode().get('dependencies')
-                    if (deps) {
-                        def removable = [
-                            'io.btrace',        // internal project modules (shell-core, parser, tools)
-                            'dev.tamboui',       // relocated into shadow JAR
-                            'com.google.code.gson', // relocated into shadow JAR
-                            'org.apache.maven',  // relocated into shadow JAR
-                            'org.apache.maven.resolver', // relocated into shadow JAR
-                            'org.apache.httpcomponents', // relocated into shadow JAR
-                            'info.picocli',      // relocated into shadow JAR
-                            'org.jline',         // relocated into shadow JAR
-                            'net.java.dev.jna',  // bundled into shadow JAR
-                        ] as Set
-                        deps.each { depsNode ->
-                            depsNode.children().removeAll { dep ->
-                                removable.contains(dep.groupId.text())
-                            }
-                        }
-                    }
+                    deps.each { asNode().remove(it) }
                 }
             }
         }

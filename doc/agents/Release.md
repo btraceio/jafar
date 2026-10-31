@@ -10,7 +10,7 @@ parser-only change re-ships ~1 MiB and does not re-publish the shell or the LLM 
 
 | Plane | Tag | Publishes | Cost |
 |---|---|---|---|
-| shell | `vX.Y.Z` | `jafar-shell` (fat jar; the `jfr-shell` module builds it), `jfr-shell-jdk`, `jfr-shell-jafar` | ~10 MiB |
+| shell | `vX.Y.Z` | `jafar-shell` (fat jar; the `jafar-shell` module builds it, the `jfr-shell` module publishes it), `jfr-shell-jdk`, `jfr-shell-jafar` | ~18 MiB |
 | core | `core/vX.Y.Z` | `jafar-parser` (+parser-core/codegen), `jafar-tools`, `jafar-gradle-plugin`; tags `go-parser/vX.Y.Z` | ~1 MiB |
 | mcp | `mcp/vX.Y.Z` | `jfr-mcp` (fat jar) | ~14 MiB |
 | llm-anthropic | `llm-anthropic/vX.Y.Z` | `llm-anthropic` | ~29 MiB |

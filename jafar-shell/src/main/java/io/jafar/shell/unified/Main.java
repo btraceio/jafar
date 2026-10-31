@@ -5,15 +5,28 @@ import io.jafar.shell.plugin.PluginManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
 @CommandLine.Command(
     name = "jafar-shell",
     description = "Unified analysis tool for JFR recordings and heap dumps",
-    version = "0.10.0",
-    mixinStandardHelpOptions = true)
+    versionProvider = io.jafar.shell.Main.VersionProvider.class,
+    mixinStandardHelpOptions = true,
+    footer = {
+      "",
+      "JFR commands: show, metadata, chunks, constants (cp), script.",
+      "JFR options: --backend, --plugin-dir, --install-plugin."
+    })
 public final class Main implements Callable<Integer> {
+
+  // The command line jfr-shell has always had; this jar is what the jafar-shell and jfr-shell
+  // aliases both install, so those invocations keep going to it.
+  private static final Set<String> JFR_COMMANDS =
+      Set.of("show", "metadata", "chunks", "constants", "cp", "script");
+  private static final Set<String> JFR_OPTIONS =
+      Set.of("-b", "--backend", "--plugin-dir", "--install-plugin");
 
   @CommandLine.Option(
       names = {"-f", "--file"},
@@ -36,7 +49,24 @@ public final class Main implements Callable<Integer> {
       description = "Launch full-screen TUI mode instead of readline REPL")
   private boolean tui;
 
+  static boolean isJfrCommandLine(String[] args) {
+    for (String arg : args) {
+      if (JFR_OPTIONS.contains(arg.split("=", 2)[0])) {
+        return true;
+      }
+      if (!arg.startsWith("-")) {
+        return JFR_COMMANDS.contains(arg) && !Files.exists(Paths.get(arg));
+      }
+    }
+    return false;
+  }
+
   public static void main(String[] args) {
+    if (isJfrCommandLine(args)) {
+      io.jafar.shell.Main.main(args);
+      return;
+    }
+
     // Initialize plugin system before BackendRegistry is accessed
     PluginManager.initialize();
 
