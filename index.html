@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html><head>
+<script>window.__resources = {"https://unpkg.com/react@18.3.1/umd/react.production.min.js": "assets/js/react.production.min.js", "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js": "assets/js/react-dom.production.min.js"};</script>
+<link rel="icon" type="image/svg+xml" href="assets/img/btrace-icon-small.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/img/btrace-icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/img/btrace-icon-16.png">
+<link rel="apple-touch-icon" href="assets/img/btrace-icon-180.png">
+<title>Jafar — JFR parser &amp; shell</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="assets/js/dc-runtime.js"></script>
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* Modernist — design-system tokens and component classes. This file is the source of truth for the system's look; retune it here and see readme.md. */
+/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/19692277.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/cf5e0272.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/c22ca84e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/19692277.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/cf5e0272.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/c22ca84e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/19692277.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/cf5e0272.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/c22ca84e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+
+:root {
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-text: #201e1d;
+  --color-accent: #ec3013;
+  --color-accent-2: #e15b47;
+  --color-divider: color-mix(in srgb, #201e1d 40%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
+     same step of any role matches the others in visual value. */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  --color-accent-100: #fff2ef;
+  --color-accent-200: #ffe0d9;
+  --color-accent-300: #ffc4b8;
+  --color-accent-400: #ff9783;
+  --color-accent-500: #ff563c;
+  --color-accent-600: #dd2b0f;
+  --color-accent-700: #ae1800;
+  --color-accent-800: #7c1405;
+  --color-accent-900: #4d170e;
+
+  --color-accent-2-100: #fff2ef;
+  --color-accent-2-200: #ffe0da;
+  --color-accent-2-300: #ffc4b9;
+  --color-accent-2-400: #ff9784;
+  --color-accent-2-500: #ef6853;
+  --color-accent-2-600: #c94b39;
+  --color-accent-2-700: #9e3526;
+  --color-accent-2-800: #71261b;
+  --color-accent-2-900: #471d16;
+
+  --font-heading: "Archivo", system-ui, sans-serif;
+  --font-heading-weight: 800;
+  --font-body: "Archivo", system-ui, sans-serif;
+
+  --space-1: 4.0px;
+  --space-2: 8.0px;
+  --space-3: 12.0px;
+  --space-4: 16.0px;
+  --space-6: 24.0px;
+  --space-8: 32.0px;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+
+  /* Elevation — derived from the ground: soft ink-tinted shadows on a
+     light theme, a hairline edge + ambient darkness on a dark one. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); }
+
+.grayscale{filter:grayscale(1) contrast(1.08)}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Components — built with the tokens above. Plain CSS
+   on plain HTML: no JavaScript, no build step. Each class is documented in
+   readme.md and demonstrated in foundations/ and components/.
+   ══════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; }
+h6 { letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* — rules — */
+.hr {
+  height: 2px; border: 0; margin: var(--space-4) 0;
+  background: var(--color-divider);
+}
+
+/* — buttons — */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text); /* matches the .input's 14px —
+     the pair sits side by side in sign-up rows */
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--color-accent); color: var(--color-bg); }
+.btn-primary:hover { background: var(--color-accent-600); }
+.btn-primary:active { background: var(--color-accent-700); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); justify-content: flex-start; text-align: left; }
+
+/* — forms — */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { background: var(--color-accent); color: var(--color-bg); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* — cards — */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* — tags — */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
+.tag-accent-2 { background: var(--color-accent-2-100); color: var(--color-accent-2-800); }
+.tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* — navigation — */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 2px solid var(--color-divider);
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* — tables — */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 2px solid var(--color-divider);
+}
+.table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+}
+.table tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+
+/* — dialog — */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+</style>
+<script src="assets/js/ds-bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/2647dc22.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/a50959d8.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/89f297ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/4262bb9a.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/ea906964.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/96bf3f93.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/2647dc22.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/a50959d8.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/89f297ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/4262bb9a.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/ea906964.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/96bf3f93.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/2647dc22.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/a50959d8.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/89f297ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/4262bb9a.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/ea906964.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/96bf3f93.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/2647dc22.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/a50959d8.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/89f297ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/4262bb9a.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/ea906964.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/96bf3f93.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/8f62342b.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/eab8b8b8.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/8f62342b.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/eab8b8b8.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/8f62342b.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("assets/fonts/eab8b8b8.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("assets/fonts/8f62342b.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("assets/fonts/eab8b8b8.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}*{animation:none!important}}
+body{margin:0;background:var(--color-text);color:var(--color-bg);text-wrap:pretty}
+a{color:var(--color-accent-400)}
+a:hover{color:var(--color-bg)}
+::selection{background:var(--color-accent);color:var(--color-bg)}
+@keyframes bt-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes bt-blink{50%{opacity:0}}
+@keyframes bt-pulse{50%{opacity:.25}}
+@keyframes bt-ticker{to{transform:translateX(-50%)}}
+@keyframes bt-scan{0%{transform:translateY(-10vh)}100%{transform:translateY(110vh)}}
+@keyframes bt-flicker{0%,100%{opacity:1}92%{opacity:1}93%{opacity:.4}94%{opacity:1}96%{opacity:.6}97%{opacity:1}}
+@keyframes bt-glitch{0%,86%,100%{clip-path:inset(0 0 100% 0);transform:none}87%{clip-path:inset(12% 0 64% 0);transform:translate(-6px,0)}89%{clip-path:inset(58% 0 18% 0);transform:translate(5px,0)}91%{clip-path:inset(30% 0 46% 0);transform:translate(-3px,0)}93%{clip-path:inset(0 0 100% 0)}}
+</style>
+</helmet>
+
+<div aria-hidden="true" style="position:fixed;inset:0;pointer-events:none;z-index:60;background:repeating-linear-gradient(to bottom,color-mix(in srgb,black 22%,transparent) 0 1px,transparent 1px 3px);opacity:.55"></div>
+<div aria-hidden="true" style="position:fixed;left:0;right:0;top:0;height:14vh;pointer-events:none;z-index:61;background:linear-gradient(to bottom,transparent,color-mix(in srgb,var(--color-accent) 6%,transparent),transparent);animation:bt-scan 9s linear infinite"></div>
+
+<div style="background:var(--color-accent);color:var(--color-bg);overflow:hidden;border-bottom:2px solid var(--color-accent-700)">
+  <div style="display:flex;width:max-content;gap:28px;padding:9px 0;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;animation:bt-ticker 60s linear infinite">
+    <sc-for list="{{ ticker }}" as="tk" hint-placeholder-count="10"><span style="display:flex;align-items:center;gap:28px;white-space:nowrap">{{ tk }}<span style="width:6px;height:6px;background:var(--color-bg)"></span></span></sc-for>
+  </div>
+</div>
+
+<div style="position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--color-text) 88%,transparent);backdrop-filter:blur(8px)">
+  <nav class="nav" style="padding:12px max(clamp(20px,5vw,72px), calc((100% - 1240px) / 2 + clamp(20px,5vw,72px)));gap:24px;border-bottom:2px solid var(--color-neutral-800)">
+    <a href="#top" class="nav-brand" style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:18px;letter-spacing:.02em;color:var(--color-bg);display:flex;align-items:center;gap:10px;margin-right:0">
+      <img src="assets/img/btrace-icon-small.svg" alt="" width="28" height="28" style="display:block;outline:1px solid var(--color-neutral-700)">JAFAR<span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--color-accent-400);border:1px solid var(--color-accent);padding:2px 6px">v0.11.0</span>
+    </a>
+    <div style="display:flex;gap:22px;overflow-x:auto;margin-right:auto;scrollbar-width:none;padding:4px 0;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.06em">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="6"><a href="{{ n.href }}" aria-current="{{ n.cur }}" style="white-space:nowrap;font-size:12px;color:{{ n.color }}">{{ n.label }}</a></sc-for>
+    </div>
+    <a href="#install" class="btn btn-primary" style="white-space:nowrap;color:var(--color-bg);font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.06em;box-shadow:0 0 20px color-mix(in srgb,var(--color-accent) 45%,transparent)" style-hover="background:var(--color-accent-500)">Install jfr-shell</a>
+  </nav>
+  <div style="height:2px;position:relative;margin-top:-2px"><div ref="{{ progRef }}" style="height:2px;width:0;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></div></div>
+</div>
+
+<main id="top" style="background-image:linear-gradient(color-mix(in srgb,var(--color-bg) 4%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--color-bg) 4%,transparent) 1px,transparent 1px);background-size:64px 64px">
+
+<section data-spy="1" id="ask" style="scroll-margin-top:72px">
+  <div style="max-width:1240px;margin:0 auto;padding:88px clamp(20px,5vw,72px) 72px">
+    <div data-hero="0" style="display:flex;flex-wrap:wrap;gap:8px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-400);margin-bottom:28px">
+      <span style="color:var(--color-accent-400)">SYS:// btraceio/jafar</span><span>JFR + HPROF parser and shell</span><span>status: <span style="color:var(--color-accent-400);animation:bt-flicker 3s infinite">early public release</span></span>
+    </div>
+    <h1 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(40px,7.2vw,112px);line-height:.92;letter-spacing:-0.015em;margin:0 0 0 -0.04em">
+      <span data-hero="0" style="display:block;position:relative">Ask your recording.<span aria-hidden="true" style="position:absolute;inset:0;color:var(--color-accent);mix-blend-mode:screen;animation:bt-glitch 4.2s steps(1) infinite;pointer-events:none">Ask your recording.</span></span>
+      <span data-hero="1" style="display:block"><span style="color:var(--color-accent);text-shadow:0 0 28px color-mix(in srgb,var(--color-accent) 60%,transparent)">Read the query</span> it ran.</span>
+    </h1>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:40px 72px;align-items:start;margin-top:40px">
+      <div>
+        <p data-hero="2" style="font-size:19px;line-height:30px;max-width:56ch;margin:0;color:var(--color-neutral-300)">Jafar is a fast JFR parser for the JVM with a small API. It includes <strong style="color:var(--color-bg);font-family:'JetBrains Mono',monospace;font-weight:600">jfr-shell</strong>, an interactive shell for JFR recordings and heap dumps. Ask a question in plain words. The shell writes JfrPath queries, runs them, and shows each query and its result.</p>
+        <div data-hero="3" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:32px">
+          <a href="#install" class="btn btn-primary" style="min-width:240px;justify-content:space-between;padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-bg);box-shadow:0 0 28px color-mix(in srgb,var(--color-accent) 50%,transparent)" style-hover="background:var(--color-accent-500)">Install jfr-shell <svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></a>
+          <a href="#parser" class="btn btn-secondary" style="padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-bg);border-color:var(--color-neutral-600)" style-hover="background:color-mix(in srgb,var(--color-bg) 8%,transparent);border-color:var(--color-bg)">&gt;_ Use the parser API</a>
+        </div>
+      </div>
+      <ol data-hero="4" style="list-style:none;margin:0;padding:0;border-top:2px solid var(--color-neutral-800)">
+        <li style="border-bottom:2px solid var(--color-neutral-800)"><a href="#parser" style="display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:baseline;padding:18px 0;color:var(--color-bg);text-decoration:none" style-hover="color:var(--color-accent-400);background:color-mix(in srgb,var(--color-accent) 8%,transparent)"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--color-accent-400)">[01]</span><span><strong style="display:block;font-size:18px">Parse with little allocation.</strong><span style="font-size:14px;color:var(--color-neutral-400)">Typed or untyped events. Java and Go.</span></span><span style="font-family:'JetBrains Mono',monospace">→</span></a></li>
+        <li style="border-bottom:2px solid var(--color-neutral-800)"><a href="#shell" style="display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:baseline;padding:18px 0;color:var(--color-bg);text-decoration:none" style-hover="color:var(--color-accent-400);background:color-mix(in srgb,var(--color-accent) 8%,transparent)"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--color-accent-400)">[02]</span><span><strong style="display:block;font-size:18px">Query JFR and heap dumps.</strong><span style="font-size:14px;color:var(--color-neutral-400)">JfrPath and HdumpPath in one shell.</span></span><span style="font-family:'JetBrains Mono',monospace">→</span></a></li>
+        <li style="border-bottom:2px solid var(--color-neutral-800)"><a href="#agents" style="display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:baseline;padding:18px 0;color:var(--color-bg);text-decoration:none" style-hover="color:var(--color-accent-400);background:color-mix(in srgb,var(--color-accent) 8%,transparent)"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--color-accent-400)">[03]</span><span><strong style="display:block;font-size:18px">Give your coding agent the tools.</strong><span style="font-size:14px;color:var(--color-neutral-400)">An MCP server and the jafar-perf plugin.</span></span><span style="font-family:'JetBrains Mono',monospace">→</span></a></li>
+      </ol>
+    </div>
+
+    <div data-reveal="0" style="position:relative;margin-top:72px;border:2px solid var(--color-neutral-700);background:color-mix(in oklch,var(--color-text),black 45%);box-shadow:0 0 60px color-mix(in srgb,var(--color-accent) 12%,transparent)">
+      <span style="position:absolute;top:-2px;left:-2px;width:18px;height:18px;border-top:2px solid var(--color-accent);border-left:2px solid var(--color-accent)"></span><span style="position:absolute;top:-2px;right:-2px;width:18px;height:18px;border-top:2px solid var(--color-accent);border-right:2px solid var(--color-accent)"></span><span style="position:absolute;bottom:-2px;left:-2px;width:18px;height:18px;border-bottom:2px solid var(--color-accent);border-left:2px solid var(--color-accent)"></span><span style="position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;border-bottom:2px solid var(--color-accent);border-right:2px solid var(--color-accent)"></span>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px 16px;border-bottom:2px solid var(--color-neutral-700);font-family:'JetBrains Mono',monospace">
+        <span style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-300)">[ jfr-shell :: recording.jfr ]</span>
+        <span style="display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-400)"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 8px var(--color-accent);animation:{{ pulseAnim }}"></span>{{ stageLabel }}</span>
+        <button type="button" sc-camel-on-click="{{ replay }}" style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.08em;display:flex;gap:6px;align-items:center;background:transparent;color:var(--color-accent-400);border:1px solid var(--color-accent);padding:5px 10px;cursor:pointer" style-hover="background:var(--color-accent);color:var(--color-bg)"><svg width="13" height="13" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>Replay</button>
+      </div>
+      <div style="padding:24px;min-height:380px;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:23px;overflow-x:auto">
+        <sc-for list="{{ outLines }}" as="l" hint-placeholder-count="0"><div style="white-space:pre-wrap;color:{{ l.color }};animation:bt-in .25s ease both">{{ l.text }}</div></sc-for>
+        <span style="display:inline-block;width:9px;height:17px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent);vertical-align:middle;animation:bt-blink 1s steps(1) infinite"></span>
+      </div>
+    </div>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:20px;margin:12px 0 0;color:var(--color-neutral-500)">// From the Jafar README. The model writes the queries. The shell runs them on your machine. <a href="https://github.com/btraceio/jafar/blob/main/doc/cli/LlmPrivacy.md">What leaves your machine →</a></p>
+  </div>
+</section>
+
+<section data-spy="1" id="parser" style="scroll-margin-top:72px;background:color-mix(in srgb,var(--color-text) 60%,black 40%);border-top:2px solid var(--color-neutral-800);border-bottom:2px solid var(--color-neutral-800)">
+  <div style="max-width:1240px;margin:0 auto;padding:96px clamp(20px,5vw,72px)">
+    <div data-reveal="0" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:24px 72px;align-items:end;margin-bottom:48px"><div><span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>02 // Parser</span><h2 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(32px,4.4vw,62px);line-height:.98;letter-spacing:-0.01em;margin:0">One interface per event type.</h2></div><p style="font-size:18px;line-height:28px;margin:0;max-width:52ch;color:var(--color-neutral-300)">Use the typed API when you know the event types. Use the untyped API to read any recording as maps. A pure Go port of the untyped parser is also available.</p></div>
+    <div data-reveal="1" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:24px 48px;align-items:start">
+      <div style="min-width:0">
+        <div style="display:flex;border:1px solid var(--color-neutral-700);border-bottom:0;width:fit-content"><sc-for list="{{ apiTabs }}" as="tb" hint-placeholder-count="3"><button type="button" sc-camel-on-click="{{ tb.pick }}" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:9px 16px;border:0;border-right:1px solid var(--color-neutral-700);cursor:pointer;background:{{ tb.bg }};color:{{ tb.fg }}">{{ tb.label }}</button></sc-for></div>
+        <div style="background:var(--color-text);border:1px solid var(--color-neutral-700);border-left:2px solid var(--color-accent);padding:18px 20px;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:21px;overflow-x:auto;min-height:300px">
+          <sc-for list="{{ apiLines }}" as="cl" hint-placeholder-count="12"><div style="white-space:pre;color:{{ cl.color }}">{{ cl.text }}</div></sc-for>
+        </div>
+        <p style="font-size:15px;line-height:24px;margin:16px 0 0;color:var(--color-neutral-300);max-width:60ch">{{ apiNote }}</p>
+      </div>
+      <div>
+        <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-400);margin-bottom:12px">// build-time handlers, 1 million ExecutionSample events</span>
+        <div style="border-top:2px solid var(--color-neutral-700)">
+          <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:2px solid var(--color-neutral-800);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)"><span>Metric</span><span>Runtime</span><span style="color:var(--color-accent-400)">Build time</span></div>
+          <sc-for list="{{ bench }}" as="b" hint-placeholder-count="4">
+            <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr);gap:12px;padding:14px 0;border-bottom:2px solid var(--color-neutral-800);align-items:baseline">
+              <span style="font-size:15px;color:var(--color-neutral-300)">{{ b.k }}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--color-neutral-400)">{{ b.a }}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--color-bg)">{{ b.b }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <p style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(28px,3vw,44px);line-height:1;margin:28px 0 8px;color:var(--color-accent);text-shadow:0 0 28px color-mix(in srgb,var(--color-accent) 60%,transparent)">85% less allocation</p>
+        <p style="font-size:15px;line-height:24px;margin:0;color:var(--color-neutral-300)">An annotation processor makes the handlers when you compile. Throughput stays the same. GC pauses almost stop.</p>
+        <a href="https://github.com/btraceio/jafar/blob/main/doc/performance/BuildTimeBenchmarks.md" style="display:inline-block;margin-top:16px;font-family:'JetBrains Mono',monospace;font-size:13px;text-transform:uppercase;letter-spacing:.06em">Full benchmark results →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section data-spy="1" id="shell" style="scroll-margin-top:72px">
+  <div style="max-width:1240px;margin:0 auto;padding:96px clamp(20px,5vw,72px)">
+    <div data-reveal="0" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:24px 72px;align-items:end;margin-bottom:48px"><div><span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>03 // JFR Shell</span><h2 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(32px,4.4vw,62px);line-height:.98;letter-spacing:-0.01em;margin:0">One shell. Recordings and heap dumps.</h2></div><p style="font-size:18px;line-height:28px;margin:0;max-width:52ch;color:var(--color-neutral-300)">Filter, project and aggregate with a path-based query language. Select a question to see the query and its result.</p></div>
+    <div data-reveal="1" style="position:relative;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));border:2px solid var(--color-neutral-700);background:var(--color-text)">
+      <span style="position:absolute;top:-2px;left:-2px;width:18px;height:18px;border-top:2px solid var(--color-accent);border-left:2px solid var(--color-accent)"></span><span style="position:absolute;top:-2px;right:-2px;width:18px;height:18px;border-top:2px solid var(--color-accent);border-right:2px solid var(--color-accent)"></span><span style="position:absolute;bottom:-2px;left:-2px;width:18px;height:18px;border-bottom:2px solid var(--color-accent);border-left:2px solid var(--color-accent)"></span><span style="position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;border-bottom:2px solid var(--color-accent);border-right:2px solid var(--color-accent)"></span>
+      <div style="padding:24px;display:flex;flex-direction:column;gap:6px;border-right:2px solid var(--color-neutral-700)">
+        <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-400);margin-bottom:6px">// start from a question</span>
+        <sc-for list="{{ queries }}" as="q" hint-placeholder-count="6">
+          <button type="button" sc-camel-on-click="{{ q.pick }}" style="font:inherit;font-size:15px;text-align:left;cursor:pointer;padding:10px 12px;border:1px solid {{ q.border }};background:{{ q.bg }};color:var(--color-bg);display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:baseline" style-hover="border-color:var(--color-accent)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;color:var(--color-accent-400)">{{ q.src }}</span>{{ q.label }}<span style="font-family:'JetBrains Mono',monospace">→</span></button>
+        </sc-for>
+      </div>
+      <div style="background:color-mix(in oklch,var(--color-text),black 45%);display:flex;flex-direction:column;min-width:0">
+        <div style="padding:20px 24px;border-bottom:1px solid var(--color-neutral-800);display:flex;gap:16px;align-items:flex-start">
+          <div style="flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:23px;word-break:break-word"><span style="color:var(--color-accent)">jfr&gt; </span>{{ qSel.q }}</div>
+          <button type="button" sc-camel-on-click="{{ copyQ }}" style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.06em;background:transparent;color:var(--color-bg);border:1px solid var(--color-neutral-600);padding:6px 10px;cursor:pointer" style-hover="border-color:var(--color-accent);color:var(--color-accent-400)">{{ copyQLabel }}</button>
+        </div>
+        <div style="padding:20px 24px;flex:1;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:21px;overflow-x:auto;min-height:220px">
+          <sc-for list="{{ qOut }}" as="qo" hint-placeholder-count="5"><div style="white-space:pre;color:{{ qo.color }};animation:bt-in .25s ease both">{{ qo.text }}</div></sc-for>
+        </div>
+      </div>
+    </div>
+    <div data-reveal="2" style="margin-top:32px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-400);margin-right:8px">// also in the shell</span>
+      <sc-for list="{{ shellFeats }}" as="sf" hint-placeholder-count="8"><span class="tag" style="font-family:'JetBrains Mono',monospace;font-size:12px;padding:5px 10px;border:1px solid var(--color-neutral-700);color:var(--color-neutral-300)">{{ sf }}</span></sc-for>
+    </div>
+  </div>
+</section>
+
+<section data-spy="1" id="agents" style="scroll-margin-top:72px">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(20px,5vw,72px)">
+    <div style="height:2px;background:var(--color-neutral-800)"></div>
+    <div style="padding:96px 0">
+      <div data-reveal="0" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:24px 72px;align-items:end;margin-bottom:48px"><div><span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>04 // Agents</span><h2 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(32px,4.4vw,62px);line-height:.98;letter-spacing:-0.01em;margin:0">A performance engineer for your agent.</h2></div><p style="font-size:18px;line-height:28px;margin:0;max-width:52ch;color:var(--color-neutral-300)">The Jafar MCP server gives AI agents the analysis tools. The jafar-perf plugin gives them the method: which analysis to run next, and what counts as evidence.</p></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:12px">
+        <div data-reveal="0" style="padding:24px;border:2px solid var(--color-neutral-800);background:color-mix(in srgb,var(--color-text) 70%,transparent);display:flex;flex-direction:column;gap:14px">
+          <code style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--color-accent-400)">&gt; 9 skills</code>
+          <div style="display:flex;flex-wrap:wrap;gap:6px"><sc-for list="{{ perfSkills }}" as="ps" hint-placeholder-count="9"><span class="tag" style="font-family:'JetBrains Mono',monospace;font-size:12px;padding:5px 10px;border:1px solid var(--color-neutral-700);color:var(--color-neutral-300)">{{ ps }}</span></sc-for></div>
+          <p style="font-size:15px;line-height:24px;margin:0;color:var(--color-neutral-300)">The agent uses a skill when the work matches. You can also call one, for example <code style="color:var(--color-accent-400)">/jafar-perf:triage</code>.</p>
+        </div>
+        <div data-reveal="1" style="padding:24px;border:2px solid var(--color-neutral-800);background:color-mix(in srgb,var(--color-text) 70%,transparent);display:flex;flex-direction:column;gap:14px">
+          <code style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--color-accent-400)">&gt; 7 agents</code>
+          <div style="border-top:1px solid var(--color-neutral-800)"><sc-for list="{{ perfAgents }}" as="pa" hint-placeholder-count="7"><div style="display:grid;grid-template-columns:minmax(0,170px) 1fr;gap:12px;padding:8px 0;border-bottom:1px solid var(--color-neutral-800);align-items:baseline"><code style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--color-bg)">{{ pa.n }}</code><span style="font-size:14px;line-height:21px;color:var(--color-neutral-400)">{{ pa.d }}</span></div></sc-for></div>
+        </div>
+        <div data-reveal="2" style="padding:24px;border:2px solid var(--color-neutral-800);background:color-mix(in oklch,var(--color-text),black 45%);display:flex;flex-direction:column;gap:14px">
+          <code style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--color-accent-400)">&gt; ask it</code>
+          <sc-for list="{{ perfPrompts }}" as="pp" hint-placeholder-count="3"><div style="border:1px solid var(--color-neutral-700);border-left:2px solid var(--color-bg);padding:12px 14px;font-size:15px;line-height:23px">{{ pp }}</div></sc-for>
+        </div>
+      </div>
+      <div data-reveal="1" style="margin-top:32px">
+        <div style="display:flex;flex-wrap:wrap;border:1px solid var(--color-neutral-700);border-bottom:0;width:fit-content"><sc-for list="{{ mcpTabs }}" as="tb" hint-placeholder-count="3"><button type="button" sc-camel-on-click="{{ tb.pick }}" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:9px 16px;border:0;border-right:1px solid var(--color-neutral-700);cursor:pointer;background:{{ tb.bg }};color:{{ tb.fg }}">{{ tb.label }}</button></sc-for></div>
+        <div style="background:color-mix(in oklch,var(--color-text),black 45%);border:1px solid var(--color-neutral-700);border-left:2px solid var(--color-accent);padding:16px 16px 16px 20px;display:flex;gap:16px;align-items:flex-start">
+          <div style="flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:24px;overflow-x:auto"><sc-for list="{{ mcpLines }}" as="ml" hint-placeholder-count="2"><div style="white-space:pre"><span style="color:var(--color-accent-400)">{{ ml.p }}</span>{{ ml.text }}</div></sc-for></div>
+          <button type="button" sc-camel-on-click="{{ copyMcp }}" style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.06em;background:transparent;color:var(--color-bg);border:1px solid var(--color-neutral-600);padding:6px 10px;cursor:pointer" style-hover="border-color:var(--color-accent);color:var(--color-accent-400)">{{ copyMcpLabel }}</button>
+        </div>
+        <p style="font-size:15px;line-height:24px;margin:12px 0 0;color:var(--color-neutral-300);max-width:72ch">{{ mcpNote }}</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section data-spy="1" id="install" style="scroll-margin-top:72px;background:color-mix(in srgb,var(--color-text) 60%,black 40%);border-top:2px solid var(--color-neutral-800);border-bottom:2px solid var(--color-neutral-800)">
+  <div style="max-width:1240px;margin:0 auto;padding:96px clamp(20px,5vw,72px)">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:48px 72px;align-items:start">
+      <div data-reveal="0">
+        <span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>05 // Install</span>
+        <h2 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(32px,4.4vw,62px);line-height:.98;letter-spacing:-0.01em;margin:0">Shell, library or Go module.</h2>
+        <p style="font-size:18px;line-height:28px;margin:24px 0 0;max-width:46ch;color:var(--color-neutral-300)">The parser is a multi-release JAR. It runs on Java 8 and uses faster code on Java 21 and later. Jafar is in early public release, so the API can change.</p>
+      </div>
+      <div data-reveal="1">
+        <div style="display:flex;flex-wrap:wrap;border:1px solid var(--color-neutral-700);border-bottom:0;width:fit-content"><sc-for list="{{ instTabs }}" as="it" hint-placeholder-count="4"><button type="button" sc-camel-on-click="{{ it.pick }}" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:9px 16px;border:0;border-right:1px solid var(--color-neutral-700);cursor:pointer;background:{{ it.bg }};color:{{ it.fg }}">{{ it.label }}</button></sc-for></div>
+        <div style="background:var(--color-text);border:1px solid var(--color-neutral-700);border-left:2px solid var(--color-accent);padding:16px 16px 16px 20px;display:flex;gap:16px;align-items:flex-start">
+          <div style="flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:24px;overflow-x:auto"><sc-for list="{{ instLines }}" as="il" hint-placeholder-count="2"><div style="white-space:pre"><span style="color:var(--color-accent-400)">{{ il.p }}</span>{{ il.text }}</div></sc-for></div>
+          <button type="button" sc-camel-on-click="{{ copyInst }}" style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.06em;background:transparent;color:var(--color-bg);border:1px solid var(--color-neutral-600);padding:6px 10px;cursor:pointer" style-hover="border-color:var(--color-accent);color:var(--color-accent-400)">{{ copyInstLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section data-spy="1" id="docs" style="scroll-margin-top:72px">
+  <div style="max-width:1240px;margin:0 auto;padding:72px clamp(20px,5vw,72px) 96px">
+    <span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>06 // Docs</span>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:32px 40px">
+      <sc-for list="{{ docCols }}" as="dc" hint-placeholder-count="4">
+        <div data-reveal="{{ $index }}" style="border-top:2px solid var(--color-accent);padding-top:14px">
+          <h3 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:16px;margin:0 0 12px">{{ dc.title }}</h3>
+          <div style="display:flex;flex-direction:column"><sc-for list="{{ dc.links }}" as="lk" hint-placeholder-count="4"><a href="{{ lk.href }}" style="font-size:15px;line-height:22px;padding:7px 0;color:var(--color-neutral-300);text-decoration:none;border-bottom:1px solid var(--color-neutral-800)" style-hover="color:var(--color-accent-400)">{{ lk.label }}</a></sc-for></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<section style="position:relative;overflow:hidden;background:var(--color-accent);color:var(--color-bg)">
+  <div aria-hidden="true" style="position:absolute;inset:0;background-image:linear-gradient(color-mix(in srgb,var(--color-text) 14%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--color-text) 14%,transparent) 1px,transparent 1px);background-size:64px 64px"></div>
+  <div style="max-width:1240px;margin:0 auto;padding:104px clamp(20px,5vw,72px);position:relative">
+    <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-bottom:24px">&gt; end of recording_</span>
+    <h2 data-reveal="0" style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(44px,8vw,128px);line-height:.9;letter-spacing:-0.015em;margin:0 0 0 -0.04em"><span style="display:block">Open. Query.</span><span style="display:block;color:var(--color-text)">Conclude.</span></h2>
+    <div data-reveal="1" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:44px">
+      <a href="#install" class="btn" style="background:var(--color-text);color:var(--color-bg);padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:13px;text-transform:uppercase;letter-spacing:.06em;min-width:240px;justify-content:space-between" style-hover="background:var(--color-neutral-900)">Install jfr-shell <svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></a>
+      <a href="https://github.com/btraceio/jafar" class="btn" style="color:var(--color-bg);border:2px solid var(--color-bg);padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:13px;text-transform:uppercase;letter-spacing:.06em" style-hover="background:var(--color-bg);color:var(--color-accent-700)">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer style="max-width:1240px;margin:0 auto;padding:28px clamp(20px,5vw,72px);display:flex;flex-wrap:wrap;gap:8px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:22px;letter-spacing:.04em;color:var(--color-neutral-400)">
+  <span style="display:flex;align-items:center;gap:8px;color:var(--color-bg);font-weight:600"><img src="assets/img/btrace-icon-small.svg" alt="" width="18" height="18" style="display:block">JAFAR</span>
+  <span>A btraceio project. Apache License 2.0.</span>
+  <a href="https://btraceio.github.io">btraceio</a>
+  <a href="https://github.com/btraceio/jafar" style="margin-left:auto">github.com/btraceio/jafar</a>
+</footer>
+</main>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;animateHero&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;expressive&quot;,&quot;restrained&quot;],&quot;default&quot;:&quot;expressive&quot;,&quot;tsType&quot;:&quot;'expressive'|'restrained'&quot;}}">
+const GH = 'https://github.com/btraceio/jafar/blob/main/';
+const TICKER = ['Parse JFR with a small API', 'Typed and untyped events', '85% less allocation with build-time handlers', 'Query recordings with JfrPath', 'Analyze heap dumps with HdumpPath', 'Ask your recording a question', 'The recording stays on your machine', 'MCP server for coding agents', 'Pure Go parser', 'Apache 2.0'];
+const NAV = [['ask', 'Ask'], ['parser', 'Parser'], ['shell', 'Shell'], ['agents', 'Agents'], ['install', 'Install'], ['docs', 'Docs']];
+const TONE = { cmd: 'var(--color-bg)', n: 'var(--color-neutral-300)', dim: 'var(--color-neutral-500)', hl: 'var(--color-accent-400)', kw: 'var(--color-accent-400)' };
+const OUT = [
+  { at: 1, k: 'cmd', text: 'jfr> ? why is this workload slow' },
+  { at: 3, k: 'hl', text: '> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(3, by=count)' },
+  { at: 4, k: 'dim', text: '  3 rows' },
+  { at: 5, k: 'n', text: '| count | key      |' },
+  { at: 5, k: 'n', text: '+-------+----------+' },
+  { at: 6, k: 'cmd', text: '| 8412  | main     |' },
+  { at: 6, k: 'n', text: '| 210   | worker-1 |' },
+  { at: 8, k: 'n', text: ' ' },
+  { at: 8, k: 'n', text: 'The samples concentrate on one thread, so the next step is that thread\'s call sites' },
+  { at: 8, k: 'n', text: 'rather than more parallelism.' },
+  { at: 10, k: 'n', text: ' ' },
+  { at: 10, k: 'dim', text: 'Transcript: ~/.jafar/investigations/ask-20260913-202249.jfrs' }
+];
+const END = 11, LOOP = 18;
+const API = {
+  typed: { label: 'Typed', note: 'Declare a Java interface for each JFR type with @JfrType. Methods map to event fields. Handlers run on the parser thread. Call ctl.abort() to stop early.', code: [
+    ['@JfrType("jdk.ExecutionSample")', 'kw'], ['public interface JFRExecutionSample {', 'cmd'], ['  @JfrField("startTime") long startTime();', 'n'], ['  @JfrField("sampledThread") JFRThread sampledThread();', 'n'], ['}', 'cmd'], [' ', 'n'],
+    ['try (TypedJafarParser p = JafarParser.newTypedParser(path)) {', 'cmd'], ['  p.handle(JFRExecutionSample.class, (e, ctl) -> {', 'n'], ['    JFRThread t = e.sampledThread();', 'n'], ['    if (t != null) System.out.println(t.javaName());', 'n'], ['  });', 'n'], ['  p.run();', 'n'], ['}', 'cmd']] },
+  untyped: { label: 'Untyped', note: 'Each event arrives as a Map. Complex fields resolve through ComplexType, arrays through ArrayType. Values.get reads a value by path.', code: [
+    ['try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {', 'cmd'], ['  p.handle((type, value) -> {', 'n'], ['    if ("jdk.ExecutionSample".equals(type.getName())) {', 'n'], ['      long tid = Values.as(value, Long.class,', 'n'], ['          "eventThread", "javaThreadId");', 'n'], ['      Object frame0 = Values.get(value,', 'n'], ['          "stackTrace", "frames", 0);', 'n'], ['    }', 'n'], ['  });', 'n'], ['  p.run();', 'n'], ['}', 'cmd']] },
+  go: { label: 'Go', note: 'github.com/btraceio/jafar/go-parser is a standalone Go module with no external dependencies. It ports the untyped parser only: no JfrPath, no shell, no CLI.', code: [
+    ['parser, err := jfr.Open("recording.jfr")', 'cmd'], ['if err != nil { log.Fatal(err) }', 'n'], ['err = parser.ParseWith(jfr.Options{', 'cmd'], ['  TypeFilter: func(t *jfr.ClassType) bool {', 'n'], ['    return t.Name == "jdk.ExecutionSample"', 'n'], ['  },', 'n'], ['}, func(e *jfr.Event) error {', 'cmd'], ['  thread, _ := jfr.GetString(e.Values, "sampledThread", "javaName")', 'n'], ['  fmt.Println(thread)', 'n'], ['  return nil', 'n'], ['})', 'cmd']] }
+};
+const BENCH = [{ k: 'Total allocations', a: '~223 GB', b: '~37 GB' }, { k: 'GC collections', a: '~600-800', b: '~50-100' }, { k: 'GC pause time', a: '~2-3 s', b: '~200-300 ms' }, { k: 'Throughput', a: '~189k events/s', b: '~187k events/s' }];
+const QUERIES = [
+  { id: 'thr', src: 'JFR', label: 'Which threads have the most samples?', q: 'events/jdk.ExecutionSample | groupBy(thread/name)', out: [['| key              | count |', 'n'], ['+------------------+-------+', 'dim'], ['| main             | 15234 |', 'cmd'], ['| ForkJoinPool-1   | 8923  |', 'n'], ['| GC Thread#0      | 4521  |', 'n']] },
+  { id: 'files', src: 'JFR', label: 'Which files does the app read most?', q: 'events/jdk.FileRead | top(10, by=bytes)', out: [['| path                    | bytes    |', 'n'], ['+-------------------------+----------+', 'dim'], ['| /data/large-file.bin    | 10485760 |', 'cmd'], ['| /logs/app.log           | 5242880  |', 'n']] },
+  { id: 'big', src: 'JFR', label: 'Show file reads of 1000 bytes or more', q: 'events/jdk.FileRead[bytes>=1000] --limit 5', out: [['| startTime           | duration | path          | bytes  |', 'n'], ['+---------------------+----------+---------------+--------+', 'dim'], ['| 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt | 524288 |', 'cmd']] },
+  { id: 'cls', src: 'HPROF', label: 'Which classes have the most objects?', q: 'objects | groupBy(class, agg=count) | top(10, count)', out: [['| class                      | count   |', 'n'], ['|---------------------------|---------|', 'dim'], ['| java.util.HashMap$Node    | 249,734 |', 'cmd'], ['| java.lang.String          | 238,750 |', 'n'], ['| java.lang.Object[]        | 156,234 |', 'n']] },
+  { id: 'str', src: 'HPROF', label: 'How large are strings over 1 KB?', q: 'objects/java.lang.String[shallow > 1KB] | stats(shallow)', out: [['| count | sum       | min  | max    | avg    |', 'n'], ['|-------|-----------|------|--------|--------|', 'dim'], ['| 1,234 | 2,456,789 | 1024 | 65,536 | 1,991  |', 'cmd']] },
+  { id: 'roots', src: 'HPROF', label: 'Which GC root types hold the most?', q: 'gcroots | groupBy(type) | sortBy(count desc)', out: [['| type         | count |', 'n'], ['|-------------|-------|', 'dim'], ['| JAVA_FRAME  | 2,345 |', 'cmd'], ['| THREAD_OBJ  | 1,234 |', 'n']] }
+];
+const SHELL_FEATS = ['flamegraph()', 'decorateByTime', 'decorateByKey', '.jfrs scripts', 'record start', 'variables ${var}', 'if / elif / endif', '--format json', 'multi-session', 'non-interactive mode', 'pathToRoot', 'dominators', 'leak detectors', 'heap diff'];
+const PERF_SKILLS = ['triage', 'cpu', 'latency', 'gc', 'memory-leak', 'heap-diff', 'compare', 'jfrpath', 'report'];
+const PERF_AGENTS = [
+  { n: 'perf-lead', d: 'Triages, sends work to specialists, and ranks their findings.' },
+  { n: 'perf-engineer', d: 'Analyzes one artifact from start to end.' },
+  { n: 'cpu-analyst', d: 'CPU-bound analysis.' },
+  { n: 'concurrency-analyst', d: 'Thread states, contention and queues.' },
+  { n: 'memory-analyst', d: 'GC and allocation.' },
+  { n: 'heap-analyst', d: 'Heap dumps and retention.' },
+  { n: 'io-analyst', d: 'File and socket I/O.' }
+];
+const PERF_PROMPTS = ['Analyse /tmp/recording.jfr and tell me why p99 latency doubled after the last deploy.', 'Use perf-lead to review /tmp/recording.jfr.', 'Compare /tmp/before.jfr against /tmp/after.jfr and tell me what regressed.'];
+const MCP = {
+  installer: { label: 'Installer', p: '$ ', note: 'Installs JBang if necessary and the jfr-mcp command. Then it registers jafar-perf with each supported agent host on your PATH. Run it again to update.', lines: ['curl -Ls https://raw.githubusercontent.com/btraceio/jafar/main/install.sh | bash'] },
+  plugin: { label: 'Claude Code plugin', p: '› ', note: 'The plugin bundles .mcp.json, so it also registers the jafar MCP server. JBang must be on your PATH.', lines: ['/plugin marketplace add btraceio/agent-plugins', '/plugin install jafar-perf@btraceio-agent-plugins'] },
+  server: { label: 'MCP server only', p: '$ ', note: 'Registers only the server, without the skills and agents. Other MCP clients get the prompts triage, compare, leak-hunt and latency from the server.', lines: ['claude mcp add jafar -- jbang jfr-mcp@btraceio --stdio'] }
+};
+const INST = {
+  jbang: { label: 'JBang', p: '$ ', lines: ['jbang app install jfr-shell@btraceio', 'jfr-shell recording.jfr'] },
+  gradle: { label: 'Gradle', p: '', lines: ["implementation 'io.btrace:jafar-parser:0.11.0'", "annotationProcessor 'io.btrace:jafar-processor:0.11.0'"] },
+  maven: { label: 'Maven', p: '', lines: ['<dependency>', '  <groupId>io.btrace</groupId>', '  <artifactId>jafar-parser</artifactId>', '  <version>0.11.0</version>', '</dependency>'] },
+  go: { label: 'Go', p: '$ ', lines: ['go get github.com/btraceio/jafar/go-parser'] }
+};
+const DOCS = [
+  { title: 'JFR Shell', links: [['JFR Shell README', 'https://github.com/btraceio/jafar/blob/main/jfr-shell/README.md'], ['Tutorial', GH + 'doc/cli/Tutorial.md'], ['JfrPath reference', GH + 'doc/cli/JFRPath.md'], ['Scripting guide', GH + 'doc/cli/Scripting.md']] },
+  { title: 'Ask', links: [['LLM setup', GH + 'doc/cli/LlmSetup.md'], ['Ask tutorial', GH + 'doc/cli/AskTutorial.md'], ['What leaves your machine', GH + 'doc/cli/LlmPrivacy.md']] },
+  { title: 'MCP and heap dumps', links: [['MCP server', 'https://github.com/btraceio/jafar/blob/main/jfr-mcp/README.md'], ['MCP tutorial', GH + 'doc/mcp/Tutorial.md'], ['Heap dump quick start', GH + 'doc/hdump-shell-quickstart.md'], ['HdumpPath reference', GH + 'doc/hdumppath.md']] },
+  { title: 'Project', links: [['Changelog', GH + 'CHANGELOG.md'], ['Limitations', GH + 'LIMITATIONS.md'], ['Performance', GH + 'PERFORMANCE.md'], ['Contributing', GH + 'CONTRIBUTING.md']] }
+].map(c => ({ title: c.title, links: c.links.map(([label, href]) => ({ label, href })) }));
+
+class Component extends DCLogic {
+  state = { t: 0, api: 'typed', q: 'thr', mcp: 'installer', inst: 'jbang', copied: null, active: 'ask' };
+  progRef = React.createRef();
+  componentDidMount() {
+    this.startHero();
+    this.onScroll = () => { const el = document.scrollingElement || document.documentElement, max = el.scrollHeight - innerHeight; if (this.progRef.current) this.progRef.current.style.width = (max > 0 ? el.scrollTop / max * 100 : 0) + '%'; };
+    addEventListener('scroll', this.onScroll, { passive: true }); this.onScroll();
+    this.spy = new IntersectionObserver(es => es.forEach(e => e.isIntersecting && this.setState({ active: e.target.id })), { rootMargin: '-35% 0px -60% 0px' });
+    document.querySelectorAll('[data-spy]').forEach(s => this.spy.observe(s));
+    this.setupMotion();
+  }
+  componentDidUpdate(prev) { if (prev.animateHero !== this.props.animateHero) this.startHero(); }
+  componentWillUnmount() { clearInterval(this.timer); clearTimeout(this.copyT); removeEventListener('scroll', this.onScroll); this.spy && this.spy.disconnect(); this.io && this.io.disconnect(); }
+  setupMotion() {
+    if ((this.props.motion ?? 'expressive') !== 'expressive' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const ease = 'cubic-bezier(.2,.7,.2,1)';
+    document.querySelectorAll('[data-hero]').forEach(el => { const d = +el.dataset.hero * 110; el.style.opacity = '0'; el.style.transform = 'translateY(28px)'; el.style.transition = `opacity .9s ${ease} ${d}ms, transform .9s ${ease} ${d}ms`; setTimeout(() => { el.style.opacity = '1'; el.style.transform = 'none'; }, 30); });
+    const showAll = () => document.querySelectorAll('[data-reveal],[data-hero]').forEach(el => { el.style.opacity = '1'; el.style.transform = 'none'; });
+    addEventListener('beforeprint', showAll);
+    if (document.visibilityState === 'hidden') setTimeout(showAll, 1500);
+    this.io = new IntersectionObserver(es => es.forEach(e => { if (!e.isIntersecting) return; e.target.style.opacity = '1'; e.target.style.transform = 'none'; this.io.unobserve(e.target); }), { rootMargin: '0px 0px -8% 0px' });
+    document.querySelectorAll('[data-reveal]').forEach(el => { if (el.getBoundingClientRect().top < innerHeight * 0.92) return; const d = (+el.dataset.reveal || 0) * 100; el.style.opacity = '0'; el.style.transform = 'translateY(48px)'; el.style.transition = `opacity .9s ${ease} ${d}ms, transform .9s ${ease} ${d}ms`; this.io.observe(el); });
+  }
+  startHero() {
+    clearInterval(this.timer);
+    if (this.props.animateHero === false) { this.setState({ t: END }); return; }
+    this.setState({ t: 0 });
+    this.timer = setInterval(() => this.setState(s => ({ t: s.t >= LOOP ? 0 : s.t + 1 })), 850);
+  }
+  copy(key, text) { try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {} clearTimeout(this.copyT); this.setState({ copied: key }); this.copyT = setTimeout(() => this.setState({ copied: null }), 1600); }
+  tabs(map, cur, key) { return Object.keys(map).map(k => ({ label: map[k].label, pick: () => this.setState({ [key]: k }), bg: k === cur ? 'var(--color-accent)' : 'transparent', fg: k === cur ? 'var(--color-bg)' : 'var(--color-neutral-300)' })); }
+  renderVals() {
+    const s = this.state, t = Math.min(s.t, END), done = t >= END;
+    const qSel = QUERIES.find(q => q.id === s.q);
+    const m = MCP[s.mcp], ins = INST[s.inst];
+    return {
+      ticker: TICKER.concat(TICKER),
+      nav: NAV.map(([id, label]) => ({ href: '#' + id, label, cur: s.active === id ? 'page' : undefined, color: s.active === id ? 'var(--color-bg)' : 'var(--color-accent-400)' })),
+      progRef: this.progRef,
+      outLines: OUT.filter(l => t >= l.at).map(l => ({ text: l.text, color: TONE[l.k] })),
+      stageLabel: done ? 'done // transcript saved' : t < 3 ? 'step 1 // read question' : t < 8 ? 'step 2 // run query' : 'step 3 // conclude',
+      pulseAnim: done ? 'none' : 'bt-pulse 1s steps(1) infinite',
+      replay: () => this.startHero(),
+      apiTabs: this.tabs(API, s.api, 'api'),
+      apiLines: API[s.api].code.map(([text, k]) => ({ text, color: TONE[k] })),
+      apiNote: API[s.api].note,
+      bench: BENCH,
+      queries: QUERIES.map(q => ({ ...q, pick: () => this.setState({ q: q.id }), bg: q.id === s.q ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent', border: q.id === s.q ? 'var(--color-accent)' : 'var(--color-neutral-700)' })),
+      qSel, qOut: qSel.out.map(([text, k]) => ({ text, color: TONE[k] })),
+      copyQ: () => this.copy('q', qSel.q), copyQLabel: s.copied === 'q' ? 'Copied' : 'Copy',
+      shellFeats: SHELL_FEATS, perfSkills: PERF_SKILLS, perfAgents: PERF_AGENTS, perfPrompts: PERF_PROMPTS,
+      mcpTabs: this.tabs(MCP, s.mcp, 'mcp'), mcpLines: m.lines.map(text => ({ text, p: m.p })), mcpNote: m.note,
+      copyMcp: () => this.copy('mcp', m.lines.join('\n')), copyMcpLabel: s.copied === 'mcp' ? 'Copied' : 'Copy',
+      instTabs: this.tabs(INST, s.inst, 'inst'), instLines: ins.lines.map(text => ({ text, p: ins.p })),
+      copyInst: () => this.copy('inst', ins.lines.join('\n')), copyInstLabel: s.copied === 'inst' ? 'Copied' : 'Copy',
+      docCols: DOCS
+    };
+  }
+}
+</script>
+
+
+</body></html>
