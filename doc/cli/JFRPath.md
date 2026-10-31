@@ -139,7 +139,7 @@ unit is worse than a parse error.
 events/jdk.FileRead[bytesRead>1MB]
 events/jdk.GCPhasePause[duration>10ms]
 events/jdk.JavaMonitorEnter[duration>1ms] | count()
-events/jdk.SocketRead[duration>500us and bytes>4KB]
+events/jdk.SocketRead[duration>500us and bytesRead>4KB]
 ```
 
 ### Boolean Expression Filters
@@ -382,15 +382,15 @@ events/jdk.FileRead | sortBy(bytesRead) | tail(5)
 
 ### Filter
 ```
-| filter([predicate])
+| filter(predicate)
 ```
 
-Filter rows in the pipeline using the same predicate syntax as path filters.
+Filter rows in the pipeline using the same predicate syntax as path filters, without the square brackets.
 
 **Examples**:
 ```
-events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter([sum>1048576])
-events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter([count>100])
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(count>100)
 ```
 
 ### Distinct
@@ -473,7 +473,6 @@ A group-by over a type with no events at all is still an empty result, not an er
 
 **Examples**:
 ```
-events/jdk.ExecutionSample/sampledThread/javaName | groupBy(value)                    # Count by thread name
 events/jdk.FileRead | groupBy(path, agg=count)                              # Count by file path
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)                   # Total bytes by path
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count)                # Count by thread name
@@ -528,7 +527,7 @@ Sort and return top N rows.
 **Examples**:
 ```
 events/jdk.FileRead | top(10, by=bytesRead)                   # Top 10 by bytes (descending)
-events/jdk.FileRead/bytesRead | top(5)                         # Top 5 values
+events/jdk.FileRead | top(5, by=bytesRead)                     # Top 5 by bytes
 events/jdk.FileRead | top(10, by=bytesRead, asc=true)         # Bottom 10 by bytes (ascending)
 ```
 
@@ -659,10 +658,10 @@ events/jdk.ExecutionSample | select(startTime)
 events/jdk.FileRead | select(path, bytesRead)
 
 # Select nested fields
-events/jdk.ExecutionSample | select(eventThread/javaThreadId, eventThread/name)
+events/jdk.ExecutionSample | select(sampledThread/javaThreadId, sampledThread/javaName)
 
 # Field with alias
-events/jdk.ExecutionSample | select(eventThread/javaThreadId as threadId)
+events/jdk.ExecutionSample | select(sampledThread/javaThreadId as threadId)
 
 # Combine with filters
 events/jdk.FileRead[bytesRead>1000] | select(path, bytesRead)
@@ -686,15 +685,15 @@ Expressions support arithmetic operations, string concatenation, and built-in fu
 # Convert bytes to kilobytes
 events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
 
-# Calculate throughput
-events/jdk.FileRead | select(bytesRead / duration as bytesPerNs)
-
 # Multiply duration by 1000
 events/jdk.FileRead | select(duration * 1000 as micros)
 
 # Complex arithmetic
-events/jdk.FileRead | select((bytesRead * count) / 1024 as totalKb)
+events/jdk.FileRead | select((bytesRead * 2) / 1024 as doubledKb)
 ```
+
+The divisor must be a number. `/` followed by a name is read as a path separator, so
+`select(bytesRead / duration as x)` is a parse error.
 
 **String Concatenation**:
 ```
@@ -726,7 +725,7 @@ events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as summary)
 events/jdk.FileRead | select("File: ${upper(path)} - ${bytesRead} bytes" as info)
 
 # Nested fields in templates
-events/jdk.ExecutionSample | select("Thread ${eventThread/name} (ID: ${eventThread/javaThreadId})" as threadInfo)
+events/jdk.ExecutionSample | select("Thread ${sampledThread/javaName} (ID: ${sampledThread/javaThreadId})" as threadInfo)
 
 # Mix templates with regular fields
 events/jdk.FileRead | select(path, "${bytesRead / 1024} KB" as sizeKb)
@@ -741,9 +740,12 @@ Templates are equivalent to string concatenation but more readable:
 **Built-in Functions**:
 
 **if(condition, trueValue, falseValue)** - Conditional expression
+
+The condition is a field or expression, true when non-zero. Comparisons such as
+`if(bytesRead > 1000, ...)` are a parse error; use a filter such as
+`events/jdk.FileRead[bytesRead>1000]` to select by threshold.
 ```
-events/jdk.FileRead | select(if(bytesRead, 'large', 'small') as size)
-events/jdk.FileRead | select(if(duration, 'slow', 'fast') as speed)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status)
 ```
 
 **upper(string)** - Convert to uppercase
@@ -807,7 +809,7 @@ events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration)
 events/jdk.FileRead | select(
     path as file,
     bytesRead / 1024 as kilobytes,
-    if(bytesRead, 'large', 'small') as sizeCategory,
+    if(bytesRead, 'has data', 'empty') as status,
     duration * 1000 as microseconds
 )
 
@@ -905,7 +907,7 @@ Converts epoch-nanosecond fields to human-readable datetime strings. Can be used
 events/jdk.ExecutionSample | asDateTime(startTime)
 
 # Format as select expression
-events/jdk.ExecutionSample | select(asDateTime(startTime) as time, eventThread/name as thread)
+events/jdk.ExecutionSample | select(asDateTime(startTime) as time, sampledThread/javaName as thread)
 
 # Custom format
 events/jdk.ExecutionSample | select(asDateTime(startTime, "HH:mm:ss.SSS") as time)

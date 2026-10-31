@@ -954,7 +954,7 @@ jfr> events/jdk.ObjectAllocationSample | groupBy(objectClass/name, agg=sum, valu
 jfr> events/jdk.ObjectAllocationSample/stackTrace/frames/0/method/type/name | groupBy() | top(10, by=count)
 
 # Allocation rate by thread
-jfr> events/jdk.ObjectAllocationSample | groupBy(thread/name, agg=sum, value=weight) | top(10, by=sum)
+jfr> events/jdk.ObjectAllocationSample | groupBy(eventThread/javaName, agg=sum, value=weight) | top(10, by=sum)
 ```
 
 ### Example 2: Analyze Thread Contention

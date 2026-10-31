@@ -26,7 +26,7 @@ Use --format json to get JSON output; also supports csv and tui formats
 Use 'set output json' to change the default format for the current session
 
 # ── Variables ──
-Variables can hold lazy queries: set x = events/jdk.FileRead[bytes>=1000]
+Variables can hold lazy queries: set x = events/jdk.FileRead[bytesRead>=1000]
 Lazy variables are evaluated on first access and the result is cached
 Use 'invalidate varname' to clear a cached lazy variable for re-evaluation
 Use --global with 'set' to store variables that persist across sessions

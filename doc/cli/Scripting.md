@@ -521,7 +521,7 @@ if ${analysis} == "cpu"
 elif ${analysis} == "io" or ${analysis} == "file"
   echo "=== I/O Analysis ==="
   events/jdk.FileRead | sum(bytesRead)
-  events/jdk.FileWrite | sum(bytes)
+  events/jdk.FileWrite | sum(bytesWritten)
 elif ${analysis} == "gc"
   echo "=== GC Analysis ==="
   events/jdk.GarbageCollection | stats(duration)
@@ -849,7 +849,7 @@ info
 metadata --summary
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 events/jdk.FileRead | sum(bytesRead)
-events/jdk.FileWrite | sum(bytes)
+events/jdk.FileWrite | sum(bytesWritten)
 events/jdk.GarbageCollection | stats(duration)
 close
 ```

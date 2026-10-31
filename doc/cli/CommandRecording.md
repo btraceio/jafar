@@ -294,7 +294,7 @@ jfr> record stop
 jfr> record start ~/jfr-scripts/io-profiling.jfrs
 jfr> open /tmp/sample.jfr
 jfr> events/jdk.FileRead | sum(bytesRead)
-jfr> events/jdk.FileWrite | sum(bytes)
+jfr> events/jdk.FileWrite | sum(bytesWritten)
 jfr> events/jdk.FileRead[bytesRead>=10000] --limit 20
 jfr> record stop
 ```
@@ -547,7 +547,7 @@ jfr> info
 jfr> events/jdk.ExecutionSample | count()
 jfr> events/jdk.GarbageCollection | stats(duration)
 jfr> events/jdk.FileRead | sum(bytesRead)
-jfr> events/jdk.FileWrite | sum(bytes)
+jfr> events/jdk.FileWrite | sum(bytesWritten)
 jfr> record stop
 ```
 

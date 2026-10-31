@@ -555,7 +555,7 @@ List matching:
 - `| top(n[, by=path, asc=false])` - Sort and take top N
 - `| head(n)` - Take first N rows
 - `| tail(n)` - Take last N rows
-- `| filter([predicate])` - Filter rows in pipeline
+- `| filter(predicate)` - Filter rows in pipeline
 - `| distinct([field])` - Remove duplicate rows by field
 - `| quantiles(0.5,0.9,0.99[,path=])` - Percentiles
 - `| sketch([path])` - Stats + p50, p90, p99

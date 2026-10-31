@@ -389,7 +389,7 @@ This ensures that events with the same simple name but different namespaces gene
 
 ```gradle
 plugins {
-  id 'io.btrace.jafar-gradle-plugin' version '0.11.0'
+  id 'io.btrace.jafar-gradle-plugin' version '0.29.0'
 }
 
 repositories {
@@ -477,12 +477,12 @@ jbang app install jfr-shell@btraceio
 # Open and analyze a recording
 jfr-shell recording.jfr
 
-jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
-jfr> events/jdk.FileRead | top(10, by=bytesRead)
-jfr> events/jdk.ExecutionSample | flamegraph()
+jfr> show events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+jfr> show events/jdk.FileRead | top(10, by=bytesRead)
+jfr> show events/jdk.ExecutionSample | flamegraph()
 
 # Event decoration: correlate samples with lock waits
-jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
+jfr> show events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
 ```
 
 See **[Event Decoration and Joining](doc/cli/Tutorial.md#event-decoration-and-joining)** for advanced correlation and joining capabilities.

@@ -514,7 +514,7 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  exit|quit                      Exit shell");
     terminal.writer().println();
     terminal.writer().println("Quick Examples:");
-    terminal.writer().println("  show events/jdk.FileRead[bytes>=1000] --limit 5");
+    terminal.writer().println("  show events/jdk.FileRead[bytesRead>=1000] --limit 5");
     terminal.writer().println("  show events/jdk.FileRead | count()");
     terminal.writer().println("  show events/jdk.ExecutionSample | groupBy(thread/name)");
     terminal.writer().println();

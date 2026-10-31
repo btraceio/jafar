@@ -259,8 +259,8 @@ events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration * 1000 as mi
 # String functions
 events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
 
-# Conditional expressions
-events/jdk.FileRead | select(if(bytesRead > 1000, 'large', 'small') as size)
+# Conditional expressions (true when non-zero; comparisons are not supported)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status)
 
 # Complex expressions with coalesce
 events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
@@ -310,7 +310,6 @@ For complete operator reference and grammar details, see [JFRPath.md](JFRPath.md
 - `events/jdk.FileRead/bytesRead | stats()`
 - `events/jdk.FileRead/bytesRead | quantiles(0.5,0.9,0.99)`
 - `events/jdk.FileRead/bytesRead | sketch()`
-- `events/jdk.ExecutionSample/sampledThread/javaName | groupBy(value)` — Count by thread name
 - `events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)` — Total bytesRead by path
 - `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)` — Sorted by count (descending)
 - `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=key, asc=true)` — Sorted alphabetically
