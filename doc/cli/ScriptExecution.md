@@ -262,7 +262,7 @@ events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
 
 # === I/O Analysis ===
-events/jdk.FileRead | sum(bytes)
+events/jdk.FileRead | sum(bytesRead)
 events/jdk.FileWrite | sum(bytes)
 events/jdk.SocketRead | sum(bytes)
 events/jdk.SocketWrite | sum(bytes)
@@ -391,8 +391,8 @@ Create a script that:
 
 open $1
 
-events/jdk.FileRead[bytes>=$2] --limit 20
-events/jdk.FileRead | sum(bytes)
+events/jdk.FileRead[bytesRead>=$2] --limit 20
+events/jdk.FileRead | sum(bytesRead)
 events/jdk.FileWrite | sum(bytes)
 
 close
@@ -489,20 +489,20 @@ open $1
 # File reads with computed fields
 events/jdk.FileRead | select(
   path,
-  bytes / 1024 as kilobytes,
-  if(bytes > 1048576, 'large', if(bytes > 1024, 'medium', 'small')) as size_category,
+  bytesRead / 1024 as kilobytes,
+  if(bytesRead > 1048576, 'large', if(bytesRead > 1024, 'medium', 'small')) as size_category,
   duration / 1000 as milliseconds
 ) --limit 20
 
 # Summarize with expressions
 events/jdk.FileRead | select(
-  bytes / 1024 as kb,
+  bytesRead / 1024 as kb,
   duration
 ) | stats(kb)
 
 # Group with computed keys
 events/jdk.FileRead | select(
-  if(bytes > 1048576, '>1MB', if(bytes > 10240, '>10KB', '<10KB')) as category,
+  if(bytesRead > 1048576, '>1MB', if(bytesRead > 10240, '>10KB', '<10KB')) as category,
   path
 ) | groupBy(category)
 

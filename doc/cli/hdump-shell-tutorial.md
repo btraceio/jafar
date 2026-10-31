@@ -164,11 +164,11 @@ Strings often dominate heap usage:
 # String statistics
 hdump> objects/java.lang.String | stats(shallow)
 
-# Large strings
-hdump> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
+# Large byte arrays (a String's own shallow size is fixed; its content lives in a byte[])
+hdump> objects/byte[][shallow > 1KB] | top(10, shallow)
 
-# String count by size range
-hdump> objects/java.lang.String[shallow > 100] | count
+# Byte arrays above a size threshold
+hdump> objects/byte[][shallow > 100] | count
 ```
 
 ### Array Analysis
@@ -752,7 +752,7 @@ objects[shallow > 1MB]
 Filter early to reduce data:
 ```bash
 # Good: filter first
-objects/java.lang.String[shallow > 1KB] | groupBy(class) | top(10)
+objects/byte[][shallow > 1KB] | groupBy(class) | top(10)
 
 # Less efficient: groupBy all, then filter
 objects/java.lang.String | groupBy(class) | filter(count > 100)

@@ -36,7 +36,7 @@ This shows total allocation size during each GC phase.
 
 ```bash
 events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
-  | groupBy($decorator.name, agg=sum, value=bytes)
+  | groupBy($decorator.name, agg=sum, value=bytesRead)
 ```
 
 Identifies if I/O operations are happening during GC (may indicate blocked threads).

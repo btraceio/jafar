@@ -174,8 +174,8 @@ hdump> objects[shallow > 1MB] | top(10, shallow)
 # String statistics
 hdump> objects/java.lang.String | stats(shallow)
 
-# Large strings
-hdump> objects/java.lang.String[shallow > 1KB] | top(10, shallow)
+# Large byte arrays (a String's own shallow size is fixed; its content lives in a byte[])
+hdump> objects/byte[][shallow > 1KB] | top(10, shallow)
 
 # String count
 hdump> objects/java.lang.String | count

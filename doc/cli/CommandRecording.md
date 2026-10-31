@@ -181,7 +181,7 @@ events/jdk.ExecutionSample | count()
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
 
 # [14:31:20]
-events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytesRead>=1000] --limit 10
 
 # Recording stopped: 2025-12-26T14:32:00Z
 ```
@@ -213,7 +213,7 @@ events/jdk.ExecutionSample | count()
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 
 # Large file reads
-events/jdk.FileRead[bytes>=${min_bytes}] --limit 10
+events/jdk.FileRead[bytesRead>=${min_bytes}] --limit 10
 ```
 
 ### Make It Executable
@@ -293,9 +293,9 @@ jfr> record stop
 # I/O profiling
 jfr> record start ~/jfr-scripts/io-profiling.jfrs
 jfr> open /tmp/sample.jfr
-jfr> events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.FileRead | sum(bytesRead)
 jfr> events/jdk.FileWrite | sum(bytes)
-jfr> events/jdk.FileRead[bytes>=10000] --limit 20
+jfr> events/jdk.FileRead[bytesRead>=10000] --limit 20
 jfr> record stop
 ```
 
@@ -546,7 +546,7 @@ jfr> open /tmp/v1.0-reference.jfr
 jfr> info
 jfr> events/jdk.ExecutionSample | count()
 jfr> events/jdk.GarbageCollection | stats(duration)
-jfr> events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.FileRead | sum(bytesRead)
 jfr> events/jdk.FileWrite | sum(bytes)
 jfr> record stop
 ```

@@ -50,12 +50,12 @@ import io.jafar.parser.api.*;
 import java.nio.file.Paths;
 
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
-  HandlerRegistration<?> reg = p.handle((type, value) -> {
+  HandlerRegistration<?> reg = p.handle((type, value, ctl) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-      // You can retrieve the value by providing 'path' -> "eventThread", "javaThreadId"
-      Object threadId = Values.get(value, "eventThread", "javaThreadId");
+      // You can retrieve the value by providing 'path' -> "sampledThread", "javaThreadId"
+      Object threadId = Values.get(value, "sampledThread", "javaThreadId");
       // You can also get the value conveniently typed - for primitive values you need to use the boxed type in the call
-      long threadIdLong = Values.as(value, Long.class, "eventThread", "javaThreadId");
+      long threadIdLong = Values.as(value, Long.class, "sampledThread", "javaThreadId").orElse(-1L);
       // use threadId ...
     }
   });
@@ -72,14 +72,15 @@ Examples:
 
 ```java
 import io.jafar.parser.api.*;
+import java.nio.file.Paths;
 import java.util.Map;
 
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/recording.jfr"))) {
-  p.handle((type, value) -> {
+  p.handle((type, value, ctl) -> {
     // ComplexType: constant-pool backed references (e.g., eventThread)
     Map<String, Object> thread = Values.as(value, Map.class, "eventThread").orElse(null);
     if (thread != null) {
-      System.out.println("thread id=" + thread.get("javaThreadId") + ", name=" + thread.get("name"));
+      System.out.println("thread id=" + thread.get("javaThreadId") + ", name=" + thread.get("javaName"));
     }
 
     // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
@@ -162,43 +163,21 @@ JAFAR now supports **build-time handler generation** via annotation processor, p
 
 ### Usage
 
-#### 1. Add Annotation Processor Dependency
+#### 1. Add the Annotation Processor
+
+`jafar-processor` is not published to Maven Central, so build the jar from this repository first:
+
+```bash
+./gradlew :jafar-processor:jar
+```
 
 **Gradle:**
 ```gradle
 dependencies {
-    implementation 'io.btrace:jafar-parser:0.11.0'
-    annotationProcessor 'io.btrace:jafar-processor:0.11.0'
+    implementation 'io.btrace:jafar-parser:0.29.0'
+    annotationProcessor 'io.btrace:jafar-parser:0.29.0'
+    annotationProcessor files('/path/to/jafar/jafar-processor/build/libs/jafar-processor-<version>.jar')
 }
-```
-
-**Maven:**
-```xml
-<dependencies>
-    <dependency>
-        <groupId>io.btrace</groupId>
-        <artifactId>jafar-parser</artifactId>
-        <version>0.11.0</version>
-    </dependency>
-</dependencies>
-
-<build>
-    <plugins>
-        <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-compiler-plugin</artifactId>
-            <configuration>
-                <annotationProcessorPaths>
-                    <path>
-                        <groupId>io.btrace</groupId>
-                        <artifactId>jafar-processor</artifactId>
-                        <version>0.11.0</version>
-                    </path>
-                </annotationProcessorPaths>
-            </configuration>
-        </plugin>
-    </plugins>
-</build>
 ```
 
 #### 2. Define Event Interfaces (Top-Level Only)
@@ -498,8 +477,8 @@ jbang app install jfr-shell@btraceio
 # Open and analyze a recording
 jfr-shell recording.jfr
 
-jfr> events/jdk.ExecutionSample | groupBy(thread/name)
-jfr> events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+jfr> events/jdk.FileRead | top(10, by=bytesRead)
 jfr> events/jdk.ExecutionSample | flamegraph()
 
 # Event decoration: correlate samples with lock waits
@@ -667,7 +646,7 @@ jfr> objects | groupBy(class, agg=count) | top(10, count)
 | java.lang.String          | 238,750 |
 | java.lang.Object[]        | 156,234 |
 
-jfr> objects/java.lang.String[shallow > 1KB] | stats(shallow)
+jfr> objects/byte[][shallow > 1KB] | stats(shallow)
 | count | sum       | min  | max    | avg    |
 |-------|-----------|------|--------|--------|
 | 1,234 | 2,456,789 | 1024 | 65,536 | 1,991  |

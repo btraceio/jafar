@@ -312,8 +312,8 @@ objects[startsWith(className, "java/util") or startsWith(className, "java/lang")
 
 ### Examples
 ```
-# Large strings
-objects/java.lang.String[shallow > 1KB]
+# Large byte arrays (a String's own shallow size is fixed; its content lives in a byte[])
+objects/byte[][shallow > 1KB]
 
 # Classes with many instances
 classes[instanceCount > 1000]

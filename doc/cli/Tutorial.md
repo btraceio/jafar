@@ -177,7 +177,7 @@ Navigate nested structures with `/`:
 events/jdk.FileRead/path
 
 # Nested field
-events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/sampledThread/javaName
 
 # Deep nesting
 events/jdk.ExecutionSample/stackTrace/frames/0/method/name
@@ -189,7 +189,7 @@ Use `[...]` to filter results:
 
 ```bash
 # Numeric comparison
-events/jdk.FileRead[bytes>1000000]
+events/jdk.FileRead[bytesRead>1000000]
 
 # String equality
 events/jdk.ExecutionSample[state="RUNNABLE"]
@@ -198,10 +198,10 @@ events/jdk.ExecutionSample[state="RUNNABLE"]
 events/jdk.FileRead[path~"/tmp/.*"]
 
 # Nested field
-events/jdk.ExecutionSample[thread/name~"main"]
+events/jdk.ExecutionSample[sampledThread/javaName~"main"]
 
 # Multiple conditions
-events/jdk.FileRead[bytes>1000 and path~".*\\.log"]
+events/jdk.FileRead[bytesRead>1000 and path~".*\\.log"]
 ```
 
 ### Operators
@@ -221,7 +221,7 @@ Extract specific fields:
 events/jdk.FileRead/path
 
 # Nested field
-events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/sampledThread/javaName
 
 # Array element
 events/jdk.ExecutionSample/stackTrace/frames/0
@@ -237,7 +237,7 @@ jfr> events/jdk.ExecutionSample | count()
 Result: 45234
 
 # Count with filter
-jfr> events/jdk.FileRead[bytes>1048576] | count()
+jfr> events/jdk.FileRead[bytesRead>1048576] | count()
 Result: 127
 ```
 
@@ -251,7 +251,7 @@ jfr> events/jdk.FileRead --limit 10
 jfr> events/jdk.FileRead/path --limit 10
 
 # Filter and list
-jfr> events/jdk.FileRead[bytes>=1000000] --limit 5
+jfr> events/jdk.FileRead[bytesRead>=1000000] --limit 5
 | startTime           | duration | path              | bytes    |
 +---------------------+----------+-------------------+----------+
 | 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt     | 5242880  |
@@ -268,7 +268,7 @@ jfr> events/jdk.FileRead[path~"/tmp/.*"] --limit 10
 jfr> events/jdk.SocketRead[duration>10000000] --limit 10
 
 # Find specific thread activity
-jfr> events/jdk.ExecutionSample[thread/name="ForkJoinPool-1"] --limit 10
+jfr> events/jdk.ExecutionSample[sampledThread/javaName="ForkJoinPool-1"] --limit 10
 ```
 
 ## Metadata Exploration
@@ -329,7 +329,7 @@ jfr> show metadata/java.lang.Thread/fields
 
 ```bash
 # Group by field
-jfr> events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 | key                | count |
 +--------------------+-------+
 | main               | 15234 |
@@ -337,7 +337,7 @@ jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 | GC Thread#0        | 4521  |
 
 # Group with aggregation
-jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
+jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)
 | path              | sum       |
 +-------------------+-----------+
 | /var/log/app.log  | 524288000 |
@@ -348,47 +348,47 @@ jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
 
 ```bash
 # Top 10 files by bytes read
-jfr> events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.FileRead | top(10, by=bytesRead)
 | path                    | bytes     |
 +-------------------------+-----------+
 | /data/large-file.bin    | 104857600 |
 | /logs/app.log           | 52428800  |
 
 # Top threads by samples
-jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 ```
 
 ### Statistics
 
 ```bash
 # Basic stats
-jfr> events/jdk.FileRead/bytes | stats()
+jfr> events/jdk.FileRead/bytesRead | stats()
 | min  | max      | avg      | stddev   | count |
 +------+----------+----------+----------+-------+
 | 0    | 10485760 | 52428.5  | 123456.7 | 5432  |
 
 # Stats on filtered data
-jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytes | stats()
+jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytesRead | stats()
 
 # Quantiles
-jfr> events/jdk.FileRead/bytes | quantiles(0.5, 0.9, 0.99)
+jfr> events/jdk.FileRead/bytesRead | quantiles(0.5, 0.9, 0.99)
 | p50   | p90     | p99      |
 +-------+---------+----------+
 | 4096  | 102400  | 1048576  |
 
 # Sketch (combined stats + quantiles)
-jfr> events/jdk.FileRead/bytes | sketch()
+jfr> events/jdk.FileRead/bytesRead | sketch()
 ```
 
 ### Summing
 
 ```bash
 # Sum bytes read
-jfr> events/jdk.FileRead/bytes | sum()
+jfr> events/jdk.FileRead/bytesRead | sum()
 Result: 524288000
 
 # Sum with filter
-jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
+jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytesRead | sum()
 ```
 
 ## Advanced Queries
@@ -397,7 +397,7 @@ jfr> events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
 
 ```bash
 # Boolean logic
-jfr> events/jdk.FileRead[bytes>1000 and path~".*\\.log"] --limit 10
+jfr> events/jdk.FileRead[bytesRead>1000 and path~".*\\.log"] --limit 10
 
 # Function-based filters
 jfr> events/jdk.FileRead[len(path)>50] --limit 10
@@ -411,7 +411,7 @@ jfr> events/jdk.FileRead[contains(path, "temp")] --limit 10
 jfr> events/jdk.FileRead[matches(path, ".*\\.log")] --limit 10
 
 # Range check
-jfr> events/jdk.FileRead[between(bytes, 1000, 10000)] --limit 10
+jfr> events/jdk.FileRead[between(bytesRead, 1000, 10000)] --limit 10
 ```
 
 ### List Matching
@@ -446,13 +446,13 @@ jfr> events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace[reservedSize>20000
 
 ```bash
 # Group then top
-jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 
 # Group by multiple levels
 jfr> events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
 
 # Filter, group, top
-jfr> events/jdk.FileRead[bytes>1000] | groupBy(path) | top(10, by=count)
+jfr> events/jdk.FileRead[bytesRead>1000] | groupBy(path) | top(10, by=count)
 ```
 
 ## Event Decoration and Joining
@@ -708,7 +708,7 @@ jfr> events/jdk.ObjectAllocationSample | decorateByTime(jdk.GCPhase, fields=name
 
 # File I/O during GC
 jfr> events/jdk.FileRead | decorateByTime(jdk.GCPhase, fields=name)
-  | groupBy($decorator.name, agg=sum, value=bytes)
+  | groupBy($decorator.name, agg=sum, value=bytesRead)
 ```
 
 #### Example 6: Thread Behavior During GC
@@ -888,14 +888,14 @@ $ jfr-shell show recording.jfr "events/jdk.FileRead | groupBy(path) | top(10, by
 
 ```bash
 # JSON for programmatic processing
-$ jfr-shell show recording.jfr "events/jdk.FileRead | top(5, by=bytes)" --format json
+$ jfr-shell show recording.jfr "events/jdk.FileRead | top(5, by=bytesRead)" --format json
 [
   {"path": "/data/large.bin", "bytes": 10485760},
   {"path": "/logs/app.log", "bytes": 5242880}
 ]
 
 # Parse with jq
-$ jfr-shell show recording.jfr "events/jdk.FileRead | top(5, by=bytes)" --format json | jq '.[0].path'
+$ jfr-shell show recording.jfr "events/jdk.FileRead | top(5, by=bytesRead)" --format json | jq '.[0].path'
 "/data/large.bin"
 ```
 
@@ -911,10 +911,10 @@ echo "Event Summary:"
 jfr-shell show "$RECORDING" "events/jdk.ExecutionSample | count()"
 
 echo "Top Threads:"
-jfr-shell show "$RECORDING" "events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)"
+jfr-shell show "$RECORDING" "events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)"
 
 echo "Top Files:"
-jfr-shell show "$RECORDING" "events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)"
+jfr-shell show "$RECORDING" "events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | top(10, by=sum)"
 
 # Exit code 0 for success, 1 for errors
 ```
@@ -974,13 +974,13 @@ jfr> events/jdk.ThreadPark/duration | stats()
 
 ```bash
 # Total bytes read
-jfr> events/jdk.FileRead/bytes | sum()
+jfr> events/jdk.FileRead/bytesRead | sum()
 
 # Slow file operations
 jfr> events/jdk.FileRead[duration>10000000] | top(20, by=duration)
 
 # I/O by file
-jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(20, by=sum)
+jfr> events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | top(20, by=sum)
 
 # Socket I/O statistics
 jfr> events/jdk.SocketRead/duration | stats()
@@ -994,7 +994,7 @@ jfr> events/jdk.SocketRead | groupBy(address) | top(10, by=count)
 jfr> events/jdk.ExecutionSample/stackTrace/frames/0/method/type/name | groupBy() | top(20, by=count)
 
 # Thread activity
-jfr> events/jdk.ExecutionSample | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 
 # Thread state distribution
 jfr> events/jdk.ExecutionSample | groupBy(state) | top(5, by=count)
@@ -1082,10 +1082,10 @@ jfr> events/jdk.FileRead[<TAB>
 # Field names: path, bytes, duration, startTime
 # Filter functions: contains(, exists(, startsWith(, endsWith(
 
-jfr> events/jdk.FileRead[bytes<TAB>
+jfr> events/jdk.FileRead[bytesRead<TAB>
 # Operators: ==, !=, >, >=, <, <=, ~, contains, startsWith, endsWith, matches
 
-jfr> events/jdk.FileRead[bytes > 1000 <TAB>
+jfr> events/jdk.FileRead[bytesRead > 1000 <TAB>
 # Logical operators: &&, ||
 ```
 
@@ -1129,9 +1129,9 @@ jfr> events/jdk.ExecutionSample
 Use shell redirection to save output:
 
 ```bash
-$ jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)" > threads.txt
+$ jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)" > threads.txt
 
-$ jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json > top-files.json
+$ jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytesRead)" --format json > top-files.json
 ```
 
 ### Quick Profiling
@@ -1152,7 +1152,7 @@ jfr> events/jdk.ExecutionSample --limit 5
 jfr> events/jdk.ExecutionSample | groupBy(state)
 
 # 5. Deep dive
-jfr> events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(thread/name) | top(10, by=count)
+jfr> events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(sampledThread/javaName) | top(10, by=count)
 ```
 
 ## Next Steps

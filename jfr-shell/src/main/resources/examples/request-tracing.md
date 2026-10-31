@@ -57,7 +57,7 @@ events/jdk.FileRead | decorateByKey(RequestStart,
                                           key=eventThread/javaThreadId,
                                           decoratorKey=thread/javaThreadId,
                                           fields=endpoint)
-  | groupBy($decorator.endpoint, agg=sum, value=bytes)
+  | groupBy($decorator.endpoint, agg=sum, value=bytesRead)
 ```
 
 ### Allocations by request

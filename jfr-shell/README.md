@@ -71,13 +71,13 @@ java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 jfr> open recording.jfr
 Opened session #1: recording.jfr
 
-jfr> events/jdk.FileRead[bytes>=1000] --limit 5
+jfr> events/jdk.FileRead[bytesRead>=1000] --limit 5
 | startTime           | duration | path              | bytes  |
 +---------------------+----------+-------------------+--------+
 | 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt     | 524288 |
 ...
 
-jfr> events/jdk.ExecutionSample | groupBy(thread/name)
+jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 | key              | count |
 +------------------+-------+
 | main             | 15234 |
@@ -88,7 +88,7 @@ jfr> events/jdk.ExecutionSample | groupBy(thread/name)
 jfr> events/jdk.ExecutionSample | flamegraph()
 [Opens interactive flame graph in terminal]
 
-jfr> events/jdk.FileRead | top(10, by=bytes)
+jfr> events/jdk.FileRead | top(10, by=bytesRead)
 | path                    | bytes    |
 +-------------------------+----------+
 | /data/large-file.bin    | 10485760 |
@@ -105,39 +105,39 @@ jfr> events/jdk.FileRead | top(10, by=bytes)
 events/jdk.ExecutionSample | count()
 
 # How many file reads over 1MB?
-events/jdk.FileRead[bytes>1048576] | count()
+events/jdk.FileRead[bytesRead>1048576] | count()
 ```
 
 ### Analyze Thread Activity
 
 ```bash
 # Group execution samples by thread
-events/jdk.ExecutionSample | groupBy(thread/name)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Group by thread, sorted by count descending (default)
-events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)
 
 # Group by thread, sorted alphabetically by thread name
-events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=key, asc=true)
 
 # Find threads with deep call stacks
 events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 10
 
 # Top threads by sample count
-events/jdk.ExecutionSample | groupBy(thread/name, agg=count) | top(10, by=count)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count) | top(10, by=count)
 ```
 
 ### File I/O Analysis
 
 ```bash
 # Sum total bytes read
-events/jdk.FileRead/bytes | sum()
+events/jdk.FileRead/bytesRead | sum()
 
 # Statistics on read sizes
-events/jdk.FileRead/bytes | stats()
+events/jdk.FileRead/bytesRead | stats()
 
 # Top 10 files by bytes read
-events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | top(10, by=sum)
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | top(10, by=sum)
 
 # Files read from /tmp
 events/jdk.FileRead[path~"/tmp/.*"] --limit 20
@@ -191,10 +191,10 @@ Execute queries without entering the shell - perfect for scripts and CI pipeline
 jfr-shell show recording.jfr "events/jdk.ExecutionSample | count()"
 
 # Get JSON output
-jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json
+jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytesRead)" --format json
 
 # Group analysis
-jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)"
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)"
 
 # List event types
 jfr-shell metadata recording.jfr --events-only
@@ -214,7 +214,7 @@ Store and reuse values in your analysis sessions with `${var}` substitution.
 ```bash
 jfr> set threshold = 1000
 jfr> set limit = 10
-jfr> events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+jfr> events/jdk.FileRead[bytesRead>=${threshold}] --limit ${limit}
 
 # Copy variables
 jfr> set backup = threshold       # Copy value from threshold
@@ -238,7 +238,7 @@ jfr> echo "Connecting to ${db.host}:${db.port} as ${db.credentials.user}"
 Connecting to localhost:5432 as admin
 
 # Use in queries
-jfr> events/jdk.FileRead[bytes>=${config.threshold}]
+jfr> events/jdk.FileRead[bytesRead>=${config.threshold}]
 
 # Get map size
 jfr> echo "Config has ${config.size} entries"
@@ -313,7 +313,7 @@ See [example script](src/main/resources/examples/map-operations.jfrs) for comple
 Store queries for on-demand evaluation with caching:
 
 ```bash
-jfr> set fileReads = events/jdk.FileRead[bytes>=1000]
+jfr> set fileReads = events/jdk.FileRead[bytesRead>=1000]
 jfr> set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Access results
@@ -430,7 +430,7 @@ open ${1:?recording file required}
 set min_bytes = ${2:-1000}     # Default to 1000 if not provided
 set top_n = ${3:-10}           # Default to 10 if not provided
 
-events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+events/jdk.FileRead[bytesRead>=${min_bytes}] --limit ${top_n}
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
 close
 ```
@@ -461,7 +461,7 @@ Recording started: analysis.jfrs
 
 jfr> open /tmp/app.jfr
 jfr> events/jdk.ExecutionSample | count()
-jfr> events/jdk.FileRead | sum(bytes)
+jfr> events/jdk.FileRead | sum(bytesRead)
 
 jfr> record stop
 Recording stopped: analysis.jfrs
@@ -577,22 +577,22 @@ List matching:
 **Examples:**
 ```bash
 # Simple field selection
-events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytesRead)
 
 # Computed expressions
-events/jdk.FileRead | select(bytes / 1024 as kilobytes)
-events/jdk.FileRead | select(path + ' (' + bytes + ')' as description)
+events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
+events/jdk.FileRead | select(path + ' (' + bytesRead + ')' as description)
 
 # String templates (cleaner syntax)
-events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
-events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path} (${bytesRead} bytes)" as description)
+events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as summary)
 
 # Mixed fields and expressions
-events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration * 1000 as micros)
 
 # Built-in functions
 events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
-events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
+events/jdk.FileRead | select(if(bytesRead, 'large', 'small') as size)
 
 # Functions in templates
 events/jdk.FileRead | select("File: ${upper(path)}" as info)
