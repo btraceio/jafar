@@ -78,9 +78,9 @@ Where the two shells differ:
 |---|---|---|
 | Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
-| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file>` | `script <path> [args]` at the prompt (or piped in). `jafar-shell script <file>` on the command line is handed to the JFR command line, so it is JFR-only |
+| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | not available at the `jafar-shell` prompt, so a script using them (`basic-analysis.jfrs` runs `metadata --summary`) reports that line as a query error and carries on |
+| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | the same commands (jfr-shell's implementations) on a recording, all but `record`; `metadata/...` and `chunks \| ...` remain queries |
 | A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
 
@@ -721,6 +721,9 @@ Execute scripts directly from the command line:
 ```bash
 # Run by path
 jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
+
+# In jafar-shell: same arguments and --continue-on-error; the script may open any format
+jafar-shell script /path/to/cross.jfrs app.jfr app.hprof
 
 # From stdin
 jfr-shell script - /tmp/app.jfr <<'EOF'
