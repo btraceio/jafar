@@ -677,7 +677,7 @@ a:hover{color:var(--color-bg)}
 <div style="position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--color-text) 88%,transparent);backdrop-filter:blur(8px)">
   <nav class="nav" style="padding:12px max(clamp(20px,5vw,72px), calc((100% - 1240px) / 2 + clamp(20px,5vw,72px)));gap:24px;border-bottom:2px solid var(--color-neutral-800)">
     <a href="#top" class="nav-brand" style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:18px;letter-spacing:.02em;color:var(--color-bg);display:flex;align-items:center;gap:10px;margin-right:0">
-      <img src="assets/img/btrace-icon-small.svg" alt="" width="28" height="28" style="display:block;outline:1px solid var(--color-neutral-700)">JAFAR<span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--color-accent-400);border:1px solid var(--color-accent);padding:2px 6px">v0.11.0</span>
+      <img src="assets/img/btrace-icon-small.svg" alt="" width="28" height="28" style="display:block;outline:1px solid var(--color-neutral-700)">JAFAR<span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--color-accent-400);border:1px solid var(--color-accent);padding:2px 6px">v0.29.0</span>
     </a>
     <div style="display:flex;gap:22px;overflow-x:auto;margin-right:auto;scrollbar-width:none;padding:4px 0;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.06em">
       <sc-for list="{{ nav }}" as="n" hint-placeholder-count="6"><a href="{{ n.href }}" aria-current="{{ n.cur }}" style="white-space:nowrap;font-size:12px;color:{{ n.color }}">{{ n.label }}</a></sc-for>
@@ -826,7 +826,7 @@ a:hover{color:var(--color-bg)}
       <div data-reveal="0">
         <span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-400);margin-bottom:18px"><span style="width:8px;height:8px;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>05 // Install</span>
         <h2 style="font-family:'Oxanium',var(--font-heading);font-weight:700;text-transform:uppercase;font-size:clamp(32px,4.4vw,62px);line-height:.98;letter-spacing:-0.01em;margin:0">Shell, library or Go module.</h2>
-        <p style="font-size:18px;line-height:28px;margin:24px 0 0;max-width:46ch;color:var(--color-neutral-300)">The parser is a multi-release JAR. It runs on Java 8 and uses faster code on Java 21 and later. Jafar is in early public release, so the API can change.</p>
+        <p style="font-size:18px;line-height:28px;margin:24px 0 0;max-width:46ch;color:var(--color-neutral-300)">The parser is a multi-release JAR. It runs on Java 8 and uses faster code on Java 21 and later. The shell and the MCP server need Java 26 or later. Jafar is in early public release, so the API can change.</p>
       </div>
       <div data-reveal="1">
         <div style="display:flex;flex-wrap:wrap;border:1px solid var(--color-neutral-700);border-bottom:0;width:fit-content"><sc-for list="{{ instTabs }}" as="it" hint-placeholder-count="4"><button type="button" sc-camel-on-click="{{ it.pick }}" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:9px 16px;border:0;border-right:1px solid var(--color-neutral-700);cursor:pointer;background:{{ it.bg }};color:{{ it.fg }}">{{ it.label }}</button></sc-for></div>
@@ -896,19 +896,21 @@ const END = 11, LOOP = 18;
 const API = {
   typed: { label: 'Typed', note: 'Declare a Java interface for each JFR type with @JfrType. Methods map to event fields. Handlers run on the parser thread. Call ctl.abort() to stop early.', code: [
     ['@JfrType("jdk.ExecutionSample")', 'kw'], ['public interface JFRExecutionSample {', 'cmd'], ['  @JfrField("startTime") long startTime();', 'n'], ['  @JfrField("sampledThread") JFRThread sampledThread();', 'n'], ['}', 'cmd'], [' ', 'n'],
+    ['@JfrType("java.lang.Thread")', 'kw'], ['public interface JFRThread {', 'cmd'], ['  @JfrField("javaName") String javaName();', 'n'], ['}', 'cmd'], [' ', 'n'],
     ['try (TypedJafarParser p = JafarParser.newTypedParser(path)) {', 'cmd'], ['  p.handle(JFRExecutionSample.class, (e, ctl) -> {', 'n'], ['    JFRThread t = e.sampledThread();', 'n'], ['    if (t != null) System.out.println(t.javaName());', 'n'], ['  });', 'n'], ['  p.run();', 'n'], ['}', 'cmd']] },
   untyped: { label: 'Untyped', note: 'Each event arrives as a Map. Complex fields resolve through ComplexType, arrays through ArrayType. Values.get reads a value by path.', code: [
-    ['try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {', 'cmd'], ['  p.handle((type, value) -> {', 'n'], ['    if ("jdk.ExecutionSample".equals(type.getName())) {', 'n'], ['      long tid = Values.as(value, Long.class,', 'n'], ['          "eventThread", "javaThreadId");', 'n'], ['      Object frame0 = Values.get(value,', 'n'], ['          "stackTrace", "frames", 0);', 'n'], ['    }', 'n'], ['  });', 'n'], ['  p.run();', 'n'], ['}', 'cmd']] },
+    ['try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {', 'cmd'], ['  p.handle((type, value, ctl) -> {', 'n'], ['    if ("jdk.ExecutionSample".equals(type.getName())) {', 'n'], ['      long tid = Values.as(value, Long.class,', 'n'], ['          "sampledThread", "javaThreadId").orElse(-1L);', 'n'], ['      Object frame0 = Values.get(value,', 'n'], ['          "stackTrace", "frames", 0);', 'n'], ['    }', 'n'], ['  });', 'n'], ['  p.run();', 'n'], ['}', 'cmd']] },
   go: { label: 'Go', note: 'github.com/btraceio/jafar/go-parser is a standalone Go module with no external dependencies. It ports the untyped parser only: no JfrPath, no shell, no CLI.', code: [
+    ['import "github.com/btraceio/jafar/go-parser/jfr"', 'kw'], [' ', 'n'],
     ['parser, err := jfr.Open("recording.jfr")', 'cmd'], ['if err != nil { log.Fatal(err) }', 'n'], ['err = parser.ParseWith(jfr.Options{', 'cmd'], ['  TypeFilter: func(t *jfr.ClassType) bool {', 'n'], ['    return t.Name == "jdk.ExecutionSample"', 'n'], ['  },', 'n'], ['}, func(e *jfr.Event) error {', 'cmd'], ['  thread, _ := jfr.GetString(e.Values, "sampledThread", "javaName")', 'n'], ['  fmt.Println(thread)', 'n'], ['  return nil', 'n'], ['})', 'cmd']] }
 };
 const BENCH = [{ k: 'Total allocations', a: '~223 GB', b: '~37 GB' }, { k: 'GC collections', a: '~600-800', b: '~50-100' }, { k: 'GC pause time', a: '~2-3 s', b: '~200-300 ms' }, { k: 'Throughput', a: '~189k events/s', b: '~187k events/s' }];
 const QUERIES = [
-  { id: 'thr', src: 'JFR', label: 'Which threads have the most samples?', q: 'events/jdk.ExecutionSample | groupBy(thread/name)', out: [['| key              | count |', 'n'], ['+------------------+-------+', 'dim'], ['| main             | 15234 |', 'cmd'], ['| ForkJoinPool-1   | 8923  |', 'n'], ['| GC Thread#0      | 4521  |', 'n']] },
-  { id: 'files', src: 'JFR', label: 'Which files does the app read most?', q: 'events/jdk.FileRead | top(10, by=bytes)', out: [['| path                    | bytes    |', 'n'], ['+-------------------------+----------+', 'dim'], ['| /data/large-file.bin    | 10485760 |', 'cmd'], ['| /logs/app.log           | 5242880  |', 'n']] },
-  { id: 'big', src: 'JFR', label: 'Show file reads of 1000 bytes or more', q: 'events/jdk.FileRead[bytes>=1000] --limit 5', out: [['| startTime           | duration | path          | bytes  |', 'n'], ['+---------------------+----------+---------------+--------+', 'dim'], ['| 2024-01-15 10:23:41 | 1234567  | /tmp/data.txt | 524288 |', 'cmd']] },
+  { id: 'thr', src: 'JFR', label: 'Which threads have the most samples?', q: 'events/jdk.ExecutionSample | groupBy(sampledThread/javaName)', out: [['| count | key            |', 'n'], ['+-------+----------------+', 'dim'], ['| 15234 | main           |', 'cmd'], ['| 8923  | ForkJoinPool-1 |', 'n'], ['| 4521  | worker-1       |', 'n']] },
+  { id: 'files', src: 'JFR', label: 'Which files does the app read most?', q: 'events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | top(10, by=sum)', out: [['| sum        | key                  |', 'n'], ['+------------+----------------------+', 'dim'], ['| 10485760.0 | /data/large-file.bin |', 'cmd'], ['| 5242880.0  | /logs/app.log        |', 'n']] },
+  { id: 'big', src: 'JFR', label: 'Show file reads of 1000 bytes or more', q: 'events/jdk.FileRead[bytesRead>=1000] | select(path, bytesRead) --limit 5', out: [['| path          | bytesRead |', 'n'], ['+---------------+-----------+', 'dim'], ['| /tmp/data.txt | 524288    |', 'cmd']] },
   { id: 'cls', src: 'HPROF', label: 'Which classes have the most objects?', q: 'objects | groupBy(class, agg=count) | top(10, count)', out: [['| class                      | count   |', 'n'], ['|---------------------------|---------|', 'dim'], ['| java.util.HashMap$Node    | 249,734 |', 'cmd'], ['| java.lang.String          | 238,750 |', 'n'], ['| java.lang.Object[]        | 156,234 |', 'n']] },
-  { id: 'str', src: 'HPROF', label: 'How large are strings over 1 KB?', q: 'objects/java.lang.String[shallow > 1KB] | stats(shallow)', out: [['| count | sum       | min  | max    | avg    |', 'n'], ['|-------|-----------|------|--------|--------|', 'dim'], ['| 1,234 | 2,456,789 | 1024 | 65,536 | 1,991  |', 'cmd']] },
+  { id: 'str', src: 'HPROF', label: 'How large are byte arrays over 1 KB?', q: 'objects/byte[][shallow > 1KB] | stats(shallow)', out: [['| count | sum       | min  | max    | avg    |', 'n'], ['|-------|-----------|------|--------|--------|', 'dim'], ['| 1,234 | 2,456,789 | 1024 | 65,536 | 1,991  |', 'cmd']] },
   { id: 'roots', src: 'HPROF', label: 'Which GC root types hold the most?', q: 'gcroots | groupBy(type) | sortBy(count desc)', out: [['| type         | count |', 'n'], ['|-------------|-------|', 'dim'], ['| JAVA_FRAME  | 2,345 |', 'cmd'], ['| THREAD_OBJ  | 1,234 |', 'n']] }
 ];
 const SHELL_FEATS = ['flamegraph()', 'decorateByTime', 'decorateByKey', '.jfrs scripts', 'record start', 'variables ${var}', 'if / elif / endif', '--format json', 'multi-session', 'non-interactive mode', 'pathToRoot', 'dominators', 'leak detectors', 'heap diff'];
@@ -929,9 +931,9 @@ const MCP = {
   server: { label: 'MCP server only', p: '$ ', note: 'Registers only the server, without the skills and agents. Other MCP clients get the prompts triage, compare, leak-hunt and latency from the server.', lines: ['claude mcp add jafar -- jbang jfr-mcp@btraceio --stdio'] }
 };
 const INST = {
-  jbang: { label: 'JBang', p: '$ ', lines: ['jbang app install jfr-shell@btraceio', 'jfr-shell recording.jfr'] },
-  gradle: { label: 'Gradle', p: '', lines: ["implementation 'io.btrace:jafar-parser:0.11.0'", "annotationProcessor 'io.btrace:jafar-processor:0.11.0'"] },
-  maven: { label: 'Maven', p: '', lines: ['<dependency>', '  <groupId>io.btrace</groupId>', '  <artifactId>jafar-parser</artifactId>', '  <version>0.11.0</version>', '</dependency>'] },
+  jbang: { label: 'JBang', p: '$ ', lines: ['jbang app install jafar-shell@btraceio', 'jafar-shell recording.jfr'] },
+  gradle: { label: 'Gradle', p: '', lines: ["implementation 'io.btrace:jafar-parser:0.29.0'"] },
+  maven: { label: 'Maven', p: '', lines: ['<dependency>', '  <groupId>io.btrace</groupId>', '  <artifactId>jafar-parser</artifactId>', '  <version>0.29.0</version>', '</dependency>'] },
   go: { label: 'Go', p: '$ ', lines: ['go get github.com/btraceio/jafar/go-parser'] }
 };
 const DOCS = [
