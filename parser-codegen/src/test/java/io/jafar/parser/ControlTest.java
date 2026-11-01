@@ -1,6 +1,7 @@
 package io.jafar.parser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.HandlerRegistration;
@@ -15,6 +16,7 @@ import io.jafar.parser.types.JFRExecutionSample;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.io.TempDir;
@@ -136,29 +138,29 @@ public class ControlTest {
   @ValueSource(strings = {SINGLE, MULTI_CHUNK})
   void abortStopsRemainingHandlersForTheSameEventUntyped(String which) throws Exception {
     // The typed parser has always stopped calling further handlers of an event once one aborts;
-    // the untyped parser must do the same.
+    // the untyped parser must do the same. Both handlers abort, so on every thread exactly one
+    // handler call may happen: the first handler for the first event that thread delivers. The
+    // total is not asserted: another chunk's thread may already be dispatching its own event when
+    // the abort lands (allowed by the contract), so the total varies with the pool size.
     Path recording = fixture(which);
-    AtomicInteger first = new AtomicInteger();
-    AtomicInteger second = new AtomicInteger();
+    Map<String, AtomicInteger> callsByThread = new ConcurrentHashMap<>();
     try (UntypedJafarParser p = UntypedJafarParser.open(recording.toString())) {
-      // two handlers that both abort on their first event: whichever runs first must be the only
-      // one ever called
-      p.handle(
-          (type, value, ctl) -> {
-            first.incrementAndGet();
-            ctl.abort();
-          });
-      p.handle(
-          (type, value, ctl) -> {
-            second.incrementAndGet();
-            ctl.abort();
-          });
+      for (int i = 0; i < 2; i++) {
+        p.handle(
+            (type, value, ctl) -> {
+              callsByThread
+                  .computeIfAbsent(Thread.currentThread().getName(), k -> new AtomicInteger())
+                  .incrementAndGet();
+              ctl.abort();
+            });
+      }
       p.run();
     }
-    assertEquals(
-        1,
-        first.get() + second.get(),
-        "first=" + first.get() + " second=" + second.get() + " (one event, one handler)");
+    assertFalse(callsByThread.isEmpty(), "no handler was called");
+    callsByThread.forEach(
+        (thread, n) ->
+            assertEquals(
+                1, n.get(), thread + " ran a second handler after abort(): " + callsByThread));
   }
 
   // ---- untyped (EventStreamGenerated) -------------------------------------------------------
