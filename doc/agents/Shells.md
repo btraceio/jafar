@@ -82,12 +82,15 @@ command goes in `BASE_COMMANDS` there, not into four module completers.
 The JFR-only commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` are not
 reimplemented in `unified/Shell`: `Shell.JFR_COMMANDS` routes them to the `CommandDispatcher` the
 shell already builds for module completers (`moduleContext`). It shares the shell's
-`SessionManager` and prints through the shell's terminal; it has its own `VariableStore` and
-`Conditionals`, which is why only these commands go to it — `set`, `if` and the rest stay with
-`ShellVariables`. The routing runs before the bare-query check because `metadata` and `constants`
-are JfrPath roots: `metadata --summary` used to be parsed as a query (`Trailing characters at
-position 9`). A line whose second word starts with `|` (`metadata | count()`) is still a query.
-The same set gates completion in `unified/ShellCompleter`, so a heap dump session is not offered them.
+`SessionManager` (so session-scoped variables too) and is given the shell's global `VariableStore`
+— jfr-shell's completer, which completes JFR sessions here, reads `${...}` global names from
+`dispatcher.getGlobalStore()`, and before that was passed it was a private, always-empty store. It
+prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
+commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
+the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
+used to be parsed as a query (`Trailing characters at position 9`). A line whose second word starts
+with `|` (`metadata | count()`) is still a query. The same set gates completion in
+`unified/ShellCompleter`, so a heap dump session is not offered them.
 
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)

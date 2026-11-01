@@ -1,5 +1,6 @@
 package io.jafar.shell.unified;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
@@ -49,7 +50,7 @@ public final class ShellCompleter implements Completer {
     "else",
     "endif",
     "script",
-    // JFR-only (Shell.JFR_COMMANDS): offered with no session or a JFR one, see offersCommand
+    // JFR-only (Shell.JFR_COMMANDS): offered with no session or a JFR one, see offersJfrCommands
     "metadata",
     "chunks",
     "chunk",
@@ -113,8 +114,11 @@ public final class ShellCompleter implements Completer {
       offered.add(c.value());
     }
     String partial = line.word().toLowerCase(Locale.ROOT);
+    boolean jfr = offersJfrCommands();
     for (String cmd : BASE_COMMANDS) {
-      if (cmd.startsWith(partial) && offersCommand(cmd) && offered.add(cmd)) {
+      if (cmd.startsWith(partial)
+          && (jfr || !Shell.JFR_COMMANDS.contains(cmd))
+          && offered.add(cmd)) {
         candidates.add(new Candidate(cmd));
       }
     }
@@ -166,8 +170,9 @@ public final class ShellCompleter implements Completer {
     String partial = line.word().toLowerCase(Locale.ROOT);
 
     // Always suggest base commands
+    boolean jfr = offersJfrCommands();
     for (String cmd : BASE_COMMANDS) {
-      if (cmd.startsWith(partial) && offersCommand(cmd)) {
+      if (cmd.startsWith(partial) && (jfr || !Shell.JFR_COMMANDS.contains(cmd))) {
         candidates.add(new Candidate(cmd));
       }
     }
@@ -186,14 +191,9 @@ public final class ShellCompleter implements Completer {
    * JFR-only commands are refused in a heap dump, pprof or OTLP session, so they are not offered
    * there; with no session open they are, as the commands a recording will accept.
    */
-  private boolean offersCommand(String cmd) {
-    if (!Shell.JFR_COMMANDS.contains(cmd)) {
-      return true;
-    }
-    return sessions
-        .getCurrent()
-        .map(ref -> ref.session instanceof io.jafar.shell.JFRSession)
-        .orElse(true);
+  private boolean offersJfrCommands() {
+    var current = sessions.getCurrent();
+    return current.isEmpty() || current.get().session instanceof JFRSession;
   }
 
   /** The {@code --dry-run} flag, offered once a leading dash is typed. */

@@ -6,10 +6,12 @@ See [Verification.md](Verification.md) for how to know a change actually works.
 ## Prerequisites
 - Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otlp-shell`)
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
-- These are Gradle toolchains, not minimums: no toolchain download repository is configured, so a
-  JDK 8, a JDK 21 (the `parser-core`/`parser-codegen` Java 21 variants) and a JDK 25 must all be
-  installed, whatever JDK runs Gradle. With only 21 present, configuration fails with `Cannot find a
-  Java installation ... matching: {languageVersion=25 ...}` (then `=8`). On Ubuntu:
+- These are Gradle toolchains, not minimums, and no toolchain download repository is configured: a
+  JDK 8 and a JDK 25 must both be installed, whatever JDK runs Gradle. With only a JDK 21 present,
+  configuring `:jafar-shell:shadowJar` fails with `Cannot find a Java installation ... matching:
+  {languageVersion=25 ...}`, then `{languageVersion=8 ...}`. `parser-core` and `parser-codegen` also
+  ask for a Java 21 toolchain (`javaToolchains.compilerFor`/`launcherFor`); a JDK 21 was present
+  when this was written, so whether its absence fails the same way is untested. On Ubuntu 24.04:
   `apt-get install openjdk-8-jdk-headless openjdk-25-jdk-headless`
 - Binary test recordings are fetched via `./get_resources.sh` (downloads from Dropbox), not Git LFS — see below
 

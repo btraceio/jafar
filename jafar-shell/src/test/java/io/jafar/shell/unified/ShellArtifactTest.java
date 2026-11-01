@@ -223,6 +223,34 @@ class ShellArtifactTest {
     assertFalse(Shell.isJfrCommand("metadata |count()"));
     assertFalse(Shell.isJfrCommand("events/jdk.ThreadStart"));
     assertFalse(Shell.isJfrCommand("objects | count"));
+    assertFalse(Shell.isJfrCommand("metadata|count()"));
+    assertFalse(Shell.isJfrCommand("metadatax"));
+    assertFalse(Shell.isJfrCommand(""));
+  }
+
+  @Test
+  void matchesJfrCommandWithoutRegardToCaseOrSpacing() {
+    assertEquals("metadata", Shell.jfrCommandOf("METADATA --summary"));
+    assertEquals("chunk", Shell.jfrCommandOf("  chunk\t0 show"));
+    assertEquals("cp", Shell.jfrCommandOf("cp"));
+    assertEquals("backend", Shell.jfrCommandOf("Backend list "));
+    assertEquals(null, Shell.jfrCommandOf("chunks \t| count()"));
+  }
+
+  /**
+   * jfr-shell's completer, which completes JFR sessions here, reads global variable names from the
+   * dispatcher's store; it must be the shell's own, not a private empty one.
+   */
+  @Test
+  void jfrDispatcherSharesTheShellsGlobalStore(@TempDir Path dir) throws Exception {
+    String home = System.getProperty("user.home");
+    System.setProperty("user.home", dir.toString());
+    try (Shell shell = new Shell()) {
+      shell.execute("set --global threshold = 5");
+      assertTrue(shell.jfrDispatcher().getGlobalStore().contains("threshold"));
+    } finally {
+      System.setProperty("user.home", home);
+    }
   }
 
   @Test
