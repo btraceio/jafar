@@ -22,7 +22,15 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 - `JafarParser`: Factory methods for creating typed/untyped parsers
 - `TypedJafarParserImpl`/`UntypedJafarParserImpl`: Core implementation classes
 - `ParsingContext`: Manages shared resources and metadata across parsing sessions
-- `ChunkParserListener`: Low-level parsing lifecycle hooks
+- `ChunkParserListener`: Low-level parsing lifecycle hooks. **Callbacks for different chunks run
+  concurrently**: `StreamingChunkParser` submits every chunk to a pool of `max(nproc - 2, 1)`
+  threads, and only the callbacks of one chunk run in sequence. A listener that collects into one
+  `ArrayList`, `HashMap`, counter or single "current chunk" slot loses data, throws, or mixes
+  chunks — and on a machine with three or fewer processors (one thread) it looks correct. Keep
+  state per chunk, keyed by `ParserContext.getChunkIndex()`, and merge in chunk order after
+  `parse` returns; `JafarSources.PerChunk` in `jfr-shell-jafar` does exactly that, and
+  `MultiChunkDeterminismTest` in `jfr-shell` is the net. The Go parser is sequential, so this has
+  no Go counterpart.
 - `Values`: Utility class for extracting values from untyped event maps
 
 ## Testing Strategy
