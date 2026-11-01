@@ -37,6 +37,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.openjdk.jmc.flightrecorder.writer.api.Recording;
+import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
+import org.openjdk.jmc.flightrecorder.writer.api.Type;
+import org.openjdk.jmc.flightrecorder.writer.api.TypedFieldBuilder;
+import org.openjdk.jmc.flightrecorder.writer.api.Types;
 
 /**
  * What the generic untyped value path does when one event's payload cannot be decoded.
@@ -78,7 +83,16 @@ class EventDecodeFailureTest {
      * when the event reads it, and {@code MutableConstantPool.get} rethrows the {@code IOException}
      * wrapped in a {@code RuntimeException}.
      */
-    CONSTANT_POOL
+    CONSTANT_POOL,
+    /**
+     * Like {@link #EVENT_PAYLOAD}, but the string is inside the last element of an array of inline
+     * (not pooled) complex values, so the failure happens with an unfinished element map above the
+     * array holder on the value builder's stack. {@code GenericValueReader} used to call {@code
+     * onArrayEnd} from a {@code finally}; with assertions enabled its {@code assert arr != null}
+     * then threw an {@link AssertionError} that replaced the decoding exception and, being an
+     * {@code Error}, bypassed {@code onDecodeError}.
+     */
+    ARRAY_ELEMENT
   }
 
   /** The three generic value paths; only {@link #DEFAULT} is reachable from the public API. */
@@ -196,9 +210,11 @@ class EventDecodeFailureTest {
 
   // --- opt-in skipping: UntypedJafarParser.onDecodeError -------------------------------------
 
-  @Test
-  void decodeErrorHandlerReturningTrueSkipsOnlyTheBadEvent() throws Exception {
-    Corruption corruption = Corruption.EVENT_PAYLOAD;
+  @ParameterizedTest
+  @EnumSource(
+      value = Corruption.class,
+      names = {"EVENT_PAYLOAD", "ARRAY_ELEMENT"})
+  void decodeErrorHandlerReturningTrueSkipsOnlyTheBadEvent(Corruption corruption) throws Exception {
     Path jfr = corrupted(corruption);
     List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
     List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
@@ -278,7 +294,8 @@ class EventDecodeFailureTest {
   @ParameterizedTest
   @EnumSource(Stream.class)
   void everyGenericValuePathCanSkip(Stream stream) throws Exception {
-    for (Corruption corruption : new Corruption[] {Corruption.EVENT_PAYLOAD}) {
+    for (Corruption corruption :
+        new Corruption[] {Corruption.EVENT_PAYLOAD, Corruption.ARRAY_ELEMENT}) {
       Path jfr = corrupted(corruption);
       List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
       List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
@@ -437,6 +454,9 @@ class EventDecodeFailureTest {
       for (Map<String, Object> e : seen) {
         int seq = ((Number) e.get("seq")).intValue();
         assertEquals("label-" + seq, e.get("label"), "incomplete event; " + ctx);
+        if (corruption == Corruption.ARRAY_ELEMENT) {
+          assertTrue(e.containsKey("holder"), "incomplete event; " + ctx);
+        }
         got.add(seq);
       }
     }
@@ -469,6 +489,28 @@ class EventDecodeFailureTest {
       int seq = ((Number) e.get("seq")).intValue();
       assertEquals(seq == BAD ? MARKER : "label-" + seq, e.get("label"), String.valueOf(e));
     }
+  }
+
+  @Test
+  void uncorruptedItemsFixtureDecodesBothInlineElements() throws Exception {
+    Path jfr = dir.resolve("clean-items.jfr");
+    writeWithItems(jfr);
+    List<String> seconds = Collections.synchronizedList(new ArrayList<>());
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.handle(
+          (type, value, ctl) -> {
+            if (TYPE.equals(type.getName())) {
+              Map<?, ?> h = (Map<?, ?>) value.get("holder");
+              Object[] items =
+                  (Object[]) ((io.jafar.parser.api.ArrayType) h.get("items")).getArray();
+              assertEquals(2, items.length, String.valueOf(value));
+              seconds.add(String.valueOf(((Map<?, ?>) items[1]).get("s")));
+            }
+          });
+      p.run();
+    }
+    assertEquals(EVENTS, seconds.size());
+    assertTrue(seconds.contains(MARKER), String.valueOf(seconds));
   }
 
   // --- helpers -------------------------------------------------------------------------------
@@ -526,10 +568,14 @@ class EventDecodeFailureTest {
 
   private Path corrupted(Corruption corruption) throws Exception {
     Path clean = dir.resolve("clean-" + corruption + ".jfr");
-    write(clean);
+    if (corruption == Corruption.ARRAY_ELEMENT) {
+      writeWithItems(clean);
+    } else {
+      write(clean);
+    }
     byte[] bytes = Files.readAllBytes(clean);
     int at;
-    if (corruption == Corruption.EVENT_PAYLOAD) {
+    if (corruption == Corruption.EVENT_PAYLOAD || corruption == Corruption.ARRAY_ELEMENT) {
       long[] bad = eventExtents(clean).get(BAD);
       at = (int) (bad[0] + bad[1] - 2);
       assertEquals(2, bytes[at], "label must be a constant pool reference (encoding id 2)");
@@ -569,6 +615,54 @@ class EventDecodeFailureTest {
     }
     assertEquals(EVENTS, extents.size());
     return extents;
+  }
+
+  /**
+   * Same events as {@link #write}, plus a last field {@code holder}: an inline {@code test.Holder}
+   * whose {@code items} is an array of two inline {@code test.Item} values, each with a string
+   * {@code s}. Event {@value #BAD}'s second item carries the marker, so its pooled-string reference
+   * is the event's last two bytes. (The array sits in a holder because the JMC writer cannot write
+   * an array field directly on an event: {@code Chunk.writeEvent} calls {@code getValue()} on every
+   * top-level field.)
+   */
+  private static void writeWithItems(Path jfr) throws Exception {
+    try (Recording recording = Recordings.newRecording(jfr)) {
+      Types types = recording.getTypes();
+      Type stackTraceType = types.getType(Types.JDK.STACK_TRACE);
+      Type threadType = types.getType(Types.JDK.THREAD);
+      Type item = types.getOrAdd("test.Item", false, t -> t.addField("s", Types.Builtin.STRING));
+      Type holder =
+          types.getOrAdd(
+              "test.Holder", false, t -> t.addField("items", item, TypedFieldBuilder::asArray));
+      Type event =
+          recording.registerEventType(
+              TYPE,
+              t -> {
+                t.addField("seq", Types.Builtin.INT);
+                t.addField("label", Types.Builtin.STRING);
+                t.addField("holder", holder);
+              });
+      for (int i = 0; i < EVENTS; i++) {
+        int seq = i;
+        recording.writeEvent(
+            event.asValue(
+                v -> {
+                  // Implicit fields first: the JMC writer declares but does not write them.
+                  v.putField("stackTrace", stackTraceType.nullValue());
+                  v.putField("eventThread", threadType.nullValue());
+                  v.putField("startTime", System.nanoTime());
+                  v.putField("seq", seq);
+                  v.putField("label", "label-" + seq);
+                  v.putField(
+                      "holder",
+                      h ->
+                          h.putFields(
+                              "items",
+                              e -> e.putField("s", "first-" + seq),
+                              e -> e.putField("s", seq == BAD ? MARKER : "second-" + seq)));
+                }));
+      }
+    }
   }
 
   private static void write(Path jfr) throws Exception {
