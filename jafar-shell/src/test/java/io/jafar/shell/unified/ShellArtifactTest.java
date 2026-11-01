@@ -170,6 +170,49 @@ class ShellArtifactTest {
     assertTrue(result.output().contains("Line 3: left 1 if-block(s) open"), result.output());
   }
 
+  /**
+   * Review findings: script errors stop the script; flags of 'show ${var}' use variables; closing a
+   * session drops the cached rows of copies in other sessions' stores.
+   */
+  @Test
+  void scriptStopsOnErrorAndCopiesForgetAClosedSession(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    Path failing = dir.resolve("failing.jfrs");
+    Files.writeString(failing, "echo BEFORE\nset x = $missing\necho AFTER-THE-ERROR\n");
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "script " + failing,
+                "open " + recording,
+                "set --global starts = events/jdk.ThreadStart",
+                "set --global n = 2",
+                "show ${starts} --limit ${n} --format json",
+                "open " + dump,
+                "set copy = starts",
+                "vars --info copy",
+                "close 1",
+                "vars --info copy",
+                "exit",
+                ""));
+
+    assertTrue(output.contains("BEFORE"), output);
+    assertFalse(output.contains("AFTER-THE-ERROR"), output);
+    assertTrue(output.contains("Script completed with errors"), output);
+    assertTrue(output.contains("Variable not found: missing"), output);
+    // --limit ${n} applied: two JSON rows, not seventeen
+    assertEquals(2, output.split("\"startTime\"", -1).length - 1, output);
+    int afterClose = output.indexOf("Session closed: 1");
+    assertTrue(afterClose > 0, output);
+    assertTrue(output.substring(0, afterClose).contains("Cached: yes"), output);
+    assertTrue(output.substring(afterClose).contains("Cached: no"), output);
+  }
+
   @Test
   void queryVariablesAreLazyAndInvalidatable(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();

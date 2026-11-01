@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers these commands and their arguments in every session type. A query variable whose session
   has been closed reports that when read instead of returning stale rows, and closing a session
   drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
-  ends inside an `if` block has the blocks it left open closed. The parsing, scoping and
+  ends inside an `if` block has the blocks it left open closed. A script line that reports an
+  error stops the script (as the default stop-on-error mode always promised), instead of being
+  counted as a success. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
@@ -74,8 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
-  one field. Shells dispatch commands on one thread, so this needed concurrent access to a
-  variable to show
+  one field, and an `invalidate()` or `release()` made while an evaluation is running is no longer
+  undone when that evaluation finishes (it publishes only if nothing replaced the slot it started
+  from). Shells dispatch commands on one thread, so this needed concurrent access to a variable to
+  show
 - **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
   taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
   expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation

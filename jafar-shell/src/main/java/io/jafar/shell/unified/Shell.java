@@ -800,7 +800,12 @@ public final class Shell implements AutoCloseable {
     if (ref.isEmpty() || !sessions.close(idOrAlias)) {
       return false;
     }
-    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, ref.get().id);
+    int id = ref.get().id;
+    // Copies of a variable can sit in any store; each surviving one may hold its rows
+    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, id);
+    for (SessionManager.SessionRef<Session> other : sessions.list()) {
+      io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(other.variables, id);
+    }
     return true;
   }
 
@@ -871,8 +876,10 @@ public final class Shell implements AutoCloseable {
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
         Object rows = lazy.get();
-        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(whole.group(2));
-        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(whole.group(2));
+        // The flags may use variables too ('--limit ${n}'); the row variable itself is not text
+        String flags = variables.substitute(whole.group(2));
+        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(flags);
+        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(flags);
         if (lim.find() && rows instanceof List<?> list) {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
