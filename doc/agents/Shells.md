@@ -58,8 +58,8 @@ jfr> echo "Top thread: ${hot[0].key}"
 
 ## Scripting is shared: one implementation, three front ends
 
-Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping and
-`script` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
+Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping,
+`script` and `record` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
 the change up. Who calls them:
 
 | Front end | Dispatcher | Query variables |

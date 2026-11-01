@@ -11,6 +11,7 @@ import io.jafar.shell.core.ShellModule;
 import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -47,6 +48,10 @@ public final class Shell implements AutoCloseable {
   private final VariableStore globalStore;
   private final ShellVariables variables;
   private final Conditionals conditionals = new Conditionals();
+  // 'record start' writes the lines typed at the prompt to a script (jfr-shell's recorder)
+  private final CommandRecorder recorder =
+      new CommandRecorder(
+          Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
   // Built once: execute() passes it for every line
   private final java.util.function.Consumer<String> errorSink = this::printError;
   private int scriptDepth;
@@ -239,8 +244,23 @@ public final class Shell implements AutoCloseable {
             terminal.flush();
             conditionals.state().reset();
           }
+          stopRecording();
           running = false;
           continue;
+        }
+
+        if (matchesCommand(input, "record")) {
+          handleRecord(argumentOf(input));
+          continue;
+        }
+        // As in jfr-shell: every other line is recorded as typed, before it runs, except 'script'
+        // (the recording should replay the script's lines, not run it a second time)
+        if (recorder.isRecording() && !matchesCommand(input, "script")) {
+          try {
+            recorder.recordCommand(input);
+          } catch (IOException e) {
+            terminal.writer().println("Warning: Failed to record command: " + e.getMessage());
+          }
         }
 
         if (!execute(input)) {
@@ -253,6 +273,7 @@ public final class Shell implements AutoCloseable {
         terminal.writer().println("^C");
         terminal.flush();
       } catch (EndOfFileException e) {
+        stopRecording();
         terminal.writer().println();
         terminal.writer().println("Goodbye!");
         terminal.flush();
@@ -263,6 +284,50 @@ public final class Shell implements AutoCloseable {
         terminal.flush();
       }
     }
+  }
+
+  /** {@code record start [path] | record stop | record status}, as in jfr-shell. */
+  private void handleRecord(String args) {
+    String[] parts = args.isBlank() ? new String[0] : args.trim().split("\\s+", 2);
+    String sub = parts.length > 0 ? parts[0].toLowerCase(java.util.Locale.ROOT) : "";
+    try {
+      switch (sub) {
+        case "start" -> {
+          Path path = parts.length > 1 ? Paths.get(expandHome(parts[1])) : null;
+          recorder.start(path);
+          terminal.writer().println("Recording started: " + recorder.getCurrentRecordingPath());
+        }
+        case "stop" -> {
+          recorder.stop();
+          terminal.writer().println("Recording stopped: " + recorder.getCurrentRecordingPath());
+        }
+        case "status" ->
+            terminal
+                .writer()
+                .println(
+                    recorder.isRecording()
+                        ? "Recording to: " + recorder.getCurrentRecordingPath()
+                        : "Not currently recording");
+        default -> printError("Usage: record start [path] | record stop | record status");
+      }
+    } catch (IOException | IllegalStateException e) {
+      printError(e.getMessage());
+    }
+    terminal.flush();
+  }
+
+  /** Saves a recording still running when the shell ends. */
+  private void stopRecording() {
+    if (!recorder.isRecording()) {
+      return;
+    }
+    try {
+      recorder.stop();
+      terminal.writer().println("Recording saved to: " + recorder.getCurrentRecordingPath());
+    } catch (IOException e) {
+      terminal.writer().println("Warning: Failed to save recording: " + e.getMessage());
+    }
+    terminal.flush();
   }
 
   /**
@@ -1294,6 +1359,8 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
     terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
     terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
+    terminal.writer().println("  record start [path] | stop | status");
+    terminal.writer().println("                     Save the commands you type as a script");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");

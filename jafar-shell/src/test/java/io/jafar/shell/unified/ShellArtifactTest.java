@@ -210,6 +210,50 @@ class ShellArtifactTest {
     assertTrue(cont.out().contains("two"), cont.out());
   }
 
+  /** 'record' saves what is typed as a script that 'jafar-shell script' replays. */
+  @Test
+  void recordsASessionThatReplaysAsAScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path saved = dir.resolve("session.jfrs");
+    Path unfinished = dir.resolve("unfinished.jfrs");
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "record status",
+                "record start " + saved,
+                "open " + recording,
+                "set n = events/jdk.ThreadStart | count()",
+                "echo REPLAYED n=${n}",
+                "record status",
+                "record stop",
+                "echo NOT-RECORDED",
+                "record start " + unfinished,
+                "echo LEFT-RUNNING",
+                "exit",
+                ""));
+
+    assertTrue(output.contains("Not currently recording"), output);
+    assertTrue(output.contains("Recording started: " + saved), output);
+    assertTrue(output.contains("Recording to: " + saved), output);
+    assertTrue(output.contains("Recording stopped: " + saved), output);
+    assertTrue(output.contains("Recording saved to: " + unfinished), output); // saved at exit
+
+    String script = Files.readString(saved);
+    assertTrue(script.startsWith("# Jafar Shell Recording"), script);
+    assertTrue(script.contains("\nopen " + recording + "\n"), script);
+    assertTrue(script.contains("\necho REPLAYED n=${n}\n"), script);
+    assertFalse(script.contains("record "), script);
+    assertFalse(script.contains("NOT-RECORDED"), script);
+    assertTrue(Files.readString(unfinished).contains("echo LEFT-RUNNING"));
+
+    Run replay = runJarRaw(dir, "", "script", saved.toString());
+    assertEquals(0, replay.exit(), replay.out() + replay.err());
+    assertTrue(replay.out().contains("REPLAYED n=17"), replay.out());
+  }
+
   @Test
   void queryVariablesAreLazyAndInvalidatable(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();

@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
   stderr and exit status 1 on failure. Tables use jafar-shell's layout. The `jfr-shell` jbang alias
   launches jfr-shell directly and is unaffected
+- **`record` in `jafar-shell`.** `record start [path] | stop | status` saves the commands typed
+  at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
+  recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
+  recorder, moved to `shell-core` and shared
 - **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
   recording, using jfr-shell's implementations; they were taken as malformed queries
 - **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
@@ -87,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
   `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
   for the whole shell. The LLM commands read the session's value first, then the global one
+- **`CommandRecorder` moved** from `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s
+  `io.jafar.shell.core.scripting`; jfr-shell's recordings are unchanged
 - **`ScriptRunner`, `VariableSubstitutor`, `ConditionEvaluator` and `ConditionalState` moved** from
   `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s `io.jafar.shell.core.scripting`;
   `ScriptRunner` now takes a line dispatcher (`dispatcher::dispatch`) instead of a
