@@ -1126,17 +1126,11 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  show <query>       Execute a query on current session");
     terminal.writer().println();
     terminal.writer().println("JFR recordings (need a JFR session):");
-    terminal
-        .writer()
-        .println("  metadata [--summary|--search <p>|--events-only|...]  List types");
-    terminal
-        .writer()
-        .println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
+    terminal.writer().println("  metadata [--summary|--search <p>|--events-only|...]  List types");
+    terminal.writer().println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
     terminal.writer().println("  chunks [--summary|--range N-M]  List chunks");
     terminal.writer().println("  chunk <index> show  Show one chunk's details");
-    terminal
-        .writer()
-        .println("  constants|cp [<type>] [--summary|--range N-M]  Constant pools");
+    terminal.writer().println("  constants|cp [<type>] [--summary|--range N-M]  Constant pools");
     terminal.writer().println("  backend [list]     Show the JFR backend, or list them");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");

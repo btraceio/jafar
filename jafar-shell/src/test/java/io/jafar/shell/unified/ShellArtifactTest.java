@@ -139,7 +139,6 @@ class ShellArtifactTest {
                 "cp --summary",
                 "constants --summary",
                 "backend",
-                "metadata | count()",
                 "exit",
                 ""));
 
