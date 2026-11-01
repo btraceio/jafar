@@ -78,14 +78,21 @@ func (c *chunkParser) newMap(hint int) map[string]any {
 //
 // A recycled array keeps the slice it last held, so an event shaped like the
 // previous one of its type decodes into the same backing array. Without an
-// arena the array is new and comes from a chunk-wide block.
+// arena the array is new: allocated on its own for an event, from a chunk-wide
+// block inside a constant pool entry.
 func (c *chunkParser) newArray(elementType string) *Array {
 	a := c.arena
 	if a == nil {
-		// Not recyclable: a constant pool value is cached and shared by every
-		// event referencing it, and an event decoded without ReuseValues may
-		// be kept. Allocate the struct from a chunk-wide block instead, which
-		// pays for the slice header that storing the elements in Elems costs.
+		if !c.inPool {
+			// An event decoded without ReuseValues is the caller's to keep,
+			// so its arrays get their own allocations: a shared block would
+			// keep every sibling array's elements alive with any one of them.
+			return &Array{ElementType: elementType}
+		}
+		// Not recyclable either: a constant pool value is cached and shared
+		// by every event referencing it. Arrays inside pool entries live as
+		// long as their pool anyway, so their structs come from a chunk-wide
+		// block, which pays for the slice header that Elems costs.
 		if len(c.arraySlab) == 0 {
 			c.arraySlab = make([]Array, arraySlabSize)
 		}
@@ -168,7 +175,8 @@ func (c *chunkParser) newRef(pool *constantPool, index int64) *Ref {
 // amount of retention (a few kilobytes) for a large drop in allocation count.
 const refSlabSize = 256
 
-// arraySlabSize is the number of Array structs allocated in one block, with the
-// same retention trade-off as refSlabSize: a block of 64 arrays is 2 KiB and
-// stays alive as long as any array handed out from it does.
+// arraySlabSize is the number of Array structs allocated in one block. A block
+// stays alive, with every array in it and the elements they hold, as long as
+// any one of them is reachable; only constant pool arrays, which their pool
+// keeps alive anyway, share blocks.
 const arraySlabSize = 64

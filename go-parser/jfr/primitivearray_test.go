@@ -3,7 +3,9 @@ package jfr
 import (
 	"math"
 	"reflect"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // Parity with the Java parser's primitive array handling (parser-core
@@ -376,4 +378,68 @@ func TestConstantPoolArraysShareStructBlocks(t *testing.T) {
 		t.Errorf("a constant pool array costs %.3f allocations more than a scalar, want about 1:"+
 			" its Array struct is allocated on its own", arrayCost)
 	}
+}
+
+// Keeping one event's array must not keep another event's elements alive.
+// Without ReuseValues, events are the caller's to keep, so their arrays must
+// not share an allocation: the garbage collector keeps a whole allocation alive
+// while any part of it is reachable, and with it everything its other Array
+// structs point to. The second event's backing array carries a finalizer; it
+// must be collectable while the first event's array is still held.
+func TestKeptEventArrayDoesNotRetainOtherEvents(t *testing.T) {
+	const n = 4096
+	event := func() []byte {
+		w := &writer{}
+		w.varint(tIDHolderEvent + 1)
+		w.varint(n)
+		for i := 0; i < n; i++ {
+			w.varint(int64(1000 + i))
+		}
+		return w.buf
+	}
+	metadata := elem("root").with(elem("metadata").with(
+		primitiveClass(tIDLong, "long"),
+		elem("class",
+			attr("id", itoa(tIDHolderEvent+1)),
+			attr("name", "test.Values"),
+			attr("superType", "jdk.jfr.Event"),
+		).with(elem("field", attr("name", "values"), attr("class", itoa(tIDLong)), attr("dimension", "1"))),
+	))
+	data := chunkSpec{
+		metadata:   metadata,
+		events:     [][]byte{event(), event()},
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}.build()
+
+	var kept *Array
+	collected := make(chan struct{}, 1)
+	seen := 0
+	err := NewParser(data).ParseWith(Options{OnError: FailOnError}, func(e *Event) error {
+		arr := e.Values["values"].(*Array)
+		if seen == 0 {
+			kept = arr
+		} else {
+			elems := arr.Elems.([]int64)
+			runtime.SetFinalizer(&elems[0], func(*int64) { collected <- struct{}{} })
+		}
+		seen++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		runtime.GC()
+		select {
+		case <-collected:
+			runtime.KeepAlive(kept)
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	runtime.KeepAlive(kept)
+	t.Fatal("the second event's array stayed reachable while only the first event's array was kept")
 }

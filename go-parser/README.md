@@ -122,8 +122,9 @@ if arr, ok := e.Values["values"].(*jfr.Array); ok {
 `Get` indexes arrays through `At`, and `ResolveDeep` turns a numeric array into
 a copy of its slice and any other array into an `[]any`.
 
-Arrays decoded without `ReuseValues`, and those inside constant pool entries,
-are allocated 64 at a time: an array you keep holds its 2 KiB block alive.
+Arrays inside constant pool entries are allocated 64 at a time, as long-lived
+as their pool. An event's arrays are allocated individually, so keeping one
+keeps nothing else alive.
 
 ### Constant pool references
 

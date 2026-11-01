@@ -266,9 +266,11 @@ type chunkParser struct {
 	// most numerous object the parser creates, and allocating them one at a
 	// time dominates its allocation count.
 	refSlab []Ref
-	// arraySlab hands out Array structs in blocks for arrays decoded without
-	// an arena: constant pool entries, and events when ReuseValues is off.
+	// arraySlab hands out Array structs in blocks for arrays inside constant
+	// pool entries, which share their pool's lifetime. inPool is set while one
+	// is being decoded.
 	arraySlab []Array
+	inPool    bool
 	// arenas recycle the objects of one event, per event type; only populated
 	// when Options.ReuseValues is set. arena is the one in use while an event
 	// is being decoded, and nil at every other time, so that values cached in a
