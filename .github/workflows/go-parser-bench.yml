@@ -1,9 +1,10 @@
 name: Go Parser Benchmarks
 
-# The Go parser benchmarks are only meaningful against real recordings, and the
-# large ones live outside the repository - ./get_resources.sh downloads them.
-# This job runs where that download works and publishes the numbers, rather than
-# leaving them to whatever recording a developer happens to have locally.
+# The Go parser benchmarks need a large recording. This job generates one with the
+# test-recordings module (about 1 GiB, 180 chunks, deterministic, so allocation
+# counts stay comparable run to run) and publishes the numbers, rather than
+# leaving them to whatever recording a developer happens to have locally. To
+# benchmark real recordings, run ./get_resources.sh and point JAFAR_BENCH_JFR at them.
 #
 # Benchmarks are slow and noisy, so this does not run on every push: it runs on
 # demand, on a schedule, when the parser changes on main, and on any branch
@@ -57,8 +58,8 @@ permissions:
 env:
   # inputs.* is empty for schedule and push, so these fall back to the cheap
   # settings while a workflow_dispatch run picks up the richer input defaults
-  # below. The recordings are large - the corpus is ~2 GB, one file of it 1.8 GB
-  # - and every benchmark iteration parses a whole file, so an unattended run
+  # below. The benchmark recording is large - about 1 GiB - and every
+  # benchmark iteration parses a whole file, so an unattended run
   # takes one sample per benchmark. Allocation counts are deterministic and stay
   # exact at one iteration, which is the signal worth tracking over time; timing
   # at one sample is indicative, so raise these by hand when timing is the point.
@@ -70,8 +71,8 @@ jobs:
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
-    # A full workflow_dispatch sweep over the corpus at 3x/3 is roughly 40
-    # minutes; the unattended run is a few minutes.
+    # A full workflow_dispatch sweep at 3x/3 took roughly 40 minutes over the
+    # previous 2 GB downloaded corpus; generating the recording adds a few minutes.
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -86,20 +87,26 @@ jobs:
           go-version: '1.24'
           cache: false
 
-      # The recordings are large and change rarely, so cache them on the
-      # contents of the script that defines where they come from.
-      - name: Cache benchmark recordings
-        id: recordings
-        uses: actions/cache@v4
+      # The recordings are generated rather than downloaded (test-recordings
+      # module): the small ones the correctness tests read, and one large
+      # multi-chunk recording for the benchmarks, written a chunk at a time.
+      - name: Set up JDK 21 for the recording generator
+        uses: actions/setup-java@v4
         with:
-          path: |
-            parser-core/src/test/resources/test-*.jfr
-            demo/src/test/resources/test-*.jfr
-          key: jfr-recordings-${{ hashFiles('get_resources.sh') }}
+          distribution: temurin
+          java-version: '21'
 
-      - name: Download benchmark recordings
-        if: steps.recordings.outputs.cache-hit != 'true'
-        run: ./get_resources.sh
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate recordings
+        run: |
+          ./gradlew --no-daemon :test-recordings:generateTestRecordings \
+            :test-recordings:generateBenchmarkRecording \
+            -Pchunks=180 -PsamplesPerChunk=200000 \
+            -Poutput="$PWD/build/bench-recordings/large-ap.jfr"
+          # The benchmarks read the large recording and the checked-in TCK one.
+          echo "JAFAR_BENCH_JFR=$PWD/build/bench-recordings/large-ap.jfr:$PWD/jfr-shell-tck/src/main/resources/tck-test.jfr" >> "$GITHUB_ENV"
 
       - name: Report available recordings
         run: |
@@ -107,12 +114,12 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           # The parser is only benchmarked against recordings that are actually
           # present, so record which ones the run saw.
-          find parser-core/src/test/resources demo/src/test/resources jfr-shell-tck/src/main/resources \
+          find parser-core/src/test/resources demo/src/test/resources jfr-shell-tck/src/main/resources build/bench-recordings \
             -name '*.jfr' -printf '%p\t%s bytes\n' 2>/dev/null | sort | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # A benchmark that measures a broken parser measures nothing, so the
-      # correctness tests run first - against the downloaded recordings too.
+      # correctness tests run first - against the generated recordings too.
       - name: Test against every available recording
         working-directory: go-parser
         run: go test -v ./...
@@ -134,13 +141,10 @@ jobs:
         run: |
           set -o pipefail
           git worktree add ../baseline "${{ inputs.baseline_ref }}"
-          # Recordings are resolved relative to the module, so point the
-          # baseline run at the ones this checkout already has.
-          jfrs=$(find "$PWD/parser-core/src/test/resources" "$PWD/demo/src/test/resources" \
-                   "$PWD/jfr-shell-tck/src/main/resources" -name '*.jfr' 2>/dev/null \
-                 | grep -v dd-trace-java-stripped | paste -sd: -)
+          # The same recordings as the current run (JAFAR_BENCH_JFR, set when they
+          # were generated), so the two are comparable.
           cd ../baseline/go-parser
-          JAFAR_BENCH_JFR="$jfrs" go test -run '^$' \
+          go test -run '^$' \
             -bench "$BENCHPATTERN" \
             -benchtime "$BENCHTIME" \
             -count "$BENCHCOUNT" \

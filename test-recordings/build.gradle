@@ -1,0 +1,68 @@
+plugins {
+    id 'java'
+}
+
+// Generates the JFR recordings the test suites and benchmarks read (see README.md here).
+// Build-time tool only: never published, and not a dependency of any library module.
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // 9.1.0: struct arrays (stack frames) and settable chunk timestamps; see ChunkContent for the
+    // one internal class used.
+    implementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
+
+    testImplementation project(':parser-core')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+def demoResources = rootProject.file('demo/src/test/resources')
+def parserResources = rootProject.file('parser-core/src/test/resources')
+def recordingNames = ['test-ap.jfr', 'test-jfr.jfr', 'test-dd.jfr']
+
+// Writes the test recordings where the suites have always read them. Real recordings
+// (downloaded by get_resources.sh, recognisable by the missing .generated marker) are kept.
+tasks.register('generateTestRecordings', JavaExec) {
+    description = 'Generates the JFR recordings the test suites read (keeps real ones if present).'
+    group = 'verification'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.jafar.testrecordings.TestRecordingGenerator'
+    args 'tests', demoResources.absolutePath, parserResources.absolutePath
+    inputs.files(sourceSets.main.runtimeClasspath).withPropertyName('generator')
+    recordingNames.each { name ->
+        outputs.file(new File(demoResources, name))
+        outputs.file(new File(parserResources, name))
+    }
+}
+
+// A large recording for benchmarks, written a chunk at a time:
+//   ./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=200 [-PsamplesPerChunk=200000]
+//       [-Pshape=ap|jfr|dd] [-Poutput=path]
+tasks.register('generateBenchmarkRecording', JavaExec) {
+    description = 'Generates a large JFR recording for benchmarks (-Pchunks, -PsamplesPerChunk, -Pshape, -Poutput).'
+    group = 'benchmark'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.jafar.testrecordings.TestRecordingGenerator'
+    def output = project.findProperty('output') ?: layout.buildDirectory.file('recordings/benchmark.jfr').get().asFile.absolutePath
+    args 'benchmark', output,
+        project.findProperty('chunks') ?: '50',
+        project.findProperty('samplesPerChunk') ?: '200000',
+        project.findProperty('shape') ?: 'ap'
+    // The writer holds one chunk at a time; allocation is high but short-lived.
+    maxHeapSize = '2g'
+}

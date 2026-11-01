@@ -112,8 +112,8 @@ Key components:
 ## Quick start
 
 ```bash
-./get_resources.sh                    # binary test recordings — required before the first build
-./gradlew build                       # everything
+./gradlew build                       # everything; generates the test recordings first
+./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
 ./gradlew spotlessApply               # formatting (a pre-commit hook also runs this)
 ./gradlew :jfr-shell:run --console=plain
