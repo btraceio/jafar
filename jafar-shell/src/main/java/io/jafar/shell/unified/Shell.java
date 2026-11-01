@@ -47,6 +47,18 @@ public final class Shell implements AutoCloseable {
   private final VariableStore globalStore;
   private final ShellVariables variables;
   private final Conditionals conditionals = new Conditionals();
+  // Built once: execute() passes it for every line
+  private final java.util.function.Consumer<String> errorSink = this::printError;
+  private int scriptDepth;
+
+  private static final int MAX_SCRIPT_DEPTH = 16;
+  private static final java.util.regex.Pattern LIMIT_FLAG =
+      java.util.regex.Pattern.compile("--limit\\s+(\\d+)");
+  private static final java.util.regex.Pattern FORMAT_FLAG =
+      java.util.regex.Pattern.compile("--format\\s+(\\S+)");
+  private static final java.util.regex.Pattern WHOLE_VARIABLE =
+      java.util.regex.Pattern.compile(
+          "^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}((?:\\s+--\\S+(?:\\s+\\S+)?)*)$");
   private boolean running = true;
   private final DefaultHistory history;
   private final ShellCompleter fallbackCompleter;
@@ -246,7 +258,7 @@ public final class Shell implements AutoCloseable {
     // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
     // balanced; every other line in such a branch is skipped.
     try {
-      if (conditionals.handle(input, variables.scopes(), this::printError)) {
+      if (conditionals.handle(input, variables.scopes(), errorSink)) {
         return true;
       }
     } catch (IllegalStateException e) {
@@ -480,9 +492,22 @@ public final class Shell implements AutoCloseable {
       return;
     }
     List<String> arguments = List.of(parts).subList(1, parts.length);
+    if (scriptDepth >= MAX_SCRIPT_DEPTH) {
+      // A script that runs itself would otherwise end in a StackOverflowError, which nothing
+      // catches, and take the shell down with it.
+      printError("Scripts nested more than " + MAX_SCRIPT_DEPTH + " deep; not running " + path);
+      return;
+    }
+    int ifDepth = conditionals.state().depth();
+    scriptDepth++;
     try {
       ScriptRunner.ExecutionResult result =
           new ScriptRunner(this::execute, arguments).execute(path);
+      int unclosed = conditionals.unwindTo(ifDepth);
+      if (unclosed > 0) {
+        // Left open, a false branch would go on skipping every command typed after the script.
+        printError(path.getFileName() + " left " + unclosed + " if-block(s) open; closed them");
+      }
       if (result.hasErrors()) {
         terminal.writer().println();
         terminal.writer().println("Script completed with errors:");
@@ -504,6 +529,8 @@ public final class Shell implements AutoCloseable {
       }
     } catch (IOException e) {
       printError("Cannot read script " + path + ": " + e.getMessage());
+    } finally {
+      scriptDepth--;
     }
     terminal.flush();
   }
@@ -699,7 +726,7 @@ public final class Shell implements AutoCloseable {
         terminal.writer().println("No session open");
       } else {
         try {
-          sessions.close(String.valueOf(current.get().id));
+          closeSession(String.valueOf(current.get().id));
           terminal.writer().println("Session closed");
         } catch (Exception e) {
           terminal.writer().println("Error closing session: " + e.getMessage());
@@ -708,7 +735,7 @@ public final class Shell implements AutoCloseable {
     } else {
       String idOrAlias = parts[1];
       try {
-        if (sessions.close(idOrAlias)) {
+        if (closeSession(idOrAlias)) {
           terminal.writer().println("Session closed: " + idOrAlias);
         } else {
           terminal.writer().println("No such session: " + idOrAlias);
@@ -718,6 +745,19 @@ public final class Shell implements AutoCloseable {
       }
     }
     terminal.flush();
+  }
+
+  /**
+   * Closes a session (which clears its own variables) and drops the cached rows of global variables
+   * bound to it, which could otherwise keep the closed file's data in memory.
+   */
+  private boolean closeSession(String idOrAlias) throws Exception {
+    Optional<SessionManager.SessionRef<Session>> ref = sessions.get(idOrAlias);
+    if (ref.isEmpty() || !sessions.close(idOrAlias)) {
+      return false;
+    }
+    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, ref.get().id);
+    return true;
   }
 
   private void handleInfo(String input) {
@@ -783,18 +823,14 @@ public final class Shell implements AutoCloseable {
 
     // 'show ${var}' alone prints a query-valued variable's rows (cached after first use), rather
     // than substituting its first value into the line
-    java.util.regex.Matcher whole =
-        java.util.regex.Pattern.compile(
-                "^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}((?:\\s+--\\S+(?:\\s+\\S+)?)*)$")
-            .matcher(query.trim());
-    if (whole.matches()
+    java.util.regex.Matcher whole = query.startsWith("${") ? WHOLE_VARIABLE.matcher(query) : null;
+    if (whole != null
+        && whole.matches()
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
         Object rows = lazy.get();
-        java.util.regex.Matcher fmt =
-            java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(whole.group(2));
-        java.util.regex.Matcher lim =
-            java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(whole.group(2));
+        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(whole.group(2));
+        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(whole.group(2));
         if (lim.find() && rows instanceof List<?> list) {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
@@ -820,15 +856,13 @@ public final class Shell implements AutoCloseable {
     Integer limit = null;
     String format = ref.outputFormat;
 
-    java.util.regex.Matcher limitMatcher =
-        java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(cleanQuery);
+    java.util.regex.Matcher limitMatcher = LIMIT_FLAG.matcher(cleanQuery);
     if (limitMatcher.find()) {
       limit = Integer.parseInt(limitMatcher.group(1));
       cleanQuery = limitMatcher.replaceFirst("").trim();
     }
 
-    java.util.regex.Matcher formatMatcher =
-        java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(cleanQuery);
+    java.util.regex.Matcher formatMatcher = FORMAT_FLAG.matcher(cleanQuery);
     if (formatMatcher.find()) {
       format = formatMatcher.group(1).toLowerCase();
       cleanQuery = formatMatcher.replaceFirst("").trim();

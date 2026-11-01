@@ -97,8 +97,9 @@ public final class ShellCompleter implements Completer {
       return false;
     }
     if (cmd.equals("set") || cmd.equals("let")) {
-      String before = line.line().substring(0, Math.min(line.cursor(), line.line().length()));
-      return !before.contains("=");
+      String text = line.line();
+      int cursor = Math.min(line.cursor(), text.length());
+      return text.lastIndexOf('=', cursor - 1) < 0; // no '=' before the cursor
     }
     return true;
   }

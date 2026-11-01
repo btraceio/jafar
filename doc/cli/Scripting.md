@@ -64,7 +64,13 @@ Script executed successfully: 13 commands
 ```
 
 `samples` is `--global` so that it is still visible after `open $2` makes the heap dump current;
-it keeps evaluating against the recording.
+it keeps evaluating against the recording. Once its session is closed, reading the variable fails
+with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
+`vars` shows it as `(closed)`.
+
+A script may run another (`script` inside a script) up to 16 deep. If a script ends inside an
+`if` block, `jafar-shell` closes the blocks it left open and says so, so the commands you type next
+are not skipped.
 
 Where the two shells differ:
 
@@ -613,6 +619,10 @@ else
   echo "No events exceed the threshold of ${threshold} bytes"
 endif
 ```
+
+An `elif` condition is evaluated only when its branch could still be taken: after a branch has
+run, or inside a block that is being skipped, it is not evaluated at all — so it cannot report an
+error or run a lazy query for a branch that will not execute.
 
 ### Nesting
 

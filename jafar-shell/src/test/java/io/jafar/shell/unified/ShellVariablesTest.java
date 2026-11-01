@@ -305,5 +305,12 @@ class ShellVariablesTest {
     withSessions.set("--global s = 1");
     var e = assertThrows(IllegalArgumentException.class, () -> withSessions.invalidate("s"));
     assertTrue(e.getMessage().contains("not a lazy value"), e.getMessage());
+
+    sessions.closeAll();
+    var closed =
+        assertThrows(IllegalArgumentException.class, () -> withSessions.set("--global c = a"));
+    assertTrue(
+        closed.getMessage().startsWith("Cannot copy a: Session #1 has been closed"),
+        closed.getMessage());
   }
 }
