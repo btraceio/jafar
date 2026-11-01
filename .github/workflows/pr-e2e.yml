@@ -1,13 +1,14 @@
 name: PR E2E
 
-# Slow suite: runs only on PRs labelled 'e2e', so it never holds other PRs back.
+# Slow suite: runs in the merge queue and on PRs labelled 'e2e', so it never holds other PRs back.
 # Kept apart from pr-tests.yml so adding the label does not rerun the regular tests.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+  merge_group:
 
 concurrency:
-  group: pr-e2e-${{ github.event.pull_request.number }}
+  group: pr-e2e-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -16,7 +17,7 @@ permissions:
 jobs:
   mcp-e2e:
     name: MCP E2E
-    if: contains(github.event.pull_request.labels.*.name, 'e2e')
+    if: github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

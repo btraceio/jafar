@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - '**'
+  merge_group:
 
 concurrency:
   group: pr-tests-${{ github.event.pull_request.number || github.ref }}
