@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * The {@code set} / {@code vars} / {@code unset} / {@code echo} / {@code invalidate} commands of
@@ -42,7 +43,12 @@ import java.util.Optional;
  */
 final class ShellVariables {
   private static final String SET_USAGE = "Usage: set [--global] <name> = <value|query>";
-  private static final String NAME = "[a-zA-Z_][a-zA-Z0-9_]*";
+  // Compiled once; String.matches would compile a Pattern on every call
+  private static final Pattern NAME = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
+  private static final Pattern DOLLAR_NAME = Pattern.compile("\\$[a-zA-Z_][a-zA-Z0-9_]*");
+  private static final Pattern INTEGER = Pattern.compile("-?\\d+");
+  private static final Pattern DECIMAL = Pattern.compile("-?\\d+\\.\\d+");
+  private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
   /** What a query-valued variable needs from the shell. */
   interface QueryContext {
@@ -117,7 +123,7 @@ final class ShellVariables {
     } else if (LlmSettings.looksLikeSetting(name)) {
       throw new IllegalArgumentException(
           "Unknown setting: " + name + "\nSettings are: " + String.join(", ", LlmSettings.names()));
-    } else if (!name.matches(NAME)) {
+    } else if (!NAME.matcher(name).matches()) {
       throw new IllegalArgumentException(
           "Invalid variable name: "
               + name
@@ -163,10 +169,10 @@ final class ShellVariables {
     if (isQuoted(text)) {
       return store(store, name, new ScalarValue(text.substring(1, text.length() - 1)));
     }
-    if (text.matches("-?\\d+")) {
+    if (INTEGER.matcher(text).matches()) {
       return store(store, name, new ScalarValue(Long.parseLong(text)));
     }
-    if (text.matches("-?\\d+\\.\\d+")) {
+    if (DECIMAL.matcher(text).matches()) {
       return store(store, name, new ScalarValue(Double.parseDouble(text)));
     }
     if (text.equals("true") || text.equals("false")) {
@@ -175,13 +181,19 @@ final class ShellVariables {
 
     // A copy of another variable: 'set b = a' or 'set b = $a'. A bare word that names no variable
     // falls through to the query below, since 'objects' or 'events' is a query on its own.
-    boolean dollar = text.matches("\\$" + NAME);
-    if (dollar || text.matches(NAME)) {
+    boolean dollar = DOLLAR_NAME.matcher(text).matches();
+    if (dollar || NAME.matcher(text).matches()) {
       String source = dollar ? text.substring(1) : text;
       Value existing = scopes.resolve(source);
       if (existing != null) {
-        Value copy =
-            existing instanceof EvaluatorLazyValue lazy ? lazy.copy() : existing; // own cache
+        Value copy = existing;
+        if (existing instanceof EvaluatorLazyValue lazy) {
+          try {
+            copy = lazy.copy(); // its own cache
+          } catch (IllegalStateException e) {
+            throw new IllegalArgumentException("Cannot copy " + source + ": " + e.getMessage());
+          }
+        }
         return store(store, name, copy);
       }
       if (dollar) {
@@ -252,7 +264,8 @@ final class ShellVariables {
 
   /** {@code vars [--global|--session|--all]} or {@code vars --info <name>}. */
   List<String> vars(String argText) {
-    List<String> args = argText.isBlank() ? List.of() : Arrays.asList(argText.trim().split("\\s+"));
+    List<String> args =
+        argText.isBlank() ? List.of() : Arrays.asList(WHITESPACE.split(argText.trim()));
     int infoIdx = args.indexOf("--info");
     if (infoIdx >= 0) {
       if (infoIdx + 1 >= args.size()) {
@@ -333,7 +346,8 @@ final class ShellVariables {
 
   /** {@code unset <name> [--global]}. */
   List<String> unset(String argText) {
-    List<String> args = argText.isBlank() ? List.of() : Arrays.asList(argText.trim().split("\\s+"));
+    List<String> args =
+        argText.isBlank() ? List.of() : Arrays.asList(WHITESPACE.split(argText.trim()));
     boolean global = args.contains("--global");
     List<String> names = args.stream().filter(a -> !a.equals("--global")).toList();
     if (names.size() != 1) {

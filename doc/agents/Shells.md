@@ -73,6 +73,18 @@ resolver)` on first use — so a variable gives the same rows as typing its quer
 variables must handle `VariableStore.LazyValue` in general, not one implementation: read rows with
 `LazyRows`.
 
+Threading: every front end dispatches on one thread (the readline loop; the TUI's single
+`tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
+`EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
+cache slot holding the rows or a "not evaluated" token, evaluation serialized — because a variable
+can be read from wherever its store is reachable. `invalidate()` and `release()` install a fresh
+token and an evaluation publishes by compare-and-set against the token it started from, so an
+evaluation in flight cannot undo them. They must not lock against evaluation instead:
+`SessionManager.close` calls `release()` holding its monitor, and an evaluation's resolver calls
+`sessions.get()`. Do not split such state across two volatiles: `LazyQueryValue`
+once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
+read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
+
 In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
 the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to
 the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shell completer, and
@@ -82,12 +94,15 @@ command goes in `BASE_COMMANDS` there, not into four module completers.
 The JFR-only commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` are not
 reimplemented in `unified/Shell`: `Shell.JFR_COMMANDS` routes them to the `CommandDispatcher` the
 shell already builds for module completers (`moduleContext`). It shares the shell's
-`SessionManager` and prints through the shell's terminal; it has its own `VariableStore` and
-`Conditionals`, which is why only these commands go to it — `set`, `if` and the rest stay with
-`ShellVariables`. The routing runs before the bare-query check because `metadata` and `constants`
-are JfrPath roots: `metadata --summary` used to be parsed as a query (`Trailing characters at
-position 9`). A line whose second word starts with `|` (`metadata | count()`) is still a query.
-The same set gates completion in `unified/ShellCompleter`, so a heap dump session is not offered them.
+`SessionManager` (so session-scoped variables too) and is given the shell's global `VariableStore`
+— jfr-shell's completer, which completes JFR sessions here, reads `${...}` global names from
+`dispatcher.getGlobalStore()`, and before that was passed it was a private, always-empty store. It
+prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
+commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
+the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
+used to be parsed as a query (`Trailing characters at position 9`). A line whose second word starts
+with `|` (`metadata | count()`) is still a query. The same set gates completion in
+`unified/ShellCompleter`, so a heap dump session is not offered them.
 
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)

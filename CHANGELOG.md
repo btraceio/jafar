@@ -17,7 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
   dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
-  offers these commands and their arguments in every session type. The parsing, scoping and
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
+  ends inside an `if` block has the blocks it left open closed. A script line that reports an
+  error stops the script (as the default stop-on-error mode always promised), instead of being
+  counted as a success. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
@@ -25,6 +30,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
+  jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
+  "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
+  stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
+  stderr and exit status 1 on failure. Tables use jafar-shell's layout. The `jfr-shell` jbang alias
+  launches jfr-shell directly and is unaffected
+- **`metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work at the `jafar-shell`
+  prompt** on a recording, using jfr-shell's implementations; they were taken as malformed queries
+  (`metadata --summary` failed with `Trailing characters at position 9`, so `jfr-shell`'s
+  `basic-analysis.jfrs` example did not run in `jafar-shell`). In a heap dump, pprof or OTLP
+  session, or with no session open, they say they need a JFR session
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way. Both are now thread-safe
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field, and an `invalidate()` or `release()` made while an evaluation is running is no longer
+  undone when that evaluation finishes (it publishes only if nothing replaced the slot it started
+  from). Shells dispatch commands on one thread, so this needed concurrent access to a variable to
+  show
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
 - **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
   `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
   conditional expression in the map parser promoted the `long` branch to `double`. Decimals are

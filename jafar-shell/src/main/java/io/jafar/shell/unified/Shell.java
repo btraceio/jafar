@@ -50,7 +50,23 @@ public final class Shell implements AutoCloseable {
   // 'record start|stop|status': the lines typed at the prompt, written as a replayable script.
   // jfr-shell's recorder, so both shells write the same format to the same default directory.
   private final CommandRecorder recorder = new CommandRecorder();
+  // Built once: execute() passes it for every line
+  private final java.util.function.Consumer<String> errorSink = this::printError;
+  private int scriptDepth;
+  // Set by fail() while a line runs, so a script stops on a line that reported an error
+  private String lineFailure;
+
+  private static final int MAX_SCRIPT_DEPTH = 16;
+  private static final java.util.regex.Pattern LIMIT_FLAG =
+      java.util.regex.Pattern.compile("--limit\\s+(\\d+)");
+  private static final java.util.regex.Pattern FORMAT_FLAG =
+      java.util.regex.Pattern.compile("--format\\s+(\\S+)");
+  private static final java.util.regex.Pattern WHOLE_VARIABLE =
+      java.util.regex.Pattern.compile(
+          "^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}((?:\\s+--\\S+(?:\\s+\\S+)?)*)$");
   private boolean running = true;
+  // Running a script from the command line: quiet, errors to stderr, no history, no row cap
+  private final boolean batch;
   private final io.jafar.shell.core.SecretFilteringHistory
       history; // never holds an llm.api-key line
   private final ShellCompleter fallbackCompleter;
@@ -67,12 +83,33 @@ public final class Shell implements AutoCloseable {
   private List<Map<String, Object>> lastResultRows;
 
   public Shell() throws IOException {
-    this(TerminalBuilder.builder().system(true).build());
+    this(TerminalBuilder.builder().system(true).build(), false);
+  }
+
+  /**
+   * A shell for {@code jafar-shell script <file>}: output on stdout without a terminal, errors on
+   * stderr, informational messages ("Opening ...", "Set x = ...") suppressed as jfr-shell's script
+   * mode does, no history, and tables printed in full.
+   */
+  static Shell forScript() throws IOException {
+    return new Shell(
+        TerminalBuilder.builder()
+            .system(false)
+            .dumb(true)
+            .streams(System.in, System.out)
+            .encoding(java.nio.charset.Charset.defaultCharset())
+            .build(),
+        true);
   }
 
   /** A shell on the given terminal; tests pass one over in-memory streams. */
-  Shell(Terminal terminal) {
+  Shell(Terminal terminal) throws IOException {
+    this(terminal, false);
+  }
+
+  private Shell(Terminal terminal, boolean batch) throws IOException {
     this.terminal = terminal;
+    this.batch = batch;
     this.modules = ShellModuleLoader.loadAll();
     this.moduleById = new HashMap<>();
     for (ShellModule module : modules) {
@@ -130,9 +167,9 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void error(String s) {
-            // The dispatcher's own catch already says "Error: ..."; do not print it twice
-            terminal.writer().println(s.startsWith("Error: ") ? s : "Error: " + s);
-            terminal.flush();
+            // Recorded like the shell's own errors, so a script stops on a failing JFR command.
+            // The dispatcher's own catch already says "Error: ..."; do not print it twice.
+            fail(s.startsWith("Error: ") ? s : "Error: " + s);
           }
         };
 
@@ -142,7 +179,10 @@ public final class Shell implements AutoCloseable {
     @SuppressWarnings("unchecked")
     SessionManager<JFRSession> jfrSessions =
         (SessionManager<JFRSession>) (SessionManager<?>) sessions;
-    this.moduleContext = new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener);
+    // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
+    // global names from the dispatcher's store, which would otherwise be a private empty one.
+    this.moduleContext =
+        new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener, null, globalStore);
 
     // Create fallback completer for basic commands
     this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);
@@ -303,13 +343,10 @@ public final class Shell implements AutoCloseable {
                     recorder.isRecording()
                         ? "Recording to: " + recorder.getCurrentRecordingPath()
                         : "Not currently recording");
-        default -> {
-          terminal.writer().println("Error: Unknown record command: " + parts[0]);
-          terminal.writer().println(usage);
-        }
+        default -> printError("Unknown record command: " + parts[0] + "\n" + usage);
       }
     } catch (IOException | IllegalStateException e) {
-      terminal.writer().println("Error: " + e.getMessage());
+      printError(e.getMessage());
     }
     terminal.flush();
   }
@@ -342,7 +379,7 @@ public final class Shell implements AutoCloseable {
     // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
     // balanced; every other line in such a branch is skipped.
     try {
-      if (conditionals.handle(input, variables.scopes(), this::printError)) {
+      if (conditionals.handle(input, variables.scopes(), errorSink)) {
         return true;
       }
     } catch (IllegalStateException e) {
@@ -429,8 +466,9 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (isJfrCommand(input)) {
-      handleJfrCommand(input);
+    String jfrCommand = jfrCommandOf(input);
+    if (jfrCommand != null) {
+      handleJfrCommand(jfrCommand, input);
       return true;
     }
 
@@ -463,7 +501,7 @@ public final class Shell implements AutoCloseable {
             var wizardMethod = session.getClass().getMethod("runLeakDetectionWizard", menuClass);
             wizardMethod.invoke(session, menu);
           } catch (Exception e) {
-            terminal.writer().println("Error launching wizard: " + e.getMessage());
+            fail("Error launching wizard: " + e.getMessage());
             e.printStackTrace();
           }
         } else {
@@ -496,9 +534,48 @@ public final class Shell implements AutoCloseable {
     return false;
   }
 
+  /** The dispatcher the JFR commands and jfr-shell's completer use; package-private for tests. */
+  CommandDispatcher jfrDispatcher() {
+    return (CommandDispatcher) moduleContext;
+  }
+
   private void printError(String message) {
-    terminal.writer().println("Error: " + message);
-    terminal.flush();
+    fail("Error: " + message);
+  }
+
+  /**
+   * Prints a command's error and records that the current line failed. Handlers report errors and
+   * return normally, so without this a script would count a failing line as a success and run on.
+   */
+  private void fail(String text) {
+    if (batch) {
+      terminal.flush(); // keep it in order with what was printed before
+      System.err.println(text);
+      System.err.flush();
+    } else {
+      terminal.writer().println(text);
+      terminal.flush();
+    }
+    lineFailure = text;
+  }
+
+  /** A confirmation ("Session closed"); a script run from the command line leaves it out. */
+  private void info(String text) {
+    if (!batch) {
+      terminal.writer().println(text);
+    }
+  }
+
+  /** One script line: a line that reported an error throws, so {@link ScriptRunner} sees it. */
+  private boolean executeScriptLine(String line) {
+    lineFailure = null;
+    boolean handled = execute(line);
+    if (lineFailure != null) {
+      String failure = lineFailure;
+      lineFailure = null;
+      throw new IllegalStateException(failure);
+    }
+    return handled;
   }
 
   /**
@@ -509,20 +586,50 @@ public final class Shell implements AutoCloseable {
   static final java.util.Set<String> JFR_COMMANDS =
       java.util.Set.of("metadata", "chunks", "chunk", "cp", "constants", "backend");
 
+  // The same names as an array, for the per-line match below: iterating it allocates nothing.
+  private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
+
   /**
    * True for {@code metadata --summary} or {@code chunks}, false for a query that starts with the
-   * same word: {@code metadata/jdk.ExecutionSample} and {@code constants/...} have a slash, and a
-   * bare {@code metadata | count()} pipes the root — jfr-shell would take that {@code |} as a
-   * search pattern, so it stays a query here.
+   * same word: {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
+   * are not the bare word, and a bare {@code metadata | count()} pipes the root — jfr-shell would
+   * take that {@code |} as a search pattern, so it stays a query here.
    */
   static boolean isJfrCommand(String input) {
-    String[] words = input.trim().split("\\s+", 3);
-    return JFR_COMMANDS.contains(words[0].toLowerCase(java.util.Locale.ROOT))
-        && (words.length < 2 || !words[1].startsWith("|"));
+    return jfrCommandOf(input) != null;
   }
 
-  private void handleJfrCommand(String input) {
-    String command = input.trim().split("\\s+", 2)[0].toLowerCase(java.util.Locale.ROOT);
+  /**
+   * The JFR command {@code input} starts with, or {@code null}. Runs for every line typed or read
+   * from a script, so it scans in place: no split, no regex, no lower-cased copy.
+   */
+  static String jfrCommandOf(String input) {
+    int n = input.length();
+    int start = 0;
+    while (start < n && Character.isWhitespace(input.charAt(start))) {
+      start++;
+    }
+    int end = start;
+    while (end < n && !Character.isWhitespace(input.charAt(end))) {
+      end++;
+    }
+    int next = end;
+    while (next < n && Character.isWhitespace(input.charAt(next))) {
+      next++;
+    }
+    if (next < n && input.charAt(next) == '|') {
+      return null;
+    }
+    int len = end - start;
+    for (String command : JFR_COMMAND_NAMES) {
+      if (command.length() == len && input.regionMatches(true, start, command, 0, len)) {
+        return command;
+      }
+    }
+    return null;
+  }
+
+  private void handleJfrCommand(String command, String input) {
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
     if (current.isEmpty() || !(current.get().session instanceof JFRSession)) {
       printError(
@@ -537,7 +644,7 @@ public final class Shell implements AutoCloseable {
               + "recording or switch to one with 'use <id>'");
       return;
     }
-    ((CommandDispatcher) moduleContext).dispatch(input);
+    jfrDispatcher().dispatch(input);
   }
 
   /**
@@ -556,10 +663,24 @@ public final class Shell implements AutoCloseable {
       return;
     }
     List<String> arguments = List.of(parts).subList(1, parts.length);
+    if (scriptDepth >= MAX_SCRIPT_DEPTH) {
+      // A script that runs itself would otherwise end in a StackOverflowError, which nothing
+      // catches, and take the shell down with it.
+      printError("Scripts nested more than " + MAX_SCRIPT_DEPTH + " deep; not running " + path);
+      return;
+    }
+    int ifDepth = conditionals.state().depth();
+    scriptDepth++;
     try {
       ScriptRunner.ExecutionResult result =
-          new ScriptRunner(this::execute, arguments).execute(path);
+          new ScriptRunner(this::executeScriptLine, arguments).execute(path);
+      int unclosed = conditionals.unwindTo(ifDepth);
+      if (unclosed > 0) {
+        // Left open, a false branch would go on skipping every command typed after the script.
+        printError(path.getFileName() + " left " + unclosed + " if-block(s) open; closed them");
+      }
       if (result.hasErrors()) {
+        lineFailure = "Script " + path.getFileName() + " failed";
         terminal.writer().println();
         terminal.writer().println("Script completed with errors:");
         for (ScriptRunner.ScriptError error : result.getErrors()) {
@@ -580,6 +701,8 @@ public final class Shell implements AutoCloseable {
       }
     } catch (IOException e) {
       printError("Cannot read script " + path + ": " + e.getMessage());
+    } finally {
+      scriptDepth--;
     }
     terminal.flush();
   }
@@ -612,12 +735,62 @@ public final class Shell implements AutoCloseable {
           return false;
         }
       }
-      lines.forEach(terminal.writer()::println);
+      // A script run from the command line prints results, not confirmations (as jfr-shell's)
+      boolean confirmation =
+          command.equals("set")
+              || command.equals("let")
+              || command.equals("unset")
+              || command.equals("invalidate");
+      if (!(batch && confirmation)) {
+        lines.forEach(terminal.writer()::println);
+      }
     } catch (IllegalArgumentException e) {
-      terminal.writer().println("Error: " + e.getMessage());
+      fail("Error: " + e.getMessage());
     }
     terminal.flush();
     return true;
+  }
+
+  /**
+   * Runs a script for {@code jafar-shell script <file|->}: each line through {@link #execute},
+   * stopping at the first line that reports an error unless {@code continueOnError}. Prints the
+   * same summary as jfr-shell's command-line {@code script} and returns the exit status.
+   */
+  int runScript(List<String> lines, List<String> arguments, boolean continueOnError) {
+    ScriptRunner runner = new ScriptRunner(this::executeScriptLine, arguments);
+    runner.setContinueOnError(continueOnError);
+    ScriptRunner.ExecutionResult result;
+    scriptDepth++;
+    try {
+      result = runner.execute(lines);
+    } finally {
+      scriptDepth--;
+    }
+    int unclosed = conditionals.unwindTo(0);
+    terminal.flush();
+    if (unclosed > 0) {
+      System.err.println("Warning: " + unclosed + " unclosed conditional block(s)");
+    }
+    if (result.hasErrors()) {
+      System.err.println();
+      System.err.println("Script completed with errors:");
+      for (ScriptRunner.ScriptError error : result.getErrors()) {
+        System.err.println(error);
+      }
+      System.err.printf(
+          "%nExecuted %d/%d commands successfully.%n",
+          result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size());
+      System.err.flush();
+      return 1;
+    }
+    if (result.getSuccessCount() > 0) {
+      terminal.writer().println();
+      terminal
+          .writer()
+          .println("Script executed successfully: " + result.getSuccessCount() + " commands");
+      terminal.flush();
+    }
+    return 0;
   }
 
   private boolean isQueryForCurrentSession(String input) {
@@ -654,7 +827,7 @@ public final class Shell implements AutoCloseable {
       try {
         handleOpen(filePath.toString());
       } catch (Exception e) {
-        terminal.writer().println("Error opening file: " + e.getMessage());
+        fail("Error opening file: " + e.getMessage());
         terminal.flush();
       }
     }
@@ -670,7 +843,7 @@ public final class Shell implements AutoCloseable {
 
     Path path = Paths.get(pathStr);
     if (!Files.exists(path)) {
-      terminal.writer().println("Error: file not found: " + path);
+      fail("Error: file not found: " + path);
       terminal.flush();
       return;
     }
@@ -685,7 +858,7 @@ public final class Shell implements AutoCloseable {
     }
 
     if (handler == null) {
-      terminal.writer().println("Error: No module can handle file: " + path);
+      fail("Error: No module can handle file: " + path);
       terminal.writer().println("Supported extensions:");
       for (ShellModule module : modules) {
         terminal
@@ -700,12 +873,16 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    terminal.writer().println("Opening " + path + " with " + handler.getDisplayName() + "...");
-    terminal.flush();
+    if (!batch) {
+      terminal.writer().println("Opening " + path + " with " + handler.getDisplayName() + "...");
+      terminal.flush();
+    }
 
     try {
       SessionManager.SessionRef<Session> ref = sessions.open(path, null);
-      terminal.writer().println("Session " + ref.id + " opened: " + path.getFileName());
+      if (!batch) {
+        terminal.writer().println("Session " + ref.id + " opened: " + path.getFileName());
+      }
 
       // Debug: Verify session state
       if (System.getProperty("jfr.shell.completion.debug") != null) {
@@ -718,7 +895,7 @@ public final class Shell implements AutoCloseable {
 
       terminal.flush();
     } catch (Exception e) {
-      terminal.writer().println("Error opening session: " + e.getMessage());
+      fail("Error opening session: " + e.getMessage());
       e.printStackTrace();
       terminal.flush();
     }
@@ -755,13 +932,10 @@ public final class Shell implements AutoCloseable {
       Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
       if (current.isPresent()) {
         SessionManager.SessionRef<Session> ref = current.get();
-        terminal
-            .writer()
-            .println(
-                "Switched to session " + ref.id + ": " + ref.session.getFilePath().getFileName());
+        info("Switched to session " + ref.id + ": " + ref.session.getFilePath().getFileName());
       }
     } else {
-      terminal.writer().println("No such session: " + idOrAlias);
+      fail("No such session: " + idOrAlias);
     }
     terminal.flush();
   }
@@ -775,25 +949,43 @@ public final class Shell implements AutoCloseable {
         terminal.writer().println("No session open");
       } else {
         try {
-          sessions.close(String.valueOf(current.get().id));
-          terminal.writer().println("Session closed");
+          closeSession(String.valueOf(current.get().id));
+          info("Session closed");
         } catch (Exception e) {
-          terminal.writer().println("Error closing session: " + e.getMessage());
+          fail("Error closing session: " + e.getMessage());
         }
       }
     } else {
       String idOrAlias = parts[1];
       try {
-        if (sessions.close(idOrAlias)) {
-          terminal.writer().println("Session closed: " + idOrAlias);
+        if (closeSession(idOrAlias)) {
+          info("Session closed: " + idOrAlias);
         } else {
-          terminal.writer().println("No such session: " + idOrAlias);
+          fail("No such session: " + idOrAlias);
         }
       } catch (Exception e) {
-        terminal.writer().println("Error closing session: " + e.getMessage());
+        fail("Error closing session: " + e.getMessage());
       }
     }
     terminal.flush();
+  }
+
+  /**
+   * Closes a session (which clears its own variables) and drops the cached rows of global variables
+   * bound to it, which could otherwise keep the closed file's data in memory.
+   */
+  private boolean closeSession(String idOrAlias) throws Exception {
+    Optional<SessionManager.SessionRef<Session>> ref = sessions.get(idOrAlias);
+    if (ref.isEmpty() || !sessions.close(idOrAlias)) {
+      return false;
+    }
+    int id = ref.get().id;
+    // Copies of a variable can sit in any store; each surviving one may hold its rows
+    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, id);
+    for (SessionManager.SessionRef<Session> other : sessions.list()) {
+      io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(other.variables, id);
+    }
+    return true;
   }
 
   private void handleInfo(String input) {
@@ -810,7 +1002,7 @@ public final class Shell implements AutoCloseable {
     } else {
       ref = sessions.get(parts[1]);
       if (ref.isEmpty()) {
-        terminal.writer().println("No such session: " + parts[1]);
+        fail("No such session: " + parts[1]);
         terminal.flush();
         return;
       }
@@ -835,7 +1027,7 @@ public final class Shell implements AutoCloseable {
   private void handleShow(String query) {
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
     if (current.isEmpty()) {
-      terminal.writer().println("No session open. Use 'open <file>' first.");
+      fail("No session open. Use 'open <file>' first.");
       terminal.flush();
       return;
     }
@@ -852,25 +1044,23 @@ public final class Shell implements AutoCloseable {
 
     QueryEvaluator evaluator = module.getQueryEvaluator();
     if (evaluator == null) {
-      terminal.writer().println("Error: Module does not support queries: " + module.getId());
+      fail("Error: Module does not support queries: " + module.getId());
       terminal.flush();
       return;
     }
 
     // 'show ${var}' alone prints a query-valued variable's rows (cached after first use), rather
     // than substituting its first value into the line
-    java.util.regex.Matcher whole =
-        java.util.regex.Pattern.compile(
-                "^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}((?:\\s+--\\S+(?:\\s+\\S+)?)*)$")
-            .matcher(query.trim());
-    if (whole.matches()
+    java.util.regex.Matcher whole = query.startsWith("${") ? WHOLE_VARIABLE.matcher(query) : null;
+    if (whole != null
+        && whole.matches()
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
         Object rows = lazy.get();
-        java.util.regex.Matcher fmt =
-            java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(whole.group(2));
-        java.util.regex.Matcher lim =
-            java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(whole.group(2));
+        // The flags may use variables too ('--limit ${n}'); the row variable itself is not text
+        String flags = variables.substitute(whole.group(2));
+        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(flags);
+        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(flags);
         if (lim.find() && rows instanceof List<?> list) {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
@@ -896,15 +1086,13 @@ public final class Shell implements AutoCloseable {
     Integer limit = null;
     String format = ref.outputFormat;
 
-    java.util.regex.Matcher limitMatcher =
-        java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(cleanQuery);
+    java.util.regex.Matcher limitMatcher = LIMIT_FLAG.matcher(cleanQuery);
     if (limitMatcher.find()) {
       limit = Integer.parseInt(limitMatcher.group(1));
       cleanQuery = limitMatcher.replaceFirst("").trim();
     }
 
-    java.util.regex.Matcher formatMatcher =
-        java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(cleanQuery);
+    java.util.regex.Matcher formatMatcher = FORMAT_FLAG.matcher(cleanQuery);
     if (formatMatcher.find()) {
       format = formatMatcher.group(1).toLowerCase();
       cleanQuery = formatMatcher.replaceFirst("").trim();
@@ -919,7 +1107,7 @@ public final class Shell implements AutoCloseable {
       rememberResult(cleanQuery, result);
       printResult(result, format);
     } catch (Exception e) {
-      terminal.writer().println("Query error: " + e.getMessage());
+      fail("Query error: " + e.getMessage());
       e.printStackTrace();
       terminal.flush();
     }
@@ -1108,7 +1296,7 @@ public final class Shell implements AutoCloseable {
       } else if ("csv".equalsIgnoreCase(format)) {
         printCsv(list);
       } else {
-        boolean isInteractive = System.console() != null;
+        boolean isInteractive = !batch && System.console() != null;
         int maxRows = Integer.MAX_VALUE;
 
         if (isInteractive) {
@@ -1244,11 +1432,13 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  show <query>       Execute a query on current session");
     terminal.writer().println();
     terminal.writer().println("JFR recordings (need a JFR session):");
-    terminal.writer().println("  metadata [--summary|--search <p>|--events-only|...]  List types");
+    terminal
+        .writer()
+        .println("  metadata [--summary] [--search <glob>] [--events-only] ...  List types");
     terminal.writer().println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
-    terminal.writer().println("  chunks [--summary|--range N-M]  List chunks");
+    terminal.writer().println("  chunks [--summary] [--range N-M]  List chunks");
     terminal.writer().println("  chunk <index> show  Show one chunk's details");
-    terminal.writer().println("  constants|cp [<type>] [--summary|--range N-M]  Constant pools");
+    terminal.writer().println("  constants|cp [<type>] [--summary] [--range N-M]  Constant pools");
     terminal.writer().println("  backend [list]     Show the JFR backend, or list them");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");
@@ -1350,9 +1540,11 @@ public final class Shell implements AutoCloseable {
     } catch (Exception ignore) {
     }
 
-    try {
-      history.save();
-    } catch (Exception ignore) {
+    if (!batch) {
+      try {
+        history.save();
+      } catch (Exception ignore) {
+      }
     }
 
     for (ShellModule module : modules) {
