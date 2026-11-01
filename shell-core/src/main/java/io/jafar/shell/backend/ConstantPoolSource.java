@@ -58,7 +58,8 @@ public interface ConstantPoolSource {
    * @param recording path to the JFR recording file
    * @param typeName the CP type name (e.g., "jdk.types.StackTrace")
    * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent
-   * @throws Exception if parsing fails
+   * @throws Exception if parsing fails, or if an event or constant pool entry cannot be decoded
+   *     (counts from a partial read would be wrong, so none are returned)
    */
   default Map<String, Object> crossref(Path recording, String typeName) throws Exception {
     throw new UnsupportedOperationException("crossref not supported by this backend");

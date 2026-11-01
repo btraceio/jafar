@@ -19,6 +19,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.shell.backend.ChunkSource;
 import io.jafar.shell.backend.ConstantPoolSource;
 import io.jafar.shell.backend.MetadataSource;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -566,6 +567,8 @@ final class JafarSources {
       // ThreadLocal: accumulates all CP refs (all types) seen in the current event
       ThreadLocal<Map<String, List<Long>>> currentEventAllRefs = new ThreadLocal<>();
 
+      // A value that cannot be decoded fails the whole command (CrossrefDecodeFailure): skipping it
+      // would leave every count and the BFS below silently incomplete.
       ValueProcessor eventCollector =
           new ValueProcessor() {
             @Override
@@ -653,7 +656,12 @@ final class JafarSources {
                               try {
                                 stream.position(offset);
                                 edgeReader.readValue(stream, mcp.getType());
-                              } catch (Throwable ignore) {
+                              } catch (Exception e) {
+                                throw new CrossrefDecodeFailure(
+                                    "constant pool entry " + mcp.getType().getName() + "#" + id,
+                                    context.getChunkIndex(),
+                                    offset,
+                                    e);
                               } finally {
                                 stream.position(saved);
                                 edgeProcRef[0].endEntry();
@@ -682,7 +690,9 @@ final class JafarSources {
                 currentEventAllRefs.set(allRefs);
                 try {
                   reader.readValue(stream, eventType);
-                } catch (Throwable ignore) {
+                } catch (Exception e) {
+                  throw new CrossrefDecodeFailure(
+                      "event " + eventType.getName(), context.getChunkIndex(), eventStartPos, e);
                 } finally {
                   currentEventAllRefs.remove();
                 }
@@ -722,6 +732,20 @@ final class JafarSources {
                 return true;
               }
             });
+      } catch (IOException | RuntimeException e) {
+        CrossrefDecodeFailure failure = findCause(e, CrossrefDecodeFailure.class);
+        if (failure == null) {
+          throw e;
+        }
+        // The parser wraps a listener failure in several layers with generic messages; the shell
+        // prints only the top message, so rethrow with the one that says what went wrong.
+        throw new IOException(
+            "crossref("
+                + typeName
+                + ") aborted: "
+                + failure.getMessage()
+                + "; counts from a partial read would be wrong, so none are reported",
+            failure.getCause());
       }
 
       // Per-event-type transitive BFS: merge transitive IDs and promote candidate event counts.
@@ -837,6 +861,35 @@ final class JafarSources {
 
       return new HashSet<>(reachable.getOrDefault(targetType, Collections.emptySet()));
     }
+  }
+
+  /**
+   * A value {@code crossref} could not decode. Unchecked because {@link ChunkParserListener}
+   * callbacks cannot throw checked exceptions; {@code crossref} unwraps it from the parser's
+   * wrapping and rethrows it as an {@link IOException}.
+   */
+  private static final class CrossrefDecodeFailure extends RuntimeException {
+    CrossrefDecodeFailure(String what, int chunkIndex, long position, Exception cause) {
+      super(
+          "cannot decode "
+              + what
+              + " in chunk "
+              + chunkIndex
+              + " at chunk position "
+              + position
+              + ": "
+              + cause,
+          cause);
+    }
+  }
+
+  private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (type.isInstance(c)) {
+        return type.cast(c);
+      }
+    }
+    return null;
   }
 
   /** Collects CP-to-CP reference edges by recording which CP entries each entry points to. */

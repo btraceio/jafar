@@ -1,0 +1,243 @@
+package io.jafar.shell;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import io.jafar.parser.api.ParserContext;
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.parser.impl.UntypedParserContextFactory;
+import io.jafar.parser.internal_api.ChunkHeader;
+import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.StreamingChunkParser;
+import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.SessionManager;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.openjdk.jmc.flightrecorder.writer.api.Recording;
+import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
+import org.openjdk.jmc.flightrecorder.writer.api.Type;
+import org.openjdk.jmc.flightrecorder.writer.api.Types;
+
+/**
+ * {@code crossref()} on a recording with one value that cannot be decoded.
+ *
+ * <p>{@code JafarSources.JafarConstantPoolSource.crossref} decodes every event and every constant
+ * pool entry with its own {@code GenericValueReader}. It used to wrap both reads in {@code catch
+ * (Throwable ignore) {}}, so a corrupted value produced incomplete reference counts, printed as if
+ * they were complete. Now the command fails and the error names what could not be decoded and
+ * where.
+ *
+ * <p>The fixture is written with the JMC writer: {@value #EVENTS} {@value #TYPE} events whose last
+ * field is a string; event {@value #BAD} carries {@value #MARKER}. One string encoding byte is then
+ * set to {@code 0x7f}, which no JFR string encoding uses (0..5 are defined).
+ */
+class CrossrefDecodeFailureTest {
+  private static final String TYPE = "test.Corruptible";
+  private static final int EVENTS = 20;
+  private static final int BAD = 7;
+  private static final String MARKER = "CORRUPT_THIS_LABEL";
+  private static final byte BAD_ENCODING = 0x7f;
+
+  /** {@code java.lang.String} is a pool every JMC-written recording with strings has. */
+  private static final String CROSSREF = "constants/java.lang.String | crossref()";
+
+  static final class BufferIO implements CommandDispatcher.IO {
+    final StringBuilder out = new StringBuilder();
+    final StringBuilder err = new StringBuilder();
+
+    @Override
+    public void println(String s) {
+      out.append(s).append('\n');
+    }
+
+    @Override
+    public void printf(String fmt, Object... args) {
+      out.append(String.format(fmt, args));
+    }
+
+    @Override
+    public void error(String s) {
+      err.append(s).append('\n');
+    }
+  }
+
+  @TempDir Path dir;
+  private BufferIO io;
+  private CommandDispatcher dispatcher;
+
+  @BeforeEach
+  void setUp() {
+    ParsingContext ctx = ParsingContext.create();
+    SessionManager<JFRSession> sessions =
+        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
+    io = new BufferIO();
+    dispatcher = new CommandDispatcher(sessions, io, r -> {});
+  }
+
+  /** Guard: the fixture itself is fine, so the failures below come from the corruption alone. */
+  @Test
+  void cleanRecordingPrintsTheCrosscheck() throws Exception {
+    Path clean = dir.resolve("clean.jfr");
+    write(clean);
+    String err = run(clean);
+    assertEquals("", err, "stdout:\n" + io.out);
+    assertTrue(
+        io.out.toString().contains("java.lang.String Constant Pool Crosscheck"),
+        "stdout:\n" + io.out);
+  }
+
+  /**
+   * The event's own string field: the JMC writer stores event strings in the {@code
+   * java.lang.String} pool, so the event ends with encoding id 2 (pool reference) and a one-byte
+   * index. Decoding the event throws {@code IOException("Unexpected string constant id: 127")}.
+   */
+  @Test
+  void undecodableEventFailsTheCommand() throws Exception {
+    Path clean = dir.resolve("clean.jfr");
+    write(clean);
+    byte[] bytes = Files.readAllBytes(clean);
+    long[] bad = eventExtents(clean).get(BAD);
+    int at = (int) (bad[0] + bad[1] - 2);
+    assertEquals(2, bytes[at], "label must be a constant pool reference (encoding id 2)");
+    bytes[at] = BAD_ENCODING;
+    Path corrupt = dir.resolve("corrupt-event.jfr");
+    Files.write(corrupt, bytes);
+
+    String err = run(corrupt);
+    assertFailedNaming(
+        err,
+        "cannot decode event " + TYPE + " in chunk 1 at chunk position " + bad[0] + ": ",
+        "Unexpected string constant id: 127");
+  }
+
+  /**
+   * The pooled string itself: {@code crossref} decodes every constant pool entry to collect
+   * pool-to-pool edges, and the {@code java.lang.String} entry holding the marker no longer
+   * decodes.
+   */
+  @Test
+  void undecodableConstantPoolEntryFailsTheCommand() throws Exception {
+    Path clean = dir.resolve("clean.jfr");
+    write(clean);
+    byte[] bytes = Files.readAllBytes(clean);
+    byte[] marker = MARKER.getBytes(StandardCharsets.UTF_8);
+    int m = indexOf(bytes, marker, 0);
+    if (m < 2 || indexOf(bytes, marker, m + 1) >= 0) {
+      fail("expected exactly one occurrence of the marker, first at " + m);
+    }
+    // <encoding byte> <one-byte varint length> <bytes>
+    assertEquals(marker.length, bytes[m - 1], "length byte before the marker");
+    int at = m - 2;
+    assertTrue(bytes[at] == 3 || bytes[at] == 5, "encoding byte before marker: " + bytes[at]);
+    bytes[at] = BAD_ENCODING;
+    Path corrupt = dir.resolve("corrupt-pool.jfr");
+    Files.write(corrupt, bytes);
+
+    String err = run(corrupt);
+    // Not necessarily the marker's entry, and not necessarily id 127: when the pool is indexed,
+    // ParsingUtils.skipUTF8 treats an unknown encoding id as an empty string, so the offsets of
+    // the entries after the marker are shifted, and whichever bad entry crossref reads first
+    // fails. Seen: "java.lang.String#83 ... Unexpected string constant id: 95" ('_' of the marker).
+    assertFailedNaming(
+        err,
+        "cannot decode constant pool entry java.lang.String#",
+        " in chunk 1 at chunk position ",
+        "Unexpected string constant id: ");
+  }
+
+  private String run(Path jfr) throws Exception {
+    dispatcher.dispatch("open " + jfr);
+    assertEquals("", io.err.toString(), "open failed");
+    io.out.setLength(0);
+    dispatcher.dispatch(CROSSREF);
+    return io.err.toString();
+  }
+
+  private void assertFailedNaming(String err, String... fragments) {
+    String ctx = "stderr:\n" + err + "stdout:\n" + io.out;
+    assertTrue(err.contains("crossref(java.lang.String) aborted: "), ctx);
+    for (String f : fragments) {
+      assertTrue(err.contains(f), "missing '" + f + "'; " + ctx);
+    }
+    assertTrue(
+        !io.out.toString().contains("Total CP entries"), "partial counts were printed; " + ctx);
+  }
+
+  private static void write(Path jfr) throws Exception {
+    try (Recording recording = Recordings.newRecording(jfr)) {
+      Types types = recording.getTypes();
+      Type stackTraceType = types.getType(Types.JDK.STACK_TRACE);
+      Type threadType = types.getType(Types.JDK.THREAD);
+      Type event =
+          recording.registerEventType(
+              TYPE,
+              t -> {
+                t.addField("seq", Types.Builtin.INT);
+                t.addField("label", Types.Builtin.STRING);
+              });
+      for (int i = 0; i < EVENTS; i++) {
+        int seq = i;
+        recording.writeEvent(
+            event.asValue(
+                v -> {
+                  // Implicit fields first: the JMC writer declares but does not write them.
+                  v.putField("stackTrace", stackTraceType.nullValue());
+                  v.putField("eventThread", threadType.nullValue());
+                  v.putField("startTime", System.nanoTime());
+                  v.putField("seq", seq);
+                  v.putField("label", seq == BAD ? MARKER : "label-" + seq);
+                }));
+      }
+    }
+  }
+
+  /** File offset and size of each {@value #TYPE} event, in order (one chunk, starting at 0). */
+  private static List<long[]> eventExtents(Path jfr) throws Exception {
+    List<long[]> extents = Collections.synchronizedList(new ArrayList<>());
+    int[] chunks = {0};
+    try (StreamingChunkParser p = new StreamingChunkParser(new UntypedParserContextFactory())) {
+      p.parse(
+          jfr,
+          new ChunkParserListener() {
+            @Override
+            public boolean onChunkStart(ParserContext c, int chunkIndex, ChunkHeader header) {
+              chunks[0]++;
+              return true;
+            }
+
+            @Override
+            public boolean onEvent(
+                ParserContext c, long typeId, long start, long rawSize, long payloadSize) {
+              if (TYPE.equals(c.getMetadataLookup().getClass(typeId).getName())) {
+                extents.add(new long[] {start, rawSize});
+              }
+              return true;
+            }
+          });
+    }
+    assertEquals(1, chunks[0], "event offsets are chunk-relative; the fixture must be one chunk");
+    assertEquals(EVENTS, extents.size());
+    return extents;
+  }
+
+  private static int indexOf(byte[] haystack, byte[] needle, int from) {
+    outer:
+    for (int i = from; i <= haystack.length - needle.length; i++) {
+      for (int j = 0; j < needle.length; j++) {
+        if (haystack[i + j] != needle[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
+  }
+}

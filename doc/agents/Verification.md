@@ -85,6 +85,17 @@ looks identical to the file not being read at all.
 > explained it printed on the next line. A field you capture and never read is a fallback in
 > disguise.
 
+> **Case file — crossref, and the layer under it.** `JafarSources.crossref` decoded every event
+> and pool entry inside `catch (Throwable ignore) {}`: a corrupted recording printed reference
+> counts as if complete. It now fails naming type, chunk and position (`CrossrefDecodeFailureTest`,
+> a JMC-written fixture with one string encoding byte set to `0x7f`). The same byte flipped in a
+> real JDK 25 recording still printed the clean file's numbers, because the failure never reached
+> crossref: `ParsingUtils.skipUTF8` skips an unknown encoding id as an empty string while
+> `CheckpointEvent` indexes the pool, the next entry misreads as `Unknown type ID 3`, and
+> `CheckpointEvent` logs a WARN and abandons the rest of the checkpoint. A corrupted-fixture test
+> proves only the path that fixture reaches; flip the byte in a real recording too, and read
+> stderr.
+
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
 > the jar manifest's `Implementation-Version`, which the shadow-jar build stamps, so it cannot drift.

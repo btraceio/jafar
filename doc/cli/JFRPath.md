@@ -1073,6 +1073,10 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
+`crossref()` decodes every event and every constant pool entry in the recording. If any of them
+cannot be decoded, the command fails with an error naming the event type or pool entry, the chunk
+and the position, and prints no counts: figures from a partial read would be wrong.
+
 ## Operator Chaining
 
 Many operators are chainable in a pipeline. For example:
