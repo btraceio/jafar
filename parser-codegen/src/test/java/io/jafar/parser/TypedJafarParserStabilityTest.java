@@ -8,8 +8,9 @@ import io.jafar.parser.api.TypedJafarParser;
 import io.jafar.parser.types.JFRExecutionSample;
 import java.io.File;
 import java.net.URI;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
@@ -35,23 +36,24 @@ public class TypedJafarParserStabilityTest {
   void runsInParallelThreads() throws Exception {
     URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     var exec = Executors.newFixedThreadPool(2);
-    CountDownLatch latch = new CountDownLatch(2);
-    Runnable task =
+    Callable<Void> task =
         () -> {
           try (TypedJafarParser p = TypedJafarParser.open(new File(uri).getAbsolutePath())) {
             HandlerRegistration<JFRExecutionSample> reg =
                 p.handle(JFRExecutionSample.class, (e, c) -> {});
             p.run();
             reg.destroy(p);
-          } catch (Exception ignored) {
-          } finally {
-            latch.countDown();
           }
+          return null;
         };
-    exec.submit(task);
-    exec.submit(task);
-    latch.await(10, TimeUnit.SECONDS);
-    exec.shutdownNow();
-    assertTrue(latch.getCount() == 0);
+    try {
+      Future<Void> first = exec.submit(task);
+      Future<Void> second = exec.submit(task);
+      // The bound only catches a hang: a parse failure surfaces here, and a busy machine is fine.
+      first.get(5, TimeUnit.MINUTES);
+      second.get(5, TimeUnit.MINUTES);
+    } finally {
+      exec.shutdownNow();
+    }
   }
 }
