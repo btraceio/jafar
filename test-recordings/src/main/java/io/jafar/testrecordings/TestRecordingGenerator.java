@@ -17,10 +17,12 @@ import java.util.Arrays;
  * downloading them.
  *
  * <pre>
- * tests &lt;demo-resources-dir&gt; &lt;parser-core-resources-dir&gt;
+ * tests &lt;demo-resources-dir&gt; &lt;parser-core-resources-dir&gt; [test-dd-source.jfr]
  *     test-ap.jfr, test-jfr.jfr, test-dd.jfr in the first directory, and the copies parser-core's
  *     tests read in the second (its test-dd.jfr is a copy of test-jfr.jfr, as get_resources.sh
- *     has always made it).
+ *     has always made it). With a source, test-dd.jfr is a copy of it rather than generated: the
+ *     build passes the checked-in tck-test.jfr, a real Datadog profiler recording whose shape
+ *     jfr-mcp's end-to-end tests pin (204 types, two chunks, two jdk.JVMInformation events).
  *
  * benchmark &lt;output.jfr&gt; &lt;chunks&gt; [samples-per-chunk] [ap|jfr|dd]
  *     One recording of any size, written a chunk at a time.
@@ -44,7 +46,7 @@ public final class TestRecordingGenerator {
 
   public static void main(String[] args) throws IOException {
     if (args.length >= 3 && args[0].equals("tests")) {
-      tests(Paths.get(args[1]), Paths.get(args[2]));
+      tests(Paths.get(args[1]), Paths.get(args[2]), args.length > 3 ? Paths.get(args[3]) : null);
     } else if (args.length >= 3 && args[0].equals("benchmark")) {
       Path out = Paths.get(args[1]);
       int chunks = Integer.parseInt(args[2]);
@@ -57,7 +59,7 @@ public final class TestRecordingGenerator {
           out, chunks, shape, Files.size(out), (System.nanoTime() - t0) / 1e9);
     } else {
       System.err.println(
-          "usage: tests <demo-resources-dir> <parser-core-resources-dir>\n"
+          "usage: tests <demo-resources-dir> <parser-core-resources-dir> [test-dd-source.jfr]\n"
               + "       benchmark <output.jfr> <chunks> [samples-per-chunk] [ap|jfr|dd]\n"
               + "got: "
               + Arrays.toString(args));
@@ -65,7 +67,7 @@ public final class TestRecordingGenerator {
     }
   }
 
-  private static void tests(Path demoDir, Path parserDir) throws IOException {
+  private static void tests(Path demoDir, Path parserDir, Path ddSource) throws IOException {
     Files.createDirectories(demoDir);
     Files.createDirectories(parserDir);
     Path ap = demoDir.resolve("test-ap.jfr");
@@ -78,7 +80,11 @@ public final class TestRecordingGenerator {
     // covered by the benchmark mode.
     provide(ap, Shape.AP, 1, TEST_SAMPLES_AP);
     provide(jfr, Shape.JFR, 1, TEST_SAMPLES_JFR);
-    provide(dd, Shape.DD, 1, TEST_SAMPLES_DD);
+    if (ddSource != null) {
+      provideCopy(dd, ddSource);
+    } else {
+      provide(dd, Shape.DD, 1, TEST_SAMPLES_DD);
+    }
 
     mirror(ap, parserDir.resolve("test-ap.jfr"));
     mirror(jfr, parserDir.resolve("test-jfr.jfr"));
@@ -95,6 +101,21 @@ public final class TestRecordingGenerator {
     write(target, shape, chunks, samples);
     markGenerated(target, shape + ", " + chunks + " chunk(s)");
     System.out.println("Generated " + target + " (" + Files.size(target) + " bytes)");
+  }
+
+  /** Copies {@code source} to {@code target} unless a real recording is already there. */
+  private static void provideCopy(Path target, Path source) throws IOException {
+    if (isReal(target)) {
+      System.out.println("Using real recording " + target + " (no " + MARKER_SUFFIX + " marker)");
+      return;
+    }
+    if (!isJfr(source)) {
+      throw new IOException("Not a JFR recording: " + source);
+    }
+    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    markGenerated(target, "copy of " + source.getFileName());
+    System.out.println(
+        "Copied " + source + " to " + target + " (" + Files.size(target) + " bytes)");
   }
 
   /**

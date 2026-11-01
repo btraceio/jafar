@@ -105,6 +105,20 @@ class TestRecordingGeneratorTest {
   }
 
   @Test
+  void testDdIsACopyOfTheGivenSource(@TempDir Path dir) throws Exception {
+    Path demo = dir.resolve("demo");
+    Path source = dir.resolve("source.jfr");
+    // Any valid recording will do as the source.
+    TestRecordingGenerator.main(new String[] {"benchmark", source.toString(), "2", "500", "dd"});
+    TestRecordingGenerator.main(
+        new String[] {
+          "tests", demo.toString(), dir.resolve("parser").toString(), source.toString()
+        });
+    assertArrayEquals(Files.readAllBytes(source), Files.readAllBytes(demo.resolve("test-dd.jfr")));
+    assertTrue(Files.exists(TestRecordingGenerator.marker(demo.resolve("test-dd.jfr"))));
+  }
+
+  @Test
   void outputIsDeterministic(@TempDir Path dir) throws Exception {
     Path a = dir.resolve("a");
     Path b = dir.resolve("b");

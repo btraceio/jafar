@@ -1,7 +1,7 @@
 name: Go Parser Benchmarks
 
 # The Go parser benchmarks need a large recording. This job generates one with the
-# test-recordings module (about 1 GiB, 180 chunks, deterministic, so allocation
+# test-recordings module (about 1 GiB, 400 chunks, deterministic, so allocation
 # counts stay comparable run to run) and publishes the numbers, rather than
 # leaving them to whatever recording a developer happens to have locally. To
 # benchmark real recordings, run ./get_resources.sh and point JAFAR_BENCH_JFR at them.
@@ -72,7 +72,7 @@ jobs:
     name: Benchmark
     runs-on: ubuntu-latest
     # A full workflow_dispatch sweep at 3x/3 took roughly 40 minutes over the
-    # previous 2 GB downloaded corpus; generating the recording adds a few minutes.
+    # previous 2 GB downloaded corpus; generating the recording adds about 12.
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -103,7 +103,7 @@ jobs:
         run: |
           ./gradlew --no-daemon :test-recordings:generateTestRecordings \
             :test-recordings:generateBenchmarkRecording \
-            -Pchunks=180 -PsamplesPerChunk=200000 \
+            -Pchunks=400 -PsamplesPerChunk=200000 \
             -Poutput="$PWD/build/bench-recordings/large-ap.jfr"
           # The benchmarks read the large recording and the checked-in TCK one.
           echo "JAFAR_BENCH_JFR=$PWD/build/bench-recordings/large-ap.jfr:$PWD/jfr-shell-tck/src/main/resources/tck-test.jfr" >> "$GITHUB_ENV"

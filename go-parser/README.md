@@ -185,7 +185,7 @@ than by name, so the numbers stay comparable across files. Run
 `./gradlew :test-recordings:generateTestRecordings` (or `./get_resources.sh` for
 the real ones) from the repository root first to add the larger recordings;
 set `JAFAR_BENCH_JFR` to benchmark one specific file, for example one made with
-`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=180 -Poutput=/tmp/large.jfr`.
+`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr`.
 
 ## Error handling
 

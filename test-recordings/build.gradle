@@ -42,8 +42,11 @@ tasks.register('generateTestRecordings', JavaExec) {
     group = 'verification'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'io.jafar.testrecordings.TestRecordingGenerator'
-    args 'tests', demoResources.absolutePath, parserResources.absolutePath
+    // test-dd.jfr is the checked-in TCK recording (a real Datadog profiler recording); see README.
+    def ddSource = rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr')
+    args 'tests', demoResources.absolutePath, parserResources.absolutePath, ddSource.absolutePath
     inputs.files(sourceSets.main.runtimeClasspath).withPropertyName('generator')
+    inputs.file(ddSource).withPropertyName('ddSource')
     recordingNames.each { name ->
         outputs.file(new File(demoResources, name))
         outputs.file(new File(parserResources, name))

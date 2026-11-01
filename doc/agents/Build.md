@@ -25,8 +25,8 @@ See [Verification.md](Verification.md) for how to know a change actually works.
 # Optional: replace the generated test recordings with the real ones
 ./get_resources.sh
 
-# A large recording for benchmarks (about 1 GiB at 180 chunks)
-./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=180 -Poutput=/tmp/large.jfr
+# A large recording for benchmarks (about 1.1 GB at 400 chunks, ~12 min)
+./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr
 
 # Build shadow JARs for all modules
 ./gradlew shadowJar
@@ -77,7 +77,7 @@ interfaces discovered at run time and has no Go equivalent - do not attempt to p
 The Go and Java untyped parsers must be kept at parity - see the parity rule under **Rules** below
 before changing either of them.
 Benchmarks need a large recording. The **Go Parser Benchmarks** workflow
-(`.github/workflows/go-parser-bench.yml`) generates one (about 1 GiB, 180 chunks) with
+(`.github/workflows/go-parser-bench.yml`) generates one (about 1.1 GB, 400 chunks) with
 `:test-recordings:generateBenchmarkRecording` and points `JAFAR_BENCH_JFR` at it. It runs on demand (`workflow_dispatch`, with inputs for benchtime, count,
 benchmark pattern and an optional baseline ref to diff against via benchstat), weekly, and on pushes
 to `main` that touch `go-parser/`. It runs the correctness tests against the generated recordings

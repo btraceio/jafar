@@ -42,7 +42,7 @@ The short version, expanded with evidence in that file:
 | **R3** | A fallback that hides a misconfiguration is a bug. Report where a value came from. |
 | **R4** | Documentation is code. Run the commands you write. |
 | **R5** | Prove the test fails without the fix, and say so in the commit message. |
-| **R6** | Compare failure sets **by name**, never by count — parts of this suite fail without the downloaded recordings. |
+| **R6** | Compare failure sets **by name**, never by count — a constant count can hide a swap, and some suites still have standing failures. |
 | **R7** | One source of truth for any list two places must agree on. |
 | **R8** | State plainly what you did not verify. |
 | **R9** | Inspect the payload, not the exit status. A green command proves nothing about what it sent. |
