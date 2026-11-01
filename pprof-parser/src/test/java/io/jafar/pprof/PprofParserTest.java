@@ -372,6 +372,41 @@ class PprofParserTest {
     assertEquals("", profile.functions().get(0).filename());
   }
 
+  @Test
+  void uncompressedProfileParsesLikeGzipped() throws Exception {
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    b.addSampleType(b.addString("cpu"), b.addString("nanoseconds"));
+    long loc = b.addLocation(b.addFunction(b.addString("Foo.bar"), b.addString("Foo.java")), 7);
+    b.addSample(List.of(loc), List.of(11L), List.of());
+    Path gzipped = b.write(tempDir);
+
+    // The extension says gzip on purpose: the content decides, not the name.
+    Path raw = tempDir.resolve("raw.pb.gz");
+    Files.write(raw, gunzip(gzipped));
+
+    PprofProfile.Profile fromRaw = PprofParser.parse(raw);
+    PprofProfile.Profile fromGzip = PprofParser.parse(gzipped);
+    assertEquals(fromGzip.sampleTypes(), fromRaw.sampleTypes());
+    assertEquals(1, fromRaw.samples().size());
+    assertEquals("Foo.bar", fromRaw.functions().get(0).name());
+  }
+
+  @Test
+  void nonProfileContentIsRejectedRatherThanOpenedEmpty() throws Exception {
+    Path text = tempDir.resolve("notes.pprof");
+    Files.writeString(text, "hello this is not a profile\n");
+    Path empty = tempDir.resolve("empty.pprof");
+    Files.write(empty, new byte[0]);
+    Path jfr = tempDir.resolve("recording.pprof");
+    Files.write(jfr, new byte[] {'F', 'L', 'R', 0, 0, 2, 0, 1});
+
+    for (Path file : List.of(text, empty, jfr)) {
+      IOException e =
+          assertThrows(IOException.class, () -> PprofParser.parse(file), file::toString);
+      assertTrue(e.getMessage().contains("Not a pprof profile"), e.getMessage());
+    }
+  }
+
   private static byte[] valueType(int typeIdx, int unitIdx) throws IOException {
     ByteArrayOutputStream m = new ByteArrayOutputStream(8);
     writeVarintField(m, 1, typeIdx);

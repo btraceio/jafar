@@ -6,13 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class LlmConfigTest {
 
   private static LlmConfig of(Map<String, String> settings) {
-    return new LlmConfig(settings::get);
+    return new LlmConfig(settings::get, Optional::empty);
   }
 
   @Test

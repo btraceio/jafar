@@ -307,7 +307,6 @@ public final class JfrSessionTools {
         for (String eventType : filteredTypes) {
           counts.put(eventType, cachedCounts.getOrDefault(eventType, 0L));
         }
-        totalEvents = sessionInfo.session().getTotalEvents();
       }
 
       // Build result list sorted by count descending
@@ -326,8 +325,11 @@ public final class JfrSessionTools {
       response.put("sessionId", sessionInfo.id());
       response.put("recordingPath", sessionInfo.recordingPath().toString());
       response.put("totalTypes", eventList.size());
-      response.put("totalEvents", totalEvents);
+      response.put("totalEvents", scan ? totalEvents : null);
       response.put("scanned", scan);
+      if (!scan) {
+        response.put("countsNote", "Events were not counted. Pass scan=true for real counts.");
+      }
       response.put("eventTypes", eventList);
 
       if (filter != null && !filter.isBlank()) {

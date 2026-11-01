@@ -18,6 +18,9 @@ import java.util.zip.GZIPInputStream;
 /**
  * Hand-rolled gzip + protobuf wire format decoder for pprof profiles.
  *
+ * <p>Whether a file is compressed is decided from its first two bytes, never from its name: Go
+ * tooling writes gzip, but other producers write the same protobuf uncompressed.
+ *
  * <p>Supports VARINT (wire type 0) and LEN (wire type 2) fields, which cover all fields in
  * google/pprof/proto/profile.proto. Field numbers are hardcoded; no proto descriptor is needed.
  *
@@ -95,15 +98,51 @@ public final class PprofReader {
   private PprofReader() {}
 
   /**
-   * Reads a gzip-compressed pprof profile from the given path.
+   * Reads a pprof profile, gzip-compressed or not, from the given path.
    *
    * @param path path to the .pb.gz or .pprof file
    * @return parsed profile
    * @throws IOException if reading or parsing fails
    */
   public static PprofProfile.Profile read(Path path) throws IOException {
+    if (!isGzip(path)) {
+      return readUncompressed(path);
+    }
     Buffer raw = gunzip(path);
     return new Parser(raw.data, 0, raw.length).parseProfile();
+  }
+
+  private static boolean isGzip(Path path) throws IOException {
+    try (InputStream is = Files.newInputStream(path)) {
+      byte[] magic = is.readNBytes(2);
+      return magic.length == 2 && magic[0] == (byte) 0x1F && magic[1] == (byte) 0x8B;
+    }
+  }
+
+  /**
+   * Parses a file holding the protobuf directly.
+   *
+   * <p>Without gzip's framing nothing vouches for the content, and protobuf is permissive enough
+   * that an empty file or some text decodes without error. A profile's string table always holds at
+   * least the empty string at index 0, so a decode that found none did not read a profile.
+   */
+  private static PprofProfile.Profile readUncompressed(Path path) throws IOException {
+    if (Files.size(path) > 1L << 30) {
+      throw new IOException("Profile exceeds 1 GiB");
+    }
+    byte[] data = Files.readAllBytes(path);
+    Parser parser = new Parser(data, 0, data.length);
+    PprofProfile.Profile profile;
+    try {
+      profile = parser.parseProfile();
+    } catch (IOException | RuntimeException e) {
+      throw new IOException(
+          "Not a pprof profile: neither gzip nor a protobuf Profile (" + e.getMessage() + ")", e);
+    }
+    if (parser.stringTable.isEmpty()) {
+      throw new IOException("Not a pprof profile: neither gzip nor a protobuf Profile");
+    }
+    return profile;
   }
 
   // ---- gzip decompression ----

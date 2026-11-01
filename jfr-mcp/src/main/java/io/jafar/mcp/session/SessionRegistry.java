@@ -43,7 +43,9 @@ public final class SessionRegistry {
       try {
         var eventTypes = session.getAvailableTypes();
         map.put("availableTypes", eventTypes.size());
-        map.put("totalEvents", session.getTotalEvents());
+        // Opening reads metadata only; counting events takes a full scan of the recording.
+        map.put("totalEvents", null);
+        map.put("totalEventsNote", "Not counted at open. jfr_summary reports the count.");
 
         // Calculate duration from recording metadata if available
         var chunkIds = session.getAvailableChunkIds();

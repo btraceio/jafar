@@ -78,7 +78,7 @@ same time, which is what makes cross-format correlation possible.
 | `jfr_help` | JfrPath query language docs |
 | `jfr_summary` | Recording overview |
 | `jfr_diagnose` | Automated diagnosis: runs the USE and TSA analyses and returns merged, severity-ranked findings plus capability gaps |
-| `jfr_compare` | Compare a candidate recording against a baseline: duration-normalised rates and per-frame self-time deltas |
+| `jfr_compare` | Compare a candidate recording against a baseline: duration-normalised rates and per-frame self-time deltas. A frame counts as a regression only if its move is significant; below 30 samples in either recording the result is reported as inconclusive |
 | `jfr_flamegraph` | Aggregated stack trace data |
 | `jfr_callgraph` | Caller-callee relationship graph |
 | `jfr_stackprofile` | Frames with self/total shares, time buckets and per-thread counts |
@@ -102,7 +102,7 @@ same time, which is what makes cross-format correlation possible.
 
 | Tool | Description |
 |------|-------------|
-| `pprof_open` / `pprof_close` | Session management |
+| `pprof_open` / `pprof_close` | Session management. Accepts gzipped and uncompressed profiles, detected from the content rather than the extension |
 | `pprof_query` | Execute PprofPath queries |
 | `pprof_summary` | Profile overview |
 | `pprof_flamegraph` | Aggregated stack data |
