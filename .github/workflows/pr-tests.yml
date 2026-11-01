@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - '**'
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -69,6 +70,16 @@ jobs:
             ./gradlew --stacktrace --no-daemon build
           fi
 
+      # Synthetic fixtures only, so this stays quick. The full suite with the large recording runs
+      # from pr-e2e.yml when a PR carries the 'e2e' label.
+      - name: MCP fat jar smoke tests (JDK 21)
+        if: matrix.java == '21'
+        run: |
+          ./gradlew --stacktrace --no-daemon :jfr-mcp:endToEndTest \
+            --tests '*McpAgentWorkflowEndToEndTest.hprofWorkflow*' \
+            --tests '*McpAgentWorkflowEndToEndTest.pprofWorkflow*' \
+            --tests '*McpAgentWorkflowEndToEndTest.otlpWorkflow*'
+
       - name: Check API compatibility (JDK 21)
         if: matrix.java == '21'
         run: |
@@ -119,14 +130,14 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml; do
+          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done
           if [ "$copied" -eq 0 ]; then
             echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
           fi
-          for d in **/build/reports/tests/test **/build/reports/tests/test8; do
+          for d in **/build/reports/tests/test **/build/reports/tests/test8 **/build/reports/tests/endToEndTest; do
             if [ -d "$d" ]; then
               dest="artifacts/html/$(basename "$d")"
               mkdir -p "$dest"

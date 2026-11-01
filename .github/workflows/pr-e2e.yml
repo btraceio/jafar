@@ -1,0 +1,52 @@
+name: PR E2E
+
+# Slow suite: runs in the merge queue and on PRs labelled 'e2e', so it never holds other PRs back.
+# Kept apart from pr-tests.yml so adding the label does not rerun the regular tests.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  merge_group:
+
+concurrency:
+  group: pr-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-e2e:
+    name: MCP E2E
+    if: github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set runner default JDK to 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare test resources
+        run: bash ./get_resources.sh
+
+      - name: MCP end-to-end tests against the fat jar
+        run: |
+          ./gradlew --stacktrace --no-daemon :jfr-mcp:endToEndTest
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-e2e-reports
+          path: |
+            jfr-mcp/build/test-results/endToEndTest
+            jfr-mcp/build/reports/tests/endToEndTest
+          retention-days: 14
