@@ -249,8 +249,8 @@ public final class ConditionEvaluator {
   }
 
   /**
-   * Reads an {@code exists()}/{@code empty()} argument: a reference such as {@code res[2].a.b},
-   * or an {@code llm.*} setting name, which may contain '-' ({@code llm.base-url}). The token is
+   * Reads an {@code exists()}/{@code empty()} argument: a reference such as {@code res[2].a.b}, or
+   * an {@code llm.*} setting name, which may contain '-' ({@code llm.base-url}). The token is
    * validated when it is resolved, not here.
    */
   private String parseReferenceToken() {
@@ -274,8 +274,8 @@ public final class ConditionEvaluator {
 
   /**
    * {@code exists(ref)}: true when {@code ref} names a variable or a set {@code llm.*} setting, or
-   * is a reference ({@code name[idx].field.path}) that resolves to a non-null value under the
-   * rules {@code ${ref}} uses.
+   * is a reference ({@code name[idx].field.path}) that resolves to a non-null value under the rules
+   * {@code ${ref}} uses.
    */
   private boolean variableExists(String arg) throws Exception {
     String settingName = settingName(arg);

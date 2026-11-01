@@ -35,9 +35,9 @@ public final class VariableSubstitutor {
   private static final Pattern VAR_PATTERN = Pattern.compile("\\$\\{" + REFERENCE + "\\}");
 
   /**
-   * The bare reference grammar of {@code ${...}}, without the braces, with the same groups.
-   * {@link ConditionEvaluator} parses {@code exists()}/{@code empty()} arguments with it, so the
-   * two cannot accept different shapes.
+   * The bare reference grammar of {@code ${...}}, without the braces, with the same groups. {@link
+   * ConditionEvaluator} parses {@code exists()}/{@code empty()} arguments with it, so the two
+   * cannot accept different shapes.
    */
   static final Pattern REFERENCE_PATTERN = Pattern.compile(REFERENCE);
 
@@ -134,8 +134,8 @@ public final class VariableSubstitutor {
 
   /**
    * Extracts the unformatted value a {@code ${name[idx].path}} reference denotes. This is the
-   * single definition of what a reference means: {@link #substitute} formats its result, and
-   * {@link ConditionEvaluator}'s {@code exists()} and {@code empty()} inspect it.
+   * single definition of what a reference means: {@link #substitute} formats its result, and {@link
+   * ConditionEvaluator}'s {@code exists()} and {@code empty()} inspect it.
    *
    * @param value the variable value
    * @param indexStr row index as string, or null for first row
