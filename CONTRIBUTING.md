@@ -36,7 +36,8 @@ We are committed to providing a welcoming and inclusive environment for all cont
    git config core.hooksPath .githooks
    ```
 
-3. **Fetch test resources**:
+3. **Optionally fetch the real test recordings** (the build generates synthetic ones otherwise; see
+   `test-recordings/README.md`):
    ```bash
    ./get_resources.sh
    ```

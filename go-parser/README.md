@@ -83,12 +83,49 @@ Event fields arrive in `Event.Values` keyed by field name:
 | `java.lang.String`    | `string`, or `nil` for a null string       |
 | inline complex value  | `map[string]any`                           |
 | constant pool value   | `*jfr.Ref`                                 |
-| array                 | `*jfr.Array`                               |
+| array                 | `*jfr.Array` (see [Arrays](#arrays))       |
 
 Fields annotated `@Timestamp(TICKS)` and `@Timespan(TICKS)` are normalised:
 timestamps become nanoseconds since the epoch and timespans become nanosecond
 durations, so callers never handle raw ticks. `ChunkInfo` exposes the same
 conversions for values you convert yourself.
+
+### Arrays
+
+An array field decodes to a `*jfr.Array` whose `Elems` field holds the elements
+in a slice. Its Go type follows the element type, so numeric elements are stored
+unboxed and decoding them allocates nothing per element:
+
+| `ElementType`  | `Elems`     | Elements                                             |
+|----------------|-------------|------------------------------------------------------|
+| `int`, `long`  | `[]int64`   | normalised like a scalar field of the type           |
+| `float`        | `[]float32` |                                                      |
+| `double`       | `[]float64` |                                                      |
+| `short`        | `[]int16`   |                                                      |
+| `char`         | `[]uint16`  |                                                      |
+| anything else  | `[]any`     | each with the Go type of a scalar field of the type  |
+
+Constant pool references are always `*Ref` elements in an `[]any`, whatever
+their type. Switch on `Elems` to read the elements in bulk; `Len` and `At` work
+on any array, but `At` boxes a numeric element:
+
+```go
+if arr, ok := e.Values["values"].(*jfr.Array); ok {
+    switch elems := arr.Elems.(type) {
+    case []int64:
+        for _, v := range elems { /* int64, no allocation */ }
+    case []any:
+        for _, v := range elems { /* *jfr.Ref, map[string]any, string, ... */ }
+    }
+}
+```
+
+`Get` indexes arrays through `At`, and `ResolveDeep` turns a numeric array into
+a copy of its slice and any other array into an `[]any`.
+
+Arrays inside constant pool entries are allocated 64 at a time, as long-lived
+as their pool. An event's arrays are allocated individually, so keeping one
+keeps nothing else alive.
 
 ### Constant pool references
 
@@ -183,8 +220,10 @@ Two other things matter more than they look:
 Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
 available recording, and picks its workload event types per recording rather
 than by name, so the numbers stay comparable across files. Run
-`./get_resources.sh` from the repository root first to add the larger
-recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
+`./gradlew :test-recordings:generateTestRecordings` (or `./get_resources.sh` for
+the real ones) from the repository root first to add the larger recordings;
+set `JAFAR_BENCH_JFR` to benchmark one specific file, for example one made with
+`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr`.
 
 ## Error handling
 
@@ -229,6 +268,14 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   - a GC phase name, a flag name, a thread state - holds one copy of it rather
   than one per event. This is Jafar's `CachedStringParser` widened from its
   single entry to a small direct-mapped table.
+* **Unboxed arrays are typed slices.** The Java parser stores `int`/`long`,
+  `float`, `double`, `short` and `char` array elements in a `long[]`,
+  `float[]`, `double[]`, `short[]` or `char[]` behind `ArrayType`; this one
+  stores an `[]int64`, `[]float32`, `[]float64`, `[]int16` or `[]uint16` in
+  `Array.Elems`. Same elements, same values; neither boxes them. `byte` and
+  `boolean` elements go in an `[]any` (Java: `byte[]`, `boolean[]` filled by
+  boxing): converting a single-byte value to an interface never allocates in
+  Go, and every `Byte` and `Boolean` box is cached in Java.
 * **Optimizations that do not port.** The typed API and the generated untyped
   deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
   generation. `LazyEventMap` in particular works because Java lets a lazy object
@@ -257,10 +304,11 @@ gofmt -l .
 ```
 
 The tests and benchmarks pick up whatever recordings are present.
-`./get_resources.sh` in the repository root downloads the larger ones from
-Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
-both the suite and the benchmarks find them there and report each file
-separately. Without them they fall back to the recordings checked into the
+`./gradlew :test-recordings:generateTestRecordings` in the repository root
+generates them into `parser-core/src/test/resources/` and
+`demo/src/test/resources/` (`./get_resources.sh` downloads the real ones to the
+same place); both the suite and the benchmarks find them there and report each
+file separately. Without them they fall back to the recordings checked into the
 repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs
