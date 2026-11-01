@@ -32,6 +32,9 @@ class JFRSessionMetadataConcurrencyTest {
         check("metadata", session.getAvailableMetadataTypes(), i);
         assertEquals(
             session.getAllMetadataTypes().size(), session.getMetadataTypeIds().size(), "ids " + i);
+        // Collected from onChunkStart / onCheckpoint, which also run on the chunk threads
+        assertEquals(List.of(1, 2), session.getAvailableChunkIds(), "chunk ids, scan " + i);
+        check("constant-pool", session.getAvailableConstantPoolTypes(), i);
       }
     }
   }

@@ -47,7 +47,8 @@ public final class Shell implements AutoCloseable {
   private final SessionManager<Session> sessions;
   private final VariableStore globalStore;
   private final ShellVariables variables;
-  private final Conditionals conditionals = new Conditionals();
+  // The if-blocks of the input being read: the prompt's, or a running script's own (see runLines)
+  private Conditionals conditionals = new Conditionals();
   // 'record start' writes the lines typed at the prompt to a script (jfr-shell's recorder)
   private final CommandRecorder recorder =
       new CommandRecorder(
@@ -544,30 +545,23 @@ public final class Shell implements AutoCloseable {
       printError("Scripts nested more than " + MAX_SCRIPT_DEPTH + " deep; not running " + path);
       return;
     }
-    int ifDepth = conditionals.state().depth();
-    scriptDepth++;
     try {
       ScriptRunner.ExecutionResult result =
-          new ScriptRunner(this::executeScriptLine, arguments).execute(path);
-      int unclosed = conditionals.unwindTo(ifDepth);
-      if (unclosed > 0) {
-        // Left open, a false branch would go on skipping every command typed after the script.
-        printError(path.getFileName() + " left " + unclosed + " if-block(s) open; closed them");
-      }
+          runLines(Files.readAllLines(path), arguments, false, path.getFileName().toString());
       if (result.hasErrors()) {
-        lineFailure = "Script " + path.getFileName() + " failed";
-        terminal.writer().println();
-        terminal.writer().println("Script completed with errors:");
+        java.io.PrintWriter out =
+            batch ? new java.io.PrintWriter(System.err, true) : terminal.writer();
+        out.println();
+        out.println("Script completed with errors:");
         for (ScriptRunner.ScriptError error : result.getErrors()) {
-          terminal.writer().println(error);
+          out.println(error);
         }
-        terminal
-            .writer()
-            .println(
-                String.format(
-                    "%nExecuted %d/%d commands successfully.",
-                    result.getSuccessCount(),
-                    result.getSuccessCount() + result.getErrors().size()));
+        out.println(
+            String.format(
+                "%nExecuted %d/%d commands successfully.",
+                result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+        out.flush();
+        lineFailure = "Script " + path.getFileName() + " failed";
       } else if (result.getSuccessCount() > 0) {
         terminal.writer().println();
         terminal
@@ -576,10 +570,33 @@ public final class Shell implements AutoCloseable {
       }
     } catch (IOException e) {
       printError("Cannot read script " + path + ": " + e.getMessage());
-    } finally {
-      scriptDepth--;
     }
     terminal.flush();
+  }
+
+  /**
+   * Runs script lines through {@link #execute} with an if-block stack of their own, so a script can
+   * neither leave the caller inside a block (a false branch would skip everything typed next) nor
+   * close one of the caller's (a stray {@code endif} is an error in the script instead).
+   */
+  private ScriptRunner.ExecutionResult runLines(
+      List<String> lines, List<String> arguments, boolean continueOnError, String name) {
+    Conditionals callers = conditionals;
+    conditionals = new Conditionals();
+    scriptDepth++;
+    try {
+      ScriptRunner runner = new ScriptRunner(this::executeScriptLine, arguments);
+      runner.setContinueOnError(continueOnError);
+      ScriptRunner.ExecutionResult result = runner.execute(lines);
+      int unclosed = conditionals.state().depth();
+      if (unclosed > 0) {
+        printError(name + " left " + unclosed + " if-block(s) open; closed them");
+      }
+      return result;
+    } finally {
+      scriptDepth--;
+      conditionals = callers;
+    }
   }
 
   private static String expandHome(String path) {
@@ -626,8 +643,8 @@ public final class Shell implements AutoCloseable {
     return true;
   }
 
-  private static final java.util.Set<String> JFR_COMMANDS =
-      java.util.Set.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
+  private static final List<String> JFR_COMMANDS =
+      List.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
 
   /**
    * {@code metadata --summary}, {@code chunks}, {@code cp jdk.types.Symbol}: a jfr-shell command on
@@ -639,11 +656,22 @@ public final class Shell implements AutoCloseable {
     while (space < input.length() && !Character.isWhitespace(input.charAt(space))) {
       space++;
     }
-    if (!JFR_COMMANDS.contains(input.substring(0, space))) {
+    // Compared in place: this runs for most lines that reach the query path
+    boolean command = false;
+    for (String c : JFR_COMMANDS) {
+      if (c.length() == space && input.startsWith(c)) {
+        command = true;
+        break;
+      }
+    }
+    if (!command) {
       return false;
     }
-    String rest = input.substring(space).trim();
-    if (rest.startsWith("|")) {
+    int next = space;
+    while (next < input.length() && Character.isWhitespace(input.charAt(next))) {
+      next++;
+    }
+    if (next < input.length() && input.charAt(next) == '|') {
       return false;
     }
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
@@ -656,20 +684,10 @@ public final class Shell implements AutoCloseable {
    * same summary as jfr-shell's command-line {@code script} and returns the exit status.
    */
   int runScript(List<String> lines, List<String> arguments, boolean continueOnError) {
-    ScriptRunner runner = new ScriptRunner(this::executeScriptLine, arguments);
-    runner.setContinueOnError(continueOnError);
-    ScriptRunner.ExecutionResult result;
-    scriptDepth++;
-    try {
-      result = runner.execute(lines);
-    } finally {
-      scriptDepth--;
-    }
-    int unclosed = conditionals.unwindTo(0);
+    lineFailure = null;
+    ScriptRunner.ExecutionResult result = runLines(lines, arguments, continueOnError, "script");
     terminal.flush();
-    if (unclosed > 0) {
-      System.err.println("Warning: " + unclosed + " unclosed conditional block(s)");
-    }
+    boolean leftBlocksOpen = lineFailure != null; // reported by runLines
     if (result.hasErrors()) {
       System.err.println();
       System.err.println("Script completed with errors:");
@@ -689,7 +707,7 @@ public final class Shell implements AutoCloseable {
           .println("Script executed successfully: " + result.getSuccessCount() + " commands");
       terminal.flush();
     }
-    return 0;
+    return leftBlocksOpen ? 1 : 0;
   }
 
   private boolean isQueryForCurrentSession(String input) {

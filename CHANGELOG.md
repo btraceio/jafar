@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
   offers these commands and their arguments in every session type. A query variable whose session
   has been closed reports that when read instead of returning stale rows, and closing a session
-  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
-  ends inside an `if` block has the blocks it left open closed. A script line that reports an
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and each script has
+  its own `if` blocks: one it leaves open is closed and reported, and a stray `endif` is an error in
+  the script instead of closing the caller's block. A script line that reports an
   error stops the script (as the default stop-on-error mode always promised), instead of being
   counted as a success. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
@@ -46,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
   set could lose entries from its size count and later fail with "Index N out of bounds for length
   N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
-  same way. Both are now thread-safe
+  same way, and the chunk-id and constant-pool-type scans collected from the chunk threads into an
+  `ArrayList` and a `HashSet` (chunk ids could also come back out of order). All are now
+  thread-safe, and chunk ids are sorted
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now

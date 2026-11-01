@@ -114,6 +114,32 @@ class ShellArtifactTest {
     assertTrue(output.contains("Scripts nested more than 16 deep"), output);
     assertFalse(output.contains("StackOverflowError"), output);
     assertTrue(output.contains("ALIVE"), output);
+
+    // A stray endif in a script is the script's error; it must not close the caller's block
+    Path stray = dir.resolve("stray.jfrs");
+    Files.writeString(stray, "endif\n");
+    String strayOutput =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "if 1 == 2",
+                "echo never",
+                "else",
+                "script " + stray,
+                "echo STILL-IN-ELSE",
+                "endif",
+                "echo AFTER-BLOCK",
+                "exit",
+                ""));
+    assertTrue(strayOutput.contains("Line 1: Error: endif without if"), strayOutput);
+    assertFalse(strayOutput.contains("Script executed successfully"), strayOutput);
+    assertTrue(strayOutput.contains("STILL-IN-ELSE"), strayOutput);
+    assertTrue(strayOutput.contains("AFTER-BLOCK"), strayOutput);
+    // the caller's own endif still matches its if: no error once its block resumes
+    assertFalse(
+        strayOutput.substring(strayOutput.indexOf("STILL-IN-ELSE")).contains("without if"),
+        strayOutput);
   }
 
   /**

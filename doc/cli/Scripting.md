@@ -68,9 +68,10 @@ it keeps evaluating against the recording. Once its session is closed, reading t
 with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
 `vars` shows it as `(closed)`.
 
-A script may run another (`script` inside a script) up to 16 deep. If a script ends inside an
-`if` block, `jafar-shell` closes the blocks it left open and says so, so the commands you type next
-are not skipped.
+A script may run another (`script` inside a script) up to 16 deep. In `jafar-shell` each script
+has its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported, so
+the commands you type next are not skipped; and a stray `endif` in a script is an error in that
+script rather than closing a block of the caller's.
 
 Where the two shells differ:
 
