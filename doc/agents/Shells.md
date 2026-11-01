@@ -75,10 +75,11 @@ variables must handle `VariableStore.LazyValue` in general, not one implementati
 
 Threading: every front end dispatches on one thread (the readline loop; the TUI's single
 `tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
-`EvaluatorLazyValue` is thread-safe on its own — one volatile cache slot, evaluation serialized —
-because a variable can be read from wherever its store is reachable. jfr-shell's `LazyQueryValue`
-is not: it publishes `evaluated` and `cachedResult` as two volatiles, so a read racing
-`invalidate()` can see `evaluated == true` with `cachedResult == null`.
+`EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
+cache slot holding the rows or a sentinel, evaluation serialized — because a variable can be read
+from wherever its store is reachable. Do not split such state across two volatiles: `LazyQueryValue`
+once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
+read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
 
 In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
 the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to
