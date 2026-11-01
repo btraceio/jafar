@@ -231,6 +231,12 @@ Two standing gaps in this area:
 > against `size() == 301`, or the overrun itself); a lock around the collection fixed it. Two
 > lessons: an intermittent failure is a symptom with a cause, and **any parser callback can run on
 > several threads at once** — check what it writes.
+>
+> The same test then failed once more locally, output not captured, and on CI with its output in
+> the JUnit XML: stderr held `Parsing... 40%` … `Complete... 100%`. `HeapSession`'s
+> `DelayedProgressReporter` prints progress only once a parse outlasts a delay, so "stderr is
+> empty" held on a fast machine and not on a loaded one. **An assertion about output that depends
+> on timing is itself timing-dependent**; assert what may not be there (errors), not that nothing is.
 
 ## R9. Inspect the payload, not the exit status
 

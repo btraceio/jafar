@@ -213,7 +213,9 @@ class ShellArtifactTest {
     Run ok = runJarRaw(dir, "", "script", script.toString(), recording.toString(), dump.toString());
 
     assertEquals(0, ok.exit(), ok.out() + ok.err());
-    assertEquals("", ok.err());
+    // stderr may carry the heap dump's parse progress ("Parsing... 40%"): HeapSession prints it
+    // only once parsing outlasts a delay, so on a slow machine. Nothing else may be there.
+    assertTrue(onlyProgress(ok.err()), ok.err());
     assertTrue(ok.out().contains("VERDICT both"), ok.out());
     assertTrue(ok.out().contains("Types Summary:"), ok.out()); // jfr-shell's metadata command
     assertTrue(ok.out().contains("Script executed successfully: 8 commands"), ok.out());
@@ -348,6 +350,26 @@ class ShellArtifactTest {
     assertFalse(Main.isJfrCommandLine(new String[] {"dump.hprof"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"-q", "--tui"}));
     assertFalse(Main.isJfrCommandLine(new String[] {}));
+  }
+
+  @Test
+  void stderrClassifierAcceptsOnlyProgress() {
+    // The stderr of the CI run that failed the old 'stderr is empty' assertion, verbatim
+    assertTrue(
+        onlyProgress("\rParsing... 40%\rParsing... 80%\rComplete... 100%\rComplete... 100%\n"));
+    assertTrue(onlyProgress(""));
+    assertFalse(onlyProgress("\rParsing... 40%\nError: Variable not found: x\n"));
+    assertFalse(onlyProgress("Exception in thread \"main\" java.lang.IllegalStateException"));
+  }
+
+  /** Whether stderr holds nothing but progress lines such as "Parsing... 40%". */
+  private static boolean onlyProgress(String err) {
+    for (String part : err.split("[\\r\\n]+")) {
+      if (!part.isBlank() && !part.trim().matches(".*\\.\\.\\. \\d{1,3}%")) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Exit status, stdout and stderr of one run, kept apart. */
