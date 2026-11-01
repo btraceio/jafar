@@ -455,10 +455,21 @@ if exists(myvar)
 # or query result with no rows)
 if empty(results)
 
+# Field references: the same paths ${...} accepts
+if exists(config.db.host)       # the field resolves to a non-null value
+if empty(config.db.user)        # missing, null, "", {} or [] all count as empty
+if !empty(results.thread.name)  # query results: field of the first row
+
 # Negation
 if !exists(optionalVar)
 if !empty(data)
 ```
+
+A field reference in `exists()` and `empty()` resolves exactly as the same reference does in
+`${...}`: `config.size` is the entry count (never empty), and a field of a query result is read
+from the first row. A name that is stored whole, such as an `llm.*` setting, is looked up as-is
+first, so `exists(llm.backend)` checks the setting. A malformed reference such as `config..db` is an
+error rather than silently empty.
 
 ### Interactive Mode
 

@@ -1875,7 +1875,7 @@ public class CommandDispatcher {
       io.println("  String: contains (substring check)");
       io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
-      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Functions: exists(var), empty(var) - var may be a field path: cfg.db.host");
       io.println("  Grouping: parentheses ( )");
       io.println("");
       io.println("Examples:");

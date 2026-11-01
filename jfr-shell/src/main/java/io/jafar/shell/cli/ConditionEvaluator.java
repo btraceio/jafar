@@ -2,6 +2,10 @@ package io.jafar.shell.cli;
 
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
+import java.lang.reflect.Array;
+import java.util.Collection;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Evaluates condition expressions for if/elif statements. Supports comparisons, arithmetic, logical
@@ -19,15 +23,21 @@ import io.jafar.shell.core.VariableStore;
  * mulExpr    := unary (('*' | '/') unary)*
  * unary      := '-' unary | primary
  * primary    := '(' expr ')' | function | number | string | identifier
- * function   := 'exists' '(' identifier ')' | 'empty' '(' identifier ')'
+ * function   := 'exists' '(' reference ')' | 'empty' '(' reference ')'
+ * reference  := identifier ('.' identifier)*
  * compOp     := '==' | '!=' | '>' | '>=' | '<' | '<='
  * </pre>
  */
 public final class ConditionEvaluator {
 
+  /**
+   * A dotted reference, {@code name.field.path}: the same shape {@code ${name.field.path}} accepts.
+   */
+  private static final Pattern FIELD_REFERENCE =
+      Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)+");
+
+  /** Resolves names and references with the same rules as {@code ${...}} substitution. */
   private final VariableSubstitutor substitutor;
-  private final VariableStore sessionStore;
-  private final VariableStore globalStore;
 
   private String input;
   private int pos;
@@ -39,8 +49,6 @@ public final class ConditionEvaluator {
    * @param globalStore global variables (may be null)
    */
   public ConditionEvaluator(VariableStore sessionStore, VariableStore globalStore) {
-    this.sessionStore = sessionStore;
-    this.globalStore = globalStore;
     this.substitutor = new VariableSubstitutor(sessionStore, globalStore);
   }
 
@@ -245,39 +253,75 @@ public final class ConditionEvaluator {
     };
   }
 
-  private boolean variableExists(String name) {
-    if (sessionStore != null && sessionStore.contains(name)) {
+  /**
+   * {@code exists(ref)}: true when {@code ref} names a variable, or is a dotted reference whose
+   * field resolves to a non-null value under the rules {@code ${ref}} uses.
+   */
+  private boolean variableExists(String name) throws Exception {
+    if (substitutor.resolve(name) != null) {
       return true;
     }
-    return globalStore != null && globalStore.contains(name);
+    return isFieldReference(name) && resolveField(name) != null;
   }
 
+  /**
+   * {@code empty(ref)}: true when {@code ref} does not exist, or what it denotes is null, an empty
+   * string, an empty map or collection, or a query result with no rows.
+   */
   private boolean variableEmpty(String name) throws Exception {
-    if (!variableExists(name)) {
+    // A whole-name match wins, so dotted names that are stored as-is (llm.* settings) keep
+    // resolving to themselves rather than being split into variable + field.
+    VariableStore.Value val = substitutor.resolve(name);
+    if (val != null) {
+      if (val instanceof LazyQueryValue lqv) {
+        return lqv.size() == 0;
+      }
+      if (val instanceof VariableStore.ScalarValue || val instanceof VariableStore.MapValue) {
+        return isEmptyValue(val.get());
+      }
       return true;
     }
+    if (!isFieldReference(name)) {
+      return true;
+    }
+    return isEmptyValue(resolveField(name));
+  }
 
-    VariableStore.Value val =
-        (sessionStore != null && sessionStore.contains(name))
-            ? sessionStore.get(name)
-            : globalStore.get(name);
-
-    if (val instanceof VariableStore.ScalarValue sv) {
-      Object v = sv.value();
-      if (v == null) return true;
-      if (v instanceof String s) return s.isEmpty();
+  /**
+   * Returns whether {@code name} is a dotted field reference. A dotted argument that does not have
+   * the shape {@code ${...}} accepts (for example {@code m..a} or {@code m.}) is rejected rather
+   * than read as a missing variable, which would make {@code empty()} silently true.
+   */
+  private static boolean isFieldReference(String name) {
+    if (name.indexOf('.') < 0) {
       return false;
     }
-
-    if (val instanceof VariableStore.MapValue mv) {
-      return mv.value().isEmpty();
+    if (!FIELD_REFERENCE.matcher(name).matches()) {
+      throw new IllegalArgumentException("Invalid variable reference: " + name);
     }
-
-    if (val instanceof LazyQueryValue lqv) {
-      return lqv.size() == 0;
-    }
-
     return true;
+  }
+
+  /**
+   * Resolves {@code base.field.path} exactly as {@code ${base.field.path}} would, returning the
+   * unformatted value, or null when the base variable or the field is missing.
+   */
+  private Object resolveField(String name) throws Exception {
+    int dot = name.indexOf('.');
+    VariableStore.Value base = substitutor.resolve(name.substring(0, dot));
+    if (base == null) {
+      return null;
+    }
+    return substitutor.extractRaw(base, null, name.substring(dot + 1));
+  }
+
+  private static boolean isEmptyValue(Object v) {
+    if (v == null) return true;
+    if (v instanceof CharSequence cs) return cs.length() == 0;
+    if (v instanceof Map<?, ?> m) return m.isEmpty();
+    if (v instanceof Collection<?> c) return c.isEmpty();
+    if (v.getClass().isArray()) return Array.getLength(v) == 0;
+    return false;
   }
 
   private String parseString() {

@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
   empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
   evaluator)
+- **`exists()` and `empty()` resolve field references the way `${...}` does.** A dotted
+  argument such as `empty(cfg.db.host)` was looked up as one variable literally named
+  `cfg.db.host`, which never exists, so `empty()` was always true and `exists()` always false while
+  `${cfg.db.host}` printed `localhost`. The argument now resolves through the same code as
+  `${...}` (nested map fields, `.size`, first-row fields of query results). Names stored whole,
+  such as `llm.*` settings, still resolve as-is, and a malformed reference (`cfg..db`) is an error
+  instead of silently empty
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that
