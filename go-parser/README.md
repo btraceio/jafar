@@ -219,8 +219,10 @@ Two other things matter more than they look:
 Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
 available recording, and picks its workload event types per recording rather
 than by name, so the numbers stay comparable across files. Run
-`./get_resources.sh` from the repository root first to add the larger
-recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
+`./gradlew :test-recordings:generateTestRecordings` (or `./get_resources.sh` for
+the real ones) from the repository root first to add the larger recordings;
+set `JAFAR_BENCH_JFR` to benchmark one specific file, for example one made with
+`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr`.
 
 ## Error handling
 
@@ -317,10 +319,11 @@ gofmt -l .
 ```
 
 The tests and benchmarks pick up whatever recordings are present.
-`./get_resources.sh` in the repository root downloads the larger ones from
-Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
-both the suite and the benchmarks find them there and report each file
-separately. Without them they fall back to the recordings checked into the
+`./gradlew :test-recordings:generateTestRecordings` in the repository root
+generates them into `parser-core/src/test/resources/` and
+`demo/src/test/resources/` (`./get_resources.sh` downloads the real ones to the
+same place); both the suite and the benchmarks find them there and report each
+file separately. Without them they fall back to the recordings checked into the
 repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs

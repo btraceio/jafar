@@ -1,7 +1,6 @@
 package io.jafar.parser.internal_api;
 
 import io.jafar.parser.api.Internal;
-import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -12,20 +11,21 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
- * Cache for storing untyped event deserializers by the structure of their event type.
+ * Cache for storing untyped event deserializers by the structure they were generated for.
  *
  * <p>This interface extends ConcurrentMap to provide thread-safe storage and retrieval of generated
  * {@link UntypedEventDeserializer} instances. It is used to cache generated deserializers to avoid
  * repeated bytecode generation for the same event types.
  *
- * <p>Keys are {@link MetadataFingerprint}s of the event type and every type reachable from it, not
- * type ids: JFR type ids are scoped to a chunk, and one cache serves every chunk of a parse, so a
- * recording whose chunks give the same id to different types must not share a deserializer.
- * Structurally identical types in different chunks do share one.
+ * <p>Keys are structural keys computed by {@code UntypedCodeGenerator.cacheKey} in {@code
+ * parser-codegen}: the event type's name and id plus the layout of every type reachable from it.
+ * They are <b>not</b> metadata class ids. One cache is shared by all chunks of a recording, and
+ * chunks written by different producers assign the same id to different types (in {@code
+ * tck-test.jfr}, id 125 is {@code jdk.CompilerConfiguration} in chunk 1 and {@code
+ * datadog.ProfilerCounter} in chunk 2); keying by id handed one type's deserializer to the other.
  */
 @Internal
-public interface UntypedDeserializerCache
-    extends ConcurrentMap<MetadataFingerprint, UntypedEventDeserializer> {
+public interface UntypedDeserializerCache extends ConcurrentMap<String, UntypedEventDeserializer> {
 
   /**
    * Implementation of UntypedDeserializerCache using ConcurrentHashMap.
@@ -37,7 +37,7 @@ public interface UntypedDeserializerCache
     /** Public constructor for Impl. */
     public Impl() {}
 
-    private final ConcurrentMap<MetadataFingerprint, UntypedEventDeserializer> delegate =
+    private final ConcurrentMap<String, UntypedEventDeserializer> delegate =
         new ConcurrentHashMap<>();
 
     @Override
@@ -47,14 +47,12 @@ public interface UntypedDeserializerCache
     }
 
     @Override
-    public void forEach(
-        BiConsumer<? super MetadataFingerprint, ? super UntypedEventDeserializer> action) {
+    public void forEach(BiConsumer<? super String, ? super UntypedEventDeserializer> action) {
       delegate.forEach(action);
     }
 
     @Override
-    public UntypedEventDeserializer putIfAbsent(
-        MetadataFingerprint key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer putIfAbsent(String key, UntypedEventDeserializer value) {
       return delegate.putIfAbsent(key, value);
     }
 
@@ -65,22 +63,19 @@ public interface UntypedDeserializerCache
 
     @Override
     public boolean replace(
-        MetadataFingerprint key,
-        UntypedEventDeserializer oldValue,
-        UntypedEventDeserializer newValue) {
+        String key, UntypedEventDeserializer oldValue, UntypedEventDeserializer newValue) {
       return delegate.replace(key, oldValue, newValue);
     }
 
     @Override
-    public UntypedEventDeserializer replace(
-        MetadataFingerprint key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer replace(String key, UntypedEventDeserializer value) {
       return delegate.replace(key, value);
     }
 
     @Override
     public void replaceAll(
         BiFunction<
-                ? super MetadataFingerprint,
+                ? super String,
                 ? super UntypedEventDeserializer,
                 ? extends UntypedEventDeserializer>
             function) {
@@ -89,16 +84,15 @@ public interface UntypedDeserializerCache
 
     @Override
     public UntypedEventDeserializer computeIfAbsent(
-        MetadataFingerprint key,
-        Function<? super MetadataFingerprint, ? extends UntypedEventDeserializer> mappingFunction) {
+        String key, Function<? super String, ? extends UntypedEventDeserializer> mappingFunction) {
       return delegate.computeIfAbsent(key, mappingFunction);
     }
 
     @Override
     public UntypedEventDeserializer computeIfPresent(
-        MetadataFingerprint key,
+        String key,
         BiFunction<
-                ? super MetadataFingerprint,
+                ? super String,
                 ? super UntypedEventDeserializer,
                 ? extends UntypedEventDeserializer>
             remappingFunction) {
@@ -107,9 +101,9 @@ public interface UntypedDeserializerCache
 
     @Override
     public UntypedEventDeserializer compute(
-        MetadataFingerprint key,
+        String key,
         BiFunction<
-                ? super MetadataFingerprint,
+                ? super String,
                 ? super UntypedEventDeserializer,
                 ? extends UntypedEventDeserializer>
             remappingFunction) {
@@ -118,7 +112,7 @@ public interface UntypedDeserializerCache
 
     @Override
     public UntypedEventDeserializer merge(
-        MetadataFingerprint key,
+        String key,
         UntypedEventDeserializer value,
         BiFunction<
                 ? super UntypedEventDeserializer,
@@ -154,7 +148,7 @@ public interface UntypedDeserializerCache
     }
 
     @Override
-    public UntypedEventDeserializer put(MetadataFingerprint key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer put(String key, UntypedEventDeserializer value) {
       return delegate.put(key, value);
     }
 
@@ -164,7 +158,7 @@ public interface UntypedDeserializerCache
     }
 
     @Override
-    public void putAll(Map<? extends MetadataFingerprint, ? extends UntypedEventDeserializer> m) {
+    public void putAll(Map<? extends String, ? extends UntypedEventDeserializer> m) {
       delegate.putAll(m);
     }
 
@@ -174,7 +168,7 @@ public interface UntypedDeserializerCache
     }
 
     @Override
-    public Set<MetadataFingerprint> keySet() {
+    public Set<String> keySet() {
       return delegate.keySet();
     }
 
@@ -184,7 +178,7 @@ public interface UntypedDeserializerCache
     }
 
     @Override
-    public Set<Entry<MetadataFingerprint, UntypedEventDeserializer>> entrySet() {
+    public Set<Entry<String, UntypedEventDeserializer>> entrySet() {
       return delegate.entrySet();
     }
 

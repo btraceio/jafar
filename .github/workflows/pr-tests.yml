@@ -46,34 +46,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Cache JFR samples
-        id: cache-jfr
-        uses: actions/cache@v4
-        with:
-          path: |
-            demo/src/test/resources/test-ap.jfr
-            demo/src/test/resources/test-jfr.jfr
-          key: jfr-samples-v1
-
-      # Separate entry: adding a path to jfr-samples-v1 would change that cache's version and force
-      # every recording to be downloaded again. actions/cache saves only when the whole job succeeds,
-      # which requires get_resources.sh to have accepted the file.
-      - name: Cache test-dd.jfr
-        uses: actions/cache@v4
-        with:
-          path: demo/src/test/resources/test-dd.jfr
-          key: jfr-sample-dd-v1
-
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare test resources
-        # Mirror for test-dd.jfr while its Dropbox link is disabled: set the repository variable
-        # JAFAR_TEST_DD_URL (Settings > Secrets and variables > Actions > Variables). Unset, this is an
-        # empty string and get_resources.sh falls back to its default URL.
-        env:
-          JAFAR_TEST_DD_URL: ${{ vars.JAFAR_TEST_DD_URL }}
-        run: bash ./get_resources.sh
+      # No recording download: the build generates the test recordings
+      # (:test-recordings:generateTestRecordings, a dependency of every test task).
 
       - name: Build and test (JDK ${{ matrix.java }})
         run: |

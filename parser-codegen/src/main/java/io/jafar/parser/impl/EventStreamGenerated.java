@@ -8,18 +8,15 @@ import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
-import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.UntypedCodeGenerator;
 import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.UntypedEventDeserializer;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
-import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
-import java.io.IOException;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Event stream with Tier 3 bytecode generation optimization for untyped parsing.
@@ -28,13 +25,17 @@ import java.util.Map;
  * type at runtime. Generated deserializers directly read from {@link RecordingStream} without
  * {@link io.jafar.parser.internal_api.ValueProcessor} callback overhead.
  *
+ * <p>Values are the same as the generic {@link EventStream}'s; see {@link UntypedCodeGenerator} for
+ * the contract and {@code GeneratedUntypedParityTest} for the check.
+ *
  * <p>Key optimizations:
  *
  * <ul>
  *   <li>Zero callback overhead (direct bytecode instead of ValueProcessor callbacks)
  *   <li>Simple events (≤10 fields) use eager HashMap deserialization
  *   <li>Complex events (&gt;10 fields) use lazy ArrayPool + LazyEventMap
- *   <li>Deserializers cached by event type ID for reuse
+ *   <li>Deserializers are shared across chunks by structural key ({@link
+ *       UntypedCodeGenerator#cacheKey}), never by type id alone
  * </ul>
  */
 @SuppressWarnings("unchecked")
@@ -58,12 +59,19 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
 
   @Override
   public final boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
+    if (context.get(UntypedDeserializerCache.class) == null) {
+      // Without the shared cache every event would have to be skipped; fail instead of silently
+      // delivering nothing (Verification.md R3).
+      throw new IllegalStateException(
+          "EventStreamGenerated needs an untyped parser context (UntypedDeserializerCache missing);"
+              + " parse with ParsingContextImpl.untypedContextFactory(...)");
+    }
     ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
     context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
+    context.put(ChunkDeserializers.class, new ChunkDeserializers());
 
     // Set type filter to accept all events (untyped parser behavior)
     context.put(TypeFilter.class, t -> true);
-    context.put(ChunkDeserializers.class, new ChunkDeserializers());
 
     return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
   }
@@ -80,10 +88,10 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
    *
    * <p>Same contract as {@link EventStream#onEvent}: a payload that cannot be decoded (including an
    * event type id the chunk metadata does not declare) is passed to {@link #onDecodeError}; unless
-   * that returns {@code true} the parse fails with the {@link EventDecodingException}. A failure to
-   * <em>generate</em> a deserializer is a parser bug, not bad data, and always fails the parse. (An
-   * {@link IOException} used to fall back to the delegate, which returned {@code false} with no
-   * delegate, and the chunk parser then skipped the rest of the chunk without an error.)
+   * that returns {@code true} the parse fails with the {@link EventDecodingException}, which names
+   * the type, chunk and position. A failure to <em>generate</em> a deserializer is a parser bug,
+   * not bad data: it fails the parse with {@link GeneratedDeserializationException} and is never
+   * skipped.
    */
   @Override
   public final boolean onEvent(
@@ -93,12 +101,11 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     Map<String, Object> value;
     try {
       if (eventClz == null) {
-        throw new IllegalStateException(
-            "Event type id " + typeId + " is not declared in the chunk metadata");
+        throw new IllegalStateException("No metadata for event type id " + typeId);
       }
-      UntypedEventDeserializer deserializer = deserializerFor(context, typeId, eventClz);
+      UntypedEventDeserializer deserializer = deserializerFor(context, eventClz);
       value = deserializer.deserialize(context.get(RecordingStream.class), context);
-    } catch (DeserializerGenerationException e) {
+    } catch (GeneratedDeserializationException e) {
       throw e;
     } catch (Exception e) {
       EventDecodingException failure =
@@ -125,57 +132,6 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
-  private static UntypedEventDeserializer deserializerFor(
-      ParserContext context, long typeId, MetadataClass eventClz) {
-    UntypedDeserializerCache cache = context.get(UntypedDeserializerCache.class);
-    if (cache == null) {
-      // Without the parse-wide cache no event could be decoded; fail rather than skip every chunk
-      // (Verification.md R3).
-      throw new IllegalStateException(
-          "EventStreamGenerated needs an untyped parser context (UntypedDeserializerCache"
-              + " missing); parse with ParsingContextImpl.untypedContextFactory(...)");
-    }
-    // Get strategy from context (defaults to SPARSE_ACCESS if not set)
-    UntypedStrategy strategy = context.get(UntypedStrategy.class);
-    final UntypedStrategy finalStrategy =
-        strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
-
-    // Type ids are chunk-scoped: resolve the id to a deserializer once per chunk, through the
-    // parse-wide cache keyed by the type's structure.
-    ChunkDeserializers chunkDeserializers = context.get(ChunkDeserializers.class);
-    UntypedEventDeserializer deserializer = chunkDeserializers.get(typeId);
-    if (deserializer == null) {
-      MutableMetadataLookup metadata = (MutableMetadataLookup) context.getMetadataLookup();
-      MetadataFingerprint key =
-          MetadataFingerprint.compute(
-              metadata,
-              MetadataFingerprint.computeReachableTypes(
-                  metadata, Collections.singleton(eventClz.getName())));
-      deserializer =
-          cache.computeIfAbsent(
-              key,
-              k -> {
-                try {
-                  return UntypedCodeGenerator.generate(eventClz, finalStrategy);
-                } catch (Exception e) {
-                  throw new DeserializerGenerationException(
-                      "Failed to generate deserializer for event type: " + eventClz.getName(), e);
-                }
-              });
-      chunkDeserializers.put(typeId, deserializer);
-    }
-    return deserializer;
-  }
-
-  /** A deserializer could not be generated: a parser bug, never skipped by onDecodeError. */
-  static final class DeserializerGenerationException extends RuntimeException {
-    private static final long serialVersionUID = 1L;
-
-    DeserializerGenerationException(String message, Throwable cause) {
-      super(message, cause);
-    }
-  }
-
   /**
    * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
    *
@@ -190,11 +146,119 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     return false;
   }
 
+  private static UntypedEventDeserializer deserializerFor(
+      ParserContext context, MetadataClass eventClz) {
+    // Within a chunk, the MetadataClass instance identifies the type: an identity lookup, with no
+    // boxing of the id ...
+    ChunkDeserializers local = context.get(ChunkDeserializers.class);
+    UntypedEventDeserializer deserializer = local.get(eventClz);
+    if (deserializer == null) {
+      UntypedStrategy strategy = context.get(UntypedStrategy.class);
+      UntypedStrategy effective = strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
+      // ... but not across chunks: other chunks may use this id for another type. The shared
+      // cache is keyed by structure.
+      deserializer =
+          shared(
+              context.get(UntypedDeserializerCache.class),
+              UntypedCodeGenerator.cacheKey(eventClz, effective),
+              () -> {
+                try {
+                  return UntypedCodeGenerator.generate(eventClz, effective);
+                } catch (RuntimeException e) {
+                  throw new GeneratedDeserializationException(
+                      "Failed to generate the untyped deserializer for event type "
+                          + eventClz.getName(),
+                      e);
+                }
+              });
+      local.put(eventClz, deserializer);
+    }
+    return deserializer;
+  }
+
   /**
-   * The deserializers resolved for the current chunk, by type id. A chunk is decoded by one thread.
+   * Returns the shared deserializer for {@code key}, generating it at most once.
+   *
+   * <p>Generation takes 0.3–0.8 ms per class, so it must not run inside {@code computeIfAbsent}:
+   * that holds the map's bin lock for the duration, blocking threads that need <em>other</em> keys
+   * in the same bin ("the computation should be short and simple", {@link
+   * java.util.concurrent.ConcurrentHashMap#computeIfAbsent}). Instead a {@link Generating}
+   * placeholder is installed in O(1) and generated outside the map lock; only threads that need the
+   * same key wait, on that placeholder. A hit is a lock-free {@code get} (on JDK 8, {@code
+   * computeIfAbsent} locks even on a hit).
    */
-  private static final class ChunkDeserializers extends HashMap<Long, UntypedEventDeserializer> {
+  static UntypedEventDeserializer shared(
+      UntypedDeserializerCache cache, String key, Supplier<UntypedEventDeserializer> generator) {
+    UntypedEventDeserializer d = cache.get(key);
+    if (d == null) {
+      d = cache.computeIfAbsent(key, k -> new Generating(generator));
+    }
+    if (d instanceof Generating) {
+      Generating g = (Generating) d;
+      try {
+        return g.resolve();
+      } catch (RuntimeException e) {
+        cache.remove(key, g); // let a later event retry, as when generation ran in the map
+        throw e;
+      }
+    }
+    return d;
+  }
+
+  /**
+   * Placeholder for a deserializer being generated. Resolves once; afterwards it only forwards, and
+   * the per-chunk map holds the resolved instance, so events never go through it.
+   */
+  private static final class Generating implements UntypedEventDeserializer {
+    // Captures the chunk's MetadataClass; cleared once generated, as the cache outlives the chunk.
+    private Supplier<UntypedEventDeserializer> generator;
+    private volatile UntypedEventDeserializer generated;
+
+    Generating(Supplier<UntypedEventDeserializer> generator) {
+      this.generator = generator;
+    }
+
+    UntypedEventDeserializer resolve() {
+      UntypedEventDeserializer d = generated;
+      if (d == null) {
+        synchronized (this) {
+          d = generated;
+          if (d == null) {
+            d = generator.get();
+            generator = null;
+            generated = d;
+          }
+        }
+      }
+      return d;
+    }
+
+    @Override
+    public Map<String, Object> deserialize(RecordingStream stream, ParserContext context) {
+      return resolve().deserialize(stream, context);
+    }
+  }
+
+  /**
+   * Per-chunk type → deserializer lookup. Keyed by identity: {@code MetadataClass.equals} is
+   * structural and its hash covers all fields. A chunk is parsed by a single thread.
+   */
+  private static final class ChunkDeserializers
+      extends IdentityHashMap<MetadataClass, UntypedEventDeserializer> {
     private static final long serialVersionUID = 1L;
+  }
+
+  /**
+   * Thrown when a deserializer cannot be generated: a parser bug, never skipped by {@link
+   * #onDecodeError}. The cause carries the reason. (A failure while <em>reading</em> an event is an
+   * {@link EventDecodingException}.)
+   */
+  public static final class GeneratedDeserializationException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    GeneratedDeserializationException(String message, Throwable cause) {
+      super(message, cause);
+    }
   }
 
   @Override
