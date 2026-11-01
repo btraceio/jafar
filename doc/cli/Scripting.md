@@ -81,6 +81,7 @@ Where the two shells differ:
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file>` | `script <path> [args]` at the prompt (or piped in). `jafar-shell script <file>` on the command line is handed to the JFR command line, so it is JFR-only |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
 | JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | not available at the `jafar-shell` prompt, so a script using them (`basic-analysis.jfrs` runs `metadata --summary`) reports that line as a query error and carries on |
+| A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
