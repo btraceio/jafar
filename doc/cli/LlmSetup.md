@@ -21,7 +21,8 @@ and why, and tells you what to do about the ones that are not ready.
 Both `jfr-shell` (JFR recordings) and the unified `jafar-shell` (recordings, heap dumps, pprof and
 OTLP profiles) have these commands. They use whichever query language the current session needs,
 so in `jafar-shell` it reaches HdumpPath and the samples grammar as well as JfrPath. `jafar-shell`
-has no `set` command yet, so configure it there with the `JAFAR_LLM_*` environment variables.
+takes the same `set llm.backend = ollama` as `jfr-shell`; the `JAFAR_LLM_*` environment variables are the
+fallback when a setting is not set.
 
 The feature is optional. Without a backend module on the classpath, or without a credential, every
 other shell command behaves exactly as before and the LLM commands print a clear message. Nothing
