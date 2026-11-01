@@ -89,11 +89,15 @@ public final class Shell implements AutoCloseable {
    * A shell for {@code jafar-shell script}: no terminal, no line reader and no history, so it runs
    * where there is no console and never touches the interactive history file. Results go to {@code
    * out}, errors to {@code err}, and the informational lines {@code open}/{@code close}/{@code use}
-   * print are left out, as jfr-shell's script mode leaves them out.
+   * print are left out, as jfr-shell's script mode leaves them out — unless {@code
+   * jfr.shell.verbose}/{@code JFR_SHELL_VERBOSE} asks for them, as it does there.
    */
   static Shell forScript(java.io.PrintStream out, java.io.PrintStream err) {
     return new Shell(
-        null, new java.io.PrintWriter(out, true), new java.io.PrintWriter(err, true), false);
+        null,
+        new java.io.PrintWriter(out, true),
+        new java.io.PrintWriter(err, true),
+        CommandDispatcher.isVerboseEnabled());
   }
 
   private Shell(
@@ -590,10 +594,10 @@ public final class Shell implements AutoCloseable {
 
   /**
    * jfr-shell's commands that are not queries — {@code metadata [--summary|--search ...]}, {@code
-   * chunks}, {@code chunk <n>}, {@code constants}/{@code cp} — run by jfr-shell's dispatcher when a
-   * recording is current, so a JFR script runs here as it does in jfr-shell. Their query forms
-   * ({@code metadata/jdk.X}, {@code chunks/...}) start with a different first word and stay
-   * queries.
+   * chunks}, {@code chunk <n>}, {@code constants}/{@code cp}, {@code backend} — run by jfr-shell's
+   * dispatcher when a recording is current, so a JFR script runs here as it does in jfr-shell. As
+   * in jfr-shell, the word alone or followed by arguments is the command; {@code metadata/jdk.X},
+   * {@code chunks[...]} (a different first word) and {@code chunks | count()} stay queries.
    */
   private boolean isJfrCommandForCurrentSession(String input) {
     // Runs for every line: the session test first, and the first word without a regex split
@@ -605,11 +609,18 @@ public final class Shell implements AutoCloseable {
     while (end < input.length() && !Character.isWhitespace(input.charAt(end))) {
       end++;
     }
-    return JFR_DISPATCHER_COMMANDS.contains(input.substring(0, end));
+    if (!JFR_DISPATCHER_COMMANDS.contains(input.substring(0, end))) {
+      return false;
+    }
+    int rest = end;
+    while (rest < input.length() && Character.isWhitespace(input.charAt(rest))) {
+      rest++;
+    }
+    return rest == input.length() || input.charAt(rest) != '|';
   }
 
   private static final java.util.Set<String> JFR_DISPATCHER_COMMANDS =
-      java.util.Set.of("metadata", "chunks", "chunk", "constants", "cp");
+      java.util.Set.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
 
   private boolean isQueryForCurrentSession(String input) {
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
@@ -796,7 +807,12 @@ public final class Shell implements AutoCloseable {
     if (ref.isEmpty() || !sessions.close(idOrAlias)) {
       return false;
     }
-    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, ref.get().id);
+    int id = ref.get().id;
+    // Copies of a variable can sit in any store; each surviving one may hold its rows
+    io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(globalStore, id);
+    for (SessionManager.SessionRef<Session> other : sessions.list()) {
+      io.jafar.shell.core.scripting.EvaluatorLazyValue.forgetSession(other.variables, id);
+    }
     return true;
   }
 
@@ -867,8 +883,10 @@ public final class Shell implements AutoCloseable {
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
         Object rows = lazy.get();
-        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(whole.group(2));
-        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(whole.group(2));
+        // The flags may use variables too ('--limit ${n}'); the row variable itself is not text
+        String flags = variables.substitute(whole.group(2));
+        java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(flags);
+        java.util.regex.Matcher lim = LIMIT_FLAG.matcher(flags);
         if (lim.find() && rows instanceof List<?> list) {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
@@ -1240,6 +1258,8 @@ public final class Shell implements AutoCloseable {
     out.println();
     out.println("Query:");
     out.println("  show <query>       Execute a query on current session");
+    out.println("  metadata | chunks | constants (cp) | backend");
+    out.println("                     jfr-shell's commands, on a recording");
     out.println();
     out.println("Ask (LLM, optional):");
     out.println("  ask <question>     Several queries, read each, conclude ('?' for short)");

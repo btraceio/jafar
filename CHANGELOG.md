@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers these commands and their arguments in every session type. A query variable whose session
   has been closed reports that when read instead of returning stale rows, and closing a session
   drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
-  ends inside an `if` block has the blocks it left open closed. The parsing, scoping and
+  ends inside an `if` block has the blocks it left open closed. A script line that reports an
+  error stops the script (as the default stop-on-error mode always promised), instead of being
+  counted as a success. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
@@ -28,18 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heap dump as a recording and answered `Invalid query: Unknown root: objects`. It now runs the
   script through the same shell as the prompt, without a terminal: results on stdout, errors on
   stderr, no banner or `Session 1 opened` lines, the interactive history untouched, exit status 1
-  if a line failed, and `--continue-on-error` as in `jfr-shell script`. `script --backend <id> ...`
-  still goes to jfr-shell, whose script command is the only one with a backend. Shebang scripts
+  if a line failed, and `--continue-on-error` and `-b/--backend` as in `jfr-shell script`. Shebang
+  scripts
   written for `jbang jfr-shell@btraceio script -` are unaffected: that alias launches
   `io.jafar.shell.Main` directly. A JFR-only script now gets the unified shell's semantics: the
   same data, but other table layout, string values printed as `{name=G1New}`, and `vars --info`
   describing a `toMap()` variable as a lazy query — see
-  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `--backend` keeps the old route
+  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `jfr-shell script` keeps
+  jfr-shell's
 - **jfr-shell's non-query commands in `jafar-shell`.** With a recording current, `metadata` (and
-  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>` and `constants`/`cp` run as they do
-  in jfr-shell, instead of failing as queries; the shipped `basic-analysis.jfrs` runs end to end.
-  Bare `metadata` therefore prints jfr-shell's type listing rather than JfrPath's `metadata` rows;
-  `show metadata` and `metadata/<type>` are queries as before
+  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>`, `constants`/`cp` and `backend` run
+  as they do in jfr-shell, using jfr-shell's implementations, instead of failing as queries; the
+  shipped `basic-analysis.jfrs` runs end to end. Bare `metadata` therefore prints jfr-shell's type
+  listing rather than JfrPath's `metadata` rows; `show metadata`, `metadata/<type>` and
+  `chunks | ...` are queries as before
+- **`JFR_SHELL_VERBOSE` / `-Djfr.shell.verbose=true` applies to `jafar-shell script`** as it does
+  to `jfr-shell script`: the open/close lines and `Set x = ...` confirmations script mode leaves
+  out are printed. The switch is jfr-shell's own (`CommandDispatcher.isVerboseEnabled`), read by
+  both
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
@@ -64,17 +72,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session, no query in the reply, a query that failed, nothing to explain) now go through a new
   `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
   `--continue-on-error` (command line) now
+- **`jafar-shell -f script` opens a file named `script`.** The value of `-f`/`--file` (and of a
+  cluster such as `-qf`, and of `--backend`/`--plugin-dir`/`--install-plugin`) was taken for the
+  first word of the command line, so it ran the script command, or jfr-shell's command line for
+  `-f show`. The command is now the first word that is not an option or an option's value
 - **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
   never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
   stdin (the terminal, or nothing) and `$1` was the script's own path — piped in, `open $1` opened
   the script as a recording. When the path is `-` and the first argument is a file starting with
   `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
   arguments as `$1`, `$2`, ...
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way. Both are now thread-safe
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
-  one field. Shells dispatch commands on one thread, so this needed concurrent access to a
-  variable to show
+  one field, and an `invalidate()` or `release()` made while an evaluation is running is no longer
+  undone when that evaluation finishes (it publishes only if nothing replaced the slot it started
+  from). Shells dispatch commands on one thread, so this needed concurrent access to a variable to
+  show
 - **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
   taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
   expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation

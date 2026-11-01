@@ -67,6 +67,9 @@ class EvaluatorLazyValueTest {
     volatile int evaluations;
     volatile long delayMillis;
     volatile boolean returnNull;
+    // When set, an evaluation signals 'entered' and waits for 'proceed' before returning
+    volatile java.util.concurrent.CountDownLatch entered;
+    volatile java.util.concurrent.CountDownLatch proceed;
     List<Map<String, Object>> rows = List.of(row("a", 3), row("b", 1));
 
     // Ordered: ${var} with no field is the first field of the first row
@@ -89,6 +92,10 @@ class EvaluatorLazyValueTest {
     @Override
     public synchronized Object evaluate(Session session, Object query) throws InterruptedException {
       evaluations++;
+      if (entered != null) {
+        entered.countDown();
+        proceed.await();
+      }
       if (delayMillis > 0) {
         Thread.sleep(delayMillis); // widen the window in which a second evaluation could start
       }
@@ -206,6 +213,34 @@ class EvaluatorLazyValueTest {
       pool.shutdownNow();
     }
     assertEquals(1, evaluator.evaluations);
+  }
+
+  /** Runs v.get() on another thread, holds it inside the evaluator, runs action, lets it finish. */
+  private Object duringEvaluation(EvaluatorLazyValue v, Runnable action) throws Exception {
+    evaluator.entered = new java.util.concurrent.CountDownLatch(1);
+    evaluator.proceed = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.FutureTask<Object> read = new java.util.concurrent.FutureTask<>(v::get);
+    new Thread(read).start();
+    assertTrue(evaluator.entered.await(10, java.util.concurrent.TimeUnit.SECONDS));
+    action.run(); // must not wait for the evaluation
+    evaluator.proceed.countDown();
+    return read.get(10, java.util.concurrent.TimeUnit.SECONDS);
+  }
+
+  @Test
+  void invalidateDuringEvaluationIsNotLost() throws Exception {
+    EvaluatorLazyValue v = lazy(null);
+    Object rows = duringEvaluation(v, v::invalidate);
+    assertSame(evaluator.rows, rows, "the reader still gets the rows it asked for");
+    assertFalse(v.isCached(), "rows computed before the invalidate must not be cached after it");
+  }
+
+  @Test
+  void releaseDuringEvaluationIsNotUndone() throws Exception {
+    EvaluatorLazyValue v = lazy(null);
+    duringEvaluation(v, v::release);
+    assertFalse(v.isCached(), "a released value must not get its rows back");
+    assertEquals("lazy[things] (session gone)", v.describe());
   }
 
   @Test

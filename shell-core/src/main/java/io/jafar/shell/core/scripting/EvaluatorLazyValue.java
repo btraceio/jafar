@@ -9,6 +9,7 @@ import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 /**
  * A query-valued variable: {@code set big = objects[shallow > 1000]}, evaluated on first use by the
@@ -29,15 +30,22 @@ import java.util.Objects;
  * <p>Thread-safe. The cache is one volatile slot, so a reader never sees a half-written state (a
  * "cached" flag from one evaluation and the rows of another); a cached read, {@link #describe} and
  * {@link #isCached} take no lock. Evaluation is serialized, so concurrent first reads run the query
- * once.
+ * once. Every {@link #invalidate}, {@link #release} and closed-session read installs a fresh "not
+ * evaluated" token, and an evaluation publishes only by compare-and-set against the token it
+ * started from, so one still running cannot put rows back afterwards. None of those waits for an
+ * evaluation: {@code release()} runs inside {@code SessionManager}'s monitor when a session closes,
+ * and an evaluation's resolver may need that monitor.
  *
  * <p>A query whose result is one map ({@link QueryEvaluator#producesMap}, i.e. JfrPath's {@code
  * toMap()}) stays lazy but is read as that map by {@link #asMap()}, so {@code ${v.size}} and {@code
  * ${v.key}} give what jfr-shell gives for the map it stores.
  */
 public final class EvaluatorLazyValue implements VariableStore.LazyValue {
-  /** The cache slot before evaluation, and after invalidation or release. */
-  private static final Object NOT_EVALUATED = new Object();
+  /** "Not evaluated"; a new one per invalidation, so an evaluation can tell it was superseded. */
+  private static final class Unevaluated {}
+
+  private static final AtomicReferenceFieldUpdater<EvaluatorLazyValue, Object> CACHE =
+      AtomicReferenceFieldUpdater.newUpdater(EvaluatorLazyValue.class, Object.class, "cache");
 
   /** Stands for an evaluator that returned {@code null}, so null still counts as evaluated. */
   private static final Object NULL_RESULT = new Object();
@@ -50,7 +58,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private final boolean mapQuery;
   private final WeakReference<SessionRef<? extends Session>> sessionRef;
   private final Object evaluationLock = new Object();
-  private volatile Object cache = NOT_EVALUATED;
+  private volatile Object cache;
 
   /**
    * @param evaluator the evaluator of the session's module
@@ -65,7 +73,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
       String queryString,
       SessionRef<? extends Session> session,
       SessionResolver resolver) {
-    this(evaluator, query, queryString, session, resolver, NOT_EVALUATED);
+    this(evaluator, query, queryString, session, resolver, new Unevaluated());
   }
 
   private EvaluatorLazyValue(
@@ -92,24 +100,33 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
    */
   public EvaluatorLazyValue copy() {
     SessionRef<? extends Session> ref = liveSession();
-    return new EvaluatorLazyValue(evaluator, query, queryString, ref, resolver, cache);
+    Object c = cache;
+    return new EvaluatorLazyValue(
+        evaluator,
+        query,
+        queryString,
+        ref,
+        resolver,
+        c instanceof Unevaluated ? new Unevaluated() : c);
   }
 
   @Override
   public Object get() throws Exception {
     liveSession();
     Object c = cache;
-    if (c == NOT_EVALUATED) {
+    if (c instanceof Unevaluated) {
       synchronized (evaluationLock) {
         c = cache;
-        if (c == NOT_EVALUATED) {
+        if (c instanceof Unevaluated) {
           SessionRef<? extends Session> ref = liveSession();
           Object result =
               resolver == null
                   ? evaluator.evaluate(ref.session, query)
                   : evaluator.evaluate(ref.session, query, resolver);
-          c = result == null ? NULL_RESULT : result;
-          cache = c;
+          // Published only if nothing invalidated or released this value meanwhile; the caller
+          // gets the rows it asked for either way.
+          CACHE.compareAndSet(this, c, result == null ? NULL_RESULT : result);
+          return result;
         }
       }
     }
@@ -120,11 +137,11 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private SessionRef<? extends Session> liveSession() {
     SessionRef<? extends Session> ref = sessionRef.get();
     if (ref == null) {
-      cache = NOT_EVALUATED;
+      cache = new Unevaluated();
       throw new IllegalStateException("Session #" + sessionId + " no longer available");
     }
     if (ref.session.isClosed()) {
-      cache = NOT_EVALUATED;
+      cache = new Unevaluated();
       throw new IllegalStateException("Session #" + sessionId + " has been closed");
     }
     return ref;
@@ -151,12 +168,12 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
 
   @Override
   public void invalidate() {
-    cache = NOT_EVALUATED;
+    cache = new Unevaluated();
   }
 
   @Override
   public boolean isCached() {
-    return cache != NOT_EVALUATED;
+    return !(cache instanceof Unevaluated);
   }
 
   @Override
@@ -192,7 +209,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
 
   @Override
   public void release() {
-    cache = NOT_EVALUATED;
+    cache = new Unevaluated();
     sessionRef.clear();
   }
 
@@ -205,7 +222,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
       status = " (session gone)";
     } else if (ref.session.isClosed()) {
       status = " (closed)";
-    } else if (c != NOT_EVALUATED) {
+    } else if (!(c instanceof Unevaluated)) {
       int size = c instanceof List<?> list ? list.size() : 1;
       status = " (cached: " + size + " rows)";
     } else {

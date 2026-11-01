@@ -139,8 +139,12 @@ public class CommandDispatcher {
   /**
    * Check if verbose mode is enabled via system property or environment variable. This allows
    * runtime control of verbosity for debugging.
+   *
+   * <p>{@code -Djfr.shell.verbose=true} (or {@code 1}, {@code on}), else {@code JFR_SHELL_VERBOSE}.
+   * Read by both shells' script modes, so the switch means the same thing in {@code jfr-shell
+   * script} and {@code jafar-shell script}.
    */
-  private static boolean isVerboseEnabled() {
+  public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
       String v = prop.trim().toLowerCase();
@@ -964,7 +968,7 @@ public class CommandDispatcher {
         return;
       }
       sessions.close(String.valueOf(cur.get().id));
-      EvaluatorLazyValue.forgetSession(globalStore, cur.get().id);
+      forgetSession(cur.get().id);
       if (verbose) {
         io.println("Closed session #" + cur.get().id);
       }
@@ -972,7 +976,7 @@ public class CommandDispatcher {
       List<Integer> ids = new ArrayList<>();
       sessions.list().forEach(r -> ids.add(r.id));
       sessions.closeAll();
-      ids.forEach(id -> EvaluatorLazyValue.forgetSession(globalStore, id));
+      ids.forEach(this::forgetSession);
       if (verbose) {
         io.println("Closed all sessions");
       }
@@ -981,12 +985,20 @@ public class CommandDispatcher {
       var target = sessions.get(key);
       boolean ok = sessions.close(key);
       if (ok) {
-        EvaluatorLazyValue.forgetSession(globalStore, target.get().id);
+        forgetSession(target.get().id);
       }
       if (!ok) io.error("No such session: " + key);
       else if (verbose) io.println("Closed session " + key);
     }
     sessions.current().ifPresent(listener::onCurrentSessionChanged);
+  }
+
+  /** Drops cached rows bound to a closed session from every surviving store, copies included. */
+  private void forgetSession(int id) {
+    EvaluatorLazyValue.forgetSession(globalStore, id);
+    for (var ref : sessions.list()) {
+      EvaluatorLazyValue.forgetSession(ref.variables, id);
+    }
   }
 
   private void cmdInfo(List<String> args) {
