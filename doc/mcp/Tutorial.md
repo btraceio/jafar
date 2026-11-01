@@ -154,7 +154,8 @@ Opens a JFR recording file for analysis.
   "path": "/path/to/recording.jfr",
   "openedAt": "2026-02-10T17:13:48.249772Z",
   "availableTypes": 224,
-  "totalEvents": 0,
+  "totalEvents": null,
+  "totalEventsNote": "Not counted at open. jfr_summary reports the count.",
   "chunkCount": 2,
   "message": "Recording opened successfully"
 }
