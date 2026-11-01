@@ -12,6 +12,7 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Abstract base class for event stream processing in JFR recordings.
@@ -24,7 +25,14 @@ public abstract class EventStream implements ChunkParserListener {
   /** The delegate chunk parser listener. */
   private final ChunkParserListener delegate;
 
-  private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+  /**
+   * Abort state shared by every chunk of one parse. Chunks are parsed on parallel threads, so a
+   * per-thread flag would stop only the chunk whose handler called {@link Control#abort()}.
+   */
+  private final AtomicBoolean aborted = new AtomicBoolean();
+
+  private final ThreadLocal<Control> control =
+      ThreadLocal.withInitial(() -> new ControlImpl(aborted));
 
   /**
    * Constructs a new EventStream with the specified delegate.
@@ -55,7 +63,9 @@ public abstract class EventStream implements ChunkParserListener {
     // We do this in the untyped parser -> we need 'all accepting' type filter
     context.put(TypeFilter.class, t -> true);
 
-    return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    boolean proceed = delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    // A chunk that starts after an abort is skipped; onChunkEnd still runs, with skipped=true.
+    return proceed && !aborted.get();
   }
 
   @Override
@@ -71,12 +81,16 @@ public abstract class EventStream implements ChunkParserListener {
   public final boolean onEvent(
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     ControlImpl ctl = (ControlImpl) control.get();
+    if (ctl.isAborted()) {
+      // aborted by a handler in this or another chunk: deliver nothing more, skip the chunk rest
+      return false;
+    }
     try {
       GenericValueReader r = context.get(GenericValueReader.class);
       MapValueBuilder builder = r != null ? r.getProcessor() : null;
 
       if (builder == null) {
-        return !ctl.abortFlag
+        return !ctl.isAborted()
             && delegate != null
             && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
       }
@@ -94,17 +108,19 @@ public abstract class EventStream implements ChunkParserListener {
         onEventValue(eventClz, value, ctl);
       }
     } catch (IOException e) {
-      return !ctl.abortFlag
+      return !ctl.isAborted()
           && delegate != null
           && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
-    return !ctl.abortFlag
+    return !ctl.isAborted()
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
   @Override
   public final void onRecordingStart(ParserContext context) {
+    // A listener instance may be handed to more than one parse; each starts un-aborted.
+    aborted.set(false);
     if (delegate != null) {
       delegate.onRecordingStart(context);
     } else {

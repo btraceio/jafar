@@ -402,6 +402,34 @@ func TestErrStopEndsParsing(t *testing.T) {
 	}
 }
 
+// ErrStop ends the whole recording, not only the chunk it was returned in -
+// the same scope as Control.abort() in the Java parser.
+func TestErrStopEndsParsingAcrossChunks(t *testing.T) {
+	one := testRecording()
+	data := append(append(append([]byte{}, one...), one...), one...)
+	var chunks []int
+	n := 0
+	err := NewParser(data).ParseWith(Options{
+		OnChunkStart: func(ci *ChunkInfo, _ *Metadata) error {
+			chunks = append(chunks, ci.ID())
+			return nil
+		},
+		OnError: FailOnError,
+	}, func(*Event) error {
+		n++
+		return ErrStop
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("handler called %d times, want 1", n)
+	}
+	if !reflect.DeepEqual(chunks, []int{1}) {
+		t.Errorf("chunks started = %v, want [1]", chunks)
+	}
+}
+
 func TestHandlerErrorAborts(t *testing.T) {
 	boom := errString("boom")
 	err := NewParser(testRecording()).Parse(func(*Event) error { return boom })

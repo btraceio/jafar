@@ -62,7 +62,8 @@ opts := jfr.Options{
 err = parser.ParseWith(opts, handler)
 ```
 
-Returning `jfr.ErrStop` from the handler ends parsing successfully; any other
+Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
+recording, not only the current chunk; no event is delivered after it. Any other
 error aborts it and is returned from `Parse` unchanged.
 
 ## Value model
@@ -207,6 +208,9 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and
   calls the handler on the calling goroutine, so events arrive in file order.
+  It also makes stopping exact: `ErrStop` and Java's `Control.abort()` both end
+  the whole recording, but in Java another chunk's thread may still deliver the
+  one event it was already dispatching, while here nothing follows `ErrStop`.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
 * **Framing is enforced.** Constant pool entries have to lie within their

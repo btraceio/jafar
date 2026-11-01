@@ -153,7 +153,9 @@ Untyped Path (maps with lazy constant-pool refs)
 - `CheckpointEvent` populates `MutableConstantPools` with offsets; values materialize lazily on
   access via `MutableConstantPool.get(...)` or `ConstantPoolAccessor` in untyped maps.
 - Typed mode: events are deserialized to generated POJOs and dispatched to user `JFRHandler`s
-  synchronously; handlers can request abort via `Control`.
+  synchronously; handlers can request abort via `Control`. The abort flag is shared by every chunk
+  of one `run()` (chunks run on parallel threads; `ControlImpl` is per thread only for the stream
+  position), checked before each event is decoded and at chunk start.
 - Untyped mode: events are `Map<String,Object>`; arrays and complex values are represented with
   `ArrayHolder`/nested maps, constant pool refs remain lazy until accessed.
 

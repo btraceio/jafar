@@ -14,6 +14,7 @@ import io.jafar.parser.internal_api.UntypedEventDeserializer;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Event stream with Tier 3 bytecode generation optimization for untyped parsing.
@@ -34,7 +35,15 @@ import java.util.Map;
 @SuppressWarnings("unchecked")
 public abstract class EventStreamGenerated implements ChunkParserListener {
   private final ChunkParserListener delegate;
-  private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+
+  /**
+   * Abort state shared by every chunk of one parse. Chunks are parsed on parallel threads, so a
+   * per-thread flag would stop only the chunk whose handler called {@link Control#abort()}.
+   */
+  private final AtomicBoolean aborted = new AtomicBoolean();
+
+  private final ThreadLocal<Control> control =
+      ThreadLocal.withInitial(() -> new ControlImpl(aborted));
 
   /**
    * Constructs a new EventStreamGenerated with the specified delegate.
@@ -58,7 +67,9 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     // Set type filter to accept all events (untyped parser behavior)
     context.put(TypeFilter.class, t -> true);
 
-    return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    boolean proceed = delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    // A chunk that starts after an abort is skipped; onChunkEnd still runs, with skipped=true.
+    return proceed && !aborted.get();
   }
 
   @Override
@@ -72,6 +83,10 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
   public final boolean onEvent(
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     ControlImpl ctl = (ControlImpl) control.get();
+    if (ctl.isAborted()) {
+      // aborted by a handler in this or another chunk: deliver nothing more, skip the chunk rest
+      return false;
+    }
     try {
       MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
       RecordingStream stream = context.get(RecordingStream.class);
@@ -80,7 +95,7 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
       UntypedDeserializerCache cache = context.get(UntypedDeserializerCache.class);
       if (cache == null) {
         // Fallback if cache not available (shouldn't happen in normal usage)
-        return !ctl.abortFlag
+        return !ctl.isAborted()
             && delegate != null
             && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
       }
@@ -112,17 +127,19 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
 
     } catch (Exception e) {
       // Handle any errors during generation or deserialization
-      return !ctl.abortFlag
+      return !ctl.isAborted()
           && delegate != null
           && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
-    return !ctl.abortFlag
+    return !ctl.isAborted()
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
   @Override
   public final void onRecordingStart(ParserContext context) {
+    // A listener instance may be handed to more than one parse; each starts un-aborted.
+    aborted.set(false);
     if (delegate != null) {
       delegate.onRecordingStart(context);
     } else {

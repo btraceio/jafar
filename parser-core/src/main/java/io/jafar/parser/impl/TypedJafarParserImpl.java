@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Implementation of TypedJafarParser that provides type-safe JFR event parsing.
@@ -192,7 +193,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     parser.parse(
         recording,
         new ChunkParserListener() {
-          private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+          // One abort state for the whole parse, shared by every chunk thread; see
+          // Control#abort(). ControlImpl itself stays per thread for the stream position.
+          private final AtomicBoolean aborted = new AtomicBoolean();
+          private final ThreadLocal<Control> control =
+              ThreadLocal.withInitial(() -> new ControlImpl(aborted));
           private Set<String> referencedTypes = null;
 
           @Override
@@ -213,8 +218,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               }
               context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
               ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
-              return parserListener == null
-                  || parserListener.onChunkStart(context, chunkIndex, header);
+              boolean proceed =
+                  parserListener == null
+                      || parserListener.onChunkStart(context, chunkIndex, header);
+              // A chunk that starts after an abort is skipped; onChunkEnd still runs.
+              return proceed && !aborted.get();
             }
             return parserListener != null
                 && parserListener.onChunkStart(context, chunkIndex, header);
@@ -295,6 +303,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             if (!(context instanceof TypedParserContext)) {
               throw new RuntimeException("Invalid context");
             }
+            if (aborted.get()) {
+              // aborted by a handler in this or another chunk: skip the rest of this chunk
+              return false;
+            }
             TypedParserContext typedContext = (TypedParserContext) context;
             LongObjectHashMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
             Class<?> typeClz = typeClassMap.get(typeId);
@@ -309,7 +321,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 ControlImpl ctrl = (ControlImpl) control.get();
                 for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
                   handler.handle(deserialized, ctrl);
-                  if (ctrl.abortFlag) {
+                  if (ctrl.isAborted()) {
                     return false;
                   }
                 }

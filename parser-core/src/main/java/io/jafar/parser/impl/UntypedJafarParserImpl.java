@@ -117,7 +117,13 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
             @Override
             protected void onEventValue(
                 MetadataClass type, Map<String, Object> value, Control ctl) {
-              handlers.forEach(h -> h.handle(type, value, ctl));
+              for (EventHandler h : handlers) {
+                h.handle(type, value, ctl);
+                if (((ControlImpl) ctl).isAborted()) {
+                  // same as the typed parser: no further handler sees this event after abort()
+                  break;
+                }
+              }
             }
           };
       parser.parse(path, listener);

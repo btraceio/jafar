@@ -40,7 +40,10 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
 Notes:
 - Handlers run synchronously on the parser thread. Keep work small or offload.
 - Exceptions thrown from a handler stop parsing and propagate from `run()`.
-- Call `ctl.abort()` inside a handler to stop parsing early without an exception.
+- Call `ctl.abort()` inside a handler to stop parsing early without an exception. It stops the
+  whole recording, not only the current chunk; because chunks are parsed in parallel, handlers may
+  still be called once more per other parsing thread (the event that thread was already
+  dispatching), so keep your own count if you need an exact one.
 
 ## Untyped API
 Receive events as `Map<String, Object>` with nested maps/arrays when applicable.
@@ -292,7 +295,9 @@ For the architecture of the `parser` module, see the [Parser Architecture](parse
   - `uptime()`: cumulative processing time across sessions using the context.
 - `Control`
   - `stream().position()`: current byte position while a handler executes.
-  - `abort()`: stop parsing immediately (no exception thrown).
+  - `abort()`: stop the whole parse (all chunks, no exception thrown). The calling thread gets no
+    further event; each other chunk thread finishes at most the one event it is dispatching. A later
+    `run()` starts afresh. Full contract in the `Control.abort()` Javadoc.
   - `chunkInfo()`: chunk metadata with `startTime()`, `duration()`, `size()`, and `convertTicks(long, TimeUnit)`.
     - Why `convertTicks(...)`? JFR records many time values in chunk-relative ticks. Converting on demand avoids creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. Convert only when needed and to the unit you need.
 
