@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`jafar-shell` prints JFR constant-pool strings as strings.** Result values that the parser
+  hands over as single-entry constants printed as their wrapper — `{name=G1New}`,
+  `{cause=G1 Evacuation Pause}`, `{string=java/lang/Object}` — in every output format, so
+  `gc-analysis.jfrs` and `thread-profiling.jfrs` grouped and listed by `{name=G1New}` where
+  jfr-shell shows `G1New`. The unified shell now unwraps those cells the way jfr-shell's table
+  renderer does (`TuiTableRenderer.unwrap`), in tables, `--format csv` and `--format json`, for
+  rows from a JFR session only; heap dump, pprof and OTLP output is unchanged. Rows passed to
+  `explain`/`ask` are not affected
 - **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
   always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
   was reachable only from tests and benchmarks. It is now selected through an
@@ -114,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
   stderr and exit status 1 on failure. It needs no terminal and leaves the interactive history
   untouched. Tables use jafar-shell's layout; a JFR-only script gets the unified shell's semantics
-  (the same data, but string values printed as `{name=G1New}`; see
+  (the same data in another table layout; see
   [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)),
   and `jfr-shell script` keeps jfr-shell's. The `jfr-shell` jbang alias launches jfr-shell directly
   and is unaffected

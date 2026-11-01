@@ -49,8 +49,17 @@ The untyped parser delivers a string constant as a single-entry map, `{string=[B
   looked like it was working. Fixed by unwrapping before the decision, so the decision is taken on
   the outer field's real name.
 
+- **The unified shell printed the wrapper.** `jafar-shell`'s `printResult` handed JFR rows
+  straight to `TableFormatter` and its CSV/JSON writers, so `gc-analysis.jfrs` grouped by
+  `{name=G1New}` and `thread-profiling.jfrs` by `{string=java/lang/Object}`. jfr-shell never showed
+  it because its `TableRenderer.toCell` collapses a single-entry map — a rule that lived in a
+  renderer, so a second shell with its own renderer did not inherit it. `Shell.forDisplay` now
+  applies `TuiTableRenderer.unwrap` to the cells of JFR rows only. jfr-shell's own `--format
+  csv|json` still print the wrapper: the rule was never in its CSV and JSON writers either.
+
 `JfrAnalyses.unwrapValue` handles the `ArrayType`/`ComplexType` case; `Redactor` handles the
-single-entry-map case. If you are reading event values anywhere else, one of those two applies.
+single-entry-map case; `TuiTableRenderer.unwrap` handles both for display. If you are reading event
+values anywhere else, one of those applies.
 
 ### A display list is not a data list
 

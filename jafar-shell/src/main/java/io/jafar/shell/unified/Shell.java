@@ -2,6 +2,7 @@ package io.jafar.shell.unified;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
@@ -14,6 +15,7 @@ import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
+import io.jafar.shell.core.scripting.EvaluatorLazyValue;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -1107,7 +1109,12 @@ public final class Shell implements AutoCloseable {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
         rememberResult(lazy.getQueryString(), rows);
-        printResult(rows, fmt.find() ? fmt.group(1) : ref.outputFormat);
+        // The variable runs in the session it was set in, which need not be the current one
+        String type =
+            lazy instanceof EvaluatorLazyValue bound && bound.sessionType() != null
+                ? bound.sessionType()
+                : ref.session.getType();
+        printResult(rows, fmt.find() ? fmt.group(1) : ref.outputFormat, type);
       } catch (Exception e) {
         printError(e.getMessage());
       }
@@ -1147,7 +1154,7 @@ public final class Shell implements AutoCloseable {
         result = list.subList(0, Math.min(limit, list.size()));
       }
       rememberResult(cleanQuery, result);
-      printResult(result, format);
+      printResult(result, format, ref.session.getType());
     } catch (Exception e) {
       error("Query error: " + e.getMessage());
       printStackTraceIfInteractive(e);
@@ -1332,11 +1339,20 @@ public final class Shell implements AutoCloseable {
     };
   }
 
+  /** Prints rows from the current session as a table. */
   private void printResult(Object result) {
-    printResult(result, "table");
+    printResult(
+        result, "table", sessions.getCurrent().map(ref -> ref.session.getType()).orElse(null));
   }
 
-  private void printResult(Object result, String format) {
+  /**
+   * Prints a query result.
+   *
+   * @param sessionType the type of the session that produced {@code result}; JFR rows are shaped
+   *     for display first, see {@link #forDisplay}
+   */
+  private void printResult(Object result, String format, String sessionType) {
+    result = forDisplay(result, sessionType);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
         out.println(toJson(result, 0));
@@ -1368,6 +1384,43 @@ public final class Shell implements AutoCloseable {
       out.println("Result: " + result);
     }
     flush();
+  }
+
+  /**
+   * Unwraps JFR constant-pool wrappers in the cells of JFR result rows, so a value prints as {@code
+   * G1New} rather than {@code {name=G1New}}.
+   *
+   * <p>The untyped parser hands a constant such as a {@code jdk.types.GCName}, a {@code
+   * jdk.types.Symbol} or a {@code jdk.types.GCCause} over as a single-entry map ({@code
+   * {name=G1New}}, {@code {string=java/lang/Object}}, {@code {cause=G1 Evacuation Pause}}), or as a
+   * {@code ComplexType} that resolves to one. jfr-shell's table renderer collapses a single-entry
+   * cell to its value; this applies the same rule, through the same {@link
+   * TuiTableRenderer#unwrap}, to every output format of this shell. Only the cells of a row are
+   * touched — a row that is itself a single-entry map, such as {@code {count=5}}, keeps its column
+   * — and multi-entry values such as a thread are left as they are.
+   *
+   * <p>Heap dump, pprof and OTLP rows are returned unchanged: their values are not parser wrappers,
+   * and a single-entry map there is data.
+   *
+   * <p>See {@code doc/agents/DataShapes.md}, "A string constant is not a string".
+   */
+  static Object forDisplay(Object result, String sessionType) {
+    if (!"jfr".equals(sessionType) || !(result instanceof List<?> list)) {
+      return result;
+    }
+    List<Object> shaped = new ArrayList<>(list.size());
+    for (Object row : list) {
+      if (row instanceof Map<?, ?> cells) {
+        Map<Object, Object> copy = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> cell : cells.entrySet()) {
+          copy.put(cell.getKey(), TuiTableRenderer.unwrap(cell.getValue()));
+        }
+        shaped.add(copy);
+      } else {
+        shaped.add(row);
+      }
+    }
+    return shaped;
   }
 
   @SuppressWarnings("unchecked")

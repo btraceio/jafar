@@ -2,6 +2,7 @@ package io.jafar.shell.unified;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.management.HotSpotDiagnosticMXBean;
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -521,6 +523,66 @@ class ShellArtifactTest {
     String output = runJar(dir, "", "chunks", recording.toString(), "--summary");
 
     assertTrue(output.toLowerCase().contains("chunks"), output);
+  }
+
+  /**
+   * JfrPath values that are constant-pool wrappers ({@code {name=G1New}}, {@code {cause=...}},
+   * {@code {string=java/lang/Object}}) print as their plain value, as jfr-shell prints them, in
+   * every output format. See {@code doc/agents/DataShapes.md}.
+   */
+  @Test
+  void printsJfrConstantsAsPlainValues(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.enable("jdk.JavaMonitorWait").withThreshold(java.time.Duration.ZERO);
+      r.start();
+      System.gc();
+      Object lock = new Object();
+      synchronized (lock) {
+        lock.wait(20);
+      }
+      r.stop();
+      r.dump(recording);
+    }
+    Path script = dir.resolve("constants.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open " + recording,
+            "echo TABLE",
+            "events/jdk.GarbageCollection | groupBy(cause)",
+            "events/jdk.JavaMonitorWait | groupBy(monitorClass/name)",
+            "echo CSV",
+            "show events/jdk.GarbageCollection --limit 1 --format csv",
+            "echo JSON",
+            "show events/jdk.GarbageCollection --limit 1 --format json",
+            ""));
+
+    String output = runJar(dir, "", "script", script.toString());
+
+    assertFalse(output.contains("{cause="), output);
+    assertFalse(output.contains("{name="), output);
+    assertFalse(output.contains("{string="), output);
+    assertFalse(output.contains("\"cause\": {"), output);
+    String table = output.substring(output.indexOf("TABLE"), output.indexOf("CSV"));
+    assertTrue(table.contains("| System.gc()"), output);
+    assertTrue(table.contains("| java/lang/Object"), output);
+    String csv = output.substring(output.indexOf("CSV"), output.indexOf("JSON"));
+    assertTrue(csv.contains(",System.gc(),"), output);
+    assertTrue(
+        output.substring(output.indexOf("JSON")).contains("\"cause\": \"System.gc()\""), output);
+  }
+
+  @Test
+  void leavesNonJfrRowsAsTheyAre() {
+    List<Map<String, Object>> rows = List.of(Map.of("value", Map.of("name", "kept")));
+
+    assertSame(rows, Shell.forDisplay(rows, "hdump"));
+    assertSame(rows, Shell.forDisplay(rows, "pprof"));
+    assertSame(rows, Shell.forDisplay(rows, "otlp"));
+    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr"));
   }
 
   @Test
