@@ -1,7 +1,9 @@
 package io.jafar.shell.unified;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.management.HotSpotDiagnosticMXBean;
@@ -157,6 +159,57 @@ class ShellArtifactTest {
     assertTrue(output.substring(afterClose).contains("Cached: no"), output);
   }
 
+  /**
+   * 'jafar-shell script file' on the command line used to go to jfr-shell, which reads only JFR: a
+   * script opening a heap dump failed with "Unknown root: objects".
+   */
+  @Test
+  void commandLineScriptRunsInThisShellAcrossFormats(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    Path script = dir.resolve("cross.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open $1",
+            "set --global starts = events/jdk.ThreadStart | count()",
+            "metadata --summary",
+            "open $2",
+            "set big = objects[shallow > ${3:-1000}] | count",
+            "if ${starts} > 0 && ${big} > 0",
+            "echo VERDICT both",
+            "endif",
+            ""));
+
+    Run ok = runJarRaw(dir, "", "script", script.toString(), recording.toString(), dump.toString());
+
+    assertEquals(0, ok.exit(), ok.out() + ok.err());
+    assertEquals("", ok.err());
+    assertTrue(ok.out().contains("VERDICT both"), ok.out());
+    assertTrue(ok.out().contains("Types Summary:"), ok.out()); // jfr-shell's metadata command
+    assertTrue(ok.out().contains("Script executed successfully: 8 commands"), ok.out());
+    // Quiet, like jfr-shell's script mode: results, not confirmations
+    assertFalse(ok.out().contains("Set starts"), ok.out());
+    assertFalse(ok.out().contains("Opening "), ok.out());
+
+    // A failing line: error on stderr, exit 1, the rest not run; '-' reads the script from stdin
+    Run bad = runJarRaw(dir, "echo one\nset x = $missing\necho two\n", "script", "-");
+    assertEquals(1, bad.exit(), bad.out() + bad.err());
+    assertTrue(bad.out().contains("one"), bad.out());
+    assertFalse(bad.out().contains("two"), bad.out());
+    assertTrue(bad.err().contains("Variable not found: missing"), bad.err());
+    assertTrue(bad.err().contains("Script completed with errors"), bad.err());
+
+    Run cont =
+        runJarRaw(
+            dir, "echo one\nset x = $missing\necho two\n", "script", "-", "--continue-on-error");
+    assertEquals(1, cont.exit());
+    assertTrue(cont.out().contains("two"), cont.out());
+  }
+
   @Test
   void queryVariablesAreLazyAndInvalidatable(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
@@ -212,13 +265,50 @@ class ShellArtifactTest {
 
   @Test
   void routesOnlyJfrInvocationsToJfrCommandLine() {
-    assertTrue(Main.isJfrCommandLine(new String[] {"script", "-"}));
+    // 'script' runs in this shell now, so a script can open any format
+    assertFalse(Main.isJfrCommandLine(new String[] {"script", "-"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"script", "x.jfrs", "--continue-on-error"}));
+    assertTrue(Main.isJfrCommandLine(new String[] {"--backend", "jdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"x.jfrs", "a"}, Main.scriptArguments(new String[] {"script", "x.jfrs", "a"}));
+    assertNull(Main.scriptArguments(new String[] {"x.jfr"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"-q", "show", "x.jfr", "events"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"--backend=jdk", "x.jfr"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"--install-plugin", "p.jar"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"dump.hprof"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"-q", "--tui"}));
     assertFalse(Main.isJfrCommandLine(new String[] {}));
+  }
+
+  /** Exit status, stdout and stderr of one run, kept apart. */
+  private record Run(int exit, String out, String err) {}
+
+  private static Run runJarRaw(Path dir, String stdin, String... args) throws Exception {
+    Path out = dir.resolve("raw-out.txt");
+    Path err = dir.resolve("raw-err.txt");
+    List<String> command =
+        new java.util.ArrayList<>(
+            List.of(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Duser.home=" + dir,
+                "-jar",
+                System.getProperty("jafar.shell.jar")));
+    command.addAll(List.of(args));
+    Process process =
+        new ProcessBuilder(command)
+            .directory(dir.toFile())
+            .redirectOutput(out.toFile())
+            .redirectError(err.toFile())
+            .start();
+    process.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
+    process.getOutputStream().close();
+    assertTrue(process.waitFor(120, TimeUnit.SECONDS), "shell did not exit");
+    // The JVM may print 'Picked up JAVA_TOOL_OPTIONS' on stderr in some environments
+    String errText =
+        Files.readAllLines(err).stream()
+            .filter(l -> !l.startsWith("Picked up JAVA_TOOL_OPTIONS"))
+            .collect(java.util.stream.Collectors.joining("\n"));
+    return new Run(process.exitValue(), Files.readString(out), errText);
   }
 
   private static String runJar(Path dir, String stdin, String... args) throws Exception {

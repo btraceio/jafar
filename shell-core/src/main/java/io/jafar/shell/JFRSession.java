@@ -33,12 +33,17 @@ public final class JFRSession implements Session {
   private final ParsingContext parsingContext;
   private TypedJafarParser parser;
   private final List<HandlerRegistration<?>> registrations = new ArrayList<>();
-  private final Map<String, Long> eventTypeCounts = new HashMap<>();
+  // Concurrent: event handlers count into it from the parser's chunk threads
+  private final Map<String, Long> eventTypeCounts = new java.util.concurrent.ConcurrentHashMap<>();
   private final Set<String> metadataTypes = new HashSet<>();
   private final Set<String> allMetadataTypes = new HashSet<>();
   private final Set<String> nonPrimitiveMetadataTypes = new HashSet<>();
   private final Set<String> primitiveMetadataTypes = new HashSet<>();
   private final Map<String, Long> metadataTypeIds = new HashMap<>();
+  // Chunks are parsed in parallel, so onMetadata runs on several threads at once; the type sets
+  // above are filled under this lock (unsynchronized, a HashSet loses size updates and later
+  // overruns when copied: "Index N out of bounds for length N")
+  private final Object metadataLock = new Object();
   private java.util.List<Integer> cachedChunkIds;
   private Set<String> cpTypes; // lazily discovered
   private final AtomicLong totalEvents = new AtomicLong(0);
@@ -56,31 +61,40 @@ public final class JFRSession implements Session {
         new ChunkParserListener() {
           @Override
           public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-            // Build index to resolve super types recursively
-            Map<String, MetadataClass> byName = new HashMap<>();
-            for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
-            // Collect event and metadata types when metadata becomes available
-            for (MetadataClass clazz : metadata.getClasses()) {
-              allMetadataTypes.add(clazz.getName());
-              metadataTypeIds.put(clazz.getName(), clazz.getId());
-              if (!clazz.isPrimitive()) {
-                nonPrimitiveMetadataTypes.add(clazz.getName());
-              } else {
-                primitiveMetadataTypes.add(clazz.getName());
-              }
-              if (isEventType(clazz, byName)) {
-                eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
-              }
-              if (isBrowsableMetadataType(clazz)) {
-                metadataTypes.add(clazz.getName());
-              }
-            }
+            collectMetadata(metadata);
             return true;
           }
         });
 
     // Do a quick metadata-only scan to populate available types immediately
     scanMetadata();
+  }
+
+  /**
+   * Records one chunk's metadata classes. Called from the parser's chunk threads, possibly several
+   * at once, hence the lock.
+   */
+  private void collectMetadata(MetadataEvent metadata) {
+    // Build index to resolve super types recursively
+    Map<String, MetadataClass> byName = new HashMap<>();
+    for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
+    synchronized (metadataLock) {
+      for (MetadataClass clazz : metadata.getClasses()) {
+        allMetadataTypes.add(clazz.getName());
+        metadataTypeIds.put(clazz.getName(), clazz.getId());
+        if (!clazz.isPrimitive()) {
+          nonPrimitiveMetadataTypes.add(clazz.getName());
+        } else {
+          primitiveMetadataTypes.add(clazz.getName());
+        }
+        if (clazz.getName() != null && isEventType(clazz, byName)) {
+          eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
+        }
+        if (isBrowsableMetadataType(clazz)) {
+          metadataTypes.add(clazz.getName());
+        }
+      }
+    }
   }
 
   /**
@@ -95,23 +109,7 @@ public final class JFRSession implements Session {
           new ChunkParserListener() {
             @Override
             public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-              Map<String, MetadataClass> byName = new HashMap<>();
-              for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
-              for (MetadataClass clazz : metadata.getClasses()) {
-                allMetadataTypes.add(clazz.getName());
-                metadataTypeIds.put(clazz.getName(), clazz.getId());
-                if (!clazz.isPrimitive()) {
-                  nonPrimitiveMetadataTypes.add(clazz.getName());
-                } else {
-                  primitiveMetadataTypes.add(clazz.getName());
-                }
-                if (isEventType(clazz, byName)) {
-                  eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
-                }
-                if (isBrowsableMetadataType(clazz)) {
-                  metadataTypes.add(clazz.getName());
-                }
-              }
+              collectMetadata(metadata);
               // Return false to abort parsing immediately after metadata is collected
               return false;
             }

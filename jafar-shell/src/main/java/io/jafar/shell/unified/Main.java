@@ -5,6 +5,7 @@ import io.jafar.shell.plugin.PluginManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
@@ -16,15 +17,17 @@ import picocli.CommandLine;
     mixinStandardHelpOptions = true,
     footer = {
       "",
-      "JFR commands: show, metadata, chunks, constants (cp), script.",
+      "script <file|-> [args...] [--continue-on-error]: run a script in this shell, any format.",
+      "JFR commands: show, metadata, chunks, constants (cp).",
       "JFR options: --backend, --plugin-dir, --install-plugin."
     })
 public final class Main implements Callable<Integer> {
 
-  // The command line jfr-shell has always had; this jar is what the jafar-shell and jfr-shell
-  // aliases both install, so those invocations keep going to it.
+  // The command line jfr-shell has always had, so 'jafar-shell show x.jfr ...' keeps working.
+  // 'script' is not among them: it runs in this shell, so a script can open any format. (The
+  // jfr-shell jbang alias launches io.jafar.shell.Main directly and never comes through here.)
   private static final Set<String> JFR_COMMANDS =
-      Set.of("show", "metadata", "chunks", "constants", "cp", "script");
+      Set.of("show", "metadata", "chunks", "constants", "cp");
   private static final Set<String> JFR_OPTIONS =
       Set.of("-b", "--backend", "--plugin-dir", "--install-plugin");
 
@@ -61,9 +64,23 @@ public final class Main implements Callable<Integer> {
     return false;
   }
 
+  /** The arguments after a leading {@code script} word, or {@code null} if this is not one. */
+  static String[] scriptArguments(String[] args) {
+    if (args.length > 0 && "script".equals(args[0]) && !Files.exists(Paths.get("script"))) {
+      return java.util.Arrays.copyOfRange(args, 1, args.length);
+    }
+    return null;
+  }
+
   public static void main(String[] args) {
     if (isJfrCommandLine(args)) {
       io.jafar.shell.Main.main(args);
+      return;
+    }
+    String[] script = scriptArguments(args);
+    if (script != null) {
+      PluginManager.initialize();
+      System.exit(new CommandLine(new ScriptCommand()).execute(script));
       return;
     }
 
@@ -125,6 +142,62 @@ public final class Main implements Callable<Integer> {
       }
       shell.run();
       return 0;
+    }
+  }
+
+  /** {@code jafar-shell script <file|-> [args...]}: a script run by this shell, not jfr-shell's. */
+  @CommandLine.Command(
+      name = "script",
+      mixinStandardHelpOptions = true,
+      description = "Run a script in jafar-shell: any format, the commands of its prompt")
+  static final class ScriptCommand implements Callable<Integer> {
+    @CommandLine.Parameters(
+        index = "0",
+        description = "Path to script file ('-' for stdin)",
+        defaultValue = "-")
+    private String scriptPath;
+
+    @CommandLine.Parameters(
+        index = "1..*",
+        arity = "0..*",
+        description = "Positional arguments for the script ($1, $2, ...)")
+    private List<String> arguments = new java.util.ArrayList<>();
+
+    @CommandLine.Option(
+        names = {"--continue-on-error"},
+        description = "Run every line even after one fails")
+    private boolean continueOnError;
+
+    @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use for recordings, as in jfr-shell")
+    private String backend;
+
+    @Override
+    public Integer call() throws Exception {
+      if (backend != null) {
+        // Read when the backend registry first initialises, which opening a recording does
+        System.setProperty("jfr.shell.backend", backend);
+      }
+      List<String> lines;
+      if ("-".equals(scriptPath)) {
+        lines =
+            new java.io.BufferedReader(
+                    new java.io.InputStreamReader(
+                        System.in, java.nio.charset.Charset.defaultCharset()))
+                .lines()
+                .toList();
+      } else {
+        Path path = Paths.get(scriptPath);
+        if (!Files.exists(path)) {
+          System.err.println("Error: Script file not found: " + scriptPath);
+          return 1;
+        }
+        lines = Files.readAllLines(path);
+      }
+      try (Shell shell = Shell.forScript()) {
+        return shell.runScript(lines, arguments, continueOnError);
+      }
     }
   }
 }

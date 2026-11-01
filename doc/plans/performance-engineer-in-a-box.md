@@ -61,9 +61,9 @@ which tool answers it, what counts as evidence, and how to report. Claude Code's
   literals, `merge()`, lazy query variables in every format's language, `if`/`elif`/`else`/`endif`
   and `script <path> [args]` now work at the `jafar-shell` prompt, from one implementation in
   `shell-core` (`io.jafar.shell.core.scripting`) that `jfr-shell` also uses; a cross-format script
-  holding a JFR variable and a heap-dump variable runs end to end. Still open: `jafar-shell script
-  <file>` on the command line is routed to the JFR-only command line, and `jfr-shell`'s `metadata`,
-  `chunks` and `constants` commands are not at the `jafar-shell` prompt. See
+  holding a JFR variable and a heap-dump variable runs end to end, at the prompt or as
+  `jafar-shell script <file>`; on a recording, `jfr-shell`'s `metadata`, `chunks`, `constants` and
+  `backend` commands work there too. See
   [Scripting in jafar-shell](../cli/Scripting.md#in-jafar-shell).)* `jafar-shell/.../unified/Shell.java` wires `open`,
   `sessions`, `use`, `close`, `info`, `show`, `checkLeaks`, `modules`; the `set`/`vars`/`if`
   machinery from `jfr-shell`'s `CommandDispatcher` is not connected. Cross-format investigations

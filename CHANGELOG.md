@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
+  jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
+  "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
+  stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
+  stderr and exit status 1 on failure. Tables use jafar-shell's layout. The `jfr-shell` jbang alias
+  launches jfr-shell directly and is unaffected
+- **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
+  recording, using jfr-shell's implementations; they were taken as malformed queries
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way. Both are now thread-safe
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
