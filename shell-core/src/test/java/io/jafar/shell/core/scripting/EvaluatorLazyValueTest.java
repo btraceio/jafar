@@ -64,7 +64,9 @@ class EvaluatorLazyValueTest {
   static final class FakeEvaluator implements QueryEvaluator {
     final List<String> parsed = new ArrayList<>();
     final List<Object> resolvers = new ArrayList<>();
-    int evaluations;
+    volatile int evaluations;
+    volatile long delayMillis;
+    volatile boolean returnNull;
     List<Map<String, Object>> rows = List.of(row("a", 3), row("b", 1));
 
     // Ordered: ${var} with no field is the first field of the first row
@@ -85,13 +87,17 @@ class EvaluatorLazyValueTest {
     }
 
     @Override
-    public Object evaluate(Session session, Object query) {
+    public synchronized Object evaluate(Session session, Object query) throws InterruptedException {
       evaluations++;
-      return rows;
+      if (delayMillis > 0) {
+        Thread.sleep(delayMillis); // widen the window in which a second evaluation could start
+      }
+      return returnNull ? null : rows;
     }
 
     @Override
-    public Object evaluate(Session session, Object query, SessionResolver resolver) {
+    public Object evaluate(Session session, Object query, SessionResolver resolver)
+        throws InterruptedException {
       resolvers.add(resolver);
       return evaluate(session, query);
     }
@@ -158,10 +164,69 @@ class EvaluatorLazyValueTest {
   @Test
   void closedSessionIsReportedNotSilentlyEmpty() throws Exception {
     EvaluatorLazyValue v = lazy(null);
+    v.get();
+    assertTrue(v.isCached());
     sessions.closeAll();
     var e = assertThrows(IllegalStateException.class, v::get);
     assertTrue(e.getMessage().contains("closed"), e.getMessage());
     assertTrue(v.describe().endsWith("(closed)"), v.describe());
+    assertFalse(v.isCached(), "rows of a closed session are dropped, not served stale");
+    assertThrows(IllegalStateException.class, v::copy);
+  }
+
+  @Test
+  void concurrentFirstReadsEvaluateOnceAndAllSeeTheSameRows() throws Exception {
+    EvaluatorLazyValue v = lazy(null);
+    evaluator.delayMillis = 50;
+    int threads = 8;
+    java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newFixedThreadPool(threads);
+    try {
+      List<java.util.concurrent.Future<Object>> results = new ArrayList<>();
+      for (int i = 0; i < threads; i++) {
+        results.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  return v.get();
+                }));
+      }
+      start.countDown();
+      for (var r : results) {
+        assertSame(evaluator.rows, r.get());
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    assertEquals(1, evaluator.evaluations);
+  }
+
+  @Test
+  void nullResultCountsAsEvaluated() throws Exception {
+    evaluator.returnNull = true;
+    EvaluatorLazyValue v = lazy(null);
+    assertEquals(null, v.get());
+    assertTrue(v.isCached());
+    v.get();
+    assertEquals(1, evaluator.evaluations);
+  }
+
+  @Test
+  void forgetSessionDropsOnlyThatSessionsRows() throws Exception {
+    EvaluatorLazyValue first = lazy(null);
+    EvaluatorLazyValue second = lazy(null); // a second session
+    first.get();
+    second.get();
+    VariableStore global = new VariableStore();
+    global.set("a", first);
+    global.set("b", second);
+    global.set("s", new VariableStore.ScalarValue(1L));
+
+    EvaluatorLazyValue.forgetSession(global, first.sessionId());
+
+    assertFalse(first.isCached());
+    assertTrue(second.isCached());
   }
 
   @Test
@@ -231,6 +296,52 @@ class EvaluatorLazyValueTest {
     assertEquals(1, errors.size());
     assertThrows(
         IllegalStateException.class, () -> new Conditionals().handle("endif", scopes, e -> {}));
+  }
+
+  @Test
+  void elifIsNotEvaluatedWhenItsBranchCannotRun() throws Exception {
+    VariableStore global = new VariableStore();
+    global.set("rows", lazy(null));
+    VariableScopes scopes = new VariableScopes(global, () -> null);
+    Conditionals c = new Conditionals();
+    List<String> errors = new ArrayList<>();
+
+    // A taken branch: later elifs are irrelevant
+    c.handle("if 1 == 1", scopes, errors::add);
+    c.handle("elif ${rows.size} > 0", scopes, errors::add);
+    c.handle("elif ${undefined} > 0", scopes, errors::add);
+    c.handle("endif", scopes, errors::add);
+    // Under a skipped block: the whole nested block is irrelevant
+    c.handle("if 1 == 2", scopes, errors::add);
+    c.handle("if ${rows.size} > 0", scopes, errors::add);
+    c.handle("elif ${undefined} > 0", scopes, errors::add);
+    c.handle("endif", scopes, errors::add);
+    c.handle("endif", scopes, errors::add);
+
+    assertEquals(List.of(), errors);
+    assertEquals(0, evaluator.evaluations, "no lazy query run for a branch that cannot execute");
+
+    // Still evaluated when it can be taken
+    c.handle("if 1 == 2", scopes, errors::add);
+    c.handle("elif ${rows.size} == 2", scopes, errors::add);
+    assertTrue(c.isActive());
+    assertEquals(1, evaluator.evaluations);
+  }
+
+  @Test
+  void keywordsAreWholeWordsAnyCaseAndUnwindClosesBlocks() {
+    VariableScopes scopes = new VariableScopes(new VariableStore(), () -> null);
+    Conditionals c = new Conditionals();
+    assertFalse(c.handle("ifx 1", scopes, e -> {}));
+    assertFalse(c.handle("endiff", scopes, e -> {}));
+    assertFalse(c.handle("show if", scopes, e -> {}));
+    assertTrue(c.handle("  IF\t1 == 2", scopes, e -> {}));
+    assertFalse(c.isActive());
+    assertTrue(c.handle("If 1 == 1", scopes, e -> {}));
+    assertEquals(2, c.state().depth());
+    assertEquals(2, c.unwindTo(0));
+    assertTrue(c.isActive());
+    assertEquals(0, c.unwindTo(0));
   }
 
   @Test

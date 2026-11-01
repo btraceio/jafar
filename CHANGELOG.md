@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
   dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
-  offers these commands and their arguments in every session type. The parsing, scoping and
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
+  ends inside an `if` block has the blocks it left open closed. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
@@ -25,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
 - **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
   `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
   conditional expression in the map parser promoted the `long` branch to `double`. Decimals are
