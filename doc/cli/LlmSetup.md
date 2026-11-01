@@ -207,7 +207,7 @@ jfr-shell recording.jfr
 
 Better, per the section above: put `llm.api-key` in `~/.config/jafar/llm.properties`. Or
 `set llm.api-key = sk-...` in the shell for a single session. A command recording
-(`record start`) leaves the value out; the shell's history file does not.
+(`record start`) leaves the value out, and the line is not kept in the shell's history.
 
 ### Ollama — local
 

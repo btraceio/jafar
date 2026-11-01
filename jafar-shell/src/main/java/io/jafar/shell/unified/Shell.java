@@ -27,7 +27,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
@@ -52,7 +51,8 @@ public final class Shell implements AutoCloseable {
   // jfr-shell's recorder, so both shells write the same format to the same default directory.
   private final CommandRecorder recorder = new CommandRecorder();
   private boolean running = true;
-  private final DefaultHistory history;
+  private final io.jafar.shell.core.SecretFilteringHistory
+      history; // never holds an llm.api-key line
   private final ShellCompleter fallbackCompleter;
   private final org.jline.reader.Completer completer; // what Tab runs at this shell's prompt
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
@@ -109,7 +109,7 @@ public final class Shell implements AutoCloseable {
     } catch (Exception ignore) {
     }
 
-    this.history = new DefaultHistory();
+    this.history = new io.jafar.shell.core.SecretFilteringHistory();
     java.util.Map<String, Object> vars = new java.util.HashMap<>();
     vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
 

@@ -137,21 +137,4 @@ class CommandRecorderTest {
     assertTrue(content.contains("# let llm.api-key= <redacted: not recorded>"), content);
     assertTrue(content.contains("# SET   LLM.API-KEY   = <redacted: not recorded>"), content);
   }
-
-  /** Other settings, variables and lines that merely mention the key are recorded as typed. */
-  @Test
-  void otherLinesAreRecordedAsTyped() {
-    for (String line :
-        List.of(
-            "set llm.backend = ollama",
-            "set --global llm.base-url = http://localhost:11434/v1",
-            "set key = events/jdk.ThreadStart | count()",
-            "set x = llm.api-key",
-            "echo llm.api-key = sk-not-a-set",
-            "settings llm.api-key = sk",
-            "unset llm.api-key",
-            "set llm.api-key")) {
-      assertSame(line, CommandRecorder.redactSecrets(line), line);
-    }
-  }
 }

@@ -821,9 +821,11 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 A `set` or `let` of `llm.api-key` is recorded without its value, as a comment —
 `# set --global llm.api-key = <redacted: not recorded>` — so the file holds no key and a replay uses
-whatever key the person replaying it has configured. The shell's history file
-(`~/.jfr-shell/history`, `~/.jafar-shell/history`) is a different matter and does keep the line as
-typed; prefer `~/.config/jafar/llm.properties` or the provider's environment variable for keys.
+whatever key the person replaying it has configured. The line is kept out of the shell's history
+too (`~/.jfr-shell/history`, `~/.jafar-shell/history`, also used by `--tui`), so the up arrow does
+not bring it back; a key line saved there by an earlier version is removed the next time the shell
+starts. The key is still echoed on screen when you set it, so for a key you use often prefer
+`~/.config/jafar/llm.properties` or the provider's environment variable.
 
 You can execute this script directly:
 

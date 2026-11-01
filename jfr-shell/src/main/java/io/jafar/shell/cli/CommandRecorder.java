@@ -1,6 +1,6 @@
 package io.jafar.shell.cli;
 
-import io.jafar.shell.core.llm.LlmSettings;
+import io.jafar.shell.core.llm.SecretCommands;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,8 +31,8 @@ import java.time.format.DateTimeFormatter;
  * show events/jdk.ExecutionSample --limit 10
  * </pre>
  *
- * <p>A {@code set}/{@code let} of a credential setting ({@link LlmSettings#isSecret}) is written as
- * a comment without its value, so the file holds no key and replaying it does not set one.
+ * <p>A {@code set}/{@code let} of a credential setting is written as a comment without its value
+ * ({@link SecretCommands#redact}), so the file holds no key and replaying it does not set one.
  */
 public final class CommandRecorder {
   private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -96,51 +96,8 @@ public final class CommandRecorder {
     // Add timestamp comment for context
     LocalTime time = LocalTime.now();
     writer.write("# [" + time.format(TIME_FORMATTER) + "]\n");
-    writer.write(redactSecrets(command) + "\n");
+    writer.write(SecretCommands.redact(command) + "\n");
     writer.flush();
-  }
-
-  /**
-   * {@code set [--global] llm.api-key = sk-...} becomes {@code # set [--global] llm.api-key =
-   * <redacted: not recorded>}; any other line is returned as is. It is commented out rather than
-   * given a placeholder value: replayed, a placeholder would become the key, and the request would
-   * fail as unauthorized instead of using the key the replaying user has configured.
-   *
-   * <p>Follows both shells' {@code set} parsing: the command word in any case, then the name is the
-   * last word before the first {@code =}. Allocates only for {@code set}/{@code let} lines.
-   */
-  static String redactSecrets(String command) {
-    int start = 0;
-    while (start < command.length() && Character.isWhitespace(command.charAt(start))) {
-      start++;
-    }
-    if (!isWord(command, start, "set") && !isWord(command, start, "let")) {
-      return command;
-    }
-    int eq = command.indexOf('=', start);
-    if (eq < 0) {
-      return command;
-    }
-    int nameEnd = eq;
-    while (nameEnd > start && Character.isWhitespace(command.charAt(nameEnd - 1))) {
-      nameEnd--;
-    }
-    int nameStart = nameEnd;
-    while (nameStart > start && !Character.isWhitespace(command.charAt(nameStart - 1))) {
-      nameStart--;
-    }
-    if (!LlmSettings.isSecret(command.substring(nameStart, nameEnd))) {
-      return command;
-    }
-    return "# " + command.substring(start, eq + 1) + " <redacted: not recorded>";
-  }
-
-  /** Whether {@code word} (ASCII, lower case) is at {@code at}, any case, followed by a space. */
-  private static boolean isWord(String s, int at, String word) {
-    int end = at + word.length();
-    return s.regionMatches(true, at, word, 0, word.length())
-        && end < s.length()
-        && Character.isWhitespace(s.charAt(end));
   }
 
   /**

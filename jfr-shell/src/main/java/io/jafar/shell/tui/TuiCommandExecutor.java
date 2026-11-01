@@ -9,6 +9,7 @@ import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
+import io.jafar.shell.core.llm.SecretCommands;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import io.jafar.shell.tui.TuiContext.TuiParsedLine;
@@ -199,7 +200,10 @@ public final class TuiCommandExecutor {
       return;
     }
 
-    ctx.commandHistory.add(command);
+    // A credential is kept out of the history file and the up arrow, as in the line shells
+    if (!SecretCommands.setsSecret(command)) {
+      ctx.commandHistory.add(command);
+    }
     ctx.lastCommand = command;
 
     int currentIdx = findUnpinnedTab();
@@ -766,7 +770,8 @@ public final class TuiCommandExecutor {
         if (colon > 0 && line.substring(0, colon).chars().allMatch(Character::isDigit)) {
           line = line.substring(colon + 1);
         }
-        if (!line.isEmpty()) {
+        // A key line from before this filter is dropped, and gone from the file at the next save
+        if (!line.isEmpty() && !SecretCommands.setsSecret(line)) {
           ctx.commandHistory.add(line);
         }
       }
