@@ -109,6 +109,14 @@ Architecture, and the reasons it is shaped this way:
   parses it with the same parser that would execute it; on rejection `LlmService` sends the parser's
   own error back and asks for a correction, up to `llm.max-retries` (default 1, capped at 3). This
   is the difference between the feature working and not working on a small local model.
+- **A failure goes through `Host.error`, not `println`.** Scripts count only what a shell reports
+  on its error channel (`ScriptRunner.ErrorTally`); a failing `ask`/`as-query`/`explain` printed
+  with `println` counted as a successful line. The headline of every outcome where the command did
+  not do what was asked — usage, no session, backend unavailable, `LlmException`, no query in the
+  reply, a query that does not parse or fails, an investigation out of budget — is `host.error`;
+  the advice after it stays `println`. Both hosts route it: `CommandDispatcher` to `io.error`,
+  `unified/Shell` to its `error(...)`. `LlmCommandsTest.failuresReportTheirHeadlineAsAnError`
+  pins the split, and `statusIsNotAFailure` pins that `llm status` reports none.
 - **Unit tests must never reach a real backend.** `llm-openai` is on `jfr-shell`'s test runtime
   classpath (the Anthropic backend stopped shipping with the shell — it installs from the plugin
   catalog), so `LlmCommandsTest` pins `llm.backend` to a non-existent id; without that, a machine

@@ -82,13 +82,22 @@ both entry points from the fat jar (`runJarWithStatus`, `runClassWithStatus`).
 **A failure must be reported through the error channel, or scripts cannot see it.** Both shells
 print a failing command and return normally; `ScriptRunner` only sees what the shell records in its
 `ScriptRunner.ErrorTally` (`failingOnReportedErrors`). In `CommandDispatcher` that is `io.error`; in
-`unified/Shell` it is `error(...)`/`printError(...)`. A new failure printed with `println` instead
+`unified/Shell` it is `error(...)`/`printError(...)`; in `LlmCommands` it is `Host.error`, which
+both hosts route to those. A new failure printed with `println` instead
 runs on in a script and ends in "Script executed successfully" — the bug this contract fixed.
 
 `EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
 resolver)` on first use — so a variable gives the same rows as typing its query. Any reader of
 variables must handle `VariableStore.LazyValue` in general, not one implementation: read rows with
 `LazyRows`.
+
+Threading: every front end dispatches on one thread (the readline loop; the TUI's single
+`tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
+`EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
+cache slot holding the rows or a sentinel, evaluation serialized — because a variable can be read
+from wherever its store is reachable. Do not split such state across two volatiles: `LazyQueryValue`
+once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
+read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
 
 In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
 the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to

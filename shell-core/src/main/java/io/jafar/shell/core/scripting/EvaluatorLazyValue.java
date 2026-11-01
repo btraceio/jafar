@@ -21,14 +21,27 @@ import java.util.Objects;
  *
  * <p>The variable is bound to the session that was current when it was defined, not to whichever
  * session is current when it is read: {@code set --global n = ...}, then {@code use 2}, still reads
- * session 1. The session is held weakly, as {@code jfr-shell}'s {@code LazyQueryValue} does, so a
- * variable does not keep a closed recording or heap dump in memory.
+ * session 1. Once that session is closed every read fails and says so, cached or not, and the cache
+ * is dropped: rows can hold the session's own objects, so keeping them would keep a closed heap
+ * dump in memory. The session itself is held weakly, as {@code jfr-shell}'s {@code LazyQueryValue}
+ * does.
+ *
+ * <p>Thread-safe. The cache is one volatile slot, so a reader never sees a half-written state (a
+ * "cached" flag from one evaluation and the rows of another); a cached read, {@link #describe} and
+ * {@link #isCached} take no lock. Evaluation is serialized, so concurrent first reads run the query
+ * once.
  *
  * <p>A query whose result is one map ({@link QueryEvaluator#producesMap}, i.e. JfrPath's {@code
  * toMap()}) stays lazy but is read as that map by {@link #asMap()}, so {@code ${v.size}} and {@code
  * ${v.key}} give what jfr-shell gives for the map it stores.
  */
 public final class EvaluatorLazyValue implements VariableStore.LazyValue {
+  /** The cache slot before evaluation, and after invalidation or release. */
+  private static final Object NOT_EVALUATED = new Object();
+
+  /** Stands for an evaluator that returned {@code null}, so null still counts as evaluated. */
+  private static final Object NULL_RESULT = new Object();
+
   private final QueryEvaluator evaluator;
   private final Object query;
   private final String queryString;
@@ -36,8 +49,8 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private final int sessionId;
   private final boolean mapQuery;
   private final WeakReference<SessionRef<? extends Session>> sessionRef;
-  private Object cachedResult;
-  private boolean evaluated;
+  private final Object evaluationLock = new Object();
+  private volatile Object cache = NOT_EVALUATED;
 
   /**
    * @param evaluator the evaluator of the session's module
@@ -52,6 +65,16 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
       String queryString,
       SessionRef<? extends Session> session,
       SessionResolver resolver) {
+    this(evaluator, query, queryString, session, resolver, NOT_EVALUATED);
+  }
+
+  private EvaluatorLazyValue(
+      QueryEvaluator evaluator,
+      Object query,
+      String queryString,
+      SessionRef<? extends Session> session,
+      SessionResolver resolver,
+      Object cache) {
     this.evaluator = Objects.requireNonNull(evaluator, "evaluator");
     this.query = query;
     this.queryString = queryString;
@@ -59,41 +82,52 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
     this.sessionId = session.id;
     this.mapQuery = evaluator.producesMap(query);
     this.sessionRef = new WeakReference<>(session);
+    this.cache = cache;
   }
 
-  /** A copy with its own cache (holding the current cached result, if any). */
-  public synchronized EvaluatorLazyValue copy() {
-    SessionRef<? extends Session> ref = sessionRef.get();
-    if (ref == null) {
-      throw new IllegalStateException(
-          "Cannot copy " + queryString + ": session no longer available");
-    }
-    EvaluatorLazyValue copy = new EvaluatorLazyValue(evaluator, query, queryString, ref, resolver);
-    if (evaluated) {
-      copy.cachedResult = cachedResult;
-      copy.evaluated = true;
-    }
-    return copy;
+  /**
+   * A copy with its own cache, starting from this one's cached rows if it has them.
+   *
+   * @throws IllegalStateException if the session is gone or closed
+   */
+  public EvaluatorLazyValue copy() {
+    SessionRef<? extends Session> ref = liveSession();
+    return new EvaluatorLazyValue(evaluator, query, queryString, ref, resolver, cache);
   }
 
   @Override
-  public synchronized Object get() throws Exception {
-    if (evaluated) {
-      return cachedResult;
+  public Object get() throws Exception {
+    liveSession();
+    Object c = cache;
+    if (c == NOT_EVALUATED) {
+      synchronized (evaluationLock) {
+        c = cache;
+        if (c == NOT_EVALUATED) {
+          SessionRef<? extends Session> ref = liveSession();
+          Object result =
+              resolver == null
+                  ? evaluator.evaluate(ref.session, query)
+                  : evaluator.evaluate(ref.session, query, resolver);
+          c = result == null ? NULL_RESULT : result;
+          cache = c;
+        }
+      }
     }
+    return c == NULL_RESULT ? null : c;
+  }
+
+  /** The bound session, or an exception saying why it cannot be read; drops the cache if so. */
+  private SessionRef<? extends Session> liveSession() {
     SessionRef<? extends Session> ref = sessionRef.get();
     if (ref == null) {
+      cache = NOT_EVALUATED;
       throw new IllegalStateException("Session #" + sessionId + " no longer available");
     }
     if (ref.session.isClosed()) {
+      cache = NOT_EVALUATED;
       throw new IllegalStateException("Session #" + sessionId + " has been closed");
     }
-    cachedResult =
-        resolver == null
-            ? evaluator.evaluate(ref.session, query)
-            : evaluator.evaluate(ref.session, query, resolver);
-    evaluated = true;
-    return cachedResult;
+    return ref;
   }
 
   /**
@@ -101,9 +135,9 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
    * evaluator returned the single map row that implies; {@code null} for any other query, so a
    * one-row result of an ordinary query is still read as rows.
    *
-   * @throws Exception if evaluation fails, as {@link #get()}
+   * @throws Exception if evaluation fails, as {@link #get()}, which does the locking
    */
-  public synchronized Map<String, Object> asMap() throws Exception {
+  public Map<String, Object> asMap() throws Exception {
     if (!mapQuery) {
       return null;
     }
@@ -116,14 +150,13 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   }
 
   @Override
-  public synchronized void invalidate() {
-    cachedResult = null;
-    evaluated = false;
+  public void invalidate() {
+    cache = NOT_EVALUATED;
   }
 
   @Override
-  public synchronized boolean isCached() {
-    return evaluated;
+  public boolean isCached() {
+    return cache != NOT_EVALUATED;
   }
 
   @Override
@@ -144,23 +177,36 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
     return ref == null ? null : ref.session.getType();
   }
 
+  /**
+   * Drops the cached rows of every variable in {@code store} bound to {@code sessionId}. A shell
+   * calls this when it closes a session, so variables in other stores (the global one) stop holding
+   * that session's rows at once rather than at their next read.
+   */
+  public static void forgetSession(VariableStore store, int sessionId) {
+    for (String name : store.names()) {
+      if (store.get(name) instanceof EvaluatorLazyValue lazy && lazy.sessionId == sessionId) {
+        lazy.invalidate();
+      }
+    }
+  }
+
   @Override
-  public synchronized void release() {
-    cachedResult = null;
-    evaluated = false;
+  public void release() {
+    cache = NOT_EVALUATED;
     sessionRef.clear();
   }
 
   @Override
-  public synchronized String describe() {
+  public String describe() {
     SessionRef<? extends Session> ref = sessionRef.get();
+    Object c = cache;
     String status;
     if (ref == null) {
       status = " (session gone)";
     } else if (ref.session.isClosed()) {
       status = " (closed)";
-    } else if (evaluated) {
-      int size = cachedResult instanceof List<?> list ? list.size() : 1;
+    } else if (c != NOT_EVALUATED) {
+      int size = c instanceof List<?> list ? list.size() : 1;
       status = " (cached: " + size + " rows)";
     } else {
       status = " (not evaluated)";

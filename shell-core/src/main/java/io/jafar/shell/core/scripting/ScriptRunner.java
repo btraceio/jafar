@@ -67,19 +67,25 @@ public final class ScriptRunner {
    * query, a missing file, no session open) and returning normally, so the runner cannot see the
    * failure from the dispatch itself; the shell records each report here instead, and {@link
    * #failingOnReportedErrors} turns a report into a failed line.
+   *
+   * <p>Safe to record from any thread: a report from a worker a command started is seen when the
+   * command returns. It is attributed to the line running at the time, as the shell attributes it
+   * when it prints it. Reading the count is one volatile read per line, and recording allocates
+   * nothing.
    */
   public static final class ErrorTally {
-    private int count;
-    private String last;
+    private final java.util.concurrent.atomic.AtomicInteger count =
+        new java.util.concurrent.atomic.AtomicInteger();
+    private volatile String last;
 
     /** Records one reported error, as printed. */
     public void record(String message) {
-      count++;
       last = message;
+      count.incrementAndGet(); // after 'last', so a reader that sees the new count sees it too
     }
 
     public int count() {
-      return count;
+      return count.get();
     }
 
     /** The most recently reported error, as printed, or {@code null}. */

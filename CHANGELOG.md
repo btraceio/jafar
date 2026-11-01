@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
   dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
-  offers these commands and their arguments in every session type. The parsing, scoping and
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
+  ends inside an `if` block has the blocks it left open closed. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
@@ -57,7 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors it reports (`ScriptRunner.ErrorTally`), and a line that reported one fails — fail-fast by
   default, listed under `Script completed with errors:`, exit status 1 — which is what the scripting
   guides already described. This applies to `jfr-shell script`, `script` at either prompt, and
-  `jafar-shell script`. A script that relied on running past a failing line needs
+  `jafar-shell script`, and to `ask`/`as-query`/`explain`/`llm`, whose failures (no backend, no
+  session, no query in the reply, a query that failed, nothing to explain) now go through a new
+  `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
   `--continue-on-error` (command line) now
 - **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
   never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
@@ -65,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the script as a recording. When the path is `-` and the first argument is a file starting with
   `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
   arguments as `$1`, `$2`, ...
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field. Shells dispatch commands on one thread, so this needed concurrent access to a
+  variable to show
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
 - **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
   `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
   conditional expression in the map parser promoted the `long` branch to `double`. Decimals are

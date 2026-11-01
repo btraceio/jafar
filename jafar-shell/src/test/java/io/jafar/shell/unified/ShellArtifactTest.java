@@ -91,6 +91,44 @@ class ShellArtifactTest {
     assertTrue(output.contains("Script executed successfully: 16 commands"), output);
   }
 
+  /**
+   * A script that runs itself used to end the shell with a StackOverflowError; a script that ended
+   * inside a false if-block left the shell skipping every command typed after it.
+   */
+  @Test
+  void runawayAndUnbalancedScriptsLeaveTheShellUsable(@TempDir Path dir) throws Exception {
+    Path self = dir.resolve("self.jfrs");
+    Files.writeString(self, "script " + self + "\n");
+    Path open = dir.resolve("open.jfrs");
+    Files.writeString(open, "if 1 == 2\necho never\n");
+
+    String output =
+        runJar(
+            dir, "script " + open + "\necho AFTER-OPEN\nscript " + self + "\necho ALIVE\nexit\n");
+
+    assertTrue(output.contains("open.jfrs left 1 if-block(s) open; closed them"), output);
+    assertTrue(output.contains("AFTER-OPEN"), output);
+    assertFalse(output.contains("never"), output);
+    assertTrue(output.contains("Scripts nested more than 16 deep"), output);
+    assertFalse(output.contains("StackOverflowError"), output);
+    assertTrue(output.contains("ALIVE"), output);
+  }
+
+  /** The same guards on the command line, where a script that leaves an if open has failed. */
+  @Test
+  void scriptCommandLineClosesOpenIfAndFails(@TempDir Path dir) throws Exception {
+    Path open = dir.resolve("open.jfrs");
+    Files.writeString(open, "echo START\nif 1 == 2\necho never\n");
+
+    Result result = runJarWithStatus(dir, "", "script", open.toString());
+
+    assertEquals(1, result.status(), result.output());
+    assertTrue(result.output().contains("START"), result.output());
+    assertFalse(result.output().contains("never"), result.output());
+    assertTrue(result.output().contains("open.jfrs left 1 if-block(s) open"), result.output());
+    assertTrue(result.output().contains("Line 3: left 1 if-block(s) open"), result.output());
+  }
+
   @Test
   void queryVariablesAreLazyAndInvalidatable(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
@@ -317,6 +355,39 @@ class ShellArtifactTest {
       assertTrue(result.output().contains("17"), result.output());
       assertTrue(
           result.output().contains("Script executed successfully: 2 commands"), result.output());
+    }
+  }
+
+  /**
+   * A failing {@code ask}/{@code as-query}/{@code explain} line fails the script, in both shells'
+   * script commands. The backend is pinned to an id that does not exist, so no request can leave
+   * the machine (see {@code LlmCommandsTest}).
+   */
+  @Test
+  void failingLlmCommandFailsTheScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String script =
+        "set llm.backend = test-nonexistent\nopen $1\nexplain\nask why\nas-query why\necho DONE\n";
+
+    for (Result result :
+        List.of(
+            runJarWithStatus(
+                dir, script, "script", "-", recording.toString(), "--continue-on-error"),
+            runClassWithStatus(
+                dir,
+                "io.jafar.shell.Main",
+                script,
+                "script",
+                "-",
+                recording.toString(),
+                "--continue-on-error"))) {
+      assertEquals(1, result.status(), result.output());
+      assertTrue(result.output().contains("Line 3: Nothing to explain yet"), result.output());
+      assertTrue(result.output().contains("Line 4: "), result.output());
+      assertTrue(result.output().contains("Line 5: "), result.output());
+      assertTrue(result.output().contains("DONE"), result.output());
+      assertTrue(result.output().contains("Executed 3/6 commands successfully."), result.output());
+      assertFalse(result.output().contains("executed successfully"), result.output());
     }
   }
 
