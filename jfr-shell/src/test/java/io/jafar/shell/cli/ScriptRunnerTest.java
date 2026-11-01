@@ -612,4 +612,47 @@ class ScriptRunnerTest {
     assertEquals(0, result.getErrors().size());
     assertEquals("test \n", capturedCommands.toString());
   }
+
+  /**
+   * A shell reports a failing command by printing it and returning normally; with the line wrapped
+   * by {@code failingOnReportedErrors}, such a line fails instead of counting as a success.
+   */
+  @Test
+  void reportedErrorFailsTheLine() {
+    ScriptRunner.ErrorTally tally = new ScriptRunner.ErrorTally();
+    List<String> ran = new ArrayList<>();
+    ScriptRunner.LineDispatcher shell =
+        line -> {
+          ran.add(line);
+          if (line.startsWith("bad")) {
+            tally.record("Error: Invalid query: " + line);
+          }
+          return true;
+        };
+    List<String> script = List.of("good 1", "bad 2", "good 3");
+
+    ScriptRunner.ExecutionResult failFast =
+        new ScriptRunner(ScriptRunner.failingOnReportedErrors(shell, tally), List.of())
+            .execute(script);
+
+    assertEquals(List.of("good 1", "bad 2"), ran);
+    assertEquals(1, failFast.getSuccessCount());
+    assertEquals(1, failFast.getErrors().size());
+    assertEquals(2, failFast.getErrors().get(0).getLineNumber());
+    assertEquals("Invalid query: bad 2", failFast.getErrors().get(0).getMessage());
+
+    ran.clear();
+    ScriptRunner carryOn =
+        new ScriptRunner(ScriptRunner.failingOnReportedErrors(shell, tally), List.of());
+    carryOn.setContinueOnError(true);
+    ScriptRunner.ExecutionResult all = carryOn.execute(script);
+
+    assertEquals(script, ran);
+    assertEquals(2, all.getSuccessCount());
+    assertEquals(1, all.getErrors().size());
+
+    // Unwrapped, the same shell reports the error and the runner still counts the line a success
+    ScriptRunner.ExecutionResult unwrapped = new ScriptRunner(shell, List.of()).execute(script);
+    assertEquals(0, unwrapped.getErrors().size());
+  }
 }

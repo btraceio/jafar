@@ -103,6 +103,16 @@ committing them.
 > `~/.config/jafar/llm.properties` without `mkdir -p`. Testing it in a scratch `HOME` caught it —
 > and testing the *advice* it gave uncovered R2's Anthropic key bug.
 
+> **Case file — the shebang that was only ever read.** `Scripting.md` and four shipped example
+> scripts start with `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`. Executed, the kernel
+> runs `jbang jfr-shell@btraceio script - ./analyze.jfrs app.jfr`: `-` read the caller's stdin
+> (nothing ran, exit 0) and `$1` was the script's own path, so with the script piped in, `open $1`
+> failed with `Invalid JFR Magic Number: 23212f75` (`#!/u`) — followed by "Script executed
+> successfully: 2 commands", because reported errors were not counted. Every example had only
+> been run as `jfr-shell script <file>`. Found by putting a stand-in `jbang` on `PATH` and running
+> the file through a real `#!` line; `ShellArtifactTest.shebangInvocationRunsTheScript` now passes
+> the kernel's argv.
+
 When you verify a doc command, verify the claim too: asset names were checked with `curl -o /dev/null
 -w "%{http_code}"` rather than assumed, which is how "there is no macOS release tarball" became a
 fact worth writing down.

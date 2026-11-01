@@ -20,11 +20,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers these commands and their arguments in every session type. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
+- **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
+  `script` used to be handed to jfr-shell, so `jafar-shell script heap.jfrs dump.hprof` parsed the
+  heap dump as a recording and answered `Invalid query: Unknown root: objects`. It now runs the
+  script through the same shell as the prompt, without a terminal: results on stdout, errors on
+  stderr, no banner or `Session 1 opened` lines, the interactive history untouched, exit status 1
+  if a line failed, and `--continue-on-error` as in `jfr-shell script`. `script --backend <id> ...`
+  still goes to jfr-shell, whose script command is the only one with a backend. Shebang scripts
+  written for `jbang jfr-shell@btraceio script -` are unaffected: that alias launches
+  `io.jafar.shell.Main` directly. A JFR-only script now gets the unified shell's semantics: the
+  same data, but other table layout, string values printed as `{name=G1New}`, and `${v.size}` of a
+  lazy `toMap()` variable counting rows — see
+  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `--backend` keeps the old route
+- **jfr-shell's non-query commands in `jafar-shell`.** With a recording current, `metadata` (and
+  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>` and `constants`/`cp` run as they do
+  in jfr-shell, instead of failing as queries; the shipped `basic-analysis.jfrs` runs end to end.
+  Bare `metadata` therefore prints jfr-shell's type listing rather than JfrPath's `metadata` rows;
+  `show metadata` and `metadata/<type>` are queries as before
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A script line that reports an error fails, in both shells.** A bad query, a missing session or
+  file, `use` of an unknown session and the like are reported by printing them, and `ScriptRunner`
+  only saw exceptions and unknown commands, so it counted those lines as successes: the script ran
+  on past the error, ended with `Script executed successfully`, and `jfr-shell script` exited 0.
+  `--continue-on-error` therefore had nothing to do for most failures. Each shell now records the
+  errors it reports (`ScriptRunner.ErrorTally`), and a line that reported one fails — fail-fast by
+  default, listed under `Script completed with errors:`, exit status 1 — which is what the scripting
+  guides already described. This applies to `jfr-shell script`, `script` at either prompt, and
+  `jafar-shell script`. A script that relied on running past a failing line needs
+  `--continue-on-error` (command line) now
+- **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
+  never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
+  stdin (the terminal, or nothing) and `$1` was the script's own path — piped in, `open $1` opened
+  the script as a recording. When the path is `-` and the first argument is a file starting with
+  `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
+  arguments as `$1`, `$2`, ...
 - **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
   `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
   conditional expression in the map parser promoted the `long` branch to `double`. Decimals are

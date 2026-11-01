@@ -66,15 +66,44 @@ Script executed successfully: 13 commands
 `samples` is `--global` so that it is still visible after `open $2` makes the heap dump current;
 it keeps evaluating against the recording.
 
+The same script runs without a prompt — from a file, or from stdin with `-`:
+
+```bash
+jafar-shell script cross.jfrs app.jfr app.hprof 4096
+jafar-shell script - app.jfr app.hprof < cross.jfrs
+```
+
+Results go to stdout and errors to stderr. As in `jfr-shell script`, the banner, the `Opening
+...`/`Session 1 opened` lines and the `Set x = ...` confirmations are left out, and the interactive
+history is not touched. The exit status is 1 if any line failed; `--continue-on-error` runs the
+remaining lines after a failure.
+
+**A JFR-only script behaves differently here.** `jafar-shell script f.jfrs ...` used to be handed
+to jfr-shell's command line; it now runs in the unified shell. The data a query returns is the
+same, but running the shipped examples both ways shows what changes:
+
+- Tables are drawn without the box and end with `(N rows)`; `info` prints its own layout.
+- String values in result tables print as the parser's wrapper, `{name=G1New}` or
+  `{string=java/lang/Object}`, where jfr-shell prints `G1New`.
+- A query variable is lazy, so `${v.size}` on a `toMap()` variable counts its one row:
+  `map-operations.jfrs` prints `GC stats entries: 1` here and `2` in jfr-shell.
+- The other rows of the table below: `show ${var} | ...`, `true`/`false`, `backend` and `record`.
+
+To keep jfr-shell's behaviour, give the script a backend — `jafar-shell script --backend jafar
+f.jfrs ...` still goes to jfr-shell's script command — or run it with `jfr-shell script`. Scripts
+with the shebang line `#!/usr/bin/env -S jbang jfr-shell@btraceio script -` are not affected: the
+`jfr-shell` jbang alias launches jfr-shell's own entry point (`io.jafar.shell.Main`), not this one.
+
 Where the two shells differ:
 
 | | `jfr-shell` | `jafar-shell` |
 |---|---|---|
 | Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
-| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file>` | `script <path> [args]` at the prompt (or piped in). `jafar-shell script <file>` on the command line is handed to the JFR command line, so it is JFR-only |
+| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|-> [args]` | `script <path> [args]` at the prompt, and `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line — both in this shell, so a script can open every format. `jafar-shell script --backend <id> ...` (or `-b`) still goes to jfr-shell's script command, the only one with a backend |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | not available at the `jafar-shell` prompt, so a script using them (`basic-analysis.jfrs` runs `metadata --summary`) reports that line as a query error and carries on |
+| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | `metadata` (with or without `--summary`, `--search`, ...), `chunks`, `chunk`, `constants`/`cp` run as in jfr-shell while a recording is the current session (`show metadata` and `metadata/<type>` stay JfrPath queries); `backend` and `record` are not available, so a line using them fails |
+| A failing line | stops the script (unless `--continue-on-error`), is listed, and makes `script` exit 1 | the same, at the prompt and on the command line |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
@@ -722,9 +751,12 @@ EOF
 jfr-shell script - /tmp/app.jfr < analysis.jfrs
 ```
 
+`jafar-shell script` takes the same arguments and runs the script in the unified shell, where it
+can open heap dumps and profiles too — see [In jafar-shell](#in-jafar-shell).
+
 ### Error Handling
 
-By default, script execution stops on the first error (fail-fast mode). Use `--continue-on-error` to execute all commands:
+By default, script execution stops on the first error (fail-fast mode). A line fails when it is not a command, when it throws, or when the shell reports an error for it — a query that does not parse, `No session open`, a file that is not there. Use `--continue-on-error` to execute all commands:
 
 ```bash
 # Stop on first error (default)
@@ -851,6 +883,12 @@ Add this line at the top of your script:
 ```
 
 This tells the shell to execute the script using JBang's jfr-shell distribution.
+
+Run as `./analyze.jfrs /tmp/app.jfr`, the kernel executes `jbang jfr-shell@btraceio script -
+./analyze.jfrs /tmp/app.jfr`. When the path is `-` and the first argument is a file whose first line
+starts with `#!`, `script` runs that file and passes the arguments after it as `$1`, `$2`, ... —
+so `$1` is `/tmp/app.jfr`, and stdin is not read. `jafar-shell script` does the same, so
+`#!/usr/bin/env -S jbang jafar-shell@btraceio script -` gives a script that can open any format.
 
 ### Making Scripts Executable
 
