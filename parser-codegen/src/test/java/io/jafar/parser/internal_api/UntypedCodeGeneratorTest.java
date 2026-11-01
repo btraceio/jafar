@@ -36,12 +36,15 @@ public class UntypedCodeGeneratorTest {
           }
         };
 
-    cache.put(1L, mockDeserializer);
+    io.jafar.parser.internal_api.metadata.MetadataFingerprint key =
+        io.jafar.parser.internal_api.metadata.MetadataFingerprint.compute(
+            new MutableMetadataLookup(), java.util.Collections.emptySet());
+    cache.put(key, mockDeserializer);
     assertEquals(1, cache.size(), "Cache should have one entry");
-    assertSame(mockDeserializer, cache.get(1L), "Should retrieve same instance");
+    assertSame(mockDeserializer, cache.get(key), "Should retrieve same instance");
 
     // Test computeIfAbsent
-    UntypedEventDeserializer d2 = cache.computeIfAbsent(1L, id -> null);
+    UntypedEventDeserializer d2 = cache.computeIfAbsent(key, id -> null);
     assertSame(mockDeserializer, d2, "computeIfAbsent should return existing value");
   }
 

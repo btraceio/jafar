@@ -3,6 +3,7 @@ package io.jafar.parser.internal_api;
 import io.jafar.parser.api.Internal;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.UntypedStrategy;
+import io.jafar.parser.impl.ArrayHolder;
 import io.jafar.parser.impl.LazyEventMap;
 import io.jafar.parser.impl.LazyMapValueBuilder;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -481,14 +482,30 @@ public final class UntypedCodeGenerator {
       String className,
       Set<MetadataClass> nestedTypes) {
 
-    MetadataClass fieldType = field.getType();
-
     // Handle arrays
     if (field.getDimension() == 1) {
       generateArrayRead(mv, field, streamVar, contextVar, className, nestedTypes);
-      // Stack: [..., Object[]] (array as Object)
+      // Stack: [..., ArrayHolder]
       return;
     }
+    generateValueRead(mv, field, streamVar, contextVar, className, nestedTypes);
+  }
+
+  /**
+   * Generates bytecode to read one value of the field's type, ignoring its dimension: the value of
+   * a scalar field, or one element of an array field.
+   *
+   * <p>Exit: Stack has one additional element: the value
+   */
+  private static void generateValueRead(
+      MethodVisitor mv,
+      MetadataField field,
+      int streamVar,
+      int contextVar,
+      String className,
+      Set<MetadataClass> nestedTypes) {
+
+    MetadataClass fieldType = field.getType();
 
     // Handle constant pool references - wrap in ConstantPoolAccessor for lazy resolution
     if (field.hasConstantPool()) {
@@ -526,8 +543,10 @@ public final class UntypedCodeGenerator {
       return;
     }
 
-    // Handle nested complex objects (inline deserialization via helper method)
-    if (!fieldType.isSimpleType() && !fieldType.isPrimitive()) {
+    // Handle nested complex objects (inline deserialization via helper method). Simple types (a
+    // class wrapping one value, e.g. a counter name) are complex values too: GenericValueReader
+    // decodes every non-primitive type as a nested map.
+    if (!fieldType.isPrimitive()) {
       nestedTypes.add(fieldType); // Register for helper generation
       generateNestedObjectInline(mv, fieldType, streamVar, contextVar, className);
       // Stack: [..., Map<String,Object>]
@@ -550,11 +569,32 @@ public final class UntypedCodeGenerator {
         false);
     // Stack: [..., primitive_or_String]
 
+    // Narrow varints exactly as GenericValueReader.readSingleValue does.
+    Type primitiveType = returnType;
+    switch (fieldType.getName()) {
+      case "int":
+        // The varint carries the 32 bit two's complement value: truncate, then sign extend.
+        mv.visitInsn(Opcodes.L2I);
+        mv.visitInsn(Opcodes.I2L);
+        break;
+      case "short":
+        mv.visitInsn(Opcodes.L2I);
+        mv.visitInsn(Opcodes.I2S);
+        primitiveType = Type.SHORT_TYPE;
+        break;
+      case "char":
+        mv.visitInsn(Opcodes.L2I);
+        mv.visitInsn(Opcodes.I2C);
+        primitiveType = Type.CHAR_TYPE;
+        break;
+      default:
+        break;
+    }
+
     // Box primitives (but not String - String is already an object)
     if (returnType.getSort() != Type.OBJECT && returnType.getSort() != Type.ARRAY) {
       // Stack: [..., primitive]
       Class<?> wrapperClass = getWrapperClass(fieldType);
-      Type primitiveType = returnType;
       mv.visitMethodInsn(
           Opcodes.INVOKESTATIC,
           Type.getInternalName(wrapperClass),
@@ -671,7 +711,15 @@ public final class UntypedCodeGenerator {
     }
   }
 
-  /** Generates array reading bytecode. */
+  /**
+   * Generates array reading bytecode, producing an {@link ArrayHolder} like the generic reader's
+   * value builders do.
+   *
+   * <p>Arrays of a primitive JFR type (including strings) are read in one call to {@link
+   * ArrayHolder#read}, which stores the elements unboxed. Arrays of complex values and constant
+   * pool references are read element by element into an {@code Object[]} and wrapped with {@link
+   * ArrayHolder#wrap}.
+   */
   private static void generateArrayRead(
       MethodVisitor mv,
       MetadataField field,
@@ -680,7 +728,28 @@ public final class UntypedCodeGenerator {
       String className,
       Set<MetadataClass> nestedTypes) {
     // Entry: Stack: [...] (depends on caller)
-    // Exit: Stack: [..., Object[]]
+    // Exit: Stack: [..., ArrayHolder]
+    String holder = Type.getInternalName(ArrayHolder.class);
+    String elementType = field.getType().getName();
+
+    if (field.getType().isPrimitive() && !field.hasConstantPool()) {
+      // return ArrayHolder.read(stream, elementType);
+      mv.visitVarInsn(Opcodes.ALOAD, streamVar);
+      // Stack: [..., RecordingStream]
+      mv.visitLdcInsn(elementType);
+      // Stack: [..., RecordingStream, String]
+      mv.visitMethodInsn(
+          Opcodes.INVOKESTATIC,
+          holder,
+          "read",
+          Type.getMethodDescriptor(
+              Type.getType(ArrayHolder.class),
+              Type.getType(RecordingStream.class),
+              Type.getType(String.class)),
+          false);
+      // Stack: [..., ArrayHolder]
+      return;
+    }
 
     // int len = (int) stream.readVarint();
     // Stack: [...]
@@ -700,7 +769,6 @@ public final class UntypedCodeGenerator {
     // Stack: [...]
 
     // Object[] array = new Object[len];
-    // Stack: [...]
     mv.visitVarInsn(Opcodes.ILOAD, lenVar);
     // Stack: [..., int]
     mv.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Object.class));
@@ -710,9 +778,7 @@ public final class UntypedCodeGenerator {
     // Stack: [...]
 
     // for (int i = 0; i < len; i++)
-    // Stack: [...]
     mv.visitInsn(Opcodes.ICONST_0);
-    // Stack: [..., int]
     int iVar = arrayVar + 1;
     mv.visitVarInsn(Opcodes.ISTORE, iVar); // i
     // Stack: [...]
@@ -721,40 +787,44 @@ public final class UntypedCodeGenerator {
     Label loopEnd = new Label();
 
     mv.visitLabel(loopStart);
-    // Loop iteration starts
     // Stack: [...]
-    mv.visitVarInsn(Opcodes.ILOAD, iVar); // i
-    // Stack: [..., int]
-    mv.visitVarInsn(Opcodes.ILOAD, lenVar); // len
+    mv.visitVarInsn(Opcodes.ILOAD, iVar);
+    mv.visitVarInsn(Opcodes.ILOAD, lenVar);
     // Stack: [..., int, int]
-    mv.visitJumpInsn(Opcodes.IF_ICMPGE, loopEnd); // if i >= len goto loopEnd
-    // Stack: [...] (comparison consumed both ints)
-
-    // array[i] = readElement(stream);
+    mv.visitJumpInsn(Opcodes.IF_ICMPGE, loopEnd);
     // Stack: [...]
-    mv.visitVarInsn(Opcodes.ALOAD, arrayVar); // Load array
-    // Stack: [..., Object[]]
-    mv.visitVarInsn(Opcodes.ILOAD, iVar); // Load index
+
+    // array[i] = <one element>;
+    mv.visitVarInsn(Opcodes.ALOAD, arrayVar);
+    mv.visitVarInsn(Opcodes.ILOAD, iVar);
     // Stack: [..., Object[], int]
-
-    // Read array element using the field's type (arrays are already reduced to element type)
-    generateFieldRead(mv, field, streamVar, contextVar, className, nestedTypes);
-    // Stack: [..., Object[], int, Object] (after generateFieldRead returns)
-    mv.visitInsn(Opcodes.AASTORE); // array[i] = value
-    // Stack: [...] (Opcodes.AASTORE consumes array, index, and value)
-
-    // i++
+    // Read one element: the field's value type, not the array again.
+    generateValueRead(mv, field, streamVar, contextVar, className, nestedTypes);
+    // Stack: [..., Object[], int, Object]
+    mv.visitInsn(Opcodes.AASTORE);
     // Stack: [...]
-    mv.visitIincInsn(iVar, 1); // i++ (doesn't affect stack)
-    // Stack: [...]
+
+    mv.visitIincInsn(iVar, 1); // i++
     mv.visitJumpInsn(Opcodes.GOTO, loopStart);
-    // Stack: [...]
 
     mv.visitLabel(loopEnd);
-    // Loop ended
     // Stack: [...]
-    mv.visitVarInsn(Opcodes.ALOAD, arrayVar); // Load array as result
-    // Stack: [..., Object[]]
+
+    // ArrayHolder.wrap(elementType, array)
+    mv.visitLdcInsn(elementType);
+    // Stack: [..., String]
+    mv.visitVarInsn(Opcodes.ALOAD, arrayVar);
+    // Stack: [..., String, Object[]]
+    mv.visitMethodInsn(
+        Opcodes.INVOKESTATIC,
+        holder,
+        "wrap",
+        Type.getMethodDescriptor(
+            Type.getType(ArrayHolder.class),
+            Type.getType(String.class),
+            Type.getType(Object[].class)),
+        false);
+    // Stack: [..., ArrayHolder]
   }
 
   /** Pushes an integer constant onto the stack (handles Opcodes.BIPUSH, Opcodes.SIPUSH, LDC). */
@@ -779,9 +849,8 @@ public final class UntypedCodeGenerator {
       case "boolean":
         return "readBoolean";
       case "short":
-        return "readShort";
       case "char":
-        return "readShort"; // char stored as short in JFR
+        return "readVarint"; // varint encoded, like int and long
       case "int":
         return "readVarint";
       case "long":
@@ -807,7 +876,6 @@ public final class UntypedCodeGenerator {
         return Type.BOOLEAN_TYPE;
       case "short":
       case "char":
-        return Type.SHORT_TYPE;
       case "int":
       case "long":
         return Type.LONG_TYPE; // varint returns long

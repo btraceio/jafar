@@ -89,6 +89,20 @@ looks identical to the file not being read at all.
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
 > the jar manifest's `Implementation-Version`, which the shadow-jar build stamps, so it cannot drift.
 
+> **Case file — a whole decode path behind one `catch`.** `EventStreamGenerated.onEvent` caught
+> every `Exception` and returned the delegate's answer, which with no delegate is `false`, and
+> `StreamingChunkParser` treats `false` as "skip the rest of the chunk". Behind it, the generated
+> untyped path was broken four ways at once: generation recursed to `StackOverflowError` on any
+> array field, threw `Unsupported field type` on simple types, emitted `Character.valueOf(short)`
+> (`NoSuchMethodError`) for `char`, and the deserializer cache was keyed by chunk-scoped type id, so
+> a later chunk decoded with an earlier chunk's deserializer. None of it was visible: on
+> `tck-test.jfr` the path delivered 16,095 of 67,657 events, with whole types (`jdk.GCHeapSummary`,
+> 1,892 → 0) silently gone. Each fix only exposed the next failure once the `catch` stopped hiding
+> it. The net that found them: decode the same recording through the generic reader and the
+> generated path and compare **counts per event type** and values (`GeneratedUntypedArrayParityTest`,
+> `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
+> types.
+
 > **Case file — half an event, then silence; or half an event, then a crash.** `EventStream.onEvent`
 > (what `UntypedJafarParser` always uses), and its benchmark-only twins `EventStreamLazy` and
 > `EventStreamBaseline`, handed the half-built map to the handler from a `finally`, then, for an
@@ -365,3 +379,10 @@ java -XX:StartFlightRecording=duration=10s,filename=/tmp/spin.jfr,settings=profi
 ```
 
 `./get_resources.sh` downloads the full set from Dropbox where the network allows it.
+
+> **Case file — the recording that was a web page.** On 2026-11-01 Dropbox answered every link in
+> `get_resources.sh` with HTTP 200 and an HTML page titled "Dropbox - Link Temporarily Disabled".
+> The script saved it as `test-dd.jfr` and exited 0. CI caches only `test-ap.jfr` and `test-jfr.jfr`,
+> so `test-dd.jfr` was fetched fresh, and three `jfr-mcp` tests failed on assertions about MCP tool
+> results; the cause, `Invalid JFR Magic Number: 3c21444f` (`<!DO`), was only in the test's stderr.
+> The script now refuses any file without the `FLR\0` magic and says what it got instead.

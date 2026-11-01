@@ -60,10 +60,10 @@ import org.openjdk.jmc.flightrecorder.writer.api.Types;
  * UntypedJafarParser#onDecodeError} returning {@code true} the bad event alone is skipped.
  */
 class EventDecodeFailureTest {
-  private static final String TYPE = "test.Corruptible";
-  private static final int EVENTS = 20;
-  private static final int BAD = 7;
-  private static final String MARKER = "CORRUPT_THIS_LABEL";
+  static final String TYPE = "test.Corruptible";
+  static final int EVENTS = 20;
+  static final int BAD = 7;
+  static final String MARKER = "CORRUPT_THIS_LABEL";
 
   /** No JFR string encoding uses this id (0..5 are defined). */
   private static final byte BAD_ENCODING = 0x7f;
@@ -567,6 +567,15 @@ class EventDecodeFailureTest {
   }
 
   private Path corrupted(Corruption corruption) throws Exception {
+    return corrupted(dir, corruption);
+  }
+
+  /**
+   * Writes the fixture for {@code corruption} into {@code dir}, corrupts event {@value #BAD} and
+   * returns the corrupted file; the clean twin stays at {@code clean-<corruption>.jfr}. Shared with
+   * {@code parser-codegen}'s tests of the generated path.
+   */
+  static Path corrupted(Path dir, Corruption corruption) throws Exception {
     Path clean = dir.resolve("clean-" + corruption + ".jfr");
     if (corruption == Corruption.ARRAY_ELEMENT) {
       writeWithItems(clean);
@@ -597,7 +606,7 @@ class EventDecodeFailureTest {
   }
 
   /** File offset and size of each {@value #TYPE} event, in order (one chunk, starting at 0). */
-  private static List<long[]> eventExtents(Path jfr) throws Exception {
+  static List<long[]> eventExtents(Path jfr) throws Exception {
     List<long[]> extents = Collections.synchronizedList(new ArrayList<>());
     try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
       p.withParserListener(
