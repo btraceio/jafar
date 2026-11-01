@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field. Shells dispatch commands on one thread, so this needed concurrent access to a
+  variable to show
 - **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
   taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
   expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
