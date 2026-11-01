@@ -7,19 +7,30 @@ import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 /**
  * Lazy query value using flyweight pattern. Stores the query and a weak reference to the session.
  * Evaluation happens on-demand when get() is called, with caching of the result.
  *
- * <p>Thread-safe. The cache is one volatile slot holding the rows or a sentinel, so a reader sees
- * either rows or "not evaluated" — never the "evaluated" flag of one state with the rows of
- * another, which two separate volatiles allowed (a read racing {@link #invalidate} could return
- * {@code null}). A cached read takes no lock; evaluation is serialized.
+ * <p>Thread-safe. The cache is one volatile slot holding the rows or a "not evaluated" token, so a
+ * reader sees either rows or "not evaluated" — never the "evaluated" flag of one state with the
+ * rows of another, which two separate volatiles allowed (a read racing {@link #invalidate} could
+ * return {@code null}). Every {@link #invalidate} and {@link #release} installs a fresh token, and
+ * an evaluation publishes its rows only by compare-and-set against the token it started from, so an
+ * evaluation still running when the value is invalidated or released cannot put its rows back.
+ * Neither takes a lock or waits for an evaluation. A cached read takes no lock; evaluation is
+ * serialized.
  */
 public final class LazyQueryValue implements VariableStore.LazyValue {
-  /** The cache slot before evaluation, and after invalidation or release. */
-  private static final Object NOT_EVALUATED = new Object();
+  /**
+   * "Not evaluated". A new one is installed by every invalidation, so an evaluation can tell
+   * whether the slot it started from is still there.
+   */
+  private static final class Unevaluated {}
+
+  private static final AtomicReferenceFieldUpdater<LazyQueryValue, Object> CACHE =
+      AtomicReferenceFieldUpdater.newUpdater(LazyQueryValue.class, Object.class, "cache");
 
   /** Stands for an evaluation that returned {@code null}, which still counts as evaluated. */
   private static final Object NULL_RESULT = new Object();
@@ -27,7 +38,7 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
   private final Query query;
   private final WeakReference<SessionRef<JFRSession>> sessionRef;
   private final String queryString;
-  private volatile Object cache = NOT_EVALUATED;
+  private volatile Object cache = new Unevaluated();
 
   public LazyQueryValue(Query query, SessionRef<JFRSession> session, String queryString) {
     this.query = query;
@@ -47,19 +58,22 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
       throw new IllegalStateException("Cannot copy LazyQueryValue: session no longer available");
     }
     LazyQueryValue copy = new LazyQueryValue(query, ref, queryString);
-    copy.cache = cache; // one read: the rows, or not evaluated
+    Object c = cache; // one read: the rows, or not evaluated
+    if (!(c instanceof Unevaluated)) {
+      copy.cache = c;
+    }
     return copy;
   }
 
   @Override
   public Object get() throws Exception {
     Object c = cache;
-    if (c != NOT_EVALUATED) {
+    if (!(c instanceof Unevaluated)) {
       return c == NULL_RESULT ? null : c;
     }
     synchronized (this) {
       c = cache;
-      if (c != NOT_EVALUATED) {
+      if (!(c instanceof Unevaluated)) {
         return c == NULL_RESULT ? null : c;
       }
       SessionRef<JFRSession> ref = sessionRef.get();
@@ -71,14 +85,16 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
       }
       JfrPathEvaluator evaluator = new JfrPathEvaluator();
       Object result = evaluator.evaluate(ref.session, query);
-      cache = result == null ? NULL_RESULT : result;
+      // Only if nothing invalidated or released this value meanwhile; the caller still gets the
+      // rows it asked for either way.
+      CACHE.compareAndSet(this, c, result == null ? NULL_RESULT : result);
       return result;
     }
   }
 
   @Override
   public void invalidate() {
-    cache = NOT_EVALUATED;
+    cache = new Unevaluated();
   }
 
   /** Sets the cached result directly (used for eager evaluation). */
@@ -88,7 +104,7 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
 
   @Override
   public boolean isCached() {
-    return cache != NOT_EVALUATED;
+    return !(cache instanceof Unevaluated);
   }
 
   /**
@@ -133,7 +149,7 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
 
   @Override
   public void release() {
-    cache = NOT_EVALUATED;
+    cache = new Unevaluated();
     sessionRef.clear();
   }
 
@@ -146,7 +162,7 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
       status = " (session gone)";
     } else if (ref.session.isClosed()) {
       status = " (closed)";
-    } else if (c != NOT_EVALUATED) {
+    } else if (!(c instanceof Unevaluated)) {
       int size = c instanceof List<?> list ? list.size() : 1;
       status = " (cached: " + size + " rows)";
     } else {
