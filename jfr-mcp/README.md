@@ -102,7 +102,7 @@ same time, which is what makes cross-format correlation possible.
 
 | Tool | Description |
 |------|-------------|
-| `pprof_open` / `pprof_close` | Session management |
+| `pprof_open` / `pprof_close` | Session management. Accepts gzipped and uncompressed profiles, detected from the content rather than the extension |
 | `pprof_query` | Execute PprofPath queries |
 | `pprof_summary` | Profile overview |
 | `pprof_flamegraph` | Aggregated stack data |
