@@ -204,16 +204,18 @@ public final class TuiCommandExecutor {
     if (!SecretCommands.setsSecret(command)) {
       ctx.commandHistory.add(command);
     }
-    ctx.lastCommand = command;
+    // What the screen shows of the command: a credential's value is hidden from tab names and echo
+    String shown = SecretCommands.hideValue(command);
+    ctx.lastCommand = shown;
 
     int currentIdx = findUnpinnedTab();
     if (currentIdx < 0) {
-      ctx.tabs.add(new ResultTab(command));
+      ctx.tabs.add(new ResultTab(shown));
       currentIdx = ctx.tabs.size() - 1;
     }
     ctx.activeTabIndex = currentIdx;
     ResultTab activeTab = ctx.activeTab();
-    activeTab.name = command;
+    activeTab.name = shown;
     activeTab.marqueeTick0 = ctx.renderTick;
     activeTab.lines.clear();
     activeTab.scrollOffset = 0;
@@ -334,7 +336,7 @@ public final class TuiCommandExecutor {
     }
 
     // Echo command
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
 
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
@@ -405,7 +407,7 @@ public final class TuiCommandExecutor {
   /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
   private void submitAdapterCommand(String command, CommandDescriptor desc) {
     ResultTab activeTab = ctx.activeTab();
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
     ctx.asyncMaxLineWidth = 0;

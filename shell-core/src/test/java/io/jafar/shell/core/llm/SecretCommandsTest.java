@@ -59,4 +59,26 @@ class SecretCommandsTest {
     assertTrue(LlmSettings.isSetting("llm.api-key"));
     assertFalse(LlmSettings.isSecret("llm.backend"));
   }
+
+  @Test
+  void masksTheKeyButShowsWhichOneItIs() {
+    assertEquals("<hidden, ends in \"REAL\">", SecretCommands.mask("sk-proj-0123456789-REAL"));
+    assertEquals("<hidden>", SecretCommands.mask("short-key-12345")); // 15 chars: too short
+    assertEquals("\"\"", SecretCommands.mask(""));
+    assertEquals(
+        "<hidden, ends in \"REAL\">",
+        SecretCommands.describe(
+            "llm.api-key", new io.jafar.shell.core.VariableStore.ScalarValue("sk-proj-0123-REAL")));
+    var backend = new io.jafar.shell.core.VariableStore.ScalarValue("ollama");
+    assertEquals(backend.describe(), SecretCommands.describe("llm.backend", backend));
+  }
+
+  @Test
+  void hidesTheValueInAnEchoedLine() {
+    assertEquals(
+        "set --global llm.api-key = <hidden>",
+        SecretCommands.hideValue("  set --global llm.api-key = sk-SECRET"));
+    String other = "set llm.backend = ollama";
+    assertSame(other, SecretCommands.hideValue(other));
+  }
 }

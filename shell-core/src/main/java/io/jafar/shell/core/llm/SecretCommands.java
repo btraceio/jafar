@@ -1,9 +1,11 @@
 package io.jafar.shell.core.llm;
 
+import io.jafar.shell.core.VariableStore;
+
 /**
  * Recognises a command line that assigns a credential setting ({@link LlmSettings#isSecret}), so
- * the places that keep typed lines — command recordings, the shells' history files — can leave its
- * value out.
+ * the places that keep or show typed lines — command recordings, history files, the TUI's echo —
+ * can leave its value out; and shows such a setting's stored value masked.
  *
  * <p>Follows both shells' {@code set} parsing: {@code set} or {@code let} in any case, optionally
  * {@code --global}, then the name is the last word before the first {@code =}. A line that is not a
@@ -31,6 +33,48 @@ public final class SecretCommands {
     }
     return "# " + line.substring(firstNonSpace(line), eq + 1) + " <redacted: not recorded>";
   }
+
+  /**
+   * {@code set llm.api-key = sk-...} as {@code set llm.api-key = <hidden>}, for echoing a typed
+   * line back on screen; any other line is returned as is (the same instance).
+   */
+  public static String hideValue(String line) {
+    int eq = secretAssignment(line);
+    return eq < 0 ? line : line.substring(firstNonSpace(line), eq + 1) + " " + HIDDEN;
+  }
+
+  /**
+   * How {@code set}'s confirmation and {@code vars} show a variable: {@link
+   * VariableStore.Value#describe()}, except a credential setting, whose value is masked (see {@link
+   * #mask}).
+   */
+  public static String describe(String name, VariableStore.Value value) {
+    if (!LlmSettings.isSecret(name)) {
+      return value.describe();
+    }
+    return value instanceof VariableStore.ScalarValue scalar
+        ? mask(String.valueOf(scalar.value()))
+        : HIDDEN;
+  }
+
+  /**
+   * {@code <hidden, ends in "REAL">} for a value long enough that its last four characters say
+   * which key it is without giving it away (as provider dashboards show keys), {@code <hidden>} for
+   * a shorter one, and {@code ""} for an empty one — nothing is set, so nothing is hidden.
+   */
+  public static String mask(String value) {
+    if (value == null || value.isEmpty()) {
+      return "\"\"";
+    }
+    if (value.length() < MIN_LENGTH_TO_SHOW_TAIL) {
+      return HIDDEN;
+    }
+    return "<hidden, ends in \"" + value.substring(value.length() - 4) + "\">";
+  }
+
+  private static final String HIDDEN = "<hidden>";
+  // Below this, four characters would be a large part of the secret.
+  private static final int MIN_LENGTH_TO_SHOW_TAIL = 16;
 
   /** The index of the {@code =} of a credential assignment, or -1 if the line is not one. */
   private static int secretAssignment(String line) {

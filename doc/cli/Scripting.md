@@ -824,8 +824,11 @@ A `set` or `let` of `llm.api-key` is recorded without its value, as a comment â€
 whatever key the person replaying it has configured. The line is kept out of the shell's history
 too (`~/.jfr-shell/history`, `~/.jafar-shell/history`, also used by `--tui`), so the up arrow does
 not bring it back; a key line saved there by an earlier version is removed the next time the shell
-starts. The key is still echoed on screen when you set it, so for a key you use often prefer
-`~/.config/jafar/llm.properties` or the provider's environment variable.
+starts. The shells do not print it back either: `set`'s confirmation, `vars` and `vars --info` show
+`<hidden, ends in "TAIL">` (the last four characters, for a value of 16 or more) or `<hidden>`, and
+the TUI shows `set llm.api-key = <hidden>` in its tab names and echo. What you type is still visible
+while you type it, so for a key you use often prefer `~/.config/jafar/llm.properties` or the
+provider's environment variable.
 
 You can execute this script directly:
 
