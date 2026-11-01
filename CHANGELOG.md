@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
+  true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
+  the condition evaluator handled only scalars and query results and treated every other value
+  as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
+  empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
+  evaluator)
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that

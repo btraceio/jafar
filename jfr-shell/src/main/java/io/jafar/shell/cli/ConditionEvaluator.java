@@ -269,6 +269,10 @@ public final class ConditionEvaluator {
       return false;
     }
 
+    if (val instanceof VariableStore.MapValue mv) {
+      return mv.value().isEmpty();
+    }
+
     if (val instanceof LazyQueryValue lqv) {
       return lqv.size() == 0;
     }

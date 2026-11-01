@@ -3,6 +3,7 @@ package io.jafar.shell.cli;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.shell.core.VariableStore;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -322,5 +323,26 @@ class ConditionEvaluatorTest {
   @Test
   void testParentheses_ContainsWithParens() throws Exception {
     assertTrue(evaluator.evaluate("(\"test\" contains \"es\")"));
+  }
+
+  // ==================== empty() on map values ====================
+
+  @Test
+  void testEmpty_NonEmptyMapIsNotEmpty() throws Exception {
+    sessionStore.set("m", new VariableStore.MapValue(Map.of("a", 1, "b", 2)));
+    assertFalse(evaluator.evaluate("empty(m)"));
+    assertTrue(evaluator.evaluate("!empty(m)"));
+  }
+
+  @Test
+  void testEmpty_EmptyMapIsEmpty() throws Exception {
+    sessionStore.set("m", new VariableStore.MapValue(Map.of()));
+    assertTrue(evaluator.evaluate("empty(m)"));
+  }
+
+  @Test
+  void testEmpty_NonEmptyGlobalMapIsNotEmpty() throws Exception {
+    globalStore.set("g", new VariableStore.MapValue(Map.of("k", "v")));
+    assertFalse(evaluator.evaluate("empty(g)"));
   }
 }
