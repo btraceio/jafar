@@ -91,7 +91,7 @@ parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         // Direct map access
         String path = (String) value.get("path");
-        Long bytes = (Long) value.get("bytes");
+        Long bytes = (Long) value.get("bytesRead");
 
         // Or use Values helper (null-safe)
         Object pathObj = Values.get(value, "path");
@@ -111,7 +111,7 @@ parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         // Type-safe access
         String path = Values.as(value, String.class, "path").orElse("unknown");
-        long bytes = Values.as(value, Long.class, "bytes").orElse(0L);
+        long bytes = Values.as(value, Long.class, "bytesRead").orElse(0L);
 
         System.out.printf("Read %d bytes from %s%n", bytes, path);
     }
@@ -609,7 +609,7 @@ Map<String, AtomicLong> fileStats = new ConcurrentHashMap<>();
 parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         String path = (String) value.get("path");
-        Long bytes = (Long) value.get("bytes");
+        Long bytes = (Long) value.get("bytesRead");
 
         if (path != null && bytes != null) {
             fileStats.computeIfAbsent(path, k -> new AtomicLong())
@@ -687,7 +687,7 @@ public class IOAnalyzer {
                                        .orElse("unknown");
 
                     // Extract bytes
-                    long bytes = Values.as(value, Long.class, "bytes")
+                    long bytes = Values.as(value, Long.class, "bytesRead")
                                       .orElse(0L);
 
                     // Count by file

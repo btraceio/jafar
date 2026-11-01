@@ -262,10 +262,10 @@ events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
 
 # === I/O Analysis ===
-events/jdk.FileRead | sum(bytes)
-events/jdk.FileWrite | sum(bytes)
-events/jdk.SocketRead | sum(bytes)
-events/jdk.SocketWrite | sum(bytes)
+events/jdk.FileRead | sum(bytesRead)
+events/jdk.FileWrite | sum(bytesWritten)
+events/jdk.SocketRead | sum(bytesRead)
+events/jdk.SocketWrite | sum(bytesWritten)
 
 # === GC Analysis ===
 events/jdk.GarbageCollection | stats(duration)
@@ -391,9 +391,9 @@ Create a script that:
 
 open $1
 
-events/jdk.FileRead[bytes>=$2] --limit 20
-events/jdk.FileRead | sum(bytes)
-events/jdk.FileWrite | sum(bytes)
+events/jdk.FileRead[bytesRead>=$2] --limit 20
+events/jdk.FileRead | sum(bytesRead)
+events/jdk.FileWrite | sum(bytesWritten)
 
 close
 ```
@@ -487,24 +487,16 @@ Create a script that uses computed expressions to transform and format output:
 open $1
 
 # File reads with computed fields
-events/jdk.FileRead | select(
-  path,
-  bytes / 1024 as kilobytes,
-  if(bytes > 1048576, 'large', if(bytes > 1024, 'medium', 'small')) as size_category,
-  duration / 1000 as milliseconds
-) --limit 20
+events/jdk.FileRead | select(path, bytesRead / 1024 as kilobytes, if(bytesRead, 'has data', 'empty') as status, duration / 1000000 as milliseconds) --limit 20
 
 # Summarize with expressions
-events/jdk.FileRead | select(
-  bytes / 1024 as kb,
-  duration
-) | stats(kb)
+events/jdk.FileRead | select(bytesRead / 1024 as kb, duration) | stats(kb)
 
 # Group with computed keys
-events/jdk.FileRead | select(
-  if(bytes > 1048576, '>1MB', if(bytes > 10240, '>10KB', '<10KB')) as category,
-  path
-) | groupBy(category)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status, path) | groupBy(status)
+
+# Count by size threshold (if() takes no comparisons, so filter instead)
+events/jdk.FileRead[bytesRead>1048576] | count()
 
 close
 ```
@@ -515,9 +507,8 @@ Usage:
 ```
 
 This demonstrates:
-- Arithmetic expressions: `bytes / 1024`
-- Nested conditionals: `if(condition, if(...))`
-- String functions and concatenation
+- Arithmetic expressions: `bytesRead / 1024`
+- Conditionals on non-zero values: `if(field, a, b)`
 - Using computed fields in aggregations
 </details>
 

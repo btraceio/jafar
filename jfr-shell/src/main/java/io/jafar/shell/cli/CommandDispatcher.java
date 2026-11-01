@@ -1534,7 +1534,7 @@ public class CommandDispatcher {
       io.println("Examples:");
       io.println("  events                                    # browse all event types");
       io.println("  events/jdk.FileRead --limit 10            # list events");
-      io.println("  events/jdk.FileRead[bytes>1024] --limit 5 # filter events");
+      io.println("  events/jdk.FileRead[bytesRead>1024] --limit 5 # filter events");
       io.println("  events/jdk.FileRead | count()             # aggregate");
       io.println("");
       io.println("Type 'help show' for full JfrPath query syntax.");
@@ -1602,7 +1602,7 @@ public class CommandDispatcher {
       io.println("      Examples:");
       io.println("        | select(path, bytes / 1024 as kb)");
       io.println("        | select(path + ' (' + bytes + ')' as description)");
-      io.println("        | select(\"${path} (${bytes} bytes)\" as description)");
+      io.println("        | select(\"${path} (${bytesRead} bytes)\" as description)");
       io.println("        | select(if(bytes > 1000, 'large', 'small') as size)");
       io.println(
           "    | toMap(keyField, valueField) → convert rows to map (last value wins for duplicates)");
@@ -1636,22 +1636,22 @@ public class CommandDispatcher {
       io.println("");
       io.println("Examples (grouped by use case):");
       io.println("  Basic event queries:");
-      io.println("    events/jdk.FileRead[bytes>=1000] --limit 5");
+      io.println("    events/jdk.FileRead[bytesRead>=1000] --limit 5");
       io.println("    events/jdk.ExecutionSample[thread/name~\"main\"] --limit 10");
       io.println("  Aggregations:");
       io.println("    events/jdk.FileRead | count()");
-      io.println("    events/jdk.FileRead/bytes | sum()");
-      io.println("    events/jdk.FileRead/bytes | stats()");
+      io.println("    events/jdk.FileRead/bytesRead | sum()");
+      io.println("    events/jdk.FileRead/bytesRead | stats()");
       io.println("    events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println(
           "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count desc");
       io.println(
           "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  # alphabetical");
-      io.println("    events/jdk.FileRead | top(10, by=bytes)");
+      io.println("    events/jdk.FileRead | top(10, by=bytesRead)");
       io.println("    events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");
-      io.println("    events/jdk.FileRead | select(path, bytes / 1024 as kilobytes)");
-      io.println("    events/jdk.FileRead | select(\"${path} (${bytes} bytes)\" as info)");
+      io.println("    events/jdk.FileRead | select(path, bytesRead / 1024 as kilobytes)");
+      io.println("    events/jdk.FileRead | select(\"${path} (${bytesRead} bytes)\" as info)");
       io.println("  Metadata:");
       io.println("    show metadata/java.lang.Thread");
       io.println("    show metadata/jdk.types.StackTrace --tree --depth 2");
@@ -1750,7 +1750,7 @@ public class CommandDispatcher {
       io.println("  - Numbers: set count = 42");
       io.println("  - Map literals: set config = {\"key\": \"value\", \"count\": 42}");
       io.println("  - Variable copies: set backup = original or set backup = $original");
-      io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytes>1000]");
+      io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytesRead>1000]");
       io.println("");
       io.println("Options:");
       io.println("  --global  Store in global scope (persists across sessions)");
@@ -1775,7 +1775,7 @@ public class CommandDispatcher {
       io.println("");
       io.println("Examples:");
       io.println("  set threshold = 1000");
-      io.println("  set bigReads = events/jdk.FileRead[bytes>${threshold}]");
+      io.println("  set bigReads = events/jdk.FileRead[bytesRead>${threshold}]");
       io.println("  set config = {\"threshold\": 1000, \"pattern\": \".*Error.*\"}");
       io.println("  echo Threshold: ${config.threshold}");
       io.println("  set --global myPattern = \".*Exception.*\"");
@@ -1845,7 +1845,7 @@ public class CommandDispatcher {
       io.println("  open $1");
       io.println("  set limit = ${2:-100}      # Default to 100 if not provided");
       io.println("  set format = ${3:-table}   # Default to table");
-      io.println("  events/jdk.FileRead[bytes>=${limit}] --format ${format}");
+      io.println("  events/jdk.FileRead[bytesRead>=${limit}] --format ${format}");
       io.println("  close");
       io.println("");
       io.println("  # Required parameter with error");

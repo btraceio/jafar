@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * open $1
  * set limit = ${2:-100}
  * set format = ${3:-table}
- * show events/jdk.FileRead[bytes>=1000] --limit ${limit} --format ${format}
+ * show events/jdk.FileRead[bytesRead>=1000] --limit ${limit} --format ${format}
  * close
  * </pre>
  */

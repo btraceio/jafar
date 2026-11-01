@@ -40,7 +40,7 @@ jfr> show metadata/jdk.types.StackTrace --tree --depth 2
 jfr> show metadata/jdk.types.Method/fields/name --tree
 
 # Events example (values projection)
-jfr> events/jdk.FileRead/bytes --limit 5
+jfr> events/jdk.FileRead/bytesRead --limit 5
 ```
 
 ## Available Commands
@@ -137,10 +137,10 @@ jfr-shell constants <jfr-file> [options]
 jfr-shell show recording.jfr "events/jdk.ExecutionSample | count()"
 
 # Top 10 files by bytes, JSON output
-jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json
+jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytesRead)" --format json
 
 # Group execution samples by thread
-jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)"
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)"
 
 # List event types only
 jfr-shell metadata recording.jfr --events-only
@@ -207,8 +207,8 @@ is aliased for convenience.
       - `events/jdk.ExecutionSample[stackTrace/truncated=true]`
       - `events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Main.*")]]`
 - Examples:
-  - `events/jdk.FileRead[bytes>=1000] --limit 5`
-  - `events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
+  - `events/jdk.FileRead[bytesRead>=1000] --limit 5`
+  - `events/jdk.ExecutionSample[sampledThread/javaName~"main"] --limit 10`
   - `show metadata/java.lang.Thread` (class overview)
   - `show metadata/jdk.types.Method/name` (single value)
 
@@ -239,28 +239,28 @@ Expressions can include arithmetic operators, string concatenation, string templ
 **Field Projection Examples:**
 ```bash
 # Simple field selection
-events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytesRead)
 
 # Convert bytes to kilobytes
-events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
 
 # Build descriptive string (concatenation)
-events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+events/jdk.FileRead | select(path + ' (' + bytesRead + ' bytes)' as description)
 
 # Build descriptive string (template - cleaner)
-events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+events/jdk.FileRead | select("${path} (${bytesRead} bytes)" as description)
 
 # String template with arithmetic
-events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as summary)
 
 # Mixed fields and expressions
-events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration * 1000 as micros)
 
 # String functions
 events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
 
-# Conditional expressions
-events/jdk.FileRead | select(if(bytes > 1000, 'large', 'small') as size)
+# Conditional expressions (true when non-zero; comparisons are not supported)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status)
 
 # Complex expressions with coalesce
 events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
@@ -306,15 +306,14 @@ For complete operator reference and grammar details, see [JFRPath.md](JFRPath.md
 
 **Aggregation Examples:**
 - `events/jdk.FileRead | count()`
-- `events/jdk.FileRead/bytes | sum()`
-- `events/jdk.FileRead/bytes | stats()`
-- `events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
-- `events/jdk.FileRead/bytes | sketch()`
-- `events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
-- `events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
-- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
-- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
-- `events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
+- `events/jdk.FileRead/bytesRead | sum()`
+- `events/jdk.FileRead/bytesRead | stats()`
+- `events/jdk.FileRead/bytesRead | quantiles(0.5,0.9,0.99)`
+- `events/jdk.FileRead/bytesRead | sketch()`
+- `events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)` — Total bytesRead by path
+- `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)` — Sorted by count (descending)
+- `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=key, asc=true)` — Sorted alphabetically
+- `events/jdk.FileRead | top(10, by=bytesRead)` — Top 10 files by bytesRead
 - `show metadata/jdk.types.Method/name | count()`
 - `constants/jdk.types.Symbol | count()`
 

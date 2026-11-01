@@ -40,7 +40,7 @@ open /path/to/recording.jfr
 events/jdk.ExecutionSample | count()
 
 # Multi-word commands
-events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytesRead>=1000] --limit 10
 
 # Close the session
 close
@@ -129,7 +129,7 @@ set min_bytes = ${2:-1024}
 set top_n = ${3:-20}
 
 # Show large file reads
-events/jdk.FileRead[bytes>=${min_bytes}] --limit ${top_n}
+events/jdk.FileRead[bytesRead>=${min_bytes}] --limit ${top_n}
 
 # Thread analysis
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=count)
@@ -207,7 +207,7 @@ set backup = threshold          # Copy value from threshold
 set copy = $threshold            # Alternative syntax with $
 
 # Lazy query (assigned when RHS contains JfrPath expression)
-set reads = events/jdk.FileRead[bytes>=1000]
+set reads = events/jdk.FileRead[bytesRead>=1000]
 set stats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 
 # Copy map variables
@@ -231,7 +231,7 @@ Variables are accessed using `${varname}` syntax:
 echo "Threshold is: ${threshold}"
 
 # In JfrPath queries
-events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+events/jdk.FileRead[bytesRead>=${threshold}] --limit ${limit}
 
 # Access query result fields
 set count = events/jdk.FileRead | count()
@@ -359,15 +359,15 @@ set threshold = $2
 set limit = 10
 
 # Store lazy queries
-set fileReads = events/jdk.FileRead[bytes>=${threshold}]
-set readCount = events/jdk.FileRead[bytes>=${threshold}] | count()
+set fileReads = events/jdk.FileRead[bytesRead>=${threshold}]
+set readCount = events/jdk.FileRead[bytesRead>=${threshold}] | count()
 
 echo "=== File Read Analysis ==="
 echo "Threshold: ${threshold} bytes"
 echo "Events found: ${readCount.count}"
 
 # Show results if any found
-events/jdk.FileRead[bytes>=${threshold}] --limit ${limit}
+events/jdk.FileRead[bytesRead>=${threshold}] --limit ${limit}
 
 # Thread analysis with caching
 set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(5, by=count)
@@ -498,7 +498,7 @@ if ${fileReads.count} > 0
     echo "Light file I/O activity"
   endif
 
-  events/jdk.FileRead | top(10, by=bytes)
+  events/jdk.FileRead | top(10, by=bytesRead)
 else
   echo "No file read events in this recording"
 endif
@@ -520,8 +520,8 @@ if ${analysis} == "cpu"
   events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 elif ${analysis} == "io" or ${analysis} == "file"
   echo "=== I/O Analysis ==="
-  events/jdk.FileRead | sum(bytes)
-  events/jdk.FileWrite | sum(bytes)
+  events/jdk.FileRead | sum(bytesRead)
+  events/jdk.FileWrite | sum(bytesWritten)
 elif ${analysis} == "gc"
   echo "=== GC Analysis ==="
   events/jdk.GarbageCollection | stats(duration)
@@ -543,10 +543,10 @@ if exists(custom_threshold)
 endif
 
 # Process only if results are not empty
-set results = events/jdk.FileRead[bytes>=${threshold}]
+set results = events/jdk.FileRead[bytesRead>=${threshold}]
 if !empty(results)
   echo "Found ${results.size} events exceeding threshold"
-  events/jdk.FileRead[bytes>=${threshold}] --limit 20
+  events/jdk.FileRead[bytesRead>=${threshold}] --limit 20
 else
   echo "No events exceed the threshold of ${threshold} bytes"
 endif
@@ -758,14 +758,14 @@ Recorded scripts often contain hardcoded paths. Convert them to parameterized sc
 **Original recorded script:**
 ```bash
 open /Users/john/recordings/prod-app-20251226.jfr
-events/jdk.FileRead[bytes>=1000] --limit 10
+events/jdk.FileRead[bytesRead>=1000] --limit 10
 ```
 
 **Parameterized version:**
 ```bash
 # Arguments: $1=recording, $2=threshold, $3=limit
 open $1
-events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytesRead>=$2] --limit $3
 ```
 
 **Usage:**
@@ -816,7 +816,7 @@ Parameters are passed as positional arguments after the script name:
 
 # This script expects: $1=recording, $2=threshold, $3=limit
 open $1
-events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytesRead>=$2] --limit $3
 ```
 
 Execute with:
@@ -848,8 +848,8 @@ open $1
 info
 metadata --summary
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
-events/jdk.FileRead | sum(bytes)
-events/jdk.FileWrite | sum(bytes)
+events/jdk.FileRead | sum(bytesRead)
+events/jdk.FileWrite | sum(bytesWritten)
 events/jdk.GarbageCollection | stats(duration)
 close
 ```
@@ -927,12 +927,12 @@ Start scripts with a comment header explaining purpose, usage, and parameters:
 # Good
 # Arguments: $1=recording_path, $2=min_bytes, $3=max_results
 open $1
-events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytesRead>=$2] --limit $3
 
 # Less clear (but sometimes acceptable for simple scripts)
 # Arguments: $1=file, $2=threshold, $3=limit
 open $1
-events/jdk.FileRead[bytes>=$2] --limit $3
+events/jdk.FileRead[bytesRead>=$2] --limit $3
 ```
 
 ### 3. Group Related Operations

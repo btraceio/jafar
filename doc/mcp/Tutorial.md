@@ -277,7 +277,7 @@ events/<eventType>[filters] | pipeline_operator
 
 ## Quick Examples
 events/jdk.ExecutionSample | count()
-events/jdk.FileRead[bytes>1000] | top(10)
+events/jdk.FileRead[bytesRead>1000] | top(10)
 events/jdk.GCPhasePause | stats(duration)
 ...
 ```

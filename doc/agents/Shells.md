@@ -50,7 +50,7 @@ Note: the event path is always `events/<EventTypeName>`, not `show <EventTypeNam
 jfr> open /path/to/recording.jfr
 jfr> events/jdk.ExecutionSample | count()
 jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count, sortBy=value) | top(10)
-jfr> events/jdk.FileRead | stats(bytes)
+jfr> events/jdk.FileRead | stats(bytesRead)
 jfr> events/jdk.ExecutionSample | flamegraph()
 jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"

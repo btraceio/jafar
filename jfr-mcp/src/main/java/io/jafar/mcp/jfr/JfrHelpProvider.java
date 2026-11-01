@@ -28,9 +28,9 @@ public final class JfrHelpProvider {
         ## Quick Examples
         ```
         events/jdk.ExecutionSample | count()
-        events/jdk.FileRead[bytes>1000] | top(10)
+        events/jdk.FileRead[bytesRead>1000] | top(10)
         events/jdk.GCPhasePause | stats(duration)
-        events/jdk.ExecutionSample | groupBy(eventThread/javaName)
+        events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
         ```
 
         ## Help Topics
@@ -61,17 +61,17 @@ public final class JfrHelpProvider {
 
         ## Examples
         ```
-        events/jdk.FileRead[bytes>1000]
-        events/jdk.ExecutionSample[eventThread/javaName="main"]
+        events/jdk.FileRead[bytesRead>1000]
+        events/jdk.ExecutionSample[sampledThread/javaName="main"]
         events/jdk.FileRead[path~"/tmp/.*"]
         events/jdk.GCPhasePause[duration>10000000]
         ```
 
         ## Boolean Expressions
         ```
-        events/jdk.FileRead[bytes>1000 and path~"/tmp/.*"]
-        events/jdk.ExecutionSample[eventThread/javaName="main" or eventThread/javaName="worker"]
-        events/jdk.FileRead[not (bytes<100)]
+        events/jdk.FileRead[bytesRead>1000 and path~"/tmp/.*"]
+        events/jdk.ExecutionSample[sampledThread/javaName="main" or sampledThread/javaName="worker"]
+        events/jdk.FileRead[not (bytesRead<100)]
         ```
 
         ## Filter Functions
@@ -118,23 +118,23 @@ public final class JfrHelpProvider {
         ## top(n[, by=field, asc=false])
         Return top N results sorted by field.
         ```
-        events/jdk.FileRead | top(10, by=bytes)
+        events/jdk.FileRead | top(10, by=bytesRead)
         events/jdk.GCPhasePause | top(5, by=duration)
-        events/jdk.FileRead | top(10, by=bytes, asc=true)  # smallest first
+        events/jdk.FileRead | top(10, by=bytesRead, asc=true)  # smallest first
         ```
 
         ## groupBy(field[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
         Group by field and aggregate.
         ```
-        events/jdk.ExecutionSample | groupBy(eventThread/javaName)
-        events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
-        events/jdk.ExecutionSample | groupBy(eventThread/javaName, sortBy=value)
+        events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+        events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)
+        events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)
         ```
 
         ## stats([field])
         Compute min, max, avg, stddev, count.
         ```
-        events/jdk.FileRead | stats(bytes)
+        events/jdk.FileRead | stats(bytesRead)
         events/jdk.GCPhasePause | stats(duration)
         → { "min": 100, "max": 50000, "avg": 5000, "stddev": 2500, "count": 200 }
         ```
@@ -142,7 +142,7 @@ public final class JfrHelpProvider {
         ## sum([field])
         Sum numeric values.
         ```
-        events/jdk.FileRead | sum(bytes)
+        events/jdk.FileRead | sum(bytesRead)
         → { "sum": 1234567, "count": 100 }
         ```
 
@@ -156,15 +156,15 @@ public final class JfrHelpProvider {
         ## select(field1, field2, expr as alias, ...)
         Project specific fields or compute expressions.
         ```
-        events/jdk.FileRead | select(path, bytes)
-        events/jdk.FileRead | select(path, bytes / 1024 as kb)
-        events/jdk.ExecutionSample | select(eventThread/javaName as thread, startTime)
+        events/jdk.FileRead | select(path, bytesRead)
+        events/jdk.FileRead | select(path, bytesRead / 1024 as kb)
+        events/jdk.ExecutionSample | select(sampledThread/javaName as thread, startTime)
         ```
 
         ## sortBy(field[, asc=false])
         Sort results by field.
         ```
-        events/jdk.FileRead | select(path, bytes) | sortBy(bytes)
+        events/jdk.FileRead | select(path, bytesRead) | sortBy(bytesRead)
         ```
 
         ## decorateByTime(eventType, fields=f1,f2[, threadPath=..., decoratorThreadPath=...])
@@ -176,7 +176,7 @@ public final class JfrHelpProvider {
         ## decorateByKey(eventType, key=path, decoratorKey=path, fields=f1,f2)
         Join using correlation keys.
         ```
-        events/jdk.ExecutionSample | decorateByKey(RequestStart, key=eventThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)
+        events/jdk.ExecutionSample | decorateByKey(RequestStart, key=sampledThread/javaThreadId, decoratorKey=thread/javaThreadId, fields=requestId)
         ```
         """;
   }
@@ -216,12 +216,12 @@ public final class JfrHelpProvider {
 
         ### Arithmetic
         - `+`, `-`, `*`, `/` - Basic arithmetic
-        - Parentheses for grouping: `(bytes * count) / 1024`
+        - Parentheses for grouping: `(bytesRead * 2) / 1024`
 
         ### String Templates
         Use `${...}` for interpolation:
         ```
-        events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as info)
+        events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as info)
         ```
 
         ## Transform Operators (after |)
@@ -246,13 +246,13 @@ public final class JfrHelpProvider {
         events/jdk.ExecutionSample | count()
 
         # Samples by thread
-        events/jdk.ExecutionSample | groupBy(eventThread/javaName)
+        events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
         # Top threads by sample count
-        events/jdk.ExecutionSample | groupBy(eventThread/javaName, sortBy=value) | top(10)
+        events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value) | top(10)
 
         # Samples for specific thread
-        events/jdk.ExecutionSample[eventThread/javaName="main"] | count()
+        events/jdk.ExecutionSample[sampledThread/javaName="main"] | count()
         ```
 
         ## GC Analysis
@@ -273,13 +273,13 @@ public final class JfrHelpProvider {
         ## I/O Analysis
         ```
         # File read statistics
-        events/jdk.FileRead | stats(bytes)
+        events/jdk.FileRead | stats(bytesRead)
 
         # Largest file reads
-        events/jdk.FileRead | top(10, by=bytes)
+        events/jdk.FileRead | top(10, by=bytesRead)
 
         # Reads by file path
-        events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)
+        events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)
 
         # Slow file operations (>10ms)
         events/jdk.FileRead[duration>10ms] | top(10)
@@ -343,7 +343,7 @@ public final class JfrHelpProvider {
         # Common JDK Event Types
 
         ## CPU/Execution
-        - `jdk.ExecutionSample` - CPU profiling samples (fields: stackTrace, state, eventThread)
+        - `jdk.ExecutionSample` - CPU profiling samples (fields: stackTrace, state, sampledThread)
         - `jdk.NativeMethodSample` - Native method samples
         - `jdk.CPULoad` - CPU load (fields: jvmUser, jvmSystem, machineTotal)
         - `jdk.ThreadCPULoad` - Per-thread CPU (fields: user, system, eventThread)
@@ -362,10 +362,10 @@ public final class JfrHelpProvider {
         - `jdk.ObjectAllocationOutsideTLAB` - Large allocations (fields: objectClass, allocationSize)
 
         ## I/O
-        - `jdk.FileRead` - File reads (fields: path, bytes, duration)
-        - `jdk.FileWrite` - File writes (fields: path, bytes, duration)
-        - `jdk.SocketRead` - Socket reads (fields: host, port, bytes, duration)
-        - `jdk.SocketWrite` - Socket writes (fields: host, port, bytes, duration)
+        - `jdk.FileRead` - File reads (fields: path, bytesRead, duration)
+        - `jdk.FileWrite` - File writes (fields: path, bytesWritten, duration)
+        - `jdk.SocketRead` - Socket reads (fields: host, port, bytesRead, duration)
+        - `jdk.SocketWrite` - Socket writes (fields: host, port, bytesWritten, duration)
 
         ## Threads
         - `jdk.ThreadStart` - Thread creation (fields: thread, parentThread)

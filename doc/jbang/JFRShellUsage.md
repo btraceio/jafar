@@ -96,11 +96,11 @@ jbang jfr-shell@btraceio show recording.jfr "events/jdk.ExecutionSample | count(
 
 # Top 10 files by bytes read
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.FileRead | top(10, by=bytes)"
+  "events/jdk.FileRead | top(10, by=bytesRead)"
 
 # Thread analysis
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.ExecutionSample | groupBy(thread/name)"
+  "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)"
 
 # GC statistics
 jbang jfr-shell@btraceio show recording.jfr \
@@ -114,12 +114,12 @@ Get JSON output for integration with other tools:
 ```bash
 # JSON format
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.FileRead | top(10, by=bytes)" \
+  "events/jdk.FileRead | top(10, by=bytesRead)" \
   --format json
 
 # Pipe to jq for processing
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.ExecutionSample | groupBy(thread/name)" \
+  "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)" \
   --format json | jq '.[] | select(.count > 1000)'
 ```
 

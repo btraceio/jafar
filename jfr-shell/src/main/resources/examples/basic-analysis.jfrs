@@ -34,9 +34,9 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 echo
 echo "=== File I/O Summary ==="
 echo "Bytes Read:"
-events/jdk.FileRead | sum(bytes)
+events/jdk.FileRead | sum(bytesRead)
 echo "Bytes Written:"
-events/jdk.FileWrite | sum(bytes)
+events/jdk.FileWrite | sum(bytesWritten)
 
 echo
 echo "=== GC Statistics ==="
