@@ -11,6 +11,8 @@ import io.jafar.shell.core.ShellModule;
 import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.scripting.Conditionals;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +46,7 @@ public final class Shell implements AutoCloseable {
   private final SessionManager<Session> sessions;
   private final VariableStore globalStore;
   private final ShellVariables variables;
+  private final Conditionals conditionals = new Conditionals();
   private boolean running = true;
   private final DefaultHistory history;
   private final ShellCompleter fallbackCompleter;
@@ -69,7 +72,26 @@ public final class Shell implements AutoCloseable {
     // Create session manager with factory that routes to appropriate module
     this.sessions = new SessionManager<>(new ModuleSessionFactory(modules), null);
     this.globalStore = new VariableStore();
-    this.variables = new ShellVariables(globalStore);
+    this.variables =
+        new ShellVariables(
+            globalStore,
+            new ShellVariables.QueryContext() {
+              @Override
+              public Optional<SessionManager.SessionRef<Session>> currentSession() {
+                return sessions.getCurrent();
+              }
+
+              @Override
+              public QueryEvaluator evaluatorFor(Session session) {
+                ShellModule module = moduleById.get(session.getType());
+                return module != null ? module.getQueryEvaluator() : null;
+              }
+
+              @Override
+              public io.jafar.shell.core.SessionResolver resolver() {
+                return buildCrossSessionContext();
+              }
+            });
 
     Path histPath = Paths.get(System.getProperty("user.home"), ".jafar-shell", "history");
     try {
@@ -112,7 +134,7 @@ public final class Shell implements AutoCloseable {
     this.moduleContext = new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener);
 
     // Create fallback completer for basic commands
-    this.fallbackCompleter = new ShellCompleter(sessions, moduleById);
+    this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);
 
     // Cache for module-specific completers (create once per module, not on every keystroke)
     this.completerCache = new HashMap<>();
@@ -131,7 +153,14 @@ public final class Shell implements AutoCloseable {
                   completerCache.computeIfAbsent(
                       moduleType, type -> module.getCompleter(sessions, moduleContext));
               if (moduleCompleter != null) {
+                if (fallbackCompleter.ownsArguments(line)) {
+                  fallbackCompleter.complete(reader, line, candidates);
+                  return;
+                }
                 moduleCompleter.complete(reader, line, candidates);
+                if (line.wordIndex() == 0) {
+                  fallbackCompleter.addShellCommands(line, candidates);
+                }
                 return;
               }
             }
@@ -165,128 +194,23 @@ public final class Shell implements AutoCloseable {
         input = input.trim();
 
         if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+          if (conditionals.state().inConditional()) {
+            terminal
+                .writer()
+                .println(
+                    "Warning: " + conditionals.state().depth() + " unclosed conditional block(s)");
+            terminal.flush();
+            conditionals.state().reset();
+          }
           running = false;
           continue;
         }
 
-        if ("help".equalsIgnoreCase(input)) {
-          printHelp();
-          continue;
+        if (!execute(input)) {
+          terminal.writer().println("Unknown command: " + input);
+          terminal.writer().println("Type 'help' for available commands.");
+          terminal.flush();
         }
-
-        if ("modules".equalsIgnoreCase(input)) {
-          printModules();
-          continue;
-        }
-
-        if (input.startsWith("open ")) {
-          handleOpen(input.substring(5).trim());
-          continue;
-        }
-
-        if ("sessions".equalsIgnoreCase(input)) {
-          handleSessions();
-          continue;
-        }
-
-        if (input.startsWith("use ")) {
-          handleUse(input.substring(4).trim());
-          continue;
-        }
-
-        if (input.startsWith("close")) {
-          handleClose(input);
-          continue;
-        }
-
-        if (input.startsWith("info")) {
-          handleInfo(input);
-          continue;
-        }
-
-        // '?' is short for 'ask', with or without a space after it, so '?why is this slow' and
-        // 'ask why is this slow' are one command. No query language here starts with it.
-        if (input.startsWith("?")) {
-          llmCommands().analyze(input.substring(1).trim());
-          continue;
-        }
-
-        if (matchesCommand(input, "ask")
-            || matchesCommand(input, "analyze")
-            || matchesCommand(input, "investigate")) {
-          llmCommands().analyze(argumentOf(input));
-          continue;
-        }
-
-        if (matchesCommand(input, "as-query")) {
-          llmCommands().asQuery(argumentOf(input));
-          continue;
-        }
-
-        if (input.equals("explain") || input.startsWith("explain ")) {
-          llmCommandsWithLastResult().explain(input.length() > 7 ? input.substring(8).trim() : "");
-          continue;
-        }
-
-        if (input.equals("llm") || input.startsWith("llm ")) {
-          String rest = input.length() > 3 ? input.substring(4).trim() : "";
-          llmCommands().llm(rest.isEmpty() ? List.of() : List.of(rest.split("\\s+")));
-          continue;
-        }
-
-        if (handleVariableCommand(input)) {
-          continue;
-        }
-
-        if (input.startsWith("show ")) {
-          handleShow(input.substring(5).trim());
-          continue;
-        }
-
-        if (input.equals("checkLeaks()")) {
-          // Launch interactive wizard
-          Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
-          if (current.isPresent()) {
-            Object session = current.get().session;
-            if (session.getClass().getName().endsWith(".HeapSession")) {
-              try {
-                // Use reflection to call runLeakDetectionWizard
-                var menuClass = Class.forName("io.jafar.shell.core.InteractiveMenu");
-                var menuConstructor = menuClass.getConstructor(Terminal.class, LineReader.class);
-                Object menu = menuConstructor.newInstance(terminal, lineReader);
-
-                var wizardMethod =
-                    session.getClass().getMethod("runLeakDetectionWizard", menuClass);
-                wizardMethod.invoke(session, menu);
-              } catch (Exception e) {
-                terminal.writer().println("Error launching wizard: " + e.getMessage());
-                e.printStackTrace();
-              }
-            } else {
-              terminal.writer().println("checkLeaks() requires an active heap dump session");
-              terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
-            }
-          } else {
-            terminal.writer().println("checkLeaks() requires an active heap dump session");
-            terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
-          }
-          terminal.writer().flush();
-          continue;
-        }
-
-        if (input.startsWith("checkLeaks(")) {
-          handleShow(input);
-          continue;
-        }
-
-        if (isQueryForCurrentSession(input)) {
-          handleShow(input);
-          continue;
-        }
-
-        terminal.writer().println("Unknown command: " + input);
-        terminal.writer().println("Type 'help' for available commands.");
-        terminal.flush();
 
       } catch (UserInterruptException e) {
         terminal.writer().println("^C");
@@ -305,9 +229,213 @@ public final class Shell implements AutoCloseable {
   }
 
   /**
-   * {@code set}/{@code let}/{@code vars}/{@code unset}/{@code echo}. Returns whether the input was
-   * one of them. Variables live in {@link #globalStore}, which is also where the LLM host adapter
-   * reads {@code llm.*} settings from.
+   * Runs one command line: typed at the prompt, or read from a script by {@code script}.
+   *
+   * @return {@code false} when the line is not a command this shell knows
+   */
+  boolean execute(String input) {
+    input = input.trim();
+    if (input.isEmpty()) {
+      return true;
+    }
+
+    // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
+    // balanced; every other line in such a branch is skipped.
+    try {
+      if (conditionals.handle(input, variables.scopes(), this::printError)) {
+        return true;
+      }
+    } catch (IllegalStateException e) {
+      printError(e.getMessage());
+      return true;
+    }
+    if (!conditionals.isActive()) {
+      return true;
+    }
+
+    if ("help".equalsIgnoreCase(input)) {
+      printHelp();
+      return true;
+    }
+
+    if ("modules".equalsIgnoreCase(input)) {
+      printModules();
+      return true;
+    }
+
+    if (input.startsWith("open ")) {
+      handleOpen(input.substring(5).trim());
+      return true;
+    }
+
+    if ("sessions".equalsIgnoreCase(input)) {
+      handleSessions();
+      return true;
+    }
+
+    if (input.startsWith("use ")) {
+      handleUse(input.substring(4).trim());
+      return true;
+    }
+
+    if (input.startsWith("close")) {
+      handleClose(input);
+      return true;
+    }
+
+    if (input.startsWith("info")) {
+      handleInfo(input);
+      return true;
+    }
+
+    // '?' is short for 'ask', with or without a space after it, so '?why is this slow' and
+    // 'ask why is this slow' are one command. No query language here starts with it.
+    if (input.startsWith("?")) {
+      llmCommands().analyze(input.substring(1).trim());
+      return true;
+    }
+
+    if (matchesCommand(input, "ask")
+        || matchesCommand(input, "analyze")
+        || matchesCommand(input, "investigate")) {
+      llmCommands().analyze(argumentOf(input));
+      return true;
+    }
+
+    if (matchesCommand(input, "as-query")) {
+      llmCommands().asQuery(argumentOf(input));
+      return true;
+    }
+
+    if (input.equals("explain") || input.startsWith("explain ")) {
+      llmCommandsWithLastResult().explain(input.length() > 7 ? input.substring(8).trim() : "");
+      return true;
+    }
+
+    if (input.equals("llm") || input.startsWith("llm ")) {
+      String rest = input.length() > 3 ? input.substring(4).trim() : "";
+      llmCommands().llm(rest.isEmpty() ? List.of() : List.of(rest.split("\\s+")));
+      return true;
+    }
+
+    if (handleVariableCommand(input)) {
+      return true;
+    }
+
+    if (input.startsWith("show ")) {
+      handleShow(input.substring(5).trim());
+      return true;
+    }
+
+    if (input.equals("checkLeaks()")) {
+      // Launch interactive wizard
+      Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+      if (current.isPresent()) {
+        Object session = current.get().session;
+        if (session.getClass().getName().endsWith(".HeapSession")) {
+          try {
+            // Use reflection to call runLeakDetectionWizard
+            var menuClass = Class.forName("io.jafar.shell.core.InteractiveMenu");
+            var menuConstructor = menuClass.getConstructor(Terminal.class, LineReader.class);
+            Object menu = menuConstructor.newInstance(terminal, lineReader);
+
+            var wizardMethod = session.getClass().getMethod("runLeakDetectionWizard", menuClass);
+            wizardMethod.invoke(session, menu);
+          } catch (Exception e) {
+            terminal.writer().println("Error launching wizard: " + e.getMessage());
+            e.printStackTrace();
+          }
+        } else {
+          terminal.writer().println("checkLeaks() requires an active heap dump session");
+          terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
+        }
+      } else {
+        terminal.writer().println("checkLeaks() requires an active heap dump session");
+        terminal.writer().println("Use 'open <file.hprof>' to open a heap dump first");
+      }
+      terminal.writer().flush();
+      return true;
+    }
+
+    if (input.startsWith("checkLeaks(")) {
+      handleShow(input);
+      return true;
+    }
+
+    if (isQueryForCurrentSession(input)) {
+      handleShow(input);
+      return true;
+    }
+
+    if (input.equals("script") || input.startsWith("script ")) {
+      handleScript(argumentOf(input));
+      return true;
+    }
+
+    return false;
+  }
+
+  private void printError(String message) {
+    terminal.writer().println("Error: " + message);
+    terminal.flush();
+  }
+
+  /**
+   * {@code script <path> [args...]}: runs each line of the file through {@link #execute}, with
+   * {@code $1}, {@code ${2:-default}} and {@code $@} replaced by the arguments.
+   */
+  private void handleScript(String argText) {
+    String[] parts = argText.isBlank() ? new String[0] : argText.trim().split("\\s+");
+    if (parts.length == 0) {
+      printError("Usage: script <path> [args...]");
+      return;
+    }
+    Path path = Paths.get(expandHome(parts[0]));
+    if (!Files.exists(path)) {
+      printError("Script file not found: " + path);
+      return;
+    }
+    List<String> arguments = List.of(parts).subList(1, parts.length);
+    try {
+      ScriptRunner.ExecutionResult result =
+          new ScriptRunner(this::execute, arguments).execute(path);
+      if (result.hasErrors()) {
+        terminal.writer().println();
+        terminal.writer().println("Script completed with errors:");
+        for (ScriptRunner.ScriptError error : result.getErrors()) {
+          terminal.writer().println(error);
+        }
+        terminal
+            .writer()
+            .println(
+                String.format(
+                    "%nExecuted %d/%d commands successfully.",
+                    result.getSuccessCount(),
+                    result.getSuccessCount() + result.getErrors().size()));
+      } else if (result.getSuccessCount() > 0) {
+        terminal.writer().println();
+        terminal
+            .writer()
+            .println("Script executed successfully: " + result.getSuccessCount() + " commands");
+      }
+    } catch (IOException e) {
+      printError("Cannot read script " + path + ": " + e.getMessage());
+    }
+    terminal.flush();
+  }
+
+  private static String expandHome(String path) {
+    if (path.startsWith("~" + java.io.File.separator)) {
+      return System.getProperty("user.home") + path.substring(1);
+    }
+    return path.equals("~") ? System.getProperty("user.home") : path;
+  }
+
+  /**
+   * {@code set}/{@code let}/{@code vars}/{@code unset}/{@code echo}/{@code invalidate}. Returns
+   * whether the input was one of them. Variables live in the current session's store or, with
+   * {@code --global} or no session open, in {@link #globalStore}; the LLM host adapter reads {@code
+   * llm.*} settings from both, session first.
    */
   private boolean handleVariableCommand(String input) {
     String command = input.split("\\s+", 2)[0].toLowerCase(java.util.Locale.ROOT);
@@ -316,9 +444,10 @@ public final class Shell implements AutoCloseable {
       List<String> lines;
       switch (command) {
         case "set", "let" -> lines = variables.set(arg);
-        case "vars" -> lines = variables.vars();
+        case "vars" -> lines = variables.vars(arg);
         case "unset" -> lines = variables.unset(arg);
         case "echo" -> lines = variables.echo(arg);
+        case "invalidate" -> lines = variables.invalidate(arg);
         default -> {
           return false;
         }
@@ -347,6 +476,10 @@ public final class Shell implements AutoCloseable {
   }
 
   private String getPrompt() {
+    // Inside an if-block the prompt shows the nesting depth, as in jfr-shell
+    if (conditionals.state().inConditional()) {
+      return "...(" + conditionals.state().depth() + ")> ";
+    }
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
     if (current.isPresent()) {
       SessionManager.SessionRef<Session> ref = current.get();
@@ -564,10 +697,44 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
+    // 'show ${var}' alone prints a query-valued variable's rows (cached after first use), rather
+    // than substituting its first value into the line
+    java.util.regex.Matcher whole =
+        java.util.regex.Pattern.compile(
+                "^\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}((?:\\s+--\\S+(?:\\s+\\S+)?)*)$")
+            .matcher(query.trim());
+    if (whole.matches()
+        && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
+      try {
+        Object rows = lazy.get();
+        java.util.regex.Matcher fmt =
+            java.util.regex.Pattern.compile("--format\\s+(\\S+)").matcher(whole.group(2));
+        java.util.regex.Matcher lim =
+            java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(whole.group(2));
+        if (lim.find() && rows instanceof List<?> list) {
+          rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
+        }
+        rememberResult(lazy.getQueryString(), rows);
+        printResult(rows, fmt.find() ? fmt.group(1) : ref.outputFormat);
+      } catch (Exception e) {
+        printError(e.getMessage());
+      }
+      return;
+    }
+
+    // ${var} first, as in 'objects[shallow > ${min}]', and before the flags are read so that
+    // '--limit ${n}' is a number by the time it is parsed
+    String cleanQuery;
+    try {
+      cleanQuery = variables.substitute(query);
+    } catch (IllegalArgumentException e) {
+      printError(e.getMessage());
+      return;
+    }
+
     // Extract --limit and --format flags from query string
     Integer limit = null;
     String format = ref.outputFormat;
-    String cleanQuery = query;
 
     java.util.regex.Matcher limitMatcher =
         java.util.regex.Pattern.compile("--limit\\s+(\\d+)").matcher(cleanQuery);
@@ -641,9 +808,9 @@ public final class Shell implements AutoCloseable {
    * reaches HdumpPath and the pprof/OTLP samples grammar as well as JfrPath — the module of the
    * current session picks the language.
    *
-   * <p>Settings resolve from the global variable store and then from environment variables. This
-   * shell's {@code set llm.backend = ollama} writes the store; {@code JAFAR_LLM_*} environment
-   * variables are the fallback.
+   * <p>Settings resolve from the variable stores (the current session's, then the global one) and
+   * then from environment variables. This shell's {@code set llm.backend = ollama} writes a store;
+   * {@code JAFAR_LLM_*} environment variables are the fallback.
    */
   private io.jafar.shell.cli.LlmCommands llmCommands() {
     if (llmCommands == null) {
@@ -734,10 +901,9 @@ public final class Shell implements AutoCloseable {
 
                 @Override
                 public String setting(String name) {
-                  if (globalStore == null) {
-                    return null;
-                  }
-                  VariableStore.Value value = globalStore.get(name);
+                  // Session-scoped settings win over global ones, matching how 'set' scopes them
+                  // and how jfr-shell's adapter reads them.
+                  VariableStore.Value value = variables.scopes().resolve(name);
                   if (value == null) {
                     return null;
                   }
@@ -926,9 +1092,24 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  llm                status | cost");
     terminal.writer().println();
     terminal.writer().println("Variables and settings:");
-    terminal.writer().println("  set <name> = <v>   Set a variable or an llm.* setting");
-    terminal.writer().println("  vars | unset <n>   List / remove variables");
-    terminal.writer().println("  echo <text>        Print text; ${var} is substituted");
+    terminal.writer().println("  set [--global] <name> = <value>");
+    terminal.writer().println("                     A string, number, boolean, map {\"k\": 1},");
+    terminal.writer().println("                     merge(${a}, {...}), another variable, a query");
+    terminal
+        .writer()
+        .println("                     (lazy: run on first use), or an llm.* setting.");
+    terminal.writer().println("                     Session-scoped unless --global or no session.");
+    terminal.writer().println("  vars [--global|--session|--all] | vars --info <name>");
+    terminal.writer().println("  unset <name> [--global]");
+    terminal.writer().println("  invalidate <name>  Re-run a lazy variable's query on next use");
+    terminal
+        .writer()
+        .println("  echo <text>        Print text: ${var}, ${var.size}, ${var[0].field}");
+    terminal.writer().println();
+    terminal.writer().println("Scripting:");
+    terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
+    terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
+    terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");

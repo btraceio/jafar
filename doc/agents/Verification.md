@@ -40,7 +40,7 @@ In this repository the recurring multiplicities are:
 
 | Axis | Instances |
 |---|---|
-| Shells | `jfr-shell` (`CommandDispatcher`) and `jafar-shell` (`unified/Shell`) |
+| Shells | `jfr-shell` (`CommandDispatcher`) and `jafar-shell` (`unified/Shell`); `jafar-shell --tui` runs `CommandDispatcher` again, with a module evaluator for heap dump, pprof and OTLP sessions |
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
@@ -139,6 +139,17 @@ git stash pop
 Record the result in the commit message. `SetLlmSettingTest`: **6 of 7 fail** against the previous
 dispatcher; the seventh is the guard that ordinary variables still behave, and passes both ways,
 which is exactly what it is for.
+
+> **Case file — an assertion that the wrong answer satisfies.** `MapVariablesTest` checked
+> `output.contains("Port: 5432")` for `set config = {"db": {"port": 5432}}`. The shell printed
+> `Port: 5432.0`, which contains the expected string, so the test was green for the whole life of
+> map literals. The cause was one line in the map parser, `return isDouble ? Double.parseDouble(s)
+> : Long.parseLong(s);` — a conditional with a `double` and a `long` operand promotes both to
+> `double` ([JLS 15.25.2](https://docs.oracle.com/javase/specs/jls/se21/html/jls-15.html#jls-15.25.2)),
+> so every integer in a map was a `Double`. Found only when a new test compared the parsed value
+> itself (`assertEquals(1L, ...)`). When the expected text is a prefix of a plausible wrong one,
+> assert the value, or assert the wrong one is absent; `doc/parser/MapVariables.md` had been
+> promising `5432` all along.
 
 ## R6. Compare failure sets by name, never by count
 

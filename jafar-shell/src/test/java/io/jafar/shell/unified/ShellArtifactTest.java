@@ -43,6 +43,81 @@ class ShellArtifactTest {
     assertTrue(output.contains("max rows    : 20"), output);
   }
 
+  /**
+   * Scripting across formats in the jar users get: a script with positional parameters opens a JFR
+   * recording and a heap dump, holds a query-valued variable per format, a map, a merge, and
+   * branches on both. The JFR variable is global and is read while the heap session is current.
+   */
+  @Test
+  void scriptsAcrossJfrAndHeapDump(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    Path script = dir.resolve("cross.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "# $1 recording, $2 heap dump, $3 minimum shallow size",
+            "set --global cfg = {\"min\": ${3:-1000}, \"label\": \"cross\"}",
+            "set --global opts = merge(${cfg}, {\"label\": \"merged\"})",
+            "open $1",
+            "set --global starts = events/jdk.ThreadStart | count()",
+            "open $2",
+            "set big = objects[shallow > ${cfg.min}] | count",
+            "echo LABEL ${opts.label} MIN ${opts.min}",
+            "echo STARTS ${starts} BIG ${big}",
+            "if ${starts} > 0 && ${big} > 0",
+            "echo VERDICT both",
+            "elif ${starts} > 0",
+            "echo VERDICT jfr-only",
+            "else",
+            "echo VERDICT neither",
+            "endif",
+            "vars --info big",
+            ""));
+
+    String output =
+        runJar(dir, "script " + script + " " + recording + " " + dump + " 64\nshow ${big}\nexit\n");
+
+    assertFalse(output.contains("Error"), output);
+    assertTrue(output.contains("LABEL merged MIN 64"), output); // an integer, not 64.0
+    assertTrue(output.contains("STARTS 17 BIG "), output);
+    assertTrue(output.contains("VERDICT both"), output);
+    assertFalse(output.contains("VERDICT jfr-only"), output);
+    assertTrue(output.contains("Source: objects[shallow > 64] | count"), output);
+    assertTrue(output.contains("Session: #2 (hdump)"), output);
+    assertTrue(output.contains("Script executed successfully: 16 commands"), output);
+  }
+
+  @Test
+  void queryVariablesAreLazyAndInvalidatable(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "set starts = events/jdk.ThreadStart",
+                "vars",
+                "echo N=${starts.size}",
+                "vars",
+                "invalidate starts",
+                "vars",
+                "set n = bogus | count()",
+                "exit",
+                ""));
+
+    assertTrue(output.contains("starts = lazy[events/jdk.ThreadStart] (not evaluated)"), output);
+    assertTrue(output.contains("N=17"), output);
+    assertTrue(output.contains("starts = lazy[events/jdk.ThreadStart] (cached: 17 rows)"), output);
+    assertTrue(output.contains("Invalidated cache for starts"), output);
+    assertTrue(output.contains("Error: Invalid query:"), output);
+  }
+
   @Test
   void keepsJfrCommandLine(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();

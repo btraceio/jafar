@@ -56,6 +56,29 @@ jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"
 ```
 
+## Scripting is shared: one implementation, three front ends
+
+Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping and
+`script` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
+the change up. Who calls them:
+
+| Front end | Dispatcher | Query variables |
+|---|---|---|
+| `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
+| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator` |
+| `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
+
+`EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
+resolver)` on first use — so a variable gives the same rows as typing its query. Any reader of
+variables must handle `VariableStore.LazyValue` in general, not one implementation: read rows with
+`LazyRows`.
+
+In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
+the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to
+the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shell completer, and
+`addShellCommands` merges the shell's command list into first-word completion. A new shell-level
+command goes in `BASE_COMMANDS` there, not into four module completers.
+
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
 - API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)

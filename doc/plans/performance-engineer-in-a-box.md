@@ -56,8 +56,15 @@ which tool answers it, what counts as evidence, and how to report. Claude Code's
   list 13 JFR tools; the server registers 36 across four formats. The agent-facing tool list
   ([doc/agents/Mcp.md](../agents/Mcp.md#mcp-server-jfr-mcp), which was in `AGENTS.md` when this was
   written) is the only accurate one and it also omits `hdump_*`.
-- **G8: `jafar-shell` lacks scripting.** *(Partly closed: `set`/`let`/`vars`/`unset`/`echo` now
-  exist, scalar values only; `if`, `script`, maps and lazy query variables are still missing.)* `jafar-shell/.../unified/Shell.java` wires `open`,
+- **G8: `jafar-shell` lacks scripting.** *(Status, added after this was written: closed for the
+  interactive shell. `set [--global]`/`let`/`vars [--info]`/`unset`/`echo`/`invalidate`, map
+  literals, `merge()`, lazy query variables in every format's language, `if`/`elif`/`else`/`endif`
+  and `script <path> [args]` now work at the `jafar-shell` prompt, from one implementation in
+  `shell-core` (`io.jafar.shell.core.scripting`) that `jfr-shell` also uses; a cross-format script
+  holding a JFR variable and a heap-dump variable runs end to end. Still open: `jafar-shell script
+  <file>` on the command line is routed to the JFR-only command line, and `jfr-shell`'s `metadata`,
+  `chunks` and `constants` commands are not at the `jafar-shell` prompt. See
+  [Scripting in jafar-shell](../cli/Scripting.md#in-jafar-shell).)* `jafar-shell/.../unified/Shell.java` wires `open`,
   `sessions`, `use`, `close`, `info`, `show`, `checkLeaks`, `modules`; the `set`/`vars`/`if`
   machinery from `jfr-shell`'s `CommandDispatcher` is not connected. Cross-format investigations
   cannot be scripted end-to-end.
