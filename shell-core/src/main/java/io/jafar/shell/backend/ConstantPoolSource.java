@@ -53,11 +53,15 @@ public interface ConstantPoolSource {
    * Crosscheck constant pool entries against event references for a given type.
    *
    * <p>Counts total CP entries for the type and how many are actually referenced by events,
-   * returning counts and percentages.
+   * returning counts and percentages. Constant pool ids are chunk-local, so an entry is one id in
+   * one chunk: every count is computed per chunk and summed.
    *
    * @param recording path to the JFR recording file
    * @param typeName the CP type name (e.g., "jdk.types.StackTrace")
-   * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent
+   * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent, and
+   *     per event type ({@code Map<String, Long>}): eventCounts (events referencing the type,
+   *     directly or through other pool entries), totalRefsByEventType (direct references) and
+   *     uniqueRefsByEventType (distinct entries reachable from that event type)
    * @throws Exception if parsing fails, or if an event or constant pool entry cannot be decoded
    *     (counts from a partial read would be wrong, so none are returned)
    */

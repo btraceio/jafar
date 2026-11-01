@@ -2420,7 +2420,8 @@ public class CommandDispatcher {
     @SuppressWarnings("unchecked")
     Map<String, Long> eventCounts = (Map<String, Long>) result.get("eventCounts");
     @SuppressWarnings("unchecked")
-    Map<String, Set<?>> idsByEventType = (Map<String, Set<?>>) result.get("idsByEventType");
+    Map<String, Long> uniqueRefsByEventType =
+        (Map<String, Long>) result.get("uniqueRefsByEventType");
     @SuppressWarnings("unchecked")
     Map<String, Long> totalRefsByEventType = (Map<String, Long>) result.get("totalRefsByEventType");
     String shortName =
@@ -2429,7 +2430,7 @@ public class CommandDispatcher {
 
     Set<String> allEventTypes = new HashSet<>();
     if (eventCounts != null) allEventTypes.addAll(eventCounts.keySet());
-    if (idsByEventType != null) allEventTypes.addAll(idsByEventType.keySet());
+    if (uniqueRefsByEventType != null) allEventTypes.addAll(uniqueRefsByEventType.keySet());
 
     if (!allEventTypes.isEmpty()) {
       io.println("");
@@ -2446,11 +2447,11 @@ public class CommandDispatcher {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("eventType", evtType);
                 row.put("events", eventCounts != null ? eventCounts.getOrDefault(evtType, 0L) : 0L);
-                int uniqueCount =
-                    idsByEventType != null && idsByEventType.containsKey(evtType)
-                        ? idsByEventType.get(evtType).size()
-                        : 0;
-                row.put(uniqueColName, uniqueCount);
+                row.put(
+                    uniqueColName,
+                    uniqueRefsByEventType != null
+                        ? uniqueRefsByEventType.getOrDefault(evtType, 0L)
+                        : 0L);
                 row.put(
                     "directRefs",
                     totalRefsByEventType != null
