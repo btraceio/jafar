@@ -489,19 +489,6 @@ public final class JfrPathEvaluator {
   // segment.
   private void extractWithIndexing(Map<String, Object> root, List<String> proj, List<Object> out) {
     if (proj.isEmpty()) return;
-    boolean debug =
-        Boolean.getBoolean("jfr.shell.debug") || System.getenv("JFR_SHELL_DEBUG") != null;
-    if (debug || proj.contains("0")) { // Always debug if path contains "0"
-      try {
-        java.nio.file.Files.writeString(
-            java.nio.file.Paths.get("/tmp/jfr-shell-debug.log"),
-            "[extractWithIndexing] proj = " + proj + "\n",
-            java.nio.file.StandardOpenOption.CREATE,
-            java.nio.file.StandardOpenOption.APPEND);
-      } catch (Exception ignore) {
-      }
-      System.err.println("[extractWithIndexing] DEBUG=" + debug + ", proj = " + proj);
-    }
     String last = proj.get(proj.size() - 1);
     Slice sl = parseSlice(last);
     if (sl != null) {

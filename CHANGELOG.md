@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`chunks/<n>/<field>` returns the field.** `chunks/0/size` printed `(no values)` in jfr-shell:
   the projection read `0` as a field of every chunk rather than as the chunk index `chunks/0`
   uses. It now projects from chunk `n`, and honours filters such as `chunks[compressed=true]`
+- **Projected paths with an index no longer write debug output.** Any projection with a `0`
+  segment — the documented `events/jdk.ExecutionSample/stackTrace/frames/0`, `chunks/0/size` —
+  printed `[extractWithIndexing] DEBUG=false, proj = [...]` to stderr and appended a line to
+  `/tmp/jfr-shell-debug.log` for every event projected, in both shells. The leftover debug hook
+  (with its undocumented `jfr.shell.debug` / `JFR_SHELL_DEBUG` switch) is removed; the opt-in
+  `-Djfr.shell.query.debug` filter tracing is unchanged
 - **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
   always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
   was reachable only from tests and benchmarks. It is now selected through an
