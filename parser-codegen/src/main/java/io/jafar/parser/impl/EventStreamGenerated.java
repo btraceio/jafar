@@ -13,6 +13,7 @@ import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.UntypedEventDeserializer;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import java.io.IOException;
 import java.util.Map;
 
 /**
@@ -111,7 +112,13 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
       onEventValue(eventClz, value, ctl);
 
     } catch (Exception e) {
-      // Handle any errors during generation or deserialization
+      // Like EventStream, fall back to the delegate only for an I/O failure (generated code
+      // reads strings through RecordingStream.readUTF8, which throws IOException without the
+      // deserializer declaring it). Anything else - a generation failure, a decoding bug - used
+      // to be swallowed here, silently dropping every event of the type.
+      if (!(e instanceof IOException)) {
+        throw e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
+      }
       return !ctl.abortFlag
           && delegate != null
           && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
