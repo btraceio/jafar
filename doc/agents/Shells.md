@@ -65,7 +65,7 @@ the change up. Who calls them:
 | Front end | Dispatcher | Query variables |
 |---|---|---|
 | `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
-| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator` |
+| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator`; a `toMap()` query (`QueryEvaluator.producesMap`, one definition in `JfrPath.Query.producesMap`, also used by jfr-shell's eager path) is read as a map by `VariableSubstitutor` |
 | `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
 
 | `jafar-shell script <file\|->` | `unified/Shell.forScript` — no terminal, line reader or history | as at the `jafar-shell` prompt |

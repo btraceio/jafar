@@ -21,6 +21,9 @@ import java.util.regex.Pattern;
  *   <li>${var[idx].field} - field from specific row (0-indexed)
  *   <li>${var[idx].a.b} - nested field from specific row
  * </ul>
+ *
+ * <p>A lazy variable whose query produces one map ({@code toMap()}) is read as a map variable:
+ * {@code .size} is its entry count and {@code .key} reads an entry, as in jfr-shell.
  */
 public final class VariableSubstitutor {
 
@@ -122,6 +125,15 @@ public final class VariableSubstitutor {
       }
       Object v = sv.value();
       return v == null ? "" : String.valueOf(v);
+    }
+
+    if (value instanceof EvaluatorLazyValue lazy) {
+      // A toMap() query: read as the map it produces, exactly as jfr-shell reads the MapValue it
+      // stores for the same query. Any other query falls through to the row rules below.
+      Map<String, Object> map = lazy.asMap();
+      if (map != null) {
+        value = new MapValue(map);
+      }
     }
 
     if (value instanceof MapValue mv) {

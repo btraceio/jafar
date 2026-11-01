@@ -29,8 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still goes to jfr-shell, whose script command is the only one with a backend. Shebang scripts
   written for `jbang jfr-shell@btraceio script -` are unaffected: that alias launches
   `io.jafar.shell.Main` directly. A JFR-only script now gets the unified shell's semantics: the
-  same data, but other table layout, string values printed as `{name=G1New}`, and `${v.size}` of a
-  lazy `toMap()` variable counting rows — see
+  same data, but other table layout, string values printed as `{name=G1New}`, and `vars --info`
+  describing a `toMap()` variable as a lazy query — see
   [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `--backend` keeps the old route
 - **jfr-shell's non-query commands in `jafar-shell`.** With a recording current, `metadata` (and
   `metadata --summary`, `--search ...`), `chunks`, `chunk <n>` and `constants`/`cp` run as they do
@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
+  unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
+  `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
+  `2` in `jfr-shell` on the same recording. A query ending in `toMap()` is now read as its map —
+  `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
+  query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
+  the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
 - **A script line that reports an error fails, in both shells.** A bad query, a missing session or
   file, `use` of an unknown session and the like are reported by printing them, and `ScriptRunner`
   only saw exceptions and unknown commands, so it counted those lines as successes: the script ran

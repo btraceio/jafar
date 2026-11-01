@@ -85,8 +85,10 @@ same, but running the shipped examples both ways shows what changes:
 - Tables are drawn without the box and end with `(N rows)`; `info` prints its own layout.
 - String values in result tables print as the parser's wrapper, `{name=G1New}` or
   `{string=java/lang/Object}`, where jfr-shell prints `G1New`.
-- A query variable is lazy, so `${v.size}` on a `toMap()` variable counts its one row:
-  `map-operations.jfrs` prints `GC stats entries: 1` here and `2` in jfr-shell.
+- A `toMap()` variable stays lazy, so `vars --info` shows `Type: lazy query` and its source where
+  jfr-shell shows `Type: map` and its entries. Reading it is the same in both shells: `${v.size}`
+  is the entry count and `${v.key}` an entry, so `map-operations.jfrs` prints `GC stats entries: 2`
+  in both.
 - The other rows of the table below: `show ${var} | ...`, `true`/`false`, `backend` and `record`.
 
 To keep jfr-shell's behaviour, give the script a backend — `jafar-shell script --backend jafar
@@ -98,7 +100,7 @@ Where the two shells differ:
 
 | | `jfr-shell` | `jafar-shell` |
 |---|---|---|
-| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
+| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy. `${n}` still reads a count's value; a query ending in `toMap()` is read as its map (`${v.size}` counts entries, `${v.key}` reads one), decided from the query, so a one-row result of any other query, such as `top(1)`, still has `.size` 1; `merge()` takes a variable whose rows are one map |
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|-> [args]` | `script <path> [args]` at the prompt, and `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line — both in this shell, so a script can open every format. `jafar-shell script --backend <id> ...` (or `-b`) still goes to jfr-shell's script command, the only one with a backend |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
@@ -342,7 +344,7 @@ ${varname[0]}
 # Access field from array element
 ${varname[0].fieldname}
 
-# Size property (works for lazy results and maps)
+# Size property: row count for a query, entry count for a map or a toMap() query
 ${varname.size}
 ```
 

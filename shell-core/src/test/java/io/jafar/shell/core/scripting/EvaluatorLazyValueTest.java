@@ -96,6 +96,12 @@ class EvaluatorLazyValueTest {
       return evaluate(session, query);
     }
 
+    /** As JfrPath's: only a query ending in toMap() yields a map. */
+    @Override
+    public boolean producesMap(Object query) {
+      return String.valueOf(query).endsWith("toMap(name, n)");
+    }
+
     @Override
     public List<String> getRootTypes() {
       return List.of("things");
@@ -181,6 +187,46 @@ class EvaluatorLazyValueTest {
     evaluator.rows = List.of();
     ((VariableStore.LazyValue) global.get("rows")).invalidate();
     assertTrue(cond.evaluate("empty(rows)"));
+  }
+
+  @Test
+  void aToMapVariableIsReadAsItsMapAndAOneRowQueryStaysRows() throws Exception {
+    // What toMap() returns: one row, holding the map. jfr-shell stores that as a MapValue, so
+    // ${gc.size} is the entry count; it must be here too, while a one-row result of any other
+    // query (same shape!) keeps counting rows.
+    Map<String, Object> map = new java.util.LinkedHashMap<>();
+    map.put("t1", 10L);
+    map.put("t2", 20L);
+    evaluator.rows = List.of(map);
+    var ref = sessions.open(Path.of("/tmp/x.fake"), null);
+    VariableStore global = new VariableStore();
+    global.set(
+        "gc",
+        new EvaluatorLazyValue(
+            evaluator, evaluator.parse("things | toMap(name, n)"), "gc", ref, null));
+    global.set(
+        "one",
+        new EvaluatorLazyValue(evaluator, evaluator.parse("things | top(1)"), "one", ref, null));
+
+    VariableSubstitutor sub = new VariableSubstitutor(null, global);
+    assertEquals("2", sub.substitute("${gc.size}"));
+    assertEquals("20", sub.substitute("${gc.t2}"));
+    assertEquals("{t1=10, t2=20}", sub.substitute("${gc}"));
+    assertEquals(
+        sub.substitute("${gc.size} ${gc.t1}"),
+        new VariableSubstitutor(null, mapStore("gc", map)).substitute("${gc.size} ${gc.t1}"),
+        "same answer as the MapValue jfr-shell stores for this query");
+    assertTrue(new ConditionEvaluator(null, global).evaluate("${gc.size} == 2"));
+
+    assertEquals("1", sub.substitute("${one.size}"), "a one-row query still counts rows");
+    assertEquals("10", sub.substitute("${one}"), "and ${v} is still the first field");
+    assertEquals("20", sub.substitute("${one.t2}"));
+  }
+
+  private static VariableStore mapStore(String name, Map<String, Object> map) {
+    VariableStore store = new VariableStore();
+    store.set(name, new VariableStore.MapValue(map));
+    return store;
   }
 
   @Test

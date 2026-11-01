@@ -7,6 +7,7 @@ import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import java.lang.ref.WeakReference;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -22,6 +23,10 @@ import java.util.Objects;
  * session is current when it is read: {@code set --global n = ...}, then {@code use 2}, still reads
  * session 1. The session is held weakly, as {@code jfr-shell}'s {@code LazyQueryValue} does, so a
  * variable does not keep a closed recording or heap dump in memory.
+ *
+ * <p>A query whose result is one map ({@link QueryEvaluator#producesMap}, i.e. JfrPath's {@code
+ * toMap()}) stays lazy but is read as that map by {@link #asMap()}, so {@code ${v.size}} and {@code
+ * ${v.key}} give what jfr-shell gives for the map it stores.
  */
 public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private final QueryEvaluator evaluator;
@@ -29,6 +34,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private final String queryString;
   private final SessionResolver resolver;
   private final int sessionId;
+  private final boolean mapQuery;
   private final WeakReference<SessionRef<? extends Session>> sessionRef;
   private Object cachedResult;
   private boolean evaluated;
@@ -51,6 +57,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
     this.queryString = queryString;
     this.resolver = resolver;
     this.sessionId = session.id;
+    this.mapQuery = evaluator.producesMap(query);
     this.sessionRef = new WeakReference<>(session);
   }
 
@@ -87,6 +94,25 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
             : evaluator.evaluate(ref.session, query, resolver);
     evaluated = true;
     return cachedResult;
+  }
+
+  /**
+   * The result as a map, when the query produces one ({@link QueryEvaluator#producesMap}) and the
+   * evaluator returned the single map row that implies; {@code null} for any other query, so a
+   * one-row result of an ordinary query is still read as rows.
+   *
+   * @throws Exception if evaluation fails, as {@link #get()}
+   */
+  public synchronized Map<String, Object> asMap() throws Exception {
+    if (!mapQuery) {
+      return null;
+    }
+    if (get() instanceof List<?> rows && rows.size() == 1 && rows.get(0) instanceof Map<?, ?> m) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> map = (Map<String, Object>) m;
+      return map;
+    }
+    return null;
   }
 
   @Override
