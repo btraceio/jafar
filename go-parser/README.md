@@ -209,6 +209,13 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   calls the handler on the calling goroutine, so events arrive in file order.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
+* **An undecodable event is skipped, not fatal.** Here it is reported through
+  `Options.OnError` and parsing resumes at the next event, using the event size
+  the parser has already read. The Java untyped parser has no such channel and
+  fails the parse instead (`EventDecodingException`, naming the type, chunk and
+  position). Neither delivers the bad event, even partially. Pinned by
+  `TestUndecodableEventIsReportedAndSkipped` here and `EventDecodeFailureTest`
+  in `parser-core`.
 * **Framing is enforced.** Constant pool entries have to lie within their
   checkpoint event; the Java parser does not check this. It only matters for
   malformed recordings, where this parser drops the pool rather than indexing

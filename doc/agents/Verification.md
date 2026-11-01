@@ -89,6 +89,23 @@ looks identical to the file not being read at all.
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
 > the jar manifest's `Implementation-Version`, which the shadow-jar build stamps, so it cannot drift.
 
+> **Case file — half an event, then silence; or half an event, then a crash.** `EventStream.onEvent`
+> (what `UntypedJafarParser` always uses), and its benchmark-only twins `EventStreamLazy` and
+> `EventStreamBaseline`, handed the half-built map to the handler from a `finally`, then, for an
+> `IOException`, returned `!abort && delegate != null && ...`: `false` with no delegate, which
+> `StreamingChunkParser` reads as "skip the rest of the chunk". Twenty events in one chunk, event 7's
+> string encoding byte set to `0x7f`: the handler got events 0–6, event 7 without `label`, and
+> nothing else, and `run()` returned normally. With a `withParserListener` delegate the same failure
+> was ignored and all 20 arrived, event 7 still half-built. The first attempt to reproduce it hit a
+> different path: the JMC writer pools event strings, so the marker bytes were in the
+> `java.lang.String` constant pool; that error surfaces as a `RuntimeException` from
+> `MutableConstantPool.get`, which was not caught, so the parse *failed* (after delivering the
+> partial map). Same bug, opposite symptom, decided by which byte was corrupted. Now
+> `EventDecodingException` names type, chunk and position, and nothing is delivered half-built;
+> pinned by `EventDecodeFailureTest` (7 of 8 fail on the old code). **When you corrupt a fixture to
+> reach a code path, read the stack to confirm which path it took before reasoning from the
+> outcome.**
+
 ## R4. Documentation is code — run it
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before

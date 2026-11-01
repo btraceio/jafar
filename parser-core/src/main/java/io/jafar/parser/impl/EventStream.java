@@ -66,38 +66,41 @@ public abstract class EventStream implements ChunkParserListener {
     return delegate == null || delegate.onChunkEnd(context, chunkIndex, skipped);
   }
 
-  @SuppressWarnings("unchecked")
+  /**
+   * Decodes the event into a map and hands it to {@link #onEventValue}.
+   *
+   * <p>A payload that cannot be decoded fails the parse with {@link EventDecodingException} naming
+   * the type, chunk and position. The half-built map is never delivered. (Both used to happen: the
+   * partial map was delivered from a {@code finally}, and for an {@link IOException} this method
+   * then returned {@code false}, which the chunk parser reads as "skip the rest of the chunk", so
+   * every later event in the chunk was dropped without an error.)
+   */
   @Override
   public final boolean onEvent(
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     ControlImpl ctl = (ControlImpl) control.get();
-    try {
-      GenericValueReader r = context.get(GenericValueReader.class);
-      MapValueBuilder builder = r != null ? r.getProcessor() : null;
-
-      if (builder == null) {
-        return !ctl.abortFlag
-            && delegate != null
-            && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
-      }
-
-      MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
-      try {
-        builder.reset();
-        builder.onComplexValueStart(null, null, eventClz);
-        r.readValue(context.get(RecordingStream.class), eventClz);
-      } finally {
-        builder.onComplexValueEnd(null, null, eventClz);
-        Map<String, Object> value = builder.getRoot();
-
-        // Process event value with parsed data
-        onEventValue(eventClz, value, ctl);
-      }
-    } catch (IOException e) {
-      return !ctl.abortFlag
-          && delegate != null
-          && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+    GenericValueReader r = context.get(GenericValueReader.class);
+    MapValueBuilder builder = r != null ? r.getProcessor() : null;
+    if (builder == null) {
+      // onChunkStart installs the reader for every chunk whose events are read; without it no event
+      // could be decoded, so fail rather than skip (Verification.md R3).
+      throw new IllegalStateException(
+          "No GenericValueReader in chunk " + context.getChunkIndex() + "; onChunkStart not run?");
     }
+
+    MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
+    Map<String, Object> value;
+    try {
+      builder.reset();
+      builder.onComplexValueStart(null, null, eventClz);
+      r.readValue(context.get(RecordingStream.class), eventClz);
+      builder.onComplexValueEnd(null, null, eventClz);
+      value = builder.getRoot();
+    } catch (Exception e) {
+      throw EventDecodingException.of(context, typeId, eventClz, eventStartPos, rawSize, e);
+    }
+    // Outside the try: an exception from the handler is the handler's, not a decoding failure.
+    onEventValue(eventClz, value, ctl);
     return !ctl.abortFlag
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));

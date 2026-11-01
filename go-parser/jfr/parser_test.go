@@ -3,6 +3,7 @@ package jfr
 import (
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -685,5 +686,69 @@ func TestReuseValuesKeepsConstantPoolValues(t *testing.T) {
 	}
 	if first["name"] != "a" {
 		t.Errorf("constant pool value was recycled: name = %#v, want a", first["name"])
+	}
+}
+
+// undecodableBagRecording is bagRecording with the second event's label made
+// undecodable: its string encoding tag is replaced by one no encoding uses.
+func undecodableBagRecording() []byte {
+	bad := bagEvent("bad", []string{"i"})
+	tag := varintLen(tIDBag)
+	if bad[tag] != strUTF8 {
+		panic("label tag not where expected")
+	}
+	bad[tag] = 0x7f
+	spec := chunkSpec{
+		metadata: bagMetadata(),
+		events: [][]byte{
+			bagEvent("first", []string{"x"}),
+			bad,
+			bagEvent("third", nil),
+			bagEvent("fourth", []string{"p", "q"}),
+		},
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}
+
+// An event that fails to decode is reported through OnError and never reaches
+// the handler, not even partially; the parser resumes at the next event using
+// the size it already read. The Java parser fails the parse instead (it has no
+// OnError channel); see "Differences from the Java parser" in the README.
+func TestUndecodableEventIsReportedAndSkipped(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		var labels []any
+		var reported []error
+		err := NewParser(undecodableBagRecording()).ParseWith(Options{
+			ReuseValues: reuse,
+			OnError: func(err error) error {
+				reported = append(reported, err)
+				return nil
+			},
+		}, func(e *Event) error {
+			if _, ok := e.Values["items"]; !ok {
+				t.Errorf("reuse=%v: partially decoded event delivered: %v", reuse, e.Values)
+			}
+			labels = append(labels, e.Values["label"])
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("reuse=%v: parse: %v", reuse, err)
+		}
+		if want := []any{"first", "third", "fourth"}; !reflect.DeepEqual(labels, want) {
+			t.Errorf("reuse=%v: labels = %v, want %v", reuse, labels, want)
+		}
+		if len(reported) != 1 || !strings.Contains(reported[0].Error(), "test.Bag") ||
+			!strings.Contains(reported[0].Error(), "unexpected string constant id: 127") {
+			t.Errorf("reuse=%v: reported = %v, want one error naming test.Bag and the bad tag", reuse, reported)
+		}
+	}
+
+	err := NewParser(undecodableBagRecording()).ParseWith(Options{OnError: FailOnError}, func(*Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "test.Bag") {
+		t.Errorf("FailOnError: parse error = %v, want one naming test.Bag", err)
 	}
 }

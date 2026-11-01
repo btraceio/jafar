@@ -540,6 +540,32 @@ parser.handle((type, value, ctl) -> {
 });
 ```
 
+### Undecodable Events
+
+If an event's payload cannot be decoded (a corrupted or non-conforming recording), `run()` fails
+with an `IOException`. Its cause chain contains an `io.jafar.parser.impl.EventDecodingException`
+whose message names the event type, the chunk and the event's position in it, for example
+`Cannot decode event of type jdk.ExecutionSample (id 101) in chunk 1 at position 271 (size 29)`.
+Its own cause is the decoder's reason.
+
+The handler never receives the bad event, not even partially. Events decoded before the failure
+have already been delivered. Chunks are parsed in parallel, so events from other chunks may have
+been delivered too.
+
+```java
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.run();
+} catch (IOException e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+        System.err.println(c);  // includes "Cannot decode event of type ..."
+    }
+}
+```
+
+> The Go parser handles this case differently: it reports the event through `Options.OnError` and
+> carries on with the next one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
+
 ## Performance Considerations
 
 ### 1. Avoid Unnecessary String Checks
