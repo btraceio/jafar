@@ -272,6 +272,10 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
 
 ## Differences from the Java parser
 
+* **Simple-type references are not collapsed.** Java now offers
+  `Values.resolvedDeepCollapsed`, which turns a reference to a JFR simple type into its scalar.
+  Here such a reference still decodes to the one-entry map `{field: value}` and no helper collapses
+  it; not ported yet (btraceio/jafar#108).
 * **Untyped only.** No typed API, no code generation, no annotation processor.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and

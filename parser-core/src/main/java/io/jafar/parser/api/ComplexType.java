@@ -18,4 +18,19 @@ public interface ComplexType {
    * @return a map representing the complex value structure
    */
   Map<String, Object> getValue();
+
+  /**
+   * Whether this value is a reference to a JFR <em>simple type</em>: a type that exists only to
+   * wrap one value (for example {@code jdk.types.ThreadState}, whose single field is {@code name}).
+   * {@link #getValue()} still returns the one-entry wrapper map; this method is what lets a caller
+   * tell such a wrapper from a genuine single-field struct, which {@code map.size() == 1} cannot.
+   *
+   * <p>See {@link Values#resolvedDeepCollapsed(Map)}.
+   *
+   * @return {@code true} if the referenced type is declared {@code simpleType="true"} and wraps
+   *     exactly one field; {@code false} otherwise (the default)
+   */
+  default boolean isSimpleType() {
+    return false;
+  }
 }
