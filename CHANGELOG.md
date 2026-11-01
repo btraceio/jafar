@@ -50,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors it reports (`ScriptRunner.ErrorTally`), and a line that reported one fails — fail-fast by
   default, listed under `Script completed with errors:`, exit status 1 — which is what the scripting
   guides already described. This applies to `jfr-shell script`, `script` at either prompt, and
-  `jafar-shell script`. A script that relied on running past a failing line needs
+  `jafar-shell script`, and to `ask`/`as-query`/`explain`/`llm`, whose failures (no backend, no
+  session, no query in the reply, a query that failed, nothing to explain) now go through a new
+  `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
   `--continue-on-error` (command line) now
 - **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
   never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read

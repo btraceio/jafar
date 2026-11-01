@@ -320,6 +320,39 @@ class ShellArtifactTest {
     }
   }
 
+  /**
+   * A failing {@code ask}/{@code as-query}/{@code explain} line fails the script, in both shells'
+   * script commands. The backend is pinned to an id that does not exist, so no request can leave
+   * the machine (see {@code LlmCommandsTest}).
+   */
+  @Test
+  void failingLlmCommandFailsTheScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String script =
+        "set llm.backend = test-nonexistent\nopen $1\nexplain\nask why\nas-query why\necho DONE\n";
+
+    for (Result result :
+        List.of(
+            runJarWithStatus(
+                dir, script, "script", "-", recording.toString(), "--continue-on-error"),
+            runClassWithStatus(
+                dir,
+                "io.jafar.shell.Main",
+                script,
+                "script",
+                "-",
+                recording.toString(),
+                "--continue-on-error"))) {
+      assertEquals(1, result.status(), result.output());
+      assertTrue(result.output().contains("Line 3: Nothing to explain yet"), result.output());
+      assertTrue(result.output().contains("Line 4: "), result.output());
+      assertTrue(result.output().contains("Line 5: "), result.output());
+      assertTrue(result.output().contains("DONE"), result.output());
+      assertTrue(result.output().contains("Executed 3/6 commands successfully."), result.output());
+      assertFalse(result.output().contains("executed successfully"), result.output());
+    }
+  }
+
   @Test
   void routesOnlyJfrInvocationsToJfrCommandLine() {
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "-"}));

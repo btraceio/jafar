@@ -927,6 +927,11 @@ public final class Shell implements AutoCloseable {
                 }
 
                 @Override
+                public void error(String line) {
+                  Shell.this.error(line); // printed to err and counted, so a script sees it
+                }
+
+                @Override
                 public Optional<String> currentModuleId() {
                   return sessions.getCurrent().map(ref -> ref.session.getType());
                 }

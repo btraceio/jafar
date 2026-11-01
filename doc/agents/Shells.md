@@ -82,7 +82,8 @@ both entry points from the fat jar (`runJarWithStatus`, `runClassWithStatus`).
 **A failure must be reported through the error channel, or scripts cannot see it.** Both shells
 print a failing command and return normally; `ScriptRunner` only sees what the shell records in its
 `ScriptRunner.ErrorTally` (`failingOnReportedErrors`). In `CommandDispatcher` that is `io.error`; in
-`unified/Shell` it is `error(...)`/`printError(...)`. A new failure printed with `println` instead
+`unified/Shell` it is `error(...)`/`printError(...)`; in `LlmCommands` it is `Host.error`, which
+both hosts route to those. A new failure printed with `println` instead
 runs on in a script and ends in "Script executed successfully" — the bug this contract fixed.
 
 `EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,

@@ -184,6 +184,11 @@ public class CommandDispatcher {
                 }
 
                 @Override
+                public void error(String line) {
+                  io.error(line); // the channel 'script' counts
+                }
+
+                @Override
                 public java.util.Optional<String> currentModuleId() {
                   var cur = sessions.current();
                   if (cur.isEmpty()) {

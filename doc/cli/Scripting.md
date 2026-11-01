@@ -756,7 +756,7 @@ can open heap dumps and profiles too — see [In jafar-shell](#in-jafar-shell).
 
 ### Error Handling
 
-By default, script execution stops on the first error (fail-fast mode). A line fails when it is not a command, when it throws, or when the shell reports an error for it — a query that does not parse, `No session open`, a file that is not there. Use `--continue-on-error` to execute all commands:
+By default, script execution stops on the first error (fail-fast mode). A line fails when it is not a command, when it throws, or when the shell reports an error for it — a query that does not parse, `No session open`, a file that is not there, or an `ask`/`as-query`/`explain` that ran nothing (no backend, no query in the reply, nothing to explain). Use `--continue-on-error` to execute all commands:
 
 ```bash
 # Stop on first error (default)
