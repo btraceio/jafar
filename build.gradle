@@ -129,4 +129,26 @@ allprojects {
     tasks.matching { it.name == 'check' }.configureEach {
         dependsOn rootProject.tasks.named('spotlessCheck')
     }
+
+    // Tests must not see the developer's LLM setup. Settings would change what they assert, and
+    // credentials would let a test reach a live, billable API. An empty settings file is used
+    // because an explicit JAFAR_LLM_CONFIG wins over ~/.config/jafar/llm.properties; owner-only so
+    // it does not trigger the file-permissions warning.
+    tasks.withType(Test).configureEach { testTask ->
+        doFirst {
+            testTask.environment.keySet().removeIf {
+                it.startsWith('JAFAR_LLM_') || it == 'LLM_ENABLED' ||
+                    it.startsWith('ANTHROPIC_') || it.startsWith('OPENAI_')
+            }
+            def llmConfig = new File(testTask.temporaryDir, 'llm.properties')
+            llmConfig.text = ''
+            llmConfig.setReadable(false, false)
+            llmConfig.setWritable(false, false)
+            llmConfig.setReadable(true, true)
+            llmConfig.setWritable(true, true)
+            testTask.environment('JAFAR_LLM_CONFIG', llmConfig.absolutePath)
+            // Anthropic profiles live under the home directory; this one is never created.
+            testTask.environment('ANTHROPIC_CONFIG_DIR', new File(testTask.temporaryDir, 'anthropic').absolutePath)
+        }
+    }
 }
