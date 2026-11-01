@@ -21,6 +21,9 @@ public final class ArrayHolder implements ArrayType {
   /** The actual array object. */
   private final Object array;
 
+  /** {@link #array} as a {@code long[]} for {@code int} and {@code long} elements, else null. */
+  private final long[] longs;
+
   /** The current index for adding elements. */
   private int index = 0;
 
@@ -61,6 +64,7 @@ public final class ArrayHolder implements ArrayType {
       default:
         array = new Object[len];
     }
+    longs = array instanceof long[] ? (long[]) array : null;
   }
 
   /**
@@ -70,6 +74,23 @@ public final class ArrayHolder implements ArrayType {
    */
   void add(Object value) {
     Array.set(array, index++, value);
+  }
+
+  /**
+   * Adds an {@code int} or {@code long} element at the current index without boxing it.
+   *
+   * <p>{@link #add(Object)} would box the value and store it through reflection; the box escapes
+   * into the native {@code Array.set}, so it is a real allocation for every element outside the
+   * {@code Long} cache (-128..127), which includes every normalized timestamp.
+   *
+   * @param value the value to add
+   * @throws IllegalStateException if the element type is neither {@code int} nor {@code long}
+   */
+  void addLong(long value) {
+    if (longs == null) {
+      throw new IllegalStateException("addLong on an array of " + type);
+    }
+    longs[index++] = value;
   }
 
   @Override

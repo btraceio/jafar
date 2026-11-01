@@ -113,13 +113,13 @@ public final class LazyMapValueBuilder implements ValueProcessor {
   @Override
   public void onIntValue(MetadataClass owner, String fld, long value) {
     value = TemporalNormalizer.normalize(owner, fld, value, chunkInfo());
-    addFieldValue(fld, value);
+    addLongFieldValue(fld, value);
   }
 
   @Override
   public void onLongValue(MetadataClass type, String fld, long value) {
     value = TemporalNormalizer.normalize(type, fld, value, chunkInfo());
-    addFieldValue(fld, value);
+    addLongFieldValue(fld, value);
   }
 
   @Override
@@ -224,6 +224,16 @@ public final class LazyMapValueBuilder implements ValueProcessor {
       } else if (parent instanceof Map) {
         ((Map<String, Object>) parent).put(fld, cpAccessor);
       }
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addLongFieldValue(String fld, long value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addLong(value);
+    } else {
+      addFieldValue(fld, value);
     }
   }
 

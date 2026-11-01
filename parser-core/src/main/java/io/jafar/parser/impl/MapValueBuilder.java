@@ -75,7 +75,7 @@ public final class MapValueBuilder implements ValueProcessor {
     value = TemporalNormalizer.normalize(owner, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addLong(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -88,7 +88,7 @@ public final class MapValueBuilder implements ValueProcessor {
     value = TemporalNormalizer.normalize(type, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addLong(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
