@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -47,6 +48,8 @@ class CrossrefDecodeFailureTest {
   private static final byte BAD_ENCODING = 0x7f;
 
   /** {@code java.lang.String} is a pool every JMC-written recording with strings has. */
+  private static final String EVENT_PREFIX = "Cannot decode event of type " + TYPE + " (id ";
+
   private static final String CROSSREF = "constants/java.lang.String | crossref()";
 
   static final class BufferIO implements CommandDispatcher.IO {
@@ -71,15 +74,20 @@ class CrossrefDecodeFailureTest {
 
   @TempDir Path dir;
   private BufferIO io;
+  private SessionManager<JFRSession> sessions;
   private CommandDispatcher dispatcher;
 
   @BeforeEach
   void setUp() {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
-        new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
+    sessions = new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     io = new BufferIO();
     dispatcher = new CommandDispatcher(sessions, io, r -> {});
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    sessions.closeAll();
   }
 
   /** Guard: the fixture itself is fine, so the failures below come from the corruption alone. */
@@ -103,19 +111,43 @@ class CrossrefDecodeFailureTest {
   void undecodableEventFailsTheCommand() throws Exception {
     Path clean = dir.resolve("clean.jfr");
     write(clean);
-    byte[] bytes = Files.readAllBytes(clean);
     long[] bad = eventExtents(clean).get(BAD);
-    int at = (int) (bad[0] + bad[1] - 2);
-    assertEquals(2, bytes[at], "label must be a constant pool reference (encoding id 2)");
-    bytes[at] = BAD_ENCODING;
     Path corrupt = dir.resolve("corrupt-event.jfr");
-    Files.write(corrupt, bytes);
+    Files.write(corrupt, corruptEvent(clean, bad));
 
     String err = run(corrupt);
     assertFailedNaming(
-        err,
-        "cannot decode event " + TYPE + " in chunk 1 at chunk position " + bad[0] + ": ",
-        "Unexpected string constant id: 127");
+        err, EVENT_PREFIX, eventFailure(1, bad), "Unexpected string constant id: 127");
+  }
+
+  /**
+   * Chunks are decoded in parallel. With the bad event in chunks 2 and 4 of four (JFR chunks
+   * concatenate into a valid recording), the error must name chunk 2 on every run: the parser
+   * collects chunk results in chunk order, so the first failing chunk wins regardless of which
+   * worker thread failed first. Positions are chunk-relative, so the bad event's position is the
+   * same as in the one-chunk file.
+   */
+  @Test
+  void firstFailingChunkIsReportedWhenChunksDecodeInParallel() throws Exception {
+    Path clean = dir.resolve("clean.jfr");
+    write(clean);
+    long[] bad = eventExtents(clean).get(BAD);
+    byte[] good = Files.readAllBytes(clean);
+    byte[] corrupt = corruptEvent(clean, bad);
+    Path jfr = dir.resolve("chunks.jfr");
+    try (var out = Files.newOutputStream(jfr)) {
+      out.write(good);
+      out.write(corrupt);
+      out.write(good);
+      out.write(corrupt);
+    }
+
+    for (int run = 0; run < 10; run++) {
+      io.err.setLength(0);
+      String err = run(jfr);
+      assertFailedNaming(
+          err, EVENT_PREFIX, eventFailure(2, bad), "Unexpected string constant id: 127");
+    }
   }
 
   /**
@@ -148,9 +180,23 @@ class CrossrefDecodeFailureTest {
     // fails. Seen: "java.lang.String#83 ... Unexpected string constant id: 95" ('_' of the marker).
     assertFailedNaming(
         err,
-        "cannot decode constant pool entry java.lang.String#",
-        " in chunk 1 at chunk position ",
+        "Cannot decode constant pool entry java.lang.String#",
+        " in chunk 1 at position ",
         "Unexpected string constant id: ");
+  }
+
+  /** The event's last two bytes are its label: encoding id 2 (pool reference) + one-byte index. */
+  private static byte[] corruptEvent(Path clean, long[] bad) throws Exception {
+    byte[] bytes = Files.readAllBytes(clean);
+    int at = (int) (bad[0] + bad[1] - 2);
+    assertEquals(2, bytes[at], "label must be a constant pool reference (encoding id 2)");
+    bytes[at] = BAD_ENCODING;
+    return bytes;
+  }
+
+  /** The message shape shared with {@code EventDecodingException} (btraceio/jafar#135). */
+  private static String eventFailure(int chunk, long[] bad) {
+    return " in chunk " + chunk + " at position " + bad[0] + " (size " + bad[1] + "): ";
   }
 
   private String run(Path jfr) throws Exception {
@@ -164,6 +210,7 @@ class CrossrefDecodeFailureTest {
   private void assertFailedNaming(String err, String... fragments) {
     String ctx = "stderr:\n" + err + "stdout:\n" + io.out;
     assertTrue(err.contains("crossref(java.lang.String) aborted: "), ctx);
+    assertEquals(1, err.split("\n", -1).length - 1, "exactly one error line; " + ctx);
     for (String f : fragments) {
       assertTrue(err.contains(f), "missing '" + f + "'; " + ctx);
     }

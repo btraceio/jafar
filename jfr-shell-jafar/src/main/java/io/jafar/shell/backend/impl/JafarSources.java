@@ -657,8 +657,9 @@ final class JafarSources {
                                 stream.position(offset);
                                 edgeReader.readValue(stream, mcp.getType());
                               } catch (Exception e) {
-                                throw new CrossrefDecodeFailure(
-                                    "constant pool entry " + mcp.getType().getName() + "#" + id,
+                                throw CrossrefDecodeFailure.poolEntry(
+                                    mcp.getType().getName(),
+                                    id,
                                     context.getChunkIndex(),
                                     offset,
                                     e);
@@ -691,8 +692,13 @@ final class JafarSources {
                 try {
                   reader.readValue(stream, eventType);
                 } catch (Exception e) {
-                  throw new CrossrefDecodeFailure(
-                      "event " + eventType.getName(), context.getChunkIndex(), eventStartPos, e);
+                  throw CrossrefDecodeFailure.event(
+                      eventType.getName(),
+                      typeId,
+                      context.getChunkIndex(),
+                      eventStartPos,
+                      rawSize,
+                      e);
                 } finally {
                   currentEventAllRefs.remove();
                 }
@@ -744,6 +750,8 @@ final class JafarSources {
                 + typeName
                 + ") aborted: "
                 + failure.getMessage()
+                + ": "
+                + failure.getCause()
                 + "; counts from a partial read would be wrong, so none are reported",
             failure.getCause());
       }
@@ -867,18 +875,49 @@ final class JafarSources {
    * A value {@code crossref} could not decode. Unchecked because {@link ChunkParserListener}
    * callbacks cannot throw checked exceptions; {@code crossref} unwraps it from the parser's
    * wrapping and rethrows it as an {@link IOException}.
+   *
+   * <p>The event message has the same shape as {@code io.jafar.parser.api.EventDecodingException}
+   * (btraceio/jafar#135). Like that exception it records no stack trace of its own: it never leaves
+   * {@code crossref} (only its cause does), and the cause's trace covers the frames where decoding
+   * failed.
    */
   private static final class CrossrefDecodeFailure extends RuntimeException {
-    CrossrefDecodeFailure(String what, int chunkIndex, long position, Exception cause) {
-      super(
-          "cannot decode "
-              + what
+    private static final long serialVersionUID = 1L;
+
+    private CrossrefDecodeFailure(String message, Exception cause) {
+      super(message, cause, false, false);
+    }
+
+    /** {@code position} is the event start within the chunk; {@code size} includes its header. */
+    static CrossrefDecodeFailure event(
+        String typeName, long typeId, int chunkIndex, long position, long size, Exception cause) {
+      return new CrossrefDecodeFailure(
+          "Cannot decode event of type "
+              + typeName
+              + " (id "
+              + typeId
+              + ") in chunk "
+              + chunkIndex
+              + " at position "
+              + position
+              + " (size "
+              + size
+              + ")",
+          cause);
+    }
+
+    /** {@code id} is chunk-local; {@code position} is the entry's offset within the chunk. */
+    static CrossrefDecodeFailure poolEntry(
+        String typeName, long id, int chunkIndex, long position, Exception cause) {
+      return new CrossrefDecodeFailure(
+          "Cannot decode constant pool entry "
+              + typeName
+              + "#"
+              + id
               + " in chunk "
               + chunkIndex
-              + " at chunk position "
-              + position
-              + ": "
-              + cause,
+              + " at position "
+              + position,
           cause);
     }
   }
