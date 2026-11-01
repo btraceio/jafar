@@ -348,3 +348,10 @@ java -XX:StartFlightRecording=duration=10s,filename=/tmp/spin.jfr,settings=profi
 ```
 
 `./get_resources.sh` downloads the full set from Dropbox where the network allows it.
+
+> **Case file — the recording that was a web page.** On 2026-11-01 Dropbox answered every link in
+> `get_resources.sh` with HTTP 200 and an HTML page titled "Dropbox - Link Temporarily Disabled".
+> The script saved it as `test-dd.jfr` and exited 0. CI caches only `test-ap.jfr` and `test-jfr.jfr`,
+> so `test-dd.jfr` was fetched fresh, and three `jfr-mcp` tests failed on assertions about MCP tool
+> results; the cause, `Invalid JFR Magic Number: 3c21444f` (`<!DO`), was only in the test's stderr.
+> The script now refuses any file without the `FLR\0` magic and says what it got instead.
