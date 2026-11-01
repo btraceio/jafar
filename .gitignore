@@ -47,3 +47,6 @@ doc/temp/
 
 # Sphinx review session state (credentials, reports)
 .sphinx/
+
+# jqwik test run state
+.jqwik-database
