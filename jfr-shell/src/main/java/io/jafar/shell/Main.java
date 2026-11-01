@@ -283,7 +283,6 @@ public final class Main implements Callable<Integer> {
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
-        ScriptRunner.ErrorTally tally = new ScriptRunner.ErrorTally();
 
         CommandDispatcher dispatcher =
             new CommandDispatcher(
@@ -302,7 +301,6 @@ public final class Main implements Callable<Integer> {
                   @Override
                   public void error(String s) {
                     errors.append(s).append("\n");
-                    tally.record(s);
                   }
                 },
                 current -> {});

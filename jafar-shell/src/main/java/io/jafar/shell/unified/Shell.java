@@ -424,7 +424,9 @@ public final class Shell implements AutoCloseable {
 
   private void flush() {
     out.flush();
-    err.flush();
+    if (err != out) { // the same terminal writer at the prompt
+      err.flush();
+    }
   }
 
   /** A stack trace belongs at the prompt, where it always was; a script reports the message. */
@@ -548,8 +550,16 @@ public final class Shell implements AutoCloseable {
    * queries.
    */
   private boolean isJfrCommandForCurrentSession(String input) {
-    return JFR_DISPATCHER_COMMANDS.contains(input.split("\\s+", 2)[0])
-        && sessions.getCurrent().map(ref -> ref.session instanceof JFRSession).orElse(false);
+    // Runs for every line: the session test first, and the first word without a regex split
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (current.isEmpty() || !(current.get().session instanceof JFRSession)) {
+      return false;
+    }
+    int end = 0;
+    while (end < input.length() && !Character.isWhitespace(input.charAt(end))) {
+      end++;
+    }
+    return JFR_DISPATCHER_COMMANDS.contains(input.substring(0, end));
   }
 
   private static final java.util.Set<String> JFR_DISPATCHER_COMMANDS =
