@@ -31,6 +31,7 @@ public final class ShellCompleter implements Completer {
     "open",
     "sessions",
     "use",
+    "session", // alias for 'use', as in jfr-shell
     "close",
     "info",
     "modules",
@@ -49,6 +50,7 @@ public final class ShellCompleter implements Completer {
     "else",
     "endif",
     "script",
+    "record",
     // JFR-only (Shell.JFR_COMMANDS): offered with no session or a JFR one, see offersCommand
     "metadata",
     "chunks",
@@ -139,7 +141,7 @@ public final class ShellCompleter implements Completer {
       case "ask", "as-query", "analyze", "investigate", "explain" ->
           completeDryRunFlag(line, candidates);
       case "open" -> completeOpen(reader, line, candidates);
-      case "use", "close" -> completeSessionRef(line, candidates);
+      case "use", "session", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);
       case "set", "let" -> completeSet(line, candidates, words, wordIndex);
       case "vars" -> completeVars(line, candidates, words, wordIndex);
