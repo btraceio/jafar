@@ -10,7 +10,8 @@ import (
 // ArrayHolder, UntypedPrimitiveArrayTest): int and long array elements decode to
 // int64, the same Go type as a scalar int field, @Timestamp/@Timespan(TICKS)
 // elements are normalised to nanoseconds, which do not fit in 32 bits, and int,
-// long, float and double elements are stored unboxed in typed slices.
+// long, float, double, short and char elements are stored unboxed in typed
+// slices.
 const tIDPrimitiveArrays = 103
 
 var (
@@ -20,6 +21,8 @@ var (
 	primitiveArrayLongs      = []int64{math.MaxInt64, -2}
 	primitiveArrayFloats     = []float32{0, -1.5, math.MaxFloat32, math.SmallestNonzeroFloat32, float32(math.Inf(-1))}
 	primitiveArrayDoubles    = []float64{0, -1.5, math.MaxFloat64, math.SmallestNonzeroFloat64, math.Inf(1)}
+	primitiveArrayShorts     = []int16{0, -1, 1000, math.MinInt16, math.MaxInt16}
+	primitiveArrayChars      = []uint16{0, 'A', 200, math.MaxUint16}
 )
 
 func primitiveArraysMetadata() *metaElement {
@@ -39,6 +42,8 @@ func primitiveArraysMetadata() *metaElement {
 		elem("field", attr("name", "longs"), attr("class", itoa(tIDLong)), attr("dimension", "1")),
 		elem("field", attr("name", "floats"), attr("class", itoa(tIDFloat)), attr("dimension", "1")),
 		elem("field", attr("name", "doubles"), attr("class", itoa(tIDDouble)), attr("dimension", "1")),
+		elem("field", attr("name", "shorts"), attr("class", itoa(tIDShort)), attr("dimension", "1")),
+		elem("field", attr("name", "chars"), attr("class", itoa(tIDChar)), attr("dimension", "1")),
 		elem("field", attr("name", "label"), attr("class", itoa(tIDString))),
 	)
 	return elem("root").with(
@@ -47,6 +52,8 @@ func primitiveArraysMetadata() *metaElement {
 			primitiveClass(tIDLong, "long"),
 			primitiveClass(tIDFloat, "float"),
 			primitiveClass(tIDDouble, "double"),
+			primitiveClass(tIDShort, "short"),
+			primitiveClass(tIDChar, "char"),
 			primitiveClass(tIDString, "java.lang.String"),
 			elem("class", attr("id", itoa(tIDTimestamp)), attr("name", "jdk.jfr.Timestamp")),
 			elem("class", attr("id", itoa(tIDTimespan)), attr("name", "jdk.jfr.Timespan")),
@@ -56,7 +63,8 @@ func primitiveArraysMetadata() *metaElement {
 }
 
 // primitiveArraysEvent encodes one test.PrimitiveArrays event body.
-func primitiveArraysEvent(ints, stamps, spans []int32, longs []int64, floats []float32, doubles []float64) []byte {
+func primitiveArraysEvent(ints, stamps, spans []int32, longs []int64, floats []float32, doubles []float64,
+	shorts []int16, chars []uint16) []byte {
 	w := &writer{}
 	w.varint(tIDPrimitiveArrays)
 	count := int32(-7)
@@ -80,6 +88,15 @@ func primitiveArraysEvent(ints, stamps, spans []int32, longs []int64, floats []f
 	for _, v := range doubles {
 		w.float64Val(v)
 	}
+	// short and char are written zero extended to their unsigned 16 bit width.
+	w.varint(int64(len(shorts)))
+	for _, v := range shorts {
+		w.varint(int64(uint16(v)))
+	}
+	w.varint(int64(len(chars)))
+	for _, v := range chars {
+		w.varint(int64(v))
+	}
 	// A field after the arrays proves the reader stayed aligned.
 	w.bytes(utf8String("after-arrays"))
 	return w.buf
@@ -100,7 +117,8 @@ func primitiveArraysRecording(events ...[]byte) []byte {
 func TestPrimitiveArrayElements(t *testing.T) {
 	data := primitiveArraysRecording(primitiveArraysEvent(
 		primitiveArrayInts, primitiveArrayStampTicks, primitiveArraySpanTicks,
-		primitiveArrayLongs, primitiveArrayFloats, primitiveArrayDoubles))
+		primitiveArrayLongs, primitiveArrayFloats, primitiveArrayDoubles,
+		primitiveArrayShorts, primitiveArrayChars))
 	for _, reuse := range []bool{false, true} {
 		var ev map[string]any
 		err := NewParser(data).ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
@@ -134,6 +152,8 @@ func TestPrimitiveArrayElements(t *testing.T) {
 			{"longs", primitiveArrayLongs},
 			{"floats", primitiveArrayFloats},
 			{"doubles", primitiveArrayDoubles},
+			{"shorts", primitiveArrayShorts},
+			{"chars", primitiveArrayChars},
 		}
 		for _, c := range checks {
 			if got := ev[c.field]; !reflect.DeepEqual(got, c.want) {
@@ -146,10 +166,11 @@ func TestPrimitiveArrayElements(t *testing.T) {
 	}
 }
 
-// TestPrimitiveArrayElementsAreNotBoxed fails if int, long, float or double
-// array elements are boxed into interface values: Go allocates for every such
-// conversion of a value outside its small-value cache (runtime.convT64 and
-// friends), so a boxed decode costs one allocation per element. The test
+// TestPrimitiveArrayElementsAreNotBoxed fails if int, long, float, double,
+// short or char array elements are boxed into interface values: Go allocates
+// for every such conversion of a value outside its small-value table
+// (runtime.convT64, convT16 and friends; the table covers 0..255), so a boxed
+// decode costs one allocation per element. The test
 // compares a parse of an event with 50,000 element arrays against the same
 // event shape with 8 element arrays; the number of allocations must not grow
 // with the element count.
@@ -159,13 +180,17 @@ func TestPrimitiveArrayElementsAreNotBoxed(t *testing.T) {
 		longs := make([]int64, n)
 		floats := make([]float32, n)
 		doubles := make([]float64, n)
+		shorts := make([]int16, n)
+		chars := make([]uint16, n)
 		for i := range ints {
 			ints[i] = math.MaxInt32 - int32(i) // outside any small-value cache
 			longs[i] = math.MaxInt64 - int64(i)
 			floats[i] = float32(i) + 0.5
 			doubles[i] = float64(i) + 0.25
+			shorts[i] = int16(1000 + i%30000) // >= 256, outside the small-value table
+			chars[i] = uint16(256 + i)
 		}
-		return primitiveArraysRecording(primitiveArraysEvent(ints, nil, nil, longs, floats, doubles))
+		return primitiveArraysRecording(primitiveArraysEvent(ints, nil, nil, longs, floats, doubles, shorts, chars))
 	}
 	small, large := recording(8), recording(50_000)
 	for _, reuse := range []bool{false, true} {
@@ -203,4 +228,20 @@ func TestHandBuiltArray(t *testing.T) {
 	if got := arr.String(); got != "[1.5, 2.5]" {
 		t.Errorf("String = %q", got)
 	}
+}
+
+// The README and the Java parity note claim single-byte values never allocate
+// when converted to an interface, which is why byte and boolean arrays stay in
+// Values. Pin that claim, and the converse for 16 bit values that the typed
+// Shorts and Chars slices exist for.
+func TestInterfaceConversionCosts(t *testing.T) {
+	var sink any
+	b, z, s := int8(-100), true, int16(1000)
+	if n := testing.AllocsPerRun(100, func() { sink = b; sink = z }); n != 0 {
+		t.Errorf("int8/bool to interface: %.0f allocs, want 0", n)
+	}
+	if n := testing.AllocsPerRun(100, func() { sink = s }); n != 1 {
+		t.Errorf("int16(1000) to interface: %.0f allocs, want 1", n)
+	}
+	_ = sink
 }

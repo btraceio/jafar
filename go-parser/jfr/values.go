@@ -79,7 +79,8 @@ func Resolve(v any) any {
 
 // ResolveDeep resolves every constant pool reference reachable from v,
 // returning a structure built only from maps, slices and scalars. An *Array
-// becomes a copy of its typed slice ([]int64, []float32 or []float64) when its
+// becomes a copy of its typed slice ([]int64, []float32, []float64, []int16 or
+// []uint16) when its
 // elements are stored unboxed, and an []any otherwise.
 //
 // Resolved constant pool entries are memoised per entry, so a stack trace
@@ -163,6 +164,10 @@ func resolveDeep(v any, onPath map[deepKey]int, depth int) (any, int) {
 			return append([]float32(nil), value.Floats...), noBackEdge
 		case len(value.Doubles) > 0 || value.kind == arrayDoubles:
 			return append([]float64(nil), value.Doubles...), noBackEdge
+		case len(value.Shorts) > 0 || value.kind == arrayShorts:
+			return append([]int16(nil), value.Shorts...), noBackEdge
+		case len(value.Chars) > 0 || value.kind == arrayChars:
+			return append([]uint16(nil), value.Chars...), noBackEdge
 		}
 		out := make([]any, len(value.Values))
 		minBack := noBackEdge

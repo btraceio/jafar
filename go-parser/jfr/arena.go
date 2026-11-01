@@ -107,6 +107,7 @@ func (arr *Array) reset(elementType string, kind arrayKind, n int) {
 	arr.ElementType = elementType
 	arr.kind = kind
 	arr.Ints, arr.Floats, arr.Doubles = arr.Ints[:0], arr.Floats[:0], arr.Doubles[:0]
+	arr.Shorts, arr.Chars = arr.Shorts[:0], arr.Chars[:0]
 	clear(arr.Values)
 	arr.Values = arr.Values[:0]
 	switch kind {
@@ -116,6 +117,10 @@ func (arr *Array) reset(elementType string, kind arrayKind, n int) {
 		arr.Floats = grow(arr.Floats, n)
 	case arrayDoubles:
 		arr.Doubles = grow(arr.Doubles, n)
+	case arrayShorts:
+		arr.Shorts = grow(arr.Shorts, n)
+	case arrayChars:
+		arr.Chars = grow(arr.Chars, n)
 	default:
 		arr.Values = grow(arr.Values, n)
 	}

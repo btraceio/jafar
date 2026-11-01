@@ -19,6 +19,8 @@ const maxValueDepth = 64
 //	                              @Timestamp/@Timespan(TICKS) in nanoseconds)
 //	float           Floats        float32
 //	double          Doubles       float64
+//	short           Shorts        int16
+//	char            Chars         uint16
 //	anything else   Values        the Go type of a scalar field of that type
 //
 // Array elements that are constant pool references are *Ref and inline complex
@@ -34,6 +36,10 @@ type Array struct {
 	Floats []float32
 	// Doubles holds the elements of double arrays.
 	Doubles []float64
+	// Shorts holds the elements of short arrays.
+	Shorts []int16
+	// Chars holds the elements of char arrays.
+	Chars []uint16
 	// Values holds the elements of every other array.
 	Values []any
 
@@ -50,6 +56,8 @@ const (
 	arrayInts
 	arrayFloats
 	arrayDoubles
+	arrayShorts
+	arrayChars
 )
 
 // arrayKindOf returns where the elements of an array field are stored.
@@ -65,6 +73,10 @@ func arrayKindOf(f *Field) arrayKind {
 		return arrayFloats
 	case "double":
 		return arrayDoubles
+	case "short":
+		return arrayShorts
+	case "char":
+		return arrayChars
 	default:
 		return arrayValues
 	}
@@ -75,7 +87,7 @@ func arrayKindOf(f *Field) arrayKind {
 // At most one of the slices is non-empty, so Len and At need no record of
 // which one the parser filled and work on an Array built by hand too.
 func (a *Array) Len() int {
-	return len(a.Ints) + len(a.Floats) + len(a.Doubles) + len(a.Values)
+	return len(a.Ints) + len(a.Floats) + len(a.Doubles) + len(a.Shorts) + len(a.Chars) + len(a.Values)
 }
 
 // At returns element i as an interface value, carrying the same Go type a
@@ -91,6 +103,10 @@ func (a *Array) At(i int) any {
 		return a.Floats[i]
 	case len(a.Doubles) > 0:
 		return a.Doubles[i]
+	case len(a.Shorts) > 0:
+		return a.Shorts[i]
+	case len(a.Chars) > 0:
+		return a.Chars[i]
 	default:
 		return a.Values[i]
 	}
@@ -241,6 +257,14 @@ func (c *chunkParser) readField(r *reader, into map[string]any, owner *ClassType
 	case arrayDoubles:
 		for i := range arr.Doubles {
 			arr.Doubles[i] = r.readFloat64()
+		}
+	case arrayShorts:
+		for i := range arr.Shorts {
+			arr.Shorts[i] = int16(r.readVarint())
+		}
+	case arrayChars:
+		for i := range arr.Chars {
+			arr.Chars[i] = uint16(r.readVarint())
 		}
 	default:
 		for i := range arr.Values {
