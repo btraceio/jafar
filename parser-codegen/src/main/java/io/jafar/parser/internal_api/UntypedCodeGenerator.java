@@ -6,6 +6,7 @@ import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.impl.ArrayHolder;
 import io.jafar.parser.impl.LazyEventMap;
 import io.jafar.parser.impl.LazyMapValueBuilder;
+import io.jafar.parser.impl.TemporalNormalizer;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.PrintStream;
@@ -591,6 +592,24 @@ public final class UntypedCodeGenerator {
         break;
     }
 
+    // Tick-normalize @Timestamp/@Timespan(TICKS) int and long values, as the generic reader's
+    // value builders do. The field's kind is fixed by its metadata, so it is decided here, once.
+    int temporalKind = temporalKindOf(field);
+    if (temporalKind != TemporalNormalizer.KIND_NONE) {
+      // Stack: [..., long]
+      pushInt(mv, temporalKind);
+      mv.visitVarInsn(Opcodes.ALOAD, contextVar);
+      // Stack: [..., long, int, ParserContext]
+      mv.visitMethodInsn(
+          Opcodes.INVOKESTATIC,
+          Type.getInternalName(TemporalNormalizer.class),
+          "apply",
+          Type.getMethodDescriptor(
+              Type.LONG_TYPE, Type.LONG_TYPE, Type.INT_TYPE, Type.getType(ParserContext.class)),
+          false);
+      // Stack: [..., long]
+    }
+
     // Box primitives (but not String - String is already an object)
     if (returnType.getSort() != Type.OBJECT && returnType.getSort() != Type.ARRAY) {
       // Stack: [..., primitive]
@@ -733,20 +752,38 @@ public final class UntypedCodeGenerator {
     String elementType = field.getType().getName();
 
     if (field.getType().isPrimitive() && !field.hasConstantPool()) {
-      // return ArrayHolder.read(stream, elementType);
+      int temporalKind = temporalKindOf(field);
+      // return ArrayHolder.read(stream, elementType[, temporalKind, context]);
       mv.visitVarInsn(Opcodes.ALOAD, streamVar);
       // Stack: [..., RecordingStream]
       mv.visitLdcInsn(elementType);
       // Stack: [..., RecordingStream, String]
-      mv.visitMethodInsn(
-          Opcodes.INVOKESTATIC,
-          holder,
-          "read",
-          Type.getMethodDescriptor(
-              Type.getType(ArrayHolder.class),
-              Type.getType(RecordingStream.class),
-              Type.getType(String.class)),
-          false);
+      if (temporalKind == TemporalNormalizer.KIND_NONE) {
+        mv.visitMethodInsn(
+            Opcodes.INVOKESTATIC,
+            holder,
+            "read",
+            Type.getMethodDescriptor(
+                Type.getType(ArrayHolder.class),
+                Type.getType(RecordingStream.class),
+                Type.getType(String.class)),
+            false);
+      } else {
+        pushInt(mv, temporalKind);
+        mv.visitVarInsn(Opcodes.ALOAD, contextVar);
+        // Stack: [..., RecordingStream, String, int, ParserContext]
+        mv.visitMethodInsn(
+            Opcodes.INVOKESTATIC,
+            holder,
+            "read",
+            Type.getMethodDescriptor(
+                Type.getType(ArrayHolder.class),
+                Type.getType(RecordingStream.class),
+                Type.getType(String.class),
+                Type.INT_TYPE,
+                Type.getType(ParserContext.class)),
+            false);
+      }
       // Stack: [..., ArrayHolder]
       return;
     }
@@ -825,6 +862,18 @@ public final class UntypedCodeGenerator {
             Type.getType(Object[].class)),
         false);
     // Stack: [..., ArrayHolder]
+  }
+
+  /**
+   * The tick normalization a field's values need: only {@code int} and {@code long} values are
+   * normalized, as in the generic reader, where only {@code onIntValue}/{@code onLongValue} do.
+   */
+  private static int temporalKindOf(MetadataField field) {
+    String typeName = field.getType().getName();
+    if (field.hasConstantPool() || !("int".equals(typeName) || "long".equals(typeName))) {
+      return TemporalNormalizer.KIND_NONE;
+    }
+    return TemporalNormalizer.kindOf(field);
   }
 
   /** Pushes an integer constant onto the stack (handles Opcodes.BIPUSH, Opcodes.SIPUSH, LDC). */

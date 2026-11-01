@@ -2,6 +2,7 @@ package io.jafar.parser.impl;
 
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.Internal;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
 import java.lang.reflect.Array;
@@ -105,8 +106,8 @@ public final class ArrayHolder implements ArrayType {
    *
    * <p>Elements are decoded exactly as {@code GenericValueReader.readSingleValue} decodes a scalar
    * of the type. Used by the generated untyped deserializers, which cannot reach the
-   * package-private constructor and {@code add} methods. Values are not tick-normalized; the
-   * generated path does not normalize scalars either.
+   * package-private constructor and {@code add} methods. Values are not tick-normalized; see {@link
+   * #read(RecordingStream, String, int, ParserContext)}.
    *
    * @param stream the stream positioned at the array length
    * @param type the JFR element type name
@@ -116,6 +117,26 @@ public final class ArrayHolder implements ArrayType {
    */
   @Internal
   public static ArrayHolder read(RecordingStream stream, String type) throws IOException {
+    return read(stream, type, TemporalNormalizer.KIND_NONE, null);
+  }
+
+  /**
+   * Like {@link #read(RecordingStream, String)}, then converts the {@code int} and {@code long}
+   * elements of a field annotated {@code Timestamp(TICKS)} or {@code Timespan(TICKS)} to
+   * nanoseconds, as the generic reader's value builders do.
+   *
+   * @param stream the stream positioned at the array length
+   * @param type the JFR element type name
+   * @param temporalKind the field's kind from {@link TemporalNormalizer#kindOf}
+   * @param context the chunk's parser context, holding its timing
+   * @return the decoded array
+   * @throws IOException if a string element cannot be read
+   * @throws IllegalArgumentException if {@code type} is not a primitive JFR type
+   */
+  @Internal
+  public static ArrayHolder read(
+      RecordingStream stream, String type, int temporalKind, ParserContext context)
+      throws IOException {
     int len = (int) stream.readVarint();
     ArrayHolder holder = new ArrayHolder(type, len);
     switch (type) {
@@ -157,6 +178,9 @@ public final class ArrayHolder implements ArrayType {
         }
       default:
         throw new IllegalArgumentException("Not a primitive JFR type: " + type);
+    }
+    if (holder.longs != null) {
+      TemporalNormalizer.applyAll(holder.longs, len, temporalKind, context);
     }
     holder.index = len;
     return holder;

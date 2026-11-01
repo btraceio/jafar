@@ -1,6 +1,8 @@
 package io.jafar.parser.impl;
 
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.Internal;
+import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataAnnotation;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
@@ -20,16 +22,27 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>The annotation lookup result is cached per {@link MetadataClass} so that the field and
  * annotation scan runs at most once per distinct metadata type rather than on every event.
+ *
+ * <p>The generated untyped deserializers decide a field's kind once, at generation time, with
+ * {@link #kindOf(MetadataField)}, and convert with {@link #apply(long, int, ParserContext)}; both
+ * share the annotation rule and the conversion with the generic reader.
  */
-final class TemporalNormalizer {
+@Internal
+public final class TemporalNormalizer {
 
   private static final String TIMESTAMP_NAME = "jdk.jfr.Timestamp";
   private static final String TIMESPAN_NAME = "jdk.jfr.Timespan";
   // The default (and most common) unit for both annotations in JFR recordings.
   private static final String TICKS = "TICKS";
 
-  private static final int KIND_TIMESTAMP = 1;
-  private static final int KIND_TIMESPAN = 2;
+  /** The field needs no conversion. */
+  public static final int KIND_NONE = 0;
+
+  /** The field is a {@code @Timestamp(TICKS)}: converted to epoch nanoseconds. */
+  public static final int KIND_TIMESTAMP = 1;
+
+  /** The field is a {@code @Timespan(TICKS)}: converted to a nanosecond duration. */
+  public static final int KIND_TIMESPAN = 2;
 
   /**
    * Per-class cache mapping field names to their normalization kind (TIMESTAMP or TIMESPAN). Only
@@ -66,25 +79,87 @@ final class TemporalNormalizer {
     return chunkInfo.asDurationNanos(value);
   }
 
+  /**
+   * Returns how values of a field are converted: {@link #KIND_TIMESTAMP} for a field annotated
+   * {@code jdk.jfr.Timestamp(TICKS)}, {@link #KIND_TIMESPAN} for one annotated {@code
+   * jdk.jfr.Timespan(TICKS)} (an annotation without a value means TICKS, the default of both), and
+   * {@link #KIND_NONE} otherwise.
+   *
+   * @param field the field
+   * @return the field's conversion kind
+   */
+  public static int kindOf(MetadataField field) {
+    for (MetadataAnnotation ann : field.getAnnotations()) {
+      MetadataClass annType = ann.getType();
+      if (annType == null) continue;
+      String annName = annType.getName();
+      String annValue = ann.getValue();
+      boolean isTicks = annValue == null || TICKS.equals(annValue);
+      if (isTicks && TIMESTAMP_NAME.equals(annName)) {
+        return KIND_TIMESTAMP;
+      }
+      if (isTicks && TIMESPAN_NAME.equals(annName)) {
+        return KIND_TIMESPAN;
+      }
+    }
+    return KIND_NONE;
+  }
+
+  /**
+   * Converts a tick value of the given kind using the chunk timing in {@code context}. Values of
+   * {@link #KIND_NONE}, and all values when the context has no chunk timing, are returned unchanged
+   * - as {@link #normalize} does.
+   *
+   * @param value the raw value (ticks)
+   * @param kind the field's kind from {@link #kindOf(MetadataField)}
+   * @param context the chunk's parser context (may be null)
+   * @return the converted value
+   */
+  public static long apply(long value, int kind, ParserContext context) {
+    if (kind == KIND_NONE || context == null) {
+      return value;
+    }
+    Control.ChunkInfo chunkInfo = context.get(Control.ChunkInfo.class);
+    if (chunkInfo == null) {
+      return value;
+    }
+    return kind == KIND_TIMESTAMP
+        ? chunkInfo.asEpochNanos(value)
+        : chunkInfo.asDurationNanos(value);
+  }
+
+  /**
+   * Converts the first {@code length} values in place, like {@link #apply} applied to each, looking
+   * the chunk timing up once.
+   *
+   * @param values the raw values (ticks)
+   * @param length how many values to convert
+   * @param kind the field's kind from {@link #kindOf(MetadataField)}
+   * @param context the chunk's parser context (may be null)
+   */
+  public static void applyAll(long[] values, int length, int kind, ParserContext context) {
+    if (kind == KIND_NONE || context == null) {
+      return;
+    }
+    Control.ChunkInfo chunkInfo = context.get(Control.ChunkInfo.class);
+    if (chunkInfo == null) {
+      return;
+    }
+    for (int i = 0; i < length; i++) {
+      values[i] =
+          kind == KIND_TIMESTAMP
+              ? chunkInfo.asEpochNanos(values[i])
+              : chunkInfo.asDurationNanos(values[i]);
+    }
+  }
+
   private static Map<String, Integer> buildKindMap(MetadataClass owner) {
     Map<String, Integer> map = null;
     for (MetadataField field : owner.getFields()) {
-      for (MetadataAnnotation ann : field.getAnnotations()) {
-        MetadataClass annType = ann.getType();
-        if (annType == null) continue;
-        String annName = annType.getName();
-        String annValue = ann.getValue();
-        boolean isTicks = annValue == null || TICKS.equals(annValue);
-        if (isTicks && TIMESTAMP_NAME.equals(annName)) {
-          if (map == null) map = new HashMap<>();
-          map.put(field.getName(), KIND_TIMESTAMP);
-          break;
-        }
-        if (isTicks && TIMESPAN_NAME.equals(annName)) {
-          if (map == null) map = new HashMap<>();
-          map.put(field.getName(), KIND_TIMESPAN);
-          break;
-        }
+      int kind = kindOf(field);
+      if (kind != KIND_NONE) {
+        if (map == null) map = new HashMap<>();
+        map.put(field.getName(), kind);
       }
     }
     return map != null ? map : Collections.emptyMap();
