@@ -93,7 +93,7 @@ public final class ArrayHolder implements ArrayType {
    * @throws IllegalArgumentException if {@code filled} is not that class
    */
   static ArrayHolder ofFilled(String type, Object filled) {
-    Class<?> expected = new ArrayHolder(type, 0).array.getClass();
+    Class<?> expected = backingClass(type);
     if (filled.getClass() != expected) {
       throw new IllegalArgumentException(
           type
@@ -103,6 +103,29 @@ public final class ArrayHolder implements ArrayType {
               + filled.getClass().getSimpleName());
     }
     return new ArrayHolder(type, filled, java.lang.reflect.Array.getLength(filled));
+  }
+
+  /** The backing array class the {@code (type, len)} constructor allocates, without allocating. */
+  static Class<?> backingClass(String type) {
+    switch (type) {
+      case "short":
+        return short[].class;
+      case "char":
+        return char[].class;
+      case "int":
+      case "long":
+        return long[].class;
+      case "byte":
+        return byte[].class;
+      case "boolean":
+        return boolean[].class;
+      case "double":
+        return double[].class;
+      case "float":
+        return float[].class;
+      default:
+        return Object[].class;
+    }
   }
 
   private ArrayHolder(String type, Object filled, int length) {
