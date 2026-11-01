@@ -40,8 +40,9 @@ import org.junit.jupiter.params.provider.EnumSource;
  * {@code @Timestamp}/{@code @Timespan} normalization can produce values outside the {@code int}
  * range, so narrowing to {@code int[]} would have been lossy.
  *
- * <p>It also pins the array class of the int, long, float and double element types and checks that
- * {@code int}, {@code long}, {@code float} and {@code double} elements are stored without boxing.
+ * <p>It also pins the array class of the int, long, float, double, short and char element types and
+ * checks that {@code int}, {@code long}, {@code float} and {@code double} elements are stored
+ * without boxing.
  */
 public class UntypedPrimitiveArrayTest {
   private static final long T_BOOLEAN = 1;
@@ -49,6 +50,8 @@ public class UntypedPrimitiveArrayTest {
   private static final long T_LONG = 6;
   private static final long T_FLOAT = 7;
   private static final long T_DOUBLE = 8;
+  private static final long T_SHORT = 4;
+  private static final long T_CHAR = 3;
   private static final long T_STRING = 9;
   private static final long T_TIMESTAMP = 40;
   private static final long T_TIMESPAN = 41;
@@ -70,6 +73,8 @@ public class UntypedPrimitiveArrayTest {
   private static final double[] DOUBLES = {
     0d, -1.5d, Double.MAX_VALUE, Double.MIN_VALUE, Double.NaN, Double.POSITIVE_INFINITY
   };
+  private static final short[] SHORTS = {0, -1, 1000, Short.MIN_VALUE, Short.MAX_VALUE};
+  private static final char[] CHARS = {0, 'A', (char) 200, (char) 0xFFFF};
 
   private static SyntheticRecording.Element metadata() {
     SyntheticRecording.Element event =
@@ -101,6 +106,8 @@ public class UntypedPrimitiveArrayTest {
                 elem("field", "name", "floats", "class", Long.toString(T_FLOAT), "dimension", "1"),
                 elem(
                     "field", "name", "doubles", "class", Long.toString(T_DOUBLE), "dimension", "1"),
+                elem("field", "name", "shorts", "class", Long.toString(T_SHORT), "dimension", "1"),
+                elem("field", "name", "chars", "class", Long.toString(T_CHAR), "dimension", "1"),
                 elem("field", "name", "label", "class", Long.toString(T_STRING)));
     return elem("root")
         .with(
@@ -111,6 +118,8 @@ public class UntypedPrimitiveArrayTest {
                     primitiveClass(T_LONG, "long"),
                     primitiveClass(T_FLOAT, "float"),
                     primitiveClass(T_DOUBLE, "double"),
+                    primitiveClass(T_SHORT, "short"),
+                    primitiveClass(T_CHAR, "char"),
                     primitiveClass(T_STRING, "java.lang.String"),
                     elem("class", "id", Long.toString(T_TIMESTAMP), "name", "jdk.jfr.Timestamp"),
                     elem("class", "id", Long.toString(T_TIMESPAN), "name", "jdk.jfr.Timespan"),
@@ -119,11 +128,18 @@ public class UntypedPrimitiveArrayTest {
   }
 
   private static byte[] eventBody() {
-    return eventBody(INTS, STAMP_TICKS, SPAN_TICKS, LONGS, FLOATS, DOUBLES);
+    return eventBody(INTS, STAMP_TICKS, SPAN_TICKS, LONGS, FLOATS, DOUBLES, SHORTS, CHARS);
   }
 
   private static byte[] eventBody(
-      int[] ints, int[] stamps, int[] spans, long[] longs, float[] floats, double[] doubles) {
+      int[] ints,
+      int[] stamps,
+      int[] spans,
+      long[] longs,
+      float[] floats,
+      double[] doubles,
+      short[] shorts,
+      char[] chars) {
     SyntheticRecording.Bytes w = new SyntheticRecording.Bytes();
     w.varint(T_EVENT);
     w.intVarint(-7); // count
@@ -139,6 +155,11 @@ public class UntypedPrimitiveArrayTest {
     for (float v : floats) w.f32(v);
     w.varint(doubles.length);
     for (double v : doubles) w.f64(v);
+    // short and char are written zero extended to their unsigned 16 bit width.
+    w.varint(shorts.length);
+    for (short v : shorts) w.varint(v & 0xFFFF);
+    w.varint(chars.length);
+    for (char v : chars) w.varint(v);
     w.utf8("after-arrays"); // a field after the arrays proves the stream stayed aligned
     return w.toByteArray();
   }
@@ -239,6 +260,8 @@ public class UntypedPrimitiveArrayTest {
     assertArrayEquals(LONGS, longArray(event, "longs"));
     assertArrayEquals(FLOATS, (float[]) array(event, "floats", float[].class));
     assertArrayEquals(DOUBLES, (double[]) array(event, "doubles", double[].class));
+    assertArrayEquals(SHORTS, (short[]) array(event, "shorts", short[].class));
+    assertArrayEquals(CHARS, (char[]) array(event, "chars", char[].class));
     assertEquals("after-arrays", event.get("label"));
   }
 
@@ -258,17 +281,19 @@ public class UntypedPrimitiveArrayTest {
   }
 
   /**
-   * {@code int}, {@code long}, {@code float} and {@code double} array elements must be stored
-   * without boxing. Boxing each element and storing it through {@code Array.set} allocates a
-   * wrapper per element ({@code Float} and {@code Double} have no cache at all; {@code Long} caches
-   * only -128..127). On JDK 21 that measured 32 bytes per int/long element before {@link
-   * ArrayHolder#addLong} existed.
+   * {@code int}, {@code long}, {@code float}, {@code double}, {@code short} and {@code char} array
+   * elements must be stored without boxing. Boxing each element and storing it through {@code
+   * Array.set} allocates a wrapper per element ({@code Float} and {@code Double} have no cache at
+   * all; {@code Long} and {@code Short} cache only -128..127, {@code Character} only 0..127). On
+   * JDK 21 that measured 32 bytes per int/long element before {@link ArrayHolder#addLong} existed.
+   * {@code byte} and {@code boolean} are not covered: every value of both is cached (JLS 5.1.7), so
+   * boxing them never allocates.
    *
    * <p>The unboxed decode allocates the backing arrays and nothing per element: {@value
-   * #UNBOXED_BYTES_PER_ROW} bytes per row of one int, long, float and double element. A wrapper is
-   * at least 16 bytes, so boxing even one of the four kinds adds 16 bytes per row; the allowance of
-   * {@value #SLACK_BYTES_PER_ROW} bytes per row covers the fixed per-event cost with a wide margin
-   * and still catches that.
+   * #UNBOXED_BYTES_PER_ROW} bytes per row of one element of each kind. A wrapper is at least 16
+   * bytes, so boxing even one of the six kinds adds 16 bytes per row; the allowance of {@value
+   * #SLACK_BYTES_PER_ROW} bytes per row covers the fixed per-event cost with a wide margin and
+   * still catches that.
    *
    * <p>The decode runs on the parser's chunk worker thread, so allocation is sampled there: the
    * handler reads the thread's allocation counter, and the difference between two consecutive
@@ -289,16 +314,20 @@ public class UntypedPrimitiveArrayTest {
     long[] longs = new long[n];
     float[] floats = new float[n];
     double[] doubles = new double[n];
+    short[] shorts = new short[n];
+    char[] chars = new char[n];
     for (int i = 0; i < n; i++) {
       ints[i] = Integer.MAX_VALUE - i; // outside the Long cache, so a box would be a real object
       longs[i] = Long.MAX_VALUE - i;
       floats[i] = i + 0.5f;
       doubles[i] = i + 0.25d;
+      shorts[i] = (short) (1000 + i % 30_000); // outside the Short cache (-128..127)
+      chars[i] = (char) (200 + i); // outside the Character cache (0..127)
     }
     int events = 6;
     List<byte[]> bodies = new ArrayList<>();
     for (int e = 0; e < events; e++) {
-      bodies.add(eventBody(ints, new int[0], new int[0], longs, floats, doubles));
+      bodies.add(eventBody(ints, new int[0], new int[0], longs, floats, doubles, shorts, chars));
     }
     Path file = dir.resolve("big-arrays.jfr");
     Files.write(
@@ -331,13 +360,15 @@ public class UntypedPrimitiveArrayTest {
         best <= allowed,
         String.format(
             "%s: decoding an event allocated %d bytes, %d over the %d bytes of backing arrays"
-                + " (%.1f per row of int, long, float and double element); elements are being"
+                + " (%.1f per row of int, long, float, double, short and char element); elements are being"
                 + " boxed",
             decoder, best, best - unboxed, unboxed, (best - unboxed) / (double) n));
   }
 
-  /** Backing array bytes per row: int (as long) 8 + long 8 + float 4 + double 8. */
-  private static final int UNBOXED_BYTES_PER_ROW = 28;
+  /**
+   * Backing array bytes per row: int (as long) 8 + long 8 + float 4 + double 8 + short 2 + char 2.
+   */
+  private static final int UNBOXED_BYTES_PER_ROW = 32;
 
   private static final int SLACK_BYTES_PER_ROW = 4;
 
@@ -376,6 +407,32 @@ public class UntypedPrimitiveArrayTest {
     assertEquals(
         "addDouble on an array of long",
         assertThrows(IllegalStateException.class, () -> new ArrayHolder("long", 1).addDouble(1d))
+            .getMessage());
+  }
+
+  @Test
+  void addShortAndAddCharStoreElementsUnboxed() {
+    ArrayHolder shorts = new ArrayHolder("short", 2);
+    shorts.addShort(Short.MIN_VALUE);
+    shorts.addShort((short) 1000);
+    assertArrayEquals(new short[] {Short.MIN_VALUE, 1000}, (short[]) shorts.getArray());
+
+    ArrayHolder chars = new ArrayHolder("char", 2);
+    chars.addChar((char) 0xFFFF);
+    chars.addChar('A');
+    assertArrayEquals(new char[] {(char) 0xFFFF, 'A'}, (char[]) chars.getArray());
+  }
+
+  @Test
+  void addShortAndAddCharRejectOtherElementTypes() {
+    assertEquals(
+        "addShort on an array of char",
+        assertThrows(
+                IllegalStateException.class, () -> new ArrayHolder("char", 1).addShort((short) 1))
+            .getMessage());
+    assertEquals(
+        "addChar on an array of short",
+        assertThrows(IllegalStateException.class, () -> new ArrayHolder("short", 1).addChar('a'))
             .getMessage());
   }
 

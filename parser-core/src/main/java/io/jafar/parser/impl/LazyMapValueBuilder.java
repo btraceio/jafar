@@ -97,12 +97,12 @@ public final class LazyMapValueBuilder implements ValueProcessor {
 
   @Override
   public void onShortValue(MetadataClass type, String fld, short value) {
-    addFieldValue(fld, value);
+    addShortFieldValue(fld, value);
   }
 
   @Override
   public void onCharValue(MetadataClass type, String fld, char value) {
-    addFieldValue(fld, value);
+    addCharFieldValue(fld, value);
   }
 
   private Control.ChunkInfo chunkInfo() {
@@ -252,6 +252,26 @@ public final class LazyMapValueBuilder implements ValueProcessor {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.addFloat(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addShortFieldValue(String fld, short value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addShort(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addCharFieldValue(String fld, char value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addChar(value);
     } else {
       addFieldValue(fld, value);
     }

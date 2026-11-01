@@ -45,7 +45,7 @@ public final class MapValueBuilder implements ValueProcessor {
   public void onShortValue(MetadataClass type, String fld, short value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addShort(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -57,7 +57,7 @@ public final class MapValueBuilder implements ValueProcessor {
   public void onCharValue(MetadataClass type, String fld, char value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addChar(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;

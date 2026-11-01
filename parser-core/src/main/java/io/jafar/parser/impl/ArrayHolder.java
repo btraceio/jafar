@@ -30,6 +30,12 @@ public final class ArrayHolder implements ArrayType {
   /** {@link #array} as a {@code float[]} for {@code float} elements, else null. */
   private final float[] floats;
 
+  /** {@link #array} as a {@code short[]} for {@code short} elements, else null. */
+  private final short[] shorts;
+
+  /** {@link #array} as a {@code char[]} for {@code char} elements, else null. */
+  private final char[] chars;
+
   /** The current index for adding elements. */
   private int index = 0;
 
@@ -73,6 +79,8 @@ public final class ArrayHolder implements ArrayType {
     longs = array instanceof long[] ? (long[]) array : null;
     doubles = array instanceof double[] ? (double[]) array : null;
     floats = array instanceof float[] ? (float[]) array : null;
+    shorts = array instanceof short[] ? (short[]) array : null;
+    chars = array instanceof char[] ? (char[]) array : null;
   }
 
   /**
@@ -127,6 +135,34 @@ public final class ArrayHolder implements ArrayType {
       throw new IllegalStateException("addFloat on an array of " + type);
     }
     floats[index++] = value;
+  }
+
+  /**
+   * Adds a {@code short} element at the current index without boxing it. {@code Short} caches only
+   * -128..127, so {@link #add(Object)} would allocate for every other element.
+   *
+   * @param value the value to add
+   * @throws IllegalStateException if the element type is not {@code short}
+   */
+  void addShort(short value) {
+    if (shorts == null) {
+      throw new IllegalStateException("addShort on an array of " + type);
+    }
+    shorts[index++] = value;
+  }
+
+  /**
+   * Adds a {@code char} element at the current index without boxing it. {@code Character} caches
+   * only 0..127, so {@link #add(Object)} would allocate for every other element.
+   *
+   * @param value the value to add
+   * @throws IllegalStateException if the element type is not {@code char}
+   */
+  void addChar(char value) {
+    if (chars == null) {
+      throw new IllegalStateException("addChar on an array of " + type);
+    }
+    chars[index++] = value;
   }
 
   @Override
