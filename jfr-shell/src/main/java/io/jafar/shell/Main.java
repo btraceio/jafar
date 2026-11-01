@@ -4,8 +4,8 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -592,25 +592,7 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        CommandDispatcher.IO scriptIO =
-            new CommandDispatcher.IO() {
-              @Override
-              public void println(String s) {
-                System.out.println(s);
-              }
-
-              @Override
-              public void printf(String fmt, Object... args) {
-                System.out.printf(fmt, args);
-              }
-
-              @Override
-              public void error(String s) {
-                System.err.println(s);
-              }
-            };
-
-        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
+        ScriptRunner runner = new ScriptRunner(dispatcher::dispatch, arguments);
         runner.setContinueOnError(continueOnError);
 
         ScriptRunner.ExecutionResult result;

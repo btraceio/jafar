@@ -86,7 +86,7 @@ Key components:
 - **jafar-processor/**: Annotation processor for build-time typed handler generation (eliminates runtime bytecode generation)
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces (separate included build)
-- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions)
+- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions) and the scripting both shells run (`core.scripting`: variables, maps, `merge()`, `if`, `script`, lazy query variables)
 - **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
 - **jfr-shell-jafar/**: Jafar-parser backend plugin for jfr-shell (high priority, full-featured)
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)

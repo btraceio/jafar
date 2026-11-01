@@ -1,6 +1,5 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
-import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
 
 /**
@@ -269,8 +268,8 @@ public final class ConditionEvaluator {
       return false;
     }
 
-    if (val instanceof LazyQueryValue lqv) {
-      return lqv.size() == 0;
+    if (val instanceof VariableStore.LazyValue lazy) {
+      return LazyRows.size(lazy.get()) == 0;
     }
 
     return true;

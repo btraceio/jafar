@@ -3,9 +3,13 @@ package io.jafar.shell.unified;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.llm.LlmSettings;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -35,9 +39,16 @@ public final class ShellCompleter implements Completer {
     "explain",
     "llm",
     "set",
+    "let",
     "vars",
     "unset",
     "echo",
+    "invalidate",
+    "if",
+    "elif",
+    "else",
+    "endif",
+    "script",
     "help",
     "exit",
     "quit"
@@ -46,9 +57,60 @@ public final class ShellCompleter implements Completer {
   // Commands only available when session is open
   private static final String[] SESSION_COMMANDS = {"show"};
 
+  // Shell-level commands whose arguments this completer owns even when a session is open
+  private static final Set<String> SHELL_LEVEL =
+      Set.of("set", "let", "vars", "unset", "invalidate", "script", "if", "elif");
+
+  private final VariableStore globalStore;
+
   public ShellCompleter(SessionManager<?> sessions, Map<String, ShellModule> moduleById) {
+    this(sessions, moduleById, null);
+  }
+
+  public ShellCompleter(
+      SessionManager<?> sessions, Map<String, ShellModule> moduleById, VariableStore globalStore) {
     this.sessions = sessions;
     this.moduleById = moduleById;
+    this.globalStore = globalStore;
+  }
+
+  /**
+   * Whether this completer, not the session's module completer, should complete the line: the
+   * arguments of a shell-level command ({@code set} up to its {@code =}, {@code vars}, {@code
+   * unset}, {@code invalidate}, {@code script}, {@code if}, {@code elif}). Module completers know
+   * their query language, not these commands; after {@code set x =} the query is theirs again.
+   */
+  public boolean ownsArguments(ParsedLine line) {
+    if (line.wordIndex() == 0 || line.words().isEmpty()) {
+      return false;
+    }
+    String cmd = line.words().get(0).toLowerCase(Locale.ROOT);
+    if (!SHELL_LEVEL.contains(cmd)) {
+      return false;
+    }
+    if (cmd.equals("set") || cmd.equals("let")) {
+      String before = line.line().substring(0, Math.min(line.cursor(), line.line().length()));
+      return !before.contains("=");
+    }
+    return true;
+  }
+
+  /**
+   * Adds this shell's own commands to a first-word completion that a module completer produced,
+   * skipping any it already offered, so {@code set}, {@code if}, {@code script}, {@code ask} and
+   * the rest complete in every session type.
+   */
+  public void addShellCommands(ParsedLine line, List<Candidate> candidates) {
+    Set<String> offered = new java.util.HashSet<>();
+    for (Candidate c : candidates) {
+      offered.add(c.value());
+    }
+    String partial = line.word().toLowerCase(Locale.ROOT);
+    for (String cmd : BASE_COMMANDS) {
+      if (cmd.startsWith(partial) && offered.add(cmd)) {
+        candidates.add(new Candidate(cmd));
+      }
+    }
   }
 
   @Override
@@ -72,6 +134,21 @@ public final class ShellCompleter implements Completer {
       case "open" -> completeOpen(reader, line, candidates);
       case "use", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);
+      case "set", "let" -> completeSet(line, candidates, words, wordIndex);
+      case "vars" -> completeVars(line, candidates, words, wordIndex);
+      case "unset" -> completeWords(line, candidates, variableNames(false), "--global");
+      case "invalidate" -> {
+        if (wordIndex == 1) {
+          completeWords(line, candidates, variableNames(true));
+        }
+      }
+      case "script" -> {
+        if (wordIndex == 1) {
+          completeOpen(reader, line, candidates);
+        }
+      }
+      case "if", "elif" ->
+          completeWords(line, candidates, variableNames(false), "exists(", "empty(");
       default -> {
         // No completion for other commands
       }
@@ -236,6 +313,66 @@ public final class ShellCompleter implements Completer {
     // info [sessionRef]
     if (wordIndex == 1) {
       completeSessionRef(line, candidates);
+    }
+  }
+
+  /** {@code set [--global] <name>}: the flag, settings and existing names, before the '='. */
+  private void completeSet(
+      ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
+    boolean afterFlag = wordIndex == 2 && "--global".equals(words.get(1));
+    if (wordIndex != 1 && !afterFlag) {
+      return;
+    }
+    Set<String> names = new TreeSet<>(variableNames(false));
+    names.addAll(LlmSettings.names());
+    if (afterFlag) {
+      completeWords(line, candidates, names);
+    } else {
+      completeWords(line, candidates, names, "--global");
+    }
+  }
+
+  /** {@code vars [--global|--session|--all]} or {@code vars --info <name>}. */
+  private void completeVars(
+      ParsedLine line, List<Candidate> candidates, List<String> words, int wordIndex) {
+    if (wordIndex >= 2 && "--info".equals(words.get(wordIndex - 1))) {
+      completeWords(line, candidates, variableNames(false));
+    } else if (wordIndex == 1) {
+      completeWords(line, candidates, Set.of(), "--global", "--session", "--all", "--info");
+    }
+  }
+
+  private void completeWords(
+      ParsedLine line, List<Candidate> candidates, Set<String> names, String... extra) {
+    String partial = line.word();
+    for (String e : extra) {
+      if (e.startsWith(partial)) {
+        // 'exists(' and 'empty(' take an argument straight after the parenthesis
+        candidates.add(new Candidate(e, e, null, null, null, null, !e.endsWith("(")));
+      }
+    }
+    for (String n : names) {
+      if (n.startsWith(partial)) {
+        candidates.add(new Candidate(n));
+      }
+    }
+  }
+
+  /** Variable names visible now: the current session's and the global ones. */
+  private Set<String> variableNames(boolean lazyOnly) {
+    Set<String> names = new TreeSet<>();
+    if (globalStore != null) {
+      addNames(globalStore, lazyOnly, names);
+    }
+    sessions.getCurrent().ifPresent(ref -> addNames(ref.variables, lazyOnly, names));
+    return names;
+  }
+
+  private static void addNames(VariableStore store, boolean lazyOnly, Set<String> names) {
+    for (String n : store.names()) {
+      if (!lazyOnly || store.get(n) instanceof VariableStore.LazyValue) {
+        names.add(n);
+      }
     }
   }
 }

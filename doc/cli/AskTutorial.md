@@ -7,8 +7,9 @@ and is covered in [LLM setup](LlmSetup.md#ask--more-than-one-query).
 Prerequisite: [LLM setup](LlmSetup.md), and `llm status` reporting READY.
 
 Available in `jfr-shell` (JFR recordings) and in the unified `jafar-shell` (JFR recordings, heap
-dumps, pprof and OTLP profiles). Both accept `set llm.backend = ollama`; `JAFAR_LLM_*` environment
-variables are the fallback.
+dumps, pprof and OTLP profiles). Both accept `set llm.backend = ollama` (scoped to the current
+session like any variable; `set --global llm.backend = ollama` keeps it for the whole shell);
+`JAFAR_LLM_*` environment variables are the fallback.
 
 ## The first question
 

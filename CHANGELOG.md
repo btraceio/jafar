@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`jafar-shell` scripts across formats.** The unified shell now has the full set of variable and
+  scripting commands `jfr-shell` has: map literals (`set cfg = {"min": 1024}`), `merge(...)`,
+  query-valued variables, `if`/`elif`/`else`/`endif`, `script <path> [args]` (`$1`,
+  `${2:-default}`, `$@`), `invalidate`, `vars --info`, and session-scoped versus `--global`
+  variables. A query variable is written in the current session's language — JfrPath, HdumpPath, or
+  the pprof/OTLP samples grammar — run on first use by that module's query evaluator exactly as
+  `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
+  dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
+  queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
+  offers these commands and their arguments in every session type. The parsing, scoping and
+  condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
+  both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
+- **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
+  OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
+  creates a lazy variable run by that module's evaluator
+
 ### Fixed
+- **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
+  `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
+  conditional expression in the map parser promoted the `long` branch to `double`. Decimals are
+  unchanged
+- **The shipped example scripts run.** `gc-analysis.jfrs` and `thread-profiling.jfrs` used
+  `top(N, by=sum(field))`, which JfrPath does not accept, and `thread-profiling.jfrs` grouped
+  `jdk.ThreadAllocationStatistics` by a field it does not have; `map-operations.jfrs` echoed a
+  `${...}` it never defined. The same queries were corrected in the scripting, script-execution and
+  command-recording guides
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that
@@ -29,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looks
 
 ### Changed
+- **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
+  `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
+  for the whole shell. The LLM commands read the session's value first, then the global one
+- **`ScriptRunner`, `VariableSubstitutor`, `ConditionEvaluator` and `ConditionalState` moved** from
+  `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s `io.jafar.shell.core.scripting`;
+  `ScriptRunner` now takes a line dispatcher (`dispatcher::dispatch`) instead of a
+  `CommandDispatcher` and an unused `IO`
 - **Javadoc jars drop ~4 MiB each.** They were up to 90% javadoc's own bundled DejaVu web
   fonts; excluded at jar-packaging for every published module's docs
 - **The MCP server jar drops from 38.2 MiB to 13.2 MiB.**** Four cuts, all content-level (the jar
