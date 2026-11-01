@@ -37,8 +37,9 @@ class ShellCompletedCommandsTest {
 
   @BeforeEach
   void setUp() throws Exception {
-    // A DumbTerminal reads input only when asked; TerminalBuilder's external terminal pumps the
-    // input on a thread and closes itself at EOF, dropping later output.
+    // Not TerminalBuilder.system(false).streams(...): on Linux that builds a PosixPtyTerminal,
+    // whose output crosses a pty and reaches 'out' on a pump thread, so what a line printed may
+    // arrive after the assertion reads it. A DumbTerminal writes straight to 'out' on this thread.
     terminal =
         new DumbTerminal(
             "test", "dumb", new ByteArrayInputStream(new byte[0]), out, StandardCharsets.UTF_8);
@@ -82,7 +83,8 @@ class ShellCompletedCommandsTest {
     String output = run("session 1");
 
     assertTrue(output.contains("Switched to session 1: tck-test.jfr"), output);
-    assertTrue(run("session").contains("Usage: use <id|alias>"), "bare 'session'");
+    assertTrue(run("session").contains("Error: Usage: session <id|alias>"), "bare 'session'");
+    assertTrue(run("use").contains("Error: Usage: use <id|alias>"), "bare 'use'");
     assertTrue(run("session 9").contains("No such session: 9"), "unknown id");
   }
 
@@ -131,9 +133,27 @@ class ShellCompletedCommandsTest {
 
   @Test
   void recordWithoutSubcommandPrintsUsage() {
-    assertTrue(run("record").contains("Usage: record start [path] | record stop | record status"));
-    assertTrue(run("record pause").contains("Unknown record command: pause"));
+    assertTrue(
+        run("record").contains("Error: Usage: record start [path] | record stop | record status"));
+    assertTrue(run("record pause").contains("Error: Unknown record command: pause"));
     assertTrue(run("record stop").contains("Error: Not currently recording"));
+  }
+
+  /** A {@code record} line in a branch that is not running neither runs nor lands in the file. */
+  @Test
+  void recordInSkippedBranchIsNeitherRunNorRecorded(@TempDir Path dir) throws Exception {
+    Path script = dir.resolve("branch.jfrs");
+    run("record start " + script);
+    run("if 1 > 2");
+    String skipped = run("record stop");
+    run("endif");
+
+    assertFalse(skipped.contains("Recording stopped"), skipped);
+    assertTrue(run("record status").contains("Recording to: " + script));
+    run("record stop");
+    String recorded = Files.readString(script, StandardCharsets.UTF_8);
+    assertFalse(recorded.contains("record stop"), recorded);
+    assertTrue(recorded.contains("if 1 > 2") && recorded.contains("endif"), recorded);
   }
 
   /** Runs one line as if typed at the prompt, and returns what it printed. */

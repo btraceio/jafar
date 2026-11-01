@@ -254,8 +254,11 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    if (matchesCommand(input, "record") && conditionals.isActive()) {
-      handleRecord(argumentOf(input));
+    // Never written to the recording; in a branch that is not running it is skipped, like any line
+    if (matchesCommand(input, "record")) {
+      if (conditionals.isActive()) {
+        handleRecord(argumentOf(input));
+      }
       return;
     }
 
@@ -280,8 +283,7 @@ public final class Shell implements AutoCloseable {
     String[] parts = argText.isEmpty() ? new String[0] : argText.split("\\s+", 2);
     String usage = "Usage: record start [path] | record stop | record status";
     if (parts.length == 0) {
-      terminal.writer().println(usage);
-      terminal.flush();
+      printError(usage);
       return;
     }
     try {
@@ -302,7 +304,7 @@ public final class Shell implements AutoCloseable {
                         ? "Recording to: " + recorder.getCurrentRecordingPath()
                         : "Not currently recording");
         default -> {
-          terminal.writer().println("Unknown record command: " + parts[0]);
+          terminal.writer().println("Error: Unknown record command: " + parts[0]);
           terminal.writer().println(usage);
         }
       }
@@ -380,7 +382,7 @@ public final class Shell implements AutoCloseable {
     if (matchesCommand(input, "use") || matchesCommand(input, "session")) {
       String ref = argumentOf(input);
       if (ref.isEmpty()) {
-        printError("Usage: use <id|alias>");
+        printError("Usage: " + (input.startsWith("use") ? "use" : "session") + " <id|alias>");
       } else {
         handleUse(ref);
       }
@@ -940,7 +942,8 @@ public final class Shell implements AutoCloseable {
 
   /** Whether the line is exactly this command, or this command followed by arguments. */
   private static boolean matchesCommand(String input, String command) {
-    return input.equals(command) || input.startsWith(command + " ");
+    int n = command.length();
+    return input.startsWith(command) && (input.length() == n || input.charAt(n) == ' ');
   }
 
   /** Everything after the first word, trimmed; empty when the line is the command alone. */
