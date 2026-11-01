@@ -25,6 +25,11 @@ import java.util.regex.Pattern;
  *   <li>$@ - All arguments space-separated
  * </ul>
  *
+ * <p>A command that throws from {@link CommandDispatcher#dispatch(String)} is recorded as an error
+ * for its line. That includes an {@code if}/{@code elif} whose condition cannot be evaluated
+ * ({@link ConditionEvaluationException}); the dispatcher has then entered the if-block with no
+ * branch active, so with continue-on-error the script resumes after the block's {@code endif}.
+ *
  * <p>Example script:
  *
  * <pre>

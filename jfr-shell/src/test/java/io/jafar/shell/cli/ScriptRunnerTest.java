@@ -2,6 +2,9 @@ package io.jafar.shell.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.SessionManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -9,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 class ScriptRunnerTest {
 
@@ -610,5 +614,100 @@ class ScriptRunnerTest {
     assertEquals(1, result.getSuccessCount());
     assertEquals(0, result.getErrors().size());
     assertEquals("test \n", capturedCommands.toString());
+  }
+
+  // ---- A condition that cannot be evaluated is a command error ----
+
+  /** A real dispatcher (conditionals live there) whose output is captured. */
+  private static CommandDispatcher realDispatcher(List<String> out, List<String> err) {
+    SessionManager<JFRSession> sm =
+        new SessionManager<>((path, c) -> Mockito.mock(JFRSession.class), ParsingContext.create());
+    return new CommandDispatcher(
+        sm,
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            out.add(s);
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            out.add(String.format(fmt, args));
+          }
+
+          @Override
+          public void error(String s) {
+            err.add(s);
+          }
+        },
+        ref -> {});
+  }
+
+  private static final String FAILING_CONDITIONAL =
+      """
+      if 1 / 0 > 1
+      echo THEN
+      else
+      echo ELSE
+      endif
+      echo AFTER
+      """;
+
+  @Test
+  void failedConditionStopsScriptAndIsReported() {
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
+
+    ScriptRunner.ExecutionResult result = runner.execute(FAILING_CONDITIONAL.lines().toList());
+
+    assertTrue(result.hasErrors(), "a failed condition must make the script fail");
+    assertEquals(1, result.getErrors().size());
+    ScriptRunner.ScriptError error = result.getErrors().get(0);
+    assertEquals(1, error.getLineNumber());
+    assertEquals("if 1 / 0 > 1", error.getLine());
+    assertTrue(error.getMessage().contains("Division by zero"), error.getMessage());
+    assertEquals(0, result.getSuccessCount());
+    assertEquals(List.of(), out, "fail-fast: nothing after the failed condition runs");
+    assertEquals(List.of(), err, "the error is reported once, through the result");
+  }
+
+  @Test
+  void failedConditionWithContinueOnErrorRunsNeitherBranch() {
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
+    runner.setContinueOnError(true);
+
+    ScriptRunner.ExecutionResult result = runner.execute(FAILING_CONDITIONAL.lines().toList());
+
+    assertEquals(1, result.getErrors().size(), "the failed condition is counted");
+    assertEquals(1, result.getErrors().get(0).getLineNumber());
+    // else, endif and the echo after it; the skipped 'echo THEN'/'echo ELSE' count as handled
+    assertEquals(5, result.getSuccessCount());
+    assertEquals(List.of("AFTER"), out, "neither branch runs; the script resumes after endif");
+  }
+
+  @Test
+  void unparseableConditionFromReportIsAnError() {
+    // The reported case: exists(rows[1].thread) could not be parsed, and the else branch ran.
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
+    runner.setContinueOnError(true);
+
+    ScriptRunner.ExecutionResult result =
+        runner.execute(
+            List.of("if exists(rows[1].thread)", "echo EXISTS", "else", "echo MISSING", "endif"));
+
+    assertEquals(1, result.getErrors().size());
+    assertTrue(
+        result
+            .getErrors()
+            .get(0)
+            .getMessage()
+            .startsWith("Condition evaluation failed: Expected ')' after function argument"),
+        result.getErrors().get(0).getMessage());
+    assertEquals(List.of(), out, "MISSING must not be printed");
   }
 }

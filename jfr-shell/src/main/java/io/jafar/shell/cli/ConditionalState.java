@@ -16,7 +16,13 @@ public final class ConditionalState {
     /** This branch's condition was false, waiting for elif/else. */
     CONDITION_FAILED,
     /** A previous branch in this if-block already executed, skip remaining. */
-    BRANCH_TAKEN
+    BRANCH_TAKEN,
+    /**
+     * A condition in this if-block could not be evaluated. No branch of the block runs: not the one
+     * whose condition failed, and not any later {@code elif} or {@code else}, since choosing one
+     * would mean guessing what the condition would have been.
+     */
+    CONDITION_ERROR
   }
 
   private record IfBlock(BranchState state) {}
@@ -49,6 +55,42 @@ public final class ConditionalState {
   }
 
   /**
+   * Enters a new if-block whose condition could not be evaluated. Every branch of the block is
+   * skipped until the matching {@code endif}.
+   */
+  public void enterIfWithError() {
+    stack.push(new IfBlock(isActive() ? BranchState.CONDITION_ERROR : BranchState.BRANCH_TAKEN));
+  }
+
+  /**
+   * Returns whether the condition of an {@code elif} at the current position would decide anything:
+   * true only when inside an if-block whose branches so far have all been false. When a branch has
+   * already run, the block is skipped, or a condition has failed, the {@code elif} condition must
+   * not be evaluated.
+   */
+  public boolean elifNeedsEvaluation() {
+    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
+  }
+
+  /**
+   * Handles an elif statement whose condition could not be evaluated. The remaining branches of the
+   * block, including any {@code else}, are skipped.
+   *
+   * @throws IllegalStateException if not inside an if-block
+   */
+  public void handleElifWithError() {
+    if (stack.isEmpty()) {
+      throw new IllegalStateException("elif without if");
+    }
+    IfBlock current = stack.pop();
+    stack.push(
+        new IfBlock(
+            current.state == BranchState.CONDITION_FAILED
+                ? BranchState.CONDITION_ERROR
+                : BranchState.BRANCH_TAKEN));
+  }
+
+  /**
    * Handles an elif statement.
    *
    * @param condition the result of evaluating the elif condition
@@ -59,9 +101,9 @@ public final class ConditionalState {
       throw new IllegalStateException("elif without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
-      // A branch already executed, skip this elif
-      stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
+    if (current.state != BranchState.CONDITION_FAILED) {
+      // A branch already executed, or a condition failed: skip this elif
+      stack.push(new IfBlock(skipState(current.state)));
     } else {
       // No branch executed yet, check this condition
       stack.push(new IfBlock(condition ? BranchState.CONDITION_MET : BranchState.CONDITION_FAILED));
@@ -78,13 +120,20 @@ public final class ConditionalState {
       throw new IllegalStateException("else without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
-      // A branch already executed, skip else
-      stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
+    if (current.state != BranchState.CONDITION_FAILED) {
+      // A branch already executed, or a condition failed: skip else
+      stack.push(new IfBlock(skipState(current.state)));
     } else {
       // No branch executed, else is active
       stack.push(new IfBlock(BranchState.CONDITION_MET));
     }
+  }
+
+  /** Keeps a failed condition visible for the rest of its block; anything else is "taken". */
+  private static BranchState skipState(BranchState current) {
+    return current == BranchState.CONDITION_ERROR
+        ? BranchState.CONDITION_ERROR
+        : BranchState.BRANCH_TAKEN;
   }
 
   /**

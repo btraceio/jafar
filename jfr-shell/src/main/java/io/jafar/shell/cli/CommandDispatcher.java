@@ -880,6 +880,10 @@ public class CommandDispatcher {
           }
           return false;
       }
+    } catch (ConditionEvaluationException e) {
+      // Not printed here: the caller reports it (ScriptRunner as a command error, the
+      // interactive shells as an error line), so it is neither swallowed nor shown twice.
+      throw e;
     } catch (Exception e) {
       io.error("Error: " + e.getMessage());
       return true;
@@ -3473,27 +3477,21 @@ public class CommandDispatcher {
     // Extract condition after "if "
     String condition = line.length() > 2 ? line.substring(2).trim() : "";
 
-    if (condition.isEmpty()) {
-      io.error("if requires a condition");
+    // In a skipped branch the block is skipped whatever its condition says, so the condition is
+    // neither evaluated nor reported.
+    if (!conditionalState.isActive()) {
       conditionalState.enterIf(false);
       return true;
     }
 
-    // Only evaluate if we're in an active branch
-    boolean result = false;
-
-    if (conditionalState.isActive() || !conditionalState.inConditional()) {
-      try {
-        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-        result = evaluator.evaluate(condition);
-      } catch (Exception e) {
-        io.error("Condition evaluation failed: " + e.getMessage());
-        result = false;
-        // Continue to enterIf - don't return early
-      }
+    boolean result;
+    try {
+      result = evaluateCondition("if", condition);
+    } catch (ConditionEvaluationException e) {
+      // The block is still entered, so that its elif/else/endif pair up; no branch of it runs.
+      conditionalState.enterIfWithError();
+      throw e;
     }
-
-    // CRITICAL: Always update state, even after errors
     conditionalState.enterIf(result);
     return true;
   }
@@ -3502,29 +3500,40 @@ public class CommandDispatcher {
     // Extract condition after "elif "
     String condition = line.length() > 4 ? line.substring(4).trim() : "";
 
-    if (condition.isEmpty()) {
-      io.error("elif requires a condition");
-      conditionalState.handleElif(false);
+    // Only evaluate when no earlier branch ran and the block is not skipped; otherwise the result
+    // could not change anything, and a failure in it would be reported for nothing.
+    if (!conditionalState.elifNeedsEvaluation()) {
+      conditionalState.handleElif(false); // throws "elif without if" outside a block
       return true;
     }
 
-    // Only evaluate if needed (previous branches failed and parent is active)
-    boolean result = false;
-    int depth = conditionalState.depth();
-
-    if (depth > 0) {
-      try {
-        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-        result = evaluator.evaluate(condition);
-      } catch (Exception e) {
-        io.error("Condition evaluation failed: " + e.getMessage());
-        result = false;
-        // Continue to handleElif - don't return early
-      }
+    boolean result;
+    try {
+      result = evaluateCondition("elif", condition);
+    } catch (ConditionEvaluationException e) {
+      conditionalState.handleElifWithError();
+      throw e;
     }
-
-    // CRITICAL: Always update state
     conditionalState.handleElif(result);
     return true;
+  }
+
+  /**
+   * Evaluates an if/elif condition. Any failure — including a missing condition — becomes a {@link
+   * ConditionEvaluationException}, which {@link #dispatch} lets through to its caller rather than
+   * printing it and carrying on: a condition that could not be evaluated is not a false one.
+   */
+  private boolean evaluateCondition(String keyword, String condition) {
+    if (condition.isEmpty()) {
+      throw new ConditionEvaluationException(
+          keyword + " requires a condition; skipping every branch of this if-block", null);
+    }
+    try {
+      return new ConditionEvaluator(getSessionStore(), globalStore).evaluate(condition);
+    } catch (Exception e) {
+      String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+      throw new ConditionEvaluationException(
+          "Condition evaluation failed: " + reason + "; skipping every branch of this if-block", e);
+    }
   }
 }

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **An `if`/`elif` condition that fails to evaluate no longer runs the `else` branch.** The
+  dispatcher printed `Condition evaluation failed: ...`, treated the condition as `false` — so the
+  `else` branch ran — and the script still ended `Script executed successfully` with exit status 0.
+  A failed condition is now a command error: no branch of that if-block runs (its `endif` still
+  closes it), a script stops there with a non-zero exit, and with `--continue-on-error` it resumes
+  after the `endif` with the error counted. An `elif` after a branch that already ran is no longer
+  evaluated, so it cannot report a failure that decides nothing
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that

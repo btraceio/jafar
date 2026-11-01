@@ -574,6 +574,39 @@ endif
 
 ### Error Handling
 
+#### Conditions That Cannot Be Evaluated
+
+A condition that fails to evaluate — a parse error, a wrong number of function arguments,
+division by zero, a missing condition — is an error, not a `false`. **No branch of that if-block
+runs**: not the failing branch, and not any later `elif` or `else`, because taking one would mean
+guessing what the condition would have said. The block is still open, and its `endif` closes it.
+
+In a script this is a command error like any other:
+
+- by default the script stops at that line and exits with a non-zero status;
+- with `--continue-on-error` the script resumes after the block's `endif` and the error is counted
+  in the final report (the script still exits non-zero).
+
+```
+if exists(rows[1].thread)
+  echo EXISTS
+else
+  echo MISSING
+endif
+```
+
+```
+Script completed with errors:
+Line 1: Condition evaluation failed: Expected ')' after function argument at position 11; skipping every branch of this if-block
+  Command: if exists(rows[1].thread)
+```
+
+Neither `EXISTS` nor `MISSING` is printed. In the interactive shell the error is printed, the prompt
+shows the block as open (`...(1)>`), its commands are skipped, and `endif` closes it.
+
+An `elif` condition is evaluated only when every earlier branch was false, and a condition inside
+a block that is already being skipped is not evaluated at all, so neither can fail there.
+
 #### Unclosed Conditionals
 
 If you exit the shell with unclosed conditionals, a warning is displayed:

@@ -12,8 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Tests for conditional control flow (if/elif/else/endif) robustness, particularly error handling
- * that was causing both branches to execute.
+ * Tests for conditional control flow (if/elif/else/endif) robustness, particularly error handling:
+ * a condition that cannot be evaluated must run no branch of its block (once both branches ran;
+ * later the else branch silently ran), and must surface as a {@link ConditionEvaluationException}.
  */
 class ConditionalFlowTest {
 
@@ -112,47 +113,61 @@ class ConditionalFlowTest {
 
   // ==================== Error Handling Tests ====================
 
+  /** Dispatches a line that is expected to fail with a condition error, returning the error. */
+  private ConditionEvaluationException dispatchFailingCondition(String line) {
+    return assertThrows(ConditionEvaluationException.class, () -> dispatcher.dispatch(line));
+  }
+
   @Test
-  void testInvalidCondition_DoesNotExecuteBothBranches() {
-    // When condition has syntax error, should treat as false and only execute else
-    dispatcher.dispatch("if 1 badoperator 2");
+  void testInvalidCondition_RunsNoBranch() {
+    // A condition that cannot be evaluated is not a false one: neither branch may run.
+    ConditionEvaluationException e = dispatchFailingCondition("if 1 badoperator 2");
+    assertTrue(e.getMessage().startsWith("Condition evaluation failed: "), e.getMessage());
     dispatcher.dispatch("set branch1 = \"executed\"");
     dispatcher.dispatch("else");
     dispatcher.dispatch("set branch2 = \"executed\"");
     dispatcher.dispatch("endif");
 
-    // Should have an error
-    assertFalse(io.errors.isEmpty(), "Should have error for invalid condition");
-
-    // Should execute else branch only (condition treated as false)
-    // Variable branch2 should be set, branch1 should not
-    assertTrue(
-        dispatcher.getGlobalStore().contains("branch2"), "branch2 should be set (else executed)");
-    assertFalse(
-        dispatcher.getGlobalStore().contains("branch1"),
-        "branch1 should NOT be set (if not executed)");
+    assertFalse(dispatcher.getGlobalStore().contains("branch1"), "if branch must not run");
+    assertFalse(dispatcher.getGlobalStore().contains("branch2"), "else branch must not run");
+    assertFalse(dispatcher.getConditionalState().inConditional(), "endif closes the block");
+    // Reported once, by whoever catches the exception — not also printed by the dispatcher.
+    assertTrue(io.errors.isEmpty(), "dispatcher must not print the error itself: " + io.errors);
   }
 
   @Test
-  void testEmptyCondition_DoesNotExecuteBothBranches() {
-    dispatcher.dispatch("if");
+  void testDivisionByZeroInCondition_RunsNoBranch() {
+    ConditionEvaluationException e = dispatchFailingCondition("if 1 / 0 > 1");
+    assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
+    dispatcher.dispatch("echo THEN");
+    dispatcher.dispatch("else");
+    dispatcher.dispatch("echo ELSE");
+    dispatcher.dispatch("endif");
+    dispatcher.dispatch("echo AFTER");
+
+    assertFalse(io.hasOutput("THEN"));
+    assertFalse(io.hasOutput("ELSE"));
+    assertTrue(io.hasOutput("AFTER"), "commands after endif run normally");
+  }
+
+  @Test
+  void testEmptyCondition_RunsNoBranch() {
+    ConditionEvaluationException e = dispatchFailingCondition("if");
+    assertTrue(e.getMessage().contains("if requires a condition"), e.getMessage());
     dispatcher.dispatch("echo branch1");
     dispatcher.dispatch("else");
     dispatcher.dispatch("echo branch2");
     dispatcher.dispatch("endif");
 
-    // Should have error for empty condition
-    assertTrue(io.hasError("if requires a condition"), "Should error on empty condition");
-
-    // Should execute else branch
-    assertTrue(io.hasOutput("branch2"), "Should execute else branch");
     assertFalse(io.hasOutput("branch1"), "Should NOT execute if branch");
+    assertFalse(io.hasOutput("branch2"), "Should NOT execute else branch");
   }
 
   @Test
-  void testElifAfterFailedIf_MaintainsCorrectState() {
-    // If the if condition has error, elif should still work correctly
-    dispatcher.dispatch("if 1 badoperator 2");
+  void testFailedIf_SkipsLaterElifAndElse() {
+    // A later elif cannot rescue the block: had the if condition been evaluable it might have been
+    // true, so taking the elif would be a guess too.
+    dispatchFailingCondition("if 1 badoperator 2");
     dispatcher.dispatch("set if_branch = \"executed\"");
     dispatcher.dispatch("elif 1 == 1");
     dispatcher.dispatch("set elif_branch = \"executed\"");
@@ -160,11 +175,71 @@ class ConditionalFlowTest {
     dispatcher.dispatch("set else_branch = \"executed\"");
     dispatcher.dispatch("endif");
 
-    // Should execute elif branch only
-    assertTrue(dispatcher.getGlobalStore().contains("elif_branch"), "elif_branch should be set");
-    assertFalse(dispatcher.getGlobalStore().contains("if_branch"), "if_branch should NOT be set");
-    assertFalse(
-        dispatcher.getGlobalStore().contains("else_branch"), "else_branch should NOT be set");
+    assertFalse(dispatcher.getGlobalStore().contains("if_branch"));
+    assertFalse(dispatcher.getGlobalStore().contains("elif_branch"));
+    assertFalse(dispatcher.getGlobalStore().contains("else_branch"));
+  }
+
+  @Test
+  void testFailedElif_SkipsElse() {
+    dispatcher.dispatch("if 1 == 2");
+    dispatcher.dispatch("echo IF");
+    ConditionEvaluationException e = dispatchFailingCondition("elif 1 / 0 > 1");
+    assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
+    dispatcher.dispatch("echo ELIF");
+    dispatcher.dispatch("else");
+    dispatcher.dispatch("echo ELSE");
+    dispatcher.dispatch("endif");
+
+    assertFalse(io.hasOutput("IF"));
+    assertFalse(io.hasOutput("ELIF"));
+    assertFalse(io.hasOutput("ELSE"));
+  }
+
+  @Test
+  void testElifAfterTakenBranch_IsNotEvaluated() {
+    // A branch already ran, so the elif condition decides nothing and must not be reported even
+    // though it would fail.
+    dispatcher.dispatch("if 1 == 1");
+    dispatcher.dispatch("echo IF");
+    assertDoesNotThrow(() -> dispatcher.dispatch("elif 1 / 0 > 1"));
+    dispatcher.dispatch("echo ELIF");
+    dispatcher.dispatch("endif");
+
+    assertTrue(io.hasOutput("IF"));
+    assertFalse(io.hasOutput("ELIF"));
+    assertTrue(io.errors.isEmpty(), "nothing to report: " + io.errors);
+  }
+
+  @Test
+  void testFailingConditionInSkippedBlock_IsNotEvaluated() {
+    dispatcher.dispatch("if 1 == 2");
+    assertDoesNotThrow(() -> dispatcher.dispatch("if 1 / 0 > 1"));
+    dispatcher.dispatch("echo INNER");
+    dispatcher.dispatch("endif");
+    dispatcher.dispatch("endif");
+
+    assertFalse(io.hasOutput("INNER"));
+    assertFalse(dispatcher.getConditionalState().inConditional());
+  }
+
+  @Test
+  void testFailedNestedIf_DoesNotAffectOuterBlock() {
+    dispatcher.dispatch("if 1 == 1");
+    dispatchFailingCondition("if 1 / 0 > 1");
+    dispatcher.dispatch("echo INNER_THEN");
+    dispatcher.dispatch("else");
+    dispatcher.dispatch("echo INNER_ELSE");
+    dispatcher.dispatch("endif");
+    dispatcher.dispatch("echo OUTER_STILL_ACTIVE");
+    dispatcher.dispatch("else");
+    dispatcher.dispatch("echo OUTER_ELSE");
+    dispatcher.dispatch("endif");
+
+    assertFalse(io.hasOutput("INNER_THEN"));
+    assertFalse(io.hasOutput("INNER_ELSE"));
+    assertTrue(io.hasOutput("OUTER_STILL_ACTIVE"));
+    assertFalse(io.hasOutput("OUTER_ELSE"));
   }
 
   // ==================== Nested Conditionals Tests ====================
