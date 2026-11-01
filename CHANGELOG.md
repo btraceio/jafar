@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
+- **JFR commands in `jafar-shell`.** `metadata` (including `metadata class`), `chunks`, `chunk`,
+  `constants`/`cp` and `backend` now work at the `jafar-shell` prompt when the current session is
+  a recording, run by the same code as in `jfr-shell`. `metadata --summary` used to be read as a
+  JfrPath query and fail with `Query error: Trailing characters at position 9`, so `jfr-shell`'s
+  `basic-analysis.jfrs` example now runs in `jafar-shell` without errors. In a heap dump, pprof or
+  OTLP session, or with no session open, these commands say they need a JFR session
 
 ### Fixed
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
