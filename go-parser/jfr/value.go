@@ -11,27 +11,99 @@ const maxValueDepth = 64
 
 // Array is the value of a JFR array field.
 //
-// Elements carry the same Go types as scalar fields of the element type: array
-// elements that are constant pool references are *Ref, inline complex elements
-// are map[string]any.
+// Elements of the numeric element types the parser can store unboxed live in a
+// typed slice, so decoding them allocates nothing per element:
+//
+//	ElementType     elements in   element value
+//	int, long       Ints          int64 (int sign extended from 32 bits;
+//	                              @Timestamp/@Timespan(TICKS) in nanoseconds)
+//	float           Floats        float32
+//	double          Doubles       float64
+//	anything else   Values        the Go type of a scalar field of that type
+//
+// Array elements that are constant pool references are *Ref and inline complex
+// elements are map[string]any; both go in Values, as do the elements of every
+// other primitive type. The slices that do not hold the elements are empty. Len
+// and At work on every array regardless of where its elements are.
 type Array struct {
 	// ElementType is the JFR type name of the elements.
 	ElementType string
-	// Values holds the decoded elements.
+	// Ints holds the elements of int and long arrays.
+	Ints []int64
+	// Floats holds the elements of float arrays.
+	Floats []float32
+	// Doubles holds the elements of double arrays.
+	Doubles []float64
+	// Values holds the elements of every other array.
 	Values []any
+
+	// kind is the slice the parser sized for this array; it only steers
+	// decoding and recycling.
+	kind arrayKind
+}
+
+// arrayKind records which slice of a decoded Array holds its elements.
+type arrayKind uint8
+
+const (
+	arrayValues arrayKind = iota
+	arrayInts
+	arrayFloats
+	arrayDoubles
+)
+
+// arrayKindOf returns where the elements of an array field are stored.
+// Constant pool references are always *Ref values, whatever their type.
+func arrayKindOf(f *Field) arrayKind {
+	if f.ConstantPool || f.Type == nil || !f.Type.primitive {
+		return arrayValues
+	}
+	switch f.Type.Name {
+	case "int", "long":
+		return arrayInts
+	case "float":
+		return arrayFloats
+	case "double":
+		return arrayDoubles
+	default:
+		return arrayValues
+	}
 }
 
 // Len returns the number of elements.
-func (a *Array) Len() int { return len(a.Values) }
+//
+// At most one of the slices is non-empty, so Len and At need no record of
+// which one the parser filled and work on an Array built by hand too.
+func (a *Array) Len() int {
+	return len(a.Ints) + len(a.Floats) + len(a.Doubles) + len(a.Values)
+}
+
+// At returns element i as an interface value, carrying the same Go type a
+// scalar field of the element type would. For the typed slices this boxes the
+// element; iterate Ints, Floats or Doubles directly to avoid that.
+//
+// At panics if i is out of range, like a slice index.
+func (a *Array) At(i int) any {
+	switch {
+	case len(a.Ints) > 0:
+		return a.Ints[i]
+	case len(a.Floats) > 0:
+		return a.Floats[i]
+	case len(a.Doubles) > 0:
+		return a.Doubles[i]
+	default:
+		return a.Values[i]
+	}
+}
 
 func (a *Array) String() string {
 	var sb strings.Builder
 	sb.WriteByte('[')
-	for i, v := range a.Values {
+	for i, n := 0, a.Len(); i < n; i++ {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		fmt.Fprintf(&sb, "%v", v)
+		fmt.Fprintf(&sb, "%v", a.At(i))
 	}
 	sb.WriteByte(']')
 	return sb.String()
@@ -147,13 +219,40 @@ func (c *chunkParser) readField(r *reader, into map[string]any, owner *ClassType
 	if f.Type != nil {
 		elementType = f.Type.Name
 	}
-	arr := c.newArray(elementType, int(n))
-	for i := int64(0); i < n; i++ {
-		v, err := c.readFieldValue(r, owner, f, depth)
-		if err != nil {
-			return err
+	arr := c.newArray(elementType, arrayKindOf(f), int(n))
+	switch arr.kind {
+	case arrayInts:
+		// Elements are stored unboxed; resolve the field's tick
+		// normalisation once for the whole array.
+		temporal := c.temporalKind(owner, f.Name)
+		isInt := f.Type.Name == "int"
+		for i := range arr.Ints {
+			v := r.readVarint()
+			if isInt {
+				// See readPrimitive: truncate to 32 bits, then sign extend.
+				v = int64(int32(v))
+			}
+			arr.Ints[i] = c.applyTemporal(temporal, v)
 		}
-		arr.Values[i] = v
+	case arrayFloats:
+		for i := range arr.Floats {
+			arr.Floats[i] = r.readFloat32()
+		}
+	case arrayDoubles:
+		for i := range arr.Doubles {
+			arr.Doubles[i] = r.readFloat64()
+		}
+	default:
+		for i := range arr.Values {
+			v, err := c.readFieldValue(r, owner, f, depth)
+			if err != nil {
+				return err
+			}
+			arr.Values[i] = v
+		}
+	}
+	if r.err != nil {
+		return r.err
 	}
 	into[f.Name] = arr
 	return nil

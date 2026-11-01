@@ -264,8 +264,8 @@ func TestParseSyntheticRecording(t *testing.T) {
 	if arr.ElementType != "long" {
 		t.Errorf("values element type = %q, want long", arr.ElementType)
 	}
-	if !reflect.DeepEqual(arr.Values, []any{int64(10), int64(20), int64(30)}) {
-		t.Errorf("values = %#v", arr.Values)
+	if !reflect.DeepEqual(arr.Ints, []int64{10, 20, 30}) || len(arr.Values) != 0 {
+		t.Errorf("values = %#v", arr)
 	}
 
 	nested, ok := first.Values["nested"].(map[string]any)

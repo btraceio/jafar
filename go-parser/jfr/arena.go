@@ -74,30 +74,60 @@ func (c *chunkParser) newMap(hint int) map[string]any {
 }
 
 // newArray returns the array for the next array field of the event being
-// decoded.
-func (c *chunkParser) newArray(elementType string, n int) *Array {
+// decoded, with the slice for kind sized to n elements and the other slices
+// empty.
+//
+// A recycled array keeps the capacity of every slice it has held: an array of
+// complex values makes the number of arrays an event needs vary, so the array
+// at a given position may hold a different field, of a different kind, from
+// one event to the next.
+func (c *chunkParser) newArray(elementType string, kind arrayKind, n int) *Array {
 	a := c.arena
 	if a == nil {
-		return &Array{ElementType: elementType, Values: make([]any, n)}
-	}
-	if a.arrIdx < len(a.arrays) {
-		arr := a.arrays[a.arrIdx]
-		a.arrIdx++
-		arr.ElementType = elementType
-		if cap(arr.Values) >= n {
-			arr.Values = arr.Values[:n]
-			for i := range arr.Values {
-				arr.Values[i] = nil
-			}
-		} else {
-			arr.Values = make([]any, n)
-		}
+		arr := &Array{}
+		arr.reset(elementType, kind, n)
 		return arr
 	}
-	arr := &Array{ElementType: elementType, Values: make([]any, n)}
-	a.arrays = append(a.arrays, arr)
+	var arr *Array
+	if a.arrIdx < len(a.arrays) {
+		arr = a.arrays[a.arrIdx]
+	} else {
+		arr = &Array{}
+		a.arrays = append(a.arrays, arr)
+	}
 	a.arrIdx++
+	arr.reset(elementType, kind, n)
 	return arr
+}
+
+// reset shapes arr to hold n elements of kind, reusing slice capacity.
+// Typed slices are fully overwritten by the decoder, so only Values, which may
+// hold references from a previous event, needs clearing.
+func (arr *Array) reset(elementType string, kind arrayKind, n int) {
+	arr.ElementType = elementType
+	arr.kind = kind
+	arr.Ints, arr.Floats, arr.Doubles = arr.Ints[:0], arr.Floats[:0], arr.Doubles[:0]
+	clear(arr.Values)
+	arr.Values = arr.Values[:0]
+	switch kind {
+	case arrayInts:
+		arr.Ints = grow(arr.Ints, n)
+	case arrayFloats:
+		arr.Floats = grow(arr.Floats, n)
+	case arrayDoubles:
+		arr.Doubles = grow(arr.Doubles, n)
+	default:
+		arr.Values = grow(arr.Values, n)
+	}
+}
+
+// grow returns s resized to n elements, reallocating only when its capacity is
+// too small. Callers overwrite every element.
+func grow[T any](s []T, n int) []T {
+	if cap(s) >= n {
+		return s[:n]
+	}
+	return make([]T, n)
 }
 
 // newRef returns the reference for the next constant pool field of the event

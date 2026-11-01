@@ -82,12 +82,39 @@ Event fields arrive in `Event.Values` keyed by field name:
 | `java.lang.String`    | `string`, or `nil` for a null string       |
 | inline complex value  | `map[string]any`                           |
 | constant pool value   | `*jfr.Ref`                                 |
-| array                 | `*jfr.Array`                               |
+| array                 | `*jfr.Array` (see [Arrays](#arrays))       |
 
 Fields annotated `@Timestamp(TICKS)` and `@Timespan(TICKS)` are normalised:
 timestamps become nanoseconds since the epoch and timespans become nanosecond
 durations, so callers never handle raw ticks. `ChunkInfo` exposes the same
 conversions for values you convert yourself.
+
+### Arrays
+
+An array field decodes to a `*jfr.Array`. Elements of the numeric types are
+stored unboxed in a typed slice, so decoding them allocates nothing per element;
+everything else goes in `Values`:
+
+| `ElementType`  | Elements in | Element type                                        |
+|----------------|-------------|-----------------------------------------------------|
+| `int`, `long`  | `Ints`      | `int64`, normalised like a scalar field of the type |
+| `float`        | `Floats`    | `float32`                                           |
+| `double`       | `Doubles`   | `float64`                                           |
+| anything else  | `Values`    | `any`, as a scalar field of the element type        |
+
+Constant pool references are always `*Ref` elements in `Values`, whatever their
+type. The slices that do not hold the elements are empty. `Len` and `At` work on
+any array; `At` boxes a typed element, so iterate the typed slice in hot loops:
+
+```go
+if arr, ok := e.Values["values"].(*jfr.Array); ok {
+    for _, v := range arr.Ints { /* int64, no allocation */ }
+}
+```
+
+`Get` indexes arrays through `At`, and `ResolveDeep` turns a typed array into a
+copy of its slice (`[]int64`, `[]float32`, `[]float64`) and any other array into
+an `[]any`.
 
 ### Constant pool references
 
@@ -225,6 +252,10 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   - a GC phase name, a flag name, a thread state - holds one copy of it rather
   than one per event. This is Jafar's `CachedStringParser` widened from its
   single entry to a small direct-mapped table.
+* **Unboxed arrays are typed slices.** The Java parser stores `int`/`long`,
+  `float` and `double` array elements in a `long[]`, `float[]` or `double[]`
+  behind `ArrayType`; this one stores them in `Array.Ints`, `Floats` or
+  `Doubles`. Same elements, same values; neither boxes them.
 * **Optimizations that do not port.** The typed API and the generated untyped
   deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
   generation. `LazyEventMap` in particular works because Java lets a lazy object
