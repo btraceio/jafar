@@ -139,8 +139,12 @@ public class CommandDispatcher {
   /**
    * Check if verbose mode is enabled via system property or environment variable. This allows
    * runtime control of verbosity for debugging.
+   *
+   * <p>{@code -Djfr.shell.verbose=true} (or {@code 1}, {@code on}), else {@code JFR_SHELL_VERBOSE}.
+   * Read by both shells' script modes, so the switch means the same thing in {@code jfr-shell
+   * script} and {@code jafar-shell script}.
    */
-  private static boolean isVerboseEnabled() {
+  public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
       String v = prop.trim().toLowerCase();

@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in jfr-shell, instead of failing as queries; the shipped `basic-analysis.jfrs` runs end to end.
   Bare `metadata` therefore prints jfr-shell's type listing rather than JfrPath's `metadata` rows;
   `show metadata` and `metadata/<type>` are queries as before
+- **`JFR_SHELL_VERBOSE` / `-Djfr.shell.verbose=true` applies to `jafar-shell script`** as it does
+  to `jfr-shell script`: the open/close lines and `Set x = ...` confirmations script mode leaves
+  out are printed. The switch is jfr-shell's own (`CommandDispatcher.isVerboseEnabled`), read by
+  both
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
@@ -57,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session, no query in the reply, a query that failed, nothing to explain) now go through a new
   `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
   `--continue-on-error` (command line) now
+- **`jafar-shell -f script` opens a file named `script`.** The value of `-f`/`--file` (and of a
+  cluster such as `-qf`, and of `--backend`/`--plugin-dir`/`--install-plugin`) was taken for the
+  first word of the command line, so it ran the script command, or jfr-shell's command line for
+  `-f show`. The command is now the first word that is not an option or an option's value
 - **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
   never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
   stdin (the terminal, or nothing) and `$1` was the script's own path — piped in, `open $1` opened

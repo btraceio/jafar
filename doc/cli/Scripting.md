@@ -81,7 +81,8 @@ jafar-shell script - app.jfr app.hprof < cross.jfrs
 
 Results go to stdout and errors to stderr. As in `jfr-shell script`, the banner, the `Opening
 ...`/`Session 1 opened` lines and the `Set x = ...` confirmations are left out, and the interactive
-history is not touched. The exit status is 1 if any line failed; `--continue-on-error` runs the
+history is not touched. `JFR_SHELL_VERBOSE=1` (or `-Djfr.shell.verbose=true`) brings the
+confirmations back, in either shell's script mode. The exit status is 1 if any line failed; `--continue-on-error` runs the
 remaining lines after a failure.
 
 **A JFR-only script behaves differently here.** `jafar-shell script f.jfrs ...` used to be handed

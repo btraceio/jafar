@@ -55,25 +55,20 @@ public final class Main implements Callable<Integer> {
   private boolean tui;
 
   static boolean isJfrCommandLine(String[] args) {
-    int command = scriptCommandIndex(args);
-    if (command >= 0) {
-      // 'script --backend jdk f.jfrs': only jfr-shell's script command takes a backend
-      for (String arg : args) {
-        if (JFR_OPTIONS.contains(arg.split("=", 2)[0])) {
-          return true;
-        }
-      }
-      return false;
-    }
-    for (String arg : args) {
-      if (JFR_OPTIONS.contains(arg.split("=", 2)[0])) {
+    int first = firstWordIndex(args);
+    boolean script = first >= 0 && isCommand(args[first], Set.of("script"));
+    // A JFR option before the command sends it to jfr-shell; for 'script', one anywhere does
+    // ('script --backend jdk f.jfrs'), since only jfr-shell's script command takes a backend
+    int scan = script || first < 0 ? args.length : first;
+    for (int i = 0; i < scan; i++) {
+      if (JFR_OPTIONS.contains(args[i].split("=", 2)[0])) {
         return true;
       }
-      if (!arg.startsWith("-")) {
-        return JFR_COMMANDS.contains(arg) && !Files.exists(Paths.get(arg));
+      if (takesValue(args[i])) {
+        i++; // '-f --backend' would be a file named --backend
       }
     }
-    return false;
+    return !script && first >= 0 && isCommand(args[first], JFR_COMMANDS);
   }
 
   /** {@code jafar-shell script ...} that runs in the unified shell (see {@link ScriptCommand}). */
@@ -81,17 +76,54 @@ public final class Main implements Callable<Integer> {
     return scriptCommandIndex(args) >= 0 && !isJfrCommandLine(args);
   }
 
-  /**
-   * Where the {@code script} command is: the first word that is not an option, unless a file of
-   * that name exists, which is opened instead as it always was. {@code -1} when there is none.
-   */
+  /** Where the {@code script} command is, or {@code -1}. */
   private static int scriptCommandIndex(String[] args) {
+    int first = firstWordIndex(args);
+    return first >= 0 && isCommand(args[first], Set.of("script")) ? first : -1;
+  }
+
+  /**
+   * The first word that is neither an option nor an option's value: {@code jafar-shell -f script}
+   * opens a file named {@code script}, it does not run the script command. {@code -1} when none.
+   */
+  static int firstWordIndex(String[] args) {
     for (int i = 0; i < args.length; i++) {
       if (!args[i].startsWith("-")) {
-        return "script".equals(args[i]) && !Files.exists(Paths.get(args[i])) ? i : -1;
+        return i;
+      }
+      if (takesValue(args[i])) {
+        i++;
       }
     }
     return -1;
+  }
+
+  /**
+   * Whether this option takes the next word as its value: {@code -f}/{@code --file} and the JFR
+   * options, unless written {@code --file=x}; and a cluster of short options ending in {@code f},
+   * such as {@code -qf}, which picocli reads as {@code -q -f}.
+   */
+  private static boolean takesValue(String arg) {
+    if (arg.indexOf('=') >= 0) {
+      return false;
+    }
+    if (arg.equals("--file") || JFR_OPTIONS.contains(arg)) {
+      return true;
+    }
+    if (arg.startsWith("--") || arg.length() < 2 || arg.charAt(arg.length() - 1) != 'f') {
+      return false;
+    }
+    for (int i = 1; i < arg.length(); i++) {
+      if (!Character.isLetter(arg.charAt(i))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** A command word, unless a file of that name exists, which is opened as it always was. */
+  private static boolean isCommand(String word, Set<String> commands) {
+    return commands.contains(word) && !Files.exists(Paths.get(word));
   }
 
   public static void main(String[] args) {

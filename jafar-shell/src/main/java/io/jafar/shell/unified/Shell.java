@@ -89,11 +89,15 @@ public final class Shell implements AutoCloseable {
    * A shell for {@code jafar-shell script}: no terminal, no line reader and no history, so it runs
    * where there is no console and never touches the interactive history file. Results go to {@code
    * out}, errors to {@code err}, and the informational lines {@code open}/{@code close}/{@code use}
-   * print are left out, as jfr-shell's script mode leaves them out.
+   * print are left out, as jfr-shell's script mode leaves them out — unless {@code
+   * jfr.shell.verbose}/{@code JFR_SHELL_VERBOSE} asks for them, as it does there.
    */
   static Shell forScript(java.io.PrintStream out, java.io.PrintStream err) {
     return new Shell(
-        null, new java.io.PrintWriter(out, true), new java.io.PrintWriter(err, true), false);
+        null,
+        new java.io.PrintWriter(out, true),
+        new java.io.PrintWriter(err, true),
+        CommandDispatcher.isVerboseEnabled());
   }
 
   private Shell(
