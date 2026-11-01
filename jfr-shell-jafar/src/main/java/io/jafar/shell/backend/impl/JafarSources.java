@@ -397,7 +397,21 @@ final class JafarSources {
 
   // ==================== ConstantPoolSource Implementation ====================
 
+  /**
+   * CHECKPOINTS_ACCUMULATE: the constant pool seen in {@code onCheckpoint} is not that checkpoint's
+   * entries. {@code CheckpointEvent.readConstantPools} adds every checkpoint's entries to one pool
+   * per type per chunk ({@code addOrGetConstantPool}), so at the n-th checkpoint the pool holds
+   * everything read so far. Draining or counting it at every checkpoint repeats the early entries
+   * once per later checkpoint: chunk 1 of {@code tck-test.jfr} has 152 checkpoints, and its 875
+   * distinct {@code jdk.types.Symbol} ids came back as 28882 rows.
+   */
   static final class JafarConstantPoolSource implements ConstantPoolSource {
+
+    /** One chunk's {@link #loadEntries} output and the ids already emitted for it. */
+    private static final class EntryRows {
+      final List<Map<String, Object>> rows = new ArrayList<>();
+      final Set<Long> seen = new HashSet<>();
+    }
 
     @Override
     public List<Map<String, Object>> loadSummary(Path recording) throws Exception {
@@ -418,7 +432,9 @@ final class JafarSources {
                           try {
                             String name = cp.getType().getName();
                             long count = extractConstantPoolCount(cp);
-                            chunkSizes.merge(name, count, Long::sum);
+                            // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE):
+                            // its size at the last checkpoint is the chunk's total.
+                            chunkSizes.merge(name, count, Math::max);
                           } catch (Throwable ignore) {
                           }
                         });
@@ -466,9 +482,9 @@ final class JafarSources {
       // Rows are collected per chunk: onMetadata/onCheckpoint for different chunks run on
       // different threads, and one shared ArrayList lost rows or threw
       // ArrayIndexOutOfBoundsException from ArrayList.add.
-      final PerChunk<List<Map<String, Object>>> perChunk = new PerChunk<>(ArrayList::new);
-      final BiConsumer<ConstantPool, List<Map<String, Object>>> drain =
-          (cp, rows) -> {
+      final PerChunk<EntryRows> perChunk = new PerChunk<>(EntryRows::new);
+      final BiConsumer<ConstantPool, EntryRows> drain =
+          (cp, chunk) -> {
             if (!cp.getType().getName().equals(typeName)) {
               return;
             }
@@ -476,6 +492,11 @@ final class JafarSources {
             Iterator<Long> it = cp.ids();
             while (it.hasNext()) {
               long id = it.next();
+              // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE): skip the ids
+              // an earlier checkpoint of this chunk already produced.
+              if (!chunk.seen.add(id)) {
+                continue;
+              }
               Object val = cp.get(id);
               Map<String, Object> row = new HashMap<>();
               row.put("id", id);
@@ -487,7 +508,7 @@ final class JafarSources {
                 row.put("value", val);
               }
               if (filter == null || filter.test(row)) {
-                rows.add(row);
+                chunk.rows.add(row);
               }
             }
           };
@@ -514,21 +535,21 @@ final class JafarSources {
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                List<Map<String, Object>> rows = perChunk.of(context);
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, rows));
+                EntryRows chunk = perChunk.of(context);
+                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, chunk));
                 return true;
               }
 
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
-                List<Map<String, Object>> rows = perChunk.of(context);
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, rows));
+                EntryRows chunk = perChunk.of(context);
+                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, chunk));
                 return true;
               }
             });
       }
       List<Map<String, Object>> rows = new ArrayList<>();
-      perChunk.inChunkOrder().forEach(rows::addAll);
+      perChunk.inChunkOrder().forEach(chunk -> rows.addAll(chunk.rows));
       return rows;
     }
 
@@ -639,8 +660,10 @@ final class JafarSources {
                     .forEach(
                         pool -> {
                           if (pool.getType().getName().equals(typeName)) {
-                            // Accumulate delta count for global total (mirrors loadSummary).
-                            chunk.totalCpCount += extractConstantPoolCount(pool);
+                            // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE):
+                            // its size at the last checkpoint is the chunk's total.
+                            chunk.totalCpCount =
+                                Math.max(chunk.totalCpCount, extractConstantPoolCount(pool));
                             // Collect IDs defined in this checkpoint for per-chunk BFS.
                             MutableConstantPool targetMcp = (MutableConstantPool) pool;
                             Iterator<Long> it = targetMcp.ids();
