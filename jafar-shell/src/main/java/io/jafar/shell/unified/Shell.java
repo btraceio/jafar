@@ -594,10 +594,10 @@ public final class Shell implements AutoCloseable {
 
   /**
    * jfr-shell's commands that are not queries — {@code metadata [--summary|--search ...]}, {@code
-   * chunks}, {@code chunk <n>}, {@code constants}/{@code cp} — run by jfr-shell's dispatcher when a
-   * recording is current, so a JFR script runs here as it does in jfr-shell. Their query forms
-   * ({@code metadata/jdk.X}, {@code chunks/...}) start with a different first word and stay
-   * queries.
+   * chunks}, {@code chunk <n>}, {@code constants}/{@code cp}, {@code backend} — run by jfr-shell's
+   * dispatcher when a recording is current, so a JFR script runs here as it does in jfr-shell. As
+   * in jfr-shell, the word alone or followed by arguments is the command; {@code metadata/jdk.X},
+   * {@code chunks[...]} (a different first word) and {@code chunks | count()} stay queries.
    */
   private boolean isJfrCommandForCurrentSession(String input) {
     // Runs for every line: the session test first, and the first word without a regex split
@@ -609,11 +609,18 @@ public final class Shell implements AutoCloseable {
     while (end < input.length() && !Character.isWhitespace(input.charAt(end))) {
       end++;
     }
-    return JFR_DISPATCHER_COMMANDS.contains(input.substring(0, end));
+    if (!JFR_DISPATCHER_COMMANDS.contains(input.substring(0, end))) {
+      return false;
+    }
+    int rest = end;
+    while (rest < input.length() && Character.isWhitespace(input.charAt(rest))) {
+      rest++;
+    }
+    return rest == input.length() || input.charAt(rest) != '|';
   }
 
   private static final java.util.Set<String> JFR_DISPATCHER_COMMANDS =
-      java.util.Set.of("metadata", "chunks", "chunk", "constants", "cp");
+      java.util.Set.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
 
   private boolean isQueryForCurrentSession(String input) {
     Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
@@ -1251,6 +1258,8 @@ public final class Shell implements AutoCloseable {
     out.println();
     out.println("Query:");
     out.println("  show <query>       Execute a query on current session");
+    out.println("  metadata | chunks | constants (cp) | backend");
+    out.println("                     jfr-shell's commands, on a recording");
     out.println();
     out.println("Ask (LLM, optional):");
     out.println("  ask <question>     Several queries, read each, conclude ('?' for short)");

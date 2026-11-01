@@ -16,18 +16,17 @@ import picocli.CommandLine;
     mixinStandardHelpOptions = true,
     footer = {
       "",
-      "Scripts: jafar-shell script <file|-> [args...] [--continue-on-error]",
-      "  (one script can open recordings, heap dumps and profiles)",
-      "JFR commands: show, metadata, chunks, constants (cp); script with --backend.",
+      "script <file|-> [args...] [--continue-on-error] [-b <backend>]: run a script in this",
+      "  shell, so it can open recordings, heap dumps and profiles.",
+      "JFR commands: show, metadata, chunks, constants (cp).",
       "JFR options: --backend, --plugin-dir, --install-plugin."
     })
 public final class Main implements Callable<Integer> {
 
-  // The command line jfr-shell has always had. The jafar-shell jbang alias runs this class, so
-  // these invocations keep going to it. 'script' is not here: it runs in the unified shell (see
-  // isScriptCommandLine), except with a JFR option such as --backend, which only jfr-shell's has.
-  // The jfr-shell alias, and the shebang scripts written for it, never reach this class: its
-  // launcher names io.jafar.shell.Main as the main class.
+  // The command line jfr-shell has always had, so 'jafar-shell show x.jfr ...' keeps working.
+  // 'script' is not among them: it runs in this shell, so a script can open any format, and its
+  // -b/--backend picks the backend for recordings there. (The jfr-shell jbang alias launches
+  // io.jafar.shell.Main directly and never comes through here.)
   private static final Set<String> JFR_COMMANDS =
       Set.of("show", "metadata", "chunks", "constants", "cp");
   private static final Set<String> JFR_OPTIONS =
@@ -57,9 +56,9 @@ public final class Main implements Callable<Integer> {
   static boolean isJfrCommandLine(String[] args) {
     int first = firstWordIndex(args);
     boolean script = first >= 0 && isCommand(args[first], Set.of("script"));
-    // A JFR option before the command sends it to jfr-shell; for 'script', one anywhere does
-    // ('script --backend jdk f.jfrs'), since only jfr-shell's script command takes a backend
-    int scan = script || first < 0 ? args.length : first;
+    // A JFR option before the command sends it to jfr-shell. After 'script' the options are the
+    // script command's own ('script -b jdk f.jfrs' picks a backend in this shell).
+    int scan = first < 0 ? args.length : first;
     for (int i = 0; i < scan; i++) {
       if (JFR_OPTIONS.contains(args[i].split("=", 2)[0])) {
         return true;
@@ -198,6 +197,11 @@ public final class Main implements Callable<Integer> {
     private boolean continueOnError;
 
     @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use for recordings, as in jfr-shell")
+    private String backend;
+
+    @CommandLine.Option(
         names = {"-h", "--help"},
         usageHelp = true,
         description = "Show this help message and exit.")
@@ -205,6 +209,10 @@ public final class Main implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+      if (backend != null) {
+        // Read when the backend registry first initialises, which opening a recording does
+        System.setProperty("jfr.shell.backend", backend);
+      }
       // A shebang line ending 'script -': the kernel passes the script's own path after '-'
       var shebang = io.jafar.shell.core.scripting.ScriptRunner.shebangScript(scriptPath, arguments);
       if (shebang.isPresent()) {

@@ -72,7 +72,8 @@ the change up. Who calls them:
 
 **Which `main` runs.** `unified/Main` sends `show`, `metadata`, `chunks`, `constants`/`cp` and any
 JFR option (`--backend`, `--plugin-dir`, `--install-plugin`) to jfr-shell's command line
-(`io.jafar.shell.Main`); `script` runs in the unified shell unless it carries a JFR option. The
+(`io.jafar.shell.Main`) when they come before the command word; `script` runs in the unified
+shell, and options after it (`-b/--backend` included) are its own. The
 `jafar-shell` jbang alias runs `unified/Main` (the jar's `Main-Class`); the `jfr-shell` alias runs
 [`jafar-shell.java`](https://github.com/btraceio/jbang-catalog/blob/main/jafar-shell.java), whose
 `//MAIN io.jafar.shell.Main` skips `unified/Main` entirely — so routing changes never reach

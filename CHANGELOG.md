@@ -30,18 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heap dump as a recording and answered `Invalid query: Unknown root: objects`. It now runs the
   script through the same shell as the prompt, without a terminal: results on stdout, errors on
   stderr, no banner or `Session 1 opened` lines, the interactive history untouched, exit status 1
-  if a line failed, and `--continue-on-error` as in `jfr-shell script`. `script --backend <id> ...`
-  still goes to jfr-shell, whose script command is the only one with a backend. Shebang scripts
+  if a line failed, and `--continue-on-error` and `-b/--backend` as in `jfr-shell script`. Shebang
+  scripts
   written for `jbang jfr-shell@btraceio script -` are unaffected: that alias launches
   `io.jafar.shell.Main` directly. A JFR-only script now gets the unified shell's semantics: the
   same data, but other table layout, string values printed as `{name=G1New}`, and `${v.size}` of a
   lazy `toMap()` variable counting rows — see
-  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `--backend` keeps the old route
+  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `jfr-shell script` keeps
+  jfr-shell's
 - **jfr-shell's non-query commands in `jafar-shell`.** With a recording current, `metadata` (and
-  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>` and `constants`/`cp` run as they do
-  in jfr-shell, instead of failing as queries; the shipped `basic-analysis.jfrs` runs end to end.
-  Bare `metadata` therefore prints jfr-shell's type listing rather than JfrPath's `metadata` rows;
-  `show metadata` and `metadata/<type>` are queries as before
+  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>`, `constants`/`cp` and `backend` run
+  as they do in jfr-shell, using jfr-shell's implementations, instead of failing as queries; the
+  shipped `basic-analysis.jfrs` runs end to end. Bare `metadata` therefore prints jfr-shell's type
+  listing rather than JfrPath's `metadata` rows; `show metadata`, `metadata/<type>` and
+  `chunks | ...` are queries as before
 - **`JFR_SHELL_VERBOSE` / `-Djfr.shell.verbose=true` applies to `jafar-shell script`** as it does
   to `jfr-shell script`: the open/close lines and `Set x = ...` confirmations script mode leaves
   out are printed. The switch is jfr-shell's own (`CommandDispatcher.isVerboseEnabled`), read by
@@ -73,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the script as a recording. When the path is `-` and the first argument is a file starting with
   `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
   arguments as `$1`, `$2`, ...
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way. Both are now thread-safe
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
