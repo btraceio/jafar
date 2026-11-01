@@ -89,6 +89,20 @@ looks identical to the file not being read at all.
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
 > the jar manifest's `Implementation-Version`, which the shadow-jar build stamps, so it cannot drift.
 
+> **Case file — a whole decode path behind one `catch`.** `EventStreamGenerated.onEvent` caught
+> every `Exception` and returned the delegate's answer, which with no delegate is `false`, and
+> `StreamingChunkParser` treats `false` as "skip the rest of the chunk". Behind it, the generated
+> untyped path was broken four ways at once: generation recursed to `StackOverflowError` on any
+> array field, threw `Unsupported field type` on simple types, emitted `Character.valueOf(short)`
+> (`NoSuchMethodError`) for `char`, and the deserializer cache was keyed by chunk-scoped type id, so
+> a later chunk decoded with an earlier chunk's deserializer. None of it was visible: on
+> `tck-test.jfr` the path delivered 16,095 of 67,657 events, with whole types (`jdk.GCHeapSummary`,
+> 1,892 → 0) silently gone. Each fix only exposed the next failure once the `catch` stopped hiding
+> it. The net that found them: decode the same recording through the generic reader and the
+> generated path and compare **counts per event type** and values (`GeneratedUntypedArrayParityTest`,
+> `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
+> types.
+
 ## R4. Documentation is code — run it
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before
