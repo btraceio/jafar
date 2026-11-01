@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parsed on parallel threads, so an abort stopped only its own chunk: on the two-chunk
   `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a multi-thread
   pool, and 6 with a one-thread pool (the next chunk delivered one event before checking the
-  flag). The flag is now shared by every chunk of a run and checked before an event is decoded,
+  flag). The flag is now shared by every chunk of a run and checked at chunk start, at the
+  metadata and checkpoint callbacks (so a chunk mid-way through its constant pools stops there),
+  and before an event is decoded,
   in the typed parser and both untyped event streams; the untyped parser also stops calling the
   remaining handlers of an event once one aborts, as the typed parser always did. The contract,
   including the at-most-one in-flight event per other thread, is in the `Control.abort()` Javadoc

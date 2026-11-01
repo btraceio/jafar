@@ -155,7 +155,8 @@ Untyped Path (maps with lazy constant-pool refs)
 - Typed mode: events are deserialized to generated POJOs and dispatched to user `JFRHandler`s
   synchronously; handlers can request abort via `Control`. The abort flag is shared by every chunk
   of one `run()` (chunks run on parallel threads; `ControlImpl` is per thread only for the stream
-  position), checked before each event is decoded and at chunk start.
+  position), checked at chunk start, at the metadata and each checkpoint callback, and before
+  each event is decoded.
 - Untyped mode: events are `Map<String,Object>`; arrays and complex values are represented with
   `ArrayHolder`/nested maps, constant pool refs remain lazy until accessed.
 

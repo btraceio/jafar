@@ -45,6 +45,11 @@ public abstract class EventStream implements ChunkParserListener {
 
   @Override
   public final boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+    if (aborted.get()) {
+      // Aborted after this chunk started: skip binding the chunk's metadata, its constant pools
+      // and its events. The parser then calls onChunkEnd with skipped=true.
+      return false;
+    }
     // use this callback to inspect/process metadata registrations
     return delegate == null
         || delegate.onMetadata(context, metadata); // can return 'false' to abort processing
@@ -130,6 +135,10 @@ public abstract class EventStream implements ChunkParserListener {
 
   @Override
   public final boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+    if (aborted.get()) {
+      // Aborted while this chunk's constant pools are being read: skip the rest of the chain.
+      return false;
+    }
     return delegate != null
         ? delegate.onCheckpoint(context, checkpoint)
         : ChunkParserListener.super.onCheckpoint(context, checkpoint);

@@ -237,6 +237,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
           @Override
           public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+            if (aborted.get()) {
+              // Aborted after this chunk started: skip binding factories and deserializers for the
+              // chunk's metadata, its constant pools and its events. The parser then calls
+              // onChunkEnd with skipped=true.
+              return false;
+            }
             if (!(context instanceof TypedParserContext)) {
               throw new RuntimeException("Invalid context");
             }
@@ -286,6 +292,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
           @Override
           public boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+            if (aborted.get()) {
+              // Aborted while this chunk's constant pools are being read: skip the rest of the
+              // chain.
+              return false;
+            }
             if (parserListener != null) {
               return parserListener.onCheckpoint(context, checkpoint);
             } else {

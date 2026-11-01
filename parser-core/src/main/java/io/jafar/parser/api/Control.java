@@ -116,9 +116,10 @@ public interface Control {
    *       further. A handler can therefore be called after another handler has aborted, at most
    *       once per other parsing thread; a handler that needs an exact count should keep and check
    *       its own.
-   *   <li><b>Chunks that have not started</b> are skipped. Parser listeners still receive {@code
-   *       onChunkEnd} for every chunk (with {@code skipped = true} for those cut short or skipped),
-   *       and {@code onRecordingEnd}.
+   *   <li><b>Chunks that have not started</b> are skipped, and a chunk still reading its metadata
+   *       or constant pools stops at its next metadata or checkpoint callback. Parser listeners
+   *       still receive {@code onChunkEnd} for every chunk (with {@code skipped = true} for those
+   *       cut short or skipped), and {@code onRecordingEnd}.
    *   <li>No exception is thrown; {@code run()} returns normally.
    *   <li>The abort belongs to that run. A later {@code run()} on the same parser starts afresh and
    *       delivers every event again.
