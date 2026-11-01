@@ -29,7 +29,11 @@ public final class TypeSkipper {
       if (dimension > 0) {
         int count = (int) stream.readVarint();
         for (int i = 0; i < count; i++) {
-          fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
+          if (field.hasConstantPool()) {
+            stream.readVarint(); // skip CP reference
+          } else {
+            fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
+          }
         }
       } else if (field.hasConstantPool()) {
         stream.readVarint(); // skip CP reference
@@ -47,6 +51,28 @@ public final class TypeSkipper {
    */
   public static TypeSkipper createSkipper(MetadataClass clz) {
     IntGrowableArray instructions = new IntGrowableArray(20);
+
+    // Special case: primitive types have 0 fields but still occupy data in the stream
+    switch (clz.getName()) {
+      case "byte":
+      case "boolean":
+        instructions.add(Instructions.BYTE);
+        return new TypeSkipper(instructions.toIntArray());
+      case "char":
+      case "short":
+      case "int":
+      case "long":
+        instructions.add(Instructions.VARINT);
+        return new TypeSkipper(instructions.toIntArray());
+      case "float":
+        instructions.add(Instructions.FLOAT);
+        return new TypeSkipper(instructions.toIntArray());
+      case "double":
+        instructions.add(Instructions.DOUBLE);
+        return new TypeSkipper(instructions.toIntArray());
+      default:
+        break;
+    }
 
     // Special case: java.lang.String has 0 fields but needs to skip string data
     // When used in constant pools, the string data is stored directly
