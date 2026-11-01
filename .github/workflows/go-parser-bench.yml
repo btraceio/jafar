@@ -99,10 +99,13 @@ jobs:
 
       - name: Download benchmark recordings
         if: steps.recordings.outputs.cache-hit != 'true'
-        # Mirror for test-dd.jfr while its Dropbox link is disabled: set the repository variable
-        # JAFAR_TEST_DD_URL (Settings > Secrets and variables > Actions > Variables). Unset, this is an
-        # empty string and get_resources.sh falls back to its default URL.
+        # Mirrors for the recordings while their Dropbox links are disabled: set the repository
+        # variables JAFAR_TEST_AP_URL, JAFAR_TEST_JFR_URL and JAFAR_TEST_DD_URL (Settings > Secrets
+        # and variables > Actions > Variables). An unset one is an empty string here, and
+        # get_resources.sh then falls back to its default URL for that recording.
         env:
+          JAFAR_TEST_AP_URL: ${{ vars.JAFAR_TEST_AP_URL }}
+          JAFAR_TEST_JFR_URL: ${{ vars.JAFAR_TEST_JFR_URL }}
           JAFAR_TEST_DD_URL: ${{ vars.JAFAR_TEST_DD_URL }}
         run: ./get_resources.sh
 
