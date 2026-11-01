@@ -124,7 +124,10 @@ func TestPrimitiveArrayElements(t *testing.T) {
 		err := NewParser(data).ParseWith(Options{ReuseValues: reuse, OnError: FailOnError}, func(e *Event) error {
 			ev = ResolveDeepMap(e.Values) // copies, so recycled arrays cannot change under the checks
 			raw := e.Values["ints"].(*Array)
-			if raw.Len() != len(primitiveArrayInts) || raw.At(5) != int64(math.MinInt32) || len(raw.Values) != 0 {
+			if _, ok := raw.Elems.([]int64); !ok {
+				t.Errorf("reuse=%v: ints Elems is %T, want []int64", reuse, raw.Elems)
+			}
+			if raw.Len() != len(primitiveArrayInts) || raw.At(5) != int64(math.MinInt32) {
 				t.Errorf("reuse=%v: ints *Array = %#v", reuse, raw)
 			}
 			if got := Get(e.Values, "doubles", 4); got != math.Inf(1) {
@@ -211,10 +214,9 @@ func TestPrimitiveArrayElementsAreNotBoxed(t *testing.T) {
 	}
 }
 
-// An Array built by hand has no record of which slice the parser would have
-// filled; Len, At, Get and ResolveDeep must still find its elements.
+// An Array built by hand must work with Len, At, Get, ResolveDeep and String.
 func TestHandBuiltArray(t *testing.T) {
-	arr := &Array{ElementType: "double", Doubles: []float64{1.5, 2.5}}
+	arr := &Array{ElementType: "double", Elems: []float64{1.5, 2.5}}
 	if arr.Len() != 2 || arr.At(1) != 2.5 {
 		t.Errorf("Len = %d, At(1) = %#v", arr.Len(), arr.At(1))
 	}
@@ -244,4 +246,47 @@ func TestInterfaceConversionCosts(t *testing.T) {
 		t.Errorf("int16(1000) to interface: %.0f allocs, want 1", n)
 	}
 	_ = sink
+}
+
+// With ReuseValues, a recycled array whose element count matches the previous
+// event's must not store its slice in Elems again: converting a slice to an
+// interface allocates its header (runtime.convTslice), which would put one
+// allocation per array back on every event.
+//
+// The event's scalar fields allocate per event regardless (count, an int64
+// outside Go's small-value table, and label, a string, are boxed into the
+// event map), so the per-event cost of events with filled arrays is compared
+// against the same events with empty arrays, which hold a nil slice.
+func TestReusedArraysDoNotReboxTheirSlice(t *testing.T) {
+	recording := func(events int, filled bool) []byte {
+		bodies := make([][]byte, events)
+		for i := range bodies {
+			if filled {
+				bodies[i] = primitiveArraysEvent(primitiveArrayInts, primitiveArrayStampTicks,
+					primitiveArraySpanTicks, primitiveArrayLongs, primitiveArrayFloats,
+					primitiveArrayDoubles, primitiveArrayShorts, primitiveArrayChars)
+			} else {
+				bodies[i] = primitiveArraysEvent(nil, nil, nil, nil, nil, nil, nil, nil)
+			}
+		}
+		return primitiveArraysRecording(bodies...)
+	}
+	allocs := func(data []byte) float64 {
+		return testing.AllocsPerRun(5, func() {
+			err := NewParser(data).ParseWith(Options{ReuseValues: true, OnError: FailOnError},
+				func(e *Event) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	const few, many = 2, 50
+	perEvent := func(filled bool) float64 {
+		return (allocs(recording(many, filled)) - allocs(recording(few, filled))) / (many - few)
+	}
+	withArrays, withoutArrays := perEvent(true), perEvent(false)
+	if withArrays > withoutArrays {
+		t.Errorf("%.2f allocations per event with filled arrays, %.2f with empty ones:"+
+			" recycled arrays allocate per event", withArrays, withoutArrays)
+	}
 }

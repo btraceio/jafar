@@ -264,7 +264,7 @@ func TestParseSyntheticRecording(t *testing.T) {
 	if arr.ElementType != "long" {
 		t.Errorf("values element type = %q, want long", arr.ElementType)
 	}
-	if !reflect.DeepEqual(arr.Ints, []int64{10, 20, 30}) || len(arr.Values) != 0 {
+	if !reflect.DeepEqual(arr.Elems, []int64{10, 20, 30}) {
 		t.Errorf("values = %#v", arr)
 	}
 
@@ -605,7 +605,7 @@ func TestReuseValuesHandlesVariableArrayLength(t *testing.T) {
 		if arr.Len() != len(want[i]) {
 			t.Fatalf("event %d: %d items, want %d", i, arr.Len(), len(want[i]))
 		}
-		for j, item := range arr.Values {
+		for j, item := range arr.Elems.([]any) {
 			m, ok := item.(map[string]any)
 			if !ok {
 				t.Fatalf("event %d item %d: %#v, want a map", i, j, item)

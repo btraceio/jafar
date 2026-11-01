@@ -74,19 +74,14 @@ func (c *chunkParser) newMap(hint int) map[string]any {
 }
 
 // newArray returns the array for the next array field of the event being
-// decoded, with the slice for kind sized to n elements and the other slices
-// empty.
+// decoded. The caller sizes its elements with sized.
 //
-// A recycled array keeps the capacity of every slice it has held: an array of
-// complex values makes the number of arrays an event needs vary, so the array
-// at a given position may hold a different field, of a different kind, from
-// one event to the next.
-func (c *chunkParser) newArray(elementType string, kind arrayKind, n int) *Array {
+// A recycled array keeps the slice it last held, so an event shaped like the
+// previous one of its type decodes into the same backing array.
+func (c *chunkParser) newArray(elementType string) *Array {
 	a := c.arena
 	if a == nil {
-		arr := &Array{}
-		arr.reset(elementType, kind, n)
-		return arr
+		return &Array{ElementType: elementType}
 	}
 	var arr *Array
 	if a.arrIdx < len(a.arrays) {
@@ -96,43 +91,40 @@ func (c *chunkParser) newArray(elementType string, kind arrayKind, n int) *Array
 		a.arrays = append(a.arrays, arr)
 	}
 	a.arrIdx++
-	arr.reset(elementType, kind, n)
+	arr.ElementType = elementType
 	return arr
 }
 
-// reset shapes arr to hold n elements of kind, reusing slice capacity.
-// Typed slices are fully overwritten by the decoder, so only Values, which may
-// hold references from a previous event, needs clearing.
-func (arr *Array) reset(elementType string, kind arrayKind, n int) {
-	arr.ElementType = elementType
-	arr.kind = kind
-	arr.Ints, arr.Floats, arr.Doubles = arr.Ints[:0], arr.Floats[:0], arr.Doubles[:0]
-	arr.Shorts, arr.Chars = arr.Shorts[:0], arr.Chars[:0]
-	clear(arr.Values)
-	arr.Values = arr.Values[:0]
-	switch kind {
-	case arrayInts:
-		arr.Ints = grow(arr.Ints, n)
-	case arrayFloats:
-		arr.Floats = grow(arr.Floats, n)
-	case arrayDoubles:
-		arr.Doubles = grow(arr.Doubles, n)
-	case arrayShorts:
-		arr.Shorts = grow(arr.Shorts, n)
-	case arrayChars:
-		arr.Chars = grow(arr.Chars, n)
-	default:
-		arr.Values = grow(arr.Values, n)
+// sized returns arr's elements as a []T of n elements, for the decoder to
+// overwrite, reusing the slice arr already holds when it has type []T and the
+// capacity.
+//
+// Storing a slice in an interface copies its header to the heap
+// (runtime.convTslice), so Elems is assigned only when the header changes: a
+// recycled array whose element count matches the previous event's costs
+// nothing. An array whose element type differs from last time (an array of
+// complex values makes the array at a given position vary) gets a new slice.
+func sized[T any](arr *Array, n int) []T {
+	if cur, ok := arr.Elems.([]T); ok {
+		if len(cur) == n {
+			return cur
+		}
+		if cap(cur) >= n {
+			if n < len(cur) {
+				clear(cur[n:]) // drop references the shorter array no longer covers
+			}
+			cur = cur[:n]
+			arr.Elems = cur
+			return cur
+		}
 	}
-}
-
-// grow returns s resized to n elements, reallocating only when its capacity is
-// too small. Callers overwrite every element.
-func grow[T any](s []T, n int) []T {
-	if cap(s) >= n {
-		return s[:n]
+	if n == 0 {
+		arr.Elems = []T(nil) // a nil slice converts to an interface without allocating
+		return nil
 	}
-	return make([]T, n)
+	s := make([]T, n)
+	arr.Elems = s
+	return s
 }
 
 // newRef returns the reference for the next constant pool field of the event

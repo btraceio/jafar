@@ -18,9 +18,9 @@
 //	java.lang.String    string, or nil for a null string
 //	inline complex      map[string]any
 //	constant pool ref   *Ref (resolve with Ref.Value)
-//	array               *Array: int and long elements in Array.Ints ([]int64),
-//	                    float in Floats, double in Doubles, short in Shorts,
-//	                    char in Chars, others in Values
+//	array               *Array; Array.Elems is []int64 for int and long,
+//	                    []float32, []float64, []int16 or []uint16 for float,
+//	                    double, short or char, and []any otherwise
 //
 // Fields annotated with jdk.jfr.Timestamp(TICKS) and jdk.jfr.Timespan(TICKS)
 // are normalised: timestamps become nanoseconds since the epoch and timespans

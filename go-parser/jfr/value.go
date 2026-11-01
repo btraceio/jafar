@@ -11,44 +11,31 @@ const maxValueDepth = 64
 
 // Array is the value of a JFR array field.
 //
-// Elements of the numeric element types the parser can store unboxed live in a
-// typed slice, so decoding them allocates nothing per element:
+// Elems holds the elements in a slice whose Go type depends on the element
+// type, so that numeric elements are stored unboxed and decoding them
+// allocates nothing per element:
 //
-//	ElementType     elements in   element value
-//	int, long       Ints          int64 (int sign extended from 32 bits;
-//	                              @Timestamp/@Timespan(TICKS) in nanoseconds)
-//	float           Floats        float32
-//	double          Doubles       float64
-//	short           Shorts        int16
-//	char            Chars         uint16
-//	anything else   Values        the Go type of a scalar field of that type
+//	ElementType     Elems
+//	int, long       []int64   (int sign extended from 32 bits;
+//	                           @Timestamp/@Timespan(TICKS) in nanoseconds)
+//	float           []float32
+//	double          []float64
+//	short           []int16
+//	char            []uint16
+//	anything else   []any     (each element has the Go type of a scalar
+//	                           field of the element type)
 //
 // Array elements that are constant pool references are *Ref and inline complex
-// elements are map[string]any; both go in Values, as do the elements of every
-// other primitive type. The slices that do not hold the elements are empty. Len
-// and At work on every array regardless of where its elements are.
+// elements are map[string]any, in an []any whatever their type. Switch on the
+// type of Elems to read the elements in bulk; Len and At work on any array.
 type Array struct {
 	// ElementType is the JFR type name of the elements.
 	ElementType string
-	// Ints holds the elements of int and long arrays.
-	Ints []int64
-	// Floats holds the elements of float arrays.
-	Floats []float32
-	// Doubles holds the elements of double arrays.
-	Doubles []float64
-	// Shorts holds the elements of short arrays.
-	Shorts []int16
-	// Chars holds the elements of char arrays.
-	Chars []uint16
-	// Values holds the elements of every other array.
-	Values []any
-
-	// kind is the slice the parser sized for this array; it only steers
-	// decoding and recycling.
-	kind arrayKind
+	// Elems is the slice of elements; see the table above for its type.
+	Elems any
 }
 
-// arrayKind records which slice of a decoded Array holds its elements.
+// arrayKind is where the decoder stores the elements of an array field.
 type arrayKind uint8
 
 const (
@@ -83,32 +70,46 @@ func arrayKindOf(f *Field) arrayKind {
 }
 
 // Len returns the number of elements.
-//
-// At most one of the slices is non-empty, so Len and At need no record of
-// which one the parser filled and work on an Array built by hand too.
 func (a *Array) Len() int {
-	return len(a.Ints) + len(a.Floats) + len(a.Doubles) + len(a.Shorts) + len(a.Chars) + len(a.Values)
+	switch e := a.Elems.(type) {
+	case []int64:
+		return len(e)
+	case []float32:
+		return len(e)
+	case []float64:
+		return len(e)
+	case []int16:
+		return len(e)
+	case []uint16:
+		return len(e)
+	case []any:
+		return len(e)
+	default:
+		return 0
+	}
 }
 
 // At returns element i as an interface value, carrying the same Go type a
-// scalar field of the element type would. For the typed slices this boxes the
-// element; iterate Ints, Floats or Doubles directly to avoid that.
+// scalar field of the element type would. For a numeric slice this boxes the
+// element; switch on Elems and index the slice to avoid that.
 //
 // At panics if i is out of range, like a slice index.
 func (a *Array) At(i int) any {
-	switch {
-	case len(a.Ints) > 0:
-		return a.Ints[i]
-	case len(a.Floats) > 0:
-		return a.Floats[i]
-	case len(a.Doubles) > 0:
-		return a.Doubles[i]
-	case len(a.Shorts) > 0:
-		return a.Shorts[i]
-	case len(a.Chars) > 0:
-		return a.Chars[i]
+	switch e := a.Elems.(type) {
+	case []int64:
+		return e[i]
+	case []float32:
+		return e[i]
+	case []float64:
+		return e[i]
+	case []int16:
+		return e[i]
+	case []uint16:
+		return e[i]
+	case []any:
+		return e[i]
 	default:
-		return a.Values[i]
+		return []any(nil)[i] // no elements: panics with the usual index message
 	}
 }
 
@@ -235,44 +236,50 @@ func (c *chunkParser) readField(r *reader, into map[string]any, owner *ClassType
 	if f.Type != nil {
 		elementType = f.Type.Name
 	}
-	arr := c.newArray(elementType, arrayKindOf(f), int(n))
-	switch arr.kind {
+	arr := c.newArray(elementType)
+	switch arrayKindOf(f) {
 	case arrayInts:
 		// Elements are stored unboxed; resolve the field's tick
 		// normalisation once for the whole array.
+		ints := sized[int64](arr, int(n))
 		temporal := c.temporalKind(owner, f.Name)
 		isInt := f.Type.Name == "int"
-		for i := range arr.Ints {
+		for i := range ints {
 			v := r.readVarint()
 			if isInt {
 				// See readPrimitive: truncate to 32 bits, then sign extend.
 				v = int64(int32(v))
 			}
-			arr.Ints[i] = c.applyTemporal(temporal, v)
+			ints[i] = c.applyTemporal(temporal, v)
 		}
 	case arrayFloats:
-		for i := range arr.Floats {
-			arr.Floats[i] = r.readFloat32()
+		floats := sized[float32](arr, int(n))
+		for i := range floats {
+			floats[i] = r.readFloat32()
 		}
 	case arrayDoubles:
-		for i := range arr.Doubles {
-			arr.Doubles[i] = r.readFloat64()
+		doubles := sized[float64](arr, int(n))
+		for i := range doubles {
+			doubles[i] = r.readFloat64()
 		}
 	case arrayShorts:
-		for i := range arr.Shorts {
-			arr.Shorts[i] = int16(r.readVarint())
+		shorts := sized[int16](arr, int(n))
+		for i := range shorts {
+			shorts[i] = int16(r.readVarint())
 		}
 	case arrayChars:
-		for i := range arr.Chars {
-			arr.Chars[i] = uint16(r.readVarint())
+		chars := sized[uint16](arr, int(n))
+		for i := range chars {
+			chars[i] = uint16(r.readVarint())
 		}
 	default:
-		for i := range arr.Values {
+		values := sized[any](arr, int(n))
+		for i := range values {
 			v, err := c.readFieldValue(r, owner, f, depth)
 			if err != nil {
 				return err
 			}
-			arr.Values[i] = v
+			values[i] = v
 		}
 	}
 	if r.err != nil {

@@ -91,33 +91,36 @@ conversions for values you convert yourself.
 
 ### Arrays
 
-An array field decodes to a `*jfr.Array`. Elements of the numeric types are
-stored unboxed in a typed slice, so decoding them allocates nothing per element;
-everything else goes in `Values`:
+An array field decodes to a `*jfr.Array` whose `Elems` field holds the elements
+in a slice. Its Go type follows the element type, so numeric elements are stored
+unboxed and decoding them allocates nothing per element:
 
-| `ElementType`  | Elements in | Element type                                        |
-|----------------|-------------|-----------------------------------------------------|
-| `int`, `long`  | `Ints`      | `int64`, normalised like a scalar field of the type |
-| `float`        | `Floats`    | `float32`                                           |
-| `double`       | `Doubles`   | `float64`                                           |
-| `short`        | `Shorts`    | `int16`                                             |
-| `char`         | `Chars`     | `uint16`                                            |
-| anything else  | `Values`    | `any`, as a scalar field of the element type        |
+| `ElementType`  | `Elems`     | Elements                                             |
+|----------------|-------------|------------------------------------------------------|
+| `int`, `long`  | `[]int64`   | normalised like a scalar field of the type           |
+| `float`        | `[]float32` |                                                      |
+| `double`       | `[]float64` |                                                      |
+| `short`        | `[]int16`   |                                                      |
+| `char`         | `[]uint16`  |                                                      |
+| anything else  | `[]any`     | each with the Go type of a scalar field of the type  |
 
-Constant pool references are always `*Ref` elements in `Values`, whatever their
-type. The slices that do not hold the elements are empty. `Len` and `At` work on
-any array; `At` boxes a typed element, so iterate the typed slice in hot loops:
+Constant pool references are always `*Ref` elements in an `[]any`, whatever
+their type. Switch on `Elems` to read the elements in bulk; `Len` and `At` work
+on any array, but `At` boxes a numeric element:
 
 ```go
 if arr, ok := e.Values["values"].(*jfr.Array); ok {
-    for _, v := range arr.Ints { /* int64, no allocation */ }
+    switch elems := arr.Elems.(type) {
+    case []int64:
+        for _, v := range elems { /* int64, no allocation */ }
+    case []any:
+        for _, v := range elems { /* *jfr.Ref, map[string]any, string, ... */ }
+    }
 }
 ```
 
-`Get` indexes arrays through `At`, and `ResolveDeep` turns a typed array into a
-copy of its slice (`[]int64`, `[]float32`, `[]float64`, `[]int16`, `[]uint16`)
-and any other array into
-an `[]any`.
+`Get` indexes arrays through `At`, and `ResolveDeep` turns a numeric array into
+a copy of its slice and any other array into an `[]any`.
 
 ### Constant pool references
 
@@ -258,11 +261,11 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 * **Unboxed arrays are typed slices.** The Java parser stores `int`/`long`,
   `float`, `double`, `short` and `char` array elements in a `long[]`,
   `float[]`, `double[]`, `short[]` or `char[]` behind `ArrayType`; this one
-  stores them in `Array.Ints`, `Floats`, `Doubles`, `Shorts` or `Chars`. Same
-  elements, same values; neither boxes them. `byte` and `boolean` elements stay
-  in `Values` (Java: `byte[]`, `boolean[]` filled by boxing): converting a
-  single-byte value to an interface never allocates in Go, and every `Byte` and
-  `Boolean` box is cached in Java.
+  stores an `[]int64`, `[]float32`, `[]float64`, `[]int16` or `[]uint16` in
+  `Array.Elems`. Same elements, same values; neither boxes them. `byte` and
+  `boolean` elements go in an `[]any` (Java: `byte[]`, `boolean[]` filled by
+  boxing): converting a single-byte value to an interface never allocates in
+  Go, and every `Byte` and `Boolean` box is cached in Java.
 * **Optimizations that do not port.** The typed API and the generated untyped
   deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
   generation. `LazyEventMap` in particular works because Java lets a lazy object

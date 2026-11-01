@@ -79,9 +79,8 @@ func Resolve(v any) any {
 
 // ResolveDeep resolves every constant pool reference reachable from v,
 // returning a structure built only from maps, slices and scalars. An *Array
-// becomes a copy of its typed slice ([]int64, []float32, []float64, []int16 or
-// []uint16) when its
-// elements are stored unboxed, and an []any otherwise.
+// becomes a copy of its Elems when that is a numeric slice ([]int64, []float32,
+// []float64, []int16 or []uint16), and an []any otherwise.
 //
 // Resolved constant pool entries are memoised per entry, so a stack trace
 // shared by ten thousand events is materialised once rather than once per
@@ -154,24 +153,27 @@ func resolveDeep(v any, onPath map[deepKey]int, depth int) (any, int) {
 		}
 		return out, minBack
 	case *Array:
-		// Typed elements hold no references: copy them, keeping their
+		// Numeric elements hold no references: copy them, keeping their
 		// element type, since a recycled array is overwritten by the next
 		// event.
-		switch {
-		case len(value.Ints) > 0 || value.kind == arrayInts:
-			return append([]int64(nil), value.Ints...), noBackEdge
-		case len(value.Floats) > 0 || value.kind == arrayFloats:
-			return append([]float32(nil), value.Floats...), noBackEdge
-		case len(value.Doubles) > 0 || value.kind == arrayDoubles:
-			return append([]float64(nil), value.Doubles...), noBackEdge
-		case len(value.Shorts) > 0 || value.kind == arrayShorts:
-			return append([]int16(nil), value.Shorts...), noBackEdge
-		case len(value.Chars) > 0 || value.kind == arrayChars:
-			return append([]uint16(nil), value.Chars...), noBackEdge
+		var items []any
+		switch e := value.Elems.(type) {
+		case []int64:
+			return append([]int64(nil), e...), noBackEdge
+		case []float32:
+			return append([]float32(nil), e...), noBackEdge
+		case []float64:
+			return append([]float64(nil), e...), noBackEdge
+		case []int16:
+			return append([]int16(nil), e...), noBackEdge
+		case []uint16:
+			return append([]uint16(nil), e...), noBackEdge
+		case []any:
+			items = e
 		}
-		out := make([]any, len(value.Values))
+		out := make([]any, len(items))
 		minBack := noBackEdge
-		for i, item := range value.Values {
+		for i, item := range items {
 			resolved, back := resolveDeep(item, onPath, depth)
 			if back < minBack {
 				minBack = back
