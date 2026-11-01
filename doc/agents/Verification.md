@@ -200,6 +200,17 @@ Two standing gaps in this area:
   not declared flaky; instead `assertSuccess` was made to include the response in every message and
   12 unasserted setup calls were asserted, so the next occurrence names its own cause.
 
+> **Case file — `Index 292 out of bounds for length 292`.** A jar test running `metadata --summary`
+> on `tck-test.jfr` failed once in four runs; the same command passed every time by hand. The
+> numbers were the clue: index equal to length is what `HashMap.keysToArray` throws when the map
+> holds more entries than its `size` counter, and that happens when two threads `put` into a plain
+> `HashMap`/`HashSet` and one `size++` is lost. `StreamingChunkParser` parses chunks on a pool, so
+> `JFRSession`'s `onMetadata` filled its type sets from two threads for this two-chunk recording.
+> A test constructing the session 300 times caught it in three runs of three (`284` entries iterated
+> against `size() == 301`, or the overrun itself); a lock around the collection fixed it. Two
+> lessons: an intermittent failure is a symptom with a cause, and **any parser callback can run on
+> several threads at once** — check what it writes.
+
 ## R9. Inspect the payload, not the exit status
 
 A command that succeeds has not told you it did the right thing. Read what actually went out or came

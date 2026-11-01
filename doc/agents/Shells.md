@@ -76,8 +76,12 @@ variables must handle `VariableStore.LazyValue` in general, not one implementati
 Threading: every front end dispatches on one thread (the readline loop; the TUI's single
 `tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
 `EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
-cache slot holding the rows or a sentinel, evaluation serialized — because a variable can be read
-from wherever its store is reachable. Do not split such state across two volatiles: `LazyQueryValue`
+cache slot holding the rows or a "not evaluated" token, evaluation serialized — because a variable
+can be read from wherever its store is reachable. `invalidate()` and `release()` install a fresh
+token and an evaluation publishes by compare-and-set against the token it started from, so an
+evaluation in flight cannot undo them. They must not lock against evaluation instead:
+`SessionManager.close` calls `release()` holding its monitor, and an evaluation's resolver calls
+`sessions.get()`. Do not split such state across two volatiles: `LazyQueryValue`
 once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
 read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
 
