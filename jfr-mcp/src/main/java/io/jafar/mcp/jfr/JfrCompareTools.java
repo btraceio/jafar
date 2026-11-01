@@ -38,7 +38,9 @@ import org.slf4j.LoggerFactory;
  * samples rather than as sample counts, so two recordings profiled at different sampling intervals
  * remain comparable. Where the two recordings are not safely comparable at all — different
  * execution-sample event types, or wildly different durations — the result says so in {@code
- * comparability} instead of quietly producing a plausible number.
+ * comparability} instead of quietly producing a plausible number. A frame is only called a
+ * regression when its move is significant given both recordings' sample counts; anything less is
+ * {@code inconclusive}, and a recording too thin to judge at all says so in the findings.
  */
 public final class JfrCompareTools {
 
@@ -50,6 +52,22 @@ public final class JfrCompareTools {
    * sub-percentage-point move is not evidence of anything.
    */
   private static final double DEFAULT_MIN_DELTA_PCT = 1.0;
+
+  /**
+   * Below this many samples in either recording no frame or rate change is called a regression. It
+   * is the usual floor for the two-proportion test below, and the samples' span is also what rates
+   * are measured over, so a thin recording undermines both.
+   */
+  private static final long MIN_RECORDING_SAMPLES = 30;
+
+  /** A frame needs this many samples in at least one recording before its move can mean much. */
+  private static final long MIN_FRAME_SAMPLES = 5;
+
+  /**
+   * Two-proportion z score a frame's change must reach. Strict because every frame is its own test,
+   * and a recording has hundreds of them.
+   */
+  private static final double MIN_SIGNIFICANCE_Z = 3.0;
 
   /** Beyond this ratio between the two observed durations, rate comparisons get a warning. */
   private static final double DURATION_RATIO_WARN = 3.0;
@@ -162,6 +180,8 @@ public final class JfrCompareTools {
           compareFrames(baseProfile, candProfile, minDeltaPct, limit);
       result.put("frames", frames);
       result.put("minDeltaPct", minDeltaPct);
+      result.put("sufficientSamples", hasSufficientSamples(baseProfile, candProfile));
+      result.put("minSamplesPerRecording", MIN_RECORDING_SAMPLES);
 
       List<Finding> findings = findings(baseProfile, candProfile, frames, metrics);
       result.put("findings", Findings.toMaps(findings));
@@ -296,7 +316,13 @@ public final class JfrCompareTools {
       }
     }
 
-    if (baseline.sampleCount() < 1000 || candidate.sampleCount() < 1000) {
+    if (!hasSufficientSamples(baseline, candidate)) {
+      notes.add(
+          String.format(
+              "Too few samples to judge changes (baseline %,d, candidate %,d, need %d in each):"
+                  + " no regression is raised, and none being raised is not evidence of no change.",
+              baseline.sampleCount(), candidate.sampleCount(), MIN_RECORDING_SAMPLES));
+    } else if (baseline.sampleCount() < 1000 || candidate.sampleCount() < 1000) {
       notes.add(
           String.format(
               "Low sample count (baseline %,d, candidate %,d): per-frame shares are noisy below"
@@ -308,6 +334,32 @@ public final class JfrCompareTools {
       notes.add("Recordings appear comparable.");
     }
     return notes;
+  }
+
+  private static boolean hasSufficientSamples(Profile baseline, Profile candidate) {
+    return baseline.sampleCount() >= MIN_RECORDING_SAMPLES
+        && candidate.sampleCount() >= MIN_RECORDING_SAMPLES;
+  }
+
+  /** Whether a frame's change in share is more than sampling noise could plausibly produce. */
+  private static boolean isSignificant(Profile baseline, Profile candidate, String frame) {
+    if (!hasSufficientSamples(baseline, candidate)) {
+      return false;
+    }
+    long baseSamples = baseline.leafFrameCounts().getOrDefault(frame, 0L);
+    long candSamples = candidate.leafFrameCounts().getOrDefault(frame, 0L);
+    if (Math.max(baseSamples, candSamples) < MIN_FRAME_SAMPLES) {
+      return false;
+    }
+    double baseN = baseline.sampleCount();
+    double candN = candidate.sampleCount();
+    double pooled = (baseSamples + candSamples) / (baseN + candN);
+    double standardError = Math.sqrt(pooled * (1 - pooled) * (1 / baseN + 1 / candN));
+    if (standardError == 0.0) {
+      return false;
+    }
+    double difference = Math.abs(candSamples / candN - baseSamples / baseN);
+    return difference / standardError >= MIN_SIGNIFICANCE_Z;
   }
 
   private List<Map<String, Object>> compareMetrics(Profile baseline, Profile candidate) {
@@ -402,7 +454,10 @@ public final class JfrCompareTools {
       row.put("deltaPct", round(delta, 2));
       row.put("baselineSamples", baseline.leafFrameCounts().getOrDefault(frame, 0L));
       row.put("candidateSamples", candidate.leafFrameCounts().getOrDefault(frame, 0L));
-      row.put("direction", delta > 0 ? "regression" : "improvement");
+      boolean significant = isSignificant(baseline, candidate, frame);
+      row.put(
+          "direction", !significant ? "inconclusive" : delta > 0 ? "regression" : "improvement");
+      row.put("significant", significant);
       if (basePct == 0.0) {
         row.put("note", "not present in baseline");
       } else if (candPct == 0.0) {
@@ -412,10 +467,14 @@ public final class JfrCompareTools {
       changed.add(row);
     }
 
+    // Significant rows first: findings come from this list, so noise must not push them past limit.
     changed.sort(
-        Comparator.comparingDouble(
-                (Map<String, Object> row) -> Math.abs(((Number) row.get("deltaPct")).doubleValue()))
-            .reversed());
+        Comparator.comparing((Map<String, Object> row) -> !(Boolean) row.get("significant"))
+            .thenComparing(
+                Comparator.comparingDouble(
+                        (Map<String, Object> row) ->
+                            Math.abs(((Number) row.get("deltaPct")).doubleValue()))
+                    .reversed()));
 
     return changed.size() > limit ? new ArrayList<>(changed.subList(0, limit)) : changed;
   }
@@ -426,10 +485,11 @@ public final class JfrCompareTools {
       List<Map<String, Object>> frames,
       List<Map<String, Object>> metrics) {
     List<Finding> findings = new ArrayList<>();
+    boolean sufficientSamples = hasSufficientSamples(baseline, candidate);
 
     for (Map<String, Object> frame : frames) {
       double delta = ((Number) frame.get("deltaPct")).doubleValue();
-      if (delta <= 0) {
+      if (delta <= 0 || !(Boolean) frame.get("significant")) {
         continue;
       }
       String method = String.valueOf(frame.get("method"));
@@ -458,7 +518,7 @@ public final class JfrCompareTools {
 
     for (Map<String, Object> metric : metrics) {
       Object deltaPctObj = metric.get("deltaPct");
-      if (!(deltaPctObj instanceof Number deltaPct)) {
+      if (!sufficientSamples || !(deltaPctObj instanceof Number deltaPct)) {
         continue;
       }
       String name = String.valueOf(metric.get("name"));
@@ -483,15 +543,35 @@ public final class JfrCompareTools {
       }
     }
 
-    if (findings.isEmpty()) {
+    if (!sufficientSamples) {
+      findings.add(
+          Finding.of("regression", "insufficient-samples")
+              .info()
+              .title(
+                  "Too few samples to call a regression (baseline %,d, candidate %,d)",
+                  baseline.sampleCount(), candidate.sampleCount())
+              .description(
+                  "Each recording needs at least "
+                      + MIN_RECORDING_SAMPLES
+                      + " execution samples before a change can be told from sampling noise. This"
+                      + " comparison is inconclusive: it neither shows a regression nor rules one"
+                      + " out.")
+              .source("jfr_compare")
+              .evidence("baselineSamples", baseline.sampleCount())
+              .evidence("candidateSamples", candidate.sampleCount())
+              .evidence("minSamplesPerRecording", MIN_RECORDING_SAMPLES)
+              .action("Record both runs for longer, or under load, and compare again")
+              .build());
+    } else if (findings.isEmpty()) {
       findings.add(
           Finding.of("regression", "none")
               .info()
               .title("No regression above the noise floor")
               .description(
-                  "No frame moved by more than the configured minDeltaPct and no tracked event"
-                      + " rate rose by half again. That is not proof of equivalence: a change"
-                      + " smaller than sampling noise cannot be seen this way.")
+                  "No frame moved by more than both the configured minDeltaPct and sampling noise,"
+                      + " and no tracked event rate rose by half again. That is not proof of"
+                      + " equivalence: a change smaller than sampling noise cannot be seen this"
+                      + " way.")
               .source("jfr_compare")
               .evidence("baselineSamples", baseline.sampleCount())
               .evidence("candidateSamples", candidate.sampleCount())

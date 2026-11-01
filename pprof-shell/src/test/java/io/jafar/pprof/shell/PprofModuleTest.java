@@ -4,11 +4,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.pprof.MinimalPprofBuilder;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,6 +65,25 @@ class PprofModuleTest {
   void canHandlePprofExtension() throws Exception {
     Path file = buildMinimalProfile("profile.pprof");
     assertTrue(module.canHandle(file), "should accept .pprof extension");
+  }
+
+  @Test
+  void canHandleUncompressedProfile() throws Exception {
+    Path gzipped = buildMinimalProfile("source.pb.gz");
+    Path raw = tempDir.resolve("raw.pprof");
+    try (InputStream is = Files.newInputStream(gzipped);
+        GZIPInputStream gz = new GZIPInputStream(is)) {
+      Files.write(raw, gz.readAllBytes());
+    }
+    assertTrue(module.canHandle(raw), "should accept an uncompressed .pprof");
+  }
+
+  @Test
+  void cannotHandleUncompressedFileWithoutAPprofExtension() throws Exception {
+    // A protobuf tag is one byte, far too weak to claim an arbitrary file on content alone.
+    Path file = tempDir.resolve("notes.txt");
+    Files.writeString(file, "hello world");
+    assertFalse(module.canHandle(file), "should not claim plain text");
   }
 
   // ---- canHandle: negative cases ----
