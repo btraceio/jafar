@@ -128,7 +128,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onDoubleValue(MetadataClass owner, String fld, double value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addDouble(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -140,7 +140,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onFloatValue(MetadataClass owner, String fld, float value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addFloat(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;

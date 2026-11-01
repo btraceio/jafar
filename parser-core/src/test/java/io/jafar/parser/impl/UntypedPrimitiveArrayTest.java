@@ -39,11 +39,16 @@ import org.junit.jupiter.params.provider.EnumSource;
  * surface as {@link Long}) and the Go parser (which decodes {@code int} elements as {@code int64}).
  * {@code @Timestamp}/{@code @Timespan} normalization can produce values outside the {@code int}
  * range, so narrowing to {@code int[]} would have been lossy.
+ *
+ * <p>It also pins the array class of the int, long, float and double element types and checks that
+ * {@code int}, {@code long}, {@code float} and {@code double} elements are stored without boxing.
  */
-public class UntypedIntArrayTest {
+public class UntypedPrimitiveArrayTest {
   private static final long T_BOOLEAN = 1;
   private static final long T_INT = 5;
   private static final long T_LONG = 6;
+  private static final long T_FLOAT = 7;
+  private static final long T_DOUBLE = 8;
   private static final long T_STRING = 9;
   private static final long T_TIMESTAMP = 40;
   private static final long T_TIMESPAN = 41;
@@ -59,6 +64,12 @@ public class UntypedIntArrayTest {
   private static final int[] STAMP_TICKS = {(int) START_TICKS, (int) START_TICKS + 7};
   private static final int[] SPAN_TICKS = {3, Integer.MAX_VALUE};
   private static final long[] LONGS = {Long.MAX_VALUE, -2L};
+  private static final float[] FLOATS = {
+    0f, -1.5f, Float.MAX_VALUE, Float.MIN_VALUE, Float.NaN, Float.NEGATIVE_INFINITY
+  };
+  private static final double[] DOUBLES = {
+    0d, -1.5d, Double.MAX_VALUE, Double.MIN_VALUE, Double.NaN, Double.POSITIVE_INFINITY
+  };
 
   private static SyntheticRecording.Element metadata() {
     SyntheticRecording.Element event =
@@ -67,7 +78,7 @@ public class UntypedIntArrayTest {
                 "id",
                 Long.toString(T_EVENT),
                 "name",
-                "test.IntArrays",
+                "test.PrimitiveArrays",
                 "superType",
                 "jdk.jfr.Event")
             .with(
@@ -87,6 +98,9 @@ public class UntypedIntArrayTest {
                 elem("field", "name", "spans", "class", Long.toString(T_INT), "dimension", "1")
                     .with(elem("annotation", "class", Long.toString(T_TIMESPAN), "value", "TICKS")),
                 elem("field", "name", "longs", "class", Long.toString(T_LONG), "dimension", "1"),
+                elem("field", "name", "floats", "class", Long.toString(T_FLOAT), "dimension", "1"),
+                elem(
+                    "field", "name", "doubles", "class", Long.toString(T_DOUBLE), "dimension", "1"),
                 elem("field", "name", "label", "class", Long.toString(T_STRING)));
     return elem("root")
         .with(
@@ -95,6 +109,8 @@ public class UntypedIntArrayTest {
                     primitiveClass(T_BOOLEAN, "boolean"),
                     primitiveClass(T_INT, "int"),
                     primitiveClass(T_LONG, "long"),
+                    primitiveClass(T_FLOAT, "float"),
+                    primitiveClass(T_DOUBLE, "double"),
                     primitiveClass(T_STRING, "java.lang.String"),
                     elem("class", "id", Long.toString(T_TIMESTAMP), "name", "jdk.jfr.Timestamp"),
                     elem("class", "id", Long.toString(T_TIMESPAN), "name", "jdk.jfr.Timespan"),
@@ -103,10 +119,11 @@ public class UntypedIntArrayTest {
   }
 
   private static byte[] eventBody() {
-    return eventBody(INTS, STAMP_TICKS, SPAN_TICKS, LONGS);
+    return eventBody(INTS, STAMP_TICKS, SPAN_TICKS, LONGS, FLOATS, DOUBLES);
   }
 
-  private static byte[] eventBody(int[] ints, int[] stamps, int[] spans, long[] longs) {
+  private static byte[] eventBody(
+      int[] ints, int[] stamps, int[] spans, long[] longs, float[] floats, double[] doubles) {
     SyntheticRecording.Bytes w = new SyntheticRecording.Bytes();
     w.varint(T_EVENT);
     w.intVarint(-7); // count
@@ -118,6 +135,10 @@ public class UntypedIntArrayTest {
     for (int v : spans) w.intVarint(v);
     w.varint(longs.length);
     for (long v : longs) w.varint(v);
+    w.varint(floats.length);
+    for (float v : floats) w.f32(v);
+    w.varint(doubles.length);
+    for (double v : doubles) w.f64(v);
     w.utf8("after-arrays"); // a field after the arrays proves the stream stayed aligned
     return w.toByteArray();
   }
@@ -192,7 +213,7 @@ public class UntypedIntArrayTest {
     decoder.decode(
         file,
         (type, value, ctl) -> {
-          if ("test.IntArrays".equals(type.getName())) {
+          if ("test.PrimitiveArrays".equals(type.getName())) {
             seen.add(new HashMap<>(value));
           }
         });
@@ -216,6 +237,8 @@ public class UntypedIntArrayTest {
         new long[] {3 * NANOS_PER_TICK, Integer.MAX_VALUE * NANOS_PER_TICK}, spans, "spans");
 
     assertArrayEquals(LONGS, longArray(event, "longs"));
+    assertArrayEquals(FLOATS, (float[]) array(event, "floats", float[].class));
+    assertArrayEquals(DOUBLES, (double[]) array(event, "doubles", double[].class));
     assertEquals("after-arrays", event.get("label"));
   }
 
@@ -235,20 +258,25 @@ public class UntypedIntArrayTest {
   }
 
   /**
-   * {@code int} and {@code long} array elements must be stored without boxing. Boxing each element
-   * and storing it through {@code Array.set} allocates a {@code Long} per element outside the
-   * {@code Long} cache: decoding measured 32 bytes per element on JDK 21 before {@link
-   * ArrayHolder#addLong} existed, against 8.0 after (the {@code long[]} slot and nothing else).
-   * More than {@value #MAX_BYTES_PER_ELEMENT} bytes per element means elements are being boxed.
+   * {@code int}, {@code long}, {@code float} and {@code double} array elements must be stored
+   * without boxing. Boxing each element and storing it through {@code Array.set} allocates a
+   * wrapper per element ({@code Float} and {@code Double} have no cache at all; {@code Long} caches
+   * only -128..127). On JDK 21 that measured 32 bytes per int/long element before {@link
+   * ArrayHolder#addLong} existed.
+   *
+   * <p>The unboxed decode allocates the backing arrays and nothing per element: {@value
+   * #UNBOXED_BYTES_PER_ROW} bytes per row of one int, long, float and double element. A wrapper is
+   * at least 16 bytes, so boxing even one of the four kinds adds 16 bytes per row; the allowance of
+   * {@value #SLACK_BYTES_PER_ROW} bytes per row covers the fixed per-event cost with a wide margin
+   * and still catches that.
    *
    * <p>The decode runs on the parser's chunk worker thread, so allocation is sampled there: the
    * handler reads the thread's allocation counter, and the difference between two consecutive
-   * events covers decoding one whole event. The arrays are large enough that the fixed per-event
-   * cost (event map, builder bookkeeping) is noise against the per-element cost.
+   * events covers decoding one whole event.
    */
   @ParameterizedTest
   @EnumSource(Decoder.class)
-  void intAndLongArrayElementsAreNotBoxed(Decoder decoder, @TempDir Path dir) throws Exception {
+  void primitiveArrayElementsAreNotBoxed(Decoder decoder, @TempDir Path dir) throws Exception {
     java.lang.management.ThreadMXBean base = ManagementFactory.getThreadMXBean();
     assumeTrue(
         base instanceof com.sun.management.ThreadMXBean, "per-thread allocation counter missing");
@@ -259,14 +287,18 @@ public class UntypedIntArrayTest {
     int n = 50_000;
     int[] ints = new int[n];
     long[] longs = new long[n];
+    float[] floats = new float[n];
+    double[] doubles = new double[n];
     for (int i = 0; i < n; i++) {
       ints[i] = Integer.MAX_VALUE - i; // outside the Long cache, so a box would be a real object
       longs[i] = Long.MAX_VALUE - i;
+      floats[i] = i + 0.5f;
+      doubles[i] = i + 0.25d;
     }
     int events = 6;
     List<byte[]> bodies = new ArrayList<>();
     for (int e = 0; e < events; e++) {
-      bodies.add(eventBody(ints, new int[0], new int[0], longs));
+      bodies.add(eventBody(ints, new int[0], new int[0], longs, floats, doubles));
     }
     Path file = dir.resolve("big-arrays.jfr");
     Files.write(
@@ -279,7 +311,7 @@ public class UntypedIntArrayTest {
     decoder.decode(
         file,
         (type, value, ctl) -> {
-          if (!"test.IntArrays".equals(type.getName()) || seen[0] >= events) return;
+          if (!"test.PrimitiveArrays".equals(type.getName()) || seen[0] >= events) return;
           long tid = Thread.currentThread().getId();
           allocated[seen[0]] = mx.getThreadAllocatedBytes(tid);
           threads[seen[0]] = tid;
@@ -293,16 +325,21 @@ public class UntypedIntArrayTest {
       assertEquals(threads[1], threads[e], "one chunk is decoded on one thread");
       best = Math.min(best, allocated[e] - allocated[e - 1]);
     }
-    double perElement = best / (2.0 * n);
+    long unboxed = (long) UNBOXED_BYTES_PER_ROW * n;
+    long allowed = unboxed + (long) SLACK_BYTES_PER_ROW * n;
     assertTrue(
-        perElement <= MAX_BYTES_PER_ELEMENT,
+        best <= allowed,
         String.format(
-            "%s: decoding an event allocated %d bytes, %.1f per int/long array element; elements"
-                + " are being boxed",
-            decoder, best, perElement));
+            "%s: decoding an event allocated %d bytes, %d over the %d bytes of backing arrays"
+                + " (%.1f per row of int, long, float and double element); elements are being"
+                + " boxed",
+            decoder, best, best - unboxed, unboxed, (best - unboxed) / (double) n));
   }
 
-  private static final int MAX_BYTES_PER_ELEMENT = 12;
+  /** Backing array bytes per row: int (as long) 8 + long 8 + float 4 + double 8. */
+  private static final int UNBOXED_BYTES_PER_ROW = 28;
+
+  private static final int SLACK_BYTES_PER_ROW = 4;
 
   @Test
   void addLongStoresIntAndLongElementsUnboxed() {
@@ -317,6 +354,32 @@ public class UntypedIntArrayTest {
   }
 
   @Test
+  void addFloatAndAddDoubleStoreElementsUnboxed() {
+    ArrayHolder floats = new ArrayHolder("float", 2);
+    floats.addFloat(Float.NaN);
+    floats.addFloat(-0f);
+    assertArrayEquals(new float[] {Float.NaN, -0f}, (float[]) floats.getArray());
+
+    ArrayHolder doubles = new ArrayHolder("double", 2);
+    doubles.addDouble(Double.MIN_VALUE);
+    doubles.addDouble(Double.NEGATIVE_INFINITY);
+    assertArrayEquals(
+        new double[] {Double.MIN_VALUE, Double.NEGATIVE_INFINITY}, (double[]) doubles.getArray());
+  }
+
+  @Test
+  void addFloatAndAddDoubleRejectOtherElementTypes() {
+    assertEquals(
+        "addFloat on an array of double",
+        assertThrows(IllegalStateException.class, () -> new ArrayHolder("double", 1).addFloat(1f))
+            .getMessage());
+    assertEquals(
+        "addDouble on an array of long",
+        assertThrows(IllegalStateException.class, () -> new ArrayHolder("long", 1).addDouble(1d))
+            .getMessage());
+  }
+
+  @Test
   void addLongRejectsNonLongElementTypes() {
     IllegalStateException e =
         assertThrows(IllegalStateException.class, () -> new ArrayHolder("short", 1).addLong(1));
@@ -324,10 +387,14 @@ public class UntypedIntArrayTest {
   }
 
   private static long[] longArray(Map<String, Object> event, String field) {
+    return (long[]) array(event, field, long[].class);
+  }
+
+  private static Object array(Map<String, Object> event, String field, Class<?> arrayClass) {
     Object v = event.get(field);
     assertNotNull(v, field + " missing");
     ArrayType at = assertInstanceOf(ArrayType.class, v, field);
-    assertEquals(long[].class, at.getType(), field + " array class");
-    return (long[]) at.getArray();
+    assertEquals(arrayClass, at.getType(), field + " array class");
+    return at.getArray();
   }
 }

@@ -134,12 +134,12 @@ public final class LazyMapValueBuilder implements ValueProcessor {
 
   @Override
   public void onDoubleValue(MetadataClass owner, String fld, double value) {
-    addFieldValue(fld, value);
+    addDoubleFieldValue(fld, value);
   }
 
   @Override
   public void onFloatValue(MetadataClass owner, String fld, float value) {
-    addFieldValue(fld, value);
+    addFloatFieldValue(fld, value);
   }
 
   @Override
@@ -232,6 +232,26 @@ public final class LazyMapValueBuilder implements ValueProcessor {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
       ah.addLong(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addDoubleFieldValue(String fld, double value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addDouble(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addFloatFieldValue(String fld, float value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addFloat(value);
     } else {
       addFieldValue(fld, value);
     }

@@ -86,6 +86,16 @@ final class SyntheticRecording {
       return this;
     }
 
+    /** Writes a {@code float} as its 4 byte big-endian IEEE 754 bits. */
+    Bytes f32(float v) {
+      return raw(ByteBuffer.allocate(4).putFloat(v).array());
+    }
+
+    /** Writes a {@code double} as its 8 byte big-endian IEEE 754 bits. */
+    Bytes f64(double v) {
+      return raw(ByteBuffer.allocate(8).putDouble(v).array());
+    }
+
     Bytes u8(int b) {
       out.write(b);
       return this;

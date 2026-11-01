@@ -24,6 +24,12 @@ public final class ArrayHolder implements ArrayType {
   /** {@link #array} as a {@code long[]} for {@code int} and {@code long} elements, else null. */
   private final long[] longs;
 
+  /** {@link #array} as a {@code double[]} for {@code double} elements, else null. */
+  private final double[] doubles;
+
+  /** {@link #array} as a {@code float[]} for {@code float} elements, else null. */
+  private final float[] floats;
+
   /** The current index for adding elements. */
   private int index = 0;
 
@@ -65,6 +71,8 @@ public final class ArrayHolder implements ArrayType {
         array = new Object[len];
     }
     longs = array instanceof long[] ? (long[]) array : null;
+    doubles = array instanceof double[] ? (double[]) array : null;
+    floats = array instanceof float[] ? (float[]) array : null;
   }
 
   /**
@@ -91,6 +99,34 @@ public final class ArrayHolder implements ArrayType {
       throw new IllegalStateException("addLong on an array of " + type);
     }
     longs[index++] = value;
+  }
+
+  /**
+   * Adds a {@code double} element at the current index without boxing it. {@code Double} has no
+   * value cache, so {@link #add(Object)} would allocate for every element.
+   *
+   * @param value the value to add
+   * @throws IllegalStateException if the element type is not {@code double}
+   */
+  void addDouble(double value) {
+    if (doubles == null) {
+      throw new IllegalStateException("addDouble on an array of " + type);
+    }
+    doubles[index++] = value;
+  }
+
+  /**
+   * Adds a {@code float} element at the current index without boxing it. {@code Float} has no value
+   * cache, so {@link #add(Object)} would allocate for every element.
+   *
+   * @param value the value to add
+   * @throws IllegalStateException if the element type is not {@code float}
+   */
+  void addFloat(float value) {
+    if (floats == null) {
+      throw new IllegalStateException("addFloat on an array of " + type);
+    }
+    floats[index++] = value;
   }
 
   @Override
