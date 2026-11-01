@@ -44,7 +44,8 @@ final class Shapes {
    */
   static void writeChunk(OutputStream out, Shape shape, int index, int events) throws IOException {
     long chunkStart = EPOCH_NANOS + index * CHUNK_NANOS;
-    ByteArrayOutputStream chunk = new ByteArrayOutputStream(events * 64 + 4096);
+    // Chunks come out at about 13.5 bytes per event; the writer itself allocates ~33 KB per event.
+    ByteArrayOutputStream chunk = new ByteArrayOutputStream(events * 16 + 4096);
     try (Recording r =
         Recordings.newRecording(
             chunk,
