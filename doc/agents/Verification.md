@@ -13,10 +13,31 @@ A user-facing command is not done until it has been typed into a built shell or 
 the output read. Not the unit test. Not the completer. The actual binary.
 
 ```bash
-./gradlew :jfr-shell:shadowJar
+./gradlew :jfr-shell:shadowJar :jfr-shell-jafar:jar
+mkdir -p /tmp/no-plugins
 printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\n' \
-  | java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
+  | java -Djfr.shell.plugin.dir=/tmp/no-plugins -Djfr.shell.registry.remote=false \
+      -Djfr.shell.backend.jars=jfr-shell-jafar/build/libs/jfr-shell-jafar-0.0.0-SNAPSHOT.jar \
+      -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 ```
+
+**The shadow jar does not contain the jafar backend.** Without those three flags the shell installs
+the *released* `jfr-shell-jafar` from Maven Central into `~/.jfr-shell/plugins` and runs that, so a
+change to anything under `jfr-shell-jafar/` is not what you are typing into. With them, the log
+says `Local backend override: …/jfr-shell-jafar-0.0.0-SNAPSHOT.jar`; check for that line. (When no
+override is given, `PluginManager` also picks a SNAPSHOT under `~/.m2/repository/io/btrace` that is
+newer than the installed version: a `./gradlew publishToMavenLocal` you forgot about is a third
+backend you may be running.)
+
+> **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
+> built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
+> numbers", "the race reproduces on my commit and on its parent" — ran the released 0.29.0 backend
+> the shell had fetched on its first start. One conclusion was false and went into this file as a
+> case file and into a suggested follow-up task; the other two were right only because the code
+> they were about had not changed in the way the claims assumed — the code under test was never
+> run. It surfaced only because a
+> redesign that had to change the numbers (1047 → 196) printed exactly the old ones. Unit tests
+> were never affected: Gradle puts `project(':jfr-shell-jafar')` on the test classpath.
 
 > **Case file — `set llm.backend = ollama`.** This command appeared in five documents, in the help
 > text, in `llm status`'s own advice, and in tab completion. It had never been run. The shell
@@ -88,13 +109,14 @@ looks identical to the file not being read at all.
 > **Case file — crossref, and the layer under it.** `JafarSources.crossref` decoded every event
 > and pool entry inside `catch (Throwable ignore) {}`: a corrupted recording printed reference
 > counts as if complete. It now fails naming type, chunk and position (`CrossrefDecodeFailureTest`,
-> a JMC-written fixture with one string encoding byte set to `0x7f`). The same byte flipped in a
-> real JDK 25 recording still printed the clean file's numbers, because the failure never reached
-> crossref: `ParsingUtils.skipUTF8` skips an unknown encoding id as an empty string while
-> `CheckpointEvent` indexes the pool, the next entry misreads as `Unknown type ID 3`, and
-> `CheckpointEvent` logs a WARN and abandons the rest of the checkpoint. A corrupted-fixture test
-> proves only the path that fixture reaches; flip the byte in a real recording too, and read
-> stderr.
+> a JMC-written fixture with one string encoding byte set to `0x7f`). The layer under it still
+> hides the same corruption: `ParsingUtils.skipUTF8` skips an unknown encoding id as an empty
+> string while `CheckpointEvent` indexes the pool, the next entry misreads as `Unknown type ID 3`,
+> and `CheckpointEvent` logs a WARN and abandons the rest of the checkpoint. With the byte flipped
+> in a real JDK 25 recording, `constants/jdk.types.StackTrace | count()` prints the WARN and a
+> number; `crossref()` fails, but names a neighbouring entry whose offset was shifted
+> (`jdk.SystemProcess#68`), not the corrupted one. (An earlier version of this case file said
+> crossref printed the clean numbers; that was the released backend — see R1.)
 
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
