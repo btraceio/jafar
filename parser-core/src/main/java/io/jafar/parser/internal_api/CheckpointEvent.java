@@ -5,8 +5,6 @@ import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Represents a checkpoint event in JFR recordings.
@@ -15,7 +13,6 @@ import org.slf4j.LoggerFactory;
  * about constant pools and other metadata that may be referenced by subsequent events.
  */
 public final class CheckpointEvent extends AbstractEvent {
-  private static final Logger log = LoggerFactory.getLogger(CheckpointEvent.class);
 
   /** The start time of the checkpoint in nanoseconds. */
   public final long startTime;
@@ -31,6 +28,9 @@ public final class CheckpointEvent extends AbstractEvent {
 
   private final RecordingStream stream;
 
+  /** The chunk-relative position at which this checkpoint event starts. */
+  private final long offset;
+
   /**
    * Constructs a new CheckpointEvent from the recording stream.
    *
@@ -40,6 +40,7 @@ public final class CheckpointEvent extends AbstractEvent {
   CheckpointEvent(RecordingStream stream) throws IOException {
     super(stream);
     this.stream = stream;
+    this.offset = stream.position();
     int size = (int) stream.readVarint();
     if (size == 0) {
       throw new IOException("Unexpected event size. Should be > 0");
@@ -60,7 +61,10 @@ public final class CheckpointEvent extends AbstractEvent {
    * <p>This method processes all constant pool entries associated with this checkpoint, applying
    * type filtering and value processing as configured in the parser context.
    *
-   * @throws IOException if an I/O error occurs during reading
+   * @throws IOException if an I/O error occurs during reading, or if the checkpoint cannot be
+   *     indexed: a pool whose type the chunk metadata does not declare, or an entry that cannot be
+   *     skipped. Both leave the remaining pools unlocatable, so the parse fails rather than going
+   *     on without them.
    */
   void readConstantPools() throws IOException {
     ParserContext context = stream.getContext();
@@ -79,30 +83,49 @@ public final class CheckpointEvent extends AbstractEvent {
       while ((typeId = stream.readVarint()) == 0)
         ; // workaround for a bug in JMC JFR writer
       int count = (int) stream.readVarint();
-      try {
-        MetadataClass clz = context.getMetadataLookup().getClass(typeId);
-        if (clz == null) {
-          log.warn(
-              "Unknown type ID {} in constant pool; remaining CP entries in this checkpoint are abandoned",
-              typeId);
-          return;
-        }
-        boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
+      MetadataClass clz = context.getMetadataLookup().getClass(typeId);
+      if (clz == null) {
+        // The entries of a pool can only be stepped over through their type, so the remaining
+        // pools of this checkpoint cannot be located. This used to be logged and the parse went
+        // on, which turned a corrupt or misaligned checkpoint into silently missing constants.
+        // The JDK's reader fails here too ("Could not find constant pool type with id = ...").
+        throw new IOException(
+            "Checkpoint at "
+                + offset
+                + ": constant pool "
+                + (i + 1)
+                + " of "
+                + cpCount
+                + " has type id "
+                + typeId
+                + ", which the chunk metadata does not declare");
+      }
+      boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
 
-        MutableConstantPool constantPool =
-            skip
-                ? null
-                : ((MutableConstantPools) context.getConstantPools())
-                    .addOrGetConstantPool(stream, typeId, count);
-        for (int j = 0; j < count; j++) {
-          long id = stream.readVarint();
-          if (!skip && !constantPool.containsKey(id)) {
-            constantPool.addOffset(id, stream.position());
-          }
-          clz.skipDirect(stream);
+      MutableConstantPool constantPool =
+          skip
+              ? null
+              : ((MutableConstantPools) context.getConstantPools())
+                  .addOrGetConstantPool(stream, typeId, count);
+      for (int j = 0; j < count; j++) {
+        long id = stream.readVarint();
+        if (!skip && !constantPool.containsKey(id)) {
+          constantPool.addOffset(id, stream.position());
         }
-      } catch (IOException e) {
-        throw e;
+        try {
+          clz.skipDirect(stream);
+        } catch (IOException e) {
+          throw new IOException(
+              "Checkpoint at "
+                  + offset
+                  + ": constant pool "
+                  + clz.getName()
+                  + ", index "
+                  + id
+                  + ": "
+                  + e.getMessage(),
+              e);
+        }
       }
     }
   }

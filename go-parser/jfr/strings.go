@@ -131,8 +131,16 @@ func skipString(r *reader) error {
 		}
 	case strConstant:
 		r.readVarint()
+	case strNull, strEmpty:
+		// no payload
 	default:
-		// null, empty and unknown ids carry no payload
+		// An unknown id has no known payload length, so the stream cannot be
+		// realigned after it. Treating it as empty, as this used to, left the
+		// reader inside the string's bytes and turned the corruption into a
+		// misleading error further on (an undeclared constant pool type), or
+		// into nothing at all when the misaligned bytes happened to decode.
+		// readString rejects the same id with the same message.
+		return fmt.Errorf("unexpected string constant id: %d", id)
 	}
 	return r.err
 }

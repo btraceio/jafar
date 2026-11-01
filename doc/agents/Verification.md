@@ -103,6 +103,33 @@ looks identical to the file not being read at all.
 > `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
 > types.
 
+> **Case file — crossref, and the layer under it.** A command that reports on constant pools is
+> only as honest as the parser that indexed them. In a real `settings=profile` recording, one
+> pooled string's encoding byte was changed from `0x03` to `0x7f`, which is no JFR encoding.
+> `ParsingUtils.readUTF8` threw `Unexpected string constant id: 127` for that byte, but
+> `skipUTF8`, which `CheckpointEvent` uses to index pool entries, treated it as an empty string
+> ("nothing to skip for null/empty or unknown here"), so every later entry was indexed from inside
+> the string's bytes. With a `jdk.types.Bytecode` name corrupted, the next read saw
+> `Unknown type ID 233`, which `CheckpointEvent` logged at WARN ("remaining CP entries in this
+> checkpoint are abandoned") before carrying on. `constants/jdk.types.Bytecode | count()` then
+> failed with a bare `Error occurred while parsing JFR recording`, while
+> `constants/jdk.types.StackTrace | crossref()` printed the clean file's numbers (2531 entries, 168
+> referenced) with only the WARN on stderr: pool values decode lazily, and crossref never touched
+> the lost ones. With a `jdk.types.Symbol` corrupted instead, the misaligned bytes happened to
+> parse: **no WARN at all**, and both commands matched the clean file exactly. `jfr print` rejected
+> the same file: `Error parsing constant pool type jdk.types.Symbol at position 312732 at check
+> point between [273529, 319110]`. The Go parser's `skipString` had the identical `default:`, and
+> there a corrupted synthetic recording parsed without error even with an `OnError` that fails.
+> Now `skipUTF8` and `skipString` reject unknown ids, an undeclared pool type fails the parse, and
+> the parse error carries its cause: `Error occurred while parsing JFR recording: Checkpoint at
+> 273529: constant pool jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The
+> offset agrees with the JDK's. Two habits: **a skip routine and its read routine must reject the
+> same inputs**, because a skip that tolerates more than the read is a fallback nobody sees; and
+> **check a reporting command against a deliberately corrupted file**, not only a clean one. A
+> clean file cannot tell a command that reads the data from one that reads whatever the layer below
+> handed it. The nets: `CorruptedConstantPoolTest` and `ParsingUtilsFuzzTest`, and in Go
+> `TestUnknownStringEncodingInConstantPoolIsReported` and `TestSkipStringRejectsUnknownEncoding`.
+
 ## R4. Documentation is code — run it
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before

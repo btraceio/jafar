@@ -3,6 +3,7 @@ package jfr
 import (
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -685,5 +686,46 @@ func TestReuseValuesKeepsConstantPoolValues(t *testing.T) {
 	}
 	if first["name"] != "a" {
 		t.Errorf("constant pool value was recycled: name = %#v, want a", first["name"])
+	}
+}
+
+// corruptedStringRecording is cyclicRecording with the encoding id of the first
+// pooled string ("a") replaced by 0x7f, which is no JFR string encoding.
+func corruptedStringRecording(t *testing.T) []byte {
+	t.Helper()
+	data := cyclicRecording()
+	entry := nodeEntry("a", 2) // 0x03 0x01 'a' 0x02
+	idx := strings.Index(string(data), string(entry))
+	if idx < 0 || strings.Count(string(data), string(entry)) != 1 {
+		t.Fatalf("expected exactly one occurrence of the pool entry")
+	}
+	out := append([]byte{}, data...)
+	out[idx] = 0x7f
+	return out
+}
+
+// Indexing a constant pool skips over its entries. A string with an unknown
+// encoding id used to be skipped as if it were empty, so the next entry was read
+// from inside the string's bytes and the problem surfaced, if at all, as an
+// unrelated error. The report must now name the actual cause.
+func TestUnknownStringEncodingInConstantPoolIsReported(t *testing.T) {
+	var reported []error
+	err := NewParser(corruptedStringRecording(t)).ParseWith(Options{
+		OnError: func(e error) error {
+			reported = append(reported, e)
+			return e
+		},
+	}, func(*Event) error { return nil })
+	if err == nil {
+		t.Fatal("parse succeeded, want the corrupted constant pool to be reported")
+	}
+	const want = "unexpected string constant id: 127"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("parse error = %q, want it to contain %q", err, want)
+	}
+	// Only the first report is checked: when OnError returns an error,
+	// readCheckpoints passes it to OnError a second time on the way out.
+	if len(reported) == 0 || !strings.Contains(reported[0].Error(), want) {
+		t.Errorf("OnError received %v, want the first error to contain %q", reported, want)
 	}
 }

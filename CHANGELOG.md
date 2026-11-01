@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A corrupted constant pool fails the parse instead of being silently dropped.** Indexing a
+  checkpoint skipped a string with an unknown encoding id as if it were empty (decoding the same
+  byte threw), and a pool of a type the chunk metadata does not declare was logged at WARN and the
+  rest of the checkpoint abandoned. Because pool values decode lazily, queries that never touched
+  the lost entries printed the clean file's numbers; on one corrupted recording there was not even
+  a WARN. Both now fail, as they do in the JDK's own reader, and the error names the cause and
+  where it was found: `Error occurred while parsing JFR recording: Checkpoint at 273529: constant
+  pool jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The parse error
+  message now carries the underlying cause instead of only the generic wrapper text. The Go
+  parser's `skipString` had the same flaw and now reports the cause through `Options.OnError`
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that

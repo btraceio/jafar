@@ -132,7 +132,8 @@ public final class ParsingUtils {
    * stream needs to be advanced.
    *
    * @param stream the recording stream to skip over
-   * @throws IOException if an I/O error occurs during skipping
+   * @throws IOException if an I/O error occurs during skipping, or if the string encoding id is not
+   *     one of the ids {@link #readUTF8} accepts
    */
   public static void skipUTF8(RecordingStream stream) throws IOException {
     byte id = stream.read();
@@ -157,9 +158,15 @@ public final class ParsingUtils {
           stream.readVarint();
           break;
         }
-      default:
-        // nothing to skip for null/empty or unknown here
+      case 0:
+      case 1:
+        // null and empty strings carry no payload
         break;
+      default:
+        // An unknown id has no known payload length, so the stream cannot be realigned after it.
+        // Treating it as empty left the cursor inside the string's bytes; readUTF8 rejects the
+        // same byte, and the two must agree.
+        throw new IOException("Unexpected string constant id: " + id);
     }
   }
 

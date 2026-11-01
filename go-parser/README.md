@@ -246,6 +246,14 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   calls the handler on the calling goroutine, so events arrive in file order.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
+* **A constant pool that cannot be indexed is recoverable.** A pool of an
+  undeclared type, or an entry that cannot be skipped (such as a string with an
+  unknown encoding id), fails the parse in the Java parser, as it does in the
+  JDK's reader. Here it is reported through `Options.OnError` with the actual
+  cause (`checkpoint at N: constant pool T, index I: unexpected string constant
+  id: 127`) and, when `OnError` is nil, the remaining pools of that checkpoint
+  are dropped and parsing continues. A `Ref` to one of their entries resolves to
+  nil; pass `jfr.FailOnError` when that must not go unnoticed.
 * **Framing is enforced.** Constant pool entries have to lie within their
   checkpoint event; the Java parser does not check this. It only matters for
   malformed recordings, where this parser drops the pool rather than indexing

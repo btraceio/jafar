@@ -12,12 +12,12 @@ import java.util.Map;
 /**
  * Builds a single-chunk JFR recording byte by byte, so that the parser can be exercised end to end
  * on shapes that no available writer can produce (the JMC {@code flightrecorder.writer} used
- * elsewhere in the tests cannot write array fields on events).
+ * elsewhere in the tests cannot write array fields on events, nor a corrupted constant pool).
  *
  * <p>The layout follows the chunk format the JVM writes and mirrors the Go parser's test helper
- * ({@code go-parser/jfr/testrecording_test.go}): a 68 byte header, the events, one (empty)
- * checkpoint event and the metadata event, with the header pointing at the latter two. Integers are
- * written with the compressed (varint) encoding.
+ * ({@code go-parser/jfr/testrecording_test.go}): a 68 byte header, the events, one checkpoint event
+ * (empty unless pools are given) and the metadata event, with the header pointing at the latter
+ * two. Integers are written with the compressed (varint) encoding.
  */
 final class SyntheticRecording {
   private static final int CHUNK_HEADER_SIZE = 68;
@@ -164,14 +164,38 @@ final class SyntheticRecording {
     return sized(body.toByteArray());
   }
 
-  private static byte[] emptyCheckpointEvent() {
+  /** One constant pool of a checkpoint event: a type id and its entries, keyed by pool index. */
+  static final class Pool {
+    final long typeId;
+    final Map<Long, byte[]> entries = new LinkedHashMap<>();
+
+    Pool(long typeId) {
+      this.typeId = typeId;
+    }
+
+    /** Adds an entry; {@code data} is the encoded value, without the index. */
+    Pool entry(long id, byte[] data) {
+      entries.put(id, data);
+      return this;
+    }
+  }
+
+  private static byte[] checkpointEvent(List<Pool> pools) {
     Bytes body = new Bytes();
     body.varint(1); // event type: checkpoint
     body.varint(200); // start time
     body.varint(0); // duration
     body.varint(0); // next offset delta: last checkpoint of the chunk
     body.u8(0); // flush flag
-    body.varint(0); // no constant pools
+    body.varint(pools.size());
+    for (Pool pool : pools) {
+      body.varint(pool.typeId);
+      body.varint(pool.entries.size());
+      for (Map.Entry<Long, byte[]> e : pool.entries.entrySet()) {
+        body.varint(e.getKey());
+        body.raw(e.getValue());
+      }
+    }
     return sized(body.toByteArray());
   }
 
@@ -188,11 +212,30 @@ final class SyntheticRecording {
       long startTicks,
       long frequency,
       long durationNanos) {
+    return chunk(
+        metadata, new ArrayList<>(), events, startNanos, startTicks, frequency, durationNanos);
+  }
+
+  /**
+   * Assembles a chunk whose single checkpoint event holds the given constant pools.
+   *
+   * @param metadata the metadata root element
+   * @param pools the constant pools of the checkpoint event
+   * @param events event bodies, each starting with the event type id varint
+   */
+  static byte[] chunk(
+      Element metadata,
+      List<Pool> pools,
+      List<byte[]> events,
+      long startNanos,
+      long startTicks,
+      long frequency,
+      long durationNanos) {
     Bytes eventBytes = new Bytes();
     for (byte[] ev : events) {
       eventBytes.raw(sized(ev));
     }
-    byte[] checkpoint = emptyCheckpointEvent();
+    byte[] checkpoint = checkpointEvent(pools);
     byte[] meta = metadataEvent(metadata);
 
     long cpOffset = CHUNK_HEADER_SIZE + eventBytes.size();
