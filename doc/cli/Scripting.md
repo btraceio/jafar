@@ -74,8 +74,11 @@ Where the two shells differ:
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file>` | `script <path> [args]` at the prompt (or piped in). `jafar-shell script <file>` on the command line is handed to the JFR command line, so it is JFR-only |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend`, `record` | not available at the `jafar-shell` prompt, so a script using them (`basic-analysis.jfrs` runs `metadata --summary`) reports that line as a query error and carries on |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
+
+The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
+(in `jafar-shell` they need the current session to be a recording), so the example scripts below run
+in either. [`record`](#recording-commands) is `jfr-shell` only.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`

@@ -120,7 +120,8 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void error(String s) {
-            terminal.writer().println("Error: " + s);
+            // The dispatcher's own catch already says "Error: ..."; do not print it twice
+            terminal.writer().println(s.startsWith("Error: ") ? s : "Error: " + s);
             terminal.flush();
           }
         };
@@ -318,6 +319,11 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
+    if (isJfrCommand(input)) {
+      handleJfrCommand(input);
+      return true;
+    }
+
     if (handleVariableCommand(input)) {
       return true;
     }
@@ -378,6 +384,45 @@ public final class Shell implements AutoCloseable {
   private void printError(String message) {
     terminal.writer().println("Error: " + message);
     terminal.flush();
+  }
+
+  /**
+   * Commands that jfr-shell's {@link CommandDispatcher} implements and that read only the current
+   * JFR session: run by that dispatcher, which shares this shell's {@link #sessions} and prints to
+   * this terminal. Shared with {@link ShellCompleter} so completion offers exactly what runs.
+   */
+  static final java.util.Set<String> JFR_COMMANDS =
+      java.util.Set.of("metadata", "chunks", "chunk", "cp", "constants", "backend");
+
+  /**
+   * True for {@code metadata --summary} or {@code chunks}, false for a query that starts with the
+   * same word: {@code metadata/jdk.ExecutionSample} and {@code constants/...} have a slash, and a
+   * bare {@code metadata | count()} pipes the root — jfr-shell would take that {@code |} as a
+   * search pattern, so it stays a query here.
+   */
+  static boolean isJfrCommand(String input) {
+    String[] words = input.trim().split("\\s+", 3);
+    return JFR_COMMANDS.contains(words[0].toLowerCase(java.util.Locale.ROOT))
+        && (words.length < 2 || !words[1].startsWith("|"));
+  }
+
+  private void handleJfrCommand(String input) {
+    String command = input.trim().split("\\s+", 2)[0].toLowerCase(java.util.Locale.ROOT);
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (current.isEmpty() || !(current.get().session instanceof JFRSession)) {
+      printError(
+          "'"
+              + command
+              + "' needs a JFR session; "
+              + current
+                  .map(
+                      ref ->
+                          "session #" + ref.id + " is " + ref.session.getType() + ". Open a .jfr ")
+                  .orElse("open a .jfr ")
+              + "recording or switch to one with 'use <id>'");
+      return;
+    }
+    ((CommandDispatcher) moduleContext).dispatch(input);
   }
 
   /**
@@ -1079,6 +1124,20 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Query:");
     terminal.writer().println("  show <query>       Execute a query on current session");
+    terminal.writer().println();
+    terminal.writer().println("JFR recordings (need a JFR session):");
+    terminal
+        .writer()
+        .println("  metadata [--summary|--search <p>|--events-only|...]  List types");
+    terminal
+        .writer()
+        .println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
+    terminal.writer().println("  chunks [--summary|--range N-M]  List chunks");
+    terminal.writer().println("  chunk <index> show  Show one chunk's details");
+    terminal
+        .writer()
+        .println("  constants|cp [<type>] [--summary|--range N-M]  Constant pools");
+    terminal.writer().println("  backend [list]     Show the JFR backend, or list them");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");
     terminal

@@ -118,6 +118,70 @@ class ShellArtifactTest {
     assertTrue(output.contains("Error: Invalid query:"), output);
   }
 
+  /**
+   * The JFR commands at the jafar-shell prompt. {@code metadata --summary} used to be parsed as a
+   * JfrPath query ({@code metadata} is a root) and fail with "Trailing characters at position 9".
+   */
+  @Test
+  void runsJfrCommandsOnJfrSession(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "metadata --summary",
+                "metadata class jdk.ThreadStart --fields",
+                "chunks --summary",
+                "chunk 0 show",
+                "cp --summary",
+                "constants --summary",
+                "backend",
+                "metadata | count()",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("Unknown command"), output);
+    assertTrue(output.contains("totalChunks"), output);
+    assertTrue(output.contains("Current backend:"), output);
+    assertTrue(output.contains("eventThread"), output); // a field of jdk.ThreadStart
+  }
+
+  @Test
+  void jfrCommandsSayTheyNeedJfrSession(@TempDir Path dir) throws Exception {
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+
+    String output = runJar(dir, "chunks\nopen " + dump + "\nmetadata --summary\nexit\n");
+
+    assertTrue(
+        output.contains(
+            "Error: 'chunks' needs a JFR session; open a .jfr recording or switch to one with"),
+        output);
+    assertTrue(
+        output.contains("Error: 'metadata' needs a JFR session; session #1 is hdump."), output);
+    assertFalse(output.contains("Unknown command"), output);
+  }
+
+  /** The example shipped with jfr-shell, run by jafar-shell's own {@code script}. */
+  @Test
+  void runsBasicAnalysisExample(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path script =
+        Path.of("../jfr-shell/src/main/resources/examples/basic-analysis.jfrs").toAbsolutePath();
+
+    String output = runJar(dir, "script " + script + " " + recording + "\nexit\n");
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("error"), output);
+    assertTrue(output.contains("=== Metadata Summary ==="), output);
+    assertTrue(output.contains("Script executed successfully"), output);
+  }
+
   @Test
   void keepsJfrCommandLine(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
@@ -142,6 +206,24 @@ class ShellArtifactTest {
     assertTrue(Shell.startsWithRoot("events", roots));
     assertFalse(Shell.startsWithRoot("objectsx", roots));
     assertFalse(Shell.startsWithRoot("bogus | count", roots));
+  }
+
+  @Test
+  void routesJfrCommandsButNotQueries() {
+    assertTrue(Shell.isJfrCommand("metadata"));
+    assertTrue(Shell.isJfrCommand("metadata --summary"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart"));
+    assertTrue(Shell.isJfrCommand("chunks --range 0-1"));
+    assertTrue(Shell.isJfrCommand("chunk 0 show"));
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol"));
+    assertTrue(Shell.isJfrCommand("constants --summary"));
+    assertTrue(Shell.isJfrCommand("backend list"));
+    assertFalse(Shell.isJfrCommand("metadata/jdk.ExecutionSample"));
+    assertFalse(Shell.isJfrCommand("constants/jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("metadata | count()"));
+    assertFalse(Shell.isJfrCommand("metadata |count()"));
+    assertFalse(Shell.isJfrCommand("events/jdk.ThreadStart"));
+    assertFalse(Shell.isJfrCommand("objects | count"));
   }
 
   @Test

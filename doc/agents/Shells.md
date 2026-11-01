@@ -79,6 +79,16 @@ the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shel
 `addShellCommands` merges the shell's command list into first-word completion. A new shell-level
 command goes in `BASE_COMMANDS` there, not into four module completers.
 
+The JFR-only commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` are not
+reimplemented in `unified/Shell`: `Shell.JFR_COMMANDS` routes them to the `CommandDispatcher` the
+shell already builds for module completers (`moduleContext`). It shares the shell's
+`SessionManager` and prints through the shell's terminal; it has its own `VariableStore` and
+`Conditionals`, which is why only these commands go to it — `set`, `if` and the rest stay with
+`ShellVariables`. The routing runs before the bare-query check because `metadata` and `constants`
+are JfrPath roots: `metadata --summary` used to be parsed as a query (`Trailing characters at
+position 9`). A line whose second word starts with `|` (`metadata | count()`) is still a query.
+The same set gates completion in `unified/ShellCompleter`, so a heap dump session is not offered them.
+
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
 - API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)
