@@ -1,9 +1,7 @@
 package io.jafar.parser.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.Control;
 import io.jafar.parser.api.EventDecodingException;
@@ -48,29 +46,14 @@ class GeneratedEventDecodeFailureTest {
               IOException.class,
               () -> parse(jfr, strategy, seen, null),
               () -> strategy + "/" + corruption + ": " + seqs(seen));
-      String ctx = strategy + "/" + corruption + ": " + seqs(seen);
-
-      EventDecodingException f = find(thrown, EventDecodingException.class);
-      assertNotNull(f, ctx + chain(thrown));
-      assertEquals(TYPE, f.getTypeName(), ctx);
-      assertEquals(1, f.getChunkIndex(), ctx);
-      assertTrue(chain(f).contains("Unexpected string constant id: 127"), ctx + chain(f));
-
-      List<Integer> expected = new ArrayList<>();
-      for (int i = 0; i < BAD; i++) {
-        expected.add(i);
-      }
-      assertEquals(expected, seqs(seen), ctx);
-      for (Map<String, Object> e : seen) {
-        assertEquals("label-" + e.get("seq"), e.get("label"), ctx);
-      }
+      EventDecodeFailureTest.assertFailedCleanly(corruption, seen, thrown);
     }
   }
 
   @ParameterizedTest
   @EnumSource(
       value = EventDecodeFailureTest.Corruption.class,
-      names = {"EVENT_PAYLOAD", "ARRAY_ELEMENT"})
+      names = {"EVENT_PAYLOAD", "ARRAY_ELEMENT", "DANGLING_STRING_REF"})
   void onDecodeErrorReturningTrueSkipsOnlyTheBadEvent(EventDecodeFailureTest.Corruption corruption)
       throws Exception {
     Path jfr = EventDecodeFailureTest.corrupted(dir, corruption);

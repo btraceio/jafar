@@ -77,13 +77,16 @@ class EventDecodeFailureTest {
      * one-byte index as its last two bytes. {@code ParsingUtils.readUTF8} throws {@code
      * IOException("Unexpected string constant id: 127")} while reading the event.
      */
-    EVENT_PAYLOAD,
+    EVENT_PAYLOAD(false, "Unexpected string constant id: 127"),
     /**
-     * The encoding byte of the pooled string the event points to. The pool entry is decoded lazily
-     * when the event reads it, and {@code MutableConstantPool.get} rethrows the {@code IOException}
-     * wrapped in a {@code RuntimeException}.
+     * The encoding byte of the pooled string event {@value #BAD} points to. Indexing the pool skips
+     * every entry, and {@code ParsingUtils.skipUTF8} used to treat the unknown id as "no payload":
+     * it stepped one byte instead of over the string, so every later entry's offset was wrong and
+     * later events read other pooled strings as {@code null} without an error. Now the skip fails,
+     * naming the pool and index, and the parse fails before any event of the chunk is decoded: past
+     * an entry that cannot be skipped, the rest of the checkpoint cannot be located.
      */
-    CONSTANT_POOL,
+    CONSTANT_POOL(true, "Unexpected string constant id: 127"),
     /**
      * Like {@link #EVENT_PAYLOAD}, but the string is inside the last element of an array of inline
      * (not pooled) complex values, so the failure happens with an unfinished element map above the
@@ -92,7 +95,24 @@ class EventDecodeFailureTest {
      * then threw an {@link AssertionError} that replaced the decoding exception and, being an
      * {@code Error}, bypassed {@code onDecodeError}.
      */
-    ARRAY_ELEMENT
+    ARRAY_ELEMENT(false, "Unexpected string constant id: 127"),
+    /**
+     * Event {@value #BAD}'s {@code label} refers to string pool index 127, which does not exist.
+     * {@code ParsingUtils.readUTF8} used to return {@code null}, indistinguishable from a null
+     * string; now it is an ordinary decoding failure.
+     */
+    DANGLING_STRING_REF(false, "String constant 127 not found in the java.lang.String pool");
+
+    /** The failure is in checkpoint data, before any event of the chunk is decoded. */
+    final boolean failsAtCheckpoint;
+
+    /** Text of the decoder's reason, somewhere in the cause chain. */
+    final String cause;
+
+    Corruption(boolean failsAtCheckpoint, String cause) {
+      this.failsAtCheckpoint = failsAtCheckpoint;
+      this.cause = cause;
+    }
   }
 
   /** The three generic value paths; only {@link #DEFAULT} is reachable from the public API. */
@@ -213,7 +233,7 @@ class EventDecodeFailureTest {
   @ParameterizedTest
   @EnumSource(
       value = Corruption.class,
-      names = {"EVENT_PAYLOAD", "ARRAY_ELEMENT"})
+      names = {"EVENT_PAYLOAD", "ARRAY_ELEMENT", "DANGLING_STRING_REF"})
   void decodeErrorHandlerReturningTrueSkipsOnlyTheBadEvent(Corruption corruption) throws Exception {
     Path jfr = corrupted(corruption);
     List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
@@ -295,7 +315,9 @@ class EventDecodeFailureTest {
   @EnumSource(Stream.class)
   void everyGenericValuePathCanSkip(Stream stream) throws Exception {
     for (Corruption corruption :
-        new Corruption[] {Corruption.EVENT_PAYLOAD, Corruption.ARRAY_ELEMENT}) {
+        new Corruption[] {
+          Corruption.EVENT_PAYLOAD, Corruption.ARRAY_ELEMENT, Corruption.DANGLING_STRING_REF
+        }) {
       Path jfr = corrupted(corruption);
       List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
       List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
@@ -309,31 +331,25 @@ class EventDecodeFailureTest {
   }
 
   /**
-   * Skip mode with a corrupted constant pool entry. Only part of the outcome is right, and only
-   * that part is asserted: the event that reads the bad entry is reported once and not delivered.
-   *
-   * <p>Not asserted, because it is wrong: later events in the chunk can then read other pooled
-   * strings as {@code null} without any error. {@code ParsingUtils.skipUTF8}, which indexes the
-   * pool, treats an unknown encoding id as having no payload, so every later entry's offset is
-   * misaligned, and {@code readUTF8} returns {@code null} for a reference it cannot resolve. The Go
-   * parser's {@code skipString} has the same default. Fixing it changes constant pool error policy
-   * in both parsers and is left to a separate change.
+   * A corrupted constant pool entry fails the parse even with a decode error handler that skips:
+   * {@code onDecodeError} is about one event's payload, and past a pool entry that cannot be
+   * skipped the rest of the checkpoint - and so every later string reference - cannot be trusted.
+   * (In skip mode this used to report the one event and then let later events read other pooled
+   * strings as {@code null}, without an error.)
    */
   @Test
-  void skippingAnEventWithACorruptedPoolEntryReportsItOnce() throws Exception {
+  void corruptedPoolEntryFailsTheParseEvenWithADecodeErrorHandler() throws Exception {
     Path jfr = corrupted(Corruption.CONSTANT_POOL);
     List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
     List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+    IOException thrown;
     try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
       p.handle((type, value, ctl) -> collect(type, value, seen));
-      p.onDecodeError(skipped::add).run();
+      p.onDecodeError(skipped::add);
+      thrown = assertThrows(IOException.class, p::run, () -> describe(seen));
     }
-    assertEquals(1, skipped.size(), "decode errors: " + skipped);
-    assertEquals(TYPE, skipped.get(0).getTypeName());
-    assertEquals(EVENTS - 1, seen.size(), describe(seen));
-    for (Map<String, Object> e : seen) {
-      assertTrue(((Number) e.get("seq")).intValue() != BAD, "corrupted event delivered: " + e);
-    }
+    assertEquals(0, skipped.size(), "decode errors: " + skipped);
+    assertFailedCleanly(Corruption.CONSTANT_POOL, seen, thrown);
   }
 
   /**
@@ -471,7 +487,7 @@ class EventDecodeFailureTest {
     assertEquals(1, f.getChunkIndex());
     assertEquals(bad[0], f.getPosition());
     assertEquals(bad[1], f.getSize());
-    assertTrue(chain(f).contains("Unexpected string constant id: 127"), chain(f));
+    assertTrue(chain(f).contains(corruption.cause), chain(f));
     assertNoOwnStackTraceButCauseHasTheDecodeFrames(f);
   }
 
@@ -533,21 +549,37 @@ class EventDecodeFailureTest {
   private void assertFailsCleanly(Corruption corruption, Run run) throws Exception {
     Path jfr = corrupted(corruption);
     Outcome o = run.on(jfr);
-    String ctx = corruption + ": " + describe(o.seen);
+    assertFailedCleanly(corruption, o.seen, o.thrown);
+  }
+
+  /** Shared with {@code parser-codegen}'s tests of the generated path. */
+  static void assertFailedCleanly(
+      Corruption corruption, List<Map<String, Object>> seen, Throwable thrown) {
+    String ctx = corruption + ": " + describe(seen);
+
+    if (corruption.failsAtCheckpoint) {
+      // The chunk's constant pools are indexed before its events: nothing is delivered.
+      assertEquals(0, seen.size(), ctx);
+      assertTrue(find(thrown, EventDecodingException.class) == null, ctx + chain(thrown));
+      assertTrue(
+          chain(thrown).contains("Constant pool java.lang.String, index "), ctx + chain(thrown));
+      assertTrue(chain(thrown).contains(corruption.cause), ctx + chain(thrown));
+      return;
+    }
 
     // No partial map, and the bad event is not among the delivered ones.
-    for (Map<String, Object> e : o.seen) {
+    for (Map<String, Object> e : seen) {
       assertTrue(e.containsKey("seq") && e.containsKey("label"), "partial event delivered; " + ctx);
       assertTrue(((Number) e.get("seq")).intValue() != BAD, "corrupted event delivered; " + ctx);
     }
     // Events are decoded in file order within a chunk: exactly those before the bad one arrived.
-    assertEquals(BAD, o.seen.size(), ctx);
+    assertEquals(BAD, seen.size(), ctx);
 
-    EventDecodingException decoding = find(o.thrown, EventDecodingException.class);
-    assertNotNull(decoding, "no EventDecodingException in" + chain(o.thrown));
+    EventDecodingException decoding = find(thrown, EventDecodingException.class);
+    assertNotNull(decoding, "no EventDecodingException in" + chain(thrown));
     String msg = decoding.getMessage();
     assertTrue(msg.contains(TYPE) && msg.contains("chunk 1") && msg.contains("position "), msg);
-    assertTrue(chain(decoding).contains("Unexpected string constant id: 127"), chain(o.thrown));
+    assertTrue(chain(decoding).contains(corruption.cause), chain(thrown));
   }
 
   private static IOException parseWithPublicApi(
@@ -584,6 +616,17 @@ class EventDecodeFailureTest {
     }
     byte[] bytes = Files.readAllBytes(clean);
     int at;
+    if (corruption == Corruption.DANGLING_STRING_REF) {
+      long[] bad = eventExtents(clean).get(BAD);
+      int ref = (int) (bad[0] + bad[1] - 2);
+      assertEquals(2, bytes[ref], "label must be a constant pool reference (encoding id 2)");
+      // The one-byte index after it: point it at 127, beyond the ~25 pooled strings written.
+      assertTrue(bytes[ref + 1] >= 0 && bytes[ref + 1] < 100, "index byte: " + bytes[ref + 1]);
+      bytes[ref + 1] = 0x7f;
+      Path out = dir.resolve("corrupt-" + corruption + ".jfr");
+      Files.write(out, bytes);
+      return out;
+    }
     if (corruption == Corruption.EVENT_PAYLOAD || corruption == Corruption.ARRAY_ELEMENT) {
       long[] bad = eventExtents(clean).get(BAD);
       at = (int) (bad[0] + bad[1] - 2);
@@ -683,7 +726,7 @@ class EventDecodeFailureTest {
     type.build();
   }
 
-  private static String describe(List<Map<String, Object>> seen) {
+  static String describe(List<Map<String, Object>> seen) {
     StringBuilder sb = new StringBuilder("handler received " + seen.size() + " events:");
     synchronized (seen) {
       for (Map<String, Object> e : seen) {
@@ -693,7 +736,7 @@ class EventDecodeFailureTest {
     return sb.toString();
   }
 
-  private static <T extends Throwable> T find(Throwable t, Class<T> type) {
+  static <T extends Throwable> T find(Throwable t, Class<T> type) {
     for (Throwable c = t; c != null; c = c.getCause()) {
       if (type.isInstance(c)) {
         return type.cast(c);
@@ -702,7 +745,7 @@ class EventDecodeFailureTest {
     return null;
   }
 
-  private static String chain(Throwable t) {
+  static String chain(Throwable t) {
     StringBuilder sb = new StringBuilder();
     for (Throwable c = t; c != null; c = c.getCause()) {
       sb.append("\n  ").append(c);

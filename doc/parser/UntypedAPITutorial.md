@@ -598,13 +598,19 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
 ```
 
 Skipping recovers cleanly from a bad event *payload*: parsing resumes at the next event, located by
-the size the chunk declares for each event. A corrupted *constant pool* entry is different. Every
-event that references it is reported, and later pooled strings in the same chunk can read as
-`null` without any error. Treat any skipped event as a sign that the rest of that chunk may be
-wrong.
+the size the chunk declares for each event. A reference to a pooled string that does not exist is
+such a payload error too; it is never read as `null`.
+
+A corrupted *constant pool* entry is different, and always fails the parse, even with a decode error
+handler. Pool entries are not length-prefixed, so past an entry that cannot be read the rest of the
+checkpoint cannot be located, and no later string reference in the chunk could be trusted. The
+`IOException` names the pool and the entry, for example
+`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`.
 
 > The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
-> default; in Java, failing is. See [go-parser/README.md](../../go-parser/README.md#error-handling).
+> default; in Java, failing is. A corrupted constant pool entry is also reported through `OnError`
+> there: the entries indexed before it stay usable, and references to the rest are reported one by
+> one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
 
 ## Performance Considerations
 

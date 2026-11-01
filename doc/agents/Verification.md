@@ -120,6 +120,18 @@ looks identical to the file not being read at all.
 > reach a code path, read the stack to confirm which path it took before reasoning from the
 > outcome.**
 
+> **Case file — a skip that guesses.** Both untyped parsers skip constant pool entries to index
+> them, and both skipped a string whose encoding id they did not know as if it had no payload
+> (Java `ParsingUtils.skipUTF8`, Go `skipString`: `default: // unknown ids carry no payload`). One
+> bad tag byte therefore moved every later entry of the checkpoint: in a Go test pool of "one",
+> "two", "three" with entry 2's tag corrupted, entry 3 was decoded from inside "two" and failed
+> with `unexpected string constant id: 116` (`'t'`). And a reference that then found no entry
+> read as `null`, so in skip mode later events quietly lost strings. Found only because a
+> skip-mode test asserted the *next* event's value, not just that the bad one was reported. Both
+> now refuse unknown ids and report dangling string references (`EventDecodeFailureTest`
+> `CONSTANT_POOL`/`DANGLING_STRING_REF`, Go `TestCorruptedPoolStringIsReportedNotMisaligned`).
+> **A skip routine's default branch is a fallback too: if it cannot know the length, it must fail.**
+
 ## R4. Documentation is code — run it
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before

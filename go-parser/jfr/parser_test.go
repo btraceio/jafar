@@ -753,3 +753,106 @@ func TestUndecodableEventIsReportedAndSkipped(t *testing.T) {
 		t.Errorf("FailOnError: parse error = %v, want one naming test.Bag", err)
 	}
 }
+
+// pooledStringRecording has one test.Sample event per name reference in refs,
+// all resolved against a java.lang.String pool holding "one", "two" and
+// "three" at indexes 1-3. With corruptTwo, entry 2's encoding tag is replaced
+// by one no encoding uses, so the entry cannot be skipped while the pool is
+// indexed.
+func pooledStringRecording(corruptTwo bool, refs ...int64) []byte {
+	two := utf8String("two")
+	if corruptTwo {
+		two[0] = 0x7f
+	}
+	var events [][]byte
+	for _, ref := range refs {
+		events = append(events, sampleEvent{
+			startTicks: testStartTicks + 100, name: stringRef(ref), symbol: 7,
+			nestedB: utf8String("inline"),
+		}.encode())
+	}
+	spec := chunkSpec{
+		metadata: testMetadata(),
+		pools: []constantPoolData{
+			{typeID: tIDSymbol, entries: []poolEntry{{id: 7, data: utf8String("sym-seven")}}},
+			// The string pool comes last, so the symbol pool is indexed whatever
+			// happens to it.
+			{typeID: tIDString, entries: []poolEntry{
+				{id: 1, data: utf8String("one")},
+				{id: 2, data: two},
+				{id: 3, data: utf8String("three")},
+			}},
+		},
+		events:     events,
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}
+
+// A pool entry whose string encoding is unknown cannot be skipped. It used to
+// be skipped as if it had no payload, which misaligned every later entry of the
+// checkpoint, so references to them read other bytes or nothing, without an
+// error. Now indexing stops there and says so; entries after it are not
+// indexed, and references to them are reported rather than read as null.
+func TestCorruptedPoolStringIsReportedNotMisaligned(t *testing.T) {
+	data := pooledStringRecording(true, 1, 2, 3)
+
+	err := NewParser(data).ParseWith(Options{OnError: FailOnError}, func(*Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "constant pool java.lang.String, index 2: unexpected string constant id: 127") {
+		t.Fatalf("FailOnError: parse error = %v, want the pool entry named", err)
+	}
+
+	var names []any
+	var reported []string
+	err = NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			reported = append(reported, err.Error())
+			return nil
+		},
+	}, func(e *Event) error {
+		names = append(names, e.Values["name"])
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if want := []any{"one"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v (events referencing unindexed entries are reported, not delivered)", names, want)
+	}
+	if len(reported) != 3 ||
+		!strings.Contains(reported[0], "index 2: unexpected string constant id: 127") ||
+		!strings.Contains(reported[1], "string constant 2 not found") ||
+		!strings.Contains(reported[2], "string constant 3 not found") {
+		t.Errorf("reported = %q, want the pool entry, then references 2 and 3", reported)
+	}
+}
+
+// A reference to a string pool entry that does not exist is an error, not a
+// null string.
+func TestDanglingStringReferenceIsReported(t *testing.T) {
+	data := pooledStringRecording(false, 1, 9, 3)
+
+	var names []any
+	var reported []string
+	err := NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			reported = append(reported, err.Error())
+			return nil
+		},
+	}, func(e *Event) error {
+		names = append(names, e.Values["name"])
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if want := []any{"one", "three"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+	if len(reported) != 1 || !strings.Contains(reported[0], "string constant 9 not found in the java.lang.String pool") {
+		t.Errorf("reported = %q, want one error for reference 9", reported)
+	}
+}

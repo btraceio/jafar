@@ -229,8 +229,11 @@ magic, an out-of-range chunk size, undecodable chunk metadata — always abort
 parsing.
 
 Recoverable problems — a checkpoint chain that cannot be followed, a constant
-pool referring to an undeclared type, a single event that fails to decode — are
-reported through `Options.OnError`. When `OnError` is nil they are ignored and
+pool referring to an undeclared type or holding an entry that cannot be read, a
+single event that fails to decode (a reference to a string pool entry that does
+not exist included) — are reported through `Options.OnError`. An unreadable pool
+entry ends that checkpoint: the entries indexed before it stay usable, and each
+reference to a later one is reported as an event error. When `OnError` is nil they are ignored and
 parsing continues, which is what reading a truncated or non-conforming recording
 on a best-effort basis needs. Pass `jfr.FailOnError` to turn them into failures:
 
@@ -254,6 +257,14 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   `OnError` that returns nil. Neither delivers the bad event, even partially.
   Pinned by `TestUndecodableEventIsReportedAndSkipped` here and
   `EventDecodeFailureTest` in `parser-core`.
+* **A corrupted constant pool entry is recoverable here.** Go reports it
+  through `Options.OnError` and keeps the entries indexed before it; Java fails
+  the parse, naming the pool and index, even with a decode error handler, since
+  that handler is about one event. Both refuse to skip an entry whose string
+  encoding is unknown, and both report a reference to a missing string entry
+  instead of reading it as null. Pinned by
+  `TestCorruptedPoolStringIsReportedNotMisaligned` and
+  `TestDanglingStringReferenceIsReported` here.
 * **Framing is enforced.** Constant pool entries have to lie within their
   checkpoint event; the Java parser does not check this. It only matters for
   malformed recordings, where this parser drops the pool rather than indexing

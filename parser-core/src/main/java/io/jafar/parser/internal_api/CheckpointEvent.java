@@ -99,7 +99,14 @@ public final class CheckpointEvent extends AbstractEvent {
           if (!skip && !constantPool.containsKey(id)) {
             constantPool.addOffset(id, stream.position());
           }
-          clz.skipDirect(stream);
+          try {
+            clz.skipDirect(stream);
+          } catch (IOException e) {
+            // Entries are not length-prefixed: past an entry that cannot be skipped, the offsets of
+            // the rest of this checkpoint cannot be known, so the chunk cannot be read reliably.
+            throw new IOException(
+                "Constant pool " + clz.getName() + ", index " + id + ": " + e.getMessage(), e);
+          }
         }
       } catch (IOException e) {
         throw e;
