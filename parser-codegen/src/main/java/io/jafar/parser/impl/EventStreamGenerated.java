@@ -7,12 +7,17 @@ import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.UntypedCodeGenerator;
 import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.UntypedEventDeserializer;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.parser.internal_api.metadata.MetadataFingerprint;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -57,6 +62,7 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
 
     // Set type filter to accept all events (untyped parser behavior)
     context.put(TypeFilter.class, t -> true);
+    context.put(ChunkDeserializers.class, new ChunkDeserializers());
 
     return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
   }
@@ -64,6 +70,7 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
   @Override
   public final boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
     context.remove(TypeFilter.class);
+    context.remove(ChunkDeserializers.class);
     return delegate == null || delegate.onChunkEnd(context, chunkIndex, skipped);
   }
 
@@ -92,17 +99,30 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
       }
       final UntypedStrategy finalStrategy = strategy;
 
-      UntypedEventDeserializer deserializer =
-          cache.computeIfAbsent(
-              typeId,
-              id -> {
-                try {
-                  return UntypedCodeGenerator.generate(eventClz, finalStrategy);
-                } catch (Exception e) {
-                  throw new RuntimeException(
-                      "Failed to generate deserializer for event type: " + eventClz.getName(), e);
-                }
-              });
+      // Type ids are chunk-scoped: resolve the id to a deserializer once per chunk, through the
+      // parse-wide cache keyed by the type's structure.
+      ChunkDeserializers chunkDeserializers = context.get(ChunkDeserializers.class);
+      UntypedEventDeserializer deserializer = chunkDeserializers.get(typeId);
+      if (deserializer == null) {
+        MutableMetadataLookup metadata = (MutableMetadataLookup) context.getMetadataLookup();
+        MetadataFingerprint key =
+            MetadataFingerprint.compute(
+                metadata,
+                MetadataFingerprint.computeReachableTypes(
+                    metadata, Collections.singleton(eventClz.getName())));
+        deserializer =
+            cache.computeIfAbsent(
+                key,
+                k -> {
+                  try {
+                    return UntypedCodeGenerator.generate(eventClz, finalStrategy);
+                  } catch (Exception e) {
+                    throw new RuntimeException(
+                        "Failed to generate deserializer for event type: " + eventClz.getName(), e);
+                  }
+                });
+        chunkDeserializers.put(typeId, deserializer);
+      }
 
       // Deserialize event using generated code
       Map<String, Object> value = deserializer.deserialize(stream, context);
@@ -111,7 +131,13 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
       onEventValue(eventClz, value, ctl);
 
     } catch (Exception e) {
-      // Handle any errors during generation or deserialization
+      // Like EventStream, fall back to the delegate only for an I/O failure (generated code
+      // reads strings through RecordingStream.readUTF8, which throws IOException without the
+      // deserializer declaring it). Anything else - a generation failure, a decoding bug - used
+      // to be swallowed here, silently dropping every event of the type.
+      if (!(e instanceof IOException)) {
+        throw e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
+      }
       return !ctl.abortFlag
           && delegate != null
           && delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
@@ -119,6 +145,13 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     return !ctl.abortFlag
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
+  }
+
+  /**
+   * The deserializers resolved for the current chunk, by type id. A chunk is decoded by one thread.
+   */
+  private static final class ChunkDeserializers extends HashMap<Long, UntypedEventDeserializer> {
+    private static final long serialVersionUID = 1L;
   }
 
   @Override

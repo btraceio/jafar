@@ -97,12 +97,12 @@ public final class LazyMapValueBuilder implements ValueProcessor {
 
   @Override
   public void onShortValue(MetadataClass type, String fld, short value) {
-    addFieldValue(fld, value);
+    addShortFieldValue(fld, value);
   }
 
   @Override
   public void onCharValue(MetadataClass type, String fld, char value) {
-    addFieldValue(fld, value);
+    addCharFieldValue(fld, value);
   }
 
   private Control.ChunkInfo chunkInfo() {
@@ -113,13 +113,13 @@ public final class LazyMapValueBuilder implements ValueProcessor {
   @Override
   public void onIntValue(MetadataClass owner, String fld, long value) {
     value = TemporalNormalizer.normalize(owner, fld, value, chunkInfo());
-    addFieldValue(fld, value);
+    addLongFieldValue(fld, value);
   }
 
   @Override
   public void onLongValue(MetadataClass type, String fld, long value) {
     value = TemporalNormalizer.normalize(type, fld, value, chunkInfo());
-    addFieldValue(fld, value);
+    addLongFieldValue(fld, value);
   }
 
   @Override
@@ -134,12 +134,12 @@ public final class LazyMapValueBuilder implements ValueProcessor {
 
   @Override
   public void onDoubleValue(MetadataClass owner, String fld, double value) {
-    addFieldValue(fld, value);
+    addDoubleFieldValue(fld, value);
   }
 
   @Override
   public void onFloatValue(MetadataClass owner, String fld, float value) {
-    addFieldValue(fld, value);
+    addFloatFieldValue(fld, value);
   }
 
   @Override
@@ -224,6 +224,56 @@ public final class LazyMapValueBuilder implements ValueProcessor {
       } else if (parent instanceof Map) {
         ((Map<String, Object>) parent).put(fld, cpAccessor);
       }
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addLongFieldValue(String fld, long value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addLong(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addDoubleFieldValue(String fld, double value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addDouble(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addFloatFieldValue(String fld, float value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addFloat(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addShortFieldValue(String fld, short value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addShort(value);
+    } else {
+      addFieldValue(fld, value);
+    }
+  }
+
+  /** Like {@link #addFieldValue} but stores array elements without boxing them. */
+  private void addCharFieldValue(String fld, char value) {
+    ArrayHolder ah = stack.peek(ArrayHolder.class);
+    if (ah != null) {
+      ah.addChar(value);
+    } else {
+      addFieldValue(fld, value);
     }
   }
 

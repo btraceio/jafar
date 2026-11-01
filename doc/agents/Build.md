@@ -16,6 +16,8 @@ See [Verification.md](Verification.md) for how to know a change actually works.
     non-zero naming each one it could not obtain, with the page title when the host answered with HTML.
   - To use a mirror, set `JAFAR_TEST_AP_URL`, `JAFAR_TEST_JFR_URL` or `JAFAR_TEST_DD_URL` (any URL curl
     accepts, `file://` included).
+  - CI does not run this script: it tests against the generated recordings. The repository variable
+    `JAFAR_TEST_DD_URL` that CI used to pass to it (#140) is no longer read by any workflow.
 
 ## Essential Commands
 ```bash
