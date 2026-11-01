@@ -19,6 +19,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,12 @@ import org.junit.jupiter.api.Test;
  * 28882 rows, and with chunk 2's 2508 the query answered 31390 instead of 3383. {@code loadSummary}
  * and {@code crossref}'s {@code cpTotal} summed the same cumulative sizes.
  *
- * <p>The oracle below counts distinct ids per chunk with a set, independent of the code under test.
+ * <p>The opposite mistake, reading only the first checkpoint, missed types: {@code
+ * getAvailableTypes} stopped there, and chunk 1's first checkpoint holds 1 of its 29 types, so it
+ * reported 13 of the recording's 32.
+ *
+ * <p>The oracles below read every checkpoint and collect into sets, independent of the code under
+ * test.
  */
 class CheckpointDuplicationTest {
 
@@ -45,6 +51,7 @@ class CheckpointDuplicationTest {
   private static final String SYMBOL = "jdk.types.Symbol";
 
   private static long distinctSymbolIds;
+  private static final Set<String> allPoolTypes = new TreeSet<>();
 
   @BeforeAll
   static void countDistinctIdsPerChunk() throws Exception {
@@ -65,6 +72,9 @@ class CheckpointDuplicationTest {
                   .pools()
                   .forEach(
                       cp -> {
+                        synchronized (allPoolTypes) { // shared by both chunks' threads
+                          allPoolTypes.add(cp.getType().getName());
+                        }
                         if (cp.getType().getName().equals(SYMBOL)) {
                           for (Iterator<Long> it = cp.ids(); it.hasNext(); ) {
                             ids.add(it.next());
@@ -82,6 +92,12 @@ class CheckpointDuplicationTest {
     distinctSymbolIds = idsByChunk.values().stream().mapToLong(Set::size).sum();
     // 875 + 2508 when this was written; the assertions below use the oracle, not the literal.
     assertEquals(3383, distinctSymbolIds, "distinct Symbol ids per chunk, summed");
+  }
+
+  @Test
+  void availableTypesIncludeTypesFromEveryCheckpoint() throws Exception {
+    assertEquals(
+        allPoolTypes, new TreeSet<>(ConstantPoolProvider.getAvailableTypes(TCK_RECORDING)));
   }
 
   @Test

@@ -101,6 +101,12 @@ The answer was stable and plausible, and it hid behind a concurrency bug that ma
 Making it stable did not make it right. Only counting the distinct ids, as
 `CheckpointDuplicationTest` does, showed that the number was wrong.
 
+The opposite shortcut fails too: `getAvailableTypes` stopped at the first checkpoint, which in
+chunk 1 holds 1 of the chunk's 29 types, so it reported 13 of the recording's 32 types. Read the
+pools at the checkpoint whose `nextOffsetDelta` is 0. `StreamingChunkParser.readConstantPool`
+visits it last, so the pools are complete there. A listener that needs no events can then return
+`false` and skip the event section.
+
 ### A missing column is not an error
 
 `Values.get(row, path)` returns `null` when the path names nothing, and `compareValues(null, null)`

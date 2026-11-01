@@ -2,7 +2,6 @@ package io.jafar.shell.backend.impl;
 
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -19,7 +18,6 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.shell.backend.ChunkSource;
 import io.jafar.shell.backend.ConstantPoolSource;
 import io.jafar.shell.backend.MetadataSource;
-import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -33,7 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.function.BiConsumer;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -56,19 +54,36 @@ final class JafarSources {
    * back in whatever order the chunks finished. Each chunk instead gets its own accumulator, keyed
    * by {@link ParserContext#getChunkIndex()} (the same number {@code onChunkStart} receives), so it
    * is only ever touched by one thread. {@code parse} joins every chunk task before returning,
-   * which publishes the accumulators to the caller, and {@link #inChunkOrder()} merges them in
-   * recording order so results do not depend on scheduling.
+   * which publishes the accumulators to the caller ({@code Future.get} happens-after the task), and
+   * {@link #inChunkOrder()} merges them in recording order so results do not depend on scheduling.
+   *
+   * <p>{@link #of} is called on per-event paths, so after the first call for a chunk it is one
+   * lookup in the chunk's own {@link ParserContext} storage: no boxing of the chunk index, no
+   * lambda, no skip-list search. The skip list is written once per chunk and read once at the end.
    */
   private static final class PerChunk<T> {
+    private static final AtomicLong KEYS = new AtomicLong();
+
     private final ConcurrentSkipListMap<Integer, T> byChunk = new ConcurrentSkipListMap<>();
     private final Supplier<T> factory;
+    // Contexts are created per chunk per parse; the key only has to be unique among the PerChunks
+    // of one parse, and a counter makes it unique in the JVM.
+    private final String key = PerChunk.class.getName() + '#' + KEYS.incrementAndGet();
 
     PerChunk(Supplier<T> factory) {
       this.factory = factory;
     }
 
+    @SuppressWarnings("unchecked")
     T of(ParserContext context) {
-      return byChunk.computeIfAbsent(context.getChunkIndex(), k -> factory.get());
+      Object cached = context.get(key, Object.class);
+      if (cached != null) {
+        return (T) cached;
+      }
+      T created = factory.get();
+      context.put(key, Object.class, created);
+      byChunk.put(context.getChunkIndex(), created);
+      return created;
     }
 
     /** Call only after {@code parse} has returned. */
@@ -403,14 +418,31 @@ final class JafarSources {
    * per type per chunk ({@code addOrGetConstantPool}), so at the n-th checkpoint the pool holds
    * everything read so far. Draining or counting it at every checkpoint repeats the early entries
    * once per later checkpoint: chunk 1 of {@code tck-test.jfr} has 152 checkpoints, and its 875
-   * distinct {@code jdk.types.Symbol} ids came back as 28882 rows.
+   * distinct {@code jdk.types.Symbol} ids came back as 28882 rows. Stopping at the first checkpoint
+   * instead misses types: that chunk's first checkpoint holds 1 of its 29 types.
+   *
+   * <p>So every source here reads the pools once, at the chunk's last checkpoint ({@link
+   * #isLastCheckpoint}), when they are complete. Sources that do not need events then return {@code
+   * false}, which skips the chunk's event section.
    */
   static final class JafarConstantPoolSource implements ConstantPoolSource {
 
-    /** One chunk's {@link #loadEntries} output and the ids already emitted for it. */
-    private static final class EntryRows {
-      final List<Map<String, Object>> rows = new ArrayList<>();
-      final Set<Long> seen = new HashSet<>();
+    /**
+     * {@code StreamingChunkParser.readConstantPool} follows the chain while {@code nextOffsetDelta
+     * != 0} and stops at the checkpoint whose delta is 0, so that checkpoint is visited last and
+     * the pools are complete when it is reported.
+     */
+    private static boolean isLastCheckpoint(CheckpointEvent event) {
+      return event.nextOffsetDelta == 0;
+    }
+
+    /**
+     * Entries indexed in the pool: {@code offsets.size()}. Not {@link ConstantPool#size()}, which
+     * counts only the entries deserialized so far. The cast fails loudly if a context factory ever
+     * hands out another pool implementation, rather than quietly counting something else.
+     */
+    private static long entryCount(ConstantPool cp) {
+      return ((MutableConstantPool) cp).entryCount();
     }
 
     @Override
@@ -423,22 +455,15 @@ final class JafarSources {
             new ChunkParserListener() {
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                if (!isLastCheckpoint(event)) {
+                  return true;
+                }
                 Map<String, Long> chunkSizes = perChunk.of(context);
                 context
                     .getConstantPools()
                     .pools()
-                    .forEach(
-                        cp -> {
-                          try {
-                            String name = cp.getType().getName();
-                            long count = extractConstantPoolCount(cp);
-                            // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE):
-                            // its size at the last checkpoint is the chunk's total.
-                            chunkSizes.merge(name, count, Math::max);
-                          } catch (Throwable ignore) {
-                          }
-                        });
-                return true;
+                    .forEach(cp -> chunkSizes.put(cp.getType().getName(), entryCount(cp)));
+                return false; // pools complete; the events are not needed
               }
             });
       }
@@ -457,20 +482,6 @@ final class JafarSources {
       return rows;
     }
 
-    private static long extractConstantPoolCount(ConstantPool cp) {
-      try {
-        Field f = cp.getClass().getDeclaredField("offsets");
-        f.setAccessible(true);
-        Object offsets = f.get(cp);
-        try {
-          return (int) offsets.getClass().getMethod("size").invoke(offsets);
-        } catch (Throwable ignore) {
-        }
-      } catch (Throwable ignore) {
-      }
-      return cp.size();
-    }
-
     @Override
     public List<Map<String, Object>> loadEntries(Path recording, String typeName) throws Exception {
       return loadEntries(recording, typeName, null);
@@ -479,78 +490,57 @@ final class JafarSources {
     @Override
     public List<Map<String, Object>> loadEntries(
         Path recording, String typeName, Predicate<Map<String, Object>> filter) throws Exception {
-      // Rows are collected per chunk: onMetadata/onCheckpoint for different chunks run on
-      // different threads, and one shared ArrayList lost rows or threw
-      // ArrayIndexOutOfBoundsException from ArrayList.add.
-      final PerChunk<EntryRows> perChunk = new PerChunk<>(EntryRows::new);
-      final BiConsumer<ConstantPool, EntryRows> drain =
-          (cp, chunk) -> {
-            if (!cp.getType().getName().equals(typeName)) {
-              return;
-            }
-            cp.ensureIndexed();
-            Iterator<Long> it = cp.ids();
-            while (it.hasNext()) {
-              long id = it.next();
-              // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE): skip the ids
-              // an earlier checkpoint of this chunk already produced.
-              if (!chunk.seen.add(id)) {
-                continue;
-              }
-              Object val = cp.get(id);
-              Map<String, Object> row = new HashMap<>();
-              row.put("id", id);
-              if (val instanceof Map<?, ?> map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> mv = (Map<String, Object>) map;
-                row.putAll(mv);
-              } else {
-                row.put("value", val);
-              }
-              if (filter == null || filter.test(row)) {
-                chunk.rows.add(row);
-              }
-            }
-          };
-
+      // Rows are collected per chunk: callbacks for different chunks run on different threads,
+      // and one shared ArrayList lost rows or threw ArrayIndexOutOfBoundsException.
+      final PerChunk<List<Map<String, Object>>> perChunk = new PerChunk<>(ArrayList::new);
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
             recording,
             new ChunkParserListener() {
               @Override
-              public boolean onChunkStart(
-                  ParserContext context, int chunkIndex, ChunkHeader header) {
-                MapValueBuilder mvb = new MapValueBuilder(context);
-                GenericValueReader reader = new GenericValueReader(mvb);
-                context.put(GenericValueReader.class, reader);
-                return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
-              }
-
-              @Override
-              public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                context.remove(GenericValueReader.class);
-                return ChunkParserListener.super.onChunkEnd(context, chunkIndex, skipped);
-              }
-
-              @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                EntryRows chunk = perChunk.of(context);
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, chunk));
-                return true;
-              }
-
-              @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
-                EntryRows chunk = perChunk.of(context);
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, chunk));
-                return true;
+                if (!isLastCheckpoint(event)) {
+                  return true;
+                }
+                List<Map<String, Object>> rows = perChunk.of(context);
+                context
+                    .getConstantPools()
+                    .pools()
+                    .forEach(
+                        cp -> {
+                          if (cp.getType().getName().equals(typeName)) {
+                            drain(cp, filter, rows);
+                          }
+                        });
+                return false; // pools complete; the events are not needed
               }
             });
       }
       List<Map<String, Object>> rows = new ArrayList<>();
-      perChunk.inChunkOrder().forEach(chunk -> rows.addAll(chunk.rows));
+      perChunk.inChunkOrder().forEach(rows::addAll);
       return rows;
+    }
+
+    private static void drain(
+        ConstantPool cp, Predicate<Map<String, Object>> filter, List<Map<String, Object>> rows) {
+      Iterator<Long> it = cp.ids();
+      while (it.hasNext()) {
+        long id = it.next();
+        Object val = cp.get(id);
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", id);
+        if (val instanceof Map<?, ?> map) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> mv = (Map<String, Object>) map;
+          row.putAll(mv);
+        } else {
+          row.put("value", val);
+        }
+        if (filter == null || filter.test(row)) {
+          rows.add(row);
+        }
+      }
     }
 
     @Override
@@ -562,15 +552,13 @@ final class JafarSources {
             recording,
             new ChunkParserListener() {
               @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
-              }
-
-              @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                if (!isLastCheckpoint(event)) {
+                  return true; // stopping at the first checkpoint missed most types
+                }
                 Set<String> types = perChunk.of(context);
                 context.getConstantPools().pools().forEach(cp -> types.add(cp.getType().getName()));
-                return false;
+                return false; // pools complete; the events are not needed
               }
             });
       }
@@ -639,7 +627,6 @@ final class JafarSources {
                 chunk.completed = !skipped;
                 if (!skipped) {
                   // Per-chunk BFS: which target-type IDs are reachable from events in this chunk?
-                  // totalCpCount is accumulated per-checkpoint via extractConstantPoolCount.
                   Set<Long> chunkReachable =
                       bfsCpReachable(chunk.eventRefs, chunk.cpEdges, typeName);
                   chunk.referencedCpCount =
@@ -651,6 +638,11 @@ final class JafarSources {
 
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent cp) {
+                if (!isLastCheckpoint(cp)) {
+                  // Pools are cumulative (see CHECKPOINTS_ACCUMULATE): reading them here as well
+                  // decoded every entry once per later checkpoint, 72703 decodes for 8301 entries.
+                  return true;
+                }
                 CrossrefChunk chunk = perChunk.of(context);
                 RecordingStream stream = context.get(RecordingStream.class);
                 GenericValueReader edgeReader = new GenericValueReader(chunk.edgeProc);
@@ -660,11 +652,8 @@ final class JafarSources {
                     .forEach(
                         pool -> {
                           if (pool.getType().getName().equals(typeName)) {
-                            // The pool is cumulative within a chunk (see CHECKPOINTS_ACCUMULATE):
-                            // its size at the last checkpoint is the chunk's total.
-                            chunk.totalCpCount =
-                                Math.max(chunk.totalCpCount, extractConstantPoolCount(pool));
-                            // Collect IDs defined in this checkpoint for per-chunk BFS.
+                            chunk.totalCpCount = entryCount(pool);
+                            // Collect the chunk's IDs of the target type for the per-chunk BFS.
                             MutableConstantPool targetMcp = (MutableConstantPool) pool;
                             Iterator<Long> it = targetMcp.ids();
                             while (it.hasNext()) {
@@ -703,13 +692,13 @@ final class JafarSources {
                   long eventStartPos,
                   long rawSize,
                   long payloadSize) {
-                CrossrefChunk chunk = perChunk.of(context);
                 MetadataClass eventType = context.getMetadataLookup().getClass(typeId);
                 if (eventType == null) return true;
                 GenericValueReader reader = context.get(GenericValueReader.class);
                 if (reader == null) return true;
                 RecordingStream stream = context.get(RecordingStream.class);
                 if (stream == null) return true;
+                CrossrefChunk chunk = perChunk.of(context);
 
                 Map<String, List<Long>> allRefs = new HashMap<>();
                 currentEventAllRefs.set(allRefs);
@@ -909,37 +898,45 @@ final class JafarSources {
     }
   }
 
-  /** Collects CP-to-CP reference edges by recording which CP entries each entry points to. */
+  /**
+   * Collects CP-to-CP reference edges by recording which CP entries each entry points to.
+   *
+   * <p>Each instance belongs to one chunk's {@code CrossrefChunk} and is driven only by that
+   * chunk's thread (see {@link PerChunk}), so it keeps its cursor in plain fields: no {@code
+   * ThreadLocal}, no boxed id per entry, no concurrent maps.
+   */
   private static final class EdgeCollectingProcessor implements ValueProcessor {
-    private final ThreadLocal<String> currentType = new ThreadLocal<>();
-    private final ThreadLocal<Long> currentId = new ThreadLocal<>();
     private final Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges;
+    private String currentType;
+    private Map<String, Set<Long>> currentRefs;
+    private long currentId;
 
     EdgeCollectingProcessor(Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges) {
       this.cpEdges = cpEdges;
     }
 
     void startEntry(String type, long id) {
-      currentType.set(type);
-      currentId.set(id);
+      currentType = type;
+      currentId = id;
+      currentRefs = null; // resolved on the first reference, so leaf entries add nothing
     }
 
     void endEntry() {
-      currentType.remove();
-      currentId.remove();
+      currentType = null;
+      currentRefs = null;
     }
 
     @Override
     public void onConstantPoolIndex(
         MetadataClass owner, String fld, MetadataClass type, long pointer) {
-      String src = currentType.get();
-      Long sid = currentId.get();
-      if (src == null || sid == null) return;
-      cpEdges
-          .computeIfAbsent(src, k -> new ConcurrentHashMap<>())
-          .computeIfAbsent(sid, k -> new ConcurrentHashMap<>())
-          .computeIfAbsent(type.getName(), k -> ConcurrentHashMap.newKeySet())
-          .add(pointer);
+      if (currentType == null) return;
+      if (currentRefs == null) {
+        currentRefs =
+            cpEdges
+                .computeIfAbsent(currentType, k -> new HashMap<>())
+                .computeIfAbsent(currentId, k -> new HashMap<>());
+      }
+      currentRefs.computeIfAbsent(type.getName(), k -> new HashSet<>()).add(pointer);
     }
   }
 }
