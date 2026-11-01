@@ -819,6 +819,12 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 # Recording stopped: 2025-12-26T14:32:10Z
 ```
 
+A `set` or `let` of `llm.api-key` is recorded without its value, as a comment —
+`# set --global llm.api-key = <redacted: not recorded>` — so the file holds no key and a replay uses
+whatever key the person replaying it has configured. The shell's history file
+(`~/.jfr-shell/history`, `~/.jafar-shell/history`) is a different matter and does keep the line as
+typed; prefer `~/.config/jafar/llm.properties` or the provider's environment variable for keys.
+
 You can execute this script directly:
 
 ```bash

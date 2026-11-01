@@ -156,6 +156,23 @@ class ShellCompletedCommandsTest {
     assertTrue(recorded.contains("if 1 > 2") && recorded.contains("endif"), recorded);
   }
 
+  /** The key still takes effect in the shell; only the recording leaves it out. */
+  @Test
+  void recordingLeavesOutApiKey(@TempDir Path dir) throws Exception {
+    Path script = dir.resolve("key.jfrs");
+    run("record start " + script);
+    String set = run("set --global llm.api-key = sk-NOT-A-REAL-KEY");
+    run("set --global llm.backend = none-such");
+    run("record stop");
+
+    String recorded = Files.readString(script, StandardCharsets.UTF_8);
+    assertFalse(recorded.contains("sk-NOT-A-REAL-KEY"), recorded);
+    assertTrue(
+        recorded.contains("# set --global llm.api-key = <redacted: not recorded>"), recorded);
+    assertTrue(recorded.contains("set --global llm.backend = none-such"), recorded);
+    assertTrue(set.contains("llm.api-key") && !set.startsWith("Error"), set);
+  }
+
   /** Runs one line as if typed at the prompt, and returns what it printed. */
   private String run(String line) {
     out.reset();

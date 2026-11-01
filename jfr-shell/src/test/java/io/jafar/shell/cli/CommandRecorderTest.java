@@ -110,4 +110,48 @@ class CommandRecorderTest {
     // Verify footer
     assertTrue(content.contains("# Recording stopped:"));
   }
+
+  /** Every form both shells' 'set' accepts for the key; the value must not reach the file. */
+  @Test
+  void apiKeyValueIsNotRecorded(@TempDir Path tempDir) throws IOException {
+    Path recordingPath = tempDir.resolve("secret.jfrs");
+    List<String> typed =
+        List.of(
+            "set llm.api-key = sk-SECRET1",
+            "set --global llm.api-key = sk-SECRET2",
+            "let llm.api-key=sk-SECRET3",
+            "SET   LLM.API-KEY   =   \"sk-SECRET4\"",
+            "set llm.api-key = sk-SECRET5=tail");
+
+    CommandRecorder recorder = new CommandRecorder();
+    recorder.start(recordingPath);
+    for (String line : typed) {
+      recorder.recordCommand(line);
+    }
+    recorder.stop();
+
+    String content = Files.readString(recordingPath);
+    assertFalse(content.contains("SECRET"), content);
+    assertTrue(content.contains("# set llm.api-key = <redacted: not recorded>"), content);
+    assertTrue(content.contains("# set --global llm.api-key = <redacted: not recorded>"), content);
+    assertTrue(content.contains("# let llm.api-key= <redacted: not recorded>"), content);
+    assertTrue(content.contains("# SET   LLM.API-KEY   = <redacted: not recorded>"), content);
+  }
+
+  /** Other settings, variables and lines that merely mention the key are recorded as typed. */
+  @Test
+  void otherLinesAreRecordedAsTyped() {
+    for (String line :
+        List.of(
+            "set llm.backend = ollama",
+            "set --global llm.base-url = http://localhost:11434/v1",
+            "set key = events/jdk.ThreadStart | count()",
+            "set x = llm.api-key",
+            "echo llm.api-key = sk-not-a-set",
+            "settings llm.api-key = sk",
+            "unset llm.api-key",
+            "set llm.api-key")) {
+      assertSame(line, CommandRecorder.redactSecrets(line), line);
+    }
+  }
 }
