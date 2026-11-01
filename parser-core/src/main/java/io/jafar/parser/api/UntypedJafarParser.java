@@ -222,8 +222,19 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * references it undecodable, so one defect can produce many calls; count them, and return {@code
    * false} to stop.
    *
+   * <p>A skipped event is still reported to a {@link #withParserListener parser listener}'s {@code
+   * onEvent}, which works at the chunk level and receives the event's valid position and size; only
+   * event handlers never see it.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
+   *
    * @param handler the decode error handler, or {@code null} to restore the default (fail)
    * @return this parser
+   * @throws UnsupportedOperationException if this implementation does not support it
    */
-  UntypedJafarParser onDecodeError(DecodeErrorHandler handler);
+  default UntypedJafarParser onDecodeError(DecodeErrorHandler handler) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support onDecodeError");
+  }
 }

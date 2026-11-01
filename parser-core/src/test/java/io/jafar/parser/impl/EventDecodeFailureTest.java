@@ -24,6 +24,13 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
@@ -206,15 +213,30 @@ class EventDecodeFailureTest {
   void decodeErrorHandlerSurvivesWithParserListener() throws Exception {
     Corruption corruption = Corruption.EVENT_PAYLOAD;
     Path jfr = corrupted(corruption);
+    List<Long> delegateSaw = Collections.synchronizedList(new ArrayList<>());
     List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
     List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
     try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
       p.onDecodeError(skipped::add);
-      UntypedJafarParser q = p.withParserListener(new ChunkParserListener() {});
+      UntypedJafarParser q =
+          p.withParserListener(
+              new ChunkParserListener() {
+                @Override
+                public boolean onEvent(
+                    ParserContext c, long typeId, long start, long rawSize, long payloadSize) {
+                  if (TYPE.equals(c.getMetadataLookup().getClass(typeId).getName())) {
+                    delegateSaw.add(start);
+                  }
+                  return true;
+                }
+              });
       q.handle((type, value, ctl) -> collect(type, value, seen));
       q.run();
     }
     assertSkippedOnlyTheBadEvent(corruption, jfr, seen, skipped);
+    // The delegate works at the chunk level and still sees the skipped event, as documented.
+    assertEquals(EVENTS, delegateSaw.size(), String.valueOf(delegateSaw));
+    assertTrue(delegateSaw.contains(skipped.get(0).getPosition()), String.valueOf(delegateSaw));
   }
 
   @Test
@@ -297,6 +319,110 @@ class EventDecodeFailureTest {
     }
   }
 
+  /**
+   * Several chunks, each with one bad event, decoded on the parser's thread pool. Every bad event
+   * is reported exactly once, with its own chunk index, and every other event arrives complete.
+   * When the pool has at least two threads the handler is also shown to run on two threads at the
+   * same time; with one thread (fewer than four cores) there is no concurrency to prove.
+   */
+  @Test
+  void decodeErrorHandlerIsCalledOncePerBadEventAcrossConcurrentChunks() throws Exception {
+    int chunks = 6;
+    Path jfr = multiChunk(corrupted(Corruption.EVENT_PAYLOAD), chunks);
+    // Mirrors StreamingChunkParser's pool size.
+    int threads = Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+    CountDownLatch bothInside = new CountDownLatch(Math.min(threads, 2));
+    AtomicInteger inside = new AtomicInteger();
+    AtomicInteger peakInside = new AtomicInteger();
+    Set<String> handlerThreads = ConcurrentHashMap.newKeySet();
+
+    List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+    List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.handle((type, value, ctl) -> collect(type, value, seen));
+      p.onDecodeError(
+          f -> {
+            int now = inside.incrementAndGet();
+            peakInside.accumulateAndGet(now, Math::max);
+            try {
+              skipped.add(f);
+              handlerThreads.add(Thread.currentThread().getName());
+              bothInside.countDown();
+              // Holds the first callers so that concurrent ones overlap; times out instead of
+              // hanging if the chunks are not decoded concurrently. Overlap is measured by the
+              // peak number of callers inside at once, not by this latch.
+              bothInside.await(10, TimeUnit.SECONDS);
+              return true;
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+              return false;
+            } finally {
+              inside.decrementAndGet();
+            }
+          });
+      p.run();
+    }
+
+    assertEquals(chunks, skipped.size(), "decode errors: " + skipped);
+    Set<Integer> chunkIndexes = new TreeSet<>();
+    for (EventDecodingException f : skipped) {
+      assertEquals(TYPE, f.getTypeName());
+      chunkIndexes.add(f.getChunkIndex());
+    }
+    assertEquals(chunks, chunkIndexes.size(), "one report per chunk: " + chunkIndexes);
+
+    assertEquals(chunks * (EVENTS - 1), seen.size(), describe(seen));
+    Map<Integer, Integer> perSeq = new TreeMap<>();
+    synchronized (seen) {
+      for (Map<String, Object> e : seen) {
+        int seq = ((Number) e.get("seq")).intValue();
+        assertTrue(seq != BAD, "corrupted event delivered: " + e);
+        assertEquals("label-" + seq, e.get("label"), "incomplete event: " + e);
+        perSeq.merge(seq, 1, Integer::sum);
+      }
+    }
+    for (int seq = 0; seq < EVENTS; seq++) {
+      if (seq != BAD) {
+        assertEquals(chunks, perSeq.getOrDefault(seq, 0), "seq " + seq + " per chunk: " + perSeq);
+      }
+    }
+
+    if (threads >= 2) {
+      assertTrue(
+          peakInside.get() >= 2,
+          "handler never ran on two threads at once; peak "
+              + peakInside.get()
+              + ", threads "
+              + handlerThreads);
+      assertTrue(handlerThreads.size() >= 2, String.valueOf(handlerThreads));
+    }
+  }
+
+  /**
+   * {@code copies} concatenated copies of a one-chunk recording: a recording of that many chunks.
+   */
+  private Path multiChunk(Path oneChunk, int copies) throws Exception {
+    byte[] chunk = Files.readAllBytes(oneChunk);
+    byte[] all = new byte[chunk.length * copies];
+    for (int i = 0; i < copies; i++) {
+      System.arraycopy(chunk, 0, all, i * chunk.length, chunk.length);
+    }
+    Path out = dir.resolve("multi-" + copies + ".jfr");
+    Files.write(out, all);
+    return out;
+  }
+
+  private static void assertNoOwnStackTraceButCauseHasTheDecodeFrames(EventDecodingException f) {
+    assertEquals(0, f.getStackTrace().length, "EventDecodingException should not fill a trace");
+    boolean decodeFrame = false;
+    for (StackTraceElement el : f.getCause().getStackTrace()) {
+      decodeFrame |=
+          el.getClassName().startsWith("io.jafar.parser.impl.EventStream")
+              && el.getMethodName().equals("onEvent");
+    }
+    assertTrue(decodeFrame, "cause trace lacks EventStream*.onEvent");
+  }
+
   private void assertSkippedOnlyTheBadEvent(
       Corruption corruption,
       Path jfr,
@@ -326,6 +452,7 @@ class EventDecodeFailureTest {
     assertEquals(bad[0], f.getPosition());
     assertEquals(bad[1], f.getSize());
     assertTrue(chain(f).contains("Unexpected string constant id: 127"), chain(f));
+    assertNoOwnStackTraceButCauseHasTheDecodeFrames(f);
   }
 
   @Test

@@ -10,7 +10,8 @@ package io.jafar.parser.api;
  * partially.
  *
  * <p>The message names the event type, chunk and position; {@link #getCause()} is the decoder's
- * reason.
+ * reason. This exception records no stack trace of its own: in skip mode one is created per bad
+ * event, and the cause's stack trace already covers the frames where decoding failed.
  */
 public final class EventDecodingException extends RuntimeException {
   private static final long serialVersionUID = 1L;
@@ -46,7 +47,9 @@ public final class EventDecodingException extends RuntimeException {
             + " (size "
             + size
             + ")",
-        cause);
+        cause,
+        false,
+        false);
     this.typeName = typeName;
     this.typeId = typeId;
     this.chunkIndex = chunkIndex;

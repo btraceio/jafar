@@ -59,6 +59,9 @@ public abstract class EventStreamBaseline implements ChunkParserListener {
   /**
    * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
    *
+   * <p>When it returns {@code true}, the delegate listener's {@code onEvent} is still called for
+   * the skipped event (its position and size are valid); {@link #onEventValue} is not.
+   *
    * @param failure names the event type, chunk and position; its cause is the decoder's reason
    * @return {@code true} to skip the event and continue with the next one, {@code false} to fail
    *     the parse with {@code failure}. The default fails the parse.
