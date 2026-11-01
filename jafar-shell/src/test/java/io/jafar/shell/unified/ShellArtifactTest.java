@@ -558,31 +558,47 @@ class ShellArtifactTest {
             "show events/jdk.GarbageCollection --limit 1 --format csv",
             "echo JSON",
             "show events/jdk.GarbageCollection --limit 1 --format json",
+            "echo META",
+            "show metadata/jdk.types.Symbol --format json",
             ""));
 
-    String output = runJar(dir, "", "script", script.toString());
+    assertPlainConstants(runJar(dir, "", "script", script.toString()));
+    // jfr-shell's own entry point, from the same jar, prints them the same way
+    Result jfrShell =
+        runClassWithStatus(dir, "io.jafar.shell.Main", "", "script", script.toString());
+    assertEquals(0, jfrShell.status(), jfrShell.output());
+    assertPlainConstants(jfrShell.output());
+  }
 
-    assertFalse(output.contains("{cause="), output);
-    assertFalse(output.contains("{name="), output);
-    assertFalse(output.contains("{string="), output);
-    assertFalse(output.contains("\"cause\": {"), output);
+  private static void assertPlainConstants(String output) {
+    String data = output.substring(0, output.indexOf("META"));
+    assertFalse(data.contains("{cause="), output);
+    assertFalse(data.contains("{name="), output);
+    assertFalse(data.contains("{string="), output);
+    assertFalse(data.contains("\"cause\": {"), output);
     String table = output.substring(output.indexOf("TABLE"), output.indexOf("CSV"));
     assertTrue(table.contains("| System.gc()"), output);
     assertTrue(table.contains("| java/lang/Object"), output);
     String csv = output.substring(output.indexOf("CSV"), output.indexOf("JSON"));
     assertTrue(csv.contains(",System.gc(),"), output);
-    assertTrue(
-        output.substring(output.indexOf("JSON")).contains("\"cause\": \"System.gc()\""), output);
+    String json = output.substring(output.indexOf("JSON"), output.indexOf("META"));
+    assertTrue(json.contains("\"cause\": \"System.gc()\""), output);
+    // metadata is structure: a one-field type's fieldsByName is data and keeps its key
+    String meta = output.substring(output.indexOf("META"));
+    assertTrue(meta.matches("(?s).*\"fieldsByName\": \\{\\s*\"string\": \\{.*"), output);
   }
 
   @Test
-  void leavesNonJfrRowsAsTheyAre() {
+  void unwrapsOnlyJfrRecordingValues() {
     List<Map<String, Object>> rows = List.of(Map.of("value", Map.of("name", "kept")));
 
-    assertSame(rows, Shell.forDisplay(rows, "hdump"));
-    assertSame(rows, Shell.forDisplay(rows, "pprof"));
-    assertSame(rows, Shell.forDisplay(rows, "otlp"));
-    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr"));
+    assertSame(rows, Shell.forDisplay(rows, "hdump", "objects"));
+    assertSame(rows, Shell.forDisplay(rows, "pprof", "samples"));
+    assertSame(rows, Shell.forDisplay(rows, "otlp", "samples"));
+    assertSame(rows, Shell.forDisplay(rows, "jfr", "metadata/jdk.types.Symbol"));
+    assertSame(rows, Shell.forDisplay(rows, "jfr", "chunks"));
+    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", "events/x"));
+    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", null));
   }
 
   @Test

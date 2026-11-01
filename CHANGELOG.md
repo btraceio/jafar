@@ -39,14 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
-- **`jafar-shell` prints JFR constant-pool strings as strings.** Result values that the parser
-  hands over as single-entry constants printed as their wrapper — `{name=G1New}`,
-  `{cause=G1 Evacuation Pause}`, `{string=java/lang/Object}` — in every output format, so
-  `gc-analysis.jfrs` and `thread-profiling.jfrs` grouped and listed by `{name=G1New}` where
-  jfr-shell shows `G1New`. The unified shell now unwraps those cells the way jfr-shell's table
-  renderer does (`TuiTableRenderer.unwrap`), in tables, `--format csv` and `--format json`, for
-  rows from a JFR session only; heap dump, pprof and OTLP output is unchanged. Rows passed to
-  `explain`/`ask` are not affected
+- **JFR constant-pool strings print as strings in CSV and JSON, and in every `jafar-shell`
+  format.** Result values that the parser hands over as single-entry constants printed as their
+  wrapper — `{name=G1New}`, `{cause=G1 Evacuation Pause}`, `{string=java/lang/Object}`: in
+  jfr-shell's `--format csv` and `--format json` (`"name": {"name": "G1New"}`), and in every
+  `jafar-shell` format, so `gc-analysis.jfrs` and `thread-profiling.jfrs` grouped and listed by
+  `{name=G1New}` there. Both shells now unwrap those cells the way jfr-shell's table always has,
+  for the results of `events/` and `constants/` queries, including `events/<type>/<field>` value
+  lists. `metadata/` and `chunks/` output is unchanged, since a single-entry map there is data
+  (`fieldsByName` of a one-field type such as `jdk.types.Symbol`), and so are heap dump, pprof and
+  OTLP output and the rows passed to `explain`/`ask`. A script that read `.name.name` or
+  `.key.string` from `--format json` output reads `.name` and `.key` now
 - **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
   always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
   was reachable only from tests and benchmarks. It is now selected through an

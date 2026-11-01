@@ -96,10 +96,6 @@ same, but running the shipped examples both ways shows what changes:
   column holding a multi-field value, such as `eventThread`, is printed as
   `{virtual=false, javaThreadId=0, osName=VM Thread, ...}`, where jfr-shell's table leaves the
   column out.
-- Constant-pool strings print as their value — `G1New`, `G1 Evacuation Pause`,
-  `java/lang/Object` — in tables, `--format csv` and `--format json` alike. jfr-shell prints them
-  that way only in tables; its CSV and JSON keep the parser's wrapper, `{name=G1New}` and
-  `"name": {"name": "G1New"}`.
 - The other rows of the table below: `show ${var} | ...` and `true`/`false`.
 
 To keep jfr-shell's behaviour, run the script with `jfr-shell script` (the `jfr-shell` jbang alias,

@@ -2,7 +2,7 @@ package io.jafar.shell.unified;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.TuiTableRenderer;
+import io.jafar.shell.cli.ConstantValues;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
@@ -1114,7 +1114,8 @@ public final class Shell implements AutoCloseable {
             lazy instanceof EvaluatorLazyValue bound && bound.sessionType() != null
                 ? bound.sessionType()
                 : ref.session.getType();
-        printResult(rows, fmt.find() ? fmt.group(1) : ref.outputFormat, type);
+        printResult(
+            rows, fmt.find() ? fmt.group(1) : ref.outputFormat, type, lazy.getQueryString());
       } catch (Exception e) {
         printError(e.getMessage());
       }
@@ -1154,7 +1155,7 @@ public final class Shell implements AutoCloseable {
         result = list.subList(0, Math.min(limit, list.size()));
       }
       rememberResult(cleanQuery, result);
-      printResult(result, format, ref.session.getType());
+      printResult(result, format, ref.session.getType(), cleanQuery);
     } catch (Exception e) {
       error("Query error: " + e.getMessage());
       printStackTraceIfInteractive(e);
@@ -1339,20 +1340,27 @@ public final class Shell implements AutoCloseable {
     };
   }
 
-  /** Prints rows from the current session as a table. */
+  /**
+   * Prints rows from the current session as a table, for {@code ask}/{@code as-query}; the query
+   * that produced them is not passed down, see {@link #forDisplay}.
+   */
   private void printResult(Object result) {
     printResult(
-        result, "table", sessions.getCurrent().map(ref -> ref.session.getType()).orElse(null));
+        result,
+        "table",
+        sessions.getCurrent().map(ref -> ref.session.getType()).orElse(null),
+        null);
   }
 
   /**
    * Prints a query result.
    *
-   * @param sessionType the type of the session that produced {@code result}; JFR rows are shaped
-   *     for display first, see {@link #forDisplay}
+   * @param sessionType the type of the session that produced {@code result}
+   * @param query the query text that produced it, or {@code null} if not known; with the session
+   *     type, it decides whether JFR constants are unwrapped first, see {@link #forDisplay}
    */
-  private void printResult(Object result, String format, String sessionType) {
-    result = forDisplay(result, sessionType);
+  private void printResult(Object result, String format, String sessionType, String query) {
+    result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
         out.println(toJson(result, 0));
@@ -1388,39 +1396,30 @@ public final class Shell implements AutoCloseable {
 
   /**
    * Unwraps JFR constant-pool wrappers in the cells of JFR result rows, so a value prints as {@code
-   * G1New} rather than {@code {name=G1New}}.
+   * G1New} rather than {@code {name=G1New}}, by the rule jfr-shell uses for its CSV and JSON
+   * output: {@link ConstantValues}. Only the results of {@code events/} and {@code constants/}
+   * queries are unwrapped; {@code metadata/} and {@code chunks/} results are structure, where a
+   * single-entry map is data ({@code fieldsByName} of {@code jdk.types.Symbol}).
    *
-   * <p>The untyped parser hands a constant such as a {@code jdk.types.GCName}, a {@code
-   * jdk.types.Symbol} or a {@code jdk.types.GCCause} over as a single-entry map ({@code
-   * {name=G1New}}, {@code {string=java/lang/Object}}, {@code {cause=G1 Evacuation Pause}}), or as a
-   * {@code ComplexType} that resolves to one. jfr-shell's table renderer collapses a single-entry
-   * cell to its value; this applies the same rule, through the same {@link
-   * TuiTableRenderer#unwrap}, to every output format of this shell. Only the cells of a row are
-   * touched — a row that is itself a single-entry map, such as {@code {count=5}}, keeps its column
-   * — and multi-entry values such as a thread are left as they are.
+   * <p>A {@code null} query — rows rendered for {@code ask}/{@code as-query}, which only ever go to
+   * the table — is unwrapped, as jfr-shell's table renderer collapses every single-entry cell
+   * whatever the query.
    *
    * <p>Heap dump, pprof and OTLP rows are returned unchanged: their values are not parser wrappers,
    * and a single-entry map there is data.
-   *
-   * <p>See {@code doc/agents/DataShapes.md}, "A string constant is not a string".
    */
-  static Object forDisplay(Object result, String sessionType) {
+  @SuppressWarnings("unchecked")
+  static Object forDisplay(Object result, String sessionType, String query) {
     if (!"jfr".equals(sessionType) || !(result instanceof List<?> list)) {
       return result;
     }
-    List<Object> shaped = new ArrayList<>(list.size());
-    for (Object row : list) {
-      if (row instanceof Map<?, ?> cells) {
-        Map<Object, Object> copy = new java.util.LinkedHashMap<>();
-        for (Map.Entry<?, ?> cell : cells.entrySet()) {
-          copy.put(cell.getKey(), TuiTableRenderer.unwrap(cell.getValue()));
-        }
-        shaped.add(copy);
-      } else {
-        shaped.add(row);
-      }
+    if (query != null && !ConstantValues.holdsRecordingValues(query)) {
+      return result;
     }
-    return shaped;
+    if (!list.isEmpty() && !(list.get(0) instanceof Map<?, ?>)) {
+      return ConstantValues.unwrapEach(list);
+    }
+    return ConstantValues.unwrapCells((List<Map<String, Object>>) list);
   }
 
   @SuppressWarnings("unchecked")

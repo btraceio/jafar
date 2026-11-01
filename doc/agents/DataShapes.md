@@ -53,13 +53,26 @@ The untyped parser delivers a string constant as a single-entry map, `{string=[B
   straight to `TableFormatter` and its CSV/JSON writers, so `gc-analysis.jfrs` grouped by
   `{name=G1New}` and `thread-profiling.jfrs` by `{string=java/lang/Object}`. jfr-shell never showed
   it because its `TableRenderer.toCell` collapses a single-entry map — a rule that lived in a
-  renderer, so a second shell with its own renderer did not inherit it. `Shell.forDisplay` now
-  applies `TuiTableRenderer.unwrap` to the cells of JFR rows only. jfr-shell's own `--format
-  csv|json` still print the wrapper: the rule was never in its CSV and JSON writers either.
+  renderer, so a second shell with its own renderer did not inherit it — and nor did jfr-shell's
+  own CSV and JSON writers, which printed `{name=G1New}` and `"name": {"name": "G1New"}`. The rule
+  now lives in `ConstantValues` (jfr-shell), used by jfr-shell's CSV/JSON output and by every
+  format of `jafar-shell` (`Shell.forDisplay`).
+
+### A single-entry map is not always a wrapper
+
+The converse of the above, and the first version of that fix got it wrong. The wrapper is a plain
+`java.util.HashMap`, so nothing about the value says "constant": `metadata/jdk.types.Symbol` has
+one field, its `fieldsByName` is `{string={name=string, type=java.lang.String, ...}}`, and
+collapsing every single-entry cell of a JFR result printed it as the inner map — the field's name
+gone, in `--format json` where a script would read it. `ConstantValues.holdsRecordingValues`
+decides by where the rows came from instead: `events/` and `constants/` hold recording values and
+are unwrapped; `metadata/` and `chunks/` are structure and are not. jfr-shell's table still
+collapses every single-entry cell, whatever the root; a table is for reading, not for parsing.
 
 `JfrAnalyses.unwrapValue` handles the `ArrayType`/`ComplexType` case; `Redactor` handles the
-single-entry-map case; `TuiTableRenderer.unwrap` handles both for display. If you are reading event
-values anywhere else, one of those applies.
+single-entry-map case; `TuiTableRenderer.unwrap` handles both for display, and `ConstantValues`
+decides when display may use it. If you are reading event values anywhere else, one of those
+applies.
 
 ### A display list is not a data list
 
@@ -156,7 +169,8 @@ so a field name cannot pass for key syntax.
 - Print the value once, in the real path, with a real recording. Not the type — the value.
 - If it comes from metadata, ask whether it means *declared* or *present*.
 - If it is a count, ask what populated it and when.
-- If it is a string from a recording, assume it is wrapped until you have seen otherwise.
+- If it is a string from a recording, assume it is wrapped until you have seen otherwise — and if
+  it is a single-entry map from metadata, assume it is data.
 - If a structure has a display form and a data form, you want the data form, and the display form
   will not tell you that you took the wrong one.
 - If it is a column name, check it against a row before you sort or filter by it. Silence means the

@@ -1248,12 +1248,13 @@ public class CommandDispatcher {
               var eval = new JfrPathEvaluator(listMatchMode);
               rows = eval.applyToRows(rows, dummyQuery.pipeline);
               if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+              boolean unwrap = ConstantValues.holdsRecordingValues(lqv.getQueryString());
               if (isFlameGraph(rows)) {
                 FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
               } else if ("json".equalsIgnoreCase(format)) {
-                printJson(rows, io);
+                printJson(forOutput(rows, unwrap), io);
               } else if ("csv".equalsIgnoreCase(format)) {
-                CsvRenderer.render(rows, io);
+                CsvRenderer.render(forOutput(rows, unwrap), io);
               } else if ("tui".equalsIgnoreCase(format)) {
                 TuiTableRenderer.render(rows, io);
               } else {
@@ -1280,12 +1281,13 @@ public class CommandDispatcher {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       rememberResult(expr, rows);
+      boolean unwrap = ConstantValues.holdsRecordingValues(expr);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, unwrap), io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, unwrap), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.render(rows, io);
       } else {
@@ -1300,12 +1302,13 @@ public class CommandDispatcher {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       rememberResult(expr, rows);
+      boolean unwrap = ConstantValues.holdsRecordingValues(q);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, unwrap), io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, unwrap), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.render(rows, io);
       } else {
@@ -1410,10 +1413,12 @@ public class CommandDispatcher {
               ? eval.evaluateValuesWithLimit((JFRSession) cur.get().session, q, limit)
               : eval.evaluateValues((JFRSession) cur.get().session, q);
       if (limit != null && limit < values.size()) values = values.subList(0, limit);
+      List<?> shaped =
+          ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values;
       if ("json".equalsIgnoreCase(format)) {
-        printJson(values, io);
+        printJson(shaped, io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.renderValues(values, io);
+        CsvRenderer.renderValues(shaped, io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.renderValues(values, io);
       } else {
@@ -1426,7 +1431,7 @@ public class CommandDispatcher {
               : eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, ConstantValues.holdsRecordingValues(q)), io);
       } else if ("csv".equalsIgnoreCase(format)) {
         // Hide internal columns for metadata tables (CSV view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
@@ -1439,7 +1444,7 @@ public class CommandDispatcher {
           copy.remove("fieldCount");
           rows = List.of(copy);
         }
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, ConstantValues.holdsRecordingValues(q)), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         // Hide internal columns for metadata tables (TUI view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
@@ -1989,6 +1994,15 @@ public class CommandDispatcher {
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
+  }
+
+  /**
+   * Rows for CSV/JSON output: with constant-pool wrappers unwrapped when they hold recording
+   * values, see {@link ConstantValues}. The table renderers collapse those cells themselves.
+   */
+  private static List<Map<String, Object>> forOutput(
+      List<Map<String, Object>> rows, boolean recordingValues) {
+    return recordingValues ? ConstantValues.unwrapCells(rows) : rows;
   }
 
   private static boolean isFlameGraph(List<Map<String, Object>> rows) {
