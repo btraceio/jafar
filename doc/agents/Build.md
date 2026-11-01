@@ -7,6 +7,11 @@ See [Verification.md](Verification.md) for how to know a change actually works.
 - Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otlp-shell`)
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
 - Binary test recordings are fetched via `./get_resources.sh` (downloads from Dropbox), not Git LFS — see below
+  - It accepts a file only if it starts with the JFR magic `FLR\0` — downloaded, already present or
+    restored from a CI cache — and replaces one that does not. It attempts every recording, then exits
+    non-zero naming each one it could not obtain, with the page title when the host answered with HTML.
+  - To use a mirror, set `JAFAR_TEST_AP_URL`, `JAFAR_TEST_JFR_URL` or `JAFAR_TEST_DD_URL` (any URL curl
+    accepts, `file://` included).
 
 ## Essential Commands
 ```bash
