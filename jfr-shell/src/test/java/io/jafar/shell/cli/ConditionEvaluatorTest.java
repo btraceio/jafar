@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -446,5 +447,115 @@ class ConditionEvaluatorTest {
     setConfigMap();
     assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("empty(cfg..db)"));
     assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("exists(cfg.)"));
+  }
+
+  // ==================== indexed references: name[idx].field ====================
+
+  private void setTwoRows() {
+    Map<String, Object> r0 = new LinkedHashMap<>();
+    r0.put("a", 1);
+    r0.put("b", "");
+    Map<String, Object> r1 = new LinkedHashMap<>();
+    r1.put("a", 2);
+    r1.put("t", Map.of("name", "worker"));
+    LazyQueryValue rows = new LazyQueryValue(null, null, "events/test");
+    rows.setCachedResult(List.of(r0, r1));
+    sessionStore.set("res", rows);
+  }
+
+  private String substitute(String text) throws Exception {
+    return new VariableSubstitutor(sessionStore, globalStore).substitute(text);
+  }
+
+  @Test
+  void testIndexedRef_FieldOfSpecificRow() throws Exception {
+    setTwoRows();
+    assertEquals("2", substitute("${res[1].a}"));
+    assertTrue(evaluator.evaluate("exists(res[1].a)"));
+    assertFalse(evaluator.evaluate("empty(res[1].a)"));
+    assertTrue(evaluator.evaluate("exists(res[1].t.name)"));
+    assertFalse(evaluator.evaluate("empty( res[1].t.name )"));
+    assertTrue(evaluator.evaluate("empty(res[0].b)"));
+  }
+
+  @Test
+  void testIndexedRef_MissingRowOrField() throws Exception {
+    setTwoRows();
+    assertEquals("", substitute("${res[5].a}"));
+    assertFalse(evaluator.evaluate("exists(res[5].a)"));
+    assertTrue(evaluator.evaluate("empty(res[5].a)"));
+    assertTrue(evaluator.evaluate("empty(res[5])"));
+    assertFalse(evaluator.evaluate("exists(res[0].t)"));
+  }
+
+  @Test
+  void testIndexedRef_RowWithoutPathIsItsFirstValue() throws Exception {
+    setTwoRows();
+    // ${res[1]} is the first value of row 1
+    assertEquals("2", substitute("${res[1]}"));
+    assertTrue(evaluator.evaluate("exists(res[1])"));
+    assertFalse(evaluator.evaluate("empty(res[1])"));
+  }
+
+  @Test
+  void testIndexedRef_MalformedIsRejected() {
+    setTwoRows();
+    assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("exists(res[x].a)"));
+    assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("exists(res[1)"));
+    assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("empty(res]1[)"));
+    assertThrows(IllegalArgumentException.class, () -> evaluator.evaluate("empty(a-b)"));
+  }
+
+  // ==================== llm.* settings, including hyphenated names ====================
+
+  @Test
+  void testSetting_HyphenatedNameResolves() throws Exception {
+    sessionStore.set("llm.base-url", new VariableStore.ScalarValue("http://localhost:11434"));
+    assertTrue(evaluator.evaluate("exists(llm.base-url)"));
+    assertFalse(evaluator.evaluate("empty(llm.base-url)"));
+  }
+
+  @Test
+  void testSetting_GlobalSettingResolves() throws Exception {
+    globalStore.set("llm.max-rows", new VariableStore.ScalarValue("20"));
+    assertTrue(evaluator.evaluate("exists(llm.max-rows)"));
+  }
+
+  @Test
+  void testSetting_UnsetIsMissingNotAnError() throws Exception {
+    assertFalse(evaluator.evaluate("exists(llm.base-url)"));
+    assertTrue(evaluator.evaluate("empty(llm.base-url)"));
+    assertFalse(evaluator.evaluate("exists(llm.backend)"));
+  }
+
+  @Test
+  void testSetting_NameIsCaseInsensitiveLikeSet() throws Exception {
+    // 'set LLM.Backend = x' stores the lower-cased name
+    sessionStore.set("llm.backend", new VariableStore.ScalarValue("ollama"));
+    assertTrue(evaluator.evaluate("exists(LLM.Backend)"));
+  }
+
+  @Test
+  void testSetting_IsNeverSplitIntoVariableAndField() throws Exception {
+    sessionStore.set("llm", new VariableStore.MapValue(Map.of("backend", "x")));
+    assertFalse(evaluator.evaluate("exists(llm.backend)"));
+  }
+
+  // ==================== a path on a scalar is ignored, as in ${...} ====================
+
+  @Test
+  void testScalarPath_CountResultFieldAgreesWithSubstitution() throws Exception {
+    // 'set n = ... | count' stores a scalar, and ${n.count} is documented ('help if')
+    sessionStore.set("n", new VariableStore.ScalarValue(42L));
+    assertEquals("42", substitute("${n.count}"));
+    assertTrue(evaluator.evaluate("exists(n.count)"));
+    assertFalse(evaluator.evaluate("empty(n.count)"));
+  }
+
+  @Test
+  void testScalarPath_EmptyScalarIsEmptyWhateverThePath() throws Exception {
+    sessionStore.set("s", new VariableStore.ScalarValue(""));
+    assertEquals("", substitute("${s.anything}"));
+    assertTrue(evaluator.evaluate("empty(s.anything)"));
   }
 }

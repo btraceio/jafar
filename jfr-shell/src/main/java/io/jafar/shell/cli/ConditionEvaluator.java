@@ -2,10 +2,11 @@ package io.jafar.shell.cli;
 
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.llm.LlmSettings;
 import java.lang.reflect.Array;
 import java.util.Collection;
 import java.util.Map;
-import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 /**
  * Evaluates condition expressions for if/elif statements. Supports comparisons, arithmetic, logical
@@ -24,17 +25,11 @@ import java.util.regex.Pattern;
  * unary      := '-' unary | primary
  * primary    := '(' expr ')' | function | number | string | identifier
  * function   := 'exists' '(' reference ')' | 'empty' '(' reference ')'
- * reference  := identifier ('.' identifier)*
+ * reference  := identifier ('[' digits ']')? ('.' identifier)* | llm-setting-name
  * compOp     := '==' | '!=' | '>' | '>=' | '<' | '<='
  * </pre>
  */
 public final class ConditionEvaluator {
-
-  /**
-   * A dotted reference, {@code name.field.path}: the same shape {@code ${name.field.path}} accepts.
-   */
-  private static final Pattern FIELD_REFERENCE =
-      Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)+");
 
   /** Resolves names and references with the same rules as {@code ${...}} substitution. */
   private final VariableSubstitutor substitutor;
@@ -240,7 +235,7 @@ public final class ConditionEvaluator {
 
   private Object evaluateFunction(String name) throws Exception {
     skipWhitespace();
-    String arg = parseIdentifier();
+    String arg = parseReferenceToken();
     skipWhitespace();
     if (!match(")")) {
       throw new IllegalArgumentException("Expected ')' after function argument at position " + pos);
@@ -254,24 +249,52 @@ public final class ConditionEvaluator {
   }
 
   /**
-   * {@code exists(ref)}: true when {@code ref} names a variable, or is a dotted reference whose
-   * field resolves to a non-null value under the rules {@code ${ref}} uses.
+   * Reads an {@code exists()}/{@code empty()} argument: a reference such as {@code res[2].a.b},
+   * or an {@code llm.*} setting name, which may contain '-' ({@code llm.base-url}). The token is
+   * validated when it is resolved, not here.
    */
-  private boolean variableExists(String name) throws Exception {
-    if (substitutor.resolve(name) != null) {
+  private String parseReferenceToken() {
+    skipWhitespace();
+    int start = pos;
+    while (pos < input.length()) {
+      char c = input.charAt(pos);
+      if (Character.isLetterOrDigit(c)
+          || c == '_'
+          || c == '.'
+          || c == '-'
+          || c == '['
+          || c == ']') {
+        pos++;
+      } else {
+        break;
+      }
+    }
+    return input.substring(start, pos);
+  }
+
+  /**
+   * {@code exists(ref)}: true when {@code ref} names a variable or a set {@code llm.*} setting, or
+   * is a reference ({@code name[idx].field.path}) that resolves to a non-null value under the
+   * rules {@code ${ref}} uses.
+   */
+  private boolean variableExists(String arg) throws Exception {
+    String settingName = settingName(arg);
+    if (substitutor.resolve(settingName != null ? settingName : arg) != null) {
       return true;
     }
-    return isFieldReference(name) && resolveField(name) != null;
+    Matcher ref = settingName == null ? reference(arg) : null;
+    return ref != null && resolveReference(ref) != null;
   }
 
   /**
    * {@code empty(ref)}: true when {@code ref} does not exist, or what it denotes is null, an empty
    * string, an empty map or collection, or a query result with no rows.
    */
-  private boolean variableEmpty(String name) throws Exception {
-    // A whole-name match wins, so dotted names that are stored as-is (llm.* settings) keep
-    // resolving to themselves rather than being split into variable + field.
-    VariableStore.Value val = substitutor.resolve(name);
+  private boolean variableEmpty(String arg) throws Exception {
+    // A whole-name match wins, so names stored as-is (llm.* settings) resolve to themselves
+    // rather than being split into variable + field.
+    String settingName = settingName(arg);
+    VariableStore.Value val = substitutor.resolve(settingName != null ? settingName : arg);
     if (val != null) {
       if (val instanceof LazyQueryValue lqv) {
         return lqv.size() == 0;
@@ -281,38 +304,54 @@ public final class ConditionEvaluator {
       }
       return true;
     }
-    if (!isFieldReference(name)) {
-      return true;
-    }
-    return isEmptyValue(resolveField(name));
+    Matcher ref = settingName == null ? reference(arg) : null;
+    return ref == null || isEmptyValue(resolveReference(ref));
   }
 
   /**
-   * Returns whether {@code name} is a dotted field reference. A dotted argument that does not have
-   * the shape {@code ${...}} accepts (for example {@code m..a} or {@code m.}) is rejected rather
-   * than read as a missing variable, which would make {@code empty()} silently true.
+   * The canonical name ({@code set} stores settings lower-cased) when {@code arg} is an {@code
+   * llm.*} setting, else null. A setting is a name, never a variable plus a field, even when unset.
+   * Every setting name contains a dot, so plain names skip the lookup.
    */
-  private static boolean isFieldReference(String name) {
-    if (name.indexOf('.') < 0) {
-      return false;
+  private static String settingName(String arg) {
+    if (arg.indexOf('.') < 0) {
+      return null;
     }
-    if (!FIELD_REFERENCE.matcher(name).matches()) {
-      throw new IllegalArgumentException("Invalid variable reference: " + name);
-    }
-    return true;
+    return LlmSettings.lookup(arg).map(LlmSettings.Setting::name).orElse(null);
   }
 
   /**
-   * Resolves {@code base.field.path} exactly as {@code ${base.field.path}} would, returning the
-   * unformatted value, or null when the base variable or the field is missing.
+   * Parses {@code arg} as a {@code ${...}} reference when it carries an index or a field path.
+   * Returns null for a plain name, which is looked up as a whole only, as before. A token with
+   * reference syntax that {@code ${...}} would not accept ({@code m..a}, {@code m.}, {@code r[x]},
+   * {@code a-b}) is rejected rather than read as a missing variable, which would make {@code
+   * empty()} silently true.
    */
-  private Object resolveField(String name) throws Exception {
-    int dot = name.indexOf('.');
-    VariableStore.Value base = substitutor.resolve(name.substring(0, dot));
+  private static Matcher reference(String arg) {
+    if (arg.indexOf('.') < 0
+        && arg.indexOf('[') < 0
+        && arg.indexOf(']') < 0
+        && arg.indexOf('-') < 0) {
+      return null;
+    }
+    Matcher m = VariableSubstitutor.REFERENCE_PATTERN.matcher(arg);
+    if (!m.matches()) {
+      throw new IllegalArgumentException("Invalid variable reference: " + arg);
+    }
+    return m;
+  }
+
+  /**
+   * Resolves a parsed reference exactly as {@code ${...}} would, returning the unformatted value,
+   * or null when the base variable, the row or the field is missing.
+   */
+  private Object resolveReference(Matcher ref) throws Exception {
+    VariableStore.Value base = substitutor.resolve(ref.group(1));
     if (base == null) {
       return null;
     }
-    return substitutor.extractRaw(base, null, name.substring(dot + 1));
+    String path = ref.group(3);
+    return substitutor.extractRaw(base, ref.group(2), path == null ? null : path.substring(1));
   }
 
   private static boolean isEmptyValue(Object v) {

@@ -24,10 +24,22 @@ import java.util.regex.Pattern;
  */
 public final class VariableSubstitutor {
 
+  // A reference: name, optional [idx], optional .field.path. Groups: 1 name, 2 index (may be null),
+  // 3 path with its leading dot (may be null).
+  private static final String REFERENCE =
+      "([a-zA-Z_][a-zA-Z0-9_]*)"
+          + "(?:\\[(\\d+)\\])?"
+          + "(\\.(?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?";
+
   // Matches ${name} or ${name[idx]} followed by optional .field.path
-  private static final Pattern VAR_PATTERN =
-      Pattern.compile(
-          "\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\\[(\\d+)\\])?(\\.(?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\}");
+  private static final Pattern VAR_PATTERN = Pattern.compile("\\$\\{" + REFERENCE + "\\}");
+
+  /**
+   * The bare reference grammar of {@code ${...}}, without the braces, with the same groups.
+   * {@link ConditionEvaluator} parses {@code exists()}/{@code empty()} arguments with it, so the
+   * two cannot accept different shapes.
+   */
+  static final Pattern REFERENCE_PATTERN = Pattern.compile(REFERENCE);
 
   private final VariableStore sessionStore; // may be null
   private final VariableStore globalStore; // may be null

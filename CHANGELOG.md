@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
   empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
   evaluator)
+- **`exists()` and `empty()` resolve references the way `${...}` does.** A dotted argument such
+  as `empty(cfg.db.host)` was looked up as one variable literally named `cfg.db.host`, which never
+  exists, so `empty()` was always true and `exists()` always false while `${cfg.db.host}` printed
+  `localhost`; an indexed argument (`exists(rows[1].thread)`) or a hyphenated setting
+  (`exists(llm.base-url)`) did not parse at all, and the condition took the `else` branch. The
+  argument now uses the same grammar and resolution as `${...}`: nested map fields, `[idx]` rows,
+  `.size`, and first-row fields of query results. `llm.*` settings (case-insensitive, hyphens
+  allowed) are checked as settings and never split into a variable plus a field, and a malformed
+  reference (`cfg..db`, `rows[x]`) is an error instead of silently empty
+- **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
+  true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
+  the condition evaluator handled only scalars and query results and treated every other value
+  as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
+  empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
+  evaluator)
 - **`exists()` and `empty()` resolve field references the way `${...}` does.** A dotted
   argument such as `empty(cfg.db.host)` was looked up as one variable literally named
   `cfg.db.host`, which never exists, so `empty()` was always true and `exists()` always false while
