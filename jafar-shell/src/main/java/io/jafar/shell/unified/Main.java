@@ -196,7 +196,8 @@ public final class Main implements Callable<Integer> {
         lines = Files.readAllLines(path);
       }
       try (Shell shell = Shell.forScript(System.out, System.err)) {
-        return shell.runScript(lines, arguments, continueOnError).hasErrors() ? 1 : 0;
+        String name = "-".equals(scriptPath) ? "-" : Paths.get(scriptPath).getFileName().toString();
+        return shell.runScript(name, lines, arguments, continueOnError).hasErrors() ? 1 : 0;
       }
     }
   }

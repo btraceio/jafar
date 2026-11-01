@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
   dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
-  offers these commands and their arguments in every session type. The parsing, scoping and
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
+  ends inside an `if` block has the blocks it left open closed. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
 - **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
@@ -60,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the script as a recording. When the path is `-` and the first argument is a file starting with
   `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
   arguments as `$1`, `$2`, ...
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field. Shells dispatch commands on one thread, so this needed concurrent access to a
+  variable to show
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
 - **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
   `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
   conditional expression in the map parser promoted the `long` branch to `double`. Decimals are

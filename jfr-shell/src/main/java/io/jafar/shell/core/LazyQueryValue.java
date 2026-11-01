@@ -11,20 +11,28 @@ import java.util.Map;
 /**
  * Lazy query value using flyweight pattern. Stores the query and a weak reference to the session.
  * Evaluation happens on-demand when get() is called, with caching of the result.
+ *
+ * <p>Thread-safe. The cache is one volatile slot holding the rows or a sentinel, so a reader sees
+ * either rows or "not evaluated" — never the "evaluated" flag of one state with the rows of
+ * another, which two separate volatiles allowed (a read racing {@link #invalidate} could return
+ * {@code null}). A cached read takes no lock; evaluation is serialized.
  */
 public final class LazyQueryValue implements VariableStore.LazyValue {
+  /** The cache slot before evaluation, and after invalidation or release. */
+  private static final Object NOT_EVALUATED = new Object();
+
+  /** Stands for an evaluation that returned {@code null}, which still counts as evaluated. */
+  private static final Object NULL_RESULT = new Object();
+
   private final Query query;
   private final WeakReference<SessionRef<JFRSession>> sessionRef;
   private final String queryString;
-  private volatile Object cachedResult;
-  private volatile boolean evaluated;
+  private volatile Object cache = NOT_EVALUATED;
 
   public LazyQueryValue(Query query, SessionRef<JFRSession> session, String queryString) {
     this.query = query;
     this.sessionRef = new WeakReference<>(session);
     this.queryString = queryString;
-    this.cachedResult = null;
-    this.evaluated = false;
   }
 
   /**
@@ -39,21 +47,20 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
       throw new IllegalStateException("Cannot copy LazyQueryValue: session no longer available");
     }
     LazyQueryValue copy = new LazyQueryValue(query, ref, queryString);
-    if (evaluated) {
-      copy.cachedResult = this.cachedResult;
-      copy.evaluated = true;
-    }
+    copy.cache = cache; // one read: the rows, or not evaluated
     return copy;
   }
 
   @Override
   public Object get() throws Exception {
-    if (evaluated) {
-      return cachedResult;
+    Object c = cache;
+    if (c != NOT_EVALUATED) {
+      return c == NULL_RESULT ? null : c;
     }
     synchronized (this) {
-      if (evaluated) {
-        return cachedResult;
+      c = cache;
+      if (c != NOT_EVALUATED) {
+        return c == NULL_RESULT ? null : c;
       }
       SessionRef<JFRSession> ref = sessionRef.get();
       if (ref == null) {
@@ -63,31 +70,25 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
         throw new IllegalStateException("Session has been closed");
       }
       JfrPathEvaluator evaluator = new JfrPathEvaluator();
-      cachedResult = evaluator.evaluate(ref.session, query);
-      evaluated = true;
-      return cachedResult;
+      Object result = evaluator.evaluate(ref.session, query);
+      cache = result == null ? NULL_RESULT : result;
+      return result;
     }
   }
 
   @Override
   public void invalidate() {
-    synchronized (this) {
-      cachedResult = null;
-      evaluated = false;
-    }
+    cache = NOT_EVALUATED;
   }
 
   /** Sets the cached result directly (used for eager evaluation). */
   public void setCachedResult(Object result) {
-    synchronized (this) {
-      this.cachedResult = result;
-      this.evaluated = true;
-    }
+    cache = result == null ? NULL_RESULT : result;
   }
 
   @Override
   public boolean isCached() {
-    return evaluated;
+    return cache != NOT_EVALUATED;
   }
 
   /**
@@ -132,23 +133,21 @@ public final class LazyQueryValue implements VariableStore.LazyValue {
 
   @Override
   public void release() {
-    synchronized (this) {
-      cachedResult = null;
-      evaluated = false;
-      sessionRef.clear();
-    }
+    cache = NOT_EVALUATED;
+    sessionRef.clear();
   }
 
   @Override
   public String describe() {
+    Object c = cache; // one read, so the status and the row count agree
     SessionRef<JFRSession> ref = sessionRef.get();
     String status;
     if (ref == null) {
       status = " (session gone)";
     } else if (ref.session.isClosed()) {
       status = " (closed)";
-    } else if (evaluated) {
-      int size = cachedResult instanceof List<?> list ? list.size() : 1;
+    } else if (c != NOT_EVALUATED) {
+      int size = c instanceof List<?> list ? list.size() : 1;
       status = " (cached: " + size + " rows)";
     } else {
       status = " (not evaluated)";

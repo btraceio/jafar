@@ -71,6 +71,9 @@ public class CommandDispatcher {
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
   private final Conditionals conditionals = new Conditionals();
+  // Built once: dispatch() consults them for every line
+  private VariableScopes scopes;
+  private java.util.function.Consumer<String> errorSink;
   private final boolean verbose;
 
   @FunctionalInterface
@@ -709,7 +712,7 @@ public class CommandDispatcher {
 
     try {
       // Handle conditional keywords - these must be processed even in inactive branches
-      if (conditionals.handle(line, scopes(), io::error)) {
+      if (conditionals.handle(line, scopes(), errorSink())) {
         return true;
       }
 
@@ -961,17 +964,25 @@ public class CommandDispatcher {
         return;
       }
       sessions.close(String.valueOf(cur.get().id));
+      EvaluatorLazyValue.forgetSession(globalStore, cur.get().id);
       if (verbose) {
         io.println("Closed session #" + cur.get().id);
       }
     } else if (args.size() == 1 && "--all".equals(args.get(0))) {
+      List<Integer> ids = new ArrayList<>();
+      sessions.list().forEach(r -> ids.add(r.id));
       sessions.closeAll();
+      ids.forEach(id -> EvaluatorLazyValue.forgetSession(globalStore, id));
       if (verbose) {
         io.println("Closed all sessions");
       }
     } else {
       String key = args.get(0);
+      var target = sessions.get(key);
       boolean ok = sessions.close(key);
+      if (ok) {
+        EvaluatorLazyValue.forgetSession(globalStore, target.get().id);
+      }
       if (!ok) io.error("No such session: " + key);
       else if (verbose) io.println("Closed session " + key);
     }
@@ -3065,7 +3076,22 @@ public class CommandDispatcher {
 
   /** Session-then-global scoping, shared with jafar-shell. */
   private VariableScopes scopes() {
-    return new VariableScopes(globalStore, this::getSessionStore);
+    VariableScopes s = scopes;
+    if (s == null) {
+      // Lazily, because test doubles subclass this dispatcher with a null IO and sessions
+      s = new VariableScopes(globalStore, this::getSessionStore);
+      scopes = s;
+    }
+    return s;
+  }
+
+  private java.util.function.Consumer<String> errorSink() {
+    java.util.function.Consumer<String> e = errorSink;
+    if (e == null) {
+      e = io::error;
+      errorSink = e;
+    }
+    return e;
   }
 
   private VariableStore getTargetStore(boolean global) {

@@ -17,6 +17,9 @@ import java.util.function.Supplier;
  *
  * <p>A session's store is cleared when the session closes ({@code SessionManager} does that); the
  * global store lives as long as the shell.
+ *
+ * <p>Not thread-safe, like {@link VariableStore} beneath it: use it from the thread that dispatches
+ * the shell's commands.
  */
 public final class VariableScopes {
   private final VariableStore global;
