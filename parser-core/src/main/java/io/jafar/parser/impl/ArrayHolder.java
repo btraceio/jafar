@@ -9,6 +9,10 @@ import java.util.Arrays;
  *
  * <p>This class provides a concrete implementation for storing and managing array values parsed
  * from JFR data, supporting all primitive types and objects.
+ *
+ * <p>The backing array type follows the element type, except that JFR {@code int} elements are
+ * stored in a {@code long[]}: the untyped value model represents every {@code int} as a {@code
+ * long}, matching scalar {@code int} fields (which surface as {@link Long}).
  */
 public final class ArrayHolder implements ArrayType {
   /** The type name of the array elements. */
@@ -36,8 +40,9 @@ public final class ArrayHolder implements ArrayType {
         array = new char[len];
         break;
       case "int":
-        array = new int[len];
-        break;
+      // JFR 'int' values reach the value builders as long (see ValueProcessor#onIntValue) and
+      // scalar int fields surface as Long, so int arrays are long[] too. Narrowing would also
+      // corrupt @Timestamp/@Timespan(TICKS) elements, whose nanosecond values exceed int range.
       case "long":
         array = new long[len];
         break;
@@ -85,7 +90,6 @@ public final class ArrayHolder implements ArrayType {
       case "char":
         return Arrays.toString((char[]) array);
       case "int":
-        return Arrays.toString((int[]) array);
       case "long":
         return Arrays.toString((long[]) array);
       case "byte":

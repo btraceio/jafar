@@ -57,9 +57,11 @@ That's it! The handler receives every event as a Map, and you check the type nam
 Every event is represented as `Map<String, Object>` where:
 - Keys are field names (e.g., `"state"`, `"duration"`, `"eventThread"`)
 - Values can be:
-  - Primitive wrappers (`Long`, `Integer`, `Boolean`, etc.)
+  - Primitive wrappers: `Long` for JFR `int` and `long`, `Short`, `Character`, `Byte`,
+    `Boolean`, `Float`, `Double`
   - `String`
-  - `Instant` for timestamps
+  - `Long` epoch nanoseconds for `@Timestamp(TICKS)` fields and `Long` nanoseconds for
+    `@Timespan(TICKS)` fields (converted from ticks using the chunk's frequency)
   - `Map<String, Object>` for nested complex types
   - `ComplexType` for constant-pool references
   - `ArrayType` for array fields
@@ -326,14 +328,10 @@ parser.handle((type, value, ctl) -> {
         Object array = ((ArrayType) arrayObj).getArray();
 
         if (array instanceof long[]) {
+            // JFR 'int' and 'long' arrays both decode to long[]
             long[] longs = (long[]) array;
             for (long l : longs) {
                 System.out.println("Value: " + l);
-            }
-        } else if (array instanceof int[]) {
-            int[] ints = (int[]) array;
-            for (int i : ints) {
-                System.out.println("Value: " + i);
             }
         } else if (array instanceof byte[]) {
             byte[] bytes = (byte[]) array;
@@ -342,6 +340,23 @@ parser.handle((type, value, ctl) -> {
     }
 });
 ```
+
+The backing array type for each JFR element type:
+
+| JFR element type | `getArray()` returns |
+|---|---|
+| `int`, `long` | `long[]` |
+| `short` | `short[]` |
+| `char` | `char[]` |
+| `byte` | `byte[]` |
+| `boolean` | `boolean[]` |
+| `float` | `float[]` |
+| `double` | `double[]` |
+| `java.lang.String`, complex and constant-pool types | `Object[]` |
+
+`int` arrays are `long[]` for the same reason scalar `int` fields are `Long`: the untyped API
+represents every JFR `int` as a `long`. `@Timestamp(TICKS)` and `@Timespan(TICKS)` elements are
+converted to epoch nanoseconds and nanosecond durations, which do not fit in an `int`.
 
 ## Type Filtering
 
@@ -702,8 +717,9 @@ public class IOAnalyzer {
                     // Extract address and port
                     String address = Values.as(value, String.class, "address")
                                           .orElse("unknown");
-                    Integer port = Values.as(value, Integer.class, "port")
-                                        .orElse(0);
+                    // JFR int fields surface as Long in the untyped API
+                    Long port = Values.as(value, Long.class, "port")
+                                     .orElse(0L);
 
                     String endpoint = address + ":" + port;
 

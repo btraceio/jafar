@@ -66,7 +66,7 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
 
 ### Complex and array values in untyped events
 - **ComplexType**: Complex fields may appear either inline as `Map<String, Object>` or as a wrapper implementing `io.jafar.parser.api.ComplexType` (e.g., constant-pool backed references). Use `getValue()` on a `ComplexType` to obtain the resolved `Map<String, Object>`.
-- **ArrayType**: When a field is an array, the value implements `io.jafar.parser.api.ArrayType`. Use `getType()` to inspect the array class (e.g., `int[].class`, `Object[].class`) and `getArray()` to access the underlying Java array.
+- **ArrayType**: When a field is an array, the value implements `io.jafar.parser.api.ArrayType`. Use `getType()` to inspect the array class (e.g., `long[].class`, `Object[].class`) and `getArray()` to access the underlying Java array. Arrays of JFR `int` are `long[]`, matching scalar `int` fields, which are `Long`: tick-based `@Timestamp`/`@Timespan` values are converted to nanoseconds, which do not fit in an `int`.
 
 Examples:
 
@@ -100,9 +100,7 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
             // primitive wrapper or String
           }
         }
-      } else if (arr instanceof int[] ints) {
-        for (int i : ints) { /* ... */ }
-      } else if (arr instanceof long[] longs) {
+      } else if (arr instanceof long[] longs) { // JFR int and long arrays
         for (long l : longs) { /* ... */ }
       }
     }
