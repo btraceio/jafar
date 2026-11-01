@@ -67,7 +67,7 @@ public final class Main implements Callable<Integer> {
       description = "Install a backend plugin from a local JAR file and exit")
   private String installPlugin;
 
-  static final class VersionProvider implements CommandLine.IVersionProvider {
+  public static final class VersionProvider implements CommandLine.IVersionProvider {
     @Override
     public String[] getVersion() {
       return new String[] {Version.VALUE};

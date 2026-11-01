@@ -273,6 +273,11 @@ public final class Shell implements AutoCloseable {
           continue;
         }
 
+        if (isQueryForCurrentSession(input)) {
+          handleShow(input);
+          continue;
+        }
+
         terminal.writer().println("Unknown command: " + input);
         terminal.writer().println("Type 'help' for available commands.");
         terminal.flush();
@@ -291,6 +296,21 @@ public final class Shell implements AutoCloseable {
         terminal.flush();
       }
     }
+  }
+
+  private boolean isQueryForCurrentSession(String input) {
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (current.isEmpty()) {
+      return false;
+    }
+    ShellModule module = moduleById.get(current.get().session.getType());
+    QueryEvaluator evaluator = module != null ? module.getQueryEvaluator() : null;
+    return evaluator != null && startsWithRoot(input, evaluator.getRootTypes());
+  }
+
+  /** True for {@code objects | count} or {@code events/jdk.FileRead}: a query with no 'show'. */
+  static boolean startsWithRoot(String input, List<String> rootTypes) {
+    return rootTypes.contains(input.split("[/\\[\\s|]", 2)[0]);
   }
 
   private String getPrompt() {

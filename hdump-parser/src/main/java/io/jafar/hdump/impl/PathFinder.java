@@ -3,6 +3,7 @@ package io.jafar.hdump.impl;
 import io.jafar.hdump.api.GcRoot;
 import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapDump;
+import io.jafar.hdump.api.HeapField;
 import io.jafar.hdump.api.HeapObject;
 import io.jafar.hdump.api.PathStep;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -42,6 +43,10 @@ public final class PathFinder {
    * </ul>
    *
    * <p>If the target is itself a GC root, returns a single-element list containing just the target.
+   *
+   * <p>Objects referenced from static fields are start points too: HPROF lists a class as a root
+   * but a class is not a heap object, so its statics are the only way to reach what it holds. Such
+   * a path starts at the referenced object, with {@code static <class>.<field>} as its field name.
    *
    * <p>If no path exists (unreachable object), returns an empty list.
    *
@@ -84,6 +89,24 @@ public final class PathFinder {
                   parents.put(rootObj.getId(), new Edge(null, null));
                 }
               });
+    }
+
+    // Static fields hold objects without any object referencing them. Seeded after the GC roots, so
+    // of two equally short paths the one from a real root wins.
+    for (HeapClass cls : dump.getClasses()) {
+      for (HeapField field : cls.getStaticFields()) {
+        if (!field.isObjectRef() || !(field.getStaticValue() instanceof Long refId)) continue;
+        dump.getObjectById(refId)
+            .ifPresent(
+                ref -> {
+                  if (visited.add(ref.getId())) {
+                    queue.add(ref);
+                    parents.put(
+                        ref.getId(),
+                        new Edge(null, "static " + cls.getName() + "." + field.getName()));
+                  }
+                });
+      }
     }
 
     // BFS until we find target or exhaust reachable objects

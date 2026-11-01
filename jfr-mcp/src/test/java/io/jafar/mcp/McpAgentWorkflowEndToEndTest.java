@@ -96,6 +96,14 @@ class McpAgentWorkflowEndToEndTest {
           queryPayload.path("results").toString().contains("java.lang.Object")
               && queryPayload.path("results").toString().contains("java.lang.String"),
           () -> "query=" + query);
+      // Iterates the object cache, which needs fastutil classes the class histogram above does not.
+      JsonNode objectCount =
+          mcp.call(
+              "hdump_query", Map.of("sessionId", "hprof-workflow", "query", "objects | count"));
+      assertEquals(
+          7,
+          mcp.contentJson(objectCount).at("/results/0/count").asInt(),
+          () -> "objectCount=" + objectCount);
       JsonNode report =
           mcp.call("hdump_report", Map.of("sessionId", "hprof-workflow", "focus", "histogram"));
       assertTrue(mcp.contentJson(report).has("findings"), () -> "report=" + report);
