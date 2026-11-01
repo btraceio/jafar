@@ -290,3 +290,90 @@ func TestReusedArraysDoNotReboxTheirSlice(t *testing.T) {
 			" recycled arrays allocate per event", withArrays, withoutArrays)
 	}
 }
+
+// Arrays decoded for constant pool entries cannot come from an arena (the
+// values are cached and shared), so their Array structs come from a chunk-wide
+// block. Without the block each such array costs three allocations - struct,
+// backing array, and the slice header that storing the elements in Elems copies
+// to the heap - instead of two plus a share of a block.
+//
+// The cost is isolated by comparing constant pool entries holding a 3 element
+// long array against identical entries holding one scalar long (one
+// allocation: its interface box).
+const (
+	tIDHolder      = 60
+	tIDHolderEvent = 104
+)
+
+func holderRecording(entries int, asArray bool) []byte {
+	field := elem("field", attr("name", "values"), attr("class", itoa(tIDLong)))
+	if asArray {
+		field.attributes = append(field.attributes, attr("dimension", "1"))
+	}
+	holder := elem("class", attr("id", itoa(tIDHolder)), attr("name", "test.Holder")).with(field)
+	event := elem("class",
+		attr("id", itoa(tIDHolderEvent)),
+		attr("name", "test.HolderEvent"),
+		attr("superType", "jdk.jfr.Event"),
+	).with(
+		elem("field", attr("name", "holder"), attr("class", itoa(tIDHolder)), attr("constantPool", "true")),
+	)
+	metadata := elem("root").with(elem("metadata").with(
+		primitiveClass(tIDLong, "long"), holder, event,
+	))
+	pool := constantPoolData{typeID: tIDHolder}
+	events := make([][]byte, entries)
+	for i := range events {
+		w := &writer{}
+		if asArray {
+			w.varint(3)
+			for j := 0; j < 3; j++ {
+				w.varint(int64(1000 + i*3 + j))
+			}
+		} else {
+			w.varint(int64(1000 + i))
+		}
+		pool.entries = append(pool.entries, poolEntry{id: int64(i + 1), data: w.buf})
+		ev := &writer{}
+		ev.varint(tIDHolderEvent)
+		ev.varint(int64(i + 1))
+		events[i] = ev.buf
+	}
+	spec := chunkSpec{
+		metadata:   metadata,
+		pools:      []constantPoolData{pool},
+		events:     events,
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}
+
+func TestConstantPoolArraysShareStructBlocks(t *testing.T) {
+	perEntry := func(asArray bool) float64 {
+		resolveAll := func(data []byte) float64 {
+			return testing.AllocsPerRun(5, func() {
+				err := NewParser(data).ParseWith(Options{OnError: FailOnError}, func(e *Event) error {
+					v := Get(e.Values, "holder", "values")
+					if arr, ok := v.(*Array); asArray && (!ok || arr.Len() != 3) || !asArray && v == nil {
+						t.Fatalf("holder.values = %#v", v)
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+		const few, many = 64, 640
+		return (resolveAll(holderRecording(many, asArray)) - resolveAll(holderRecording(few, asArray))) / (many - few)
+	}
+	arrayCost := perEntry(true) - perEntry(false)
+	// Expected: backing + header + 1/64 block - scalar box = 1.016.
+	if arrayCost > 1.5 {
+		t.Errorf("a constant pool array costs %.3f allocations more than a scalar, want about 1:"+
+			" its Array struct is allocated on its own", arrayCost)
+	}
+}

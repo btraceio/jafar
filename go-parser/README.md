@@ -122,6 +122,9 @@ if arr, ok := e.Values["values"].(*jfr.Array); ok {
 `Get` indexes arrays through `At`, and `ResolveDeep` turns a numeric array into
 a copy of its slice and any other array into an `[]any`.
 
+Arrays decoded without `ReuseValues`, and those inside constant pool entries,
+are allocated 64 at a time: an array you keep holds its 2 KiB block alive.
+
 ### Constant pool references
 
 Most of a JFR recording's payload — threads, stack traces, methods, classes,

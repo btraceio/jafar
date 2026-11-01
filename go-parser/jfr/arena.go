@@ -77,11 +77,22 @@ func (c *chunkParser) newMap(hint int) map[string]any {
 // decoded. The caller sizes its elements with sized.
 //
 // A recycled array keeps the slice it last held, so an event shaped like the
-// previous one of its type decodes into the same backing array.
+// previous one of its type decodes into the same backing array. Without an
+// arena the array is new and comes from a chunk-wide block.
 func (c *chunkParser) newArray(elementType string) *Array {
 	a := c.arena
 	if a == nil {
-		return &Array{ElementType: elementType}
+		// Not recyclable: a constant pool value is cached and shared by every
+		// event referencing it, and an event decoded without ReuseValues may
+		// be kept. Allocate the struct from a chunk-wide block instead, which
+		// pays for the slice header that storing the elements in Elems costs.
+		if len(c.arraySlab) == 0 {
+			c.arraySlab = make([]Array, arraySlabSize)
+		}
+		arr := &c.arraySlab[0]
+		c.arraySlab = c.arraySlab[1:]
+		arr.ElementType = elementType
+		return arr
 	}
 	var arr *Array
 	if a.arrIdx < len(a.arrays) {
@@ -156,3 +167,8 @@ func (c *chunkParser) newRef(pool *constantPool, index int64) *Ref {
 // alive as long as any reference handed out from it does, so it trades a bounded
 // amount of retention (a few kilobytes) for a large drop in allocation count.
 const refSlabSize = 256
+
+// arraySlabSize is the number of Array structs allocated in one block, with the
+// same retention trade-off as refSlabSize: a block of 64 arrays is 2 KiB and
+// stays alive as long as any array handed out from it does.
+const arraySlabSize = 64
