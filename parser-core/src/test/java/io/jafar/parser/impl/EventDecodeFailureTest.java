@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import io.jafar.parser.JfrTestHelper;
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
@@ -23,6 +24,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,7 +44,8 @@ import org.junit.jupiter.params.provider.EnumSource;
  * instead ignored and parsing went on.
  *
  * <p>Now the parse fails with {@link EventDecodingException} naming type, chunk and position, and
- * only the complete events before the bad one have been delivered.
+ * only the complete events before the bad one have been delivered. With {@link
+ * UntypedJafarParser#onDecodeError} returning {@code true} the bad event alone is skipped.
  */
 class EventDecodeFailureTest {
   private static final String TYPE = "test.Corruptible";
@@ -83,12 +87,23 @@ class EventDecodeFailureTest {
     }
 
     ChunkParserListener listener(List<Map<String, Object>> sink) {
+      return listener(sink, null);
+    }
+
+    /** {@code skipped == null}: default policy; otherwise skip and record each failure there. */
+    ChunkParserListener listener(
+        List<Map<String, Object>> sink, List<EventDecodingException> skipped) {
       switch (this) {
         case DEFAULT:
           return new EventStream(null) {
             @Override
             protected void onEventValue(MetadataClass t, Map<String, Object> v, Control c) {
               collect(t, v, sink);
+            }
+
+            @Override
+            protected boolean onDecodeError(EventDecodingException failure) {
+              return skipped != null && skipped.add(failure);
             }
           };
         case LAZY:
@@ -97,12 +112,22 @@ class EventDecodeFailureTest {
             protected void onEventValue(MetadataClass t, Map<String, Object> v, Control c) {
               collect(t, v, sink);
             }
+
+            @Override
+            protected boolean onDecodeError(EventDecodingException failure) {
+              return skipped != null && skipped.add(failure);
+            }
           };
         case BASELINE:
           return new EventStreamBaseline(null) {
             @Override
             protected void onEventValue(MetadataClass t, Map<String, Object> v, Control c) {
               collect(t, v, sink);
+            }
+
+            @Override
+            protected boolean onDecodeError(EventDecodingException failure) {
+              return skipped != null && skipped.add(failure);
             }
           };
         default:
@@ -160,6 +185,147 @@ class EventDecodeFailureTest {
             return new Outcome(seen, thrown);
           });
     }
+  }
+
+  // --- opt-in skipping: UntypedJafarParser.onDecodeError -------------------------------------
+
+  @Test
+  void decodeErrorHandlerReturningTrueSkipsOnlyTheBadEvent() throws Exception {
+    Corruption corruption = Corruption.EVENT_PAYLOAD;
+    Path jfr = corrupted(corruption);
+    List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+    List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.handle((type, value, ctl) -> collect(type, value, seen));
+      p.onDecodeError(skipped::add).run();
+    }
+    assertSkippedOnlyTheBadEvent(corruption, jfr, seen, skipped);
+  }
+
+  @Test
+  void decodeErrorHandlerSurvivesWithParserListener() throws Exception {
+    Corruption corruption = Corruption.EVENT_PAYLOAD;
+    Path jfr = corrupted(corruption);
+    List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+    List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.onDecodeError(skipped::add);
+      UntypedJafarParser q = p.withParserListener(new ChunkParserListener() {});
+      q.handle((type, value, ctl) -> collect(type, value, seen));
+      q.run();
+    }
+    assertSkippedOnlyTheBadEvent(corruption, jfr, seen, skipped);
+  }
+
+  @Test
+  void decodeErrorHandlerReturningFalseOrResetToNullFailsTheParse() throws Exception {
+    for (Corruption corruption : Corruption.values()) {
+      for (boolean reset : new boolean[] {false, true}) {
+        assertFailsCleanly(
+            corruption,
+            jfr -> {
+              List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+              try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+                p.handle((type, value, ctl) -> collect(type, value, seen));
+                if (reset) {
+                  p.onDecodeError(f -> true).onDecodeError(null);
+                } else {
+                  p.onDecodeError(f -> false);
+                }
+                return new Outcome(seen, assertThrows(IOException.class, p::run));
+              }
+            });
+      }
+    }
+  }
+
+  @Test
+  void exceptionFromDecodeErrorHandlerFailsTheParseWithIt() throws Exception {
+    Path jfr = corrupted(Corruption.EVENT_PAYLOAD);
+    IllegalStateException mine = new IllegalStateException("enough");
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.onDecodeError(
+          f -> {
+            throw mine;
+          });
+      IOException thrown = assertThrows(IOException.class, p::run);
+      assertTrue(find(thrown, IllegalStateException.class) == mine, chain(thrown));
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(Stream.class)
+  void everyGenericValuePathCanSkip(Stream stream) throws Exception {
+    for (Corruption corruption : new Corruption[] {Corruption.EVENT_PAYLOAD}) {
+      Path jfr = corrupted(corruption);
+      List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+      List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+      try (StreamingChunkParser p =
+          new StreamingChunkParser(
+              ((ParsingContextImpl) ParsingContext.create()).untypedContextFactory())) {
+        p.parse(jfr, stream.listener(seen, skipped));
+      }
+      assertSkippedOnlyTheBadEvent(corruption, jfr, seen, skipped);
+    }
+  }
+
+  /**
+   * Skip mode with a corrupted constant pool entry. Only part of the outcome is right, and only
+   * that part is asserted: the event that reads the bad entry is reported once and not delivered.
+   *
+   * <p>Not asserted, because it is wrong: later events in the chunk can then read other pooled
+   * strings as {@code null} without any error. {@code ParsingUtils.skipUTF8}, which indexes the
+   * pool, treats an unknown encoding id as having no payload, so every later entry's offset is
+   * misaligned, and {@code readUTF8} returns {@code null} for a reference it cannot resolve. The Go
+   * parser's {@code skipString} has the same default. Fixing it changes constant pool error policy
+   * in both parsers and is left to a separate change.
+   */
+  @Test
+  void skippingAnEventWithACorruptedPoolEntryReportsItOnce() throws Exception {
+    Path jfr = corrupted(Corruption.CONSTANT_POOL);
+    List<Map<String, Object>> seen = Collections.synchronizedList(new ArrayList<>());
+    List<EventDecodingException> skipped = Collections.synchronizedList(new ArrayList<>());
+    try (UntypedJafarParser p = UntypedJafarParser.open(jfr)) {
+      p.handle((type, value, ctl) -> collect(type, value, seen));
+      p.onDecodeError(skipped::add).run();
+    }
+    assertEquals(1, skipped.size(), "decode errors: " + skipped);
+    assertEquals(TYPE, skipped.get(0).getTypeName());
+    assertEquals(EVENTS - 1, seen.size(), describe(seen));
+    for (Map<String, Object> e : seen) {
+      assertTrue(((Number) e.get("seq")).intValue() != BAD, "corrupted event delivered: " + e);
+    }
+  }
+
+  private void assertSkippedOnlyTheBadEvent(
+      Corruption corruption,
+      Path jfr,
+      List<Map<String, Object>> seen,
+      List<EventDecodingException> skipped)
+      throws Exception {
+    String ctx = corruption + ": " + describe(seen);
+    List<Integer> expected =
+        IntStream.range(0, EVENTS).filter(i -> i != BAD).boxed().collect(Collectors.toList());
+    List<Integer> got = new ArrayList<>();
+    synchronized (seen) {
+      for (Map<String, Object> e : seen) {
+        int seq = ((Number) e.get("seq")).intValue();
+        assertEquals("label-" + seq, e.get("label"), "incomplete event; " + ctx);
+        got.add(seq);
+      }
+    }
+    // One chunk is decoded by one thread, in file order.
+    assertEquals(expected, got, ctx);
+
+    assertEquals(1, skipped.size(), "decode errors: " + skipped);
+    EventDecodingException f = skipped.get(0);
+    // Corruption changes one byte in place, so the clean twin has the same positions and sizes.
+    long[] bad = eventExtents(dir.resolve("clean-" + corruption + ".jfr")).get(BAD);
+    assertEquals(TYPE, f.getTypeName());
+    assertEquals(1, f.getChunkIndex());
+    assertEquals(bad[0], f.getPosition());
+    assertEquals(bad[1], f.getSize());
+    assertTrue(chain(f).contains("Unexpected string constant id: 127"), chain(f));
   }
 
   @Test

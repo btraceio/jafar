@@ -543,12 +543,14 @@ parser.handle((type, value, ctl) -> {
 ### Undecodable Events
 
 If an event's payload cannot be decoded (a corrupted or non-conforming recording), `run()` fails
-with an `IOException`. Its cause chain contains an `io.jafar.parser.impl.EventDecodingException`
-whose message names the event type, the chunk and the event's position in it, for example
+by default with an `IOException`. Its cause chain contains an
+`io.jafar.parser.api.EventDecodingException` whose message names the event type, the chunk and the
+event's position in it, for example
 `Cannot decode event of type jdk.ExecutionSample (id 101) in chunk 1 at position 271 (size 29)`.
-Its own cause is the decoder's reason.
+The same details are available from `getTypeName()`, `getTypeId()`, `getChunkIndex()`,
+`getPosition()` and `getSize()`, and `getCause()` is the decoder's reason.
 
-The handler never receives the bad event, not even partially. Events decoded before the failure
+Event handlers never receive the bad event, not even partially. Events decoded before the failure
 have already been delivered. Chunks are parsed in parallel, so events from other chunks may have
 been delivered too.
 
@@ -563,8 +565,31 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
 }
 ```
 
-> The Go parser handles this case differently: it reports the event through `Options.OnError` and
-> carries on with the next one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
+To read such a recording on a best-effort basis instead, register a decode error handler. Return
+`true` to skip the event and continue with the next one, `false` to fail the parse. If the handler
+throws, the parse fails with that exception. It is called from the threads parsing the chunks, so
+it must be thread-safe:
+
+```java
+AtomicLong skipped = new AtomicLong();
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.onDecodeError(failure -> {
+        System.err.println("skipped: " + failure.getMessage());
+        return skipped.incrementAndGet() <= 100;  // give up after 100 bad events
+    });
+    p.run();
+}
+```
+
+Skipping recovers cleanly from a bad event *payload*: parsing resumes at the next event, located by
+the size the chunk declares for each event. A corrupted *constant pool* entry is different. Every
+event that references it is reported, and later pooled strings in the same chunk can read as
+`null` without any error. Treat any skipped event as a sign that the rest of that chunk may be
+wrong.
+
+> The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
+> default; in Java, failing is. See [go-parser/README.md](../../go-parser/README.md#error-handling).
 
 ## Performance Considerations
 

@@ -21,8 +21,10 @@ public final class MapValueBuilder implements ValueProcessor {
     this.context = context;
   }
 
+  /** Prepares for the next event, discarding anything a failed event left behind. */
   void reset() {
     root = null;
+    stack.clear();
   }
 
   public Map<String, Object> getRoot() {

@@ -716,8 +716,9 @@ func undecodableBagRecording() []byte {
 
 // An event that fails to decode is reported through OnError and never reaches
 // the handler, not even partially; the parser resumes at the next event using
-// the size it already read. The Java parser fails the parse instead (it has no
-// OnError channel); see "Differences from the Java parser" in the README.
+// the size it already read. The Java parser fails the parse by default and
+// skips only when its UntypedJafarParser.onDecodeError handler returns true; see
+// "Differences from the Java parser" in the README.
 func TestUndecodableEventIsReportedAndSkipped(t *testing.T) {
 	for _, reuse := range []bool{false, true} {
 		var labels []any

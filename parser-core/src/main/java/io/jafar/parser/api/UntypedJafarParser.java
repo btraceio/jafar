@@ -115,6 +115,22 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
   }
 
   /**
+   * Decides what happens to an event whose payload cannot be decoded. See {@link
+   * #onDecodeError(DecodeErrorHandler)}.
+   */
+  @FunctionalInterface
+  interface DecodeErrorHandler {
+    /**
+     * Called once per undecodable event.
+     *
+     * @param failure names the event type, chunk and position; its cause is the decoder's reason
+     * @return {@code true} to skip the event and continue with the next one; {@code false} to fail
+     *     the parse with {@code failure}
+     */
+    boolean onDecodeError(EventDecodingException failure);
+  }
+
+  /**
    * Start a new parsing session.
    *
    * @param path the recording path
@@ -189,4 +205,25 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * @return a registration that can be destroyed to stop receiving events
    */
   HandlerRegistration<?> handle(EventHandler handler);
+
+  /**
+   * Sets what happens to an event whose payload cannot be decoded (a corrupted or non-conforming
+   * recording).
+   *
+   * <p>Without a decode error handler, or when it returns {@code false}, the parse fails: {@link
+   * #run()} throws an {@code IOException} whose cause chain contains the {@link
+   * EventDecodingException}. When it returns {@code true} the event is skipped and parsing resumes
+   * at the next event, located by the event size the chunk already declares. If it throws, the
+   * parse fails with that exception. In no case does an event handler receive the bad event, not
+   * even partially.
+   *
+   * <p>Chunks are parsed in parallel, so the handler can be called concurrently from several
+   * threads and must be thread-safe. A corrupted constant pool entry makes every event that
+   * references it undecodable, so one defect can produce many calls; count them, and return {@code
+   * false} to stop.
+   *
+   * @param handler the decode error handler, or {@code null} to restore the default (fail)
+   * @return this parser
+   */
+  UntypedJafarParser onDecodeError(DecodeErrorHandler handler);
 }

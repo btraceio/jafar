@@ -2,6 +2,7 @@ package io.jafar.parser.impl;
 
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -56,13 +57,25 @@ public abstract class EventStreamBaseline implements ChunkParserListener {
   }
 
   /**
+   * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
+   *
+   * @param failure names the event type, chunk and position; its cause is the decoder's reason
+   * @return {@code true} to skip the event and continue with the next one, {@code false} to fail
+   *     the parse with {@code failure}. The default fails the parse.
+   */
+  protected boolean onDecodeError(EventDecodingException failure) {
+    return false;
+  }
+
+  /**
    * Decodes the event into a map and hands it to {@link #onEventValue}.
    *
-   * <p>A payload that cannot be decoded fails the parse with {@link EventDecodingException} naming
-   * the type, chunk and position. The half-built map is never delivered. (Both used to happen: the
-   * partial map was delivered from a {@code finally}, and for an {@link IOException} this method
-   * then returned {@code false}, which the chunk parser reads as "skip the rest of the chunk", so
-   * every later event in the chunk was dropped without an error.)
+   * <p>A payload that cannot be decoded is passed to {@link #onDecodeError}; unless that returns
+   * {@code true} the parse fails with the {@link EventDecodingException}, which names the type,
+   * chunk and position. The half-built map is never delivered. (Both used to happen: the partial
+   * map was delivered from a {@code finally}, and for an {@link IOException} this method then
+   * returned {@code false}, which the chunk parser reads as "skip the rest of the chunk", so every
+   * later event in the chunk was dropped without an error.)
    */
   @Override
   public final boolean onEvent(
@@ -86,7 +99,23 @@ public abstract class EventStreamBaseline implements ChunkParserListener {
       builder.onComplexValueEnd(null, null, eventClz);
       value = builder.getRoot();
     } catch (Exception e) {
-      throw EventDecodingException.of(context, typeId, eventClz, eventStartPos, rawSize, e);
+      EventDecodingException failure =
+          new EventDecodingException(
+              eventClz != null ? eventClz.getName() : null,
+              typeId,
+              context.getChunkIndex(),
+              eventStartPos,
+              rawSize,
+              e);
+      builder.reset(); // drop whatever the failed event left on the builder's stack
+      if (!onDecodeError(failure)) {
+        throw failure;
+      }
+      // Skipped. StreamingChunkParser repositions to eventStartPos + rawSize after onEvent returns
+      // true, so the next event is read from its own start whatever the decoder consumed.
+      return !ctl.abortFlag
+          && (delegate == null
+              || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
     }
     // Outside the try: an exception from the handler is the handler's, not a decoding failure.
     onEventValue(eventClz, value, ctl);
