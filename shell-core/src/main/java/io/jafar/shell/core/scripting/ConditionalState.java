@@ -100,6 +100,16 @@ public final class ConditionalState {
   }
 
   /**
+   * Whether an {@code elif} here could still be taken: inside a block whose branches so far were
+   * all false and whose enclosing block is running. Otherwise its condition does not matter and
+   * should not be evaluated — evaluating it can run a lazy query or report an error for a branch
+   * that was never going to execute.
+   */
+  public boolean awaitingBranch() {
+    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
+  }
+
+  /**
    * Returns whether we are currently inside any if-block.
    *
    * @return true if inside a conditional block
