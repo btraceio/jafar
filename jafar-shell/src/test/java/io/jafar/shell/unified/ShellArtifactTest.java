@@ -588,6 +588,65 @@ class ShellArtifactTest {
     assertTrue(meta.matches("(?s).*\"fieldsByName\": \\{\\s*\"string\": \\{.*"), output);
   }
 
+  /**
+   * A projected path — {@code events/<type>/<path>}, {@code metadata/<type>/fields}, {@code
+   * metadata/<type>/<field>}, {@code constants/<type>/<path>}, {@code chunks/<n>/<path>} — prints
+   * the values it names, and the same values in both shells. The JSON of the two entry points is
+   * compared whole, so a projection that drifts in either fails here.
+   */
+  @Test
+  void projectedPathsMatchJfrShell(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    Path script = dir.resolve("projections.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open " + recording,
+            "echo P1",
+            "show events/jdk.GarbageCollection/cause --format json",
+            "echo P2",
+            "show metadata/jdk.GarbageCollection/fields --format json",
+            "echo P3",
+            "show metadata/jdk.GarbageCollection/cause --format json",
+            "echo P4",
+            "show constants/jdk.types.GCName/name --format json",
+            "echo P5",
+            "show chunks/0/size --format json",
+            "echo TABLE",
+            "show events/jdk.GarbageCollection/cause --limit 1",
+            "echo END",
+            ""));
+
+    String unified = runJar(dir, "", "script", script.toString());
+    Result jfrShell =
+        runClassWithStatus(dir, "io.jafar.shell.Main", "", "script", script.toString());
+    assertEquals(0, jfrShell.status(), jfrShell.output());
+
+    String json = between(unified, "P1", "TABLE");
+    assertTrue(between(json, "P1", "P2").contains("\"System.gc()\""), unified);
+    assertFalse(between(json, "P1", "P2").contains("duration"), unified);
+    assertTrue(between(json, "P2", "P3").contains("\"cause\""), unified);
+    assertTrue(between(json, "P3", "P4").contains("\"type\": \"jdk.types.GCCause\""), unified);
+    assertTrue(between(json, "P4", "P5").contains("\"G1New\""), unified);
+    // one chunk, so chunk 0 is as long as the file
+    assertTrue(
+        between(unified, "P5", "TABLE").contains(String.valueOf(Files.size(recording))), unified);
+    String table = between(unified, "TABLE", "END");
+    assertTrue(table.contains("value"), unified);
+    assertTrue(table.contains("System.gc()"), unified);
+    assertFalse(table.contains("duration"), unified);
+    // last, so that a missing projection fails above on what it lost, not on a diff
+    assertEquals(between(jfrShell.output(), "P1", "TABLE"), json, unified);
+  }
+
   @Test
   void unwrapsOnlyJfrRecordingValues() {
     List<Map<String, Object>> rows = List.of(Map.of("value", Map.of("name", "kept")));

@@ -3,6 +3,7 @@ package io.jafar.shell.unified;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ConstantValues;
+import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
@@ -17,6 +18,8 @@ import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.EvaluatorLazyValue;
 import io.jafar.shell.core.scripting.ScriptRunner;
+import io.jafar.shell.jfrpath.JfrPath;
+import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1149,6 +1152,14 @@ public final class Shell implements AutoCloseable {
     }
 
     try {
+      // JfrQueryEvaluator.evaluate returns whole events for events/<type>/<path>; the path is
+      // honoured here, the way jfr-shell's show honours it
+      if (ref.session instanceof JFRSession jfr
+          && evaluator.parse(cleanQuery) instanceof JfrPath.Query q
+          && ShowShape.of(q) != ShowShape.ROWS) {
+        showJfrProjection(jfr, q, cleanQuery, limit, format);
+        return;
+      }
       CrossSessionContext ctx = buildCrossSessionContext();
       Object result = evaluator.evaluate(ref.session, cleanQuery, ctx);
       if (limit != null && result instanceof List<?> list) {
@@ -1160,6 +1171,60 @@ public final class Shell implements AutoCloseable {
       error("Query error: " + e.getMessage());
       printStackTraceIfInteractive(e);
       flush();
+    }
+  }
+
+  /**
+   * Shows a JfrPath query that names values rather than rows — {@code events/<type>/<path>}, {@code
+   * constants/<type>/<path>}, {@code metadata/<type>/fields} — or one field's metadata, {@code
+   * metadata/<type>/<field>}, routed by {@link ShowShape} as jfr-shell's {@code show} routes it.
+   *
+   * <p>Values print as a {@code value} column in a table or CSV, as in jfr-shell, and as a plain
+   * array in JSON. They are not passed to the module's {@link QueryEvaluator}: its {@code evaluate}
+   * returns rows, which {@code ask}, query variables and cross-session joins rely on, so the
+   * projection is a matter of what {@code show} prints.
+   */
+  private void showJfrProjection(
+      JFRSession session, JfrPath.Query q, String query, Integer limit, String format)
+      throws Exception {
+    JfrPathEvaluator eval = new JfrPathEvaluator();
+    if (ShowShape.of(q) == ShowShape.FIELD_METADATA) {
+      // As jfr-shell prints it: the field's map itself in JSON, a one-row table otherwise
+      Map<String, Object> field = ShowShape.fieldMetadata(eval, session, q);
+      if (field == null) {
+        out.println("(no rows)");
+        flush();
+        return;
+      }
+      Map<String, Object> copy = new java.util.LinkedHashMap<>(field);
+      rememberResult(query, List.of(copy));
+      if ("json".equalsIgnoreCase(format)) {
+        out.println(toJson(copy, 0));
+        flush();
+      } else {
+        Map<String, Object> shown = new java.util.LinkedHashMap<>(copy);
+        shown.remove("annotationsFull"); // jfr-shell hides it outside JSON
+        printResult(List.of(shown), format, session.getType(), query);
+      }
+      return;
+    }
+    List<Object> values = ShowShape.values(eval, session, q, limit);
+    if (limit != null && limit < values.size()) {
+      values = values.subList(0, limit);
+    }
+    if (ConstantValues.holdsRecordingValues(q)) {
+      values = ConstantValues.unwrapEach(values);
+    }
+    List<Map<String, Object>> rows = new ArrayList<>(values.size());
+    for (Object value : values) {
+      rows.add(java.util.Collections.singletonMap("value", value));
+    }
+    rememberResult(query, rows);
+    if ("json".equalsIgnoreCase(format)) {
+      out.println(toJson(values, 0));
+      flush();
+    } else {
+      printResult(rows, format, session.getType(), query);
     }
   }
 

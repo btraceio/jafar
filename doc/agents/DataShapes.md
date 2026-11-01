@@ -162,6 +162,21 @@ the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the
 instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
 so a field name cannot pass for key syntax.
 
+### A path that parses is not a path that is read
+
+`JfrPathEvaluator.evaluate` reads the root and the first segment of
+`events/jdk.GarbageCollection/cause` — the event type — and returns whole events; the rest of the
+path is honoured only by `evaluateValues`. Nothing fails: the query parses, rows come back, and they
+even contain a `cause` column. jfr-shell's `show` picked the right method by counting segments;
+`jafar-shell` called `evaluate` for everything, so for `events/`, `metadata/`, `constants/` and
+`chunks/` a projected path printed every column of every row. Both shells now route through
+`ShowShape.of`, and `ShellArtifactTest.projectedPathsMatchJfrShell` compares their JSON.
+
+The same evaluator read `chunks/0/size` one way in `evaluate` (`0` is the chunk index) and another
+in `evaluateValues` (`0` is a field of every chunk), so the projection found no field `0` and
+returned an empty list — in jfr-shell too, where it had always printed `(no values)`. When two
+methods interpret one path, check that they agree segment by segment.
+
 ---
 
 ## Before you trust a shape

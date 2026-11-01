@@ -423,10 +423,23 @@ public final class JfrPathEvaluator {
       if (query.segments.isEmpty()) {
         throw new IllegalArgumentException("No projection path provided after 'chunks'");
       }
-      List<Map<String, Object>> rows = ChunkProvider.loadAllChunks(session.getRecordingPath());
+      // chunks/<n>/<path> projects from chunk n, the chunk evaluate() returns for chunks/<n>;
+      // chunks/<path> projects from every chunk
+      List<Map<String, Object>> rows;
+      List<String> proj = query.segments;
+      Integer chunkId = parseChunkIndex(query.segments.get(0));
+      if (chunkId != null && query.segments.size() > 1) {
+        Map<String, Object> chunk = ChunkProvider.loadChunk(session.getRecordingPath(), chunkId);
+        rows = chunk == null ? java.util.Collections.emptyList() : java.util.List.of(chunk);
+        proj = query.segments.subList(1, query.segments.size());
+      } else {
+        rows = ChunkProvider.loadAllChunks(session.getRecordingPath());
+      }
       List<Object> out = new ArrayList<>();
       for (Map<String, Object> row : rows) {
-        extractWithIndexing(row, query.segments, out);
+        if (matchesAll(row, query.predicates)) {
+          extractWithIndexing(row, proj, out);
+        }
       }
       return out;
     } else if (query.root == Root.CONSTANTS) {
@@ -460,6 +473,15 @@ public final class JfrPathEvaluator {
       }
     } else {
       throw new UnsupportedOperationException("Unsupported root: " + query.root);
+    }
+  }
+
+  /** The chunk index a {@code chunks/<n>} segment names, or {@code null} if it is not a number. */
+  private static Integer parseChunkIndex(String segment) {
+    try {
+      return Integer.parseInt(segment);
+    } catch (NumberFormatException e) {
+      return null;
     }
   }
 

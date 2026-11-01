@@ -36,6 +36,7 @@ Access chunk-level information from the recording.
 - **Returns**: Chunk metadata (offset, size, duration, compression status)
 - **Example**: `chunks`
 - **Specific chunk**: `chunks/0` (by index)
+- **Field of a chunk**: `chunks/0/size`
 
 ### `constants`
 Access constant pool entries.
@@ -1022,6 +1023,11 @@ Specific chunk by index:
 ```
 chunks/0
 chunks/5
+```
+
+One field of a chunk:
+```
+chunks/0/size
 ```
 
 Filter chunks:

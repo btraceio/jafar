@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`fieldsByName` of a one-field type such as `jdk.types.Symbol`), and so are heap dump, pprof and
   OTLP output and the rows passed to `explain`/`ask`. A script that read `.name.name` or
   `.key.string` from `--format json` output reads `.name` and `.key` now
+- **`jafar-shell` honours a projected path.** `show events/jdk.GarbageCollection/cause` printed
+  every column of every event, because the unified shell evaluated every JfrPath query as rows and
+  the evaluator reads only the event type of such a path. It now prints the values the path names,
+  as jfr-shell does, for `events/<type>/<path>`, `constants/<type>/<path>`,
+  `metadata/<type>/fields` and `chunks/<n>/<path>`, and one field's metadata for
+  `metadata/<type>/<field>`: a `value` column in tables and CSV, a plain array in JSON. Both shells
+  route through one `ShowShape`, so a path means the same thing in each. Query variables, `ask` and
+  cross-session joins still receive rows
+- **`chunks/<n>/<field>` returns the field.** `chunks/0/size` printed `(no values)` in jfr-shell:
+  the projection read `0` as a field of every chunk rather than as the chunk index `chunks/0`
+  uses. It now projects from chunk `n`, and honours filters such as `chunks[compressed=true]`
 - **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
   always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
   was reachable only from tests and benchmarks. It is now selected through an

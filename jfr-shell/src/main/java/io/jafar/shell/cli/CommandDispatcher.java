@@ -1364,27 +1364,11 @@ public class CommandDispatcher {
       cmdTypes(List.of());
       return;
     }
-    if (q.root == JfrPath.Root.METADATA && q.segments.size() == 2) {
-      String typeName = q.segments.get(0);
-      String fieldName = q.segments.get(1);
-      if ("fields".equals(fieldName) || "fieldsByName".equals(fieldName)) {
-        // Delegate to generic evaluator to support 'fields' and 'fieldsByName'
-        var values = eval.evaluateValues((JFRSession) cur.get().session, q);
-        if (limit != null && limit < values.size()) values = values.subList(0, limit);
-        if ("json".equalsIgnoreCase(format)) {
-          printJson(values, io);
-        } else if ("csv".equalsIgnoreCase(format)) {
-          CsvRenderer.renderValues(values, io);
-        } else if ("tui".equalsIgnoreCase(format)) {
-          TuiTableRenderer.renderValues(values, io);
-        } else {
-          TableRenderer.renderValues(values, io);
-        }
-        return;
-      }
-      var evalMeta = new JfrPathEvaluator();
-      Map<String, Object> fm =
-          evalMeta.loadFieldMetadata(cur.get().session.getFilePath(), typeName, fieldName);
+    // events/<type>/<path>, metadata/<type>/fields, metadata/<type>/<field>, ... — the same
+    // routing jafar-shell's 'show' uses
+    ShowShape shape = ShowShape.of(q);
+    if (shape == ShowShape.FIELD_METADATA) {
+      Map<String, Object> fm = ShowShape.fieldMetadata(eval, (JFRSession) cur.get().session, q);
       if (fm == null) {
         io.println("(no rows)");
       } else {
@@ -1407,11 +1391,8 @@ public class CommandDispatcher {
       }
       return;
     }
-    if (q.segments.size() > 1) {
-      var values =
-          (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateValuesWithLimit((JFRSession) cur.get().session, q, limit)
-              : eval.evaluateValues((JFRSession) cur.get().session, q);
+    if (shape == ShowShape.VALUES) {
+      var values = ShowShape.values(eval, (JFRSession) cur.get().session, q, limit);
       if (limit != null && limit < values.size()) values = values.subList(0, limit);
       List<?> shaped =
           ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values;
