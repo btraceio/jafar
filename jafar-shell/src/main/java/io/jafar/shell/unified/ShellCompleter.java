@@ -34,6 +34,10 @@ public final class ShellCompleter implements Completer {
     "as-query",
     "explain",
     "llm",
+    "set",
+    "vars",
+    "unset",
+    "echo",
     "help",
     "exit",
     "quit"

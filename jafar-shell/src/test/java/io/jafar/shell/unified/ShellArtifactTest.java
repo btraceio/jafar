@@ -34,6 +34,16 @@ class ShellArtifactTest {
   }
 
   @Test
+  void setReachesLlmStatus(@TempDir Path dir) throws Exception {
+    String output =
+        runJar(dir, "set llm.backend = ollama\nset llm.max-rows = 20\nllm status\nexit\n");
+
+    assertFalse(output.contains("Unknown command"), output);
+    assertTrue(output.contains("backend     : ollama"), output);
+    assertTrue(output.contains("max rows    : 20"), output);
+  }
+
+  @Test
   void keepsJfrCommandLine(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
 

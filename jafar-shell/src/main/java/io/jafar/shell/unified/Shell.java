@@ -43,6 +43,7 @@ public final class Shell implements AutoCloseable {
   private final Map<String, ShellModule> moduleById;
   private final SessionManager<Session> sessions;
   private final VariableStore globalStore;
+  private final ShellVariables variables;
   private boolean running = true;
   private final DefaultHistory history;
   private final ShellCompleter fallbackCompleter;
@@ -68,6 +69,7 @@ public final class Shell implements AutoCloseable {
     // Create session manager with factory that routes to appropriate module
     this.sessions = new SessionManager<>(new ModuleSessionFactory(modules), null);
     this.globalStore = new VariableStore();
+    this.variables = new ShellVariables(globalStore);
 
     Path histPath = Paths.get(System.getProperty("user.home"), ".jafar-shell", "history");
     try {
@@ -232,6 +234,10 @@ public final class Shell implements AutoCloseable {
           continue;
         }
 
+        if (handleVariableCommand(input)) {
+          continue;
+        }
+
         if (input.startsWith("show ")) {
           handleShow(input.substring(5).trim());
           continue;
@@ -296,6 +302,33 @@ public final class Shell implements AutoCloseable {
         terminal.flush();
       }
     }
+  }
+
+  /**
+   * {@code set}/{@code let}/{@code vars}/{@code unset}/{@code echo}. Returns whether the input was
+   * one of them. Variables live in {@link #globalStore}, which is also where the LLM host adapter
+   * reads {@code llm.*} settings from.
+   */
+  private boolean handleVariableCommand(String input) {
+    String command = input.split("\\s+", 2)[0].toLowerCase(java.util.Locale.ROOT);
+    String arg = input.length() > command.length() ? input.substring(command.length()).trim() : "";
+    try {
+      List<String> lines;
+      switch (command) {
+        case "set", "let" -> lines = variables.set(arg);
+        case "vars" -> lines = variables.vars();
+        case "unset" -> lines = variables.unset(arg);
+        case "echo" -> lines = variables.echo(arg);
+        default -> {
+          return false;
+        }
+      }
+      lines.forEach(terminal.writer()::println);
+    } catch (IllegalArgumentException e) {
+      terminal.writer().println("Error: " + e.getMessage());
+    }
+    terminal.flush();
+    return true;
   }
 
   private boolean isQueryForCurrentSession(String input) {
@@ -609,9 +642,8 @@ public final class Shell implements AutoCloseable {
    * current session picks the language.
    *
    * <p>Settings resolve from the global variable store and then from environment variables. This
-   * shell has no {@code set} command yet, so in practice {@code JAFAR_LLM_*} environment variables
-   * are how you configure it here; the store is consulted first so that {@code set} works the day
-   * it is added.
+   * shell's {@code set llm.backend = ollama} writes the store; {@code JAFAR_LLM_*} environment
+   * variables are the fallback.
    */
   private io.jafar.shell.cli.LlmCommands llmCommands() {
     if (llmCommands == null) {
@@ -892,6 +924,11 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  explain            Explain the most recent result");
     terminal.writer().println("                     (each takes --dry-run: print, send nothing)");
     terminal.writer().println("  llm                status | cost");
+    terminal.writer().println();
+    terminal.writer().println("Variables and settings:");
+    terminal.writer().println("  set <name> = <v>   Set a variable or an llm.* setting");
+    terminal.writer().println("  vars | unset <n>   List / remove variables");
+    terminal.writer().println("  echo <text>        Print text; ${var} is substituted");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");
