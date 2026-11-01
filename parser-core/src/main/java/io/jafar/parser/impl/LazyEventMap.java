@@ -42,6 +42,27 @@ public final class LazyEventMap extends AbstractMap<String, Object> {
     this.size = size;
   }
 
+  /**
+   * Creates a map over arrays owned by the caller, without copying them. Used by generated untyped
+   * deserializers, which pass a per-class constant {@code keys} array shared by every map they
+   * return and a fresh {@code values} array per event.
+   *
+   * <p>Neither array may be modified afterwards. This map never writes to them: materialization and
+   * {@link #keySet()} iteration copy.
+   *
+   * @param keys field names; may be shared between instances
+   * @param values field values, same order and length as {@code keys}
+   */
+  public LazyEventMap(String[] keys, Object[] values) {
+    if (keys.length != values.length) {
+      throw new IllegalArgumentException(keys.length + " keys, " + values.length + " values");
+    }
+    this.pool = null;
+    this.size = values.length;
+    this.keys = keys;
+    this.values = values;
+  }
+
   private void ensureArrays() {
     if (keys == null) {
       keys = pool.getKeys();

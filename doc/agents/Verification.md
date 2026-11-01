@@ -44,6 +44,7 @@ In this repository the recurring multiplicities are:
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
+| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
@@ -101,7 +102,10 @@ looks identical to the file not being read at all.
 > it. The net that found them: decode the same recording through the generic reader and the
 > generated path and compare **counts per event type** and values (`GeneratedUntypedArrayParityTest`,
 > `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
-> types.
+> types. The `catch` is gone too: every failure, I/O included, is rethrown as
+> `GeneratedDeserializationException` naming type, chunk and position, pinned by
+> `GeneratedUntypedParityTest.deserializerFailureFailsTheParseNamingTheEventType`. When a listener
+> method returns `boolean`, a `catch` that returns is a control-flow decision, not error handling.
 
 ## R4. Documentation is code — run it
 
