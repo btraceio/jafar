@@ -2,7 +2,7 @@ package io.jafar.shell.tui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.jafar.shell.cli.ConditionalState;
+import io.jafar.shell.core.scripting.ConditionalState;
 import org.junit.jupiter.api.Test;
 
 /**

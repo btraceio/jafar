@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,11 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes JFR shell script files with positional parameter substitution.
+ * Executes shell script files with positional parameter substitution.
  *
- * <p>Scripts are line-based text files containing shell commands and JfrPath queries. Lines
- * starting with '#' are comments. Positional parameters are substituted with values provided via
- * the constructor.
+ * <p>Scripts are line-based text files containing shell commands and queries in the current
+ * session's language (JfrPath, HdumpPath, ...). Lines starting with '#' are comments. Positional
+ * parameters are substituted with values provided via the constructor.
  *
  * <p>Supported parameter syntax:
  *
@@ -24,11 +24,6 @@ import java.util.regex.Pattern;
  *   <li>${1:?error message} - Required parameter with custom error message
  *   <li>$@ - All arguments space-separated
  * </ul>
- *
- * <p>A command that throws from {@link CommandDispatcher#dispatch(String)} is recorded as an error
- * for its line. That includes an {@code if}/{@code elif} whose condition cannot be evaluated
- * ({@link ConditionalException}); the dispatcher has then entered the if-block with no branch
- * active, so with continue-on-error the script resumes after the block's {@code endif}.
  *
  * <p>Example script:
  *
@@ -53,22 +48,32 @@ public final class ScriptRunner {
   private static final Pattern VAR_PATTERN =
       Pattern.compile("\\$(?:(\\d+|@)|\\{(\\d+|@)(?:(:[-?])(.*?))?\\})");
 
-  private final CommandDispatcher dispatcher;
-  private final CommandDispatcher.IO io;
+  /**
+   * Runs one script line in the shell that owns the script. Both shells provide one: {@code
+   * jfr-shell}'s {@code CommandDispatcher::dispatch} and {@code jafar-shell}'s {@code Shell}.
+   */
+  @FunctionalInterface
+  public interface LineDispatcher {
+    /**
+     * Executes one line.
+     *
+     * @return {@code false} when the line is not a command the shell knows
+     */
+    boolean dispatch(String line) throws Exception;
+  }
+
+  private final LineDispatcher dispatcher;
   private final List<String> arguments;
   private boolean continueOnError;
 
   /**
    * Creates a script runner.
    *
-   * @param dispatcher command dispatcher for executing commands
-   * @param io IO interface for output
+   * @param dispatcher executes each line
    * @param arguments positional arguments for substitution ($1, $2, etc.)
    */
-  public ScriptRunner(
-      CommandDispatcher dispatcher, CommandDispatcher.IO io, List<String> arguments) {
+  public ScriptRunner(LineDispatcher dispatcher, List<String> arguments) {
     this.dispatcher = dispatcher;
-    this.io = io;
     this.arguments = arguments;
     this.continueOnError = false;
   }
@@ -102,67 +107,46 @@ public final class ScriptRunner {
   public ExecutionResult execute(List<String> lines) {
     int successCount = 0;
     List<ScriptError> errors = new ArrayList<>();
-    boolean stopped = false;
 
-    // The dispatcher may be the interactive shell's own: whatever blocks this script opens, it
-    // must not leave them open there, or the user's next commands would be silently skipped.
-    ConditionalState conditionals = dispatcher.getConditionalState();
-    int startDepth = conditionals.depth();
-    try {
-      for (int i = 0; i < lines.size(); i++) {
-        String line = lines.get(i).trim();
-        int lineNumber = i + 1;
+    for (int i = 0; i < lines.size(); i++) {
+      String line = lines.get(i).trim();
+      int lineNumber = i + 1;
 
-        // Skip comments and blank lines
-        if (line.isEmpty() || line.startsWith("#")) {
-          continue;
-        }
-
-        // Substitute variables
-        String processed;
-        try {
-          processed = substituteVariables(line);
-        } catch (IllegalArgumentException e) {
-          errors.add(new ScriptError(lineNumber, line, e.getMessage()));
-          if (!continueOnError) {
-            stopped = true;
-            break;
-          }
-          continue;
-        }
-
-        // Dispatch command
-        try {
-          boolean handled = dispatcher.dispatch(processed);
-          if (!handled) {
-            errors.add(new ScriptError(lineNumber, line, "Unknown command"));
-            if (!continueOnError) {
-              stopped = true;
-              break;
-            }
-          } else {
-            successCount++;
-          }
-        } catch (Exception e) {
-          String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-          errors.add(new ScriptError(lineNumber, line, errorMsg));
-          if (!continueOnError) {
-            stopped = true;
-            break;
-          }
-        }
+      // Skip comments and blank lines
+      if (line.isEmpty() || line.startsWith("#")) {
+        continue;
       }
 
-      if (!stopped && conditionals.depth() > startDepth) {
-        int unclosed = conditionals.depth() - startDepth;
-        errors.add(
-            new ScriptError(
-                lines.size(),
-                "",
-                unclosed + " if-block(s) not closed with endif by end of script"));
+      // Substitute variables
+      String processed;
+      try {
+        processed = substituteVariables(line);
+      } catch (IllegalArgumentException e) {
+        errors.add(new ScriptError(lineNumber, line, e.getMessage()));
+        if (!continueOnError) {
+          break;
+        }
+        continue;
       }
-    } finally {
-      conditionals.unwindTo(startDepth);
+
+      // Dispatch command
+      try {
+        boolean handled = dispatcher.dispatch(processed);
+        if (!handled) {
+          errors.add(new ScriptError(lineNumber, line, "Unknown command"));
+          if (!continueOnError) {
+            break;
+          }
+        } else {
+          successCount++;
+        }
+      } catch (Exception e) {
+        String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        errors.add(new ScriptError(lineNumber, line, errorMsg));
+        if (!continueOnError) {
+          break;
+        }
+      }
     }
 
     return new ExecutionResult(successCount, errors);

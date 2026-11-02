@@ -56,6 +56,41 @@ jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"
 ```
 
+## Scripting is shared: one implementation, three front ends
+
+Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping,
+`script` and `record` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
+the change up. Who calls them:
+
+| Front end | Dispatcher | Query variables |
+|---|---|---|
+| `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
+| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator` |
+| `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
+
+`EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
+resolver)` on first use — so a variable gives the same rows as typing its query. Any reader of
+variables must handle `VariableStore.LazyValue` in general, not one implementation: read rows with
+`LazyRows`.
+
+Threading: every front end dispatches on one thread (the readline loop; the TUI's single
+`tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
+`EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
+cache slot holding the rows or a "not evaluated" token, evaluation serialized — because a variable
+can be read from wherever its store is reachable. `invalidate()` and `release()` install a fresh
+token and an evaluation publishes by compare-and-set against the token it started from, so an
+evaluation in flight cannot undo them. They must not lock against evaluation instead:
+`SessionManager.close` calls `release()` holding its monitor, and an evaluation's resolver calls
+`sessions.get()`. Do not split such state across two volatiles: `LazyQueryValue`
+once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
+read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
+
+In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
+the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to
+the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shell completer, and
+`addShellCommands` merges the shell's command list into first-word completion. A new shell-level
+command goes in `BASE_COMMANDS` there, not into four module completers.
+
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
 - API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)

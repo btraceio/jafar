@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -64,16 +64,6 @@ public final class ConditionalState {
   }
 
   /**
-   * Returns whether the condition of an {@code elif} at the current position would decide anything:
-   * true only when inside an if-block whose branches so far have all been false. When a branch has
-   * already run, the block is skipped, or a condition has failed, the {@code elif} condition must
-   * not be evaluated.
-   */
-  public boolean elifNeedsEvaluation() {
-    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
-  }
-
-  /**
    * Handles an elif statement whose condition could not be evaluated. The remaining branches of the
    * block, including any {@code else}, are skipped.
    *
@@ -86,6 +76,13 @@ public final class ConditionalState {
     // Whatever the block's state was, nothing in it may run from here on.
     stack.pop();
     stack.push(new IfBlock(BranchState.CONDITION_ERROR));
+  }
+
+  /** Keeps a failed condition visible for the rest of its block; anything else is "taken". */
+  private static BranchState skipState(BranchState current) {
+    return current == BranchState.CONDITION_ERROR
+        ? BranchState.CONDITION_ERROR
+        : BranchState.BRANCH_TAKEN;
   }
 
   /**
@@ -127,13 +124,6 @@ public final class ConditionalState {
     }
   }
 
-  /** Keeps a failed condition visible for the rest of its block; anything else is "taken". */
-  private static BranchState skipState(BranchState current) {
-    return current == BranchState.CONDITION_ERROR
-        ? BranchState.CONDITION_ERROR
-        : BranchState.BRANCH_TAKEN;
-  }
-
   /**
    * Exits the current if-block.
    *
@@ -144,6 +134,16 @@ public final class ConditionalState {
       throw new IllegalStateException("endif without if");
     }
     stack.pop();
+  }
+
+  /**
+   * Whether an {@code elif} here could still be taken: inside a block whose branches so far were
+   * all false and whose enclosing block is running. Otherwise its condition does not matter and
+   * should not be evaluated — evaluating it can run a lazy query or report an error for a branch
+   * that was never going to execute.
+   */
+  public boolean awaitingBranch() {
+    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
   }
 
   /**
@@ -162,18 +162,6 @@ public final class ConditionalState {
    */
   public int depth() {
     return stack.size();
-  }
-
-  /**
-   * Closes if-blocks until at most {@code depth} remain. Used to discard blocks a script opened and
-   * did not close, so they do not leak into the session that ran it.
-   *
-   * @param depth the nesting depth to return to
-   */
-  public void unwindTo(int depth) {
-    while (stack.size() > depth) {
-      stack.pop();
-    }
   }
 
   /** Resets the conditional state, clearing all if-blocks. */

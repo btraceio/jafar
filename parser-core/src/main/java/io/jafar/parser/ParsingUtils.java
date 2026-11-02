@@ -72,17 +72,22 @@ public final class ParsingUtils {
         // lookup from metadata string constants
         return stream.getContext().getMetadataLookup().getString(ptr);
       }
-      if (constantPools != null) {
-        // use the type constant pool
-        ConstantPool stringPool = constantPools.getConstantPool(stringTypeId);
-        if (stringPool != null) {
-          Object value = stringPool.get(ptr);
-          if (value instanceof String) {
-            return (String) value;
-          }
-        }
+      ConstantPool stringPool =
+          constantPools != null ? constantPools.getConstantPool(stringTypeId) : null;
+      if (stringPool == null) {
+        throw new IOException(
+            "String constant " + ptr + " referenced, but the chunk has no java.lang.String pool");
       }
-      return null;
+      Object value = stringPool.get(ptr);
+      if (value instanceof String) {
+        return (String) value;
+      }
+      // A dangling reference used to read as null, indistinguishable from a null string; it means
+      // a corrupted recording (or a pool that could not be indexed), so say so.
+      throw new IOException(
+          value == null
+              ? "String constant " + ptr + " not found in the java.lang.String pool"
+              : "String constant " + ptr + " is not a string: " + value.getClass().getName());
     } else if (id == 3) {
       // UTF8
       int size = (int) stream.readVarint();
@@ -132,7 +137,8 @@ public final class ParsingUtils {
    * stream needs to be advanced.
    *
    * @param stream the recording stream to skip over
-   * @throws IOException if an I/O error occurs during skipping
+   * @throws IOException if an I/O error occurs during skipping, or the encoding id is not one JFR
+   *     defines (0 to 5)
    */
   public static void skipUTF8(RecordingStream stream) throws IOException {
     byte id = stream.read();
@@ -157,9 +163,14 @@ public final class ParsingUtils {
           stream.readVarint();
           break;
         }
-      default:
-        // nothing to skip for null/empty or unknown here
+      case 0: // null
+      case 1: // empty
         break;
+      default:
+        // Not "no payload": an unknown encoding has a payload of unknown length, and skipping just
+        // the id byte would misalign everything after it - every later constant pool entry when
+        // indexing a pool, the rest of the value when skipping a field (Verification.md R3).
+        throw new IOException("Unexpected string constant id: " + id);
     }
   }
 

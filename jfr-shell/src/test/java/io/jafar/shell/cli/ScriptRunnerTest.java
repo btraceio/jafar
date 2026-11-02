@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -55,7 +56,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -101,7 +102,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -134,7 +135,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -179,7 +180,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(2, result.getSuccessCount());
@@ -223,7 +224,7 @@ class ScriptRunnerTest {
         };
 
     // Test with continueOnError = true
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     runner.setContinueOnError(true);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
@@ -233,7 +234,7 @@ class ScriptRunnerTest {
 
     // Test with continueOnError = false (default)
     commandCount[0] = 0;
-    ScriptRunner runner2 = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner2 = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result2 = runner2.execute(scriptPath);
 
     assertEquals(1, result2.getSuccessCount());
@@ -273,7 +274,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("arg1");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -312,7 +313,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -350,7 +351,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("arg1");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -383,7 +384,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -417,7 +418,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -456,7 +457,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("file.jfr");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -499,7 +500,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -534,7 +535,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -573,7 +574,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -608,7 +609,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -657,9 +658,8 @@ class ScriptRunnerTest {
   void failedConditionStopsScriptAndIsReported() {
     List<String> out = new ArrayList<>();
     List<String> err = new ArrayList<>();
-    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
-
-    ScriptRunner.ExecutionResult result = runner.execute(FAILING_CONDITIONAL.lines().toList());
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, err).runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), false);
 
     assertTrue(result.hasErrors(), "a failed condition must make the script fail");
     assertEquals(1, result.getErrors().size());
@@ -676,10 +676,8 @@ class ScriptRunnerTest {
   void failedConditionWithContinueOnErrorRunsNeitherBranch() {
     List<String> out = new ArrayList<>();
     List<String> err = new ArrayList<>();
-    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
-    runner.setContinueOnError(true);
-
-    ScriptRunner.ExecutionResult result = runner.execute(FAILING_CONDITIONAL.lines().toList());
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, err).runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), true);
 
     assertEquals(1, result.getErrors().size(), "the failed condition is counted");
     assertEquals(1, result.getErrors().get(0).getLineNumber());
@@ -693,12 +691,13 @@ class ScriptRunnerTest {
     // The reported case: exists(rows[1].thread) could not be parsed, and the else branch ran.
     List<String> out = new ArrayList<>();
     List<String> err = new ArrayList<>();
-    ScriptRunner runner = new ScriptRunner(realDispatcher(out, err), null, List.of());
-    runner.setContinueOnError(true);
-
     ScriptRunner.ExecutionResult result =
-        runner.execute(
-            List.of("if exists(rows[1].thread)", "echo EXISTS", "else", "echo MISSING", "endif"));
+        realDispatcher(out, err)
+            .runScript(
+                List.of(
+                    "if exists(rows[1].thread)", "echo EXISTS", "else", "echo MISSING", "endif"),
+                List.of(),
+                true);
 
     assertEquals(1, result.getErrors().size());
     assertTrue(
@@ -711,7 +710,7 @@ class ScriptRunnerTest {
     assertEquals(List.of(), out, "MISSING must not be printed");
   }
 
-  // ---- A script does not leave its if-blocks open in the dispatcher that ran it ----
+  // ---- A script runs with an if-block stack of its own ----
 
   @Test
   void scriptStoppedInsideBlockDoesNotLeaveItOpen() {
@@ -722,7 +721,7 @@ class ScriptRunnerTest {
     CommandDispatcher dispatcher = realDispatcher(out, err);
 
     ScriptRunner.ExecutionResult result =
-        new ScriptRunner(dispatcher, null, List.of()).execute(FAILING_CONDITIONAL.lines().toList());
+        dispatcher.runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), false);
 
     assertTrue(result.hasErrors());
     assertFalse(dispatcher.getConditionalState().inConditional());
@@ -731,15 +730,26 @@ class ScriptRunnerTest {
   }
 
   @Test
-  void scriptKeepsTheCallersOwnOpenBlock() {
+  void scriptHasItsOwnIfBlockStack() {
     List<String> out = new ArrayList<>();
-    CommandDispatcher dispatcher = realDispatcher(out, new ArrayList<>());
+    List<String> err = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, err);
     dispatcher.dispatch("if 1 == 1"); // typed interactively before running the script
 
-    new ScriptRunner(dispatcher, null, List.of()).execute(List.of("if 1 / 0 > 1", "echo X"));
-
-    assertEquals(1, dispatcher.getConditionalState().depth(), "only the script's block is closed");
+    // The script's failed block is closed; the caller's is untouched
+    dispatcher.runScript(List.of("if 1 / 0 > 1", "echo X"), List.of(), false);
+    assertEquals(1, dispatcher.getConditionalState().depth());
     assertTrue(dispatcher.getConditionalState().isActive());
+
+    // A stray endif is the script's error; it must not close the caller's block
+    ScriptRunner.ExecutionResult stray = dispatcher.runScript(List.of("endif"), List.of(), false);
+    assertEquals("endif without if", stray.getErrors().get(0).getMessage());
+    assertEquals(1, dispatcher.getConditionalState().depth());
+
+    dispatcher.dispatch("echo STILL_IN_CALLERS_BLOCK");
+    dispatcher.dispatch("endif");
+    assertEquals(List.of("STILL_IN_CALLERS_BLOCK"), out);
+    assertFalse(dispatcher.getConditionalState().inConditional());
   }
 
   @Test
@@ -748,8 +758,8 @@ class ScriptRunnerTest {
     CommandDispatcher dispatcher = realDispatcher(out, new ArrayList<>());
 
     ScriptRunner.ExecutionResult result =
-        new ScriptRunner(dispatcher, null, List.of())
-            .execute(List.of("if 1 == 1", "echo INSIDE", "if 1 == 2", "echo NESTED"));
+        dispatcher.runScript(
+            List.of("if 1 == 1", "echo INSIDE", "if 1 == 2", "echo NESTED"), List.of(), false);
 
     assertEquals(1, result.getErrors().size());
     ScriptRunner.ScriptError error = result.getErrors().get(0);
@@ -763,8 +773,8 @@ class ScriptRunnerTest {
   void strayEndifFailsTheScript() {
     List<String> out = new ArrayList<>();
     ScriptRunner.ExecutionResult result =
-        new ScriptRunner(realDispatcher(out, new ArrayList<>()), null, List.of())
-            .execute(List.of("endif", "echo AFTER"));
+        realDispatcher(out, new ArrayList<>())
+            .runScript(List.of("endif", "echo AFTER"), List.of(), false);
 
     assertEquals(1, result.getErrors().size());
     assertEquals("endif without if", result.getErrors().get(0).getMessage());

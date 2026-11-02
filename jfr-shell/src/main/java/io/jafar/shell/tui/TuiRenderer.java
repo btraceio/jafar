@@ -20,16 +20,17 @@ import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
 import io.jafar.shell.backend.BackendRegistry;
-import io.jafar.shell.cli.ConditionalState;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
+import io.jafar.shell.core.scripting.ConditionalState;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.jline.reader.Candidate;
 
 /**
@@ -43,7 +44,7 @@ public final class TuiRenderer {
   private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
   private TuiAdapter tuiAdapter;
-  private ConditionalState conditionalState;
+  private Supplier<ConditionalState> conditionalState = () -> null;
 
   TuiRenderer(
       TuiContext ctx, SessionManager<? extends Session> sessions, TuiDetailBuilder detailBuilder) {
@@ -56,8 +57,11 @@ public final class TuiRenderer {
     this.tuiAdapter = adapter;
   }
 
-  /** The dispatcher's if-block state, shown in the input title the way the CLI shows it. */
-  void setConditionalState(ConditionalState conditionalState) {
+  /**
+   * Where to read the if-block state shown in the input title, the way the CLI prompt shows it. A
+   * supplier, not the state itself: the dispatcher swaps in a fresh one while a script runs.
+   */
+  void setConditionalState(Supplier<ConditionalState> conditionalState) {
     this.conditionalState = conditionalState;
   }
 
@@ -765,7 +769,7 @@ public final class TuiRenderer {
   private void renderInput(Frame frame, Rect area) {
     Block.Builder inputBlockBuilder =
         Block.builder()
-            .title(mnemonicTitle(inputTitle(conditionalState), 0))
+            .title(mnemonicTitle(inputTitle(conditionalState.get()), 0))
             .borders(Borders.ALL)
             .borderType(BorderType.ROUNDED);
     if (ctx.focus == Focus.INPUT) {

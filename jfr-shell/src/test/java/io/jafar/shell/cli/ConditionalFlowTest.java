@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ConditionalException;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;

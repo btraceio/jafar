@@ -4,8 +4,8 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -592,41 +592,21 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        CommandDispatcher.IO scriptIO =
-            new CommandDispatcher.IO() {
-              @Override
-              public void println(String s) {
-                System.out.println(s);
-              }
-
-              @Override
-              public void printf(String fmt, Object... args) {
-                System.out.printf(fmt, args);
-              }
-
-              @Override
-              public void error(String s) {
-                System.err.println(s);
-              }
-            };
-
-        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
-        runner.setContinueOnError(continueOnError);
-
-        ScriptRunner.ExecutionResult result;
+        List<String> lines;
         if (fromStdin) {
           // Read from stdin
-          List<String> lines = new ArrayList<>();
+          lines = new ArrayList<>();
           try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
             }
           }
-          result = runner.execute(lines);
         } else {
-          result = runner.execute(path);
+          lines = Files.readAllLines(path);
         }
+        ScriptRunner.ExecutionResult result =
+            dispatcher.runScript(lines, arguments, continueOnError);
 
         // Print captured output
         if (output.length() > 0) {

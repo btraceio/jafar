@@ -2,10 +2,10 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.CommandRecorder;
-import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.CommandRecorder;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -402,31 +402,8 @@ public final class Shell implements AutoCloseable {
                 terminal.flush();
               });
 
-      ScriptRunner runner =
-          new ScriptRunner(
-              dispatcher,
-              new CommandDispatcher.IO() {
-                @Override
-                public void println(String s) {
-                  terminal.writer().println(s);
-                  terminal.flush();
-                }
-
-                @Override
-                public void printf(String fmt, Object... args) {
-                  terminal.writer().printf(fmt, args);
-                  terminal.flush();
-                }
-
-                @Override
-                public void error(String s) {
-                  terminal.writer().println(s);
-                  terminal.flush();
-                }
-              },
-              effectiveArgs);
-
-      ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
+      ScriptRunner.ExecutionResult result =
+          dispatcher.runScript(Files.readAllLines(scriptPath), effectiveArgs, false);
 
       if (result.hasErrors()) {
         terminal.writer().println("\nScript completed with errors:");
