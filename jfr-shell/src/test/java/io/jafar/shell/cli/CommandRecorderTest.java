@@ -2,6 +2,7 @@ package io.jafar.shell.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.shell.core.scripting.CommandRecorder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

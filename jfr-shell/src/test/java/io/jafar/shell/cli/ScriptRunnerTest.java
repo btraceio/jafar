@@ -2,6 +2,7 @@ package io.jafar.shell.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,7 +52,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -97,7 +98,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -130,7 +131,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -175,7 +176,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(2, result.getSuccessCount());
@@ -219,7 +220,7 @@ class ScriptRunnerTest {
         };
 
     // Test with continueOnError = true
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     runner.setContinueOnError(true);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
@@ -229,7 +230,7 @@ class ScriptRunnerTest {
 
     // Test with continueOnError = false (default)
     commandCount[0] = 0;
-    ScriptRunner runner2 = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner2 = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result2 = runner2.execute(scriptPath);
 
     assertEquals(1, result2.getSuccessCount());
@@ -269,7 +270,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("arg1");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -308,7 +309,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -346,7 +347,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("arg1");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -379,7 +380,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -413,7 +414,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(0, result.getSuccessCount());
@@ -452,7 +453,7 @@ class ScriptRunnerTest {
     List<String> arguments = new ArrayList<>();
     arguments.add("file.jfr");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -495,7 +496,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -530,7 +531,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -569,7 +570,7 @@ class ScriptRunnerTest {
     arguments.add("arg1");
     arguments.add("arg2");
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, arguments);
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, arguments);
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
@@ -604,7 +605,7 @@ class ScriptRunnerTest {
           public void error(String s) {}
         };
 
-    ScriptRunner runner = new ScriptRunner(mockDispatcher, mockIO, new ArrayList<>());
+    ScriptRunner runner = new ScriptRunner(mockDispatcher::dispatch, new ArrayList<>());
     ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 
     assertEquals(1, result.getSuccessCount());
