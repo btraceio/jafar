@@ -77,7 +77,7 @@ Where the two shells differ:
 
 | | `jfr-shell` | `jafar-shell` |
 |---|---|---|
-| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
+| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy. `${n}` still reads a count's value; a query ending in `toMap()` is read as its map (`${v.size}` counts entries, `${v.key}` reads one), decided from the query, so a one-row result of any other query, such as `top(1)`, still has `.size` 1; `merge()` takes a variable whose rows are one map |
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
@@ -327,7 +327,7 @@ ${varname[0]}
 # Access field from array element
 ${varname[0].fieldname}
 
-# Size property (works for lazy results and maps)
+# Size property: row count for a query, entry count for a map or a toMap() query
 ${varname.size}
 ```
 

@@ -295,6 +295,13 @@ public final class ConditionEvaluator {
     String settingName = settingName(arg);
     VariableStore.Value val = substitutor.resolve(settingName != null ? settingName : arg);
     if (val != null) {
+      if (val instanceof EvaluatorLazyValue lazy) {
+        // A toMap() query is read as its map, as by ${v.size}: empty when it has no entries
+        Map<String, Object> map = lazy.asMap();
+        if (map != null) {
+          return map.isEmpty();
+        }
+      }
       if (val instanceof VariableStore.LazyValue lazy) {
         return LazyRows.size(lazy.get()) == 0;
       }

@@ -46,6 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.size`, and first-row fields of query results. `llm.*` settings (case-insensitive, hyphens
   allowed) are checked as settings and never split into a variable plus a field, and a malformed
   reference (`cfg..db`, `rows[x]`) is an error instead of silently empty
+- **`empty(name)` of a `jafar-shell` `toMap()` variable over no rows is true.** `jafar-shell`
+  keeps a `toMap()` query lazy, and its result is one row holding the map, so `empty()` counted
+  that row and answered false for a `toMap()` that matched nothing, while `${v.size}` (below) said
+  0. It now asks the map, as `jfr-shell` does for the map it stores
+- **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
+  unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
+  `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
+  `2` in `jfr-shell` on the same recording. A query ending in `toMap()` is now read as its map —
+  `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
+  query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
+  the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
