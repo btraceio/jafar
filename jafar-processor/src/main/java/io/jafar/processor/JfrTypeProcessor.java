@@ -726,7 +726,9 @@ public class JfrTypeProcessor extends AbstractProcessor {
     } else if (javaType.equals("short")) {
       return "(short) stream.readVarint()";
     } else if (javaType.equals("byte")) {
-      return "(byte) stream.readVarint()";
+      // A byte is one raw byte, not a varint: the JDK's own reader (ParserFactory.ByteParser) reads
+      // it with readByte() and skips it as 1 byte, as do GenericValueReader and TypeSkipper.
+      return "stream.read()";
     } else if (javaType.equals("boolean")) {
       return "stream.readBoolean()";
     } else if (javaType.equals("char")) {

@@ -146,7 +146,8 @@ so a field name cannot pass for key syntax.
 real recordings in several ways while every test passed - the existing tests only checked the
 generated source text. They were found by compiling, loading and running that output: the skip by
 the first such test, the other two by comparing build-time against runtime handlers event by event
-on a JVM recording with the same interfaces.
+on a JVM recording with the same interfaces; the byte by reading the generator against the JDK's
+reader.
 
 - **A skip that consumed nothing.** Undeclared fields were skipped with
   `TypeSkipper.skip(MetadataField, ...)`, which called `fieldType.skipDirect(stream)`. A primitive
@@ -160,6 +161,9 @@ on a JVM recording with the same interfaces.
 - **One instance for every pooled entry.** A factory's `get` returns one reused handler per thread,
   and the constant pool cached that instance for every entry: 935 of 1,261 samples named the wrong
   thread, while every name was a real one. Pooled entries now come from `HandlerFactory.create`.
+- **A byte read as a varint.** A JFR `byte` is one raw byte (the JDK's `ParserFactory.ByteParser`
+  reads it with `readByte()`), but generated handlers used `readVarint()`, so any negative byte
+  also swallowed the next byte and shifted every field after it.
 
 Watch the comparison, not the values: each value looked right.
 
