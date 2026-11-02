@@ -8,10 +8,10 @@ import java.util.Map;
  * Abstraction for metadata queries against a JFR recording.
  *
  * <p>Each chunk of a recording carries its own metadata, and chunks can disagree about a class. A
- * backend returns one class per name. The Jafar backend merges the chunks' definitions: the
- * union of fields, a {@code chunks} list on the class and on each field, and {@code typesByChunk}
- * / {@code superTypesByChunk} where chunks conflict (see {@code doc/cli/JFRPath.md}, "Metadata
- * across chunks").
+ * backend returns one class per name. The Jafar backend merges the chunks' definitions: the union
+ * of fields, a {@code chunks} list on the class and on each field, and {@code typesByChunk} /
+ * {@code superTypesByChunk} where chunks conflict (see {@code doc/cli/JFRPath.md}, "Metadata across
+ * chunks").
  */
 public interface MetadataSource {
 
