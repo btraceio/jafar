@@ -48,6 +48,68 @@ class ShellCompleterVariablesTest {
     assertEquals(List.of("sessions", "set"), complete("se"));
   }
 
+  /** With no session open the JFR commands are offered; every one that the shell routes. */
+  @Test
+  void offersTheJfrCommandsTheShellRoutes() {
+    List<String> all = complete("");
+    for (String cmd : Shell.JFR_COMMANDS) {
+      assertTrue(all.contains(cmd), cmd + " missing from " + all);
+    }
+    assertEquals(List.of("chunk", "chunks"), complete("chu"));
+    assertEquals(List.of("backend"), complete("ba"));
+  }
+
+  /** A heap dump session refuses the JFR commands, so neither completion path offers them. */
+  @Test
+  void doesNotOfferJfrCommandsInOtherSessions() throws Exception {
+    SessionManager<Session> heap = new SessionManager<>((p, c) -> new StubSession("hdump"), null);
+    heap.open(java.nio.file.Path.of("dump.hprof"), null);
+    ShellCompleter heapCompleter = new ShellCompleter(heap, Map.of(), global);
+
+    List<Candidate> fallback = new ArrayList<>();
+    heapCompleter.complete(null, parse(""), fallback);
+    List<Candidate> merged = new ArrayList<>();
+    heapCompleter.addShellCommands(parse(""), merged);
+
+    for (List<Candidate> candidates : List.of(fallback, merged)) {
+      List<String> values = candidates.stream().map(Candidate::value).toList();
+      assertTrue(values.contains("set"), values.toString());
+      for (String cmd : Shell.JFR_COMMANDS) {
+        assertFalse(values.contains(cmd), cmd + " offered in a heap session: " + values);
+      }
+    }
+  }
+
+  private record StubSession(String type) implements Session {
+    @Override
+    public String getType() {
+      return type;
+    }
+
+    @Override
+    public java.nio.file.Path getFilePath() {
+      return java.nio.file.Path.of("dump.hprof");
+    }
+
+    @Override
+    public boolean isClosed() {
+      return false;
+    }
+
+    @Override
+    public java.util.Set<String> getAvailableTypes() {
+      return java.util.Set.of();
+    }
+
+    @Override
+    public Map<String, Object> getStatistics() {
+      return Map.of();
+    }
+
+    @Override
+    public void close() {}
+  }
+
   @Test
   void completesArgumentsOfTheVariableCommands() {
     global.set("threshold", new VariableStore.ScalarValue(1L));

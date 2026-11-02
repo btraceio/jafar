@@ -1,6 +1,7 @@
 package io.jafar.shell;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,6 +36,20 @@ class JfrQueryEvaluatorTest {
             QueryEvaluator.QueryParseException.class,
             () -> evaluator.parse("SELECT * FROM jdk.ExecutionSample"));
     assertTrue(e.getMessage().contains("SELECT"), e.getMessage());
+  }
+
+  @Test
+  void producesMapOnlyForAQueryEndingInToMap() {
+    // Decided from the query: every row is a map, so a one-row top(1) result looks exactly like a
+    // toMap() result and only the pipeline tells them apart. jfr-shell's set uses the same test.
+    assertTrue(
+        evaluator.producesMap(
+            evaluator.parse(
+                "events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when, heapUsed)")));
+    assertFalse(
+        evaluator.producesMap(evaluator.parse("events/jdk.GCHeapSummary | top(1, by=heapUsed)")));
+    assertFalse(evaluator.producesMap(evaluator.parse("events/jdk.GCHeapSummary")));
+    assertFalse(evaluator.producesMap("not a parsed query"));
   }
 
   @Test

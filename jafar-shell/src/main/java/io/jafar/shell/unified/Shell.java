@@ -163,8 +163,9 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void error(String s) {
-            // Recorded like the shell's own errors, so a script stops on a failing JFR command
-            fail("Error: " + s);
+            // Recorded like the shell's own errors, so a script stops on a failing JFR command.
+            // The dispatcher's own catch already says "Error: ..."; do not print it twice.
+            fail(s.startsWith("Error: ") ? s : "Error: " + s);
           }
         };
 
@@ -174,7 +175,10 @@ public final class Shell implements AutoCloseable {
     @SuppressWarnings("unchecked")
     SessionManager<JFRSession> jfrSessions =
         (SessionManager<JFRSession>) (SessionManager<?>) sessions;
-    this.moduleContext = new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener);
+    // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
+    // global names from the dispatcher's store, which would otherwise be a private empty one.
+    this.moduleContext =
+        new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener, null, globalStore);
 
     // Create fallback completer for basic commands
     this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);
@@ -421,6 +425,12 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
+    String jfrCommand = jfrCommandOf(input);
+    if (jfrCommand != null) {
+      handleJfrCommand(jfrCommand, input);
+      return true;
+    }
+
     if (handleVariableCommand(input)) {
       return true;
     }
@@ -465,12 +475,6 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (isJfrCommand(input)) {
-      // metadata/chunks/constants/backend on a recording: jfr-shell's own implementations, run
-      // by the CommandDispatcher this shell already holds over the same sessions
-      return ((CommandDispatcher) moduleContext).dispatch(input);
-    }
-
     if (isQueryForCurrentSession(input)) {
       handleShow(input);
       return true;
@@ -482,6 +486,11 @@ public final class Shell implements AutoCloseable {
     }
 
     return false;
+  }
+
+  /** The dispatcher the JFR commands and jfr-shell's completer use; package-private for tests. */
+  CommandDispatcher jfrDispatcher() {
+    return (CommandDispatcher) moduleContext;
   }
 
   private void printError(String message) {
@@ -521,6 +530,109 @@ public final class Shell implements AutoCloseable {
       throw new IllegalStateException(failure);
     }
     return handled;
+  }
+
+  /**
+   * Commands that jfr-shell's {@link CommandDispatcher} implements and that read only the current
+   * JFR session: run by that dispatcher, which shares this shell's {@link #sessions} and prints to
+   * this terminal. Shared with {@link ShellCompleter} so completion offers exactly what runs.
+   */
+  static final java.util.Set<String> JFR_COMMANDS =
+      java.util.Set.of("metadata", "chunks", "chunk", "cp", "constants", "backend");
+
+  // The same names as an array, for the per-line match below: iterating it allocates nothing.
+  private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
+
+  /**
+   * True for {@code metadata --summary} or {@code chunks}; false for a query that starts with the
+   * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
+   * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
+   * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
+   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
+   * crossref()}, stays a command.
+   */
+  static boolean isJfrCommand(String input) {
+    return jfrCommandOf(input) != null;
+  }
+
+  /**
+   * The JFR command {@code input} starts with, or {@code null}. Runs for every line typed or read
+   * from a script, so it scans in place: no split, no regex, no lower-cased copy.
+   */
+  static String jfrCommandOf(String input) {
+    int n = input.length();
+    int start = skipSpace(input, 0);
+    int end = skipWord(input, start);
+    String command = null;
+    for (String name : JFR_COMMAND_NAMES) {
+      if (name.length() == end - start && input.regionMatches(true, start, name, 0, end - start)) {
+        command = name;
+        break;
+      }
+    }
+    if (command == null) {
+      return null;
+    }
+    // The remaining words: a pipeline (a word starting with '|') or --limit makes it a query.
+    // A '|' inside a word is an argument, e.g. 'metadata --regex ^(jdk|datadog)\..*'.
+    for (int word = skipSpace(input, end); word < n; word = skipSpace(input, end)) {
+      end = skipWord(input, word);
+      if (input.charAt(word) == '|') {
+        return isCrossref(command, input, word) ? command : null;
+      }
+      if (end - word == 7 && input.startsWith("--limit", word)) {
+        return null;
+      }
+    }
+    return command;
+  }
+
+  /** {@code cp <type> | crossref()}: the form jfr-shell's {@code cmdCp} takes as a command. */
+  private static boolean isCrossref(String command, String input, int pipe) {
+    if (!command.equals("cp") && !command.equals("constants")) {
+      return false;
+    }
+    int n = input.length();
+    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
+      return false; // cmdCp needs '|' and 'crossref()' as separate words
+    }
+    int word = skipSpace(input, pipe + 1);
+    int end = skipWord(input, word);
+    return end - word == 10
+        && input.regionMatches(true, word, "crossref()", 0, 10)
+        && skipSpace(input, end) == n;
+  }
+
+  private static int skipSpace(String s, int i) {
+    while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private static int skipWord(String s, int i) {
+    while (i < s.length() && !Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private void handleJfrCommand(String command, String input) {
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (current.isEmpty() || !(current.get().session instanceof JFRSession)) {
+      printError(
+          "'"
+              + command
+              + "' needs a JFR session; "
+              + current
+                  .map(
+                      ref ->
+                          "session #" + ref.id + " is " + ref.session.getType() + ". Open a .jfr ")
+                  .orElse("open a .jfr ")
+              + "recording or switch to one with 'use <id>'");
+      return;
+    }
+    jfrDispatcher().dispatch(input);
   }
 
   /**
@@ -641,41 +753,6 @@ public final class Shell implements AutoCloseable {
     }
     terminal.flush();
     return true;
-  }
-
-  private static final List<String> JFR_COMMANDS =
-      List.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
-
-  /**
-   * {@code metadata --summary}, {@code chunks}, {@code cp jdk.types.Symbol}: a jfr-shell command on
-   * a recording. As in jfr-shell, the word alone or followed by arguments is the command, while
-   * {@code metadata/...}, {@code chunks[...]} and {@code chunks | ...} remain queries.
-   */
-  private boolean isJfrCommand(String input) {
-    int space = 0;
-    while (space < input.length() && !Character.isWhitespace(input.charAt(space))) {
-      space++;
-    }
-    // Compared in place: this runs for most lines that reach the query path
-    boolean command = false;
-    for (String c : JFR_COMMANDS) {
-      if (c.length() == space && input.startsWith(c)) {
-        command = true;
-        break;
-      }
-    }
-    if (!command) {
-      return false;
-    }
-    int next = space;
-    while (next < input.length() && Character.isWhitespace(input.charAt(next))) {
-      next++;
-    }
-    if (next < input.length() && input.charAt(next) == '|') {
-      return false;
-    }
-    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
-    return current.isPresent() && current.get().session instanceof JFRSession;
   }
 
   /**
@@ -1344,8 +1421,16 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Query:");
     terminal.writer().println("  show <query>       Execute a query on current session");
-    terminal.writer().println("  metadata | chunks | constants (cp) | backend");
-    terminal.writer().println("                     jfr-shell's commands, on a recording");
+    terminal.writer().println();
+    terminal.writer().println("JFR recordings (need a JFR session):");
+    terminal
+        .writer()
+        .println("  metadata [--summary] [--search <glob>] [--events-only] ...  List types");
+    terminal.writer().println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
+    terminal.writer().println("  chunks [--summary] [--range N-M]  List chunks");
+    terminal.writer().println("  chunk <index> show  Show one chunk's details");
+    terminal.writer().println("  constants|cp [<type>] [--summary] [--range N-M]  Constant pools");
+    terminal.writer().println("  backend [list]     Show the JFR backend, or list them");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");
     terminal

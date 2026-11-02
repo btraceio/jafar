@@ -36,6 +36,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
   carries the cause, for example `Error occurred while parsing JFR recording: Constant pool
   jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The prefix is unchanged
+- **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
+  true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
+  the condition evaluator handled only scalars and query results and treated every other value
+  as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
+  empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
+  evaluator)
+- **`exists()` and `empty()` resolve references the way `${...}` does.** A dotted argument such
+  as `empty(cfg.db.host)` was looked up as one variable literally named `cfg.db.host`, which never
+  exists, so `empty()` was always true and `exists()` always false while `${cfg.db.host}` printed
+  `localhost`; an indexed argument (`exists(rows[1].thread)`) or a hyphenated setting
+  (`exists(llm.base-url)`) did not parse at all, and the condition took the `else` branch. The
+  argument now uses the same grammar and resolution as `${...}`: nested map fields, `[idx]` rows,
+  `.size`, and first-row fields of query results. `llm.*` settings (case-insensitive, hyphens
+  allowed) are checked as settings and never split into a variable plus a field, and a malformed
+  reference (`cfg..db`, `rows[x]`) is an error instead of silently empty
+- **`empty(name)` of a `jafar-shell` `toMap()` variable over no rows is true.** `jafar-shell`
+  keeps a `toMap()` query lazy, and its result is one row holding the map, so `empty()` counted
+  that row and answered false for a `toMap()` that matched nothing, while `${v.size}` (below) said
+  0. It now asks the map, as `jfr-shell` does for the map it stores
+- **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
+  unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
+  `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
+  `2` in `jfr-shell` on the same recording. A query ending in `toMap()` is now read as its map —
+  `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
+  query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
+  the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
@@ -46,8 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
   recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
   recorder, moved to `shell-core` and shared
-- **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
-  recording, using jfr-shell's implementations; they were taken as malformed queries
+- **`metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work at the `jafar-shell`
+  prompt** on a recording, using jfr-shell's implementations; they were taken as malformed queries
+  (`metadata --summary` failed with `Trailing characters at position 9`, so `jfr-shell`'s
+  `basic-analysis.jfrs` example did not run in `jafar-shell`). In a heap dump, pprof or OTLP
+  session, or with no session open, they say they need a JFR session
 - **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
   parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
   set could lose entries from its size count and later fail with "Index N out of bounds for length
