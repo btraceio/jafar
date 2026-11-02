@@ -60,13 +60,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_CP_TEMPLATE =
       "        case \"%s\":\n"
-          + "          requireStorage(metadata, metaField, true, false);\n"
           + "          this.%s_cpRef = stream.readVarint();\n"
           + "          break;\n";
 
   private static final String SWITCH_CASE_CP_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
-          + "          requireStorage(metadata, metaField, true, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s_cpRef = new long[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -77,7 +75,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
-          + "          requireStorage(metadata, metaField, false, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new %s[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -88,7 +85,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_STRING_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
-          + "          requireStorage(metadata, metaField, false, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new String[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -98,18 +94,28 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "        }\n";
 
   private static final String SWITCH_CASE_TEMPLATE =
+      "        case \"%s\":\n" + "          this.%s = %s;\n" + "          break;\n";
+
+  // Checks a declared field against the recording's metadata, once per metadata class (see
+  // HandlerTemplate.validate): pool storage (0 inline, 1 pooled, 2 either - @JfrField(raw = true),
+  // whose value is the pool index for a pooled field), array shape, and the field's JFR type.
+  private static final String VALIDATE_CASE_TEMPLATE =
       "        case \"%s\":\n"
-          + "          requireStorage(metadata, metaField, false, false);\n"
-          + "          this.%s = %s;\n"
+          + "          requireStorage(metadata, metaField, %d, %s, %s);\n"
           + "          break;\n";
 
-  // @JfrField(raw = true): the field's encoded value as is. For a constant pool field that is the
-  // pool index, a varint, so either storage is accepted; only the shape (scalar) is checked.
-  private static final String SWITCH_CASE_RAW_TEMPLATE =
-      "        case \"%s\":\n"
-          + "          requireStorage(metadata, metaField, metaField.hasConstantPool(), false);\n"
-          + "          this.%s = %s;\n"
-          + "          break;\n";
+  private static final java.util.Map<String, String> BOXED_TO_PRIMITIVE = new java.util.HashMap<>();
+
+  static {
+    BOXED_TO_PRIMITIVE.put("java.lang.Long", "long");
+    BOXED_TO_PRIMITIVE.put("java.lang.Integer", "int");
+    BOXED_TO_PRIMITIVE.put("java.lang.Short", "short");
+    BOXED_TO_PRIMITIVE.put("java.lang.Byte", "byte");
+    BOXED_TO_PRIMITIVE.put("java.lang.Boolean", "boolean");
+    BOXED_TO_PRIMITIVE.put("java.lang.Character", "char");
+    BOXED_TO_PRIMITIVE.put("java.lang.Float", "float");
+    BOXED_TO_PRIMITIVE.put("java.lang.Double", "double");
+  }
 
   private static final String RESET_FIELD_CP_TEMPLATE = "    this.%s_cpRef = 0L;\n";
   private static final String RESET_FIELD_PRIMITIVE_TEMPLATE = "    this.%s = %s;\n";
@@ -250,6 +256,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("INSTANCE_FIELDS", buildInstanceFields(fields))
             .set("BIND_BODY", buildBindBody(fields))
             .set("SWITCH_CASES", buildSwitchCases(fields))
+            .set("VALIDATE_CASES", buildValidateCases(fields))
             .set("RESET_FIELDS", buildResetFields(fields))
             .set("GETTER_METHODS", buildGetterMethods(fields))
             .render();
@@ -517,19 +524,63 @@ public class JfrTypeProcessor extends AbstractProcessor {
         // Non-array handling
         if (field.needsConstantPool) {
           sb.append(switchCaseCp(field.jfrFieldName, field.fieldName));
-        } else if (field.isRaw) {
-          sb.append(
-              String.format(
-                  SWITCH_CASE_RAW_TEMPLATE,
-                  field.jfrFieldName,
-                  field.fieldName,
-                  generateReadCode(field)));
         } else {
           sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
         }
       }
     }
     return sb.toString();
+  }
+
+  /** Builds the cases of the handler's metadata check (HandlerTemplate.validate). */
+  private String buildValidateCases(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      int pooled = field.needsConstantPool ? 1 : field.isRaw ? 2 : 0;
+      String types;
+      if (field.needsConstantPool) {
+        types = "new String[] {\"" + field.cpTypeName + "\"}";
+      } else {
+        types = expectedJfrTypes(field.isArray ? field.elementType : field.javaType);
+      }
+      sb.append(
+          String.format(VALIDATE_CASE_TEMPLATE, field.jfrFieldName, pooled, field.isArray, types));
+    }
+    return sb.toString();
+  }
+
+  /**
+   * The JFR types whose encoding the read generated for {@code javaType} consumes correctly: the
+   * varint integer types are interchangeable, as are the one-byte {@code byte} and {@code boolean};
+   * {@code float}, {@code double} and {@code String} match only themselves.
+   */
+  private static String expectedJfrTypes(String javaType) {
+    switch (javaType) {
+      case "long":
+      case "int":
+      case "short":
+      case "char":
+      case "java.lang.Long":
+      case "java.lang.Integer":
+      case "java.lang.Short":
+      case "java.lang.Character":
+        return "new String[] {\"long\", \"int\", \"short\", \"char\"}";
+      case "byte":
+      case "boolean":
+      case "java.lang.Byte":
+      case "java.lang.Boolean":
+        return "new String[] {\"byte\", \"boolean\"}";
+      case "float":
+      case "java.lang.Float":
+        return "new String[] {\"float\"}";
+      case "double":
+      case "java.lang.Double":
+        return "new String[] {\"double\"}";
+      case "String":
+        return "new String[] {\"java.lang.String\"}";
+      default:
+        return "new String[0]";
+    }
   }
 
   /** Builds field reset statements. */
@@ -754,6 +805,14 @@ public class JfrTypeProcessor extends AbstractProcessor {
       return "stream.readDouble()";
     } else if (javaType.equals("String")) {
       return "stream.readUTF8()";
+    } else if (javaType.startsWith("java.lang.")) {
+      // Boxed accessors read like their primitive; autoboxing does the rest. They used to fall
+      // through to "null", which consumed nothing and misaligned every later field.
+      String primitive = BOXED_TO_PRIMITIVE.get(javaType);
+      if (primitive != null) {
+        return generateReadCodeForType(primitive);
+      }
+      return "null /* unsupported type: " + javaType + " */";
     } else {
       // Complex type - should be handled by constant pool path
       return "null /* unsupported type: " + javaType + " */";

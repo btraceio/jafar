@@ -73,7 +73,8 @@ class GeneratedHandlerStorageMismatchTest {
     assertChain(
         thrown,
         "PStackHandler cannot read jdk.types.StackTrace.frames: the recording stores it as an array"
-            + " of inline values, but PStack declares it as an array of constant pool references");
+            + " of inline values of type jdk.types.StackFrame, but PStack declares it as an array of"
+            + " constant pool references of type jdk.types.StackFrame");
   }
 
   @Test
@@ -107,7 +108,48 @@ class GeneratedHandlerStorageMismatchTest {
     assertChain(
         thrown,
         "PSymHandler cannot read test.Sym.sym: the recording stores it as a constant pool"
-            + " reference, but PSym declares it as an inline value");
+            + " reference of type jdk.types.Symbol, but PSym declares it as an inline value of type"
+            + " java.lang.String");
+  }
+
+  /**
+   * The field is inline, as declared, but of another type: a {@code float} accessor reads 4 raw
+   * bytes where the recording has an {@code int} varint. The storage check did not look at types.
+   */
+  @Test
+  void accessorOfAnotherTypeFails() throws Exception {
+    Path jfr = dir.resolve("types.jfr");
+    try (Recording r = Recordings.newRecording(jfr)) {
+      Types types = r.getTypes();
+      Type event =
+          r.registerEventType(
+              "test.Typed",
+              t -> t.addField("n", Types.Builtin.INT).addField("last", Types.Builtin.INT));
+      r.writeEvent(
+          event.asValue(
+              v -> {
+                v.putField("stackTrace", types.getType(Types.JDK.STACK_TRACE).nullValue());
+                v.putField("eventThread", types.getType(Types.JDK.THREAD).nullValue());
+                v.putField("startTime", System.nanoTime());
+                v.putField("n", 7);
+                v.putField("last", 9);
+              }));
+    }
+    ClassLoader loader =
+        compileAndLoad(
+            source(
+                "PTyped",
+                "@JfrType(\"test.Typed\")\npublic interface PTyped {\n  float n();\n  int last();\n}\n"));
+    Exception thrown =
+        assertThrows(
+            Exception.class,
+            () ->
+                parse(
+                    jfr, loader, loader.loadClass("test.PTyped"), e -> call(e, "last"), "PTyped"));
+    assertChain(
+        thrown,
+        "PTypedHandler cannot read test.Typed.n: the recording stores it as an inline value of type"
+            + " int, but PTyped declares it as an inline value of type float");
   }
 
   private static void assertChain(Throwable t, String text) {

@@ -19,6 +19,9 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
 
   // Instance fields for event data
   private ConstantPools constantPools;
+
+  /** The metadata class this instance last checked with validate(); not cleared by reset(). */
+  private MetadataClass validatedFor;
 {{INSTANCE_FIELDS}}
 
   /**
@@ -38,6 +41,10 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
    */
   public void read(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) throws IOException {
     this.constantPools = constantPools;
+    if (metadata != validatedFor) {
+      validate(metadata);
+      validatedFor = metadata;
+    }
     List<MetadataField> metaFields = metadata.getFields();
     for (MetadataField metaField : metaFields) {
       String fieldName = metaField.getName();
@@ -51,19 +58,41 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
   }
 
   /**
-   * Checks that the recording stores a field the way this handler reads it. The handler is
-   * generated without the recording's metadata: a complex-typed accessor is read as a constant pool
-   * reference and a primitive or String accessor as an inline value. A field stored otherwise (for
-   * example jdk.types.StackTrace's inline frames array, or a String accessor for a pooled
-   * jdk.types.Symbol) cannot be read by this handler; reading it anyway would misread it and every
-   * field after it.
+   * Checks the declared fields against the recording's metadata, once per metadata class: the
+   * reads in {@link #read} are fixed at build time, without the metadata, so a field stored or typed
+   * differently would be misread together with every field after it.
+   */
+  private static void validate(MetadataClass metadata) throws IOException {
+    for (MetadataField metaField : metadata.getFields()) {
+      switch (metaField.getName()) {
+{{VALIDATE_CASES}}
+        default:
+          break;
+      }
+    }
+  }
+
+  /**
+   * Checks one field: how it is stored ({@code pooled}: 0 inline, 1 a constant pool reference, 2
+   * either - a raw accessor reads a pooled field's index), whether it is an array, and its JFR type
+   * (for an inline field the type a simple type wraps) against {@code types}.
    */
   private static void requireStorage(
-      MetadataClass metadata, MetadataField field, boolean pooled, boolean array)
+      MetadataClass metadata, MetadataField field, int pooled, boolean array, String[] types)
       throws IOException {
     boolean isPooled = field.hasConstantPool();
     boolean isArray = field.getDimension() > 0;
-    if (isPooled != pooled || isArray != array) {
+    MetadataClass type = field.getType();
+    if (!isPooled) {
+      int depth = 0;
+      while (type != null && type.isSimpleType() && type.getFields().size() == 1 && depth++ < 10) {
+        type = type.getFields().get(0).getType();
+      }
+    }
+    String typeName = type != null ? type.getName() : "?";
+    boolean storageOk = pooled == 2 || isPooled == (pooled == 1);
+    boolean typeOk = (pooled == 2 && isPooled) || java.util.Arrays.asList(types).contains(typeName);
+    if (!storageOk || isArray != array || !typeOk) {
       throw new IOException(
           "{{HANDLER_NAME}} cannot read "
               + metadata.getName()
@@ -71,8 +100,12 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
               + field.getName()
               + ": the recording stores it as "
               + describe(isPooled, isArray)
+              + " of type "
+              + typeName
               + ", but {{INTERFACE_NAME}} declares it as "
-              + describe(pooled, array));
+              + describe(pooled == 1 || (pooled == 2 && isPooled), array)
+              + " of type "
+              + (types.length == 0 ? "?" : String.join(" or ", types)));
     }
   }
 
