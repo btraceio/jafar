@@ -86,21 +86,6 @@ public final class Conditionals {
     return false;
   }
 
-  /**
-   * Leaves every block opened after {@code depth}, so that a script that ends inside an if-block
-   * does not leave the shell skipping the commands that follow it.
-   *
-   * @return how many blocks were closed
-   */
-  public int unwindTo(int depth) {
-    int closed = 0;
-    while (state.depth() > depth) {
-      state.exitIf();
-      closed++;
-    }
-    return closed;
-  }
-
   private static boolean keyword(String line, int start, int len, String keyword) {
     return len == keyword.length() && line.regionMatches(true, start, keyword, 0, len);
   }

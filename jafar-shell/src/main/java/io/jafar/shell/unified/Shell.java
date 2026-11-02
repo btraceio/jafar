@@ -2,7 +2,6 @@ package io.jafar.shell.unified;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.CommandRecorder;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
@@ -12,6 +11,7 @@ import io.jafar.shell.core.ShellModule;
 import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -46,10 +46,13 @@ public final class Shell implements AutoCloseable {
   private final SessionManager<Session> sessions;
   private final VariableStore globalStore;
   private final ShellVariables variables;
-  private final Conditionals conditionals = new Conditionals();
-  // 'record start|stop|status': the lines typed at the prompt, written as a replayable script.
-  // jfr-shell's recorder, so both shells write the same format to the same default directory.
-  private final CommandRecorder recorder = new CommandRecorder();
+  // The if-blocks of the input being read: the prompt's, or a running script's own (see runLines)
+  private Conditionals conditionals = new Conditionals();
+  // 'record start|stop|status': the lines typed at the prompt, written as a replayable script
+  // by jfr-shell's recorder (moved to shell-core), to this shell's own directory
+  private final CommandRecorder recorder =
+      new CommandRecorder(
+          Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
   // Built once: execute() passes it for every line
   private final java.util.function.Consumer<String> errorSink = this::printError;
   private int scriptDepth;
@@ -257,10 +260,10 @@ public final class Shell implements AutoCloseable {
         terminal.writer().println("^C");
         terminal.flush();
       } catch (EndOfFileException e) {
+        stopRecordingOnExit();
         terminal.writer().println();
         terminal.writer().println("Goodbye!");
         terminal.flush();
-        stopRecordingOnExit();
         running = false;
       } catch (Exception e) {
         terminal.writer().println("Error: " + e.getMessage());
@@ -302,7 +305,9 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    // 'help' is not recorded (jfr-shell does not either): it is not part of an analysis
+    // 'help' is not recorded (jfr-shell does not either): it is not part of an analysis. 'script'
+    // is, unlike jfr-shell: the lines a script runs are not recorded (only prompt lines are), so
+    // leaving the invocation out too would make the replay silently skip that script.
     if (recorder.isRecording() && !"help".equalsIgnoreCase(input)) {
       try {
         recorder.recordCommand(input);
@@ -669,30 +674,23 @@ public final class Shell implements AutoCloseable {
       printError("Scripts nested more than " + MAX_SCRIPT_DEPTH + " deep; not running " + path);
       return;
     }
-    int ifDepth = conditionals.state().depth();
-    scriptDepth++;
     try {
       ScriptRunner.ExecutionResult result =
-          new ScriptRunner(this::executeScriptLine, arguments).execute(path);
-      int unclosed = conditionals.unwindTo(ifDepth);
-      if (unclosed > 0) {
-        // Left open, a false branch would go on skipping every command typed after the script.
-        printError(path.getFileName() + " left " + unclosed + " if-block(s) open; closed them");
-      }
+          runLines(Files.readAllLines(path), arguments, false, path.getFileName().toString());
       if (result.hasErrors()) {
-        lineFailure = "Script " + path.getFileName() + " failed";
-        terminal.writer().println();
-        terminal.writer().println("Script completed with errors:");
+        java.io.PrintWriter out =
+            batch ? new java.io.PrintWriter(System.err, true) : terminal.writer();
+        out.println();
+        out.println("Script completed with errors:");
         for (ScriptRunner.ScriptError error : result.getErrors()) {
-          terminal.writer().println(error);
+          out.println(error);
         }
-        terminal
-            .writer()
-            .println(
-                String.format(
-                    "%nExecuted %d/%d commands successfully.",
-                    result.getSuccessCount(),
-                    result.getSuccessCount() + result.getErrors().size()));
+        out.println(
+            String.format(
+                "%nExecuted %d/%d commands successfully.",
+                result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+        out.flush();
+        lineFailure = "Script " + path.getFileName() + " failed";
       } else if (result.getSuccessCount() > 0) {
         terminal.writer().println();
         terminal
@@ -701,10 +699,33 @@ public final class Shell implements AutoCloseable {
       }
     } catch (IOException e) {
       printError("Cannot read script " + path + ": " + e.getMessage());
-    } finally {
-      scriptDepth--;
     }
     terminal.flush();
+  }
+
+  /**
+   * Runs script lines through {@link #execute} with an if-block stack of their own, so a script can
+   * neither leave the caller inside a block (a false branch would skip everything typed next) nor
+   * close one of the caller's (a stray {@code endif} is an error in the script instead).
+   */
+  private ScriptRunner.ExecutionResult runLines(
+      List<String> lines, List<String> arguments, boolean continueOnError, String name) {
+    Conditionals callers = conditionals;
+    conditionals = new Conditionals();
+    scriptDepth++;
+    try {
+      ScriptRunner runner = new ScriptRunner(this::executeScriptLine, arguments);
+      runner.setContinueOnError(continueOnError);
+      ScriptRunner.ExecutionResult result = runner.execute(lines);
+      int unclosed = conditionals.state().depth();
+      if (unclosed > 0) {
+        printError(name + " left " + unclosed + " if-block(s) open; closed them");
+      }
+      return result;
+    } finally {
+      scriptDepth--;
+      conditionals = callers;
+    }
   }
 
   private static String expandHome(String path) {
@@ -757,20 +778,10 @@ public final class Shell implements AutoCloseable {
    * same summary as jfr-shell's command-line {@code script} and returns the exit status.
    */
   int runScript(List<String> lines, List<String> arguments, boolean continueOnError) {
-    ScriptRunner runner = new ScriptRunner(this::executeScriptLine, arguments);
-    runner.setContinueOnError(continueOnError);
-    ScriptRunner.ExecutionResult result;
-    scriptDepth++;
-    try {
-      result = runner.execute(lines);
-    } finally {
-      scriptDepth--;
-    }
-    int unclosed = conditionals.unwindTo(0);
+    lineFailure = null;
+    ScriptRunner.ExecutionResult result = runLines(lines, arguments, continueOnError, "script");
     terminal.flush();
-    if (unclosed > 0) {
-      System.err.println("Warning: " + unclosed + " unclosed conditional block(s)");
-    }
+    boolean leftBlocksOpen = lineFailure != null; // reported by runLines
     if (result.hasErrors()) {
       System.err.println();
       System.err.println("Script completed with errors:");
@@ -790,7 +801,7 @@ public final class Shell implements AutoCloseable {
           .println("Script executed successfully: " + result.getSuccessCount() + " commands");
       terminal.flush();
     }
-    return 0;
+    return leftBlocksOpen ? 1 : 0;
   }
 
   private boolean isQueryForCurrentSession(String input) {
@@ -1471,9 +1482,8 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
     terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
     terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
-    terminal
-        .writer()
-        .println("  record start [path] | stop | status  Record typed commands as a script");
+    terminal.writer().println("  record start [path] | stop | status");
+    terminal.writer().println("                     Save the commands you type as a script");
     terminal.writer().println();
     terminal.writer().println("General:");
     terminal.writer().println("  help               Show this help message");

@@ -74,30 +74,75 @@ func (c *chunkParser) newMap(hint int) map[string]any {
 }
 
 // newArray returns the array for the next array field of the event being
-// decoded.
-func (c *chunkParser) newArray(elementType string, n int) *Array {
+// decoded. The caller sizes its elements with sized.
+//
+// A recycled array keeps the slice it last held, so an event shaped like the
+// previous one of its type decodes into the same backing array. Without an
+// arena the array is new: allocated on its own for an event, from a chunk-wide
+// block inside a constant pool entry.
+func (c *chunkParser) newArray(elementType string) *Array {
 	a := c.arena
 	if a == nil {
-		return &Array{ElementType: elementType, Values: make([]any, n)}
-	}
-	if a.arrIdx < len(a.arrays) {
-		arr := a.arrays[a.arrIdx]
-		a.arrIdx++
-		arr.ElementType = elementType
-		if cap(arr.Values) >= n {
-			arr.Values = arr.Values[:n]
-			for i := range arr.Values {
-				arr.Values[i] = nil
-			}
-		} else {
-			arr.Values = make([]any, n)
+		if !c.inPool {
+			// An event decoded without ReuseValues is the caller's to keep,
+			// so its arrays get their own allocations: a shared block would
+			// keep every sibling array's elements alive with any one of them.
+			return &Array{ElementType: elementType}
 		}
+		// Not recyclable either: a constant pool value is cached and shared
+		// by every event referencing it. Arrays inside pool entries live as
+		// long as their pool anyway, so their structs come from a chunk-wide
+		// block, which pays for the slice header that Elems costs.
+		if len(c.arraySlab) == 0 {
+			c.arraySlab = make([]Array, arraySlabSize)
+		}
+		arr := &c.arraySlab[0]
+		c.arraySlab = c.arraySlab[1:]
+		arr.ElementType = elementType
 		return arr
 	}
-	arr := &Array{ElementType: elementType, Values: make([]any, n)}
-	a.arrays = append(a.arrays, arr)
+	var arr *Array
+	if a.arrIdx < len(a.arrays) {
+		arr = a.arrays[a.arrIdx]
+	} else {
+		arr = &Array{}
+		a.arrays = append(a.arrays, arr)
+	}
 	a.arrIdx++
+	arr.ElementType = elementType
 	return arr
+}
+
+// sized returns arr's elements as a []T of n elements, for the decoder to
+// overwrite, reusing the slice arr already holds when it has type []T and the
+// capacity.
+//
+// Storing a slice in an interface copies its header to the heap
+// (runtime.convTslice), so Elems is assigned only when the header changes: a
+// recycled array whose element count matches the previous event's costs
+// nothing. An array whose element type differs from last time (an array of
+// complex values makes the array at a given position vary) gets a new slice.
+func sized[T any](arr *Array, n int) []T {
+	if cur, ok := arr.Elems.([]T); ok {
+		if len(cur) == n {
+			return cur
+		}
+		if cap(cur) >= n {
+			if n < len(cur) {
+				clear(cur[n:]) // drop references the shorter array no longer covers
+			}
+			cur = cur[:n]
+			arr.Elems = cur
+			return cur
+		}
+	}
+	if n == 0 {
+		arr.Elems = []T(nil) // a nil slice converts to an interface without allocating
+		return nil
+	}
+	s := make([]T, n)
+	arr.Elems = s
+	return s
 }
 
 // newRef returns the reference for the next constant pool field of the event
@@ -129,3 +174,9 @@ func (c *chunkParser) newRef(pool *constantPool, index int64) *Ref {
 // alive as long as any reference handed out from it does, so it trades a bounded
 // amount of retention (a few kilobytes) for a large drop in allocation count.
 const refSlabSize = 256
+
+// arraySlabSize is the number of Array structs allocated in one block. A block
+// stays alive, with every array in it and the elements they hold, as long as
+// any one of them is reachable; only constant pool arrays, which their pool
+// keeps alive anyway, share blocks.
+const arraySlabSize = 64

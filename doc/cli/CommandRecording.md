@@ -48,7 +48,9 @@ jfr> record start
 Recording started: /Users/you/.jfr-shell/recordings/session-20251226143022.jfrs
 ```
 
-By default, recordings go to `~/.jfr-shell/recordings/` with a timestamp filename.
+By default, recordings go to `~/.jfr-shell/recordings/` with a timestamp filename. In `jafar-shell`,
+`record` works the same way for every format, saves to `~/.jafar-shell/recordings/`, and the result
+replays with `jafar-shell script <file>`.
 
 Or specify a custom path:
 

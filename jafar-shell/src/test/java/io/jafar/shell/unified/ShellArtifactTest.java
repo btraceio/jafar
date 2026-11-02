@@ -114,6 +114,32 @@ class ShellArtifactTest {
     assertTrue(output.contains("Scripts nested more than 16 deep"), output);
     assertFalse(output.contains("StackOverflowError"), output);
     assertTrue(output.contains("ALIVE"), output);
+
+    // A stray endif in a script is the script's error; it must not close the caller's block
+    Path stray = dir.resolve("stray.jfrs");
+    Files.writeString(stray, "endif\n");
+    String strayOutput =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "if 1 == 2",
+                "echo never",
+                "else",
+                "script " + stray,
+                "echo STILL-IN-ELSE",
+                "endif",
+                "echo AFTER-BLOCK",
+                "exit",
+                ""));
+    assertTrue(strayOutput.contains("Line 1: Error: endif without if"), strayOutput);
+    assertFalse(strayOutput.contains("Script executed successfully"), strayOutput);
+    assertTrue(strayOutput.contains("STILL-IN-ELSE"), strayOutput);
+    assertTrue(strayOutput.contains("AFTER-BLOCK"), strayOutput);
+    // the caller's own endif still matches its if: no error once its block resumes
+    assertFalse(
+        strayOutput.substring(strayOutput.indexOf("STILL-IN-ELSE")).contains("without if"),
+        strayOutput);
   }
 
   /**
@@ -187,7 +213,9 @@ class ShellArtifactTest {
     Run ok = runJarRaw(dir, "", "script", script.toString(), recording.toString(), dump.toString());
 
     assertEquals(0, ok.exit(), ok.out() + ok.err());
-    assertEquals("", ok.err());
+    // stderr may carry the heap dump's parse progress ("Parsing... 40%"): HeapSession prints it
+    // only once parsing outlasts a delay, so on a slow machine. Nothing else may be there.
+    assertTrue(onlyProgress(ok.err()), ok.err());
     assertTrue(ok.out().contains("VERDICT both"), ok.out());
     assertTrue(ok.out().contains("Types Summary:"), ok.out()); // jfr-shell's metadata command
     assertTrue(ok.out().contains("Script executed successfully: 8 commands"), ok.out());
@@ -208,6 +236,50 @@ class ShellArtifactTest {
             dir, "echo one\nset x = $missing\necho two\n", "script", "-", "--continue-on-error");
     assertEquals(1, cont.exit());
     assertTrue(cont.out().contains("two"), cont.out());
+  }
+
+  /** 'record' saves what is typed as a script that 'jafar-shell script' replays. */
+  @Test
+  void recordsASessionThatReplaysAsAScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path saved = dir.resolve("session.jfrs");
+    Path unfinished = dir.resolve("unfinished.jfrs");
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "record status",
+                "record start " + saved,
+                "open " + recording,
+                "set n = events/jdk.ThreadStart | count()",
+                "echo REPLAYED n=${n}",
+                "record status",
+                "record stop",
+                "echo NOT-RECORDED",
+                "record start " + unfinished,
+                "echo LEFT-RUNNING",
+                "exit",
+                ""));
+
+    assertTrue(output.contains("Not currently recording"), output);
+    assertTrue(output.contains("Recording started: " + saved), output);
+    assertTrue(output.contains("Recording to: " + saved), output);
+    assertTrue(output.contains("Recording stopped: " + saved), output);
+    assertTrue(output.contains("Recording saved to: " + unfinished), output); // saved at exit
+
+    String script = Files.readString(saved);
+    assertTrue(script.startsWith("# Jafar Shell Recording"), script);
+    assertTrue(script.contains("\nopen " + recording + "\n"), script);
+    assertTrue(script.contains("\necho REPLAYED n=${n}\n"), script);
+    assertFalse(script.contains("record "), script);
+    assertFalse(script.contains("NOT-RECORDED"), script);
+    assertTrue(Files.readString(unfinished).contains("echo LEFT-RUNNING"));
+
+    Run replay = runJarRaw(dir, "", "script", saved.toString());
+    assertEquals(0, replay.exit(), replay.out() + replay.err());
+    assertTrue(replay.out().contains("REPLAYED n=17"), replay.out());
   }
 
   @Test
@@ -387,6 +459,26 @@ class ShellArtifactTest {
     assertFalse(Main.isJfrCommandLine(new String[] {"dump.hprof"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"-q", "--tui"}));
     assertFalse(Main.isJfrCommandLine(new String[] {}));
+  }
+
+  @Test
+  void stderrClassifierAcceptsOnlyProgress() {
+    // The stderr of the CI run that failed the old 'stderr is empty' assertion, verbatim
+    assertTrue(
+        onlyProgress("\rParsing... 40%\rParsing... 80%\rComplete... 100%\rComplete... 100%\n"));
+    assertTrue(onlyProgress(""));
+    assertFalse(onlyProgress("\rParsing... 40%\nError: Variable not found: x\n"));
+    assertFalse(onlyProgress("Exception in thread \"main\" java.lang.IllegalStateException"));
+  }
+
+  /** Whether stderr holds nothing but progress lines such as "Parsing... 40%". */
+  private static boolean onlyProgress(String err) {
+    for (String part : err.split("[\\r\\n]+")) {
+      if (!part.isBlank() && !part.trim().matches(".*\\.\\.\\. \\d{1,3}%")) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Exit status, stdout and stderr of one run, kept apart. */
