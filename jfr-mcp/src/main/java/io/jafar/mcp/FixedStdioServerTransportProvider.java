@@ -168,19 +168,25 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
     /**
      * Guards every emission into {@link #outboundSink}. Responses are sent from whichever thread
-     * completed the request (the SDK's {@code boundedElastic} workers, the inbound reader for parse
-     * errors, the inbound pipeline's {@code doFinally}), and a Reactor sink accepts only one
-     * producer at a time: a concurrent {@code tryEmitNext} fails with {@code FAIL_NON_SERIALIZED}
-     * instead of waiting. A lock rather than {@code emitNext(..., busyLooping(...))} keeps the
-     * {@link Sinks.EmitResult} visible, so a sink terminated outside shutdown is still reported
-     * instead of silently dropped. The critical section only enqueues: delivery happens on {@code
-     * stdio-outbound} after {@code publishOn}.
+     * completed the request (the SDK's {@code boundedElastic} workers, or the inbound reader for
+     * parse errors), and the sink is completed from the inbound pipeline's {@code doFinally}. A
+     * Reactor sink accepts only one producer at a time: a concurrent {@code tryEmitNext} fails with
+     * {@code FAIL_NON_SERIALIZED} instead of waiting. A lock rather than {@code emitNext(...,
+     * busyLooping(...))} keeps the {@link Sinks.EmitResult} visible, so a sink terminated outside
+     * shutdown is still reported instead of silently dropped. The critical section only enqueues:
+     * delivery happens on {@code stdio-outbound} after {@code publishOn}.
      */
     private final Object outboundEmitLock = new Object();
 
     /**
      * Guards every emission into {@link #inboundSink}: the reader thread emits messages, while
      * {@link #closeGracefully()} can complete the sink from any thread at the same time.
+     *
+     * <p>The sink delivers {@code onNext} synchronously, so the reader holds this lock while the
+     * message is dispatched to {@code session.handle} and the returned {@code Mono} is subscribed.
+     * The SDK offloads tool execution to {@code boundedElastic}, so that is short, but {@code
+     * closeGracefully()} waits for it. Never take this lock while holding {@link
+     * #outboundEmitLock}: the reader takes them in the order inbound, then outbound.
      */
     private final Object inboundEmitLock = new Object();
 
