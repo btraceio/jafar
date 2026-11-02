@@ -13,6 +13,13 @@ package io.jafar.parser.api;
  *   <li>{@link #AUTO} - Auto-detect access pattern (future feature)
  * </ul>
  *
+ * <p>The strategy selects the generated deserializers of {@code parser-codegen}, which is on the
+ * classpath of the {@code jafar-parser} artifact. If it is not (a {@code parser-core}-only
+ * classpath), or the system property {@code jafar.untyped.generated} is {@code false}, the parser
+ * reads with the generic reader instead; the strategy then has no effect, and the events are the
+ * same. Both readers yield identical values. The generic fallback is logged at debug level by
+ * {@code UntypedJafarParserImpl}.
+ *
  * <h2>How to Choose</h2>
  *
  * <p><b>Use {@link #SPARSE_ACCESS} (default) if:</b>

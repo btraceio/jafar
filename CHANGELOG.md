@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`Values.resolvedDeepCollapsed(Map)` and `ComplexType.isSimpleType()`** (#108). Resolves
+  constant-pool references to JFR simple types (`jdk.types.ThreadState`, ...) to their scalar, as
+  the typed API does, decided by the recording's metadata rather than a `size() == 1` guess.
+  `resolvedDeep` and `getValue()` are unchanged
 - **`jafar-shell` scripts across formats.** The unified shell now has the full set of variable and
   scripting commands `jfr-shell` has: map literals (`set cfg = {"min": 1024}`), `merge(...)`,
   query-valued variables, `if`/`elif`/`else`/`endif`, `script <path> [args]` (`$1`,
@@ -35,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
+  always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
+  was reachable only from tests and benchmarks. It is now selected through an
+  `UntypedEventStreamFactory` SPI (ServiceLoader) whenever `parser-codegen` is on the classpath,
+  which was safe to do only after the generated path was made to match the generic one. Without
+  `parser-codegen`, or with `-Djafar.untyped.generated=false`, the generic reader is used as
+  before. `UntypedStrategyDispatchTest` observes which reader ran
 - **An `if`/`elif` condition that fails to evaluate no longer runs the `else` branch.** Both
   shells printed `Condition evaluation failed: ...` and treated the condition as `false`, so the
   `else` branch ran; in `jfr-shell` the script even ended `Script executed successfully` with exit
