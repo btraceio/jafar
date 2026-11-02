@@ -34,13 +34,8 @@ jobs:
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare test resources
-        # Mirror for test-dd.jfr while its Dropbox link is disabled: set the repository variable
-        # JAFAR_TEST_DD_URL (Settings > Secrets and variables > Actions > Variables). Unset, this is an
-        # empty string and get_resources.sh falls back to its default URL.
-        env:
-          JAFAR_TEST_DD_URL: ${{ vars.JAFAR_TEST_DD_URL }}
-        run: bash ./get_resources.sh
+      # No recording download: the build generates the test recordings
+      # (:test-recordings:generateTestRecordings, a dependency of every test task).
 
       - name: MCP end-to-end tests against the fat jar
         run: |

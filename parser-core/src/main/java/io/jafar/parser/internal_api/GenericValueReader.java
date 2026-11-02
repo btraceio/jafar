@@ -42,14 +42,15 @@ public final class GenericValueReader {
     for (MetadataField fld : type.getFields()) {
       if (fld.getDimension() == 1) {
         int len = (int) stream.readVarint();
-        try {
-          processor.onArrayStart(type, fld.getName(), fld.getType(), len);
-          for (int i = 0; i < len; i++) {
-            readSingleFieldValue(stream, type, fld);
-          }
-        } finally {
-          processor.onArrayEnd(type, fld.getName(), fld.getType());
+        processor.onArrayStart(type, fld.getName(), fld.getType(), len);
+        for (int i = 0; i < len; i++) {
+          readSingleFieldValue(stream, type, fld);
         }
+        // Not in a finally, like onComplexValueEnd: after a failed element the processor's state
+        // is unfinished (an element value may still be open), and completing the array on top of
+        // it would misreport or mask the decoding exception. Callers that continue after a failure
+        // reset the processor instead.
+        processor.onArrayEnd(type, fld.getName(), fld.getType());
       } else {
         readSingleFieldValue(stream, type, fld);
       }

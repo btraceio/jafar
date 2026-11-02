@@ -219,8 +219,10 @@ Two other things matter more than they look:
 Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
 available recording, and picks its workload event types per recording rather
 than by name, so the numbers stay comparable across files. Run
-`./get_resources.sh` from the repository root first to add the larger
-recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
+`./gradlew :test-recordings:generateTestRecordings` (or `./get_resources.sh` for
+the real ones) from the repository root first to add the larger recordings;
+set `JAFAR_BENCH_JFR` to benchmark one specific file, for example one made with
+`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr`.
 
 ## Error handling
 
@@ -229,8 +231,11 @@ magic, an out-of-range chunk size, undecodable chunk metadata — always abort
 parsing.
 
 Recoverable problems — a checkpoint chain that cannot be followed, a constant
-pool referring to an undeclared type, a single event that fails to decode — are
-reported through `Options.OnError`. When `OnError` is nil they are ignored and
+pool referring to an undeclared type or holding an entry that cannot be read, a
+single event that fails to decode (a reference to a string pool entry that does
+not exist included) — are reported through `Options.OnError`. An unreadable pool
+entry ends that checkpoint: the entries indexed before it stay usable, and each
+reference to a later one is reported as an event error. When `OnError` is nil they are ignored and
 parsing continues, which is what reading a truncated or non-conforming recording
 on a best-effort basis needs. Pass `jfr.FailOnError` to turn them into failures:
 
@@ -246,6 +251,22 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   calls the handler on the calling goroutine, so events arrive in file order.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
+* **An undecodable event is skipped by default.** Here a nil `Options.OnError`
+  ignores it and parsing resumes at the next event, using the event size the
+  parser has already read. The Java untyped parser fails the parse by default
+  (`EventDecodingException`, naming the type, chunk and position) and skips only
+  when `UntypedJafarParser.onDecodeError` returns `true`, the counterpart of an
+  `OnError` that returns nil. Neither delivers the bad event, even partially.
+  Pinned by `TestUndecodableEventIsReportedAndSkipped` here and
+  `EventDecodeFailureTest` in `parser-core`.
+* **A corrupted constant pool entry is recoverable here.** Go reports it
+  through `Options.OnError` and keeps the entries indexed before it; Java fails
+  the parse, naming the pool and index, even with a decode error handler, since
+  that handler is about one event. Both refuse to skip an entry whose string
+  encoding is unknown, and both report a reference to a missing string entry
+  instead of reading it as null. Pinned by
+  `TestCorruptedPoolStringIsReportedNotMisaligned` and
+  `TestDanglingStringReferenceIsReported` here.
 * **Framing is enforced.** Constant pool entries have to lie within their
   checkpoint event; the Java parser does not check this. It only matters for
   malformed recordings, where this parser drops the pool rather than indexing
@@ -298,10 +319,11 @@ gofmt -l .
 ```
 
 The tests and benchmarks pick up whatever recordings are present.
-`./get_resources.sh` in the repository root downloads the larger ones from
-Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
-both the suite and the benchmarks find them there and report each file
-separately. Without them they fall back to the recordings checked into the
+`./gradlew :test-recordings:generateTestRecordings` in the repository root
+generates them into `parser-core/src/test/resources/` and
+`demo/src/test/resources/` (`./get_resources.sh` downloads the real ones to the
+same place); both the suite and the benchmarks find them there and report each
+file separately. Without them they fall back to the recordings checked into the
 repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs

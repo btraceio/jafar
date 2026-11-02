@@ -3,6 +3,7 @@ package io.jafar.shell.cli;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.scripting.ConditionEvaluator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

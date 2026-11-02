@@ -82,8 +82,10 @@ public final class LazyMapValueBuilder implements ValueProcessor {
     }
   }
 
+  /** Prepares for the next event, discarding anything a failed event left behind. */
   void reset() {
     root = null;
+    stack.clear();
   }
 
   Map<String, Object> getRoot() {

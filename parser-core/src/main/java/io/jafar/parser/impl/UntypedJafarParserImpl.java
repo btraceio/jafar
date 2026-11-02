@@ -1,6 +1,7 @@
 package io.jafar.parser.impl;
 
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.JafarParser;
 import io.jafar.parser.api.ParsingContext;
@@ -62,6 +63,8 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   /** The set of registered event handlers. */
   private final Set<EventHandler> handlers;
 
+  private volatile DecodeErrorHandler decodeErrorHandler;
+
   /**
    * Constructs a new UntypedJafarParserImpl for the specified path and context.
    *
@@ -99,6 +102,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     this.strategy = other.strategy;
 
     this.handlers = new HashSet<>(other.handlers);
+    this.decodeErrorHandler = other.decodeErrorHandler;
     this.parserListener = listener;
   }
 
@@ -119,6 +123,12 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
                 MetadataClass type, Map<String, Object> value, Control ctl) {
               handlers.forEach(h -> h.handle(type, value, ctl));
             }
+
+            @Override
+            protected boolean onDecodeError(EventDecodingException failure) {
+              DecodeErrorHandler h = decodeErrorHandler;
+              return h != null && h.onDecodeError(failure);
+            }
           };
       parser.parse(path, listener);
     } catch (IOException e) {
@@ -126,6 +136,12 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     } catch (Exception e) {
       throw new IOException(e);
     }
+  }
+
+  @Override
+  public UntypedJafarParser onDecodeError(DecodeErrorHandler handler) {
+    this.decodeErrorHandler = handler;
+    return this;
   }
 
   @Override

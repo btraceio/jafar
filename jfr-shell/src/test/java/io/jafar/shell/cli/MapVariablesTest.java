@@ -164,6 +164,8 @@ class MapVariablesTest {
     String output = io.text();
     assertTrue(output.contains("Host: localhost"), "Should substitute nested field");
     assertTrue(output.contains("Port: 5432"), "Should substitute nested numeric field");
+    // An integer stays an integer: 'contains("Port: 5432")' alone also matched "5432.0"
+    assertFalse(output.contains("5432.0"), output);
   }
 
   @Test

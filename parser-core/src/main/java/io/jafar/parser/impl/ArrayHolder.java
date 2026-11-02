@@ -1,10 +1,6 @@
 package io.jafar.parser.impl;
 
 import io.jafar.parser.api.ArrayType;
-import io.jafar.parser.api.Internal;
-import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.internal_api.RecordingStream;
-import java.io.IOException;
 import java.lang.reflect.Array;
 import java.util.Arrays;
 
@@ -87,116 +83,60 @@ public final class ArrayHolder implements ArrayType {
     chars = array instanceof char[] ? (char[]) array : null;
   }
 
-  /** Wraps an already filled array of objects. */
-  private ArrayHolder(String type, Object[] elements) {
-    this.type = type;
-    this.array = elements;
-    this.longs = null;
-    this.doubles = null;
-    this.floats = null;
-    this.shorts = null;
-    this.chars = null;
-    this.index = elements.length;
+  /**
+   * Wraps a primitive array the caller has already filled, without copying it. Used by the
+   * generated untyped deserializers (through {@code GeneratedDeserializerSupport}), which decode
+   * and tick-normalize elements straight into the array.
+   *
+   * @param type the JFR element type name
+   * @param filled an array of the class {@code new ArrayHolder(type, n)} would allocate
+   * @throws IllegalArgumentException if {@code filled} is not that class
+   */
+  static ArrayHolder ofFilled(String type, Object filled) {
+    Class<?> expected = backingClass(type);
+    if (filled.getClass() != expected) {
+      throw new IllegalArgumentException(
+          type
+              + " elements belong in "
+              + expected.getSimpleName()
+              + ", got "
+              + filled.getClass().getSimpleName());
+    }
+    return new ArrayHolder(type, filled, java.lang.reflect.Array.getLength(filled));
   }
 
-  /**
-   * Reads a whole array of a primitive JFR type (including {@code java.lang.String}) from the
-   * stream: its length, then its elements, stored unboxed in the same backing array class the value
-   * builders produce ({@code long[]} for {@code int} and {@code long}).
-   *
-   * <p>Elements are decoded exactly as {@code GenericValueReader.readSingleValue} decodes a scalar
-   * of the type. Used by the generated untyped deserializers, which cannot reach the
-   * package-private constructor and {@code add} methods. Values are not tick-normalized; see {@link
-   * #read(RecordingStream, String, int, ParserContext)}.
-   *
-   * @param stream the stream positioned at the array length
-   * @param type the JFR element type name
-   * @return the decoded array
-   * @throws IOException if a string element cannot be read
-   * @throws IllegalArgumentException if {@code type} is not a primitive JFR type
-   */
-  @Internal
-  public static ArrayHolder read(RecordingStream stream, String type) throws IOException {
-    return read(stream, type, TemporalNormalizer.KIND_NONE, null);
-  }
-
-  /**
-   * Like {@link #read(RecordingStream, String)}, then converts the {@code int} and {@code long}
-   * elements of a field annotated {@code Timestamp(TICKS)} or {@code Timespan(TICKS)} to
-   * nanoseconds, as the generic reader's value builders do.
-   *
-   * @param stream the stream positioned at the array length
-   * @param type the JFR element type name
-   * @param temporalKind the field's kind from {@link TemporalNormalizer#kindOf}
-   * @param context the chunk's parser context, holding its timing
-   * @return the decoded array
-   * @throws IOException if a string element cannot be read
-   * @throws IllegalArgumentException if {@code type} is not a primitive JFR type
-   */
-  @Internal
-  public static ArrayHolder read(
-      RecordingStream stream, String type, int temporalKind, ParserContext context)
-      throws IOException {
-    int len = (int) stream.readVarint();
-    ArrayHolder holder = new ArrayHolder(type, len);
+  /** The backing array class the {@code (type, len)} constructor allocates, without allocating. */
+  static Class<?> backingClass(String type) {
     switch (type) {
       case "short":
-        for (int i = 0; i < len; i++) holder.shorts[i] = (short) stream.readVarint();
-        break;
+        return short[].class;
       case "char":
-        for (int i = 0; i < len; i++) holder.chars[i] = (char) stream.readVarint();
-        break;
+        return char[].class;
       case "int":
-        for (int i = 0; i < len; i++) holder.longs[i] = (int) stream.readVarint();
-        break;
       case "long":
-        for (int i = 0; i < len; i++) holder.longs[i] = stream.readVarint();
-        break;
+        return long[].class;
       case "byte":
-        {
-          byte[] bytes = (byte[]) holder.array;
-          for (int i = 0; i < len; i++) bytes[i] = stream.read();
-          break;
-        }
+        return byte[].class;
       case "boolean":
-        {
-          boolean[] booleans = (boolean[]) holder.array;
-          for (int i = 0; i < len; i++) booleans[i] = stream.read() != 0;
-          break;
-        }
-      case "float":
-        for (int i = 0; i < len; i++) holder.floats[i] = stream.readFloat();
-        break;
+        return boolean[].class;
       case "double":
-        for (int i = 0; i < len; i++) holder.doubles[i] = stream.readDouble();
-        break;
-      case "java.lang.String":
-        {
-          Object[] strings = (Object[]) holder.array;
-          for (int i = 0; i < len; i++) strings[i] = stream.readUTF8();
-          break;
-        }
+        return double[].class;
+      case "float":
+        return float[].class;
       default:
-        throw new IllegalArgumentException("Not a primitive JFR type: " + type);
+        return Object[].class;
     }
-    if (holder.longs != null) {
-      TemporalNormalizer.applyAll(holder.longs, len, temporalKind, context);
-    }
-    holder.index = len;
-    return holder;
   }
 
-  /**
-   * Wraps an array of decoded elements (complex values, constant pool accessors) of the given JFR
-   * element type. Used by the generated untyped deserializers.
-   *
-   * @param type the JFR element type name
-   * @param elements the decoded elements; not copied
-   * @return an {@link ArrayType} backed by {@code elements}
-   */
-  @Internal
-  public static ArrayHolder wrap(String type, Object[] elements) {
-    return new ArrayHolder(type, elements);
+  private ArrayHolder(String type, Object filled, int length) {
+    this.type = type;
+    this.array = filled;
+    this.longs = filled instanceof long[] ? (long[]) filled : null;
+    this.doubles = filled instanceof double[] ? (double[]) filled : null;
+    this.floats = filled instanceof float[] ? (float[]) filled : null;
+    this.shorts = filled instanceof short[] ? (short[]) filled : null;
+    this.chars = filled instanceof char[] ? (char[]) filled : null;
+    this.index = length;
   }
 
   /**
