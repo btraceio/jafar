@@ -87,7 +87,9 @@ Where the two shells differ:
 
 The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
 (in `jafar-shell` they need the current session to be a recording), so the example scripts below run
-in either; `metadata/...`, `chunks[...]` and `chunks | ...` remain queries.
+in either. `metadata/...`, `chunks[...]`, and a line with a pipeline or `--limit`
+(`chunks --format json | count()`, `chunks --limit 1`) remain queries; `cp <type> | crossref()` is the
+command.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`

@@ -100,8 +100,10 @@ shell already builds for module completers (`moduleContext`). It shares the shel
 prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
 commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
 the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
-used to be parsed as a query (`Trailing characters at position 9`). A line whose second word starts
-with `|` (`metadata | count()`) is still a query. The same set gates completion in
+used to be parsed as a query (`Trailing characters at position 9`). A line with a pipeline (any
+later word starting with `|`: `chunks --format json | count()`) or `--limit` is still a query —
+jfr-shell's handlers have neither and would print every row — except `cp <type> | crossref()`,
+which `cmdCp` takes. A `|` inside a word is an argument (`metadata --regex ^(jdk|datadog)\..*`). The same set gates completion in
 `unified/ShellCompleter`, so a heap dump session is not offered them.
 
 ## Backend Plugin Development

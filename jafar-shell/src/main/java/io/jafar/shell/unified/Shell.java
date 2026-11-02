@@ -544,10 +544,12 @@ public final class Shell implements AutoCloseable {
   private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
 
   /**
-   * True for {@code metadata --summary} or {@code chunks}, false for a query that starts with the
-   * same word: {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
-   * are not the bare word, and a bare {@code metadata | count()} pipes the root — jfr-shell would
-   * take that {@code |} as a search pattern, so it stays a query here.
+   * True for {@code metadata --summary} or {@code chunks}; false for a query that starts with the
+   * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
+   * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
+   * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
+   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
+   * crossref()}, stays a command.
    */
   static boolean isJfrCommand(String input) {
     return jfrCommandOf(input) != null;
@@ -559,28 +561,60 @@ public final class Shell implements AutoCloseable {
    */
   static String jfrCommandOf(String input) {
     int n = input.length();
-    int start = 0;
-    while (start < n && Character.isWhitespace(input.charAt(start))) {
-      start++;
-    }
-    int end = start;
-    while (end < n && !Character.isWhitespace(input.charAt(end))) {
-      end++;
-    }
-    int next = end;
-    while (next < n && Character.isWhitespace(input.charAt(next))) {
-      next++;
-    }
-    if (next < n && input.charAt(next) == '|') {
-      return null;
-    }
-    int len = end - start;
-    for (String command : JFR_COMMAND_NAMES) {
-      if (command.length() == len && input.regionMatches(true, start, command, 0, len)) {
-        return command;
+    int start = skipSpace(input, 0);
+    int end = skipWord(input, start);
+    String command = null;
+    for (String name : JFR_COMMAND_NAMES) {
+      if (name.length() == end - start && input.regionMatches(true, start, name, 0, end - start)) {
+        command = name;
+        break;
       }
     }
-    return null;
+    if (command == null) {
+      return null;
+    }
+    // The remaining words: a pipeline (a word starting with '|') or --limit makes it a query.
+    // A '|' inside a word is an argument, e.g. 'metadata --regex ^(jdk|datadog)\..*'.
+    for (int word = skipSpace(input, end); word < n; word = skipSpace(input, end)) {
+      end = skipWord(input, word);
+      if (input.charAt(word) == '|') {
+        return isCrossref(command, input, word) ? command : null;
+      }
+      if (end - word == 7 && input.startsWith("--limit", word)) {
+        return null;
+      }
+    }
+    return command;
+  }
+
+  /** {@code cp <type> | crossref()}: the form jfr-shell's {@code cmdCp} takes as a command. */
+  private static boolean isCrossref(String command, String input, int pipe) {
+    if (!command.equals("cp") && !command.equals("constants")) {
+      return false;
+    }
+    int n = input.length();
+    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
+      return false; // cmdCp needs '|' and 'crossref()' as separate words
+    }
+    int word = skipSpace(input, pipe + 1);
+    int end = skipWord(input, word);
+    return end - word == 10
+        && input.regionMatches(true, word, "crossref()", 0, 10)
+        && skipSpace(input, end) == n;
+  }
+
+  private static int skipSpace(String s, int i) {
+    while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private static int skipWord(String s, int i) {
+    while (i < s.length() && !Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
   }
 
   private void handleJfrCommand(String command, String input) {
