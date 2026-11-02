@@ -56,7 +56,7 @@ jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"
 ```
 
-## Scripting is shared: one implementation, three front ends
+## Scripting is shared: one implementation, four front ends
 
 Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping,
 `script` and `record` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
@@ -67,6 +67,25 @@ the change up. Who calls them:
 | `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
 | `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator`; a `toMap()` query (`QueryEvaluator.producesMap`, one definition in `JfrPath.Query.producesMap`, also used by jfr-shell's eager path) is read as a map by `VariableSubstitutor` |
 | `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
+
+| `jafar-shell script <file\|->` | `unified/Shell.forScript` — no terminal, line reader or history | as at the `jafar-shell` prompt |
+
+**Which `main` runs.** `unified/Main` sends `show`, `metadata`, `chunks`, `constants`/`cp` and any
+JFR option (`--backend`, `--plugin-dir`, `--install-plugin`) to jfr-shell's command line
+(`io.jafar.shell.Main`) when they come before the command word; `script` runs in the unified
+shell, and options after it (`-b/--backend` included) are its own. The
+`jafar-shell` jbang alias runs `unified/Main` (the jar's `Main-Class`); the `jfr-shell` alias runs
+[`jafar-shell.java`](https://github.com/btraceio/jbang-catalog/blob/main/jafar-shell.java), whose
+`//MAIN io.jafar.shell.Main` skips `unified/Main` entirely — so routing changes never reach
+`jbang jfr-shell@btraceio ...` or the shebang scripts written for it. `ShellArtifactTest` drives
+both entry points from the fat jar (`runJarWithStatus`, `runClassWithStatus`).
+
+**A failure must be reported through the error channel, or scripts cannot see it.** Both shells
+print a failing command and return normally; `ScriptRunner` only sees what the shell records in its
+`ScriptRunner.ErrorTally` (`failingOnReportedErrors`). In `CommandDispatcher` that is `io.error`; in
+`unified/Shell` it is `error(...)`/`printError(...)`; in `LlmCommands` it is `Host.error`, which
+both hosts route to those. A new failure printed with `println` instead
+runs on in a script and ends in "Script executed successfully" — the bug this contract fixed.
 
 `EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
 resolver)` on first use — so a variable gives the same rows as typing its query. Any reader of

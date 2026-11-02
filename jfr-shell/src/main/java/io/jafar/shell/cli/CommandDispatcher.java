@@ -71,6 +71,8 @@ public class CommandDispatcher {
 
   private final SessionManager<? extends Session> sessions;
   private final IO io;
+  // Every io.error, so runScript fails a line that reported an error rather than counting it
+  private final ScriptRunner.ErrorTally errorTally = new ScriptRunner.ErrorTally();
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
   // Replaced for the duration of a script by runScript, so a script has an if-block stack of its
@@ -125,11 +127,32 @@ public class CommandDispatcher {
       VariableStore globalStore,
       boolean verbose) {
     this.sessions = sessions;
-    this.io = io;
+    this.io = io != null ? countingErrors(io, errorTally) : null;
     this.listener = listener;
     this.selector = selector;
     this.globalStore = globalStore != null ? globalStore : new VariableStore();
     this.verbose = verbose || isVerboseEnabled();
+  }
+
+  /** The caller's IO, with each {@code error} also recorded in {@code tally}. */
+  private static IO countingErrors(IO io, ScriptRunner.ErrorTally tally) {
+    return new IO() {
+      @Override
+      public void println(String s) {
+        io.println(s);
+      }
+
+      @Override
+      public void printf(String fmt, Object... args) {
+        io.printf(fmt, args);
+      }
+
+      @Override
+      public void error(String s) {
+        tally.record(s);
+        io.error(s);
+      }
+    };
   }
 
   /**
@@ -143,8 +166,12 @@ public class CommandDispatcher {
   /**
    * Check if verbose mode is enabled via system property or environment variable. This allows
    * runtime control of verbosity for debugging.
+   *
+   * <p>{@code -Djfr.shell.verbose=true} (or {@code 1}, {@code on}), else {@code JFR_SHELL_VERBOSE}.
+   * Read by both shells' script modes, so the switch means the same thing in {@code jfr-shell
+   * script} and {@code jafar-shell script}.
    */
-  private static boolean isVerboseEnabled() {
+  public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
       String v = prop.trim().toLowerCase();
@@ -188,6 +215,11 @@ public class CommandDispatcher {
                 @Override
                 public void println(String line) {
                   io.println(line);
+                }
+
+                @Override
+                public void error(String line) {
+                  io.error(line); // the channel 'script' counts
                 }
 
                 @Override
@@ -713,7 +745,9 @@ public class CommandDispatcher {
     Conditionals callers = conditionals;
     conditionals = new Conditionals();
     try {
-      ScriptRunner runner = new ScriptRunner(this::dispatch, arguments);
+      ScriptRunner runner =
+          new ScriptRunner(
+              ScriptRunner.failingOnReportedErrors(this::dispatch, errorTally), arguments);
       runner.setContinueOnError(continueOnError);
       ScriptRunner.ExecutionResult result = runner.execute(lines);
       int unclosed = conditionals.state().depth();
