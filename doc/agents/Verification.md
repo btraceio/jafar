@@ -110,14 +110,17 @@ looks identical to the file not being read at all.
 > **Case file — crossref, and the layer under it.** `JafarSources.crossref` decoded every event
 > and pool entry inside `catch (Throwable ignore) {}`: a corrupted recording printed reference
 > counts as if complete. It now fails naming type, chunk and position (`CrossrefDecodeFailureTest`,
-> a JMC-written fixture with one string encoding byte set to `0x7f`). The layer under it still
-> hides the same corruption: `ParsingUtils.skipUTF8` skips an unknown encoding id as an empty
-> string while `CheckpointEvent` indexes the pool, the next entry misreads as `Unknown type ID 3`,
-> and `CheckpointEvent` logs a WARN and abandons the rest of the checkpoint. With the byte flipped
-> in a real JDK 25 recording, `constants/jdk.types.StackTrace | count()` prints the WARN and a
-> number; `crossref()` fails, but names a neighbouring entry whose offset was shifted
-> (`jdk.SystemProcess#68`), not the corrupted one. (An earlier version of this case file said
-> crossref printed the clean numbers; that was the released backend — see R1.)
+> a JMC-written fixture with one string encoding byte set to `0x7f` in an event, and a pooled
+> entry whose string reference points at an id the string pool lacks). Until btraceio/jafar#135 the
+> layer under it hid the same byte flipped in a pooled string: `ParsingUtils.skipUTF8` skipped the
+> unknown id as an empty string while `CheckpointEvent` indexed the pool, the next entry misread
+> as `Unknown type ID 3`, and `CheckpointEvent` logged a WARN and abandoned the rest of the
+> checkpoint, so on a real JDK 25 recording `constants/jdk.types.StackTrace | count()` printed the
+> WARN and a number. Since #135 indexing fails instead, and both commands report an error. What is
+> left: the shell prints only the parser's top-level message, "Error occurred while parsing JFR
+> recording"; which pool and index, and why, is in the cause chain the user never sees. (An
+> earlier version of this case file said crossref printed the clean numbers; that was the released
+> backend — see R1.)
 
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from

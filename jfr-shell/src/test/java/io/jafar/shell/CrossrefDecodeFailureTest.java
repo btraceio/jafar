@@ -9,9 +9,11 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.MutableConstantPool;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.providers.ConstantPoolProvider;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -151,12 +153,13 @@ class CrossrefDecodeFailureTest {
   }
 
   /**
-   * The pooled string itself: {@code crossref} decodes every constant pool entry to collect
-   * pool-to-pool edges, and the {@code java.lang.String} entry holding the marker no longer
-   * decodes.
+   * The pooled string itself, with its encoding byte set to {@code 0x7f}. Since btraceio/jafar#135
+   * the parser rejects this while indexing the pool, before {@code crossref} decodes anything:
+   * entries are not length-prefixed, so past one that cannot be skipped no later offset is known.
+   * The shell shows only the parser's top-level message; the cause chain names the entry.
    */
   @Test
-  void undecodableConstantPoolEntryFailsTheCommand() throws Exception {
+  void undecodablePoolStringIsRejectedWhileIndexing() throws Exception {
     Path clean = dir.resolve("clean.jfr");
     write(clean);
     byte[] bytes = Files.readAllBytes(clean);
@@ -173,16 +176,107 @@ class CrossrefDecodeFailureTest {
     Path corrupt = dir.resolve("corrupt-pool.jfr");
     Files.write(corrupt, bytes);
 
+    java.io.IOException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            java.io.IOException.class,
+            () -> ConstantPoolProvider.crossref(corrupt, "java.lang.String"));
+    String chain = chain(e);
+    assertTrue(chain.contains("Constant pool java.lang.String, index "), chain);
+    assertTrue(chain.contains("Unexpected string constant id: 127"), chain);
+
     String err = run(corrupt);
-    // Not necessarily the marker's entry, and not necessarily id 127: when the pool is indexed,
-    // ParsingUtils.skipUTF8 treats an unknown encoding id as an empty string, so the offsets of
-    // the entries after the marker are shifted, and whichever bad entry crossref reads first
-    // fails. Seen: "java.lang.String#83 ... Unexpected string constant id: 95" ('_' of the marker).
+    String ctx = "stderr:\n" + err + "stdout:\n" + io.out;
+    assertTrue(err.startsWith("Error: "), ctx);
+    assertTrue(!io.out.toString().contains("Total CP entries"), "counts were printed; " + ctx);
+  }
+
+  /**
+   * A pool entry that indexes but does not decode, so {@code crossref}'s own pool-entry path is the
+   * one that fails: a {@code test.Node} entry's string field is a reference (encoding 2) into the
+   * {@code java.lang.String} pool, and its index is changed to one the pool does not hold. Skipping
+   * the field reads only the varint; reading it resolves the reference and throws.
+   */
+  @Test
+  void poolEntryThatIndexesButDoesNotDecodeFailsTheCommand() throws Exception {
+    Path clean = dir.resolve("nodes.jfr");
+    writeNodes(clean);
+    long[] entry = nodeEntry(clean); // {offset of the name field, string pool size}
+    byte[] bytes = Files.readAllBytes(clean);
+    int at = (int) entry[0];
+    assertEquals(2, bytes[at], "name must be a string pool reference (encoding id 2)");
+    assertTrue(bytes[at + 1] > 0, "one-byte index expected, got " + bytes[at + 1]);
+    assertTrue(entry[1] < DANGLING, "string pool must not hold id " + DANGLING + ": " + entry[1]);
+    bytes[at + 1] = DANGLING;
+    Path corrupt = dir.resolve("dangling.jfr");
+    Files.write(corrupt, bytes);
+
+    String err = run(corrupt);
     assertFailedNaming(
         err,
-        "Cannot decode constant pool entry java.lang.String#",
+        "Cannot decode constant pool entry test.Node#",
         " in chunk 1 at position ",
-        "Unexpected string constant id: ");
+        "String constant " + DANGLING + " not found in the java.lang.String pool");
+  }
+
+  private static final byte DANGLING = 0x7e;
+
+  /** {@value #EVENTS} {@code test.NodeEvent}s pointing at one pooled {@code test.Node}. */
+  private static void writeNodes(Path jfr) throws Exception {
+    try (Recording recording = Recordings.newRecording(jfr)) {
+      Types types = recording.getTypes();
+      Type stackTraceType = types.getType(Types.JDK.STACK_TRACE);
+      Type threadType = types.getType(Types.JDK.THREAD);
+      Type node = types.getOrAdd("test.Node", true, t -> t.addField("name", Types.Builtin.STRING));
+      Type event = recording.registerEventType("test.NodeEvent", t -> t.addField("node", node));
+      for (int i = 0; i < EVENTS; i++) {
+        recording.writeEvent(
+            event.asValue(
+                v -> {
+                  v.putField("stackTrace", stackTraceType.nullValue());
+                  v.putField("eventThread", threadType.nullValue());
+                  v.putField("startTime", System.nanoTime());
+                  v.putField("node", n -> n.putField("name", "the-node"));
+                }));
+      }
+    }
+  }
+
+  /** The only {@code test.Node} entry's offset (its first field) and the string pool's size. */
+  private static long[] nodeEntry(Path jfr) throws Exception {
+    long[] out = {-1, -1};
+    try (StreamingChunkParser p = new StreamingChunkParser(new UntypedParserContextFactory())) {
+      p.parse(
+          jfr,
+          new ChunkParserListener() {
+            @Override
+            public boolean onChunkEnd(ParserContext c, int chunkIndex, boolean skipped) {
+              c.getConstantPools()
+                  .pools()
+                  .forEach(
+                      cp -> {
+                        String name = cp.getType().getName();
+                        if (name.equals("test.Node")) {
+                          assertEquals(1, cp.entryCount(), "one distinct node expected");
+                          MutableConstantPool mcp = (MutableConstantPool) cp;
+                          out[0] = mcp.getOffset(mcp.ids().next());
+                        } else if (name.equals("java.lang.String")) {
+                          out[1] = cp.entryCount();
+                        }
+                      });
+              return true;
+            }
+          });
+    }
+    assertTrue(out[0] > 0, "no test.Node entry found");
+    return out;
+  }
+
+  private static String chain(Throwable t) {
+    StringBuilder sb = new StringBuilder();
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      sb.append("\n  ").append(c);
+    }
+    return sb.toString();
   }
 
   /** The event's last two bytes are its label: encoding id 2 (pool reference) + one-byte index. */
