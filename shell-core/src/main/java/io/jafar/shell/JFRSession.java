@@ -57,7 +57,17 @@ public final class JFRSession implements Session {
     // Populate the available types up front. There is deliberately no second collector on the
     // typed parser: it would re-read the same metadata from parser threads during run(), racing
     // with readers, and add nothing this scan has not already found.
-    scanMetadata();
+    try {
+      scanMetadata();
+    } catch (IOException | RuntimeException e) {
+      // The caller never receives this instance, so nobody else can close the typed parser.
+      try {
+        parser.close();
+      } catch (Exception closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
   }
 
   /**
@@ -185,20 +195,26 @@ public final class JFRSession implements Session {
       throw new IllegalStateException("Cannot register handlers after run() has been called");
     }
 
+    // Find the actual JFR type name once: it depends only on the class and the scanned types.
+    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
+    String countedType = null;
+    for (String key : eventTypeCounts.keySet()) {
+      if (key.toLowerCase().contains(typeName)
+          || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
+        countedType = key;
+        break;
+      }
+    }
+    final String counted = countedType;
+
     // Wrap handler to count events
     JFRHandler<T> countingHandler =
         (event, ctl) -> {
           totalEvents.incrementAndGet();
-          String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
-          // Called from parser threads, one per chunk: merge on a ConcurrentHashMap is atomic.
-          ConcurrentHashMap<String, Long> counts = eventTypeCounts;
-          // Try to find the actual JFR type name
-          for (String key : counts.keySet()) {
-            if (key.toLowerCase().contains(typeName)
-                || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
-              counts.merge(key, 1L, Long::sum);
-              break;
-            }
+          if (counted != null) {
+            // Called from parser threads, one per chunk: computeIfPresent on a ConcurrentHashMap
+            // is atomic. Read the field each time: refreshTypes() may have replaced the map.
+            eventTypeCounts.computeIfPresent(counted, (k, v) -> v + 1);
           }
           handler.handle(event, ctl);
         };
@@ -320,6 +336,16 @@ public final class JFRSession implements Session {
                   byChunk.computeIfAbsent(context.getChunkIndex(), k -> new LinkedHashSet<>());
               context.getConstantPools().pools().forEach(cp -> out.add(cp.getType().getName()));
               return true; // continue to ALL checkpoints to discover all CP types
+            }
+
+            @Override
+            public boolean onEvent(
+                ParserContext context,
+                long typeId,
+                long eventStartPos,
+                long rawSize,
+                long payloadSize) {
+              return false; // every checkpoint of this chunk is read; skip its events
             }
           });
     } catch (Exception e) {
