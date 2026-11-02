@@ -11,7 +11,9 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -102,11 +104,17 @@ public final class StdioSseBridge {
 
     /** On an SSE reader thread: {@code onStreamEnded} has finished. */
     default void streamEnded() {}
+
+    /** On an SSE reader thread: a response arrived, and is not yet relayed or dropped. */
+    default void responseArriving(String idKey) {}
+
+    /** On an SSE reader thread: a response has been relayed or dropped. */
+    default void responseHandled(String idKey) {}
   }
 
   private static final Hooks NO_HOOKS = new Hooks() {};
 
-  volatile Hooks hooks = NO_HOOKS;
+  private final Hooks hooks;
 
   private volatile boolean closing;
   private volatile String swallowId;
@@ -123,6 +131,18 @@ public final class StdioSseBridge {
       OutputStream stdout,
       PrintStream diag,
       Duration handshakeTimeout) {
+    this(daemon, stdin, stdout, diag, handshakeTimeout, NO_HOOKS);
+  }
+
+  /** For tests: {@code hooks} lets a test force a thread interleaving. */
+  StdioSseBridge(
+      DaemonSupplier daemon,
+      InputStream stdin,
+      OutputStream stdout,
+      PrintStream diag,
+      Duration handshakeTimeout,
+      Hooks hooks) {
+    this.hooks = hooks;
     this.daemon = daemon;
     this.stdin = stdin;
     this.stdout = new PrintStream(stdout, false, StandardCharsets.UTF_8);
@@ -136,6 +156,13 @@ public final class StdioSseBridge {
     final InputStream stream;
     volatile URI messageUri;
     volatile boolean dead;
+
+    /**
+     * Requests failed to the client by {@link #dropConnection} while this stream was still open, so
+     * a reply already on its way can still arrive here. Such a reply is dropped: the client has its
+     * answer. Only those are recorded, since a stream that has ended delivers nothing more.
+     */
+    final Set<String> failed = ConcurrentHashMap.newKeySet();
 
     Connection(DaemonEndpoint endpoint, HttpURLConnection http, InputStream stream) {
       this.endpoint = endpoint;
@@ -194,13 +221,13 @@ public final class StdioSseBridge {
     }
     hooks.beforeDelivery(idKey);
 
-    boolean delivered;
+    boolean delivered = false;
     try {
       delivered = post(line, idKey);
     } finally {
-      if (idKey != null) {
+      if (idKey != null && !delivered) { // when delivered, settleAccepted() has released it
         synchronized (inFlightLock) {
-          delivering = null; // every path out of post() has answered it or handed it to the daemon
+          delivering = null; // post() answered it, or it was never accepted
         }
       }
     }
@@ -237,7 +264,7 @@ public final class StdioSseBridge {
           return true;
         }
         if (status == 404 || status == 410) {
-          dropConnection(c, idKey);
+          dropConnection(c);
           last = new IOException("the daemon no longer knows this session (HTTP " + status + ")");
           continue;
         }
@@ -246,7 +273,7 @@ public final class StdioSseBridge {
       } catch (IOException e) {
         last = e;
         if (connection != null) {
-          dropConnection(connection, idKey);
+          dropConnection(connection);
         }
         if (attempt + 1 < DELIVERY_ATTEMPTS) {
           try {
@@ -275,17 +302,24 @@ public final class StdioSseBridge {
     if (idKey == null) {
       return;
     }
+    boolean lost;
     synchronized (inFlightLock) {
       delivering = null;
-      if (c.dead) {
-        fail(idKey, "the connection to the jfr-mcp daemon was lost; retry the request");
-      }
+      lost = c.dead && inFlight.remove(idKey) != null;
+    }
+    if (lost) { // written outside the lock: a stdout write can block on a slow client
+      writeError(idKey, "the connection to the jfr-mcp daemon was lost; retry the request");
     }
   }
 
   private Connection ensureConnected() throws IOException {
-    if (connection != null && !connection.dead) {
-      return connection;
+    if (connection != null) {
+      if (!connection.dead) {
+        return connection;
+      }
+      // Its stream ended (or we closed it) and what was in flight on it has been failed: forget
+      // it, so a failed connect() below does not leave it to be closed and failed over again.
+      connection = null;
     }
     connection = connect();
     return connection;
@@ -406,7 +440,7 @@ public final class StdioSseBridge {
       String line;
       while ((line = r.readLine()) != null) {
         if (line.isEmpty()) {
-          dispatch(event, data.toString(), announced);
+          dispatch(c, event, data.toString(), announced);
           event = null;
           data.setLength(0);
         } else if (line.startsWith("event:")) {
@@ -430,30 +464,42 @@ public final class StdioSseBridge {
     return line.startsWith(" ", from) ? line.substring(from + 1) : line.substring(from);
   }
 
-  private void dispatch(String event, String data, CompletableFuture<String> announced) {
+  private void dispatch(
+      Connection c, String event, String data, CompletableFuture<String> announced) {
     if ("endpoint".equals(event)) {
       announced.complete(data);
     } else if (event == null || "message".equals(event)) {
-      onMessage(data);
+      onMessage(c, data);
     }
   }
 
-  private void onMessage(String data) {
+  private void onMessage(Connection c, String data) {
     String line = data.indexOf('\n') >= 0 ? JsonRpc.compact(data) : data;
     JsonRpc.Frame frame = JsonRpc.parse(line);
     if (frame == null) {
       diag.println("jfr-mcp bridge: dropping a daemon event that is not a JSON object");
       return;
     }
-    if (frame.isResponse()) {
-      if (frame.idJson().equals(swallowId)) {
-        swallowId = null;
-        swallowLatch.countDown();
-        return;
-      }
-      inFlight.remove(frame.idJson());
+    if (!frame.isResponse()) {
+      writeStdout(line);
+      return;
     }
-    writeStdout(line);
+    String idKey = frame.idJson();
+    if (idKey.equals(swallowId)) {
+      swallowId = null;
+      swallowLatch.countDown();
+      return;
+    }
+    hooks.responseArriving(idKey);
+    // A response the bridge does not track (id null, a batch member) is relayed as before; only a
+    // reply to a request already failed to the client on this connection is dropped. failInFlight
+    // records the id before removing it, so whichever of the two removes it answers it, once.
+    if (inFlight.remove(idKey) != null || !c.failed.remove(idKey)) {
+      writeStdout(line);
+    } else {
+      diag.println("jfr-mcp bridge: dropping a late reply to failed request " + idKey);
+    }
+    hooks.responseHandled(idKey);
   }
 
   private void onStreamEnded(Connection c) {
@@ -473,23 +519,21 @@ public final class StdioSseBridge {
     // flight must not wait for that. ensureConnected() replaces a dead connection by itself.
     c.dead = true;
     if (!closing) {
-      synchronized (inFlightLock) {
-        // The request being delivered is post()'s: it reconnects and delivers it, or fails it, or,
-        // if this connection already accepted it, settleAccepted() sees it dead and fails it.
-        failInFlight(
-            delivering, "the connection to the jfr-mcp daemon was lost; retry the request");
-      }
+      // The request being delivered is post()'s: it reconnects and delivers it, or fails it, or,
+      // if this connection already accepted it, settleAccepted() sees it dead and fails it. The
+      // stream has ended, so no late reply can follow: nothing to record on c.
+      failInFlight(null, "the connection to the jfr-mcp daemon was lost; retry the request");
     }
   }
 
   // ───────────────────────────── failure paths ─────────────────────────────
 
-  private void dropConnection(Connection c, String keepKey) {
+  private void dropConnection(Connection c) {
     c.close();
     if (connection == c) {
       connection = null;
     }
-    failInFlight(keepKey, "the jfr-mcp daemon dropped this session; retry the request");
+    failInFlight(c, "the jfr-mcp daemon dropped this session; retry the request");
   }
 
   private void closeConnection() {
@@ -509,12 +553,42 @@ public final class StdioSseBridge {
     }
   }
 
-  private void failInFlight(String exceptKey, String message) {
+  /**
+   * Fails every request in flight but one. Which ones is decided under {@link #inFlightLock}; the
+   * errors are written after it is released, because a stdout write can block on a slow client and
+   * the stdin thread needs the lock to register each request. Removing a key from {@link #inFlight}
+   * is what entitles a caller to answer it, so writing later cannot answer twice.
+   *
+   * <p>The request {@link #post} is delivering is spared: its retry loop owns it.
+   *
+   * @param lateRepliesFrom the connection whose stream may still deliver replies to these requests,
+   *     to record them on so those replies are dropped; {@code null} if its stream has ended
+   */
+  private void failInFlight(Connection lateRepliesFrom, String message) {
+    List<String> failed = null; // allocated only when there is something to fail
     synchronized (inFlightLock) {
-      for (String key : new ArrayList<>(inFlight.keySet())) {
-        if (!key.equals(exceptKey) && inFlight.remove(key) != null) {
-          writeError(key, message);
+      String spare = delivering;
+      // A ConcurrentHashMap key set may be modified while iterated; no snapshot needed.
+      for (String key : inFlight.keySet()) {
+        if (key.equals(spare)) {
+          continue;
         }
+        if (lateRepliesFrom != null) {
+          lateRepliesFrom.failed.add(key); // before the remove: see onMessage
+        }
+        if (inFlight.remove(key) != null) {
+          if (failed == null) {
+            failed = new ArrayList<>();
+          }
+          failed.add(key);
+        } else if (lateRepliesFrom != null) {
+          lateRepliesFrom.failed.remove(key); // its reply won the race and was relayed
+        }
+      }
+    }
+    if (failed != null) {
+      for (String key : failed) {
+        writeError(key, message);
       }
     }
   }
