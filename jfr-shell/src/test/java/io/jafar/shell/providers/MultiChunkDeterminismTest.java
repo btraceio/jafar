@@ -95,6 +95,7 @@ class MultiChunkDeterminismTest {
               r.get("cpTotal"),
               r.get("cpReferenced"),
               new TreeMap<>((Map<?, ?>) r.get("eventCounts")),
+              new TreeMap<>((Map<?, ?>) r.get("uniqueByEventType")),
               new TreeMap<>((Map<?, ?>) r.get("totalRefsByEventType")));
         });
   }

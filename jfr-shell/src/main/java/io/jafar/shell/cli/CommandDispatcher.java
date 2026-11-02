@@ -2419,8 +2419,9 @@ public class CommandDispatcher {
 
     @SuppressWarnings("unchecked")
     Map<String, Long> eventCounts = (Map<String, Long>) result.get("eventCounts");
+    // Unique CP entries per event type, counted per chunk and summed (CP ids are chunk-local).
     @SuppressWarnings("unchecked")
-    Map<String, Set<?>> idsByEventType = (Map<String, Set<?>>) result.get("idsByEventType");
+    Map<String, Long> uniqueByEventType = (Map<String, Long>) result.get("uniqueByEventType");
     @SuppressWarnings("unchecked")
     Map<String, Long> totalRefsByEventType = (Map<String, Long>) result.get("totalRefsByEventType");
     String shortName =
@@ -2429,7 +2430,7 @@ public class CommandDispatcher {
 
     Set<String> allEventTypes = new HashSet<>();
     if (eventCounts != null) allEventTypes.addAll(eventCounts.keySet());
-    if (idsByEventType != null) allEventTypes.addAll(idsByEventType.keySet());
+    if (uniqueByEventType != null) allEventTypes.addAll(uniqueByEventType.keySet());
 
     if (!allEventTypes.isEmpty()) {
       io.println("");
@@ -2446,10 +2447,8 @@ public class CommandDispatcher {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("eventType", evtType);
                 row.put("events", eventCounts != null ? eventCounts.getOrDefault(evtType, 0L) : 0L);
-                int uniqueCount =
-                    idsByEventType != null && idsByEventType.containsKey(evtType)
-                        ? idsByEventType.get(evtType).size()
-                        : 0;
+                long uniqueCount =
+                    uniqueByEventType != null ? uniqueByEventType.getOrDefault(evtType, 0L) : 0L;
                 row.put(uniqueColName, uniqueCount);
                 row.put(
                     "directRefs",

@@ -1073,6 +1073,12 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
+Constant pool ids are local to a chunk, so every number is computed per chunk and summed. In
+the per-event-type table, `events` counts events that reference the type directly or through
+other constant pool entries. `unique<Type>` counts the distinct entries they reach, so an id that
+appears in two chunks counts twice. `directRefs` counts direct references, including repeats.
+This is available in `jfr-shell`; the unified `jafar-shell` does not support `crossref()` yet.
+
 ## Operator Chaining
 
 Many operators are chainable in a pipeline. For example:

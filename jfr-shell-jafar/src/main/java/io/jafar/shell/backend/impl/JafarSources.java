@@ -29,7 +29,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
@@ -569,38 +568,12 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> crossref(Path recording, String typeName) throws Exception {
-      // JFR CP IDs are chunk-local. Global stats (total/referenced/unused CP entries) must be
-      // computed per chunk and then summed. Chunks run concurrently, so every piece of per-chunk
-      // state lives in that chunk's own CrossrefChunk; a single slot reset in onChunkStart was
-      // replaced by the other chunk's onChunkStart while the first was still using it.
+      // JFR CP IDs are chunk-local, so every statistic is computed per chunk and summed. Chunks
+      // also run concurrently, so all per-chunk state lives in that chunk's own CrossrefChunk.
+      // Event-type results used to be computed after the parse over one graph and one id set
+      // merged from all chunks: an id referenced from two chunks (two different entries) was
+      // counted once, and one chunk's ids were resolved through another chunk's edges.
       PerChunk<CrossrefChunk> perChunk = new PerChunk<>(CrossrefChunk::new);
-
-      // Per-event-type CP refs (all types) — seeds for per-event-type BFS
-      Map<String, Map<String, Set<Long>>> directEventRefsByType = new ConcurrentHashMap<>();
-      // Events per event type that directly reference the target CP type
-      Map<String, Long> eventCounts = new ConcurrentHashMap<>();
-      // Candidate event counts for types with transitive (not direct) refs — only promoted after
-      // BFS confirms reachable target IDs
-      Map<String, Long> candidateTransitiveCounts = new ConcurrentHashMap<>();
-      // Total non-unique direct target-type refs per event type
-      Map<String, Long> totalRefsByEventType = new ConcurrentHashMap<>();
-      // Per-event-type unique target IDs (direct refs only)
-      Map<String, Set<Long>> idsByEventType = new ConcurrentHashMap<>();
-
-      // ThreadLocal: accumulates all CP refs (all types) seen in the current event
-      ThreadLocal<Map<String, List<Long>>> currentEventAllRefs = new ThreadLocal<>();
-
-      ValueProcessor eventCollector =
-          new ValueProcessor() {
-            @Override
-            public void onConstantPoolIndex(
-                MetadataClass owner, String fld, MetadataClass type, long ptr) {
-              Map<String, List<Long>> allRefs = currentEventAllRefs.get();
-              if (allRefs != null) {
-                allRefs.computeIfAbsent(type.getName(), k -> new ArrayList<>()).add(ptr);
-              }
-            }
-          };
 
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
@@ -616,22 +589,14 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
-                perChunk.of(context);
-                context.put(GenericValueReader.class, new GenericValueReader(eventCollector));
+                CrossrefChunk chunk = perChunk.of(context);
+                context.put(GenericValueReader.class, new GenericValueReader(chunk.eventCollector));
                 return true;
               }
 
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                CrossrefChunk chunk = perChunk.of(context);
-                chunk.completed = !skipped;
-                if (!skipped) {
-                  // Per-chunk BFS: which target-type IDs are reachable from events in this chunk?
-                  Set<Long> chunkReachable =
-                      bfsCpReachable(chunk.eventRefs, chunk.cpEdges, typeName);
-                  chunk.referencedCpCount =
-                      chunkReachable.stream().filter(chunk.allIds::contains).count();
-                }
+                perChunk.of(context).finish(typeName, !skipped);
                 context.remove(GenericValueReader.class);
                 return true;
               }
@@ -700,84 +665,30 @@ final class JafarSources {
                 if (stream == null) return true;
                 CrossrefChunk chunk = perChunk.of(context);
 
-                Map<String, List<Long>> allRefs = new HashMap<>();
-                currentEventAllRefs.set(allRefs);
+                Map<String, List<Long>> allRefs = chunk.eventAllRefs;
+                allRefs.clear();
                 try {
                   reader.readValue(stream, eventType);
                 } catch (Throwable ignore) {
-                } finally {
-                  currentEventAllRefs.remove();
                 }
-
-                // Track per-event-type refs and seed per-chunk BFS
-                List<Long> directTarget = allRefs.getOrDefault(typeName, Collections.emptyList());
-                if (!directTarget.isEmpty()) {
-                  String et = eventType.getName();
-                  eventCounts.merge(et, 1L, Long::sum);
-                  totalRefsByEventType.merge(et, (long) directTarget.size(), Long::sum);
-                  idsByEventType
-                      .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
-                      .addAll(directTarget);
-                } else {
-                  // Check for transitive refs — count as candidate, confirmed after BFS
-                  for (String ancestor : chunk.ancestorTypes) {
-                    if (allRefs.containsKey(ancestor)) {
-                      candidateTransitiveCounts.merge(eventType.getName(), 1L, Long::sum);
-                      break;
-                    }
-                  }
-                }
-                allRefs.forEach(
-                    (refType, refIds) ->
-                        chunk
-                            .eventRefs
-                            .computeIfAbsent(refType, k -> new HashSet<>())
-                            .addAll(refIds));
-                if (!allRefs.isEmpty()) {
-                  String et = eventType.getName();
-                  allRefs.forEach(
-                      (refType, refIds) ->
-                          directEventRefsByType
-                              .computeIfAbsent(et, k -> new ConcurrentHashMap<>())
-                              .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
-                              .addAll(refIds));
-                }
+                chunk.recordEvent(eventType.getName(), allRefs, typeName);
                 return true;
               }
             });
       }
 
-      // Sum per-chunk totals and merge per-chunk CP edges in recording order, so that an id
-      // defined in several chunks resolves to the same chunk's edges on every run.
       long total = 0;
       long referenced = 0;
-      Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new HashMap<>();
+      Map<String, Long> eventCounts = new HashMap<>();
+      Map<String, Long> uniqueByEventType = new HashMap<>();
+      Map<String, Long> totalRefsByEventType = new HashMap<>();
       for (CrossrefChunk chunk : perChunk.inChunkOrder()) {
         total += chunk.totalCpCount;
-        if (chunk.completed) {
-          referenced += chunk.referencedCpCount;
-          chunk.cpEdges.forEach(
-              (type, idMap) -> cpEdges.computeIfAbsent(type, k -> new HashMap<>()).putAll(idMap));
-        }
+        referenced += chunk.referencedCpCount;
+        chunk.eventCounts.forEach((k, v) -> eventCounts.merge(k, v, Long::sum));
+        chunk.uniqueByEventType.forEach((k, v) -> uniqueByEventType.merge(k, v, Long::sum));
+        chunk.totalRefsByEventType.forEach((k, v) -> totalRefsByEventType.merge(k, v, Long::sum));
       }
-
-      // Per-event-type transitive BFS: merge transitive IDs and promote candidate event counts.
-      // Uses the global merged cpEdges accumulated from all chunks.
-      for (Map.Entry<String, Map<String, Set<Long>>> e : directEventRefsByType.entrySet()) {
-        String et = e.getKey();
-        Set<Long> transitiveIds = bfsCpReachable(e.getValue(), cpEdges, typeName);
-        if (!transitiveIds.isEmpty()) {
-          idsByEventType
-              .computeIfAbsent(et, k -> ConcurrentHashMap.newKeySet())
-              .addAll(transitiveIds);
-          // Promote candidate transitive event counts now that BFS confirmed reachability
-          Long candidateCount = candidateTransitiveCounts.get(et);
-          if (candidateCount != null) {
-            eventCounts.merge(et, candidateCount, Long::sum);
-          }
-        }
-      }
-
       long unused = total - referenced;
 
       Map<String, Object> result = new LinkedHashMap<>();
@@ -788,33 +699,118 @@ final class JafarSources {
       result.put("usedPercent", total == 0 ? 0.0 : 100.0 * referenced / total);
       result.put("unusedPercent", total == 0 ? 0.0 : 100.0 * unused / total);
       result.put("eventCounts", eventCounts);
-      result.put("idsByEventType", idsByEventType);
+      result.put("uniqueByEventType", uniqueByEventType);
       result.put("totalRefsByEventType", totalRefsByEventType);
       return result;
     }
 
     /**
      * Everything {@link #crossref} accumulates for one chunk. Touched only by that chunk's thread
-     * (see {@link PerChunk}), so plain collections suffice.
+     * (see {@link PerChunk}), so plain collections suffice. {@link #finish} turns the chunk's graph
+     * and references into counts at the end of the chunk and drops them, so at most one graph per
+     * parser thread is alive at a time.
      */
     private static final class CrossrefChunk {
-      /** Target-type CP IDs defined in this chunk's checkpoints. */
-      final Set<Long> allIds = new HashSet<>();
+      /** Target-type CP IDs defined in this chunk. */
+      Set<Long> allIds = new HashSet<>();
 
-      /** This chunk's CP-to-CP reference edges. Merged into the global graph after the parse. */
-      final Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new HashMap<>();
+      /** This chunk's CP-to-CP reference edges. */
+      Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new HashMap<>();
 
       /** Union of all CP refs made by this chunk's events: seeds for the per-chunk BFS. */
-      final Map<String, Set<Long>> eventRefs = new HashMap<>();
+      Map<String, Set<Long>> eventRefs = new HashMap<>();
 
-      final EdgeCollectingProcessor edgeProc = new EdgeCollectingProcessor(cpEdges);
+      /** Event type -> CP type -> ids its events reference: seeds for per-event-type BFS. */
+      Map<String, Map<String, Set<Long>>> refsByEventType = new HashMap<>();
+
+      /** Event type -> target ids its events reference directly. */
+      Map<String, Set<Long>> directIdsByEventType = new HashMap<>();
+
+      /**
+       * Events with no direct target reference but a reference to an ancestor type, per event type;
+       * added to {@link #eventCounts} only if the BFS confirms the target is reachable.
+       */
+      Map<String, Long> candidateTransitiveCounts = new HashMap<>();
+
+      EdgeCollectingProcessor edgeProc = new EdgeCollectingProcessor(cpEdges);
+
+      /** The current event's CP refs, by CP type. Reused across this chunk's events. */
+      final Map<String, List<Long>> eventAllRefs = new HashMap<>();
+
+      /** Feeds {@link #eventAllRefs}; one per chunk, so no ThreadLocal is needed. */
+      final ValueProcessor eventCollector =
+          new ValueProcessor() {
+            @Override
+            public void onConstantPoolIndex(
+                MetadataClass owner, String fld, MetadataClass type, long ptr) {
+              eventAllRefs.computeIfAbsent(type.getName(), k -> new ArrayList<>()).add(ptr);
+            }
+          };
 
       /** Metadata-derived ancestor types of the target, from this chunk's metadata. */
       Set<String> ancestorTypes = Collections.emptySet();
 
+      // Results, kept after finish().
       long totalCpCount;
       long referencedCpCount;
-      boolean completed;
+      final Map<String, Long> eventCounts = new HashMap<>();
+      final Map<String, Long> uniqueByEventType = new HashMap<>();
+      final Map<String, Long> totalRefsByEventType = new HashMap<>();
+
+      void recordEvent(String eventType, Map<String, List<Long>> allRefs, String typeName) {
+        if (allRefs.isEmpty()) return;
+        List<Long> directTarget = allRefs.get(typeName);
+        if (directTarget != null && !directTarget.isEmpty()) {
+          eventCounts.merge(eventType, 1L, Long::sum);
+          totalRefsByEventType.merge(eventType, (long) directTarget.size(), Long::sum);
+          directIdsByEventType
+              .computeIfAbsent(eventType, k -> new HashSet<>())
+              .addAll(directTarget);
+        } else {
+          for (String ancestor : ancestorTypes) {
+            if (allRefs.containsKey(ancestor)) {
+              candidateTransitiveCounts.merge(eventType, 1L, Long::sum);
+              break;
+            }
+          }
+        }
+        Map<String, Set<Long>> byRefType =
+            refsByEventType.computeIfAbsent(eventType, k -> new HashMap<>());
+        allRefs.forEach(
+            (refType, refIds) -> {
+              eventRefs.computeIfAbsent(refType, k -> new HashSet<>()).addAll(refIds);
+              byRefType.computeIfAbsent(refType, k -> new HashSet<>()).addAll(refIds);
+            });
+      }
+
+      void finish(String typeName, boolean completed) {
+        if (completed) {
+          // Which target-type IDs are reachable from this chunk's events?
+          Set<Long> reachable = bfsCpReachable(eventRefs, cpEdges, typeName);
+          referencedCpCount = reachable.stream().filter(allIds::contains).count();
+        }
+        // Per event type: target ids reachable from its events in this chunk, through this
+        // chunk's edges. The BFS starts from the event type's own refs, so it includes the direct
+        // ones; the union keeps them if the graph is empty.
+        refsByEventType.forEach(
+            (eventType, seeds) -> {
+              Set<Long> ids = bfsCpReachable(seeds, cpEdges, typeName);
+              Set<Long> direct = directIdsByEventType.get(eventType);
+              if (direct != null) ids.addAll(direct);
+              if (!ids.isEmpty()) {
+                uniqueByEventType.put(eventType, (long) ids.size());
+                Long candidates = candidateTransitiveCounts.get(eventType);
+                if (candidates != null) eventCounts.merge(eventType, candidates, Long::sum);
+              }
+            });
+        allIds = null;
+        cpEdges = null;
+        edgeProc = null; // holds cpEdges
+        eventRefs = null;
+        refsByEventType = null;
+        directIdsByEventType = null;
+        candidateTransitiveCounts = null;
+      }
     }
 
     /**
