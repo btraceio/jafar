@@ -28,6 +28,12 @@ public final class CheckpointEvent extends AbstractEvent {
 
   private final RecordingStream stream;
 
+  /** Offset of this checkpoint event in the chunk; its size field is the first thing there. */
+  private final long start;
+
+  /** Size of this checkpoint event in bytes, including the size field itself. */
+  private final int size;
+
   /**
    * Constructs a new CheckpointEvent from the recording stream.
    *
@@ -37,7 +43,8 @@ public final class CheckpointEvent extends AbstractEvent {
   CheckpointEvent(RecordingStream stream) throws IOException {
     super(stream);
     this.stream = stream;
-    int size = (int) stream.readVarint();
+    this.start = stream.position();
+    this.size = (int) stream.readVarint();
     if (size == 0) {
       throw new IOException("Unexpected event size. Should be > 0");
     }
@@ -57,7 +64,8 @@ public final class CheckpointEvent extends AbstractEvent {
    * <p>This method processes all constant pool entries associated with this checkpoint, applying
    * type filtering and value processing as configured in the parser context.
    *
-   * @throws IOException if an I/O error occurs during reading
+   * @throws IOException if an I/O error occurs during reading, or if the constant pools do not end
+   *     exactly where the checkpoint event's size says the event ends
    */
   void readConstantPools() throws IOException {
     ParserContext context = stream.getContext();
@@ -113,6 +121,22 @@ public final class CheckpointEvent extends AbstractEvent {
       } catch (IOException e) {
         throw e;
       }
+    }
+    // Entries are not length-prefixed, so a wrong length inside one (a corrupted string length
+    // varint, say) still skips without error and indexes every later entry at the wrong offset.
+    // The checkpoint's size is the only check that catches it. The JDK's ChunkParser fails here
+    // too ("Size of check point event doesn't match content").
+    long end = start + size;
+    if (stream.position() != end) {
+      throw new IOException(
+          "Checkpoint at "
+              + start
+              + ": constant pools end at "
+              + stream.position()
+              + ", but the event size "
+              + size
+              + " says it ends at "
+              + end);
     }
   }
 }

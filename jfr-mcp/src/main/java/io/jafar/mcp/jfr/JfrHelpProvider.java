@@ -18,7 +18,8 @@ public final class JfrHelpProvider {
         - `events/<type>` - Access event data (e.g., events/jdk.ExecutionSample)
         - `metadata/<type>` - Access type metadata
         - `chunks` - Access chunk information
-        - `constants/<type>` - Access constant pool entries
+        - `constants/<type>` - Access constant pool entries; `| crossref()` checks them against
+          the events that reference them
 
         ## Field Navigation
         - Simple: `events/jdk.FileRead/path`
@@ -36,7 +37,7 @@ public final class JfrHelpProvider {
         ## Help Topics
         Call jfr_help with topic parameter for detailed documentation:
         - filters: Filter syntax and operators
-        - pipeline: Aggregation operators (count, groupBy, top, stats, etc.)
+        - pipeline: Aggregation operators (count, groupBy, top, stats, crossref, etc.)
         - functions: Built-in functions for filters and select
         - examples: Common query patterns
         - event_types: Common JDK event types
@@ -165,6 +166,23 @@ public final class JfrHelpProvider {
         Sort results by field.
         ```
         events/jdk.FileRead | select(path, bytesRead) | sortBy(bytesRead)
+        ```
+
+        ## crossref()
+        Check a constant pool type's entries against the events that reference them: how many
+        entries some event reaches (directly or through other pool entries), how many none does,
+        and which event types reach them, most events first. Must directly follow a bare
+        `constants/<type>`, with no filter, projection or other operator before it. It decodes
+        every event and pool entry in the recording; one that cannot be decoded fails the query.
+        Constant pool ids are chunk-local, so an entry is one id in one chunk.
+        ```
+        constants/jdk.types.StackTrace | crossref()
+        constants/jdk.types.Method | crossref()
+        constants/jdk.types.StackTrace | crossref() | select(type, total, unreferenced)
+        → { "type": "jdk.types.StackTrace", "total": 622, "referenced": 555, "unreferenced": 67,
+            "referencedPercent": 89.2282958199357, "unreferencedPercent": 10.771704180064308,
+            "referencingEventTypes": [ { "eventType": "jdk.ExecutionSample", "events": 409,
+              "uniqueRefs": 407, "directRefs": 409 }, ... ] }
         ```
 
         ## decorateByTime(eventType, fields=f1,f2[, threadPath=..., decoratorThreadPath=...])

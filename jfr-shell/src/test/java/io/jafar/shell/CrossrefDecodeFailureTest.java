@@ -100,9 +100,9 @@ class CrossrefDecodeFailureTest {
     write(clean);
     String err = run(clean);
     assertEquals("", err, "stdout:\n" + io.out);
-    assertTrue(
-        io.out.toString().contains("java.lang.String Constant Pool Crosscheck"),
-        "stdout:\n" + io.out);
+    String out = io.out.toString();
+    assertTrue(out.contains("referencingEventTypes"), "stdout:\n" + out);
+    assertTrue(out.contains("| java.lang.String "), "stdout:\n" + out);
   }
 
   /**
@@ -205,7 +205,7 @@ class CrossrefDecodeFailureTest {
     String err = run(corrupt);
     String ctx = "stderr:\n" + err + "stdout:\n" + io.out;
     assertTrue(err.startsWith("Error: "), ctx);
-    assertTrue(!io.out.toString().contains("Total CP entries"), "counts were printed; " + ctx);
+    assertTrue(!io.out.toString().contains("referencingEventTypes"), "counts were printed; " + ctx);
   }
 
   /**
@@ -327,7 +327,8 @@ class CrossrefDecodeFailureTest {
       assertTrue(err.contains(f), "missing '" + f + "'; " + ctx);
     }
     assertTrue(
-        !io.out.toString().contains("Total CP entries"), "partial counts were printed; " + ctx);
+        !io.out.toString().contains("referencingEventTypes"),
+        "partial counts were printed; " + ctx);
   }
 
   private static void write(Path jfr) throws Exception {

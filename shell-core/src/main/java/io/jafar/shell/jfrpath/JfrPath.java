@@ -321,9 +321,17 @@ public final class JfrPath {
           TimeRangeOp,
           StackProfileOp,
           AsDateTimeOp,
-          FlameGraphOp {}
+          FlameGraphOp,
+          CrossrefOp {}
 
   public static final class CountOp implements PipelineOp {}
+
+  /**
+   * {@code constants/<type> | crossref()}: checks the type's constant pool entries against the
+   * events that reference them. Only valid as the first operator after a bare {@code
+   * constants/<type>}; it yields one summary row.
+   */
+  public static final class CrossrefOp implements PipelineOp {}
 
   public static final class SumOp implements PipelineOp {
     public final List<String> valuePath; // optional, if empty: use projection path

@@ -57,12 +57,14 @@ public final class TypeSkipper {
 
     // Special case: simple types in constant pools store unwrapped field values
     // The CP entries contain the raw unwrapped type data, not the simple type structure
-    if (clz.isSimpleType() && clz.getFields().size() == 1) {
+    if (clz.isSimpleType() && clz.getFields().size() == 1 && unwrappable(clz.getFields().get(0))) {
       MetadataField singleField = clz.getFields().get(0);
       MetadataClass fieldType = singleField.getType();
 
       // Recursively unwrap nested simple types to get the actual field type
-      while (fieldType.isSimpleType() && fieldType.getFields().size() == 1) {
+      while (fieldType.isSimpleType()
+          && fieldType.getFields().size() == 1
+          && unwrappable(fieldType.getFields().get(0))) {
         fieldType = fieldType.getFields().get(0).getType();
       }
 
@@ -106,6 +108,17 @@ public final class TypeSkipper {
   }
 
   /**
+   * Whether a simple type's single field is encoded inline as a plain value, so that the field's
+   * type can stand in for the simple type. An array or pooled field keeps its own framing and has
+   * to go through {@link #fillSkipper}: {@code jdk.types.ChunkHeader} is a simple type whose only
+   * field is {@code byte[] payload}, and unwrapping it to {@code byte} skipped one byte of a
+   * 68-byte array. Mirrors {@code unwrappable} in {@code go-parser/jfr/constantpool.go}.
+   */
+  private static boolean unwrappable(MetadataField field) {
+    return field.getDimension() == 0 && !field.hasConstantPool();
+  }
+
+  /**
    * Fills the instruction list with skipping instructions for a field.
    *
    * @param fld the metadata field to generate instructions for
@@ -123,6 +136,9 @@ public final class TypeSkipper {
     boolean withCp = fld.hasConstantPool();
     while (fldClz.isSimpleType()) {
       List<MetadataField> fl = fldClz.getFields();
+      if (fl.size() != 1 || !unwrappable(fl.get(0))) {
+        break; // skipped field by field below, keeping the inner field's own framing
+      }
       fldClz = fl.get(0).getType();
     }
     String name = fldClz.getName();
