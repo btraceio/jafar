@@ -18,6 +18,7 @@ import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.Progress;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
+import io.jafar.shell.core.llm.SecretCommands;
 import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.ConditionalState;
 import io.jafar.shell.core.scripting.Conditionals;
@@ -2712,7 +2713,8 @@ public class CommandDispatcher {
       }
       store.set(varName, new ScalarValue(literal));
       if (verbose) {
-        io.println("Set " + varName + " = " + literal);
+        String shown = LlmSettings.isSecret(varName) ? SecretCommands.mask(literal) : literal;
+        io.println("Set " + varName + " = " + shown);
       }
       return;
     }
@@ -3003,7 +3005,7 @@ public class CommandDispatcher {
       io.println("Global variables:");
       for (String name : globalStore.names()) {
         Value val = globalStore.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -3011,7 +3013,7 @@ public class CommandDispatcher {
       io.println("Session variables (session #" + cur.get().id + "):");
       for (String name : cur.get().variables.names()) {
         Value val = cur.get().variables.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -3060,7 +3062,7 @@ public class CommandDispatcher {
       io.println("Structure: " + mv.describe());
     } else if (val instanceof ScalarValue sv) {
       io.println("Type: scalar");
-      io.println("Value: " + sv.describe());
+      io.println("Value: " + SecretCommands.describe(name, sv));
     }
   }
 

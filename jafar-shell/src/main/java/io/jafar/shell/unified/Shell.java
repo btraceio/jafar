@@ -28,7 +28,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
@@ -50,7 +49,8 @@ public final class Shell implements AutoCloseable {
   private final ShellVariables variables;
   // The if-blocks of the input being read: the prompt's, or a running script's own (see runLines)
   private Conditionals conditionals = new Conditionals();
-  // 'record start' writes the lines typed at the prompt to a script (jfr-shell's recorder)
+  // 'record start|stop|status': the lines typed at the prompt, written as a replayable script
+  // by jfr-shell's recorder (moved to shell-core), to this shell's own directory
   private final CommandRecorder recorder =
       new CommandRecorder(
           Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
@@ -70,8 +70,10 @@ public final class Shell implements AutoCloseable {
   private boolean running = true;
   // Running a script from the command line: quiet, errors to stderr, no history, no row cap
   private final boolean batch;
-  private final DefaultHistory history;
+  private final io.jafar.shell.core.SecretFilteringHistory
+      history; // never holds an llm.api-key line
   private final ShellCompleter fallbackCompleter;
+  private final org.jline.reader.Completer completer; // what Tab runs at this shell's prompt
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
   private final Map<String, org.jline.reader.Completer>
       completerCache; // Cache completers per module
@@ -101,6 +103,11 @@ public final class Shell implements AutoCloseable {
             .encoding(java.nio.charset.Charset.defaultCharset())
             .build(),
         true);
+  }
+
+  /** A shell on the given terminal; tests pass one over in-memory streams. */
+  Shell(Terminal terminal) throws IOException {
+    this(terminal, false);
   }
 
   private Shell(Terminal terminal, boolean batch) throws IOException {
@@ -142,7 +149,7 @@ public final class Shell implements AutoCloseable {
     } catch (Exception ignore) {
     }
 
-    this.history = new DefaultHistory();
+    this.history = new io.jafar.shell.core.SecretFilteringHistory();
     java.util.Map<String, Object> vars = new java.util.HashMap<>();
     vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
 
@@ -228,6 +235,16 @@ public final class Shell implements AutoCloseable {
             .completer(dynamicCompleter)
             .parser(parser)
             .build();
+    this.completer = dynamicCompleter;
+  }
+
+  /** The prompt's completer, for tests that check completion offers only what runs. */
+  org.jline.reader.Completer completer() {
+    return completer;
+  }
+
+  LineReader lineReader() {
+    return lineReader;
   }
 
   public void run() {
@@ -238,47 +255,12 @@ public final class Shell implements AutoCloseable {
         String prompt = getPrompt();
         String input = lineReader.readLine(prompt);
         if (input == null || input.isBlank()) continue;
-        input = input.trim();
-
-        if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
-          if (conditionals.state().inConditional()) {
-            terminal
-                .writer()
-                .println(
-                    "Warning: " + conditionals.state().depth() + " unclosed conditional block(s)");
-            terminal.flush();
-            conditionals.state().reset();
-          }
-          stopRecording();
-          running = false;
-          continue;
-        }
-
-        if (matchesCommand(input, "record")) {
-          handleRecord(argumentOf(input));
-          continue;
-        }
-        // As in jfr-shell: every other line is recorded as typed, before it runs, except 'script'
-        // (the recording should replay the script's lines, not run it a second time)
-        if (recorder.isRecording() && !matchesCommand(input, "script")) {
-          try {
-            recorder.recordCommand(input);
-          } catch (IOException e) {
-            terminal.writer().println("Warning: Failed to record command: " + e.getMessage());
-          }
-        }
-
-        if (!execute(input)) {
-          terminal.writer().println("Unknown command: " + input);
-          terminal.writer().println("Type 'help' for available commands.");
-          terminal.flush();
-        }
-
+        handleLine(input);
       } catch (UserInterruptException e) {
         terminal.writer().println("^C");
         terminal.flush();
       } catch (EndOfFileException e) {
-        stopRecording();
+        stopRecordingOnExit();
         terminal.writer().println();
         terminal.writer().println("Goodbye!");
         terminal.flush();
@@ -291,15 +273,68 @@ public final class Shell implements AutoCloseable {
     }
   }
 
+  /**
+   * One line typed at the prompt (or piped into it): {@code exit}/{@code quit}, {@code record},
+   * then {@link #execute}. Kept apart from {@link #execute} because these three belong to the
+   * prompt, not to scripts: a script line is neither recorded nor able to end the shell.
+   */
+  void handleLine(String input) {
+    input = input.trim();
+    if (input.isEmpty()) {
+      return;
+    }
+
+    if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+      if (conditionals.state().inConditional()) {
+        terminal
+            .writer()
+            .println("Warning: " + conditionals.state().depth() + " unclosed conditional block(s)");
+        terminal.flush();
+        conditionals.state().reset();
+      }
+      stopRecordingOnExit();
+      running = false;
+      return;
+    }
+
+    // Never written to the recording; in a branch that is not running it is skipped, like any line
+    if (matchesCommand(input, "record")) {
+      if (conditionals.isActive()) {
+        handleRecord(argumentOf(input));
+      }
+      return;
+    }
+
+    // 'help' is not recorded (jfr-shell does not either): it is not part of an analysis. 'script'
+    // is, unlike jfr-shell: the lines a script runs are not recorded (only prompt lines are), so
+    // leaving the invocation out too would make the replay silently skip that script.
+    if (recorder.isRecording() && !"help".equalsIgnoreCase(input)) {
+      try {
+        recorder.recordCommand(input);
+      } catch (IOException e) {
+        printError("Failed to record command: " + e.getMessage());
+      }
+    }
+
+    if (!execute(input)) {
+      terminal.writer().println("Unknown command: " + input);
+      terminal.writer().println("Type 'help' for available commands.");
+      terminal.flush();
+    }
+  }
+
   /** {@code record start [path] | record stop | record status}, as in jfr-shell. */
-  private void handleRecord(String args) {
-    String[] parts = args.isBlank() ? new String[0] : args.trim().split("\\s+", 2);
-    String sub = parts.length > 0 ? parts[0].toLowerCase(java.util.Locale.ROOT) : "";
+  private void handleRecord(String argText) {
+    String[] parts = argText.isEmpty() ? new String[0] : argText.split("\\s+", 2);
+    String usage = "Usage: record start [path] | record stop | record status";
+    if (parts.length == 0) {
+      printError(usage);
+      return;
+    }
     try {
-      switch (sub) {
+      switch (parts[0].toLowerCase(java.util.Locale.ROOT)) {
         case "start" -> {
-          Path path = parts.length > 1 ? Paths.get(expandHome(parts[1])) : null;
-          recorder.start(path);
+          recorder.start(parts.length > 1 ? Paths.get(expandHome(parts[1].trim())) : null);
           terminal.writer().println("Recording started: " + recorder.getCurrentRecordingPath());
         }
         case "stop" -> {
@@ -313,7 +348,7 @@ public final class Shell implements AutoCloseable {
                     recorder.isRecording()
                         ? "Recording to: " + recorder.getCurrentRecordingPath()
                         : "Not currently recording");
-        default -> printError("Usage: record start [path] | record stop | record status");
+        default -> printError("Unknown record command: " + parts[0] + "\n" + usage);
       }
     } catch (IOException | IllegalStateException e) {
       printError(e.getMessage());
@@ -321,8 +356,8 @@ public final class Shell implements AutoCloseable {
     terminal.flush();
   }
 
-  /** Saves a recording still running when the shell ends. */
-  private void stopRecording() {
+  /** Leaving the shell saves a recording still in progress, as jfr-shell does on {@code exit}. */
+  private void stopRecordingOnExit() {
     if (!recorder.isRecording()) {
       return;
     }
@@ -372,8 +407,13 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (input.startsWith("open ")) {
-      handleOpen(input.substring(5).trim());
+    if (matchesCommand(input, "open")) {
+      String path = argumentOf(input);
+      if (path.isEmpty()) {
+        printError("Usage: open <path>");
+      } else {
+        handleOpen(path);
+      }
       return true;
     }
 
@@ -382,8 +422,14 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (input.startsWith("use ")) {
-      handleUse(input.substring(4).trim());
+    // 'session' is jfr-shell's alias for 'use'
+    if (matchesCommand(input, "use") || matchesCommand(input, "session")) {
+      String ref = argumentOf(input);
+      if (ref.isEmpty()) {
+        printError("Usage: " + (input.startsWith("use") ? "use" : "session") + " <id|alias>");
+      } else {
+        handleUse(ref);
+      }
       return true;
     }
 
@@ -437,8 +483,13 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (input.startsWith("show ")) {
-      handleShow(input.substring(5).trim());
+    if (matchesCommand(input, "show")) {
+      String query = argumentOf(input);
+      if (query.isEmpty()) {
+        printError("Usage: show <query>");
+      } else {
+        handleShow(query);
+      }
       return true;
     }
 
@@ -1126,7 +1177,8 @@ public final class Shell implements AutoCloseable {
 
   /** Whether the line is exactly this command, or this command followed by arguments. */
   private static boolean matchesCommand(String input, String command) {
-    return input.equals(command) || input.startsWith(command + " ");
+    int n = command.length();
+    return input.startsWith(command) && (input.length() == n || input.charAt(n) == ' ');
   }
 
   /** Everything after the first word, trimmed; empty when the line is the command alone. */
@@ -1417,7 +1469,9 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Session Management:");
     terminal.writer().println("  open <path>        Open a file (auto-detects format)");
     terminal.writer().println("  sessions           List all open sessions");
-    terminal.writer().println("  use <id>           Switch to a session");
+    terminal
+        .writer()
+        .println("  use <id>           Switch to a session ('session <id>' is the same)");
     terminal.writer().println("  close [id]         Close session (current if no id given)");
     terminal.writer().println("  info [id]          Show session information");
     terminal.writer().println();
@@ -1526,6 +1580,8 @@ public final class Shell implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
+    stopRecordingOnExit();
+
     try {
       globalStore.clear();
     } catch (Exception ignore) {

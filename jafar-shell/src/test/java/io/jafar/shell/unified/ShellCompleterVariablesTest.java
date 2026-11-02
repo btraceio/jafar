@@ -45,7 +45,8 @@ class ShellCompleterVariablesTest {
       assertTrue(all.contains(cmd), cmd + " missing from " + all);
     }
     assertEquals(List.of("script"), complete("sc"));
-    assertEquals(List.of("sessions", "set"), complete("se"));
+    assertEquals(List.of("session", "sessions", "set"), complete("se"));
+    assertEquals(List.of("record"), complete("rec"));
   }
 
   /** With no session open the JFR commands are offered; every one that the shell routes. */

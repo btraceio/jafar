@@ -9,6 +9,7 @@ import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.core.llm.LlmSettings;
+import io.jafar.shell.core.llm.SecretCommands;
 import io.jafar.shell.core.scripting.EvaluatorLazyValue;
 import io.jafar.shell.core.scripting.LazyRows;
 import io.jafar.shell.core.scripting.MapLiteralParser;
@@ -258,7 +259,7 @@ final class ShellVariables {
 
   private static List<String> store(VariableStore store, String name, Value value) {
     store.set(name, value);
-    return List.of("Set " + name + " = " + value.describe());
+    return List.of("Set " + name + " = " + SecretCommands.describe(name, value));
   }
 
   /** {@code vars [--global|--session|--all]} or {@code vars --info <name>}. */
@@ -301,7 +302,7 @@ final class ShellVariables {
   private static void list(VariableStore store, List<String> lines) {
     store.names().stream()
         .sorted()
-        .forEach(n -> lines.add("  " + n + " = " + store.get(n).describe()));
+        .forEach(n -> lines.add("  " + n + " = " + SecretCommands.describe(n, store.get(n))));
   }
 
   private List<String> info(String name) {
@@ -338,7 +339,7 @@ final class ShellVariables {
       lines.add("Structure: " + map.describe());
     } else {
       lines.add("Type: scalar");
-      lines.add("Value: " + value.describe());
+      lines.add("Value: " + SecretCommands.describe(name, value));
     }
     return lines;
   }

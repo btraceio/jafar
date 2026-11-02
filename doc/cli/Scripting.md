@@ -82,7 +82,7 @@ Where the two shells differ:
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| `record` | saves to `~/.jfr-shell/recordings/` | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording` |
+| [`record`](#recording-commands) | saves to `~/.jfr-shell/recordings/`; records each typed line except `record`, `help`, `exit`/`quit` and `script ...` (nor the lines the script runs, so a replay skips it) | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording`; records the same lines but keeps `script ...`, so a replay runs that script again |
 | A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
 
@@ -91,6 +91,7 @@ The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` w
 in either. `metadata/...`, `chunks[...]`, and a line with a pipeline or `--limit`
 (`chunks --format json | count()`, `chunks --limit 1`) remain queries; `cp <type> | crossref()` is the
 command.
+`session <id>` is an alias for `use <id>` in both shells.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`
@@ -885,7 +886,10 @@ jfr> record stop
 Recording stopped: /tmp/my-analysis.jfrs
 ```
 
-Recording also auto-saves when you exit the shell.
+Recording also auto-saves when you exit the shell. `jafar-shell` has the same three commands, saves
+to `~/.jafar-shell/recordings/` by default, and records lines typed at its prompt whatever the
+session type — see [In jafar-shell](#in-jafar-shell)
+for which lines each shell leaves out.
 
 ### Recorded Script Format
 
@@ -907,6 +911,17 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Recording stopped: 2025-12-26T14:32:10Z
 ```
+
+A `set` or `let` of `llm.api-key` is recorded without its value, as a comment —
+`# set --global llm.api-key = <redacted: not recorded>` — so the file holds no key and a replay uses
+whatever key the person replaying it has configured. The line is kept out of the shell's history
+too (`~/.jfr-shell/history`, `~/.jafar-shell/history`, also used by `--tui`), so the up arrow does
+not bring it back; a key line saved there by an earlier version is removed the next time the shell
+starts. The shells do not print it back either: `set`'s confirmation, `vars` and `vars --info` show
+`<hidden, ends in "TAIL">` (the last four characters, for a value of 16 or more) or `<hidden>`, and
+the TUI shows `set llm.api-key = <hidden>` in its tab names and echo. What you type is still visible
+while you type it, so for a key you use often prefer `~/.config/jafar/llm.properties` or the
+provider's environment variable.
 
 You can execute this script directly:
 

@@ -334,4 +334,19 @@ class ShellVariablesTest {
         closed.getMessage().startsWith("Cannot copy a: Session #1 has been closed"),
         closed.getMessage());
   }
+
+  /** The key is stored as typed but never printed: not by 'set', 'vars' or 'vars --info'. */
+  @Test
+  void apiKeyIsStoredButNeverPrinted() throws Exception {
+    List<String> out = new java.util.ArrayList<>(vars.set("llm.api-key = sk-proj-0123456789-TAIL"));
+    out.addAll(vars.vars(""));
+    out.addAll(vars.vars("--info llm.api-key"));
+
+    assertEquals("sk-proj-0123456789-TAIL", store.get("llm.api-key").get());
+    String text = String.join("\n", out);
+    assertFalse(text.contains("sk-proj"), text);
+    assertTrue(text.contains("Set llm.api-key = <hidden, ends in \"TAIL\">"), text);
+    assertTrue(text.contains("  llm.api-key = <hidden, ends in \"TAIL\">"), text);
+    assertTrue(text.contains("Value: <hidden, ends in \"TAIL\">"), text);
+  }
 }

@@ -96,7 +96,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`record` in `jafar-shell`.** `record start [path] | stop | status` saves the commands typed
   at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
   recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
-  recorder, moved to `shell-core` and shared
+  recorder, moved to `shell-core` and shared. It leaves out `help` and `exit`/`quit` as jfr-shell
+  does, and a `record` line in an `if` branch that is not running; unlike jfr-shell it keeps
+  `script ...`, since the lines a script runs are not recorded and a replay would otherwise skip it
+- **`session <id>` in `jafar-shell`**, jfr-shell's alias for `use`, which tab completion offered on
+  a recording and the shell refused as an unknown command. Bare `open`, `use`, `session` and `show`
+  print their usage instead of "Unknown command"
 - **`metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work at the `jafar-shell`
   prompt** on a recording, using jfr-shell's implementations; they were taken as malformed queries
   (`metadata --summary` failed with `Trailing characters at position 9`, so `jfr-shell`'s
@@ -148,6 +153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin's POM (compile and runtime scopes, nearest-wins conflicts, BOM-managed versions) and
   copies every dependency jar into the plugin's storage, where the plugin classloader already
   looks
+
+
+### Security
+- **`llm.api-key` is no longer written or shown in full.** In both shells and the TUI: a line
+  setting it is kept out of the history files (`~/.jfr-shell/history`, `~/.jafar-shell/history`),
+  and a key line saved there by an earlier version is removed at the next start; a command
+  recording writes it as a comment without the value; `set`'s confirmation, `vars` and
+  `vars --info` show `<hidden, ends in "TAIL">`. The stored value is unchanged
 
 ### Changed
 - **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in

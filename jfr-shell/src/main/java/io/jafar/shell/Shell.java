@@ -18,7 +18,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
@@ -31,7 +30,8 @@ public final class Shell implements AutoCloseable {
   private final SessionManager<JFRSession> sessions;
   private final CommandDispatcher dispatcher;
   private boolean running = true;
-  private final DefaultHistory history;
+  private final io.jafar.shell.core.SecretFilteringHistory
+      history; // never holds an llm.api-key line
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -44,7 +44,7 @@ public final class Shell implements AutoCloseable {
       java.nio.file.Files.createDirectories(histPath.getParent());
     } catch (Exception ignore) {
     }
-    this.history = new DefaultHistory();
+    this.history = new io.jafar.shell.core.SecretFilteringHistory();
     // Create dispatcher first so it can be passed to ShellCompleter
     this.dispatcher =
         new CommandDispatcher(
