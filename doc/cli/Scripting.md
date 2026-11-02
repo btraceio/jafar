@@ -68,10 +68,11 @@ it keeps evaluating against the recording. Once its session is closed, reading t
 with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
 `vars` shows it as `(closed)`.
 
-A script may run another (`script` inside a script) up to 16 deep. In `jafar-shell` each script
-has its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported, so
-the commands you type next are not skipped; and a stray `endif` in a script is an error in that
-script rather than closing a block of the caller's.
+A script may run another (`script` inside a script) up to 16 deep. In both shells each script has
+its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported (see
+[Blocks Left Open by a Script](#blocks-left-open-by-a-script)), so the commands you type next are
+not skipped; and a stray `endif` in a script is an error in that script rather than closing a block
+of the caller's.
 
 Where the two shells differ:
 
@@ -646,6 +647,53 @@ endif
 
 ### Error Handling
 
+#### Conditions That Cannot Be Evaluated
+
+A condition that fails to evaluate — a parse error, an undefined variable, a wrong number of
+function arguments, division by zero, a missing condition — is an error, not a `false`. **No branch
+of that if-block runs**: not the failing branch, and not any later `elif` or `else`, because taking
+one would mean guessing what the condition would have said. The block is still open, and its
+`endif` closes it. To branch on whether a variable is set, use `exists(name)` rather than letting
+`${name}` fail.
+
+In a script this is a command error like any other, in both shells:
+
+- by default the script stops at that line and exits with a non-zero status;
+- with `--continue-on-error` the script resumes after the block's `endif` and the error is counted
+  in the final report (the script still exits non-zero).
+
+```
+if exists(rows[1].thread)
+  echo EXISTS
+else
+  echo MISSING
+endif
+```
+
+```
+Script completed with errors:
+Line 1: Condition evaluation failed: Expected ')' after function argument at position 11; skipping every branch of this if-block
+  Command: if exists(rows[1].thread)
+```
+
+Neither `EXISTS` nor `MISSING` is printed. Interactively the error is printed, the prompt shows the
+block as open (`...(1)>`), its commands are skipped, and `endif` closes it. The jfr-shell TUI shows
+the same in the title of the command input: `Command ...(1, skipping until endif) >`.
+
+An `elif` condition is evaluated only when every earlier branch was false, and a condition inside
+a block that is already being skipped is not evaluated at all, so neither can fail there. A
+*missing* condition (`if` or `elif` alone) is a syntax error and is reported either way.
+
+#### Blocks Left Open by a Script
+
+Each script runs with its own `if` blocks, so whether it ends normally or stops early at an error,
+the blocks it opened are closed when it returns: running a script from the interactive shell never
+leaves the shell inside one of the script's blocks, and a block you opened before running it stays
+open. A script that runs to its end with an `if` still open is reported, and exits non-zero:
+`jfr-shell` adds an error `N if-block(s) not closed with endif by end of script` against the last
+line; `jafar-shell` prints `<script> left N if-block(s) open; closed them` (it also prints this
+after a script that stopped early at an error inside a block, alongside that error).
+
 #### Unclosed Conditionals
 
 If you exit the shell with unclosed conditionals, a warning is displayed:
@@ -669,6 +717,9 @@ else           # Error: else without if
 # Error: endif without if
 endif          # Error: endif without if
 ```
+
+These are command errors like a failed condition: a script stops at them (or, with
+`--continue-on-error`, counts them) and exits non-zero.
 
 ## Executing Scripts
 

@@ -31,6 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **An `if`/`elif` condition that fails to evaluate no longer runs the `else` branch.** Both
+  shells printed `Condition evaluation failed: ...` and treated the condition as `false`, so the
+  `else` branch ran; in `jfr-shell` the script even ended `Script executed successfully` with exit
+  status 0. A failed (or missing) condition is now an error of that line in both shells: no branch
+  of the if-block runs (its `endif` still closes it), a script stops there with a non-zero exit,
+  and with `--continue-on-error` it resumes after the `endif` with the error counted
+- **`jfr-shell` scripts: stray keywords, missing `endif`, and leaking blocks.** `elif`/`else`/
+  `endif` without an `if` were printed and counted as successful commands, and a script ending
+  inside an `if` was silently accepted; both now fail the script. A script also runs with an
+  if-block stack of its own (as in `jafar-shell`), so one that stopped inside a block no longer
+  leaves the interactive shell silently skipping everything typed afterwards, and a stray `endif`
+  in a script cannot close one of the caller's blocks
+- **The `jfr-shell` TUI shows an open if-block.** The command input's title reads
+  `Command ...(1, skipping until endif) >` inside a block that is skipping, as the CLI prompt shows
+  `...(1)>`; commands typed there used to produce no output and no sign why
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for

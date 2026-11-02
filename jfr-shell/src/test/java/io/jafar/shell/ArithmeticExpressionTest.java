@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ConditionalException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.junit.jupiter.api.AfterEach;
@@ -224,16 +225,14 @@ class ArithmeticExpressionTest {
 
   @Test
   void divisionByZeroError() {
-    // Division by zero should produce an error
-    dispatcher.dispatch("if 10 / 0 == 0");
+    // Division by zero fails the condition; no branch of the block runs
+    ConditionalException e =
+        assertThrows(ConditionalException.class, () -> dispatcher.dispatch("if 10 / 0 == 0"));
+    assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
     dispatcher.dispatch("echo Should not print");
     dispatcher.dispatch("endif");
 
-    String error = io.getError();
-    // Should contain division by zero error
-    assertTrue(
-        error.length() > 0 || !io.getOutput().contains("Should not print"),
-        "Division by zero should error or not execute");
+    assertFalse(io.getOutput().contains("Should not print"));
   }
 
   // ==================== Operator Precedence ====================

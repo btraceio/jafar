@@ -1,7 +1,5 @@
 package io.jafar.shell.core.scripting;
 
-import java.util.function.Consumer;
-
 /**
  * {@code if} / {@code elif} / {@code else} / {@code endif} for a line-at-a-time shell.
  *
@@ -9,9 +7,11 @@ import java.util.function.Consumer;
  * (even inside a branch that is not running, so nesting stays balanced); for any other line the
  * shell asks {@link #isActive} and skips the line when it is {@code false}.
  *
- * <p>A condition that cannot be evaluated is reported and counts as false; the block is still
- * entered, so the matching {@code endif} does not unbalance the stack. A condition is evaluated
- * only when its branch could run.
+ * <p>A condition that cannot be evaluated (or is missing) is an error, not a {@code false}: the
+ * block is entered with no branch active — neither the failing branch nor any later {@code elif} or
+ * {@code else} runs — and {@link #handle} throws {@link ConditionalException}, which the shell must
+ * treat as a failure of the line. The matching {@code endif} still closes the block. A condition is
+ * evaluated only when its branch could run; a missing one is reported either way.
  *
  * <p>Not thread-safe: one instance per shell, used from the thread that dispatches its commands.
  */
@@ -33,11 +33,12 @@ public final class Conditionals {
    *
    * @param line the input line
    * @param scopes variables the condition may reference
-   * @param error receives messages about a missing or failing condition
    * @return {@code true} if the line was {@code if}, {@code elif}, {@code else} or {@code endif}
-   * @throws IllegalStateException for {@code elif}, {@code else} or {@code endif} outside a block
+   * @throws ConditionalException for a missing or failing condition (after the state has been
+   *     updated so that no branch of the block runs), or for {@code elif}, {@code else} or {@code
+   *     endif} outside a block
    */
-  public boolean handle(String line, VariableScopes scopes, Consumer<String> error) {
+  public boolean handle(String line, VariableScopes scopes) {
     // Called for every line a shell runs, so a line that is not a keyword allocates nothing.
     int start = 0;
     int end = line.length();
@@ -51,51 +52,81 @@ public final class Conditionals {
     int len = wordEnd - start;
     if (keyword(line, start, len, "if")) {
       String condition = line.substring(wordEnd).trim();
-      if (condition.isEmpty()) {
-        error.accept("if requires a condition");
+      // Only evaluate in a running branch; a nested if under a skipped one is skipped whole.
+      if (!state.isActive()) {
         state.enterIf(false);
+        if (condition.isEmpty()) {
+          throw new ConditionalException("if requires a condition", null);
+        }
         return true;
       }
-      // Only evaluate in a running branch; a nested if under a skipped one is skipped whole.
-      boolean result = state.isActive() && evaluate(condition, scopes, error);
-      // Always update state, even after errors
+      boolean result;
+      try {
+        result = evaluate("if", condition, scopes);
+      } catch (ConditionalException e) {
+        // Still entered, so its elif/else/endif pair up; no branch of it runs.
+        state.enterIfWithError();
+        throw e;
+      }
       state.enterIf(result);
       return true;
     }
     if (keyword(line, start, len, "elif")) {
       String condition = line.substring(wordEnd).trim();
-      if (condition.isEmpty()) {
-        error.accept("elif requires a condition");
-        state.handleElif(false);
-        return true;
-      }
+      requireOpenIf("elif");
       // Only when this branch could still be taken; after a taken branch, or under a skipped
       // block, the condition is irrelevant and evaluating it may run a query or report an error.
-      boolean result = state.awaitingBranch() && evaluate(condition, scopes, error);
+      if (!state.awaitingBranch()) {
+        state.handleElif(false);
+        if (condition.isEmpty()) {
+          throw new ConditionalException("elif requires a condition", null);
+        }
+        return true;
+      }
+      boolean result;
+      try {
+        result = evaluate("elif", condition, scopes);
+      } catch (ConditionalException e) {
+        state.handleElifWithError();
+        throw e;
+      }
       state.handleElif(result);
       return true;
     }
     if (keyword(line, start, len, "else")) {
+      requireOpenIf("else");
       state.handleElse();
       return true;
     }
     if (keyword(line, start, len, "endif")) {
+      requireOpenIf("endif");
       state.exitIf();
       return true;
     }
     return false;
   }
 
+  private void requireOpenIf(String keyword) {
+    if (!state.inConditional()) {
+      throw new ConditionalException(keyword + " without if", null);
+    }
+  }
+
   private static boolean keyword(String line, int start, int len, String keyword) {
     return len == keyword.length() && line.regionMatches(true, start, keyword, 0, len);
   }
 
-  private static boolean evaluate(String condition, VariableScopes scopes, Consumer<String> error) {
+  private static boolean evaluate(String keyword, String condition, VariableScopes scopes) {
+    if (condition.isEmpty()) {
+      throw new ConditionalException(
+          keyword + " requires a condition; skipping every branch of this if-block", null);
+    }
     try {
       return new ConditionEvaluator(scopes.session(), scopes.global()).evaluate(condition);
     } catch (Exception e) {
-      error.accept("Condition evaluation failed: " + e.getMessage());
-      return false;
+      String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+      throw new ConditionalException(
+          "Condition evaluation failed: " + reason + "; skipping every branch of this if-block", e);
     }
   }
 }
