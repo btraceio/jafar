@@ -46,20 +46,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Cache JFR samples
-        id: cache-jfr
-        uses: actions/cache@v4
-        with:
-          path: |
-            demo/src/test/resources/test-ap.jfr
-            demo/src/test/resources/test-jfr.jfr
-          key: jfr-samples-v1
-
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare test resources
-        run: bash ./get_resources.sh
+      # No recording download: the build generates the test recordings
+      # (:test-recordings:generateTestRecordings, a dependency of every test task).
 
       - name: Build and test (JDK ${{ matrix.java }})
         run: |

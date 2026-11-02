@@ -68,9 +68,10 @@ it keeps evaluating against the recording. Once its session is closed, reading t
 with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
 `vars` shows it as `(closed)`.
 
-A script may run another (`script` inside a script) up to 16 deep. If a script ends inside an
-`if` block, `jafar-shell` closes the blocks it left open and says so, so the commands you type next
-are not skipped.
+A script may run another (`script` inside a script) up to 16 deep. In `jafar-shell` each script
+has its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported, so
+the commands you type next are not skipped; and a stray `endif` in a script is an error in that
+script rather than closing a block of the caller's.
 
 Where the two shells differ:
 
@@ -80,13 +81,13 @@ Where the two shells differ:
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
+| `record` | saves to `~/.jfr-shell/recordings/` | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording` |
 | A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
 
 The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
 (in `jafar-shell` they need the current session to be a recording), so the example scripts below run
-in either; `metadata/...`, `chunks[...]` and `chunks | ...` remain queries. [`record`](#recording-commands)
-is `jfr-shell` only.
+in either; `metadata/...`, `chunks[...]` and `chunks | ...` remain queries.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`
@@ -767,7 +768,9 @@ Executed 21/25 commands successfully.
 
 ## Recording Commands
 
-JFR Shell can record your interactive commands into an executable script file. This is perfect for:
+JFR Shell can record your interactive commands into an executable script file (`jafar-shell` has the same
+`record` command, for every format, saving to `~/.jafar-shell/recordings/` and replayed with
+`jafar-shell script <file>`). This is perfect for:
 
 - **Capturing ad-hoc analysis** - Record exploratory analysis for later reuse
 - **Creating templates** - Build script templates by example

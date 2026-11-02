@@ -50,6 +50,7 @@ public final class ShellCompleter implements Completer {
     "else",
     "endif",
     "script",
+    "record",
     // JFR-only (Shell.JFR_COMMANDS): offered with no session or a JFR one, see offersJfrCommands
     "metadata",
     "chunks",
@@ -67,7 +68,7 @@ public final class ShellCompleter implements Completer {
 
   // Shell-level commands whose arguments this completer owns even when a session is open
   private static final Set<String> SHELL_LEVEL =
-      Set.of("set", "let", "vars", "unset", "invalidate", "script", "if", "elif");
+      Set.of("set", "let", "vars", "unset", "invalidate", "script", "if", "elif", "record");
 
   private final VariableStore globalStore;
 
@@ -156,6 +157,13 @@ public final class ShellCompleter implements Completer {
       }
       case "script" -> {
         if (wordIndex == 1) {
+          completeOpen(reader, line, candidates);
+        }
+      }
+      case "record" -> {
+        if (wordIndex == 1) {
+          completeWords(line, candidates, Set.of(), "start", "stop", "status");
+        } else if (wordIndex == 2 && "start".equals(words.get(1))) {
           completeOpen(reader, line, candidates);
         }
       }
