@@ -109,6 +109,12 @@ class EvaluatorLazyValueTest {
       return evaluate(session, query);
     }
 
+    /** As JfrPath's: only a query ending in toMap() yields a map. */
+    @Override
+    public boolean producesMap(Object query) {
+      return String.valueOf(query).endsWith("toMap(name, n)");
+    }
+
     @Override
     public List<String> getRootTypes() {
       return List.of("things");
@@ -284,6 +290,70 @@ class EvaluatorLazyValueTest {
   }
 
   @Test
+  void aToMapVariableIsReadAsItsMapAndAOneRowQueryStaysRows() throws Exception {
+    // What toMap() returns: one row, holding the map. jfr-shell stores that as a MapValue, so
+    // ${gc.size} is the entry count; it must be here too, while a one-row result of any other
+    // query (same shape!) keeps counting rows.
+    Map<String, Object> map = new java.util.LinkedHashMap<>();
+    map.put("t1", 10L);
+    map.put("t2", 20L);
+    evaluator.rows = List.of(map);
+    var ref = sessions.open(Path.of("/tmp/x.fake"), null);
+    VariableStore global = new VariableStore();
+    global.set(
+        "gc",
+        new EvaluatorLazyValue(
+            evaluator, evaluator.parse("things | toMap(name, n)"), "gc", ref, null));
+    global.set(
+        "one",
+        new EvaluatorLazyValue(evaluator, evaluator.parse("things | top(1)"), "one", ref, null));
+
+    VariableSubstitutor sub = new VariableSubstitutor(null, global);
+    assertEquals("2", sub.substitute("${gc.size}"));
+    assertEquals("20", sub.substitute("${gc.t2}"));
+    assertEquals("{t1=10, t2=20}", sub.substitute("${gc}"));
+    assertEquals(
+        sub.substitute("${gc.size} ${gc.t1}"),
+        new VariableSubstitutor(null, mapStore("gc", map)).substitute("${gc.size} ${gc.t1}"),
+        "same answer as the MapValue jfr-shell stores for this query");
+    assertTrue(new ConditionEvaluator(null, global).evaluate("${gc.size} == 2"));
+
+    ConditionEvaluator cond = new ConditionEvaluator(null, global);
+    assertFalse(cond.evaluate("empty(gc)"), "a toMap() variable with entries is not empty");
+    assertFalse(cond.evaluate("empty(one)"));
+
+    assertEquals("1", sub.substitute("${one.size}"), "a one-row query still counts rows");
+    assertEquals("10", sub.substitute("${one}"), "and ${v} is still the first field");
+    assertEquals("20", sub.substitute("${one.t2}"));
+  }
+
+  @Test
+  void emptyIsTrueOnlyForAMapWithoutEntries() throws Exception {
+    // empty() used to answer true for every map variable, so 'if !empty(cfg)' never ran
+    VariableStore global = new VariableStore();
+    global.set("cfg", new VariableStore.MapValue(Map.of("k", 1L)));
+    global.set("none", new VariableStore.MapValue(Map.of()));
+    var ref = sessions.open(Path.of("/tmp/x.fake"), null);
+    evaluator.rows = List.of(Map.of()); // what toMap() gives for no matching rows: one empty map
+    global.set(
+        "emptyGc",
+        new EvaluatorLazyValue(
+            evaluator, evaluator.parse("things | toMap(name, n)"), "emptyGc", ref, null));
+
+    ConditionEvaluator cond = new ConditionEvaluator(null, global);
+    assertFalse(cond.evaluate("empty(cfg)"));
+    assertTrue(cond.evaluate("!empty(cfg)"));
+    assertTrue(cond.evaluate("empty(none)"));
+    assertTrue(cond.evaluate("empty(emptyGc)"), "a toMap() of no rows is an empty map");
+  }
+
+  private static VariableStore mapStore(String name, Map<String, Object> map) {
+    VariableStore store = new VariableStore();
+    store.set(name, new VariableStore.MapValue(map));
+    return store;
+  }
+
+  @Test
   void scopesPreferTheSessionAndUnsetFallsBackToTheOtherStore() {
     VariableStore global = new VariableStore();
     VariableStore session = new VariableStore();
@@ -311,26 +381,32 @@ class EvaluatorLazyValueTest {
     global.set("n", new VariableStore.ScalarValue(5L));
     VariableScopes scopes = new VariableScopes(global, () -> null);
     Conditionals c = new Conditionals();
-    List<String> errors = new ArrayList<>();
 
-    assertTrue(c.handle("if ${n} > 10", scopes, errors::add));
+    assertTrue(c.handle("if ${n} > 10", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("if ${undefined} > 1", scopes, errors::add)); // nested, not evaluated
-    assertTrue(c.handle("endif", scopes, errors::add));
-    assertTrue(c.handle("elif ${n} == 5", scopes, errors::add));
+    assertTrue(c.handle("if ${undefined} > 1", scopes)); // nested, not evaluated
+    assertTrue(c.handle("endif", scopes));
+    assertTrue(c.handle("elif ${n} == 5", scopes));
     assertTrue(c.isActive());
-    assertTrue(c.handle("else", scopes, errors::add));
+    assertTrue(c.handle("else", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("endif", scopes, errors::add));
+    assertTrue(c.handle("endif", scopes));
     assertTrue(c.isActive());
-    assertFalse(c.handle("iffy", scopes, errors::add));
-    assertEquals(List.of(), errors, "the nested condition was never evaluated");
+    assertFalse(c.handle("iffy", scopes));
 
-    assertTrue(c.handle("if ${nope} > 1", scopes, errors::add));
-    assertFalse(c.isActive(), "a failing condition counts as false");
-    assertEquals(1, errors.size());
-    assertThrows(
-        IllegalStateException.class, () -> new Conditionals().handle("endif", scopes, e -> {}));
+    // A failing condition is an error, not false: no branch of the block runs, else included
+    ConditionalException failed =
+        assertThrows(ConditionalException.class, () -> c.handle("if ${nope} > 1", scopes));
+    assertTrue(
+        failed.getMessage().startsWith("Condition evaluation failed: "), failed.getMessage());
+    assertFalse(c.isActive());
+    assertTrue(c.handle("else", scopes));
+    assertFalse(c.isActive(), "the else of a failed condition does not run");
+    assertTrue(c.handle("endif", scopes));
+    assertTrue(c.isActive());
+    ConditionalException stray =
+        assertThrows(ConditionalException.class, () -> new Conditionals().handle("endif", scopes));
+    assertEquals("endif without if", stray.getMessage());
   }
 
   @Test
@@ -339,26 +415,24 @@ class EvaluatorLazyValueTest {
     global.set("rows", lazy(null));
     VariableScopes scopes = new VariableScopes(global, () -> null);
     Conditionals c = new Conditionals();
-    List<String> errors = new ArrayList<>();
 
     // A taken branch: later elifs are irrelevant
-    c.handle("if 1 == 1", scopes, errors::add);
-    c.handle("elif ${rows.size} > 0", scopes, errors::add);
-    c.handle("elif ${undefined} > 0", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
+    c.handle("if 1 == 1", scopes);
+    c.handle("elif ${rows.size} > 0", scopes);
+    c.handle("elif ${undefined} > 0", scopes);
+    c.handle("endif", scopes);
     // Under a skipped block: the whole nested block is irrelevant
-    c.handle("if 1 == 2", scopes, errors::add);
-    c.handle("if ${rows.size} > 0", scopes, errors::add);
-    c.handle("elif ${undefined} > 0", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
+    c.handle("if 1 == 2", scopes);
+    c.handle("if ${rows.size} > 0", scopes);
+    c.handle("elif ${undefined} > 0", scopes);
+    c.handle("endif", scopes);
+    c.handle("endif", scopes);
 
-    assertEquals(List.of(), errors);
     assertEquals(0, evaluator.evaluations, "no lazy query run for a branch that cannot execute");
 
     // Still evaluated when it can be taken
-    c.handle("if 1 == 2", scopes, errors::add);
-    c.handle("elif ${rows.size} == 2", scopes, errors::add);
+    c.handle("if 1 == 2", scopes);
+    c.handle("elif ${rows.size} == 2", scopes);
     assertTrue(c.isActive());
     assertEquals(1, evaluator.evaluations);
   }
@@ -367,12 +441,12 @@ class EvaluatorLazyValueTest {
   void keywordsAreWholeWordsInAnyCase() {
     VariableScopes scopes = new VariableScopes(new VariableStore(), () -> null);
     Conditionals c = new Conditionals();
-    assertFalse(c.handle("ifx 1", scopes, e -> {}));
-    assertFalse(c.handle("endiff", scopes, e -> {}));
-    assertFalse(c.handle("show if", scopes, e -> {}));
-    assertTrue(c.handle("  IF\t1 == 2", scopes, e -> {}));
+    assertFalse(c.handle("ifx 1", scopes));
+    assertFalse(c.handle("endiff", scopes));
+    assertFalse(c.handle("show if", scopes));
+    assertTrue(c.handle("  IF\t1 == 2", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("If 1 == 1", scopes, e -> {}));
+    assertTrue(c.handle("If 1 == 1", scopes));
     assertEquals(2, c.state().depth());
   }
 

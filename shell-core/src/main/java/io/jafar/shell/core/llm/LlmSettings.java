@@ -46,6 +46,10 @@ public final class LlmSettings {
           new Setting(
               "llm.max-analysis-chars", "characters of one analysis result shown to the model"));
 
+  // Settings whose value is a credential: never written anywhere a user did not ask it to go, such
+  // as a command recording ('record start').
+  private static final List<String> SECRETS = List.of("llm.api-key");
+
   private LlmSettings() {}
 
   /** Every setting, in the order worth showing them. */
@@ -70,6 +74,23 @@ public final class LlmSettings {
     }
     String needle = name.trim().toLowerCase(Locale.ROOT);
     return ALL.stream().filter(s -> s.name().equals(needle)).findFirst();
+  }
+
+  /**
+   * Whether {@code name} is a setting whose value is a credential ({@code llm.api-key}).
+   * Case-insensitive, like {@link #isSetting}.
+   */
+  public static boolean isSecret(String name) {
+    if (name == null) {
+      return false;
+    }
+    String trimmed = name.trim();
+    for (String secret : SECRETS) {
+      if (secret.equalsIgnoreCase(trimmed)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

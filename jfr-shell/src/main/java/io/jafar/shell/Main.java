@@ -552,6 +552,14 @@ public final class Main implements Callable<Integer> {
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
 
+      // '#!/usr/bin/env -S jbang jfr-shell@btraceio script -': the kernel passes the script's own
+      // path after '-', so that file is the script and $1 is the argument after it
+      var shebang = ScriptRunner.shebangScript(scriptPath, arguments);
+      if (shebang.isPresent()) {
+        scriptPath = shebang.get().toString();
+        arguments = new ArrayList<>(arguments.subList(1, arguments.size()));
+      }
+
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
       Path path = fromStdin ? null : Paths.get(scriptPath);
@@ -592,23 +600,21 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        ScriptRunner runner = new ScriptRunner(dispatcher::dispatch, arguments);
-        runner.setContinueOnError(continueOnError);
-
-        ScriptRunner.ExecutionResult result;
+        List<String> lines;
         if (fromStdin) {
           // Read from stdin
-          List<String> lines = new ArrayList<>();
+          lines = new ArrayList<>();
           try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
             }
           }
-          result = runner.execute(lines);
         } else {
-          result = runner.execute(path);
+          lines = Files.readAllLines(path);
         }
+        ScriptRunner.ExecutionResult result =
+            dispatcher.runScript(lines, arguments, continueOnError);
 
         // Print captured output
         if (output.length() > 0) {

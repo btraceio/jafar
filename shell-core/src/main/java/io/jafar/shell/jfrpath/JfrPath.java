@@ -264,6 +264,17 @@ public final class JfrPath {
       this.pipeline = List.copyOf(pipeline);
     }
 
+    /**
+     * Whether this query's result is one map rather than rows: its last pipeline operator is {@code
+     * toMap()}, which returns a single row holding the map. Decided from the query alone, never
+     * from the rows, because any one-row result (a {@code top(1)}, a single event) is also a list
+     * holding one map. jfr-shell stores such a variable as a map; jafar-shell reads its lazy
+     * variable as one ({@link io.jafar.shell.core.QueryEvaluator#producesMap}).
+     */
+    public boolean producesMap() {
+      return !pipeline.isEmpty() && pipeline.get(pipeline.size() - 1) instanceof ToMapOp;
+    }
+
     @Override
     public String toString() {
       return "Query{"

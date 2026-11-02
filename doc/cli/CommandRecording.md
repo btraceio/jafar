@@ -594,6 +594,12 @@ Recent recordings appear first.
    - **Fix:** Update path in the script
 3. Different JFR event types
    - **Fix:** Use `--continue-on-error` flag
+4. An LLM command fails as unauthorized, or uses another key than when you recorded
+   - **Cause:** `set llm.api-key = ...` is recorded as a comment without its value
+     (`# set llm.api-key = <redacted: not recorded>`), so the replay uses the key configured
+     where it runs
+   - **Fix:** Configure a key in `~/.config/jafar/llm.properties` or the provider's environment
+     variable — see [LLM setup](LlmSetup.md)
 
 ## Next Steps
 

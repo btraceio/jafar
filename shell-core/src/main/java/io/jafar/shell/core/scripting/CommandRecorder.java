@@ -1,5 +1,6 @@
 package io.jafar.shell.core.scripting;
 
+import io.jafar.shell.core.llm.SecretCommands;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -30,6 +31,9 @@ import java.time.format.DateTimeFormatter;
  * # [14:30:20]
  * show events/jdk.ExecutionSample --limit 10
  * </pre>
+ *
+ * <p>A {@code set}/{@code let} of a credential setting is written as a comment without its value
+ * ({@link SecretCommands#redact}), so the file holds no key and replaying it does not set one.
  */
 public final class CommandRecorder {
   private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -102,7 +106,7 @@ public final class CommandRecorder {
     // Add timestamp comment for context
     LocalTime time = LocalTime.now();
     writer.write("# [" + time.format(TIME_FORMATTER) + "]\n");
-    writer.write(command + "\n");
+    writer.write(SecretCommands.redact(command) + "\n");
     writer.flush();
   }
 

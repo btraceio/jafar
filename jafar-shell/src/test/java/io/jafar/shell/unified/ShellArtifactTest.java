@@ -1,9 +1,7 @@
 package io.jafar.shell.unified;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.management.HotSpotDiagnosticMXBean;
@@ -132,7 +130,8 @@ class ShellArtifactTest {
                 "echo AFTER-BLOCK",
                 "exit",
                 ""));
-    assertTrue(strayOutput.contains("Line 1: Error: endif without if"), strayOutput);
+    // listed as every reported error is, without the printed "Error: " prefix
+    assertTrue(strayOutput.contains("Line 1: endif without if"), strayOutput);
     assertFalse(strayOutput.contains("Script executed successfully"), strayOutput);
     assertTrue(strayOutput.contains("STILL-IN-ELSE"), strayOutput);
     assertTrue(strayOutput.contains("AFTER-BLOCK"), strayOutput);
@@ -140,6 +139,62 @@ class ShellArtifactTest {
     assertFalse(
         strayOutput.substring(strayOutput.indexOf("STILL-IN-ELSE")).contains("without if"),
         strayOutput);
+  }
+
+  /**
+   * {@code -f script} opens a file named {@code script}, as {@code -f} does any file; before, the
+   * value was taken for the script command.
+   */
+  @Test
+  void fileOptionValueIsNotTheScriptCommand(@TempDir Path dir) throws Exception {
+    Result result = runJarWithStatus(dir, "", "-f", "script");
+
+    assertEquals(1, result.status(), result.output());
+    assertTrue(result.output().contains("Error: File not found: script"), result.output());
+  }
+
+  /**
+   * {@code JFR_SHELL_VERBOSE} brings back the lines script mode leaves out, as it does for {@code
+   * jfr-shell script}.
+   */
+  @Test
+  void verboseSwitchAppliesToScriptMode(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String script = "open $1\nset n = events/jdk.ThreadStart | count()\necho N=${n}\n";
+
+    Result quiet = runJarWithStatus(dir, script, "script", "-", recording.toString());
+    Result verbose =
+        run(
+            dir,
+            script,
+            java.util.Map.of("JFR_SHELL_VERBOSE", "true"),
+            List.of("-jar", System.getProperty("jafar.shell.jar")),
+            "script",
+            "-",
+            recording.toString());
+
+    assertEquals(0, quiet.status(), quiet.output());
+    assertFalse(quiet.output().contains("Session 1 opened"), quiet.output());
+    assertFalse(quiet.output().contains("Set n ="), quiet.output());
+    assertEquals(0, verbose.status(), verbose.output());
+    assertTrue(verbose.output().contains("Session 1 opened"), verbose.output());
+    assertTrue(verbose.output().contains("Set n ="), verbose.output());
+    assertTrue(verbose.output().contains("N=17"), verbose.output());
+  }
+
+  /** The same guards on the command line, where a script that leaves an if open has failed. */
+  @Test
+  void scriptCommandLineClosesOpenIfAndFails(@TempDir Path dir) throws Exception {
+    Path open = dir.resolve("open.jfrs");
+    Files.writeString(open, "echo START\nif 1 == 2\necho never\n");
+
+    Result result = runJarWithStatus(dir, "", "script", open.toString());
+
+    assertEquals(1, result.status(), result.output());
+    assertTrue(result.output().contains("START"), result.output());
+    assertFalse(result.output().contains("never"), result.output());
+    assertTrue(result.output().contains("open.jfrs left 1 if-block(s) open"), result.output());
+    assertTrue(result.output().contains("Line 3: left 1 if-block(s) open"), result.output());
   }
 
   /**
@@ -238,6 +293,29 @@ class ShellArtifactTest {
     assertTrue(cont.out().contains("two"), cont.out());
   }
 
+  /**
+   * A condition that cannot be evaluated is an error, not false: no branch runs — not the if's, and
+   * not the else, which used to run as though the condition had been false.
+   */
+  @Test
+  void failedConditionRunsNoBranch(@TempDir Path dir) throws Exception {
+    String lines = "if 1 / 0 > 1\necho THEN\nelse\necho ELSE\nendif\necho AFTER\n";
+
+    Run cont = runJarRaw(dir, lines, "script", "-", "--continue-on-error");
+    assertEquals(1, cont.exit(), cont.out() + cont.err());
+    assertFalse(cont.out().contains("THEN"), cont.out());
+    assertFalse(cont.out().contains("ELSE"), cont.out());
+    assertTrue(cont.out().contains("AFTER"), cont.out());
+    assertTrue(cont.err().contains("Condition evaluation failed: Division by zero"), cont.err());
+
+    // Typed at the prompt: the error is shown, the block stays open to its endif, no branch runs
+    String typed = runJar(dir, lines + "exit\n");
+    assertTrue(typed.contains("skipping every branch of this if-block"), typed);
+    assertFalse(typed.contains("THEN"), typed);
+    assertFalse(typed.contains("ELSE"), typed);
+    assertTrue(typed.contains("AFTER"), typed);
+  }
+
   /** 'record' saves what is typed as a script that 'jafar-shell script' replays. */
   @Test
   void recordsASessionThatReplaysAsAScript(@TempDir Path dir) throws Exception {
@@ -309,6 +387,113 @@ class ShellArtifactTest {
     assertTrue(output.contains("Error: Invalid query:"), output);
   }
 
+  /**
+   * The JFR commands at the jafar-shell prompt. {@code metadata --summary} used to be parsed as a
+   * JfrPath query ({@code metadata} is a root) and fail with "Trailing characters at position 9".
+   */
+  @Test
+  void runsJfrCommandsOnJfrSession(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "metadata --summary",
+                "metadata class jdk.ThreadStart --fields",
+                "chunks --summary",
+                "chunk 0 show",
+                "cp --summary",
+                "constants --summary",
+                "backend",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("Unknown command"), output);
+    assertTrue(output.contains("totalChunks"), output);
+    assertTrue(output.contains("Current backend:"), output);
+    assertTrue(output.contains("eventThread"), output); // a field of jdk.ThreadStart
+  }
+
+  /**
+   * Lines that start with a command word but are queries: jfr-shell's handlers would print every
+   * chunk for {@code | count()} and ignore {@code --limit}. {@code cp <type> | crossref()} is the
+   * one pipeline that stays a command.
+   */
+  @Test
+  void keepsPipedAndLimitedLinesAsQueries(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "echo [count]",
+                "chunks --format json | count()",
+                "echo [limit]",
+                "chunks --limit 1",
+                "echo [crossref]",
+                "cp jdk.types.Symbol | crossref()",
+                "echo [regex]",
+                "metadata --regex ^jdk\\.Thread(Start|End)$",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    String count = between(output, "[count]", "[limit]");
+    assertTrue(count.contains("\"count\""), count); // the count, not the chunk rows
+    assertFalse(count.contains("startTicks"), count);
+    assertTrue(between(output, "[limit]", "[crossref]").contains("(1 rows)"), output);
+    assertTrue(
+        between(output, "[crossref]", "[regex]").contains("Constant Pool Crosscheck"), output);
+    String regex = output.substring(output.indexOf("[regex]"));
+    assertTrue(regex.contains("jdk.ThreadStart") && regex.contains("jdk.ThreadEnd"), regex);
+  }
+
+  private static String between(String s, String from, String to) {
+    int a = s.indexOf(from);
+    int b = s.indexOf(to, a + from.length());
+    assertTrue(a >= 0 && b > a, "markers " + from + ".." + to + " in " + s);
+    return s.substring(a, b);
+  }
+
+  @Test
+  void jfrCommandsSayTheyNeedJfrSession(@TempDir Path dir) throws Exception {
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+
+    String output = runJar(dir, "chunks\nopen " + dump + "\nmetadata --summary\nexit\n");
+
+    assertTrue(
+        output.contains(
+            "Error: 'chunks' needs a JFR session; open a .jfr recording or switch to one with"),
+        output);
+    assertTrue(
+        output.contains("Error: 'metadata' needs a JFR session; session #1 is hdump."), output);
+    assertFalse(output.contains("Unknown command"), output);
+  }
+
+  /** The example shipped with jfr-shell, run by jafar-shell's own {@code script}. */
+  @Test
+  void runsBasicAnalysisExample(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path script =
+        Path.of("../jfr-shell/src/main/resources/examples/basic-analysis.jfrs").toAbsolutePath();
+
+    String output = runJar(dir, "script " + script + " " + recording + "\nexit\n");
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("error"), output);
+    assertTrue(output.contains("=== Metadata Summary ==="), output);
+    assertTrue(output.contains("Script executed successfully"), output);
+  }
+
   @Test
   void keepsJfrCommandLine(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
@@ -335,15 +520,301 @@ class ShellArtifactTest {
     assertFalse(Shell.startsWithRoot("bogus | count", roots));
   }
 
+  /**
+   * {@code jafar-shell script <file> <args>} on the command line runs in the unified shell: before,
+   * it went to jfr-shell, which parsed the heap dump as a recording and answered {@code Invalid
+   * query: Unknown root: objects}.
+   */
+  @Test
+  void scriptCommandLineRunsInUnifiedShell(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    Path script = dir.resolve("heap.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open $1",
+            "set --global n = objects | count",
+            "open $2",
+            "set starts = events/jdk.ThreadStart | count()",
+            "echo OBJECTS ${n} STARTS ${starts}",
+            ""));
+
+    Result result =
+        runJarWithStatus(
+            dir, "", "script", script.toString(), dump.toString(), recording.toString());
+
+    assertEquals(0, result.status(), result.output());
+    assertFalse(result.output().contains("Unknown root"), result.output());
+    assertFalse(result.output().contains("Error"), result.output());
+    assertTrue(
+        result.output().matches("(?s).*OBJECTS [1-9][0-9]* STARTS 17\\R.*"), result.output());
+    assertTrue(
+        result.output().contains("Script executed successfully: 5 commands"), result.output());
+    // script mode leaves out the informational lines and the banner, as jfr-shell's does
+    assertFalse(result.output().contains("Session 1 opened"), result.output());
+    assertFalse(result.output().contains("Set n ="), result.output());
+    assertFalse(result.output().contains("Jafar Shell"), result.output());
+    // and never touches the interactive history
+    assertFalse(Files.exists(dir.resolve(".jafar-shell")), "history directory created");
+  }
+
+  /** {@code script -} reads the script from stdin, the form shebang lines use. */
+  @Test
+  void scriptCommandLineReadsStdin(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    Result result =
+        runJarWithStatus(
+            dir,
+            "open $1\nset s = events/jdk.ThreadStart | count()\necho STARTS ${s}\n",
+            "script",
+            "-",
+            recording.toString());
+
+    assertEquals(0, result.status(), result.output());
+    assertTrue(result.output().contains("STARTS 17"), result.output());
+  }
+
+  /**
+   * A line that reports an error fails the script: it stops there, is listed, is not counted as
+   * successful, and the exit status is 1. Before, the error was printed and the script went on to
+   * report "Script executed successfully".
+   */
+  @Test
+  void scriptCommandLineStopsAtReportedError(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path script = dir.resolve("bad.jfrs");
+    Files.writeString(
+        script, "open $1\nset n = bogus | count()\necho AFTER\nnosuchcommand\necho LAST\n");
+
+    Result failFast = runJarWithStatus(dir, "", "script", script.toString(), recording.toString());
+
+    assertEquals(1, failFast.status(), failFast.output());
+    assertTrue(failFast.output().contains("Script completed with errors:"), failFast.output());
+    assertTrue(failFast.output().contains("Line 2: Invalid query:"), failFast.output());
+    assertTrue(
+        failFast.output().contains("Executed 1/2 commands successfully."), failFast.output());
+    assertFalse(failFast.output().contains("AFTER"), failFast.output());
+    assertFalse(failFast.output().contains("executed successfully"), failFast.output());
+
+    Result carryOn =
+        runJarWithStatus(
+            dir, "", "script", script.toString(), recording.toString(), "--continue-on-error");
+
+    assertEquals(1, carryOn.status(), carryOn.output());
+    assertTrue(carryOn.output().contains("AFTER"), carryOn.output());
+    assertTrue(carryOn.output().contains("LAST"), carryOn.output());
+    assertTrue(carryOn.output().contains("Line 4: Unknown command"), carryOn.output());
+    assertTrue(carryOn.output().contains("Executed 3/5 commands successfully."), carryOn.output());
+  }
+
+  /** The same contract at the prompt: a failing line inside {@code script} is reported. */
+  @Test
+  void interactiveScriptReportsErrors(@TempDir Path dir) throws Exception {
+    Path script = dir.resolve("bad.jfrs");
+    Files.writeString(script, "echo FIRST\nuse 42\necho AFTER\n");
+
+    String output = runJar(dir, "script " + script + "\nexit\n");
+
+    assertTrue(output.contains("FIRST"), output);
+    assertTrue(output.contains("Line 2: No such session: 42"), output);
+    assertFalse(output.contains("AFTER"), output);
+    assertFalse(output.contains("Script executed successfully"), output);
+  }
+
+  /**
+   * jfr-shell's own {@code script} command, run the way the {@code jfr-shell} jbang alias runs it:
+   * its launcher names {@code io.jafar.shell.Main} as the main class of this same artifact, so the
+   * shebang line {@code #!/usr/bin/env -S jbang jfr-shell@btraceio script -} never reaches the
+   * unified {@link Main}. Its reported errors now fail the script too.
+   */
+  @Test
+  void jfrShellScriptCommandCountsReportedErrors(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    Result ok =
+        runClassWithStatus(
+            dir,
+            "io.jafar.shell.Main",
+            "open $1\nevents/jdk.ThreadStart | count()\n",
+            "script",
+            "-",
+            recording.toString());
+
+    assertEquals(0, ok.status(), ok.output());
+    assertTrue(ok.output().contains("17"), ok.output());
+    assertTrue(ok.output().contains("Script executed successfully: 2 commands"), ok.output());
+
+    Result bad =
+        runClassWithStatus(
+            dir,
+            "io.jafar.shell.Main",
+            "open $1\nevents/jdk.NoSuchEvent[bogus | count()\nevents/jdk.ThreadStart | count()\n",
+            "script",
+            "-",
+            recording.toString());
+
+    assertEquals(1, bad.status(), bad.output());
+    assertTrue(bad.output().contains("Line 2: Expected operator after field path"), bad.output());
+    assertTrue(bad.output().contains("Executed 1/2 commands successfully."), bad.output());
+    assertFalse(bad.output().contains("executed successfully"), bad.output());
+  }
+
+  /**
+   * The argv the kernel builds for an executable script whose first line is {@code #!/usr/bin/env
+   * -S jbang jfr-shell@btraceio script -}, run as {@code ./analyze.jfrs app.jfr}: {@code script -
+   * ./analyze.jfrs app.jfr}, with stdin left to the caller (empty here). Before, {@code -} read the
+   * empty stdin and ran nothing, or with the script piped in, {@code open $1} opened the script
+   * itself as a recording. Checked for jfr-shell's entry point, which the {@code jfr-shell} alias
+   * launches, and for this jar's, which the {@code jafar-shell} alias launches.
+   */
+  @Test
+  void shebangInvocationRunsTheScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path script = dir.resolve("analyze.jfrs");
+    Files.writeString(
+        script,
+        "#!/usr/bin/env -S jbang jfr-shell@btraceio script -\n"
+            + "open $1\nevents/jdk.ThreadStart | count()\n");
+
+    Result jfrShell =
+        runClassWithStatus(
+            dir, "io.jafar.shell.Main", "", "script", "-", script.toString(), recording.toString());
+    Result jafarShell =
+        runJarWithStatus(dir, "", "script", "-", script.toString(), recording.toString());
+
+    for (Result result : List.of(jfrShell, jafarShell)) {
+      assertEquals(0, result.status(), result.output());
+      assertFalse(result.output().contains("Invalid JFR Magic Number"), result.output());
+      assertTrue(result.output().contains("17"), result.output());
+      assertTrue(
+          result.output().contains("Script executed successfully: 2 commands"), result.output());
+    }
+  }
+
+  /**
+   * A failing {@code ask}/{@code as-query}/{@code explain} line fails the script, in both shells'
+   * script commands. The backend is pinned to an id that does not exist, so no request can leave
+   * the machine (see {@code LlmCommandsTest}).
+   */
+  @Test
+  void failingLlmCommandFailsTheScript(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String script =
+        "set llm.backend = test-nonexistent\nopen $1\nexplain\nask why\nas-query why\necho DONE\n";
+
+    for (Result result :
+        List.of(
+            runJarWithStatus(
+                dir, script, "script", "-", recording.toString(), "--continue-on-error"),
+            runClassWithStatus(
+                dir,
+                "io.jafar.shell.Main",
+                script,
+                "script",
+                "-",
+                recording.toString(),
+                "--continue-on-error"))) {
+      assertEquals(1, result.status(), result.output());
+      assertTrue(result.output().contains("Line 3: Nothing to explain yet"), result.output());
+      assertTrue(result.output().contains("Line 4: "), result.output());
+      assertTrue(result.output().contains("Line 5: "), result.output());
+      assertTrue(result.output().contains("DONE"), result.output());
+      assertTrue(result.output().contains("Executed 3/6 commands successfully."), result.output());
+      assertFalse(result.output().contains("executed successfully"), result.output());
+    }
+  }
+
+  @Test
+  void routesJfrCommandsButNotQueries() {
+    assertTrue(Shell.isJfrCommand("metadata"));
+    assertTrue(Shell.isJfrCommand("metadata --summary"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart"));
+    assertTrue(Shell.isJfrCommand("chunks --range 0-1"));
+    assertTrue(Shell.isJfrCommand("chunk 0 show"));
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol"));
+    assertTrue(Shell.isJfrCommand("constants --summary"));
+    assertTrue(Shell.isJfrCommand("backend list"));
+    assertFalse(Shell.isJfrCommand("metadata/jdk.ExecutionSample"));
+    assertFalse(Shell.isJfrCommand("constants/jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("metadata | count()"));
+    assertFalse(Shell.isJfrCommand("metadata |count()"));
+    assertFalse(Shell.isJfrCommand("events/jdk.ThreadStart"));
+    assertFalse(Shell.isJfrCommand("objects | count"));
+    assertFalse(Shell.isJfrCommand("metadata|count()"));
+    // A pipeline or --limit anywhere makes it a query: jfr-shell's handlers would ignore them
+    assertFalse(Shell.isJfrCommand("chunks --format json | count()"));
+    assertFalse(Shell.isJfrCommand("chunks --format json |count()"));
+    assertFalse(Shell.isJfrCommand("chunks --limit 1"));
+    assertFalse(Shell.isJfrCommand("constants --limit 2"));
+    assertFalse(Shell.isJfrCommand("constants --format json | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | crossref() | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
+    assertFalse(Shell.isJfrCommand("chunks | crossref()"));
+    // ...except the pipeline cmdCp takes, and a '|' inside an argument
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol | crossref()"));
+    assertTrue(Shell.isJfrCommand("CONSTANTS jdk.types.Symbol |  CrossRef() "));
+    assertTrue(Shell.isJfrCommand("metadata --regex ^(jdk|datadog)\\.Thread.*"));
+    assertTrue(Shell.isJfrCommand("chunks --format json"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart --tree --depth 2"));
+    assertFalse(Shell.isJfrCommand("metadatax"));
+    assertFalse(Shell.isJfrCommand(""));
+  }
+
+  @Test
+  void matchesJfrCommandWithoutRegardToCaseOrSpacing() {
+    assertEquals("metadata", Shell.jfrCommandOf("METADATA --summary"));
+    assertEquals("chunk", Shell.jfrCommandOf("  chunk\t0 show"));
+    assertEquals("cp", Shell.jfrCommandOf("cp"));
+    assertEquals("backend", Shell.jfrCommandOf("Backend list "));
+    assertEquals(null, Shell.jfrCommandOf("chunks \t| count()"));
+  }
+
+  /**
+   * jfr-shell's completer, which completes JFR sessions here, reads global variable names from the
+   * dispatcher's store; it must be the shell's own, not a private empty one.
+   */
+  @Test
+  void jfrDispatcherSharesTheShellsGlobalStore(@TempDir Path dir) throws Exception {
+    String home = System.getProperty("user.home");
+    System.setProperty("user.home", dir.toString());
+    try (Shell shell = new Shell()) {
+      shell.execute("set --global threshold = 5");
+      assertTrue(shell.jfrDispatcher().getGlobalStore().contains("threshold"));
+    } finally {
+      System.setProperty("user.home", home);
+    }
+  }
+
   @Test
   void routesOnlyJfrInvocationsToJfrCommandLine() {
-    // 'script' runs in this shell now, so a script can open any format
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "-"}));
-    assertFalse(Main.isJfrCommandLine(new String[] {"script", "x.jfrs", "--continue-on-error"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"script", "f.jfrs", "--continue-on-error"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"script", "f.jfrs", "x.hprof"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"-q", "script", "-"}));
+    // after 'script', -b/--backend is the script command's own: it runs in this shell
+    assertFalse(Main.isJfrCommandLine(new String[] {"script", "--backend", "jdk", "f.jfrs"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"script", "-b=jdk", "f.jfrs"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"script", "--backend", "jdk", "f.jfrs"}));
+    // before the command word, a JFR option still means jfr-shell's command line
     assertTrue(Main.isJfrCommandLine(new String[] {"--backend", "jdk", "script", "-"}));
-    assertArrayEquals(
-        new String[] {"x.jfrs", "a"}, Main.scriptArguments(new String[] {"script", "x.jfrs", "a"}));
-    assertNull(Main.scriptArguments(new String[] {"x.jfr"}));
+    assertFalse(Main.isScriptCommandLine(new String[] {"dump.hprof", "script"}));
+    // an option's value is not the command: '-f script' opens a file named script
+    assertFalse(Main.isScriptCommandLine(new String[] {"-f", "script"}));
+    assertFalse(Main.isScriptCommandLine(new String[] {"--file", "script"}));
+    assertFalse(Main.isScriptCommandLine(new String[] {"-qf", "script"}));
+    assertFalse(Main.isScriptCommandLine(new String[] {"--file=script"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"-f", "script"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"-f", "show"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"-q", "script", "f.jfrs"}));
+    assertTrue(Main.isJfrCommandLine(new String[] {"-b", "jdk", "script", "f.jfrs"}));
+    assertEquals(2, Main.firstWordIndex(new String[] {"-f", "x.jfr", "script"}));
+    assertEquals(-1, Main.firstWordIndex(new String[] {"-qf", "script"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"-q", "show", "x.jfr", "events"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"--backend=jdk", "x.jfr"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"--install-plugin", "p.jar"}));
@@ -372,6 +843,8 @@ class ShellArtifactTest {
     return true;
   }
 
+  private record Result(int status, String output) {}
+
   /** Exit status, stdout and stderr of one run, kept apart. */
   private record Run(int exit, String out, String err) {}
 
@@ -386,12 +859,13 @@ class ShellArtifactTest {
                 "-jar",
                 System.getProperty("jafar.shell.jar")));
     command.addAll(List.of(args));
-    Process process =
+    ProcessBuilder builder =
         new ProcessBuilder(command)
             .directory(dir.toFile())
             .redirectOutput(out.toFile())
-            .redirectError(err.toFile())
-            .start();
+            .redirectError(err.toFile());
+    builder.environment().remove("JFR_SHELL_VERBOSE"); // as in run(): no leak from the machine
+    Process process = builder.start();
     process.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
     process.getOutputStream().close();
     assertTrue(process.waitFor(120, TimeUnit.SECONDS), "shell did not exit");
@@ -404,22 +878,49 @@ class ShellArtifactTest {
   }
 
   private static String runJar(Path dir, String stdin, String... args) throws Exception {
-    Path out = dir.resolve("out.txt");
+    Result result = runJarWithStatus(dir, stdin, args);
+    assertEquals(0, result.status(), result.output());
+    return result.output();
+  }
+
+  private static Result runJarWithStatus(Path dir, String stdin, String... args) throws Exception {
+    return run(dir, stdin, List.of("-jar", System.getProperty("jafar.shell.jar")), args);
+  }
+
+  /** Runs a main class from the jar, as a jbang launcher naming {@code //MAIN} does. */
+  private static Result runClassWithStatus(Path dir, String mainClass, String stdin, String... args)
+      throws Exception {
+    return run(dir, stdin, List.of("-cp", System.getProperty("jafar.shell.jar"), mainClass), args);
+  }
+
+  private static Result run(Path dir, String stdin, List<String> launch, String... args)
+      throws Exception {
+    return run(dir, stdin, java.util.Map.of(), launch, args);
+  }
+
+  private static Result run(
+      Path dir,
+      String stdin,
+      java.util.Map<String, String> env,
+      List<String> launch,
+      String... args)
+      throws Exception {
+    Path out = dir.resolve("out-" + System.nanoTime() + ".txt");
     List<String> command =
         new java.util.ArrayList<>(
             List.of(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Duser.home=" + dir,
-                "-jar",
-                System.getProperty("jafar.shell.jar")));
+                "-Duser.home=" + dir));
+    command.addAll(launch);
     command.addAll(List.of(args));
-    Process process =
-        new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(out.toFile()).start();
+    ProcessBuilder builder =
+        new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(out.toFile());
+    builder.environment().remove("JFR_SHELL_VERBOSE"); // so the machine's setting cannot leak in
+    builder.environment().putAll(env);
+    Process process = builder.start();
     process.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
     process.getOutputStream().close();
     assertTrue(process.waitFor(120, TimeUnit.SECONDS), "shell did not exit");
-    String output = Files.readString(out);
-    assertEquals(0, process.exitValue(), output);
-    return output;
+    return new Result(process.exitValue(), Files.readString(out));
   }
 }

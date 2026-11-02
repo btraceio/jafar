@@ -120,6 +120,7 @@ public final class TuiWiring {
     browser.setTuiAdapter(adapter);
     TuiRenderer renderer = new TuiRenderer(ctx, sessions, detailBuilder);
     renderer.setTuiAdapter(adapter);
+    renderer.setConditionalState(dispatcher::getConditionalState);
     TuiKeyHandler keyHandler =
         new TuiKeyHandler(ctx, backend::read, browser, executor, detailBuilder, sessions);
 

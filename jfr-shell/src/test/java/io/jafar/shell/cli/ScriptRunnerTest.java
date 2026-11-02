@@ -2,6 +2,9 @@ package io.jafar.shell.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -10,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 class ScriptRunnerTest {
 
@@ -611,5 +615,212 @@ class ScriptRunnerTest {
     assertEquals(1, result.getSuccessCount());
     assertEquals(0, result.getErrors().size());
     assertEquals("test \n", capturedCommands.toString());
+  }
+
+  /**
+   * A shell reports a failing command by printing it and returning normally; with the line wrapped
+   * by {@code failingOnReportedErrors}, such a line fails instead of counting as a success.
+   */
+  @Test
+  void reportedErrorFailsTheLine() {
+    ScriptRunner.ErrorTally tally = new ScriptRunner.ErrorTally();
+    List<String> ran = new ArrayList<>();
+    ScriptRunner.LineDispatcher shell =
+        line -> {
+          ran.add(line);
+          if (line.startsWith("bad")) {
+            tally.record("Error: Invalid query: " + line);
+          }
+          return true;
+        };
+    List<String> script = List.of("good 1", "bad 2", "good 3");
+
+    ScriptRunner.ExecutionResult failFast =
+        new ScriptRunner(ScriptRunner.failingOnReportedErrors(shell, tally), List.of())
+            .execute(script);
+
+    assertEquals(List.of("good 1", "bad 2"), ran);
+    assertEquals(1, failFast.getSuccessCount());
+    assertEquals(1, failFast.getErrors().size());
+    assertEquals(2, failFast.getErrors().get(0).getLineNumber());
+    assertEquals("Invalid query: bad 2", failFast.getErrors().get(0).getMessage());
+
+    ran.clear();
+    ScriptRunner carryOn =
+        new ScriptRunner(ScriptRunner.failingOnReportedErrors(shell, tally), List.of());
+    carryOn.setContinueOnError(true);
+    ScriptRunner.ExecutionResult all = carryOn.execute(script);
+
+    assertEquals(script, ran);
+    assertEquals(2, all.getSuccessCount());
+    assertEquals(1, all.getErrors().size());
+
+    // Unwrapped, the same shell reports the error and the runner still counts the line a success
+    ScriptRunner.ExecutionResult unwrapped = new ScriptRunner(shell, List.of()).execute(script);
+    assertEquals(0, unwrapped.getErrors().size());
+  }
+
+  // ---- A condition that cannot be evaluated is a command error ----
+
+  /** A real dispatcher (conditionals live there) whose output is captured. */
+  private static CommandDispatcher realDispatcher(List<String> out, List<String> err) {
+    SessionManager<JFRSession> sm =
+        new SessionManager<>((path, c) -> Mockito.mock(JFRSession.class), ParsingContext.create());
+    return new CommandDispatcher(
+        sm,
+        new CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            out.add(s);
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            out.add(String.format(fmt, args));
+          }
+
+          @Override
+          public void error(String s) {
+            err.add(s);
+          }
+        },
+        ref -> {});
+  }
+
+  private static final String FAILING_CONDITIONAL =
+      """
+      if 1 / 0 > 1
+      echo THEN
+      else
+      echo ELSE
+      endif
+      echo AFTER
+      """;
+
+  @Test
+  void failedConditionStopsScriptAndIsReported() {
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, err).runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), false);
+
+    assertTrue(result.hasErrors(), "a failed condition must make the script fail");
+    assertEquals(1, result.getErrors().size());
+    ScriptRunner.ScriptError error = result.getErrors().get(0);
+    assertEquals(1, error.getLineNumber());
+    assertEquals("if 1 / 0 > 1", error.getLine());
+    assertTrue(error.getMessage().contains("Division by zero"), error.getMessage());
+    assertEquals(0, result.getSuccessCount());
+    assertEquals(List.of(), out, "fail-fast: nothing after the failed condition runs");
+    assertEquals(List.of(), err, "the error is reported once, through the result");
+  }
+
+  @Test
+  void failedConditionWithContinueOnErrorRunsNeitherBranch() {
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, err).runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), true);
+
+    assertEquals(1, result.getErrors().size(), "the failed condition is counted");
+    assertEquals(1, result.getErrors().get(0).getLineNumber());
+    // else, endif and the echo after it; the skipped 'echo THEN'/'echo ELSE' count as handled
+    assertEquals(5, result.getSuccessCount());
+    assertEquals(List.of("AFTER"), out, "neither branch runs; the script resumes after endif");
+  }
+
+  @Test
+  void malformedReferenceInConditionIsAnError() {
+    // A malformed reference is an error (#144), and the else branch used to run anyway. (The
+    // originally reported exists(rows[1].thread) now parses, so it no longer exercises this.)
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, err)
+            .runScript(
+                List.of("if empty(cfg..db)", "echo EMPTY", "else", "echo SET", "endif"),
+                List.of(),
+                true);
+
+    assertEquals(1, result.getErrors().size());
+    assertTrue(
+        result
+            .getErrors()
+            .get(0)
+            .getMessage()
+            .startsWith("Condition evaluation failed: Invalid variable reference: cfg..db"),
+        result.getErrors().get(0).getMessage());
+    assertEquals(List.of(), out, "neither EMPTY nor SET may be printed");
+  }
+
+  // ---- A script runs with an if-block stack of its own ----
+
+  @Test
+  void scriptStoppedInsideBlockDoesNotLeaveItOpen() {
+    // The interactive shell runs scripts on its own dispatcher; a script that stopped at a failed
+    // condition used to leave the shell inside that block, silently skipping what was typed next.
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, err);
+
+    ScriptRunner.ExecutionResult result =
+        dispatcher.runScript(FAILING_CONDITIONAL.lines().toList(), List.of(), false);
+
+    assertTrue(result.hasErrors());
+    assertFalse(dispatcher.getConditionalState().inConditional());
+    dispatcher.dispatch("echo TYPED_AFTERWARDS");
+    assertEquals(List.of("TYPED_AFTERWARDS"), out);
+  }
+
+  @Test
+  void scriptHasItsOwnIfBlockStack() {
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, err);
+    dispatcher.dispatch("if 1 == 1"); // typed interactively before running the script
+
+    // The script's failed block is closed; the caller's is untouched
+    dispatcher.runScript(List.of("if 1 / 0 > 1", "echo X"), List.of(), false);
+    assertEquals(1, dispatcher.getConditionalState().depth());
+    assertTrue(dispatcher.getConditionalState().isActive());
+
+    // A stray endif is the script's error; it must not close the caller's block
+    ScriptRunner.ExecutionResult stray = dispatcher.runScript(List.of("endif"), List.of(), false);
+    assertEquals("endif without if", stray.getErrors().get(0).getMessage());
+    assertEquals(1, dispatcher.getConditionalState().depth());
+
+    dispatcher.dispatch("echo STILL_IN_CALLERS_BLOCK");
+    dispatcher.dispatch("endif");
+    assertEquals(List.of("STILL_IN_CALLERS_BLOCK"), out);
+    assertFalse(dispatcher.getConditionalState().inConditional());
+  }
+
+  @Test
+  void missingEndifIsReportedAndClosed() {
+    List<String> out = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, new ArrayList<>());
+
+    ScriptRunner.ExecutionResult result =
+        dispatcher.runScript(
+            List.of("if 1 == 1", "echo INSIDE", "if 1 == 2", "echo NESTED"), List.of(), false);
+
+    assertEquals(1, result.getErrors().size());
+    ScriptRunner.ScriptError error = result.getErrors().get(0);
+    assertEquals(4, error.getLineNumber());
+    assertEquals("2 if-block(s) not closed with endif by end of script", error.getMessage());
+    assertEquals(List.of("INSIDE"), out);
+    assertFalse(dispatcher.getConditionalState().inConditional());
+  }
+
+  @Test
+  void strayEndifFailsTheScript() {
+    List<String> out = new ArrayList<>();
+    ScriptRunner.ExecutionResult result =
+        realDispatcher(out, new ArrayList<>())
+            .runScript(List.of("endif", "echo AFTER"), List.of(), false);
+
+    assertEquals(1, result.getErrors().size());
+    assertEquals("endif without if", result.getErrors().get(0).getMessage());
+    assertEquals(List.of(), out, "fail-fast");
   }
 }
