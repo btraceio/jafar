@@ -4,10 +4,17 @@ import static io.jafar.processor.ProcessorTestSupport.call;
 import static io.jafar.processor.ProcessorTestSupport.compileAndLoad;
 import static io.jafar.processor.ProcessorTestSupport.parse;
 import static io.jafar.processor.ProcessorTestSupport.source;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import jdk.jfr.consumer.RecordedEvent;
+import jdk.jfr.consumer.RecordedFrame;
+import jdk.jfr.consumer.RecordingFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.openjdk.jmc.flightrecorder.writer.api.Recording;
@@ -20,7 +27,8 @@ import org.openjdk.jmc.flightrecorder.writer.api.Types;
  * as a constant pool reference and a primitive or String accessor as an inline value. When the
  * recording stores the field differently it used to misread that field and every field after it
  * without an error - a {@code jdk.types.StackTrace}'s {@code frames} are inline structures, and a
- * {@code jdk.types.Method}'s {@code name} is a pooled {@code jdk.types.Symbol}. It now fails,
+ * {@code jdk.types.Method}'s {@code name} is a pooled {@code jdk.types.Symbol}. Both are now read,
+ * choosing the read from the metadata once per metadata class; a storage no read handles fails,
  * naming the field and both storages.
  */
 class GeneratedHandlerStorageMismatchTest {
@@ -33,27 +41,171 @@ class GeneratedHandlerStorageMismatchTest {
     int seq;
   }
 
-  @Test
-  void complexAccessorForAnInlineArrayFails() throws Exception {
+  private static final String FRAME =
+      "@JfrType(\"jdk.types.StackFrame\")\npublic interface PFrame {\n"
+          + "  int lineNumber();\n  PMethod method();\n}\n";
+  private static final String METHOD =
+      "@JfrType(\"jdk.types.Method\")\npublic interface PMethod {\n"
+          + "  String name();\n  PClass type();\n}\n";
+  private static final String CLASS =
+      "@JfrType(\"java.lang.Class\")\npublic interface PClass {\n  String name();\n}\n";
+  private static final String STACK =
+      "@JfrType(\"jdk.types.StackTrace\")\npublic interface PStack {\n  PFrame[] frames();\n}\n";
+  private static final String EVENT =
+      "@JfrType(\"test.InlineFrames\")\npublic interface PEv {\n"
+          + "  int seq();\n  PStack stackTrace();\n}\n";
+
+  /** Records {@code n} events from two call sites, so their stack traces differ. */
+  private Path recordInlineFrames(int n) throws Exception {
     // The JMC writer pools stack frames; the JVM writes them inside the stack trace entry.
     Path jfr = dir.resolve("jvm.jfr");
     try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
       r.enable(InlineFramesEvent.class).withStackTrace();
       r.start();
-      InlineFramesEvent e = new InlineFramesEvent();
-      e.seq = 1;
-      e.commit();
+      for (int i = 0; i < n; i++) {
+        if (i % 2 == 0) {
+          commitFromHere(i);
+        } else {
+          commitFromThere(i);
+        }
+      }
       r.stop();
       r.dump(jfr);
     }
+    return jfr;
+  }
+
+  private static void commitFromHere(int seq) {
+    InlineFramesEvent e = new InlineFramesEvent();
+    e.seq = seq;
+    e.commit();
+  }
+
+  private static void commitFromThere(int seq) {
+    InlineFramesEvent e = new InlineFramesEvent();
+    e.seq = seq;
+    e.commit();
+  }
+
+  /** Each event's frames as the JDK's own reader sees them: "seq: class.method:line ...". */
+  private static List<String> expectedFrames(Path jfr) throws Exception {
+    List<String> out = new ArrayList<>();
+    for (RecordedEvent e : RecordingFile.readAllEvents(jfr)) {
+      if (!e.getEventType().getName().equals("test.InlineFrames")) {
+        continue;
+      }
+      StringBuilder sb = new StringBuilder().append(e.getInt("seq")).append(':');
+      for (RecordedFrame f : e.getStackTrace().getFrames()) {
+        sb.append(' ')
+            .append(f.getMethod().getType().getName())
+            .append('.')
+            .append(f.getMethod().getName())
+            .append(':')
+            .append(f.getLineNumber());
+      }
+      out.add(sb.toString());
+    }
+    return out;
+  }
+
+  /** One event's frames through the generated handlers, formatted like {@link #expectedFrames}. */
+  private static String describeFrames(Object seq, Object[] frames) {
+    StringBuilder sb = new StringBuilder().append(seq).append(':');
+    for (Object f : frames) {
+      Object method = call(f, "method");
+      // the JVM writes class names in internal form; the JDK's reader converts them
+      String type = ((String) call(call(method, "type"), "name")).replace('/', '.');
+      sb.append(' ')
+          .append(type)
+          .append('.')
+          .append(call(method, "name"))
+          .append(':')
+          .append(call(f, "lineNumber"));
+    }
+    return sb.toString();
+  }
+
+  /**
+   * Inline frames, and the pooled {@code jdk.types.Symbol} names of their methods and classes read
+   * through {@code String} accessors, match the JDK's reader frame by frame.
+   */
+  @Test
+  void inlineFramesAndPooledSymbolsAreRead() throws Exception {
+    Path jfr = recordInlineFrames(4);
+    ClassLoader loader =
+        compileAndLoad(
+            source("PFrame", FRAME),
+            source("PMethod", METHOD),
+            source("PClass", CLASS),
+            source("PStack", STACK),
+            source("PEv", EVENT));
+    List<String> seen = Collections.synchronizedList(new ArrayList<>());
+    parse(
+        jfr,
+        loader,
+        loader.loadClass("test.PEv"),
+        ev ->
+            seen.add(
+                describeFrames(call(ev, "seq"), (Object[]) call(call(ev, "stackTrace"), "frames"))),
+        "PEv",
+        "PStack",
+        "PFrame",
+        "PMethod",
+        "PClass");
+    List<String> expected = expectedFrames(jfr);
+    assertEquals(4, expected.size());
+    assertTrue(expected.get(0).contains(".commitFromHere:"), expected.get(0));
+    assertTrue(expected.get(1).contains(".commitFromThere:"), expected.get(1));
+    assertEquals(expected, seen);
+  }
+
+  /**
+   * Inline values are read by a new handler each, not the instance a factory reuses per thread:
+   * frames kept past the event that read them keep their own values.
+   */
+  @Test
+  void inlineValuesOutliveTheirEvent() throws Exception {
+    Path jfr = recordInlineFrames(6);
+    ClassLoader loader =
+        compileAndLoad(
+            source("PFrame", FRAME),
+            source("PMethod", METHOD),
+            source("PClass", CLASS),
+            source("PStack", STACK),
+            source("PEv", EVENT));
+    List<Object[]> kept = Collections.synchronizedList(new ArrayList<>());
+    parse(
+        jfr,
+        loader,
+        loader.loadClass("test.PEv"),
+        ev -> kept.add(new Object[] {call(ev, "seq"), call(call(ev, "stackTrace"), "frames")}),
+        "PEv",
+        "PStack",
+        "PFrame",
+        "PMethod",
+        "PClass");
+    List<String> seen = new ArrayList<>();
+    for (Object[] k : kept) {
+      seen.add(describeFrames(k[0], (Object[]) k[1]));
+    }
+    assertEquals(expectedFrames(jfr), seen);
+  }
+
+  /**
+   * An inline value is read by the generated handler of the accessor's type; a nested interface
+   * gets none, so such a field still fails, naming it.
+   */
+  @Test
+  void inlineValueWithoutAGeneratedHandlerFails() throws Exception {
+    Path jfr = recordInlineFrames(1);
     ClassLoader loader =
         compileAndLoad(
             source(
-                "PFrame",
-                "@JfrType(\"jdk.types.StackFrame\")\npublic interface PFrame {\n  int lineNumber();\n}\n"),
-            source(
                 "PStack",
-                "@JfrType(\"jdk.types.StackTrace\")\npublic interface PStack {\n  PFrame[] frames();\n}\n"),
+                "@JfrType(\"jdk.types.StackTrace\")\npublic interface PStack {\n"
+                    + "  Frame[] frames();\n"
+                    + "  @JfrType(\"jdk.types.StackFrame\")\n"
+                    + "  interface Frame {\n    int lineNumber();\n  }\n}\n"),
             source(
                 "PEv",
                 "@JfrType(\"test.InlineFrames\")\npublic interface PEv {\n"
@@ -68,17 +220,17 @@ class GeneratedHandlerStorageMismatchTest {
                     loader.loadClass("test.PEv"),
                     ev -> call(call(ev, "stackTrace"), "frames"),
                     "PEv",
-                    "PStack",
-                    "PFrame"));
+                    "PStack"));
     assertChain(
         thrown,
         "PStackHandler cannot read jdk.types.StackTrace.frames: the recording stores it as an array"
-            + " of inline values of type jdk.types.StackFrame, but PStack declares it as an array of"
-            + " constant pool references of type jdk.types.StackFrame");
+            + " of inline values of type jdk.types.StackFrame, which needs the generated handler of"
+            + " the accessor's type, and PStack declares it with a type that has none");
   }
 
+  /** A {@code String} accessor for a pooled {@code jdk.types.Symbol} resolves and unwraps it. */
   @Test
-  void stringAccessorForAPooledSymbolFails() throws Exception {
+  void stringAccessorForAPooledSymbolIsRead() throws Exception {
     Path jfr = dir.resolve("symbol.jfr");
     try (Recording r = Recordings.newRecording(jfr)) {
       Types types = r.getTypes();
@@ -86,30 +238,34 @@ class GeneratedHandlerStorageMismatchTest {
       Type event =
           r.registerEventType(
               "test.Sym", t -> t.addField("sym", symbol).addField("last", Types.Builtin.INT));
-      r.writeEvent(
-          event.asValue(
-              v -> {
-                v.putField("stackTrace", types.getType(Types.JDK.STACK_TRACE).nullValue());
-                v.putField("eventThread", types.getType(Types.JDK.THREAD).nullValue());
-                v.putField("startTime", System.nanoTime());
-                v.putField("sym", symbol.asValue(sv -> sv.putField("string", "some.Symbol")));
-                v.putField("last", 9);
-              }));
+      String[] values = {"some.Symbol", "other.Symbol", "some.Symbol"};
+      for (int i = 0; i < values.length; i++) {
+        String value = values[i];
+        int last = 9 + i;
+        r.writeEvent(
+            event.asValue(
+                v -> {
+                  v.putField("stackTrace", types.getType(Types.JDK.STACK_TRACE).nullValue());
+                  v.putField("eventThread", types.getType(Types.JDK.THREAD).nullValue());
+                  v.putField("startTime", System.nanoTime());
+                  v.putField("sym", symbol.asValue(sv -> sv.putField("string", value)));
+                  v.putField("last", last);
+                }));
+      }
     }
     ClassLoader loader =
         compileAndLoad(
             source(
                 "PSym",
                 "@JfrType(\"test.Sym\")\npublic interface PSym {\n  String sym();\n  int last();\n}\n"));
-    Exception thrown =
-        assertThrows(
-            Exception.class,
-            () -> parse(jfr, loader, loader.loadClass("test.PSym"), e -> call(e, "last"), "PSym"));
-    assertChain(
-        thrown,
-        "PSymHandler cannot read test.Sym.sym: the recording stores it as a constant pool"
-            + " reference of type jdk.types.Symbol, but PSym declares it as an inline value of type"
-            + " java.lang.String");
+    List<String> seen = Collections.synchronizedList(new ArrayList<>());
+    parse(
+        jfr,
+        loader,
+        loader.loadClass("test.PSym"),
+        e -> seen.add(call(e, "sym") + " " + call(e, "last")),
+        "PSym");
+    assertEquals(List.of("some.Symbol 9", "other.Symbol 10", "some.Symbol 11"), seen);
   }
 
   /**

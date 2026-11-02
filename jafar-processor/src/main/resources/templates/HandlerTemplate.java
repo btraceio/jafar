@@ -20,8 +20,16 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
   // Instance fields for event data
   private ConstantPools constantPools;
 
-  /** The metadata class this instance last checked with validate(); not cleared by reset(). */
-  private MetadataClass validatedFor;
+  /**
+   * The read plan of the metadata class this instance last read; not cleared by {@link #reset}.
+   */
+  private Plan plan;
+
+  /**
+   * The plan last built by any instance: pooled entries are read by a new instance each ({@code
+   * HandlerFactory.create}), and the metadata walk is done once per metadata class, not per entry.
+   */
+  private static volatile Plan lastPlan;
 {{INSTANCE_FIELDS}}
 
   /**
@@ -41,9 +49,14 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
    */
   public void read(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) throws IOException {
     this.constantPools = constantPools;
-    if (metadata != validatedFor) {
-      validate(metadata);
-      validatedFor = metadata;
+    Plan p = this.plan;
+    if (p == null || p.metadata != metadata) {
+      p = lastPlan;
+      if (p == null || p.metadata != metadata) {
+        p = new Plan(metadata);
+        lastPlan = p;
+      }
+      this.plan = p;
     }
     List<MetadataField> metaFields = metadata.getFields();
     for (MetadataField metaField : metaFields) {
@@ -58,17 +71,27 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
   }
 
   /**
-   * Checks the declared fields against the recording's metadata, once per metadata class: the
-   * reads in {@link #read} are fixed at build time, without the metadata, so a field stored or typed
-   * differently would be misread together with every field after it.
+   * How {@link #read} reads each declared field from recordings with one metadata class, decided
+   * once per metadata class: the reads are generated at build time, without the metadata, so a
+   * field's storage (inline or a constant pool reference) is known only here. A field stored in a
+   * way no read handles fails here, naming it, instead of being misread together with every field
+   * after it.
    */
-  private static void validate(MetadataClass metadata) throws IOException {
-    for (MetadataField metaField : metadata.getFields()) {
-      switch (metaField.getName()) {
+  private static final class Plan {
+    final MetadataClass metadata;
+{{PLAN_FIELDS}}
+
+    Plan(MetadataClass metadata) throws IOException {
+      this.metadata = metadata;
+{{PLAN_DEFAULTS}}
+      for (MetadataField metaField : metadata.getFields()) {
+        switch (metaField.getName()) {
 {{VALIDATE_CASES}}
-        default:
-          break;
+          default:
+            break;
+        }
       }
+{{PLAN_ASSIGN}}
     }
   }
 
@@ -107,6 +130,119 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
               + " of type "
               + (types.length == 0 ? "?" : String.join(" or ", types)));
     }
+  }
+
+  /**
+   * Plans a field read through a complex-typed accessor: a constant pool reference ({@code false})
+   * or an inline value read in place by {@code inlineHandler}, the generated handler of the
+   * accessor's type ({@code true}; {@code null} when there is none to call).
+   */
+  private static boolean planComplex(
+      MetadataClass metadata, MetadataField field, String type, boolean array, String inlineHandler)
+      throws IOException {
+    boolean isPooled = field.hasConstantPool();
+    boolean isArray = field.getDimension() > 0;
+    MetadataClass fieldType = field.getType();
+    String typeName = fieldType != null ? fieldType.getName() : "?";
+    if (isArray != array || !type.equals(typeName)) {
+      throw mismatch(metadata, field, isPooled, isArray, typeName, isPooled, array, type);
+    }
+    if (!isPooled && inlineHandler == null) {
+      throw new IOException(
+          "{{HANDLER_NAME}} cannot read "
+              + metadata.getName()
+              + "."
+              + field.getName()
+              + ": the recording stores it as "
+              + describe(false, isArray)
+              + " of type "
+              + typeName
+              + ", which needs the generated handler of the accessor's type, and {{INTERFACE_NAME}}"
+              + " declares it with a type that has none (annotate a top-level interface with"
+              + " @JfrType(\""
+              + type
+              + "\"))");
+    }
+    return !isPooled;
+  }
+
+  /**
+   * Plans a field read through a {@code String} accessor: an inline string ({@code -1}), or the id
+   * of the constant pool the field refers to, whose entry is a string or a simple type wrapping one,
+   * unwrapped by {@link #unwrapString} - for example a {@code jdk.types.Symbol} or a {@code
+   * jdk.types.ThreadState}.
+   */
+  private static long planString(MetadataClass metadata, MetadataField field) throws IOException {
+    boolean isPooled = field.hasConstantPool();
+    boolean isArray = field.getDimension() > 0;
+    MetadataClass type = field.getType();
+    int depth = 0;
+    // simple types are transparent, as in requireStorage and the runtime-generated handlers
+    while (type != null && type.isSimpleType() && type.getFields().size() == 1 && depth++ < 10) {
+      type = type.getFields().get(0).getType();
+    }
+    String typeName = type != null ? type.getName() : "?";
+    if (isArray || !"java.lang.String".equals(typeName)) {
+      MetadataClass declared = field.getType();
+      throw mismatch(
+          metadata,
+          field,
+          isPooled,
+          isArray,
+          isPooled && declared != null ? declared.getName() : typeName,
+          isPooled,
+          false,
+          isPooled ? "java.lang.String or a simple type wrapping one" : "java.lang.String");
+    }
+    return isPooled ? field.getType().getId() : -1L;
+  }
+
+  /**
+   * The string of a constant pool entry referred to through a {@code String} accessor: the entry
+   * itself, or the single field of the type wrapping it. Such an entry has no handler of its own,
+   * so its pool decodes it with a runtime deserializer, which unwraps simple types to the string,
+   * or into a map of its fields.
+   */
+  private static String unwrapString(Object value, String field) {
+    Object v = value;
+    for (int depth = 0; depth < 10; depth++) {
+      if (v == null || v instanceof String) {
+        return (String) v;
+      }
+      if (!(v instanceof java.util.Map) || ((java.util.Map<?, ?>) v).size() != 1) {
+        break;
+      }
+      v = ((java.util.Map<?, ?>) v).values().iterator().next();
+    }
+    throw new IllegalStateException(
+        "{{INTERFACE_NAME}}."
+            + field
+            + "(): the constant pool entry is not a string or a single-field wrapper of one: "
+            + value.getClass().getName());
+  }
+
+  private static IOException mismatch(
+      MetadataClass metadata,
+      MetadataField field,
+      boolean isPooled,
+      boolean isArray,
+      String typeName,
+      boolean declaredPooled,
+      boolean declaredArray,
+      String declaredType) {
+    return new IOException(
+        "{{HANDLER_NAME}} cannot read "
+            + metadata.getName()
+            + "."
+            + field.getName()
+            + ": the recording stores it as "
+            + describe(isPooled, isArray)
+            + " of type "
+            + typeName
+            + ", but {{INTERFACE_NAME}} declares it as "
+            + describe(declaredPooled, declaredArray)
+            + " of type "
+            + declaredType);
   }
 
   private static String describe(boolean pooled, boolean array) {

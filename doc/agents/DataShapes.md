@@ -160,8 +160,17 @@ reader.
   (`NestedArraySkipTest`).
 - **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
   `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
-  `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently; they now fail
-  naming the field.
+  `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently. The read is now
+  chosen from the metadata once per metadata class (`Plan` in `HandlerTemplate.java`): an inline
+  complex value is read in place by a new instance of the nested type's generated handler, and a
+  pooled simple type behind a `String` accessor is resolved through the field type's pool and
+  unwrapped. Two things to know when touching it: `MetadataField.getDimension()` is `-1`, not `0`,
+  for a non-array field (a `== 0` check rejected every `ThreadState`), and the pool entry of a
+  simple type comes back as a `String` when `parser-codegen` is on the classpath but as a
+  one-entry `Map` without it (`MutableConstantPool.get` falls back to `MapValueBuilder`) -
+  `jafar-processor`'s own tests run without it, the comparison below with it, so both are
+  covered. Shapes no read handles (a `float` accessor for an `int`, an inline value whose type has
+  no generated handler) still fail naming the field.
 - **One instance for every pooled entry.** A factory's `get` returns one reused handler per thread,
   and the constant pool cached that instance for every entry: 935 of 1,261 samples named the wrong
   thread, while every name was a real one. Pooled entries now come from `HandlerFactory.create`.
@@ -169,7 +178,13 @@ reader.
   reads it with `readByte()`), but generated handlers used `readVarint()`, so any negative byte
   also swallowed the next byte and shifted every field after it.
 
-Watch the comparison, not the values: each value looked right.
+Watch the comparison, not the values: each value looked right. The comparison that settles it:
+record with `java -XX:StartFlightRecording=filename=rec.jfr,settings=profile` running a small
+workload, read every `jdk.ExecutionSample`'s thread, state and frames (method and class names,
+line numbers) through the same interfaces with build-time and with runtime handlers, and diff the
+output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFactory` for the
+runtime run, or the parser discovers the factories and both runs are build-time; print the class
+of one event to be sure which ran.
 
 ---
 
