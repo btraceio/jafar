@@ -518,13 +518,37 @@ if ${filename} contains ".jfr" and ${size} > 1000
 # Check if a variable exists
 if exists(myvar)
 
-# Check if a variable is empty (doesn't exist, null, or empty string/result)
+# Check if a variable is empty (doesn't exist, null, empty string, map with no entries,
+# or query result with no rows)
 if empty(results)
+
+# References: the same shapes ${...} accepts
+if exists(config.db.host)       # the field resolves to a non-null value
+if empty(config.db.user)        # missing, null, "", {} or [] all count as empty
+if !empty(results.thread.name)  # query results: field of the first row
+if exists(results[2].thread)    # field of row 2 (0-based); a missing row does not exist
+
+# LLM settings are names, including hyphenated ones
+if empty(llm.base-url)
+  echo "llm.base-url is not set"
+endif
 
 # Negation
 if !exists(optionalVar)
 if !empty(data)
 ```
+
+An argument to `exists()` and `empty()` resolves exactly as the same reference does in `${...}`:
+
+- `name.field.path` reads a map field or the first row of a query result; `name[idx].field` reads
+  row `idx`; `name[idx]` alone is the first value of that row, as `${name[idx]}` is.
+- `name.size` is the entry or row count, so it exists and is never empty.
+- A path on a plain value is ignored, as in `${...}`: after `set n = events/jdk.ExecutionSample |
+  count`, `${n.count}` is the count and `empty(n.count)` tests that count.
+- An `llm.*` setting name (case-insensitive, hyphens allowed) checks that setting and is never split
+  into a variable plus a field; an unset setting does not exist.
+- A malformed reference such as `config..db`, `results[x]` or `a-b` is an error rather than silently
+  empty.
 
 ### Interactive Mode
 
