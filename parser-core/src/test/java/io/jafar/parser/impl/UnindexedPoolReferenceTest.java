@@ -1,6 +1,8 @@
 package io.jafar.parser.impl;
 
-import static io.jafar.parser.impl.SyntheticRecording.elem;
+import static io.jafar.parser.impl.NodePoolFixture.EVENT;
+import static io.jafar.parser.impl.NodePoolFixture.NODE_REFS;
+import static io.jafar.parser.impl.NodePoolFixture.T_UNDECLARED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -13,8 +15,7 @@ import io.jafar.parser.api.EventIterator;
 import io.jafar.parser.api.JafarRecordedEvent;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
-import io.jafar.parser.impl.SyntheticRecording.Bytes;
-import io.jafar.parser.impl.SyntheticRecording.Element;
+import io.jafar.parser.impl.NodePoolFixture.Shape;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -33,14 +34,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Constant pool references from pooled fields other than strings, when the pool is damaged or the
- * reference does not resolve.
- *
- * <p>The recording has the same layout as the Go parser's {@code nodePoolRecording}: one {@code
- * test.Node} pool storing entries 5, 1, 2, 3 in that order, where a node is {@code (String name,
- * pooled Node next)}; entry 5's {@code next} is 0, entry 1's is 3. {@value #EVENT} events refer to
- * nodes {@code 5, 0, Long.MIN_VALUE, 1, 2, 3, 9}: 0 is how HotSpot writes an absent value, {@code
- * Long.MIN_VALUE} how the JMC writer writes a null one, and 9 is never declared. {@link Shape} says
- * how the pool is damaged.
+ * reference does not resolve. The recordings are {@link NodePoolFixture}'s, which the Go parser's
+ * tests read too (go-parser/jfr/testdata).
  *
  * <p>Java fails the parse for any constant pool it cannot index completely - an entry that cannot
  * be skipped, or a pool whose type the chunk does not declare - so no event ever sees a partially
@@ -48,36 +43,7 @@ import org.junit.jupiter.params.provider.EnumSource;
  * go-parser/README.md.
  */
 class UnindexedPoolReferenceTest {
-  private static final String EVENT = "test.Holder";
-  private static final long[] NODE_REFS = {5, 0, Long.MIN_VALUE, 1, 2, 3, 9};
-
-  private static final int T_INT = 5;
-  private static final int T_STRING = 9;
-  private static final int T_NODE = 50;
-  private static final int T_EVENT = 101;
-  private static final int T_UNDECLARED = 77;
-
   @TempDir Path dir;
-
-  enum Shape {
-    /** Nothing is damaged. */
-    INTACT,
-    /** Entry 2's name has an encoding id no encoding uses, so the entry cannot be skipped. */
-    UNREADABLE_ENTRY,
-    /**
-     * A pool of type {@value #T_UNDECLARED}, which the metadata does not declare, precedes the node
-     * pool in the checkpoint. Its entries cannot be skipped without the type. Before, {@code
-     * CheckpointEvent} logged "remaining CP entries in this checkpoint are abandoned" and returned:
-     * the node pool was never indexed and every node reference resolved to {@code null}.
-     */
-    UNDECLARED_POOL,
-    /**
-     * Entry 1's name is a reference into a {@code java.lang.String} pool the chunk does not have.
-     * The pool indexes fine (a string reference is skipped by its varint); the entry fails only
-     * when it is resolved.
-     */
-    DANGLING_NAME
-  }
 
   /** The three generic value paths; only {@link #DEFAULT} is reachable from the public API. */
   enum Stream {
@@ -347,81 +313,8 @@ class UnindexedPoolReferenceTest {
   // --- the recording -------------------------------------------------------------------------
 
   private Path write(Shape shape) throws IOException {
-    byte[] bad = nodeEntry("b", 0);
-    if (shape == Shape.UNREADABLE_ENTRY) {
-      bad[0] = 0x7f; // no JFR string encoding uses this id (0..5 are defined)
-    }
-    byte[] one =
-        shape == Shape.DANGLING_NAME
-            ? new Bytes().u8(2).varint(42).varint(3).toByteArray() // name -> string pool #42
-            : nodeEntry("a", 3);
-
-    Bytes pools = new Bytes();
-    if (shape == Shape.UNDECLARED_POOL) {
-      pools.varint(2); // pool count
-      pools.varint(T_UNDECLARED).varint(1).varint(1).varint(0); // one entry: id 1, payload 0
-    } else {
-      pools.varint(1);
-    }
-    pools.varint(T_NODE).varint(4);
-    pools.varint(5).raw(nodeEntry("e", 0));
-    pools.varint(1).raw(one);
-    pools.varint(2).raw(bad);
-    pools.varint(3).raw(nodeEntry("c", 0));
-
-    List<byte[]> events = new ArrayList<>();
-    for (int i = 0; i < NODE_REFS.length; i++) {
-      events.add(new Bytes().varint(T_EVENT).varint(i).varint(NODE_REFS[i]).toByteArray());
-    }
-    byte[] chunk =
-        SyntheticRecording.chunk(
-            metadata(),
-            pools.toByteArray(),
-            events,
-            1_700_000_000_000_000_000L,
-            5_000_000,
-            1_000_000,
-            1000);
-    Path out = dir.resolve(shape + ".jfr");
-    Files.write(out, chunk);
+    Path out = dir.resolve(shape.fileName());
+    Files.write(out, NodePoolFixture.bytes(shape));
     return out;
-  }
-
-  private static byte[] nodeEntry(String name, long next) {
-    return new Bytes().utf8(name).varint(next).toByteArray();
-  }
-
-  private static Element metadata() {
-    return elem("root")
-        .with(
-            elem("metadata")
-                .with(
-                    // Not SyntheticRecording.primitiveClass: Java's TypeSkipper unwraps a
-                    // simpleType through its first field, and a primitive has none.
-                    elem("class", "id", "" + T_INT, "name", "int"),
-                    elem("class", "id", "" + T_STRING, "name", "java.lang.String"),
-                    elem("class", "id", "" + T_NODE, "name", "test.Node")
-                        .with(
-                            elem("field", "name", "name", "class", "" + T_STRING),
-                            elem(
-                                "field",
-                                "name",
-                                "next",
-                                "class",
-                                "" + T_NODE,
-                                "constantPool",
-                                "true")),
-                    elem("class", "id", "" + T_EVENT, "name", EVENT, "superType", "jdk.jfr.Event")
-                        .with(
-                            elem("field", "name", "seq", "class", "" + T_INT),
-                            elem(
-                                "field",
-                                "name",
-                                "node",
-                                "class",
-                                "" + T_NODE,
-                                "constantPool",
-                                "true"))),
-            elem("region", "dst", "0", "gmtOffset", "0", "locale", "en_US"));
   }
 }

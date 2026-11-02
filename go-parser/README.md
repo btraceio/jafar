@@ -262,8 +262,12 @@ indexing failure. The error is kept per entry and returned again without
 decoding the entry again. `ResolveDeep` resolves such an entry to nil, as it
 does any entry that cannot be decoded; check `Err` on the references where that
 matters. Pinned by `TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil`
-(with `ReuseValues` off and on) and
-`TestDanglingReferenceInIntactChunkResolvesToNil`.
+(with `ReuseValues` off and on),
+`TestUndeclaredPoolTypeFailsEveryReferenceIntoTheAbandonedPools`,
+`TestUndecodableEntryFailsOnResolutionTheSameWayEachTime` and
+`TestDanglingReferenceInIntactChunkResolvesToNil`, which read the same
+recordings as the Java parser's `UnindexedPoolReferenceTest`
+([jfr/testdata](jfr/testdata/README.md)).
 
 ## Differences from the Java parser
 
