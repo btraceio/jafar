@@ -137,6 +137,18 @@ looks identical to the file not being read at all.
 > `CONSTANT_POOL`/`DANGLING_STRING_REF`, Go `TestCorruptedPoolStringIsReportedNotMisaligned`).
 > **A skip routine's default branch is a fallback too: if it cannot know the length, it must fail.**
 
+> **Case file — the cause three wrappers down.** Once a corrupted pool failed the parse, both shells
+> said so in the same words for every cause: a real `settings=profile` recording with one pooled
+> string's `0x03` set to `0x7f` gave `Error: Error occurred while parsing JFR recording` in
+> `jfr-shell` and `Query error: Error occurred while parsing JFR recording` in `jafar-shell`. The
+> reason was in hand: chunks are parsed on worker threads, so it reached `run()` as chunk task →
+> future → `RuntimeException("Failed to process chunk")` → `IOException`, and both shells print
+> only `getMessage()` of the outermost one. `StreamingChunkParser` now appends the most specific
+> message in the chain that still contains the root cause's, so both shells print `… JFR
+> recording: Constant pool jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`.
+> Pinned by `ParseErrorMessageTest` on `NodePoolFixture`. **A failure is only reported once its
+> reason reaches the reader; check what the prompt prints, not what the stack trace holds.**
+
 ## R4. Documentation is code — run it
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before

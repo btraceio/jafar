@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A failed parse says why.** Chunks are parsed on worker threads, so the cause reached the caller
+  several wrappers deep, and both shells print only the outermost message: every corrupted
+  recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
+  carries the cause, for example `Error occurred while parsing JFR recording: Constant pool
+  jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The prefix is unchanged
 - **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
   true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
   the condition evaluator handled only scalars and query results and treated every other value
