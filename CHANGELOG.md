@@ -19,35 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
   offers these commands and their arguments in every session type. A query variable whose session
   has been closed reports that when read instead of returning stale rows, and closing a session
-  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and a script that
-  ends inside an `if` block has the blocks it left open closed. A script line that reports an
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and each script has
+  its own `if` blocks: one it leaves open is closed and reported, and a stray `endif` is an error in
+  the script instead of closing the caller's block. A script line that reports an
   error stops the script (as the default stop-on-error mode always promised), instead of being
   counted as a success. The parsing, scoping and
   condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
   both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
-- **`jafar-shell script <file|-> [args...]` runs in the unified shell.** On the command line,
-  `script` used to be handed to jfr-shell, so `jafar-shell script heap.jfrs dump.hprof` parsed the
-  heap dump as a recording and answered `Invalid query: Unknown root: objects`. It now runs the
-  script through the same shell as the prompt, without a terminal: results on stdout, errors on
-  stderr, no banner or `Session 1 opened` lines, the interactive history untouched, exit status 1
-  if a line failed, and `--continue-on-error` and `-b/--backend` as in `jfr-shell script`. Shebang
-  scripts
-  written for `jbang jfr-shell@btraceio script -` are unaffected: that alias launches
-  `io.jafar.shell.Main` directly. A JFR-only script now gets the unified shell's semantics: the
-  same data, but other table layout, string values printed as `{name=G1New}`, and `vars --info`
-  describing a `toMap()` variable as a lazy query — see
-  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell); `jfr-shell script` keeps
-  jfr-shell's
-- **jfr-shell's non-query commands in `jafar-shell`.** With a recording current, `metadata` (and
-  `metadata --summary`, `--search ...`), `chunks`, `chunk <n>`, `constants`/`cp` and `backend` run
-  as they do in jfr-shell, using jfr-shell's implementations, instead of failing as queries; the
-  shipped `basic-analysis.jfrs` runs end to end. Bare `metadata` therefore prints jfr-shell's type
-  listing rather than JfrPath's `metadata` rows; `show metadata`, `metadata/<type>` and
-  `chunks | ...` are queries as before
-- **`JFR_SHELL_VERBOSE` / `-Djfr.shell.verbose=true` applies to `jafar-shell script`** as it does
-  to `jfr-shell script`: the open/close lines and `Set x = ...` confirmations script mode leaves
-  out are printed. The switch is jfr-shell's own (`CommandDispatcher.isVerboseEnabled`), read by
-  both
 - **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
@@ -60,33 +38,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
   query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
   the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
-- **A script line that reports an error fails, in both shells.** A bad query, a missing session or
-  file, `use` of an unknown session and the like are reported by printing them, and `ScriptRunner`
-  only saw exceptions and unknown commands, so it counted those lines as successes: the script ran
-  on past the error, ended with `Script executed successfully`, and `jfr-shell script` exited 0.
-  `--continue-on-error` therefore had nothing to do for most failures. Each shell now records the
-  errors it reports (`ScriptRunner.ErrorTally`), and a line that reported one fails — fail-fast by
-  default, listed under `Script completed with errors:`, exit status 1 — which is what the scripting
-  guides already described. This applies to `jfr-shell script`, `script` at either prompt, and
-  `jafar-shell script`, and to `ask`/`as-query`/`explain`/`llm`, whose failures (no backend, no
-  session, no query in the reply, a query that failed, nothing to explain) now go through a new
-  `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
-  `--continue-on-error` (command line) now
-- **`jafar-shell -f script` opens a file named `script`.** The value of `-f`/`--file` (and of a
-  cluster such as `-qf`, and of `--backend`/`--plugin-dir`/`--install-plugin`) was taken for the
-  first word of the command line, so it ran the script command, or jfr-shell's command line for
-  `-f show`. The command is now the first word that is not an option or an option's value
-- **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
-  never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
-  stdin (the terminal, or nothing) and `$1` was the script's own path — piped in, `open $1` opened
-  the script as a recording. When the path is `-` and the first argument is a file starting with
-  `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
-  arguments as `$1`, `$2`, ...
+- **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
+  jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
+  "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
+  stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
+  stderr and exit status 1 on failure. Tables use jafar-shell's layout. The `jfr-shell` jbang alias
+  launches jfr-shell directly and is unaffected
+- **`record` in `jafar-shell`.** `record start [path] | stop | status` saves the commands typed
+  at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
+  recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
+  recorder, moved to `shell-core` and shared
+- **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
+  recording, using jfr-shell's implementations; they were taken as malformed queries
 - **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
   parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
   set could lose entries from its size count and later fail with "Index N out of bounds for length
   N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
-  same way. Both are now thread-safe
+  same way, and the chunk-id and constant-pool-type scans collected from the chunk threads into an
+  `ArrayList` and a `HashSet` (chunk ids could also come back out of order). All are now
+  thread-safe, and chunk ids are sorted
 - **A lazy JFR variable read while another thread invalidated it could return `null`.**
   `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
   see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
@@ -131,6 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
   `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
   for the whole shell. The LLM commands read the session's value first, then the global one
+- **`CommandRecorder` moved** from `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s
+  `io.jafar.shell.core.scripting`; jfr-shell's recordings are unchanged
 - **`ScriptRunner`, `VariableSubstitutor`, `ConditionEvaluator` and `ConditionalState` moved** from
   `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s `io.jafar.shell.core.scripting`;
   `ScriptRunner` now takes a line dispatcher (`dispatcher::dispatch`) instead of a

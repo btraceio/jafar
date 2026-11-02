@@ -124,10 +124,12 @@ public final class JFRSession implements Session {
   /** Refresh discovered event types by rescanning metadata. */
   public synchronized void refreshTypes() throws IOException {
     eventTypeCounts.clear();
-    metadataTypes.clear();
-    allMetadataTypes.clear();
-    nonPrimitiveMetadataTypes.clear();
-    primitiveMetadataTypes.clear();
+    synchronized (metadataLock) {
+      metadataTypes.clear();
+      allMetadataTypes.clear();
+      nonPrimitiveMetadataTypes.clear();
+      primitiveMetadataTypes.clear();
+    }
     cachedChunkIds = null;
     scanMetadata();
   }
@@ -222,7 +224,8 @@ public final class JFRSession implements Session {
   /** Get available chunk ids (indices) discovered by scanning headers). */
   public synchronized java.util.List<Integer> getAvailableChunkIds() {
     if (cachedChunkIds != null) return cachedChunkIds;
-    java.util.List<Integer> out = new java.util.ArrayList<>();
+    // onChunkStart runs on each chunk's parser thread, in whatever order they start
+    java.util.Queue<Integer> out = new java.util.concurrent.ConcurrentLinkedQueue<>();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -239,14 +242,17 @@ public final class JFRSession implements Session {
           });
     } catch (Exception ignore) {
     }
-    cachedChunkIds = java.util.Collections.unmodifiableList(out);
+    java.util.List<Integer> ids = new java.util.ArrayList<>(out);
+    java.util.Collections.sort(ids);
+    cachedChunkIds = java.util.Collections.unmodifiableList(ids);
     return cachedChunkIds;
   }
 
   /** Get available constant-pool types discovered in this recording (lazy scan). */
   public synchronized Set<String> getAvailableConstantPoolTypes() {
     if (cpTypes != null) return cpTypes;
-    Set<String> out = new HashSet<>();
+    // onCheckpoint runs on the chunk threads, several at once
+    Set<String> out = java.util.concurrent.ConcurrentHashMap.newKeySet();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -267,7 +273,7 @@ public final class JFRSession implements Session {
     } catch (Exception ignore) {
       // Ignore discovery failures; fall back to empty set
     }
-    cpTypes = out;
+    cpTypes = new HashSet<>(out);
     return cpTypes;
   }
 

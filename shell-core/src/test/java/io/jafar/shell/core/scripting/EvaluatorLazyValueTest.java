@@ -410,7 +410,7 @@ class EvaluatorLazyValueTest {
   }
 
   @Test
-  void keywordsAreWholeWordsAnyCaseAndUnwindClosesBlocks() {
+  void keywordsAreWholeWordsInAnyCase() {
     VariableScopes scopes = new VariableScopes(new VariableStore(), () -> null);
     Conditionals c = new Conditionals();
     assertFalse(c.handle("ifx 1", scopes, e -> {}));
@@ -420,9 +420,6 @@ class EvaluatorLazyValueTest {
     assertFalse(c.isActive());
     assertTrue(c.handle("If 1 == 1", scopes, e -> {}));
     assertEquals(2, c.state().depth());
-    assertEquals(2, c.unwindTo(0));
-    assertTrue(c.isActive());
-    assertEquals(0, c.unwindTo(0));
   }
 
   @Test

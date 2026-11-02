@@ -2,9 +2,9 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.CommandRecorder;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.IOException;
@@ -32,8 +32,6 @@ public final class Shell implements AutoCloseable {
   private final CommandDispatcher dispatcher;
   private boolean running = true;
   private final DefaultHistory history;
-  // Errors the dispatcher reports, so a 'script' line that reported one counts as failed
-  private final ScriptRunner.ErrorTally errorTally = new ScriptRunner.ErrorTally();
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -66,7 +64,6 @@ public final class Shell implements AutoCloseable {
 
               @Override
               public void error(String s) {
-                errorTally.record(s);
                 terminal.writer().println(s);
                 terminal.flush();
               }
@@ -405,10 +402,7 @@ public final class Shell implements AutoCloseable {
                 terminal.flush();
               });
 
-      ScriptRunner runner =
-          new ScriptRunner(
-              ScriptRunner.failingOnReportedErrors(dispatcher::dispatch, errorTally),
-              effectiveArgs);
+      ScriptRunner runner = new ScriptRunner(dispatcher::dispatch, effectiveArgs);
 
       ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
 

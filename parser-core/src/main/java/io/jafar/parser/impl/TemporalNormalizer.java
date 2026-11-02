@@ -7,7 +7,6 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Converts JFR tick-based temporal field values to nanoseconds using metadata annotations.
@@ -35,8 +34,9 @@ final class TemporalNormalizer {
    * Per-class cache mapping field names to their normalization kind (TIMESTAMP or TIMESPAN). Only
    * fields that require conversion are stored; absent entries mean no conversion.
    */
-  private static final ConcurrentHashMap<MetadataClass, Map<String, Integer>> NORM_CACHE =
-      new ConcurrentHashMap<>();
+  // The kind table is held by each MetadataClass instance (per chunk), not in a global map keyed by
+  // MetadataClass.equals: that equality ignores annotations and field names, so a shared table gave
+  // one chunk another chunk's decision (TemporalAnnotationPerChunkTest).
 
   /**
    * Normalizes a long field value if the owning class has a {@code @Timestamp(TICKS)} or
@@ -50,20 +50,33 @@ final class TemporalNormalizer {
    *     unchanged when no applicable annotation is found
    */
   static long normalize(MetadataClass owner, String fld, long value, Control.ChunkInfo chunkInfo) {
-    if (owner == null || fld == null || fld.isEmpty() || chunkInfo == null) {
+    if (chunkInfo == null) {
       return value;
     }
-    Map<String, Integer> kinds =
-        NORM_CACHE.computeIfAbsent(owner, TemporalNormalizer::buildKindMap);
-    Integer kind = kinds.get(fld);
-    if (kind == null) {
+    return normalizeKind(kindOf(owner, fld), value, chunkInfo);
+  }
+
+  /**
+   * Returns how {@link #normalize} treats {@code owner.fld}: {@code 0} (left as is), {@link
+   * #KIND_TIMESTAMP} or {@link #KIND_TIMESPAN}. Generated deserializers resolve this once, at
+   * generation time, from the same table {@link #normalize} consults per value.
+   */
+  static int kindOf(MetadataClass owner, String fld) {
+    if (owner == null || fld == null || fld.isEmpty()) {
+      return 0;
+    }
+    Integer kind = owner.temporalKinds(TemporalNormalizer::buildKindMap).get(fld);
+    return kind == null ? 0 : kind;
+  }
+
+  /** Applies a kind previously returned by {@link #kindOf}; identical to {@link #normalize}. */
+  static long normalizeKind(int kind, long value, Control.ChunkInfo chunkInfo) {
+    if (kind == 0 || chunkInfo == null) {
       return value;
     }
-    if (kind == KIND_TIMESTAMP) {
-      return chunkInfo.asEpochNanos(value);
-    }
-    // KIND_TIMESPAN
-    return chunkInfo.asDurationNanos(value);
+    return kind == KIND_TIMESTAMP
+        ? chunkInfo.asEpochNanos(value)
+        : chunkInfo.asDurationNanos(value);
   }
 
   private static Map<String, Integer> buildKindMap(MetadataClass owner) {

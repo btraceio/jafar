@@ -552,14 +552,6 @@ public final class Main implements Callable<Integer> {
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
 
-      // '#!/usr/bin/env -S jbang jfr-shell@btraceio script -': the kernel passes the script's own
-      // path after '-', so that file is the script and $1 is the argument after it
-      var shebang = ScriptRunner.shebangScript(scriptPath, arguments);
-      if (shebang.isPresent()) {
-        scriptPath = shebang.get().toString();
-        arguments = new ArrayList<>(arguments.subList(1, arguments.size()));
-      }
-
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
       Path path = fromStdin ? null : Paths.get(scriptPath);
@@ -575,7 +567,6 @@ public final class Main implements Callable<Integer> {
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
-        ScriptRunner.ErrorTally tally = new ScriptRunner.ErrorTally();
 
         CommandDispatcher dispatcher =
             new CommandDispatcher(
@@ -594,7 +585,6 @@ public final class Main implements Callable<Integer> {
                   @Override
                   public void error(String s) {
                     errors.append(s).append("\n");
-                    tally.record(s);
                   }
                 },
                 current -> {},
@@ -602,9 +592,7 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        ScriptRunner runner =
-            new ScriptRunner(
-                ScriptRunner.failingOnReportedErrors(dispatcher::dispatch, tally), arguments);
+        ScriptRunner runner = new ScriptRunner(dispatcher::dispatch, arguments);
         runner.setContinueOnError(continueOnError);
 
         ScriptRunner.ExecutionResult result;

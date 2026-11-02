@@ -16,6 +16,15 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations
 - **Untyped API**: Returns events as `Map<String, Object>` with wrapper types for arrays/complex values
+- Two Java implementations produce untyped values. `UntypedJafarParser` always uses the generic
+  `EventStream` (`GenericValueReader` + `MapValueBuilder`). `EventStreamGenerated` in
+  `parser-codegen` generates a deserializer per event type with `UntypedCodeGenerator`; nothing in
+  the public API selects it. They must yield the same values: the contract is in
+  `UntypedCodeGenerator`'s Javadoc and `GeneratedUntypedParityTest` compares every event of
+  `tck-test.jfr`. Generated code calls the generic path's own helpers through
+  `GeneratedDeserializerSupport` rather than re-implementing them. Generated deserializers are
+  shared across chunks only by structural key, never by class id — see
+  [DataShapes.md](DataShapes.md#a-type-id-is-not-a-type).
 - Both APIs support handler registration and synchronous event processing
 
 ## Key Classes to Understand

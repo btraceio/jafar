@@ -130,12 +130,12 @@ func (c *chunkParser) decodeConstant(ct *ClassType, offset int) (any, error) {
 	r.err = nil
 	// A constant pool value is cached in its pool and outlives the event that
 	// first resolved it, so it must never be built from an event's arena.
-	savedArena := c.arena
-	c.arena = nil
+	savedArena, savedInPool := c.arena, c.inPool
+	c.arena, c.inPool = nil, true
 	defer func() {
 		r.pos = saved
 		r.err = savedErr
-		c.arena = savedArena
+		c.arena, c.inPool = savedArena, savedInPool
 	}()
 	r.seek(offset)
 	if r.err != nil {

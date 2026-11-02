@@ -238,7 +238,7 @@ Results are saved to: `benchmarks/build/results/jmh/results.json`
 git clone https://github.com/btraceio/jafar.git
 cd jafar
 
-# Fetch test resources
+# Optional: the real test recordings (the build generates synthetic ones otherwise)
 ./get_resources.sh
 
 # Run benchmarks
