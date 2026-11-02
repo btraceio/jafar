@@ -44,7 +44,13 @@ class Screen:
             i += 1
 
     def csi(self, params, cmd):
-        nums = [int(x) if x.isdigit() else 0 for x in params.lstrip("?").split(";")] if params else []
+        if params.startswith("?") and cmd in "hl" and set(params[1:].split(";")) & {"47", "1047", "1049"}:
+            # Alternate screen on/off: a real terminal shows a fresh screen, so text written
+            # before the TUI started (JVM warnings, log lines) does not show through.
+            self.rows = [[" "] * COLS for _ in range(ROWS)]
+            self.r = self.c = 0
+            return
+        nums =[int(x) if x.isdigit() else 0 for x in params.lstrip("?").split(";")] if params else []
         n = nums[0] if nums and nums[0] else 1
         if cmd in "Hf":
             self.r = (nums[0] if len(nums) > 0 and nums[0] else 1) - 1
