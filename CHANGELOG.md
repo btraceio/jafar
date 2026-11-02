@@ -31,6 +31,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **An `if`/`elif` condition that fails to evaluate no longer runs the `else` branch.** Both
+  shells printed `Condition evaluation failed: ...` and treated the condition as `false`, so the
+  `else` branch ran; in `jfr-shell` the script even ended `Script executed successfully` with exit
+  status 0. A failed (or missing) condition is now an error of that line in both shells: no branch
+  of the if-block runs (its `endif` still closes it), a script stops there with a non-zero exit,
+  and with `--continue-on-error` it resumes after the `endif` with the error counted
+- **`jfr-shell` scripts: stray keywords, missing `endif`, and leaking blocks.** `elif`/`else`/
+  `endif` without an `if` were printed and counted as successful commands, and a script ending
+  inside an `if` was silently accepted; both now fail the script. A script also runs with an
+  if-block stack of its own (as in `jafar-shell`), so one that stopped inside a block no longer
+  leaves the interactive shell silently skipping everything typed afterwards, and a stray `endif`
+  in a script cannot close one of the caller's blocks
+- **The `jfr-shell` TUI shows an open if-block.** The command input's title reads
+  `Command ...(1, skipping until endif) >` inside a block that is skipping, as the CLI prompt shows
+  `...(1)>`; commands typed there used to produce no output and no sign why
+- **`Control.abort()` stops the whole parse.** The abort flag was per thread, and chunks are
+  parsed on parallel threads, so an abort stopped only its own chunk: on the two-chunk
+  `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a multi-thread
+  pool, and 6 with a one-thread pool (the next chunk delivered one event before checking the
+  flag). The flag is now shared by every chunk of a run and checked at chunk start, at the
+  metadata and checkpoint callbacks (so a chunk mid-way through its constant pools stops there),
+  and before an event is decoded,
+  in the typed parser and both untyped event streams; the untyped parser also stops calling the
+  remaining handlers of an event once one aborts, as the typed parser always did. The contract,
+  including the at-most-one in-flight event per other thread, is in the `Control.abort()` Javadoc
+- **A failed parse says why.** Chunks are parsed on worker threads, so the cause reached the caller
+  several wrappers deep, and both shells print only the outermost message: every corrupted
+  recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
+  carries the cause, for example `Error occurred while parsing JFR recording: Constant pool
+  jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The prefix is unchanged
+- **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
+  true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
+  the condition evaluator handled only scalars and query results and treated every other value
+  as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
+  empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
+  evaluator)
+- **`exists()` and `empty()` resolve references the way `${...}` does.** A dotted argument such
+  as `empty(cfg.db.host)` was looked up as one variable literally named `cfg.db.host`, which never
+  exists, so `empty()` was always true and `exists()` always false while `${cfg.db.host}` printed
+  `localhost`; an indexed argument (`exists(rows[1].thread)`) or a hyphenated setting
+  (`exists(llm.base-url)`) did not parse at all, and the condition took the `else` branch. The
+  argument now uses the same grammar and resolution as `${...}`: nested map fields, `[idx]` rows,
+  `.size`, and first-row fields of query results. `llm.*` settings (case-insensitive, hyphens
+  allowed) are checked as settings and never split into a variable plus a field, and a malformed
+  reference (`cfg..db`, `rows[x]`) is an error instead of silently empty
+- **`empty(name)` of a `jafar-shell` `toMap()` variable over no rows is true.** `jafar-shell`
+  keeps a `toMap()` query lazy, and its result is one row holding the map, so `empty()` counted
+  that row and answered false for a `toMap()` that matched nothing, while `${v.size}` (below) said
+  0. It now asks the map, as `jfr-shell` does for the map it stores
+- **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
+  unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
+  `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
+  `2` in `jfr-shell` on the same recording. A query ending in `toMap()` is now read as its map —
+  `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
+  query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
+  the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for

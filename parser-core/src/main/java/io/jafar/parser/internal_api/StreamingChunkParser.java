@@ -334,7 +334,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     } catch (Throwable t) {
       // Cancel any pending tasks before propagating exception
       results.forEach(f -> f.cancel(true));
-      throw new IOException("Error occurred while parsing JFR recording", t);
+      throw new IOException("Error occurred while parsing JFR recording" + rootCauseSuffix(t), t);
     } finally {
       listener.onRecordingEnd(stream.getContext());
     }
@@ -384,5 +384,38 @@ public final class StreamingChunkParser implements AutoCloseable {
     }
     stream.getContext().onConstantPoolsReady();
     return true;
+  }
+
+  /**
+   * Describes why parsing failed, as {@code ": <message>"}, for the caller-facing wrapper.
+   *
+   * <p>Chunks are parsed on worker threads, so a failure reaches the caller wrapped several times
+   * (task, future, chunk). Callers that print only {@link Throwable#getMessage()} - both shells do
+   * - would otherwise show "Error occurred while parsing JFR recording" and nothing about why.
+   *
+   * <p>The message used is the outermost one in the cause chain that still contains the innermost
+   * cause's message, skipping wrappers whose message is only their cause's {@code toString()}. That
+   * keeps context a layer added on the way out ("Constant pool jdk.types.Symbol, index 16778023:
+   * Unexpected string constant id: 127") without the wrapper noise. When the innermost cause has no
+   * message, its class name stands in.
+   */
+  private static String rootCauseSuffix(Throwable t) {
+    List<Throwable> chain = new ArrayList<>();
+    for (Throwable c = t; c != null && !chain.contains(c); c = c.getCause()) {
+      chain.add(c);
+    }
+    Throwable root = chain.get(chain.size() - 1);
+    String rootMsg = root.getMessage();
+    if (rootMsg == null || rootMsg.isEmpty()) {
+      return ": " + root.getClass().getName();
+    }
+    for (Throwable c : chain) {
+      String msg = c.getMessage();
+      boolean autoWrapper = c.getCause() != null && String.valueOf(c.getCause()).equals(msg);
+      if (msg != null && !autoWrapper && msg.contains(rootMsg)) {
+        return ": " + msg;
+      }
+    }
+    return ": " + rootMsg;
   }
 }

@@ -4,7 +4,6 @@ import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
 import io.jafar.shell.core.VariableStore.Value;
-import java.util.Collection;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,13 +20,28 @@ import java.util.regex.Pattern;
  *   <li>${var[idx].field} - field from specific row (0-indexed)
  *   <li>${var[idx].a.b} - nested field from specific row
  * </ul>
+ *
+ * <p>A lazy variable whose query produces one map ({@code toMap()}) is read as a map variable:
+ * {@code .size} is its entry count and {@code .key} reads an entry, as in jfr-shell.
  */
 public final class VariableSubstitutor {
 
+  // A reference: name, optional [idx], optional .field.path. Groups: 1 name, 2 index (may be null),
+  // 3 path with its leading dot (may be null).
+  private static final String REFERENCE =
+      "([a-zA-Z_][a-zA-Z0-9_]*)"
+          + "(?:\\[(\\d+)\\])?"
+          + "(\\.(?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?";
+
   // Matches ${name} or ${name[idx]} followed by optional .field.path
-  private static final Pattern VAR_PATTERN =
-      Pattern.compile(
-          "\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\\[(\\d+)\\])?(\\.(?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\}");
+  private static final Pattern VAR_PATTERN = Pattern.compile("\\$\\{" + REFERENCE + "\\}");
+
+  /**
+   * The bare reference grammar of {@code ${...}}, without the braces, with the same groups. {@link
+   * ConditionEvaluator} parses {@code exists()}/{@code empty()} arguments with it, so the two
+   * cannot accept different shapes.
+   */
+  static final Pattern REFERENCE_PATTERN = Pattern.compile(REFERENCE);
 
   private final VariableStore sessionStore; // may be null
   private final VariableStore globalStore; // may be null
@@ -90,10 +104,12 @@ public final class VariableSubstitutor {
   /**
    * Resolves a variable by name, checking session store first, then global.
    *
+   * <p>Package-private so that {@link ConditionEvaluator} resolves names with the same precedence.
+   *
    * @param name variable name
    * @return the value, or null if not found
    */
-  private Value resolve(String name) {
+  Value resolve(String name) {
     if (sessionStore != null && sessionStore.contains(name)) {
       return sessionStore.get(name);
     }
@@ -114,31 +130,49 @@ public final class VariableSubstitutor {
   private String extractValue(Value value, String indexStr, String path) throws Exception {
     // Remove leading dot from path if present
     String fieldPath = (path != null && path.startsWith(".")) ? path.substring(1) : path;
+    Object result = extractRaw(value, indexStr, fieldPath);
+    return result == null ? "" : String.valueOf(result);
+  }
 
+  /**
+   * Extracts the unformatted value a {@code ${name[idx].path}} reference denotes. This is the
+   * single definition of what a reference means: {@link #substitute} formats its result, and {@link
+   * ConditionEvaluator}'s {@code exists()} and {@code empty()} inspect it.
+   *
+   * @param value the variable value
+   * @param indexStr row index as string, or null for first row
+   * @param fieldPath property/field path without a leading dot, or null for first/scalar value
+   * @return the value, or null if the reference resolves to nothing
+   */
+  Object extractRaw(Value value, String indexStr, String fieldPath) throws Exception {
     if (value instanceof ScalarValue sv) {
-      // Scalar values ignore index and path (except "size" returns "1")
+      // Scalar values ignore index and path (except "size" returns 1)
       if ("size".equals(fieldPath)) {
-        return "1";
+        return 1;
       }
-      Object v = sv.value();
-      return v == null ? "" : String.valueOf(v);
+      return sv.value();
+    }
+
+    if (value instanceof EvaluatorLazyValue lazy) {
+      // A toMap() query: read as the map it produces, exactly as jfr-shell reads the MapValue it
+      // stores for the same query. Any other query falls through to the row rules below.
+      Map<String, Object> map = lazy.asMap();
+      if (map != null) {
+        value = new MapValue(map);
+      }
     }
 
     if (value instanceof MapValue mv) {
       // Handle .size property for maps
       if ("size".equals(fieldPath)) {
-        return String.valueOf(mv.value().size());
+        return mv.value().size();
       }
 
-      // Navigate nested map structure
-      Object result;
+      // Navigate nested map structure; ${map} denotes the map itself
       if (fieldPath == null || fieldPath.isEmpty()) {
-        // ${map} returns the map itself as string
-        result = mv.value();
-      } else {
-        result = mv.getField(fieldPath);
+        return mv.value();
       }
-      return result == null ? "" : formatValue(result);
+      return mv.getField(fieldPath);
     }
 
     if (value instanceof VariableStore.LazyValue lazy) {
@@ -147,7 +181,7 @@ public final class VariableSubstitutor {
       Object rows = lazy.get();
       // Handle .size property
       if ("size".equals(fieldPath) && indexStr == null) {
-        return String.valueOf(LazyRows.size(rows));
+        return LazyRows.size(rows);
       }
 
       int idx = (indexStr != null) ? Integer.parseInt(indexStr) : 0;
@@ -167,14 +201,12 @@ public final class VariableSubstitutor {
           Map<String, Object> map = (Map<String, Object>) extracted;
           extracted = navigateMap(map, restPath);
         }
-        return extracted == null ? "" : String.valueOf(extracted);
-      } else {
-        Object extracted = LazyRows.extract(rows, idx, fieldPath);
-        return extracted == null ? "" : String.valueOf(extracted);
+        return extracted;
       }
+      return LazyRows.extract(rows, idx, fieldPath);
     }
 
-    return "";
+    return null;
   }
 
   /**
@@ -205,22 +237,5 @@ public final class VariableSubstitutor {
     }
 
     return current;
-  }
-
-  /**
-   * Formats a value for display, handling maps and collections specially.
-   *
-   * @param value the value to format
-   * @return formatted string representation
-   */
-  private String formatValue(Object value) {
-    if (value instanceof Map) {
-      // Format map as simple string (not full JSON)
-      return value.toString();
-    } else if (value instanceof Collection || value.getClass().isArray()) {
-      return String.valueOf(value);
-    } else {
-      return String.valueOf(value);
-    }
   }
 }

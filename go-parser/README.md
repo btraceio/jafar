@@ -62,7 +62,8 @@ opts := jfr.Options{
 err = parser.ParseWith(opts, handler)
 ```
 
-Returning `jfr.ErrStop` from the handler ends parsing successfully; any other
+Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
+recording, not only the current chunk; no event is delivered after it. Any other
 error aborts it and is returned from `Parse` unchanged.
 
 ## Value model
@@ -243,12 +244,41 @@ on a best-effort basis needs. Pass `jfr.FailOnError` to turn them into failures:
 err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 ```
 
+A checkpoint problem that can leave entries unindexed is remembered for the
+chunk. From then on, an event holding a reference from any pooled field (a
+string, a thread, a stack trace, a class) to an entry missing from its pool
+fails to decode, for example with `constant pool reference 3 to test.Node does
+not resolve: the pool has no such entry (constant pool indexing stopped early in
+this chunk: ...)`. The indexing failure is wrapped, so `errors.Is`/`errors.As`
+reach it. The indices writers use for an absent value stay a `*Ref` that
+resolves to nil: 0 from HotSpot, and `math.MinInt64` from the JMC writer, which
+writes a null value that way. So does a dangling reference in a chunk that was
+indexed completely, as in the JDK's reader (strings excepted: a string
+reference that does not resolve is always an error).
+
+An indexed entry whose own pooled field refers to an abandoned entry is found
+when it is resolved rather than when the event is decoded: it cannot be decoded,
+so `Ref.Value` returns nil and `Ref.Err` returns the error, which wraps the
+indexing failure. The error is kept per entry and returned again without
+decoding the entry again. `ResolveDeep` resolves such an entry to nil, as it
+does any entry that cannot be decoded; check `Err` on the references where that
+matters. Pinned by `TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil`
+(with `ReuseValues` off and on),
+`TestUndeclaredPoolTypeFailsEveryReferenceIntoTheAbandonedPools`,
+`TestUndecodableEntryFailsOnResolutionTheSameWayEachTime` and
+`TestDanglingReferenceInIntactChunkResolvesToNil`, which read the same
+recordings as the Java parser's `UnindexedPoolReferenceTest`
+([jfr/testdata](jfr/testdata/README.md)).
+
 ## Differences from the Java parser
 
 * **Untyped only.** No typed API, no code generation, no annotation processor.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and
   calls the handler on the calling goroutine, so events arrive in file order.
+  It also makes stopping exact: `ErrStop` and Java's `Control.abort()` both end
+  the whole recording, but in Java another chunk's thread may still deliver the
+  one event it was already dispatching, while here nothing follows `ErrStop`.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
 * **An undecodable event is skipped by default.** Here a nil `Options.OnError`
@@ -262,7 +292,17 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 * **A corrupted constant pool entry is recoverable here.** Go reports it
   through `Options.OnError` and keeps the entries indexed before it; Java fails
   the parse, naming the pool and index, even with a decode error handler, since
-  that handler is about one event. Both refuse to skip an entry whose string
+  that handler is about one event. The same holds for a pool of a type the
+  chunk metadata does not declare. So only Go can see a partially indexed pool,
+  and only Go needs the per-reference check described under
+  [Error handling](#error-handling).
+* **An undecodable constant pool entry resolves to nil.** Resolving a reference
+  to an entry that cannot be decoded returns nil here, with the reason in
+  `Ref.Err`. The Java parser throws from `getValue()` instead. Both decode such
+  an entry once and keep the failure: later resolutions return the same error
+  here and rethrow the same exception there. Pinned by
+  `TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil` here and
+  `UnindexedPoolReferenceTest` in `parser-core`. Both refuse to skip an entry whose string
   encoding is unknown, and both report a reference to a missing string entry
   instead of reading it as null. Pinned by
   `TestCorruptedPoolStringIsReportedNotMisaligned` and

@@ -65,7 +65,7 @@ the change up. Who calls them:
 | Front end | Dispatcher | Query variables |
 |---|---|---|
 | `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
-| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator` |
+| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator`; a `toMap()` query (`QueryEvaluator.producesMap`, one definition in `JfrPath.Query.producesMap`, also used by jfr-shell's eager path) is read as a map by `VariableSubstitutor` |
 | `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
 
 `EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
@@ -100,8 +100,10 @@ shell already builds for module completers (`moduleContext`). It shares the shel
 prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
 commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
 the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
-used to be parsed as a query (`Trailing characters at position 9`). A line whose second word starts
-with `|` (`metadata | count()`) is still a query. The same set gates completion in
+used to be parsed as a query (`Trailing characters at position 9`). A line with a pipeline (any
+later word starting with `|`: `chunks --format json | count()`) or `--limit` is still a query —
+jfr-shell's handlers have neither and would print every row — except `cp <type> | crossref()`,
+which `cmdCp` takes. A `|` inside a word is an argument (`metadata --regex ^(jdk|datadog)\..*`). The same set gates completion in
 `unified/ShellCompleter`, so a heap dump session is not offered them.
 
 ## Backend Plugin Development

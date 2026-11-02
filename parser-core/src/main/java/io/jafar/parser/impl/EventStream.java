@@ -13,6 +13,7 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Abstract base class for event stream processing in JFR recordings.
@@ -25,7 +26,14 @@ public abstract class EventStream implements ChunkParserListener {
   /** The delegate chunk parser listener. */
   private final ChunkParserListener delegate;
 
-  private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+  /**
+   * Abort state shared by every chunk of one parse. Chunks are parsed on parallel threads, so a
+   * per-thread flag would stop only the chunk whose handler called {@link Control#abort()}.
+   */
+  private final AtomicBoolean aborted = new AtomicBoolean();
+
+  private final ThreadLocal<Control> control =
+      ThreadLocal.withInitial(() -> new ControlImpl(aborted));
 
   /**
    * Constructs a new EventStream with the specified delegate.
@@ -38,6 +46,11 @@ public abstract class EventStream implements ChunkParserListener {
 
   @Override
   public final boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+    if (aborted.get()) {
+      // Aborted after this chunk started: skip binding the chunk's metadata, its constant pools
+      // and its events. The parser then calls onChunkEnd with skipped=true.
+      return false;
+    }
     // use this callback to inspect/process metadata registrations
     return delegate == null
         || delegate.onMetadata(context, metadata); // can return 'false' to abort processing
@@ -56,7 +69,9 @@ public abstract class EventStream implements ChunkParserListener {
     // We do this in the untyped parser -> we need 'all accepting' type filter
     context.put(TypeFilter.class, t -> true);
 
-    return delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    boolean proceed = delegate == null || delegate.onChunkStart(context, chunkIndex, header);
+    // A chunk that starts after an abort is skipped; onChunkEnd still runs, with skipped=true.
+    return proceed && !aborted.get();
   }
 
   @Override
@@ -81,6 +96,10 @@ public abstract class EventStream implements ChunkParserListener {
   public final boolean onEvent(
       ParserContext context, long typeId, long eventStartPos, long rawSize, long payloadSize) {
     ControlImpl ctl = (ControlImpl) control.get();
+    if (ctl.isAborted()) {
+      // aborted by a handler in this or another chunk: deliver nothing more, skip the chunk rest
+      return false;
+    }
     GenericValueReader r = context.get(GenericValueReader.class);
     MapValueBuilder builder = r != null ? r.getProcessor() : null;
     if (builder == null) {
@@ -113,19 +132,21 @@ public abstract class EventStream implements ChunkParserListener {
       }
       // Skipped. StreamingChunkParser repositions to eventStartPos + rawSize after onEvent returns
       // true, so the next event is read from its own start whatever the decoder consumed.
-      return !ctl.abortFlag
+      return !ctl.isAborted()
           && (delegate == null
               || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
     }
     // Outside the try: an exception from the handler is the handler's, not a decoding failure.
     onEventValue(eventClz, value, ctl);
-    return !ctl.abortFlag
+    return !ctl.isAborted()
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
   @Override
   public final void onRecordingStart(ParserContext context) {
+    // A listener instance may be handed to more than one parse; each starts un-aborted.
+    aborted.set(false);
     if (delegate != null) {
       delegate.onRecordingStart(context);
     } else {
@@ -135,6 +156,10 @@ public abstract class EventStream implements ChunkParserListener {
 
   @Override
   public final boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+    if (aborted.get()) {
+      // Aborted while this chunk's constant pools are being read: skip the rest of the chain.
+      return false;
+    }
     return delegate != null
         ? delegate.onCheckpoint(context, checkpoint)
         : ChunkParserListener.super.onCheckpoint(context, checkpoint);
@@ -151,6 +176,9 @@ public abstract class EventStream implements ChunkParserListener {
 
   /**
    * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
+   *
+   * <p>Chunks are decoded in parallel, so this can be called concurrently from several threads and
+   * must be thread-safe.
    *
    * <p>When it returns {@code true}, the delegate listener's {@code onEvent} is still called for
    * the skipped event (its position and size are valid); {@link #onEventValue} is not.

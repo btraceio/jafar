@@ -592,23 +592,21 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        ScriptRunner runner = new ScriptRunner(dispatcher::dispatch, arguments);
-        runner.setContinueOnError(continueOnError);
-
-        ScriptRunner.ExecutionResult result;
+        List<String> lines;
         if (fromStdin) {
           // Read from stdin
-          List<String> lines = new ArrayList<>();
+          lines = new ArrayList<>();
           try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
             }
           }
-          result = runner.execute(lines);
         } else {
-          result = runner.execute(path);
+          lines = Files.readAllLines(path);
         }
+        ScriptRunner.ExecutionResult result =
+            dispatcher.runScript(lines, arguments, continueOnError);
 
         // Print captured output
         if (output.length() > 0) {

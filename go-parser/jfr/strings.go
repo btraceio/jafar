@@ -48,7 +48,7 @@ func readString(r *reader, md *Metadata, cp *chunkParser) (string, bool, error) 
 		// constant pool; this is how the JMC writer emits them.
 		pool := cp.pools.get(md.stringTypeID)
 		if pool == nil {
-			return "", false, fmt.Errorf("string constant %d referenced, but the chunk has no java.lang.String pool", ptr)
+			return "", false, cp.pools.missing(fmt.Errorf("string constant %d referenced, but the chunk has no java.lang.String pool", ptr))
 		}
 		v, err := pool.value(ptr)
 		if err != nil {
@@ -60,7 +60,7 @@ func readString(r *reader, md *Metadata, cp *chunkParser) (string, bool, error) 
 		// A dangling reference used to read as a null string; it means a
 		// corrupted recording, or a pool that could not be indexed.
 		if v == nil {
-			return "", false, fmt.Errorf("string constant %d not found in the java.lang.String pool", ptr)
+			return "", false, cp.pools.missing(fmt.Errorf("string constant %d not found in the java.lang.String pool", ptr))
 		}
 		return "", false, fmt.Errorf("string constant %d is not a string: %T", ptr, v)
 	case strUTF8, strLatin1:

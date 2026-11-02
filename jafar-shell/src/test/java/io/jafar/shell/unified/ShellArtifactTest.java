@@ -238,6 +238,29 @@ class ShellArtifactTest {
     assertTrue(cont.out().contains("two"), cont.out());
   }
 
+  /**
+   * A condition that cannot be evaluated is an error, not false: no branch runs — not the if's, and
+   * not the else, which used to run as though the condition had been false.
+   */
+  @Test
+  void failedConditionRunsNoBranch(@TempDir Path dir) throws Exception {
+    String lines = "if 1 / 0 > 1\necho THEN\nelse\necho ELSE\nendif\necho AFTER\n";
+
+    Run cont = runJarRaw(dir, lines, "script", "-", "--continue-on-error");
+    assertEquals(1, cont.exit(), cont.out() + cont.err());
+    assertFalse(cont.out().contains("THEN"), cont.out());
+    assertFalse(cont.out().contains("ELSE"), cont.out());
+    assertTrue(cont.out().contains("AFTER"), cont.out());
+    assertTrue(cont.err().contains("Condition evaluation failed: Division by zero"), cont.err());
+
+    // Typed at the prompt: the error is shown, the block stays open to its endif, no branch runs
+    String typed = runJar(dir, lines + "exit\n");
+    assertTrue(typed.contains("skipping every branch of this if-block"), typed);
+    assertFalse(typed.contains("THEN"), typed);
+    assertFalse(typed.contains("ELSE"), typed);
+    assertTrue(typed.contains("AFTER"), typed);
+  }
+
   /** 'record' saves what is typed as a script that 'jafar-shell script' replays. */
   @Test
   void recordsASessionThatReplaysAsAScript(@TempDir Path dir) throws Exception {
@@ -340,6 +363,50 @@ class ShellArtifactTest {
     assertTrue(output.contains("eventThread"), output); // a field of jdk.ThreadStart
   }
 
+  /**
+   * Lines that start with a command word but are queries: jfr-shell's handlers would print every
+   * chunk for {@code | count()} and ignore {@code --limit}. {@code cp <type> | crossref()} is the
+   * one pipeline that stays a command.
+   */
+  @Test
+  void keepsPipedAndLimitedLinesAsQueries(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "echo [count]",
+                "chunks --format json | count()",
+                "echo [limit]",
+                "chunks --limit 1",
+                "echo [crossref]",
+                "cp jdk.types.Symbol | crossref()",
+                "echo [regex]",
+                "metadata --regex ^jdk\\.Thread(Start|End)$",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    String count = between(output, "[count]", "[limit]");
+    assertTrue(count.contains("\"count\""), count); // the count, not the chunk rows
+    assertFalse(count.contains("startTicks"), count);
+    assertTrue(between(output, "[limit]", "[crossref]").contains("(1 rows)"), output);
+    assertTrue(
+        between(output, "[crossref]", "[regex]").contains("Constant Pool Crosscheck"), output);
+    String regex = output.substring(output.indexOf("[regex]"));
+    assertTrue(regex.contains("jdk.ThreadStart") && regex.contains("jdk.ThreadEnd"), regex);
+  }
+
+  private static String between(String s, String from, String to) {
+    int a = s.indexOf(from);
+    int b = s.indexOf(to, a + from.length());
+    assertTrue(a >= 0 && b > a, "markers " + from + ".." + to + " in " + s);
+    return s.substring(a, b);
+  }
+
   @Test
   void jfrCommandsSayTheyNeedJfrSession(@TempDir Path dir) throws Exception {
     Path dump = dir.resolve("dump.hprof");
@@ -415,6 +482,22 @@ class ShellArtifactTest {
     assertFalse(Shell.isJfrCommand("events/jdk.ThreadStart"));
     assertFalse(Shell.isJfrCommand("objects | count"));
     assertFalse(Shell.isJfrCommand("metadata|count()"));
+    // A pipeline or --limit anywhere makes it a query: jfr-shell's handlers would ignore them
+    assertFalse(Shell.isJfrCommand("chunks --format json | count()"));
+    assertFalse(Shell.isJfrCommand("chunks --format json |count()"));
+    assertFalse(Shell.isJfrCommand("chunks --limit 1"));
+    assertFalse(Shell.isJfrCommand("constants --limit 2"));
+    assertFalse(Shell.isJfrCommand("constants --format json | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | crossref() | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
+    assertFalse(Shell.isJfrCommand("chunks | crossref()"));
+    // ...except the pipeline cmdCp takes, and a '|' inside an argument
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol | crossref()"));
+    assertTrue(Shell.isJfrCommand("CONSTANTS jdk.types.Symbol |  CrossRef() "));
+    assertTrue(Shell.isJfrCommand("metadata --regex ^(jdk|datadog)\\.Thread.*"));
+    assertTrue(Shell.isJfrCommand("chunks --format json"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart --tree --depth 2"));
     assertFalse(Shell.isJfrCommand("metadatax"));
     assertFalse(Shell.isJfrCommand(""));
   }

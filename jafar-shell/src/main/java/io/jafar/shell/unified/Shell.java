@@ -12,6 +12,7 @@ import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.scripting.CommandRecorder;
+import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -54,7 +55,6 @@ public final class Shell implements AutoCloseable {
       new CommandRecorder(
           Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
   // Built once: execute() passes it for every line
-  private final java.util.function.Consumer<String> errorSink = this::printError;
   private int scriptDepth;
   // Set by fail() while a line runs, so a script stops on a line that reported an error
   private String lineFailure;
@@ -384,10 +384,12 @@ public final class Shell implements AutoCloseable {
     // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
     // balanced; every other line in such a branch is skipped.
     try {
-      if (conditionals.handle(input, variables.scopes(), errorSink)) {
+      if (conditionals.handle(input, variables.scopes())) {
         return true;
       }
-    } catch (IllegalStateException e) {
+    } catch (ConditionalException e) {
+      // A failed condition has entered its block with no branch running; printError marks the
+      // line failed, so a script counts it (and stops unless continue-on-error).
       printError(e.getMessage());
       return true;
     }
@@ -595,10 +597,12 @@ public final class Shell implements AutoCloseable {
   private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
 
   /**
-   * True for {@code metadata --summary} or {@code chunks}, false for a query that starts with the
-   * same word: {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
-   * are not the bare word, and a bare {@code metadata | count()} pipes the root — jfr-shell would
-   * take that {@code |} as a search pattern, so it stays a query here.
+   * True for {@code metadata --summary} or {@code chunks}; false for a query that starts with the
+   * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
+   * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
+   * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
+   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
+   * crossref()}, stays a command.
    */
   static boolean isJfrCommand(String input) {
     return jfrCommandOf(input) != null;
@@ -610,28 +614,60 @@ public final class Shell implements AutoCloseable {
    */
   static String jfrCommandOf(String input) {
     int n = input.length();
-    int start = 0;
-    while (start < n && Character.isWhitespace(input.charAt(start))) {
-      start++;
-    }
-    int end = start;
-    while (end < n && !Character.isWhitespace(input.charAt(end))) {
-      end++;
-    }
-    int next = end;
-    while (next < n && Character.isWhitespace(input.charAt(next))) {
-      next++;
-    }
-    if (next < n && input.charAt(next) == '|') {
-      return null;
-    }
-    int len = end - start;
-    for (String command : JFR_COMMAND_NAMES) {
-      if (command.length() == len && input.regionMatches(true, start, command, 0, len)) {
-        return command;
+    int start = skipSpace(input, 0);
+    int end = skipWord(input, start);
+    String command = null;
+    for (String name : JFR_COMMAND_NAMES) {
+      if (name.length() == end - start && input.regionMatches(true, start, name, 0, end - start)) {
+        command = name;
+        break;
       }
     }
-    return null;
+    if (command == null) {
+      return null;
+    }
+    // The remaining words: a pipeline (a word starting with '|') or --limit makes it a query.
+    // A '|' inside a word is an argument, e.g. 'metadata --regex ^(jdk|datadog)\..*'.
+    for (int word = skipSpace(input, end); word < n; word = skipSpace(input, end)) {
+      end = skipWord(input, word);
+      if (input.charAt(word) == '|') {
+        return isCrossref(command, input, word) ? command : null;
+      }
+      if (end - word == 7 && input.startsWith("--limit", word)) {
+        return null;
+      }
+    }
+    return command;
+  }
+
+  /** {@code cp <type> | crossref()}: the form jfr-shell's {@code cmdCp} takes as a command. */
+  private static boolean isCrossref(String command, String input, int pipe) {
+    if (!command.equals("cp") && !command.equals("constants")) {
+      return false;
+    }
+    int n = input.length();
+    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
+      return false; // cmdCp needs '|' and 'crossref()' as separate words
+    }
+    int word = skipSpace(input, pipe + 1);
+    int end = skipWord(input, word);
+    return end - word == 10
+        && input.regionMatches(true, word, "crossref()", 0, 10)
+        && skipSpace(input, end) == n;
+  }
+
+  private static int skipSpace(String s, int i) {
+    while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private static int skipWord(String s, int i) {
+    while (i < s.length() && !Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
   }
 
   private void handleJfrCommand(String command, String input) {
@@ -1481,6 +1517,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Scripting:");
     terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
     terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
+    terminal
+        .writer()
+        .println("                     A condition that fails to evaluate is an error, not");
+    terminal
+        .writer()
+        .println("                     false: no branch runs; the block stays open to endif");
     terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
     terminal.writer().println("  record start [path] | stop | status");
     terminal.writer().println("                     Save the commands you type as a script");
