@@ -552,6 +552,14 @@ public final class Main implements Callable<Integer> {
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
 
+      // '#!/usr/bin/env -S jbang jfr-shell@btraceio script -': the kernel passes the script's own
+      // path after '-', so that file is the script and $1 is the argument after it
+      var shebang = ScriptRunner.shebangScript(scriptPath, arguments);
+      if (shebang.isPresent()) {
+        scriptPath = shebang.get().toString();
+        arguments = new ArrayList<>(arguments.subList(1, arguments.size()));
+      }
+
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
       Path path = fromStdin ? null : Paths.get(scriptPath);
