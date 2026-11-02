@@ -289,7 +289,7 @@ java -jar jfr-shell-tck-all.jar path/to/my-backend.jar path/to/test.jfr
 
 ### TCK Test Categories
 
-The TCK runs 23 tests across these categories:
+The TCK runs 27 tests across these categories:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
@@ -298,7 +298,7 @@ The TCK runs 23 tests across these categories:
 | Event Streaming | 4 | Events are properly streamed |
 | Metadata | 5 | Classes and fields load correctly |
 | Chunks | 4 | Chunk info is accurate (if supported) |
-| Constant Pools | 4 | CP access works (if supported) |
+| Constant Pools | 8 | CP access works, and the available types, summary, entry listing and `crossref` agree on every run (if supported) |
 
 ### Understanding TCK Output
 
@@ -311,13 +311,13 @@ Loaded backend: My Custom Backend (id=mybackend)
 Capabilities: [EVENT_STREAMING, METADATA_CLASSES, UNTYPED_HANDLERS]
 
 === TCK Results ===
-Tests run: 23
-Passed: 23
+Tests run: 27
+Passed: 27
 Failed: 0
 Skipped: 0
 ```
 
-Tests for unsupported capabilities are automatically skipped (e.g., if your backend doesn't support `CHUNK_INFO`, chunk tests are skipped).
+Tests for unsupported capabilities return without checking anything, and the summary counts them as **passed**, not skipped (e.g., if your backend doesn't support `CHUNK_INFO`, the chunk tests pass trivially). Read `Capabilities:` in the output to know which tests actually ran.
 
 ### Common TCK Failures
 

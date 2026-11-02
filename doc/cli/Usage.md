@@ -62,11 +62,18 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
 - `constants/<type> | crossref()`: Crosscheck CP entries against event references.
 - `events/<type>[filter] [--limit N]`: Query events (shorthand for `show events`, both forms work).
 
+`metadata`, `metadata class`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in `jafar-shell`
+too while the current session is a JFR recording; in a heap dump, pprof or OTLP session they say so
+and do nothing.
+
 ### Variables
+The variable, conditional and `script <path>` commands below exist in `jafar-shell` too, for every
+format it opens; see [Scripting in jafar-shell](Scripting.md#in-jafar-shell) for the differences.
+
 - `set [--global] <name> = <value>`: Set a variable (scalar, map, or lazy query).
 - `let [--global] <name> = <value>`: Alias for `set`.
-- `vars [--global|--session] [--info <name>]`: List variables or show detailed info.
-- `unset <name>`: Remove a variable.
+- `vars [--global|--session|--all]` / `vars --info <name>`: List variables or show detailed info.
+- `unset <name> [--global]`: Remove a variable.
 - `echo <text>`: Print text with `${var}` substitution (supports nested fields: `${var.field.subfield}`).
 - `invalidate <name>`: Clear cached lazy variable result.
 

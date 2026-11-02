@@ -113,7 +113,11 @@ public interface ValueProcessor {
   default void onArrayStart(MetadataClass owner, String fld, MetadataClass type, int len) {}
 
   /**
-   * Called when an array ends.
+   * Called when an array ends, after all its elements were read.
+   *
+   * <p>Not called if reading an element fails, just as {@link #onComplexValueEnd} is not called for
+   * a complex value that fails part-way: the processor is then left mid-value, and a caller that
+   * continues with the next value must reset it.
    *
    * @param owner the owner metadata class
    * @param fld the field name

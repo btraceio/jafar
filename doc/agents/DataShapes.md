@@ -67,7 +67,7 @@ list silently empty.
 
 ### A declared type is not a present type
 
-`JFRSession.scanMetadata` reads the first chunk's metadata and stops, so `getAvailableTypes()`
+`JFRSession.scanMetadata` reads every chunk's metadata and skips its events, so `getAvailableTypes()`
 returns every type the JVM *registered* — including those that emitted nothing. A recording made
 with an agent that ships its own sampler lists an empty `jdk.ExecutionSample` beside a vendor type
 holding thousands of events.
@@ -110,6 +110,36 @@ that matched no event rather than returning nothing. The general point stands fo
 **a path that resolves to null must be distinguishable from a value that is null.** Validate against
 the first row, as `applySortBy` does, or count what you consumed, as `aggregateGroupBy` does.
 
+### A type id is not a type
+
+A metadata class id names a type **within one chunk**. Chunks written by different producers — a
+JVM's own chunk and an agent's, concatenated — assign ids independently. `tck-test.jfr` has two
+chunks and 50 of its 290 ids name different types in each: id 125 is `jdk.CompilerConfiguration` in
+chunk 1 and `datadog.ProfilerCounter` in chunk 2; even `long` is `#11` in one and `#219` in the
+other.
+
+`UntypedDeserializerCache` is shared by every chunk of a parse and was keyed by that id. Whichever
+chunk generated a deserializer for id 125 first owned it, and the other chunk's events were decoded
+with the wrong layout — `IOException: Unexpected string constant id: 85` when the misread landed on
+a string, a plausible wrong map when it did not. Chunks parse on parallel threads, so *which* type
+won varied between runs: `Code generation failed for datadog.ProfilerCounter` appeared in two runs
+and in none of the next five. It looked flaky and was deterministic per ordering.
+
+The cache is now keyed by `UntypedCodeGenerator.cacheKey` — name, id and full reachable layout —
+and each chunk keeps its own id → deserializer map. The typed path was already safe: it chooses its
+cache by `MetadataFingerprint`. Anything else that outlives a chunk must not be keyed by a class id
+either.
+
+Nor by `MetadataClass.equals`: it compares id, name, supertype and fields, and `MetadataField.equals`
+compares only type id, constant-pool flag, dimension and declaring type — **not field names, not
+annotations**. `TemporalNormalizer` cached each class's tick-normalization table in a static map
+under that equality, so two chunks declaring the same `test.T {a: long}`, one with
+`@Timestamp("TICKS")` on `a` and one without, shared one table: whichever chunk was decoded first
+decided for both, and the other got raw ticks as epoch nanos or the reverse, on the generic path and
+the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the `MetadataClass`
+instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
+so a field name cannot pass for key syntax.
+
 ---
 
 ## Before you trust a shape
@@ -122,3 +152,7 @@ the first row, as `applySortBy` does, or count what you consumed, as `aggregateG
   will not tell you that you took the wrong one.
 - If it is a column name, check it against a row before you sort or filter by it. Silence means the
   column was absent, not that the data was uninteresting.
+- If it is a metadata class id, or a `MetadataClass` compared with `equals`, it is only meaningful
+  inside its chunk; `equals` ignores field names and annotations. A failure that comes and
+  goes across runs of a multi-chunk parse is per-chunk state shared between chunks until shown
+  otherwise.

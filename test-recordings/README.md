@@ -26,8 +26,9 @@ Every test task, and every test-resource task, depends on this task (root `build
 
 Each generated recording is a single chunk, like the recordings the suites were written against. Some tests
 assume that (an abort in one chunk does not stop chunks parsing in parallel; constant-pool ids are
-chunk-local), and jfr-shell's constant-pool source races across parallel chunks. Multi-chunk output
-is exercised by the benchmark mode and this module's tests.
+chunk-local). Multi-chunk output is exercised by the benchmark mode, this module's tests, the
+two-chunk `tck-test.jfr` the backend TCK runs against, and jfr-shell's
+`ConstantPoolChunkLocalityTest`, which concatenates a recording's chunk to make one.
 
 ### Real recordings
 

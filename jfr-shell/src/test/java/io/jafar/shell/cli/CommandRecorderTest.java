@@ -2,6 +2,7 @@ package io.jafar.shell.cli;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.shell.core.scripting.CommandRecorder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -109,5 +110,32 @@ class CommandRecorderTest {
 
     // Verify footer
     assertTrue(content.contains("# Recording stopped:"));
+  }
+
+  /** Every form both shells' 'set' accepts for the key; the value must not reach the file. */
+  @Test
+  void apiKeyValueIsNotRecorded(@TempDir Path tempDir) throws IOException {
+    Path recordingPath = tempDir.resolve("secret.jfrs");
+    List<String> typed =
+        List.of(
+            "set llm.api-key = sk-SECRET1",
+            "set --global llm.api-key = sk-SECRET2",
+            "let llm.api-key=sk-SECRET3",
+            "SET   LLM.API-KEY   =   \"sk-SECRET4\"",
+            "set llm.api-key = sk-SECRET5=tail");
+
+    CommandRecorder recorder = new CommandRecorder();
+    recorder.start(recordingPath);
+    for (String line : typed) {
+      recorder.recordCommand(line);
+    }
+    recorder.stop();
+
+    String content = Files.readString(recordingPath);
+    assertFalse(content.contains("SECRET"), content);
+    assertTrue(content.contains("# set llm.api-key = <redacted: not recorded>"), content);
+    assertTrue(content.contains("# set --global llm.api-key = <redacted: not recorded>"), content);
+    assertTrue(content.contains("# let llm.api-key= <redacted: not recorded>"), content);
+    assertTrue(content.contains("# SET   LLM.API-KEY   = <redacted: not recorded>"), content);
   }
 }

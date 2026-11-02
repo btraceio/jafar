@@ -129,7 +129,7 @@ public final class JFRSession implements Session {
                 } else {
                   out.primitiveMetadataTypes.add(clazz.getName());
                 }
-                if (isEventType(clazz, byName)) {
+                if (clazz.getName() != null && isEventType(clazz, byName)) {
                   out.eventTypes.add(clazz.getName());
                 }
                 if (isBrowsableMetadataType(clazz)) {

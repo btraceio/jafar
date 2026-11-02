@@ -21,7 +21,10 @@ and why, and tells you what to do about the ones that are not ready.
 Both `jfr-shell` (JFR recordings) and the unified `jafar-shell` (recordings, heap dumps, pprof and
 OTLP profiles) have these commands. They use whichever query language the current session needs,
 so in `jafar-shell` it reaches HdumpPath and the samples grammar as well as JfrPath. `jafar-shell`
-has no `set` command yet, so configure it there with the `JAFAR_LLM_*` environment variables.
+takes the same `set llm.backend = ollama` as `jfr-shell`; the `JAFAR_LLM_*` environment variables are the
+fallback when a setting is not set. In both shells a setting follows the same scoping as any variable:
+set while a session is open it belongs to that session and goes when the session closes; use
+`set --global llm.backend = ollama` to keep it for the whole shell.
 
 The feature is optional. Without a backend module on the classpath, or without a credential, every
 other shell command behaves exactly as before and the LLM commands print a clear message. Nothing
@@ -203,7 +206,9 @@ jfr-shell recording.jfr
 ```
 
 Better, per the section above: put `llm.api-key` in `~/.config/jafar/llm.properties`. Or
-`set llm.api-key = sk-...` in the shell for a single session.
+`set llm.api-key = sk-...` in the shell for a single session. A command recording
+(`record start`) leaves the value out, the line is not kept in the shell's history, and `set` and
+`vars` show it as `<hidden, ends in "…">`.
 
 ### Ollama — local
 
@@ -462,8 +467,7 @@ jfr> set llm.confirm = true
 ```
 
 Each is also readable from an environment variable (`JAFAR_LLM_BACKEND`, `JAFAR_LLM_MODEL`,
-`JAFAR_LLM_BASE_URL`, `JAFAR_LLM_MAX_ROWS`, and so on), which is the easier route in CI and the only
-route in `jafar-shell` until it grows a `set` command.
+`JAFAR_LLM_BASE_URL`, `JAFAR_LLM_MAX_ROWS`, and so on), which is the easier route in CI.
 
 ## Cost
 

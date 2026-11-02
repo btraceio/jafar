@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -16,7 +16,13 @@ public final class ConditionalState {
     /** This branch's condition was false, waiting for elif/else. */
     CONDITION_FAILED,
     /** A previous branch in this if-block already executed, skip remaining. */
-    BRANCH_TAKEN
+    BRANCH_TAKEN,
+    /**
+     * A condition in this if-block could not be evaluated. No branch of the block runs: not the one
+     * whose condition failed, and not any later {@code elif} or {@code else}, since choosing one
+     * would mean guessing what the condition would have been.
+     */
+    CONDITION_ERROR
   }
 
   private record IfBlock(BranchState state) {}
@@ -49,6 +55,37 @@ public final class ConditionalState {
   }
 
   /**
+   * Enters a new if-block whose condition could not be evaluated. Every branch of the block is
+   * skipped until the matching {@code endif}. (Inside an already-skipped branch this is equally
+   * correct: a {@link BranchState#CONDITION_ERROR} block never becomes active.)
+   */
+  public void enterIfWithError() {
+    stack.push(new IfBlock(BranchState.CONDITION_ERROR));
+  }
+
+  /**
+   * Handles an elif statement whose condition could not be evaluated. The remaining branches of the
+   * block, including any {@code else}, are skipped.
+   *
+   * @throws IllegalStateException if not inside an if-block
+   */
+  public void handleElifWithError() {
+    if (stack.isEmpty()) {
+      throw new IllegalStateException("elif without if");
+    }
+    // Whatever the block's state was, nothing in it may run from here on.
+    stack.pop();
+    stack.push(new IfBlock(BranchState.CONDITION_ERROR));
+  }
+
+  /** Keeps a failed condition visible for the rest of its block; anything else is "taken". */
+  private static BranchState skipState(BranchState current) {
+    return current == BranchState.CONDITION_ERROR
+        ? BranchState.CONDITION_ERROR
+        : BranchState.BRANCH_TAKEN;
+  }
+
+  /**
    * Handles an elif statement.
    *
    * @param condition the result of evaluating the elif condition
@@ -59,9 +96,9 @@ public final class ConditionalState {
       throw new IllegalStateException("elif without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
-      // A branch already executed, skip this elif
-      stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
+    if (current.state != BranchState.CONDITION_FAILED) {
+      // A branch already executed, or a condition failed: skip this elif
+      stack.push(new IfBlock(skipState(current.state)));
     } else {
       // No branch executed yet, check this condition
       stack.push(new IfBlock(condition ? BranchState.CONDITION_MET : BranchState.CONDITION_FAILED));
@@ -78,9 +115,9 @@ public final class ConditionalState {
       throw new IllegalStateException("else without if");
     }
     IfBlock current = stack.pop();
-    if (current.state == BranchState.BRANCH_TAKEN || current.state == BranchState.CONDITION_MET) {
-      // A branch already executed, skip else
-      stack.push(new IfBlock(BranchState.BRANCH_TAKEN));
+    if (current.state != BranchState.CONDITION_FAILED) {
+      // A branch already executed, or a condition failed: skip else
+      stack.push(new IfBlock(skipState(current.state)));
     } else {
       // No branch executed, else is active
       stack.push(new IfBlock(BranchState.CONDITION_MET));
@@ -97,6 +134,16 @@ public final class ConditionalState {
       throw new IllegalStateException("endif without if");
     }
     stack.pop();
+  }
+
+  /**
+   * Whether an {@code elif} here could still be taken: inside a block whose branches so far were
+   * all false and whose enclosing block is running. Otherwise its condition does not matter and
+   * should not be evaluated — evaluating it can run a lazy query or report an error for a branch
+   * that was never going to execute.
+   */
+  public boolean awaitingBranch() {
+    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
   }
 
   /**

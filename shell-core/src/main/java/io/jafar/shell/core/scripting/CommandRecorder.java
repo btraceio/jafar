@@ -1,5 +1,6 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
+import io.jafar.shell.core.llm.SecretCommands;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,7 +16,8 @@ import java.time.format.DateTimeFormatter;
  * Records interactive shell commands to a script file for later replay.
  *
  * <p>Recorded scripts are in the same format as executable scripts, with timestamp comments added
- * for context.
+ * for context. Shared by {@code jfr-shell} and {@code jafar-shell}, which differ only in the
+ * default directory and the header's title.
  *
  * <p>Example recorded script:
  *
@@ -29,6 +31,9 @@ import java.time.format.DateTimeFormatter;
  * # [14:30:20]
  * show events/jdk.ExecutionSample --limit 10
  * </pre>
+ *
+ * <p>A {@code set}/{@code let} of a credential setting is written as a comment without its value
+ * ({@link SecretCommands#redact}), so the file holds no key and replaying it does not set one.
  */
 public final class CommandRecorder {
   private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -39,11 +44,20 @@ public final class CommandRecorder {
   private BufferedWriter writer;
   private boolean recording;
   private final Path defaultRecordingDir;
+  private final String title;
 
   /** Creates a command recorder with default recording directory ~/.jfr-shell/recordings. */
   public CommandRecorder() {
-    this.defaultRecordingDir =
-        Paths.get(System.getProperty("user.home"), ".jfr-shell", "recordings");
+    this(Paths.get(System.getProperty("user.home"), ".jfr-shell", "recordings"), "JFR Shell");
+  }
+
+  /**
+   * @param defaultRecordingDir where {@code record start} without a path writes
+   * @param title the shell's name for the header line, e.g. {@code "Jafar Shell"}
+   */
+  public CommandRecorder(Path defaultRecordingDir, String title) {
+    this.defaultRecordingDir = defaultRecordingDir;
+    this.title = title;
     this.recording = false;
   }
 
@@ -72,7 +86,7 @@ public final class CommandRecorder {
     this.recording = true;
 
     // Write header
-    writer.write("# JFR Shell Recording\n");
+    writer.write("# " + title + " Recording\n");
     writer.write("# Started: " + Instant.now() + "\n");
     writer.write("# Session: " + path.getFileName() + "\n\n");
     writer.flush();
@@ -92,7 +106,7 @@ public final class CommandRecorder {
     // Add timestamp comment for context
     LocalTime time = LocalTime.now();
     writer.write("# [" + time.format(TIME_FORMATTER) + "]\n");
-    writer.write(command + "\n");
+    writer.write(SecretCommands.redact(command) + "\n");
     writer.flush();
   }
 

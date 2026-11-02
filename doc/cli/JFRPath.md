@@ -1073,6 +1073,15 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
+`crossref()` decodes every event and every constant pool entry in the recording. If any of them
+cannot be decoded, the command fails with an error naming the event type or pool entry, the chunk
+and the position, and prints no counts: figures from a partial read would be wrong.
+
+Constant pool ids are local to a chunk, so every constants query counts per chunk: an entry is one
+id in one chunk. `constants --summary` and `crossref()` report the sum of the chunks' figures, and
+`constants/<type>` lists each chunk's entries in chunk order, so a recording made of several chunks
+can list the same id more than once; those rows are different entries.
+
 ## Operator Chaining
 
 Many operators are chainable in a pipeline. For example:

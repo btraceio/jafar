@@ -5,8 +5,6 @@ import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Represents a checkpoint event in JFR recordings.
@@ -15,7 +13,6 @@ import org.slf4j.LoggerFactory;
  * about constant pools and other metadata that may be referenced by subsequent events.
  */
 public final class CheckpointEvent extends AbstractEvent {
-  private static final Logger log = LoggerFactory.getLogger(CheckpointEvent.class);
 
   /** The start time of the checkpoint in nanoseconds. */
   public final long startTime;
@@ -82,10 +79,15 @@ public final class CheckpointEvent extends AbstractEvent {
       try {
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
         if (clz == null) {
-          log.warn(
-              "Unknown type ID {} in constant pool; remaining CP entries in this checkpoint are abandoned",
-              typeId);
-          return;
+          // Without the type its entries cannot be skipped, so - as for an entry that cannot be
+          // skipped - the rest of this checkpoint cannot be located. Abandoning it with a warning
+          // left non-string references into it resolving to null (Verification.md R3).
+          throw new IOException(
+              "Constant pool of type "
+                  + typeId
+                  + " ("
+                  + count
+                  + " entries): the type is not declared in the chunk metadata");
         }
         boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
 
@@ -99,7 +101,14 @@ public final class CheckpointEvent extends AbstractEvent {
           if (!skip && !constantPool.containsKey(id)) {
             constantPool.addOffset(id, stream.position());
           }
-          clz.skipDirect(stream);
+          try {
+            clz.skipDirect(stream);
+          } catch (IOException e) {
+            // Entries are not length-prefixed: past an entry that cannot be skipped, the offsets of
+            // the rest of this checkpoint cannot be known, so the chunk cannot be read reliably.
+            throw new IOException(
+                "Constant pool " + clz.getName() + ", index " + id + ": " + e.getMessage(), e);
+          }
         }
       } catch (IOException e) {
         throw e;

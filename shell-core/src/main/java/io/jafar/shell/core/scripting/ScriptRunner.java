@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,11 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes JFR shell script files with positional parameter substitution.
+ * Executes shell script files with positional parameter substitution.
  *
- * <p>Scripts are line-based text files containing shell commands and JfrPath queries. Lines
- * starting with '#' are comments. Positional parameters are substituted with values provided via
- * the constructor.
+ * <p>Scripts are line-based text files containing shell commands and queries in the current
+ * session's language (JfrPath, HdumpPath, ...). Lines starting with '#' are comments. Positional
+ * parameters are substituted with values provided via the constructor.
  *
  * <p>Supported parameter syntax:
  *
@@ -48,22 +48,122 @@ public final class ScriptRunner {
   private static final Pattern VAR_PATTERN =
       Pattern.compile("\\$(?:(\\d+|@)|\\{(\\d+|@)(?:(:[-?])(.*?))?\\})");
 
-  private final CommandDispatcher dispatcher;
-  private final CommandDispatcher.IO io;
+  /**
+   * Runs one script line in the shell that owns the script. Both shells provide one: {@code
+   * jfr-shell}'s {@code CommandDispatcher::dispatch} and {@code jafar-shell}'s {@code Shell}.
+   */
+  @FunctionalInterface
+  public interface LineDispatcher {
+    /**
+     * Executes one line.
+     *
+     * @return {@code false} when the line is not a command the shell knows
+     */
+    boolean dispatch(String line) throws Exception;
+  }
+
+  /**
+   * Counts the errors a shell reports. Both shells report a failing command by printing it (a bad
+   * query, a missing file, no session open) and returning normally, so the runner cannot see the
+   * failure from the dispatch itself; the shell records each report here instead, and {@link
+   * #failingOnReportedErrors} turns a report into a failed line.
+   *
+   * <p>Safe to record from any thread: a report from a worker a command started is seen when the
+   * command returns. It is attributed to the line running at the time, as the shell attributes it
+   * when it prints it. Reading the count is one volatile read per line, and recording allocates
+   * nothing.
+   */
+  public static final class ErrorTally {
+    private final java.util.concurrent.atomic.AtomicInteger count =
+        new java.util.concurrent.atomic.AtomicInteger();
+    private volatile String last;
+
+    /** Records one reported error, as printed. */
+    public void record(String message) {
+      last = message;
+      count.incrementAndGet(); // after 'last', so a reader that sees the new count sees it too
+    }
+
+    public int count() {
+      return count.get();
+    }
+
+    /** The most recently reported error, as printed, or {@code null}. */
+    public String last() {
+      return last;
+    }
+  }
+
+  /** Thrown for a line that reported an error rather than throwing one. */
+  static final class ReportedError extends Exception {
+    ReportedError(String message) {
+      super(message, null, false, false);
+    }
+  }
+
+  /**
+   * Wraps a dispatcher so that a line during which the shell reported an error fails, and so stops
+   * the script unless {@link #setContinueOnError} is set, is listed in the error report, and is not
+   * counted as successful.
+   */
+  public static LineDispatcher failingOnReportedErrors(
+      LineDispatcher dispatcher, ErrorTally tally) {
+    return line -> {
+      int before = tally.count();
+      boolean handled = dispatcher.dispatch(line);
+      if (tally.count() > before) {
+        String message = tally.last() == null ? "" : tally.last().strip();
+        if (message.startsWith("Error: ")) {
+          message = message.substring("Error: ".length());
+        }
+        throw new ReportedError(message.isEmpty() ? "command reported an error" : message);
+      }
+      return handled;
+    };
+  }
+
+  /**
+   * The script a shebang line names, for {@code script -}.
+   *
+   * <p>A script starting {@code #!/usr/bin/env -S jbang jfr-shell@btraceio script -} and run as
+   * {@code ./analyze.jfrs app.jfr} is executed by the kernel as {@code ... script - ./analyze.jfrs
+   * app.jfr}: the script's own path arrives as the first argument, and stdin is whatever the caller
+   * had — usually the terminal. Read literally, {@code -} then waits on stdin and {@code $1} is the
+   * script itself. So when the path is {@code -} and the first argument is a file whose first line
+   * is a shebang, that file is the script and the arguments after it are {@code $1}, {@code $2}...
+   *
+   * @return the script file, or empty when this is not such an invocation
+   */
+  public static java.util.Optional<Path> shebangScript(String scriptPath, List<String> arguments) {
+    if (!"-".equals(scriptPath) || arguments.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    Path candidate = Path.of(arguments.get(0));
+    if (!Files.isRegularFile(candidate)) {
+      return java.util.Optional.empty();
+    }
+    try (java.io.BufferedReader reader = Files.newBufferedReader(candidate)) {
+      String first = reader.readLine();
+      return first != null && first.startsWith("#!")
+          ? java.util.Optional.of(candidate)
+          : java.util.Optional.empty();
+    } catch (IOException | java.io.UncheckedIOException e) {
+      return java.util.Optional.empty();
+    }
+  }
+
+  private final LineDispatcher dispatcher;
   private final List<String> arguments;
   private boolean continueOnError;
 
   /**
    * Creates a script runner.
    *
-   * @param dispatcher command dispatcher for executing commands
-   * @param io IO interface for output
+   * @param dispatcher executes each line
    * @param arguments positional arguments for substitution ($1, $2, etc.)
    */
-  public ScriptRunner(
-      CommandDispatcher dispatcher, CommandDispatcher.IO io, List<String> arguments) {
+  public ScriptRunner(LineDispatcher dispatcher, List<String> arguments) {
     this.dispatcher = dispatcher;
-    this.io = io;
     this.arguments = arguments;
     this.continueOnError = false;
   }

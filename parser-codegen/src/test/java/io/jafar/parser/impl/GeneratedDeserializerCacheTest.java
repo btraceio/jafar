@@ -97,4 +97,55 @@ public class GeneratedDeserializerCacheTest {
         new java.util.TreeSet<>(seen.keySet()),
         strategy + ": every event decoded with its own chunk's type");
   }
+
+  /**
+   * Names come verbatim from the recording, so the structural cache key must not let a name pass
+   * for key syntax. Chunk 1 declares {@code test.K {a: long, b: long}}; chunk 2 declares the same
+   * id as one field named {@code "a:6 long/-1;b"}. Written without length prefixes, the two layouts
+   * produce the same key string, and chunk 2's single field would be decoded as two.
+   */
+  @ParameterizedTest(name = "key-syntax names {0}")
+  @EnumSource(
+      value = UntypedStrategy.class,
+      names = {"FULL_ITERATION", "SPARSE_ACCESS"})
+  void namesThatLookLikeKeySyntaxDoNotShareADeserializer(
+      UntypedStrategy strategy, @TempDir Path dir) throws Exception {
+    SyntheticRecording.Element twoFields =
+        elem("class", "id", "100", "name", "test.K", "superType", "jdk.jfr.Event")
+            .with(
+                elem("field", "name", "a", "class", Long.toString(T_LONG)),
+                elem("field", "name", "b", "class", Long.toString(T_LONG)));
+    SyntheticRecording.Element oneField =
+        elem("class", "id", "100", "name", "test.K", "superType", "jdk.jfr.Event")
+            .with(elem("field", "name", "a:6 long/-1;b", "class", Long.toString(T_LONG)));
+    byte[] first =
+        chunk(
+            metadata(twoFields),
+            new SyntheticRecording.Bytes().varint(100).varint(1).varint(2).toByteArray());
+    byte[] second =
+        chunk(
+            metadata(oneField), new SyntheticRecording.Bytes().varint(100).varint(7).toByteArray());
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.write(first);
+    out.write(second);
+    Path file = Files.write(dir.resolve("ambiguous-names.jfr"), out.toByteArray());
+
+    Map<String, Map<String, Object>> seen = new ConcurrentHashMap<>();
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(new UntypedParserContextFactory(strategy))) {
+      parser.parse(
+          file,
+          new EventStreamGenerated(null) {
+            @Override
+            protected void onEventValue(
+                MetadataClass type, Map<String, Object> value, Control ctl) {
+              seen.put(new java.util.TreeMap<>(value).toString(), new HashMap<>(value));
+            }
+          });
+    }
+    assertEquals(
+        new java.util.TreeSet<>(java.util.Arrays.asList("{a:6 long/-1;b=7}", "{a=1, b=2}")),
+        new java.util.TreeSet<>(seen.keySet()),
+        strategy + ": each chunk decoded with its own layout");
+  }
 }

@@ -118,4 +118,20 @@ class SetLlmSettingTest {
     String out = io.text();
     assertTrue(out.contains("Invalid variable name: foo.bar"), out);
   }
+
+  /** The key is stored as typed but never printed: not by 'set', 'vars' or 'vars --info'. */
+  @Test
+  void theApiKeyIsStoredButNeverPrinted() {
+    dispatcher.dispatch("set llm.api-key = sk-proj-0123456789-TAIL");
+    dispatcher.dispatch("set --global llm.api-key = sk-proj-global-0123-GLOB");
+    dispatcher.dispatch("vars --all");
+    dispatcher.dispatch("vars --info llm.api-key");
+
+    assertEquals("sk-proj-0123456789-TAIL", config().apiKey());
+    String out = io.text();
+    assertTrue(!out.contains("sk-proj"), out);
+    assertTrue(out.contains("Set llm.api-key = <hidden, ends in \"TAIL\">"), out);
+    assertTrue(out.contains("  llm.api-key = <hidden, ends in \"GLOB\">"), out);
+    assertTrue(out.contains("Value: <hidden, ends in \"TAIL\">"), out);
+  }
 }

@@ -48,7 +48,7 @@ func readString(r *reader, md *Metadata, cp *chunkParser) (string, bool, error) 
 		// constant pool; this is how the JMC writer emits them.
 		pool := cp.pools.get(md.stringTypeID)
 		if pool == nil {
-			return "", true, nil
+			return "", false, cp.pools.missing(fmt.Errorf("string constant %d referenced, but the chunk has no java.lang.String pool", ptr))
 		}
 		v, err := pool.value(ptr)
 		if err != nil {
@@ -57,7 +57,12 @@ func readString(r *reader, md *Metadata, cp *chunkParser) (string, bool, error) 
 		if s, ok := v.(string); ok {
 			return s, false, nil
 		}
-		return "", true, nil
+		// A dangling reference used to read as a null string; it means a
+		// corrupted recording, or a pool that could not be indexed.
+		if v == nil {
+			return "", false, cp.pools.missing(fmt.Errorf("string constant %d not found in the java.lang.String pool", ptr))
+		}
+		return "", false, fmt.Errorf("string constant %d is not a string: %T", ptr, v)
 	case strUTF8, strLatin1:
 		size := r.readVarint()
 		if r.err != nil {
@@ -131,8 +136,16 @@ func skipString(r *reader) error {
 		}
 	case strConstant:
 		r.readVarint()
+	case strNull, strEmpty:
+		// no payload
 	default:
-		// null, empty and unknown ids carry no payload
+		// Not "no payload": an unknown encoding has a payload of unknown length,
+		// and skipping only the id byte would misalign everything after it -
+		// every later constant pool entry when indexing a pool.
+		if r.err != nil {
+			return r.err
+		}
+		return fmt.Errorf("unexpected string constant id: %d", id)
 	}
 	return r.err
 }

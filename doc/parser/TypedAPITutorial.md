@@ -60,7 +60,9 @@ Handlers are lambda functions or method references that:
 
 The `Control` parameter provides:
 - `stream().position()` - current byte offset in the JFR file
-- `abort()` - stop parsing immediately without throwing exception
+- `abort()` - stop the whole parse (every chunk) without throwing an exception. Chunks are parsed
+  in parallel: the calling thread gets no further event, and each other chunk thread finishes at
+  most the one event it was already dispatching. See the `Control.abort()` Javadoc.
 - `chunkInfo()` - chunk metadata (start time, duration, tick conversion)
 
 ## Defining Event Interfaces
@@ -207,6 +209,10 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
 
 System.out.println("Processed " + count.get() + " samples");
 ```
+
+`abort()` stops every chunk, not just the one the handler is in. Because chunks are parsed in
+parallel, `count` can end slightly above 1000 - at most one extra event per other parsing thread -
+so cap on your own count if you need an exact number.
 
 ### Error Handling
 

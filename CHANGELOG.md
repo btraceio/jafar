@@ -7,7 +7,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`Values.resolvedDeepCollapsed(Map)` and `ComplexType.isSimpleType()`** (#108). Resolves
+  constant-pool references to JFR simple types (`jdk.types.ThreadState`, ...) to their scalar, as
+  the typed API does, decided by the recording's metadata rather than a `size() == 1` guess.
+  `resolvedDeep` and `getValue()` are unchanged
+- **`jafar-shell` scripts across formats.** The unified shell now has the full set of variable and
+  scripting commands `jfr-shell` has: map literals (`set cfg = {"min": 1024}`), `merge(...)`,
+  query-valued variables, `if`/`elif`/`else`/`endif`, `script <path> [args]` (`$1`,
+  `${2:-default}`, `$@`), `invalidate`, `vars --info`, and session-scoped versus `--global`
+  variables. A query variable is written in the current session's language — JfrPath, HdumpPath, or
+  the pprof/OTLP samples grammar — run on first use by that module's query evaluator exactly as
+  `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
+  dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
+  queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and each script has
+  its own `if` blocks: one it leaves open is closed and reported, and a stray `endif` is an error in
+  the script instead of closing the caller's block. A script line that reports an
+  error stops the script (as the default stop-on-error mode always promised), instead of being
+  counted as a success. The parsing, scoping and
+  condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
+  both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
+- **`JFR_SHELL_VERBOSE` / `-Djfr.shell.verbose=true` applies to `jafar-shell script`** as it does
+  to `jfr-shell script`: the open/close lines and `Set x = ...` confirmations script mode leaves
+  out are printed. The switch is jfr-shell's own (`CommandDispatcher.isVerboseEnabled`), read by
+  both
+- **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
+  OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
+  creates a lazy variable run by that module's evaluator
+
 ### Fixed
+- **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
+  always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
+  was reachable only from tests and benchmarks. It is now selected through an
+  `UntypedEventStreamFactory` SPI (ServiceLoader) whenever `parser-codegen` is on the classpath,
+  which was safe to do only after the generated path was made to match the generic one. Without
+  `parser-codegen`, or with `-Djafar.untyped.generated=false`, the generic reader is used as
+  before. `UntypedStrategyDispatchTest` observes which reader ran
+- **An `if`/`elif` condition that fails to evaluate no longer runs the `else` branch.** Both
+  shells printed `Condition evaluation failed: ...` and treated the condition as `false`, so the
+  `else` branch ran; in `jfr-shell` the script even ended `Script executed successfully` with exit
+  status 0. A failed (or missing) condition is now an error of that line in both shells: no branch
+  of the if-block runs (its `endif` still closes it), a script stops there with a non-zero exit,
+  and with `--continue-on-error` it resumes after the `endif` with the error counted
+- **`jfr-shell` scripts: stray keywords, missing `endif`, and leaking blocks.** `elif`/`else`/
+  `endif` without an `if` were printed and counted as successful commands, and a script ending
+  inside an `if` was silently accepted; both now fail the script. A script also runs with an
+  if-block stack of its own (as in `jafar-shell`), so one that stopped inside a block no longer
+  leaves the interactive shell silently skipping everything typed afterwards, and a stray `endif`
+  in a script cannot close one of the caller's blocks
+- **The `jfr-shell` TUI shows an open if-block.** The command input's title reads
+  `Command ...(1, skipping until endif) >` inside a block that is skipping, as the CLI prompt shows
+  `...(1)>`; commands typed there used to produce no output and no sign why
+- **`Control.abort()` stops the whole parse.** The abort flag was per thread, and chunks are
+  parsed on parallel threads, so an abort stopped only its own chunk: on the two-chunk
+  `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a multi-thread
+  pool, and 6 with a one-thread pool (the next chunk delivered one event before checking the
+  flag). The flag is now shared by every chunk of a run and checked at chunk start, at the
+  metadata and checkpoint callbacks (so a chunk mid-way through its constant pools stops there),
+  and before an event is decoded,
+  in the typed parser and both untyped event streams; the untyped parser also stops calling the
+  remaining handlers of an event once one aborts, as the typed parser always did. The contract,
+  including the at-most-one in-flight event per other thread, is in the `Control.abort()` Javadoc
+- **A failed parse says why.** Chunks are parsed on worker threads, so the cause reached the caller
+  several wrappers deep, and both shells print only the outermost message: every corrupted
+  recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
+  carries the cause, for example `Error occurred while parsing JFR recording: Constant pool
+  jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The prefix is unchanged
+- **`empty()` in script conditions no longer reports every map as empty.** `if empty(m)` was
+  true for any map variable — `set m = {"a": 1, "b": 2}` or a `toMap()` query result — because
+  the condition evaluator handled only scalars and query results and treated every other value
+  as empty, so `if empty(m)` took the empty branch while `${m.size}` printed `2`. A map is now
+  empty only when it has no entries, in both jfr-shell and jafar-shell (which share the
+  evaluator)
+- **`exists()` and `empty()` resolve references the way `${...}` does.** A dotted argument such
+  as `empty(cfg.db.host)` was looked up as one variable literally named `cfg.db.host`, which never
+  exists, so `empty()` was always true and `exists()` always false while `${cfg.db.host}` printed
+  `localhost`; an indexed argument (`exists(rows[1].thread)`) or a hyphenated setting
+  (`exists(llm.base-url)`) did not parse at all, and the condition took the `else` branch. The
+  argument now uses the same grammar and resolution as `${...}`: nested map fields, `[idx]` rows,
+  `.size`, and first-row fields of query results. `llm.*` settings (case-insensitive, hyphens
+  allowed) are checked as settings and never split into a variable plus a field, and a malformed
+  reference (`cfg..db`, `rows[x]`) is an error instead of silently empty
+- **`empty(name)` of a `jafar-shell` `toMap()` variable over no rows is true.** `jafar-shell`
+  keeps a `toMap()` query lazy, and its result is one row holding the map, so `empty()` counted
+  that row and answered false for a `toMap()` that matched nothing, while `${v.size}` (below) said
+  0. It now asks the map, as `jfr-shell` does for the map it stores
+- **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
+  unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
+  `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
+  `2` in `jfr-shell` on the same recording. A query ending in `toMap()` is now read as its map —
+  `.size`, `.key`, `${v}` — while staying lazy. Whether a query produces a map is decided from the
+  query (`QueryEvaluator.producesMap`, one definition shared with `jfr-shell`'s `set`), not from
+  the rows: a `top(1)` result is also one row holding a map, and its `${v.size}` stays 1
+- **MCP server no longer loses a response when two are sent at once.** The stdio transport emitted
+  into its Reactor sinks from whichever thread finished a request, and a sink accepts only one
+  producer at a time: a concurrent emit failed with `FAIL_NON_SERIALIZED`, was logged as "Failed
+  to enqueue message", and the response was dropped. The client then waited for its timeout.
+  Two tool calls in flight together were enough to trigger it. Emission into both sinks is now
+  serialized, so every response is written
+- **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
+  jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
+  "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
+  stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
+  stderr and exit status 1 on failure. It needs no terminal and leaves the interactive history
+  untouched. Tables use jafar-shell's layout; a JFR-only script gets the unified shell's semantics
+  (the same data, but string values printed as `{name=G1New}`; see
+  [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)),
+  and `jfr-shell script` keeps jfr-shell's. The `jfr-shell` jbang alias launches jfr-shell directly
+  and is unaffected
+- **`record` in `jafar-shell`.** `record start [path] | stop | status` saves the commands typed
+  at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
+  recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
+  recorder, moved to `shell-core` and shared. It leaves out `help` and `exit`/`quit` as jfr-shell
+  does, and a `record` line in an `if` branch that is not running; unlike jfr-shell it keeps
+  `script ...`, since the lines a script runs are not recorded and a replay would otherwise skip it
+- **`session <id>` in `jafar-shell`**, jfr-shell's alias for `use`, which tab completion offered on
+  a recording and the shell refused as an unknown command. Bare `open`, `use`, `session` and `show`
+  print their usage instead of "Unknown command"
+- **`metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work at the `jafar-shell`
+  prompt** on a recording, using jfr-shell's implementations; they were taken as malformed queries
+  (`metadata --summary` failed with `Trailing characters at position 9`, so `jfr-shell`'s
+  `basic-analysis.jfrs` example did not run in `jafar-shell`). In a heap dump, pprof or OTLP
+  session, or with no session open, they say they need a JFR session
+- **A script line that reports an error fails, in both shells.** A bad query, a missing session or
+  file, `use` of an unknown session and the like are reported by printing them, and `ScriptRunner`
+  only saw exceptions and unknown commands, so it counted those lines as successes: the script ran
+  on past the error, ended with `Script executed successfully`, and `jfr-shell script` exited 0.
+  `--continue-on-error` therefore had nothing to do for most failures. Each shell now records the
+  errors it reports (`ScriptRunner.ErrorTally`), and a line that reported one fails — fail-fast by
+  default, listed under `Script completed with errors:`, exit status 1 — which is what the scripting
+  guides already described. This applies to `jfr-shell script`, `script` at either prompt, and
+  `jafar-shell script`, and to `ask`/`as-query`/`explain`/`llm`, whose failures (no backend, no
+  session, no query in the reply, a query that failed, nothing to explain) now go through a new
+  `LlmCommands.Host.error`; `llm status` and dry runs are not failures. A script that relied on running past a failing line needs
+  `--continue-on-error` (command line) now
+- **`jafar-shell -f script` opens a file named `script`.** The value of `-f`/`--file` (and of a
+  cluster such as `-qf`, and of `--backend`/`--plugin-dir`/`--install-plugin`) was taken for the
+  first word of the command line, so it ran the script command, or jfr-shell's command line for
+  `-f show`. The command is now the first word that is not an option or an option's value
+- **Shebang scripts run.** The documented `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`
+  never worked as an executable: the kernel runs `... script - ./analyze.jfrs app.jfr`, so `-` read
+  stdin (the terminal, or nothing) and `$1` was the script's own path — piped in, `open $1` opened
+  the script as a recording. When the path is `-` and the first argument is a file starting with
+  `#!`, both `jfr-shell script` and `jafar-shell script` now run that file with the remaining
+  arguments as `$1`, `$2`, ...
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way, and the chunk-id and constant-pool-type scans collected from the chunk threads into an
+  `ArrayList` and a `HashSet` (chunk ids could also come back out of order). All are now
+  thread-safe, and chunk ids are sorted
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field, and an `invalidate()` or `release()` made while an evaluation is running is no longer
+  undone when that evaluation finishes (it publishes only if nothing replaced the slot it started
+  from). Shells dispatch commands on one thread, so this needed concurrent access to a variable to
+  show
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
+- **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
+  `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
+  conditional expression in the map parser promoted the `long` branch to `double`. Decimals are
+  unchanged
+- **The shipped example scripts run.** `gc-analysis.jfrs` and `thread-profiling.jfrs` used
+  `top(N, by=sum(field))`, which JfrPath does not accept, and `thread-profiling.jfrs` grouped
+  `jdk.ThreadAllocationStatistics` by a field it does not have; `map-operations.jfrs` echoed a
+  `${...}` it never defined. The same queries were corrected in the scripting, script-execution and
+  command-recording guides
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that
@@ -28,7 +201,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies every dependency jar into the plugin's storage, where the plugin classloader already
   looks
 
+
+### Security
+- **`llm.api-key` is no longer written or shown in full.** In both shells and the TUI: a line
+  setting it is kept out of the history files (`~/.jfr-shell/history`, `~/.jafar-shell/history`),
+  and a key line saved there by an earlier version is removed at the next start; a command
+  recording writes it as a comment without the value; `set`'s confirmation, `vars` and
+  `vars --info` show `<hidden, ends in "TAIL">`. The stored value is unchanged
+
 ### Changed
+- **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
+  `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
+  for the whole shell. The LLM commands read the session's value first, then the global one
+- **`CommandRecorder` moved** from `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s
+  `io.jafar.shell.core.scripting`; jfr-shell's recordings are unchanged
+- **`ScriptRunner`, `VariableSubstitutor`, `ConditionEvaluator` and `ConditionalState` moved** from
+  `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s `io.jafar.shell.core.scripting`;
+  `ScriptRunner` now takes a line dispatcher (`dispatcher::dispatch`) instead of a
+  `CommandDispatcher` and an unused `IO`
 - **Javadoc jars drop ~4 MiB each.** They were up to 90% javadoc's own bundled DejaVu web
   fonts; excluded at jar-packaging for every published module's docs
 - **The MCP server jar drops from 38.2 MiB to 13.2 MiB.**** Four cuts, all content-level (the jar

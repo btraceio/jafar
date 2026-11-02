@@ -39,6 +39,23 @@ public interface QueryEvaluator {
     return evaluate(session, query);
   }
 
+  /**
+   * Whether a parsed query's result is one map rather than rows — JfrPath's {@code toMap()}, which
+   * returns a single row holding the map. A query variable built from such a query is read as that
+   * map: {@code ${v.size}} counts its entries and {@code ${v.key}} reads one, as in jfr-shell,
+   * which stores the variable as a map. Languages without a map-producing operator keep the
+   * default.
+   *
+   * <p>This must be decided from the query, not the rows: every row is a map, so a one-row result
+   * of any query looks the same as a {@code toMap()} result.
+   *
+   * @param query the parsed query object, from {@link #parse}
+   * @return {@code true} if the result is a single map
+   */
+  default boolean producesMap(Object query) {
+    return false;
+  }
+
   /** Returns the root types supported by this query language (e.g. "events", "objects"). */
   List<String> getRootTypes();
 

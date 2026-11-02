@@ -12,10 +12,13 @@ import io.jafar.shell.backend.MetadataSource;
 import io.jafar.shell.backend.UnsupportedCapabilityException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -47,7 +50,9 @@ import org.junit.jupiter.api.TestInstance;
  *   <li>Event source functionality (if supported)
  *   <li>Metadata source functionality (if supported)
  *   <li>Chunk source functionality (if supported)
- *   <li>Constant pool source functionality (if supported)
+ *   <li>Constant pool source functionality (if supported), and that its operations agree: the
+ *       available types, the summary, the entry listing and {@code crossref} describe the same
+ *       pools, on every run
  * </ul>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -417,5 +422,112 @@ public abstract class BackendTck {
 
     assertNotNull(entries, "Constant pool entries should not be null");
     // May be empty for some types
+  }
+
+  // ==================== Constant Pool Consistency Tests ====================
+  //
+  // The constant pool operations describe the same pools, so their answers must agree. Pool ids are
+  // chunk-local: an entry is one id in one chunk, and counts are per chunk, summed. The built-in
+  // recording has two chunks, which a backend may parse in parallel.
+
+  @Test
+  void constantPoolAvailableTypesMatchSummary() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Set<String> types = new TreeSet<>(source.getAvailableTypes(recording));
+    Set<String> summarized = new TreeSet<>(summaryByName(source, recording).keySet());
+
+    assertEquals(
+        summarized, types, "getAvailableTypes() must name every pool loadSummary() counts");
+  }
+
+  @Test
+  void constantPoolEntriesMatchSummaryTotals() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    // The largest pools; every loadEntries() call reads the whole recording.
+    for (String type : largestPools(summaryByName(source, recording), 5)) {
+      long total = summaryByName(source, recording).get(type);
+      List<Map<String, Object>> entries = source.loadEntries(recording, type);
+      assertEquals(
+          total,
+          entries.size(),
+          "loadEntries(" + type + ") must list each entry loadSummary() counts, once");
+    }
+  }
+
+  @Test
+  void constantPoolSummaryIsDeterministic() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Map<String, Long> first = summaryByName(source, recording);
+    for (int run = 1; run < 3; run++) {
+      assertEquals(first, summaryByName(source, recording), "loadSummary() run " + run);
+    }
+  }
+
+  @Test
+  void constantPoolCrossrefMatchesSummary() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+    Map<String, Long> summary = summaryByName(source, recording);
+    List<String> largest = largestPools(summary, 1);
+    if (largest.isEmpty()) {
+      return; // No constant pools in this recording
+    }
+    String type = largest.get(0);
+
+    Map<String, Object> result;
+    try {
+      result = source.crossref(recording, type);
+    } catch (UnsupportedOperationException e) {
+      return; // crossref is optional (ConstantPoolSource's default throws)
+    }
+    long total = ((Number) result.get("cpTotal")).longValue();
+    long referenced = ((Number) result.get("cpReferenced")).longValue();
+    long unused = ((Number) result.get("cpUnused")).longValue();
+    String ctx = "crossref(" + type + "): " + result;
+    assertEquals(summary.get(type).longValue(), total, "cpTotal must equal loadSummary(); " + ctx);
+    assertTrue(referenced >= 0 && referenced <= total, ctx);
+    assertEquals(total - referenced, unused, ctx);
+  }
+
+  /** {@code loadSummary()} as pool type to total size; fails on a repeated type. */
+  private static Map<String, Long> summaryByName(ConstantPoolSource source, Path recording)
+      throws Exception {
+    Map<String, Long> byName = new TreeMap<>();
+    for (Map<String, Object> row : source.loadSummary(recording)) {
+      String name = (String) row.get("name");
+      long size = ((Number) row.get("totalSize")).longValue();
+      assertNull(byName.put(name, size), "loadSummary() lists " + name + " more than once");
+    }
+    return byName;
+  }
+
+  /** The {@code n} largest pools, ties by name, so the choice is the same on every run. */
+  private static List<String> largestPools(Map<String, Long> summary, int n) {
+    return summary.entrySet().stream()
+        .filter(e -> e.getValue() > 0)
+        .sorted(
+            Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder())
+                .thenComparing(Map.Entry.comparingByKey()))
+        .limit(n)
+        .map(Map.Entry::getKey)
+        .toList();
   }
 }

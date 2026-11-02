@@ -164,14 +164,15 @@ final class SyntheticRecording {
     return sized(body.toByteArray());
   }
 
-  private static byte[] emptyCheckpointEvent() {
+  /** A checkpoint event holding {@code constantPools}: the pool count, then each pool. */
+  private static byte[] checkpointEvent(byte[] constantPools) {
     Bytes body = new Bytes();
     body.varint(1); // event type: checkpoint
     body.varint(200); // start time
     body.varint(0); // duration
     body.varint(0); // next offset delta: last checkpoint of the chunk
     body.u8(0); // flush flag
-    body.varint(0); // no constant pools
+    body.raw(constantPools);
     return sized(body.toByteArray());
   }
 
@@ -188,11 +189,37 @@ final class SyntheticRecording {
       long startTicks,
       long frequency,
       long durationNanos) {
+    return chunk(
+        metadata,
+        new Bytes().varint(0).toByteArray(), // no constant pools
+        events,
+        startNanos,
+        startTicks,
+        frequency,
+        durationNanos);
+  }
+
+  /**
+   * Assembles a chunk with one checkpoint.
+   *
+   * @param metadata the metadata root element
+   * @param constantPools the checkpoint's constant pool section: the pool count, then for each pool
+   *     its type id, entry count and entries ({@code id} followed by the entry's bytes)
+   * @param events event bodies, each starting with the event type id varint
+   */
+  static byte[] chunk(
+      Element metadata,
+      byte[] constantPools,
+      List<byte[]> events,
+      long startNanos,
+      long startTicks,
+      long frequency,
+      long durationNanos) {
     Bytes eventBytes = new Bytes();
     for (byte[] ev : events) {
       eventBytes.raw(sized(ev));
     }
-    byte[] checkpoint = emptyCheckpointEvent();
+    byte[] checkpoint = checkpointEvent(constantPools);
     byte[] meta = metadataEvent(metadata);
 
     long cpOffset = CHUNK_HEADER_SIZE + eventBytes.size();

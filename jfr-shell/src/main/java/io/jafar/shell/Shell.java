@@ -2,10 +2,10 @@ package io.jafar.shell;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.CommandRecorder;
-import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.CommandRecorder;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +18,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
@@ -31,7 +30,8 @@ public final class Shell implements AutoCloseable {
   private final SessionManager<JFRSession> sessions;
   private final CommandDispatcher dispatcher;
   private boolean running = true;
-  private final DefaultHistory history;
+  private final io.jafar.shell.core.SecretFilteringHistory
+      history; // never holds an llm.api-key line
 
   public Shell() throws IOException {
     this.terminal = TerminalBuilder.builder().system(true).build();
@@ -44,7 +44,7 @@ public final class Shell implements AutoCloseable {
       java.nio.file.Files.createDirectories(histPath.getParent());
     } catch (Exception ignore) {
     }
-    this.history = new DefaultHistory();
+    this.history = new io.jafar.shell.core.SecretFilteringHistory();
     // Create dispatcher first so it can be passed to ShellCompleter
     this.dispatcher =
         new CommandDispatcher(
@@ -402,31 +402,8 @@ public final class Shell implements AutoCloseable {
                 terminal.flush();
               });
 
-      ScriptRunner runner =
-          new ScriptRunner(
-              dispatcher,
-              new CommandDispatcher.IO() {
-                @Override
-                public void println(String s) {
-                  terminal.writer().println(s);
-                  terminal.flush();
-                }
-
-                @Override
-                public void printf(String fmt, Object... args) {
-                  terminal.writer().printf(fmt, args);
-                  terminal.flush();
-                }
-
-                @Override
-                public void error(String s) {
-                  terminal.writer().println(s);
-                  terminal.flush();
-                }
-              },
-              effectiveArgs);
-
-      ScriptRunner.ExecutionResult result = runner.execute(scriptPath);
+      ScriptRunner.ExecutionResult result =
+          dispatcher.runScript(Files.readAllLines(scriptPath), effectiveArgs, false);
 
       if (result.hasErrors()) {
         terminal.writer().println("\nScript completed with errors:");
@@ -496,6 +473,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  elif <condition>               Else-if branch");
     terminal.writer().println("  else                           Else branch");
     terminal.writer().println("  endif                          End conditional block");
+    terminal
+        .writer()
+        .println("  A condition that fails to evaluate is an error, not false: no branch of");
+    terminal
+        .writer()
+        .println("  its block runs, and the block stays open (...(N)>) until its endif.");
     terminal.writer().println();
     terminal.writer().println("Scripting:");
     terminal.writer().println("  script list                    List available scripts");
