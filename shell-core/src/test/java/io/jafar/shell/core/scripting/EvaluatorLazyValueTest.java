@@ -381,26 +381,32 @@ class EvaluatorLazyValueTest {
     global.set("n", new VariableStore.ScalarValue(5L));
     VariableScopes scopes = new VariableScopes(global, () -> null);
     Conditionals c = new Conditionals();
-    List<String> errors = new ArrayList<>();
 
-    assertTrue(c.handle("if ${n} > 10", scopes, errors::add));
+    assertTrue(c.handle("if ${n} > 10", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("if ${undefined} > 1", scopes, errors::add)); // nested, not evaluated
-    assertTrue(c.handle("endif", scopes, errors::add));
-    assertTrue(c.handle("elif ${n} == 5", scopes, errors::add));
+    assertTrue(c.handle("if ${undefined} > 1", scopes)); // nested, not evaluated
+    assertTrue(c.handle("endif", scopes));
+    assertTrue(c.handle("elif ${n} == 5", scopes));
     assertTrue(c.isActive());
-    assertTrue(c.handle("else", scopes, errors::add));
+    assertTrue(c.handle("else", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("endif", scopes, errors::add));
+    assertTrue(c.handle("endif", scopes));
     assertTrue(c.isActive());
-    assertFalse(c.handle("iffy", scopes, errors::add));
-    assertEquals(List.of(), errors, "the nested condition was never evaluated");
+    assertFalse(c.handle("iffy", scopes));
 
-    assertTrue(c.handle("if ${nope} > 1", scopes, errors::add));
-    assertFalse(c.isActive(), "a failing condition counts as false");
-    assertEquals(1, errors.size());
-    assertThrows(
-        IllegalStateException.class, () -> new Conditionals().handle("endif", scopes, e -> {}));
+    // A failing condition is an error, not false: no branch of the block runs, else included
+    ConditionalException failed =
+        assertThrows(ConditionalException.class, () -> c.handle("if ${nope} > 1", scopes));
+    assertTrue(
+        failed.getMessage().startsWith("Condition evaluation failed: "), failed.getMessage());
+    assertFalse(c.isActive());
+    assertTrue(c.handle("else", scopes));
+    assertFalse(c.isActive(), "the else of a failed condition does not run");
+    assertTrue(c.handle("endif", scopes));
+    assertTrue(c.isActive());
+    ConditionalException stray =
+        assertThrows(ConditionalException.class, () -> new Conditionals().handle("endif", scopes));
+    assertEquals("endif without if", stray.getMessage());
   }
 
   @Test
@@ -409,26 +415,24 @@ class EvaluatorLazyValueTest {
     global.set("rows", lazy(null));
     VariableScopes scopes = new VariableScopes(global, () -> null);
     Conditionals c = new Conditionals();
-    List<String> errors = new ArrayList<>();
 
     // A taken branch: later elifs are irrelevant
-    c.handle("if 1 == 1", scopes, errors::add);
-    c.handle("elif ${rows.size} > 0", scopes, errors::add);
-    c.handle("elif ${undefined} > 0", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
+    c.handle("if 1 == 1", scopes);
+    c.handle("elif ${rows.size} > 0", scopes);
+    c.handle("elif ${undefined} > 0", scopes);
+    c.handle("endif", scopes);
     // Under a skipped block: the whole nested block is irrelevant
-    c.handle("if 1 == 2", scopes, errors::add);
-    c.handle("if ${rows.size} > 0", scopes, errors::add);
-    c.handle("elif ${undefined} > 0", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
-    c.handle("endif", scopes, errors::add);
+    c.handle("if 1 == 2", scopes);
+    c.handle("if ${rows.size} > 0", scopes);
+    c.handle("elif ${undefined} > 0", scopes);
+    c.handle("endif", scopes);
+    c.handle("endif", scopes);
 
-    assertEquals(List.of(), errors);
     assertEquals(0, evaluator.evaluations, "no lazy query run for a branch that cannot execute");
 
     // Still evaluated when it can be taken
-    c.handle("if 1 == 2", scopes, errors::add);
-    c.handle("elif ${rows.size} == 2", scopes, errors::add);
+    c.handle("if 1 == 2", scopes);
+    c.handle("elif ${rows.size} == 2", scopes);
     assertTrue(c.isActive());
     assertEquals(1, evaluator.evaluations);
   }
@@ -437,12 +441,12 @@ class EvaluatorLazyValueTest {
   void keywordsAreWholeWordsInAnyCase() {
     VariableScopes scopes = new VariableScopes(new VariableStore(), () -> null);
     Conditionals c = new Conditionals();
-    assertFalse(c.handle("ifx 1", scopes, e -> {}));
-    assertFalse(c.handle("endiff", scopes, e -> {}));
-    assertFalse(c.handle("show if", scopes, e -> {}));
-    assertTrue(c.handle("  IF\t1 == 2", scopes, e -> {}));
+    assertFalse(c.handle("ifx 1", scopes));
+    assertFalse(c.handle("endiff", scopes));
+    assertFalse(c.handle("show if", scopes));
+    assertTrue(c.handle("  IF\t1 == 2", scopes));
     assertFalse(c.isActive());
-    assertTrue(c.handle("If 1 == 1", scopes, e -> {}));
+    assertTrue(c.handle("If 1 == 1", scopes));
     assertEquals(2, c.state().depth());
   }
 

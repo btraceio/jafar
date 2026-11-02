@@ -12,6 +12,7 @@ import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.scripting.CommandRecorder;
+import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -54,7 +55,6 @@ public final class Shell implements AutoCloseable {
       new CommandRecorder(
           Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
   // Built once: execute() passes it for every line
-  private final java.util.function.Consumer<String> errorSink = this::printError;
   private int scriptDepth;
   // Set by fail() while a line runs, so a script stops on a line that reported an error
   private String lineFailure;
@@ -349,10 +349,12 @@ public final class Shell implements AutoCloseable {
     // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
     // balanced; every other line in such a branch is skipped.
     try {
-      if (conditionals.handle(input, variables.scopes(), errorSink)) {
+      if (conditionals.handle(input, variables.scopes())) {
         return true;
       }
-    } catch (IllegalStateException e) {
+    } catch (ConditionalException e) {
+      // A failed condition has entered its block with no branch running; printError marks the
+      // line failed, so a script counts it (and stops unless continue-on-error).
       printError(e.getMessage());
       return true;
     }
@@ -1461,6 +1463,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Scripting:");
     terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
     terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
+    terminal
+        .writer()
+        .println("                     A condition that fails to evaluate is an error, not");
+    terminal
+        .writer()
+        .println("                     false: no branch runs; the block stays open to endif");
     terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
     terminal.writer().println("  record start [path] | stop | status");
     terminal.writer().println("                     Save the commands you type as a script");

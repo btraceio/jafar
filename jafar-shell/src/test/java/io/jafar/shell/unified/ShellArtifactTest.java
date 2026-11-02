@@ -238,6 +238,29 @@ class ShellArtifactTest {
     assertTrue(cont.out().contains("two"), cont.out());
   }
 
+  /**
+   * A condition that cannot be evaluated is an error, not false: no branch runs — not the if's, and
+   * not the else, which used to run as though the condition had been false.
+   */
+  @Test
+  void failedConditionRunsNoBranch(@TempDir Path dir) throws Exception {
+    String lines = "if 1 / 0 > 1\necho THEN\nelse\necho ELSE\nendif\necho AFTER\n";
+
+    Run cont = runJarRaw(dir, lines, "script", "-", "--continue-on-error");
+    assertEquals(1, cont.exit(), cont.out() + cont.err());
+    assertFalse(cont.out().contains("THEN"), cont.out());
+    assertFalse(cont.out().contains("ELSE"), cont.out());
+    assertTrue(cont.out().contains("AFTER"), cont.out());
+    assertTrue(cont.err().contains("Condition evaluation failed: Division by zero"), cont.err());
+
+    // Typed at the prompt: the error is shown, the block stays open to its endif, no branch runs
+    String typed = runJar(dir, lines + "exit\n");
+    assertTrue(typed.contains("skipping every branch of this if-block"), typed);
+    assertFalse(typed.contains("THEN"), typed);
+    assertFalse(typed.contains("ELSE"), typed);
+    assertTrue(typed.contains("AFTER"), typed);
+  }
+
   /** 'record' saves what is typed as a script that 'jafar-shell script' replays. */
   @Test
   void recordsASessionThatReplaysAsAScript(@TempDir Path dir) throws Exception {
