@@ -421,7 +421,8 @@ class ShellArtifactTest {
   /**
    * Lines that start with a command word but are queries: jfr-shell's handlers would print every
    * chunk for {@code | count()} and ignore {@code --limit}. {@code cp <type> | crossref()} is the
-   * one pipeline that stays a command.
+   * one pipeline jfr-shell's handler takes; it runs the {@code crossref()} query, so it prints the
+   * same row as the query forms the unified shell evaluates itself.
    */
   @Test
   void keepsPipedAndLimitedLinesAsQueries(@TempDir Path dir) throws Exception {
@@ -439,6 +440,10 @@ class ShellArtifactTest {
                 "chunks --limit 1",
                 "echo [crossref]",
                 "cp jdk.types.Symbol | crossref()",
+                "echo [crossref-query]",
+                "constants/jdk.types.Symbol | crossref()",
+                "echo [crossref-show]",
+                "show constants/jdk.types.Symbol | crossref()",
                 "echo [regex]",
                 "metadata --regex ^jdk\\.Thread(Start|End)$",
                 "exit",
@@ -449,8 +454,23 @@ class ShellArtifactTest {
     assertTrue(count.contains("\"count\""), count); // the count, not the chunk rows
     assertFalse(count.contains("startTicks"), count);
     assertTrue(between(output, "[limit]", "[crossref]").contains("(1 rows)"), output);
-    assertTrue(
-        between(output, "[crossref]", "[regex]").contains("Constant Pool Crosscheck"), output);
+    // The query forms printed "Query error: Unknown pipeline function: crossref", which the
+    // "Error" check above does not catch; each form is checked on its own.
+    String[][] forms = {
+      {"[crossref]", "[crossref-query]"},
+      {"[crossref-query]", "[crossref-show]"},
+      {"[crossref-show]", "[regex]"}
+    };
+    org.junit.jupiter.api.Assertions.assertAll(
+        java.util.Arrays.stream(forms)
+            .map(
+                m ->
+                    () -> {
+                      String crossref = between(output, m[0], m[1]);
+                      assertFalse(crossref.toLowerCase().contains("error"), crossref);
+                      assertTrue(crossref.contains("referencingEventTypes"), crossref);
+                      assertTrue(crossref.contains("jdk.types.Symbol"), crossref);
+                    }));
     String regex = output.substring(output.indexOf("[regex]"));
     assertTrue(regex.contains("jdk.ThreadStart") && regex.contains("jdk.ThreadEnd"), regex);
   }
