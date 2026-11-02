@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,11 @@ class StdioSseBridgeTest {
   private Thread bridgeThread;
 
   private void start(boolean requireAuth, String tokenToSend) throws Exception {
+    start(requireAuth, tokenToSend, null);
+  }
+
+  private void start(boolean requireAuth, String tokenToSend, StdioSseBridge.Hooks hooks)
+      throws Exception {
     daemon = new FakeSseDaemon().start(requireAuth);
     toBridge = new PipedOutputStream();
     PipedInputStream bridgeIn = new PipedInputStream(toBridge, 1 << 16);
@@ -50,6 +56,9 @@ class StdioSseBridgeTest {
             bridgeOut,
             new PrintStream(diag, true, StandardCharsets.UTF_8),
             Duration.ofMillis(1500));
+    if (hooks != null) {
+      bridge.hooks = hooks;
+    }
     bridgeThread = new Thread(() -> exitCode.set(bridge.run()), "bridge-under-test");
     bridgeThread.setDaemon(true);
     bridgeThread.start();
@@ -199,6 +208,113 @@ class StdioSseBridgeTest {
         List.of("initialize", "notifications/initialized", "tools/list"),
         onNewSession,
         "new session must be initialized exactly as the client initialized the old one");
+  }
+
+  /**
+   * The SSE reader notices the dropped stream after the next request is registered as in flight but
+   * before its POST has met the 404. That request belongs to the delivery retry loop, which
+   * reconnects and delivers it; the stream ending must not fail it to the client.
+   */
+  @Test
+  void aRequestBeingDeliveredWhenTheStreamEndsIsRetriedNotFailed() throws Exception {
+    // Forces: request 3 registered -> onStreamEnded runs to completion -> request 3 posted.
+    CountDownLatch registered = new CountDownLatch(1);
+    CountDownLatch streamEnded = new CountDownLatch(1);
+    CountDownLatch readerHeld = new CountDownLatch(1);
+    CountDownLatch held = new CountDownLatch(1);
+    start(
+        true,
+        FakeSseDaemon.TOKEN,
+        new StdioSseBridge.Hooks() {
+          @Override
+          public void beforeDelivery(String idKey) {
+            if ("3".equals(idKey)) {
+              registered.countDown();
+              awaitQuietly(streamEnded, held);
+            }
+          }
+
+          @Override
+          public void streamEnding() {
+            awaitQuietly(registered, readerHeld);
+          }
+
+          @Override
+          public void streamEnded() {
+            streamEnded.countDown();
+          }
+        });
+    handshake();
+    send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+    assertEquals("s1", next().get("result").get("session").asString());
+
+    daemon.dropAllSessions();
+    send("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}");
+
+    JsonNode response = next();
+    assertEquals(3, response.get("id").asInt(), "unexpected frame: " + response);
+    assertNotNull(response.get("result"), "request 3 was failed instead of retried: " + response);
+    assertEquals("s2", response.get("result").get("session").asString());
+    assertEquals(0, readerHeld.getCount(), "the interleaving was not forced: never registered");
+    assertEquals(0, held.getCount(), "the interleaving was not forced: stream end not seen");
+
+    // Answered once: the next frame on stdout belongs to the next request.
+    send("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}");
+    assertEquals(4, next().get("id").asInt());
+  }
+
+  /**
+   * The converse: the daemon accepts the request, then the stream that would carry its reply ends
+   * while the request is still marked as being delivered. Its reply can never arrive, so it must
+   * get an error, and exactly one.
+   */
+  @Test
+  void aRequestAcceptedJustBeforeTheStreamEndsStillGetsAnErrorResponse() throws Exception {
+    CountDownLatch streamEnded = new CountDownLatch(1);
+    CountDownLatch held = new CountDownLatch(1);
+    FakeSseDaemon[] daemonRef = new FakeSseDaemon[1];
+    start(
+        true,
+        FakeSseDaemon.TOKEN,
+        new StdioSseBridge.Hooks() {
+          @Override
+          public void acceptedBeforeSettling(String idKey) {
+            if ("8".equals(idKey)) {
+              daemonRef[0].dropAllSessions();
+              awaitQuietly(streamEnded, held);
+            }
+          }
+
+          @Override
+          public void streamEnded() {
+            streamEnded.countDown();
+          }
+        });
+    daemonRef[0] = daemon;
+    handshake();
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"hang\"}");
+
+    JsonNode response = next();
+    assertEquals(8, response.get("id").asInt(), "unexpected frame: " + response);
+    assertEquals(-32603, response.get("error").get("code").asInt());
+    assertEquals(0, held.getCount(), "the interleaving was not forced: stream end not seen");
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/list\"}");
+    JsonNode after = next();
+    assertEquals(9, after.get("id").asInt(), "request 8 was answered twice: " + after);
+    assertEquals("s2", after.get("result").get("session").asString());
+  }
+
+  /** Blocks the calling bridge thread until {@code latch} opens; counts {@code done} if it did. */
+  private static void awaitQuietly(CountDownLatch latch, CountDownLatch done) {
+    try {
+      if (latch.await(WAIT_MS, TimeUnit.MILLISECONDS)) {
+        done.countDown();
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   @Test

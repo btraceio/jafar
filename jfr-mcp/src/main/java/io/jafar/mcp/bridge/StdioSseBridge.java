@@ -73,6 +73,41 @@ public final class StdioSseBridge {
   /** Requests sent but not yet answered, by canonical JSON id. */
   private final Map<String, String> inFlight = new ConcurrentHashMap<>();
 
+  /**
+   * Makes registering a request together with marking it {@link #delivering} atomic with respect to
+   * failing what is in flight, so a lost stream can never see the one without the other.
+   */
+  private final Object inFlightLock = new Object();
+
+  /**
+   * The request {@link #post} is delivering, or {@code null}. Until {@code post} settles it, its
+   * retry loop owns it: a stream that ends meanwhile must leave it alone, because the loop will
+   * either reconnect and deliver it or fail it itself. Guarded by {@link #inFlightLock}.
+   */
+  private String delivering;
+
+  /**
+   * Seams that let a test hold one thread at a chosen point so a race can be forced rather than
+   * waited for. Every method is a no-op in production.
+   */
+  interface Hooks {
+    /** On the stdin thread: the request is registered as in flight, and not yet posted. */
+    default void beforeDelivery(String idKey) {}
+
+    /** On the stdin thread: the daemon accepted the request, and the outcome is not yet settled. */
+    default void acceptedBeforeSettling(String idKey) {}
+
+    /** On an SSE reader thread: the stream ended, and {@code onStreamEnded} has not yet run. */
+    default void streamEnding() {}
+
+    /** On an SSE reader thread: {@code onStreamEnded} has finished. */
+    default void streamEnded() {}
+  }
+
+  private static final Hooks NO_HOOKS = new Hooks() {};
+
+  volatile Hooks hooks = NO_HOOKS;
+
   private volatile boolean closing;
   private volatile String swallowId;
   private volatile CountDownLatch swallowLatch = new CountDownLatch(0);
@@ -152,10 +187,23 @@ public final class StdioSseBridge {
     }
     String idKey = frame.isRequest() ? frame.idJson() : null;
     if (idKey != null) {
-      inFlight.put(idKey, frame.method());
+      synchronized (inFlightLock) {
+        delivering = idKey;
+        inFlight.put(idKey, frame.method());
+      }
     }
+    hooks.beforeDelivery(idKey);
 
-    boolean delivered = post(line, idKey);
+    boolean delivered;
+    try {
+      delivered = post(line, idKey);
+    } finally {
+      if (idKey != null) {
+        synchronized (inFlightLock) {
+          delivering = null; // every path out of post() has answered it or handed it to the daemon
+        }
+      }
+    }
 
     // Cache only what the daemon actually accepted, and only after the first delivery, so a
     // reconnect replays the client's handshake rather than duplicating it on the first connect.
@@ -184,6 +232,8 @@ public final class StdioSseBridge {
         Connection c = ensureConnected();
         int status = postTo(c, line);
         if (status < 300) {
+          hooks.acceptedBeforeSettling(idKey);
+          settleAccepted(c, idKey);
           return true;
         }
         if (status == 404 || status == 410) {
@@ -213,6 +263,24 @@ public final class StdioSseBridge {
         idKey,
         "cannot reach the jfr-mcp daemon: " + (last == null ? "unknown" : last.getMessage()));
     return false;
+  }
+
+  /**
+   * Hands an accepted request over to the stream that will carry its reply. If that stream has
+   * already ended, it skipped this request while {@link #post} owned it, and the reply can never
+   * arrive: fail it now. Either way it is answered at most once, because only whoever removes it
+   * from {@link #inFlight} answers it.
+   */
+  private void settleAccepted(Connection c, String idKey) {
+    if (idKey == null) {
+      return;
+    }
+    synchronized (inFlightLock) {
+      delivering = null;
+      if (c.dead) {
+        fail(idKey, "the connection to the jfr-mcp daemon was lost; retry the request");
+      }
+    }
   }
 
   private Connection ensureConnected() throws IOException {
@@ -389,17 +457,28 @@ public final class StdioSseBridge {
   }
 
   private void onStreamEnded(Connection c) {
+    hooks.streamEnding();
+    try {
+      streamEnded(c);
+    } finally {
+      hooks.streamEnded();
+    }
+  }
+
+  private void streamEnded(Connection c) {
     if (c.dead) {
       return; // we closed it ourselves and already dealt with what was in flight
     }
+    // No bridge lock here: post() may hold it for a whole POST or handshake replay, and what is in
+    // flight must not wait for that. ensureConnected() replaces a dead connection by itself.
     c.dead = true;
-    synchronized (this) {
-      if (connection == c) {
-        connection = null;
-      }
-    }
     if (!closing) {
-      failInFlight(null, "the connection to the jfr-mcp daemon was lost; retry the request");
+      synchronized (inFlightLock) {
+        // The request being delivered is post()'s: it reconnects and delivers it, or fails it, or,
+        // if this connection already accepted it, settleAccepted() sees it dead and fails it.
+        failInFlight(
+            delivering, "the connection to the jfr-mcp daemon was lost; retry the request");
+      }
     }
   }
 
@@ -431,9 +510,11 @@ public final class StdioSseBridge {
   }
 
   private void failInFlight(String exceptKey, String message) {
-    for (String key : new ArrayList<>(inFlight.keySet())) {
-      if (!key.equals(exceptKey) && inFlight.remove(key) != null) {
-        writeError(key, message);
+    synchronized (inFlightLock) {
+      for (String key : new ArrayList<>(inFlight.keySet())) {
+        if (!key.equals(exceptKey) && inFlight.remove(key) != null) {
+          writeError(key, message);
+        }
       }
     }
   }
