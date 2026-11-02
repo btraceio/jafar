@@ -29,6 +29,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
@@ -89,6 +91,11 @@ final class JafarSources {
     Collection<T> inChunkOrder() {
       return byChunk.values();
     }
+
+    /** Chunk index -> accumulator, in chunk order. Call only after {@code parse} has returned. */
+    SortedMap<Integer, T> byChunkIndex() {
+      return Collections.unmodifiableSortedMap(byChunk);
+    }
   }
 
   // ==================== MetadataSource Implementation ====================
@@ -97,9 +104,7 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-      // Last chunk, in recording order, that defines the type wins -- what a sequential parse
-      // overwriting one slot would return. The slot itself raced: which chunk's class came back
-      // depended on which thread finished last.
+      // Every chunk that defines the type contributes; see mergeClassDefinitions.
       final PerChunk<Map<String, Object>[]> perChunk = new PerChunk<>(() -> new Map[1]);
       if (System.getProperty("jfr.shell.completion.debug") != null) {
         System.err.println("[DEBUG] JafarMetadataSource.loadClass() called for: " + typeName);
@@ -147,12 +152,15 @@ final class JafarSources {
             });
       }
 
-      Map<String, Object> result = null;
-      for (Map<String, Object>[] slot : perChunk.inChunkOrder()) {
-        if (slot[0] != null) {
-          result = slot[0];
-        }
-      }
+      SortedMap<Integer, Map<String, Object>> defsByChunk = new TreeMap<>();
+      perChunk
+          .byChunkIndex()
+          .forEach(
+              (chunk, slot) -> {
+                if (slot[0] != null) defsByChunk.put(chunk, slot[0]);
+              });
+      Map<String, Object> result =
+          defsByChunk.isEmpty() ? null : mergeClassDefinitions(defsByChunk);
       if (System.getProperty("jfr.shell.completion.debug") != null) {
         System.err.println(
             "[DEBUG] JafarMetadataSource.loadClass() returning: "
@@ -198,8 +206,21 @@ final class JafarSources {
               }
             });
       }
-      List<Map<String, Object>> result = new ArrayList<>();
-      perChunk.inChunkOrder().forEach(result::addAll);
+      // One row per class name, not per chunk: name -> chunk -> definition, names in first-seen
+      // order. Rows used to repeat for every chunk (340 rows for 304 classes in tck-test.jfr).
+      Map<String, SortedMap<Integer, Map<String, Object>>> byName = new LinkedHashMap<>();
+      perChunk
+          .byChunkIndex()
+          .forEach(
+              (chunk, defs) -> {
+                for (Map<String, Object> def : defs) {
+                  byName
+                      .computeIfAbsent((String) def.get("name"), k -> new TreeMap<>())
+                      .put(chunk, def);
+                }
+              });
+      List<Map<String, Object>> result = new ArrayList<>(byName.size());
+      byName.values().forEach(defsByChunk -> result.add(mergeClassDefinitions(defsByChunk)));
       return result;
     }
 
@@ -227,17 +248,14 @@ final class JafarSources {
 
       // Settings
       try {
-        Map<String, Map<String, Object>> settingsByName = new HashMap<>();
+        Map<String, Map<String, Object>> settingsByName = new LinkedHashMap<>();
         List<String> settingsDisplay = new ArrayList<>();
         for (Map.Entry<String, Map<String, Object>> e : clazz.getSettingsByName().entrySet()) {
           String sName = e.getKey();
           @SuppressWarnings("unchecked")
           Map<String, Object> sm = (Map<String, Object>) e.getValue();
           settingsByName.put(sName, sm);
-          String st = String.valueOf(sm.get("type"));
-          Object dv = sm.get("defaultValue");
-          String def = dv == null ? null : String.valueOf(dv);
-          settingsDisplay.add(sName + ":" + st + (def != null ? (" (" + def + ")") : ""));
+          settingsDisplay.add(settingDisplay(sName, sm));
         }
         meta.put("settingsByName", settingsByName);
         meta.put("settings", settingsDisplay);
@@ -245,7 +263,8 @@ final class JafarSources {
       }
 
       // Fields
-      Map<String, Map<String, Object>> fieldsByName = new HashMap<>();
+      // Declaration order: the merge across chunks keeps it, and appends fields later chunks add.
+      Map<String, Map<String, Object>> fieldsByName = new LinkedHashMap<>();
       List<String> fieldsDisplay = new ArrayList<>();
       for (MetadataField f : clazz.getFields()) {
         try {
@@ -263,7 +282,6 @@ final class JafarSources {
           } catch (Throwable t) {
             dim = -1;
           }
-          String dimSuffix = dim > 0 ? "[]".repeat(dim) : "";
           fm.put("name", fName);
           fm.put("type", fType);
           fm.put("dimension", dim);
@@ -292,13 +310,7 @@ final class JafarSources {
           fm.put("annotations", ann);
           fm.put("annotationsFull", annFull);
           fieldsByName.put(fName, fm);
-          String disp =
-              fName
-                  + ":"
-                  + fType
-                  + dimSuffix
-                  + (ann.isEmpty() ? "" : (" " + String.join(" ", ann)));
-          fieldsDisplay.add(disp);
+          fieldsDisplay.add(fieldDisplay(fm));
         } catch (Throwable ignoreField) {
           // skip problematic field
         }
@@ -307,6 +319,170 @@ final class JafarSources {
       meta.put("fields", fieldsDisplay);
       meta.put("fieldCount", fieldsDisplay.size());
       return meta;
+    }
+
+    private static String settingDisplay(String name, Map<String, Object> setting) {
+      Object dv = setting.get("defaultValue");
+      return name + ":" + setting.get("type") + (dv != null ? (" (" + dv + ")") : "");
+    }
+
+    /** {@code name:type[]... @Ann...}, as listed under {@code fields}. */
+    private static String fieldDisplay(Map<String, Object> field) {
+      List<?> ann = (List<?>) field.get("annotations");
+      return field.get("name")
+          + ":"
+          + typeWithDimensions(field)
+          + (ann == null || ann.isEmpty()
+              ? ""
+              : (" " + String.join(" ", ann.stream().map(String::valueOf).toList())));
+    }
+
+    private static String typeWithDimensions(Map<String, Object> field) {
+      Object dim = field.get("dimension");
+      int d = dim instanceof Number n ? n.intValue() : -1;
+      return field.get("type") + (d > 0 ? "[]".repeat(d) : "");
+    }
+
+    /**
+     * Merges one class's definitions from several chunks, given as chunk index -> {@link
+     * #convertClass} output, into one class.
+     *
+     * <p>Chunks can disagree. Metadata is written per chunk, and a recording can concatenate chunks
+     * from different writers: in {@code tck-test.jfr}, 36 classes appear in both chunks with
+     * different ids, and 4 of them have fields only chunk 1 declares ({@code java.lang.Thread} has
+     * {@code group} and {@code virtual}). Picking one chunk's definition loses fields that exist in
+     * the others, so the merge keeps everything and records where it came from:
+     *
+     * <ul>
+     *   <li>{@code chunks}: the chunks that define the class, and on every field the chunks that
+     *       define that field. A field missing from some chunks is why events from those chunks
+     *       show {@code null} for it; the {@code fields} display marks it {@code [chunks: ...]}.
+     *   <li>Fields: union in declaration order, later chunks' new fields appended. Annotations and
+     *       settings: union, first chunk wins for a setting both define.
+     *   <li>Conflicts are reported, not resolved: if chunks give a field different types, it keeps
+     *       the first chunk's type and gets {@code typesByChunk} (chunk -> type); a class whose
+     *       chunks disagree on the super type gets {@code superTypesByChunk}.
+     *   <li>{@code id} is the first chunk's. Class ids are chunk-local; the other chunks' ids
+     *       differ and are not kept.
+     * </ul>
+     *
+     * A class defined by one chunk comes out as that definition plus the {@code chunks} keys.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> mergeClassDefinitions(
+        SortedMap<Integer, Map<String, Object>> defsByChunk) {
+      List<Integer> classChunks = new ArrayList<>(defsByChunk.keySet());
+      Map<String, Object> first = defsByChunk.get(classChunks.get(0));
+
+      Map<String, Object> out = new LinkedHashMap<>();
+      out.put("id", first.get("id"));
+      out.put("name", first.get("name"));
+      out.put("superType", first.get("superType"));
+
+      List<String> classAnn = null;
+      List<String> classAnnFull = null;
+      Map<String, Map<String, Object>> settingsByName = null;
+      Map<String, Map<String, Object>> fields = new LinkedHashMap<>();
+      Map<String, Map<Integer, String>> typesByField = new HashMap<>();
+      Map<Integer, Object> superTypes = new LinkedHashMap<>();
+
+      for (Map.Entry<Integer, Map<String, Object>> e : defsByChunk.entrySet()) {
+        Integer chunk = e.getKey();
+        Map<String, Object> def = e.getValue();
+        superTypes.put(chunk, def.get("superType"));
+        if (def.get("classAnnotations") instanceof List<?> l) {
+          classAnn = union(classAnn, (List<String>) l);
+        }
+        if (def.get("classAnnotationsFull") instanceof List<?> l) {
+          classAnnFull = union(classAnnFull, (List<String>) l);
+        }
+        if (def.get("settingsByName") instanceof Map<?, ?> m) {
+          if (settingsByName == null) settingsByName = new LinkedHashMap<>();
+          for (Map.Entry<?, ?> se : m.entrySet()) {
+            settingsByName.putIfAbsent((String) se.getKey(), (Map<String, Object>) se.getValue());
+          }
+        }
+        if (def.get("fieldsByName") instanceof Map<?, ?> fbn) {
+          for (Map.Entry<?, ?> fe : fbn.entrySet()) {
+            String name = (String) fe.getKey();
+            Map<String, Object> fm = (Map<String, Object>) fe.getValue();
+            typesByField
+                .computeIfAbsent(name, k -> new LinkedHashMap<>())
+                .put(chunk, typeWithDimensions(fm));
+            Map<String, Object> merged = fields.get(name);
+            if (merged == null) {
+              merged = new HashMap<>(fm);
+              merged.put("chunks", new ArrayList<>(List.of(chunk)));
+              fields.put(name, merged);
+            } else {
+              ((List<Integer>) merged.get("chunks")).add(chunk);
+              merged.put(
+                  "annotations",
+                  union(
+                      (List<String>) merged.get("annotations"),
+                      (List<String>) fm.get("annotations")));
+              merged.put(
+                  "annotationsFull",
+                  union(
+                      (List<String>) merged.get("annotationsFull"),
+                      (List<String>) fm.get("annotationsFull")));
+            }
+          }
+        }
+      }
+
+      if (classAnn != null) out.put("classAnnotations", classAnn);
+      if (classAnnFull != null) out.put("classAnnotationsFull", classAnnFull);
+      if (settingsByName != null) {
+        List<String> settings = new ArrayList<>(settingsByName.size());
+        settingsByName.forEach((name, sm) -> settings.add(settingDisplay(name, sm)));
+        out.put("settingsByName", settingsByName);
+        out.put("settings", settings);
+      }
+
+      List<String> display = new ArrayList<>(fields.size());
+      for (Map.Entry<String, Map<String, Object>> fe : fields.entrySet()) {
+        Map<String, Object> fm = fe.getValue();
+        StringBuilder line = new StringBuilder(fieldDisplay(fm));
+        List<Integer> fieldChunks = (List<Integer>) fm.get("chunks");
+        if (!fieldChunks.equals(classChunks)) {
+          line.append(" [chunks: ").append(joinChunks(fieldChunks)).append(']');
+        }
+        Map<Integer, String> types = typesByField.get(fe.getKey());
+        if (new HashSet<>(types.values()).size() > 1) {
+          fm.put("typesByChunk", types);
+          StringBuilder t = new StringBuilder();
+          types.forEach(
+              (c, type) ->
+                  t.append(t.length() == 0 ? "" : ", ").append(c).append('=').append(type));
+          line.append(" [types by chunk: ").append(t).append(']');
+        }
+        display.add(line.toString());
+      }
+      out.put("fieldsByName", fields);
+      out.put("fields", display);
+      out.put("fieldCount", display.size());
+      out.put("chunks", classChunks);
+      if (new HashSet<>(superTypes.values()).size() > 1) {
+        out.put("superTypesByChunk", superTypes);
+      }
+      return out;
+    }
+
+    private static List<String> union(List<String> acc, List<String> more) {
+      if (acc == null) return more == null ? null : new ArrayList<>(more);
+      if (more == null) return acc;
+      List<String> out = new ArrayList<>(acc);
+      for (String s : more) {
+        if (!out.contains(s)) out.add(s);
+      }
+      return out;
+    }
+
+    private static String joinChunks(List<Integer> chunks) {
+      StringBuilder sb = new StringBuilder();
+      for (Integer c : chunks) sb.append(sb.length() == 0 ? "" : ", ").append(c);
+      return sb.toString();
     }
   }
 

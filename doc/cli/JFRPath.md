@@ -75,6 +75,23 @@ metadata/jdk.types.Method/fields.name           # Same as /fields/name
 metadata/jdk.types.Method/fieldsByName.name     # Access field by name
 ```
 
+### Metadata across chunks
+Each chunk of a recording carries its own metadata, and chunks can disagree, for example when
+a recording joins chunks written by different JVMs or profilers. The Jafar backend returns one
+class per name:
+
+- `fields` / `fieldsByName` contain every field declared by any chunk, in declaration order.
+- `chunks` lists the chunks that define the class. Each field has its own `chunks` list, and in
+  `fields` a field that some chunks lack is marked, e.g. `group:jdk.types.ThreadGroup [chunks: 1]`.
+  Events from the other chunks have no value for that field.
+- When chunks give a field different types, the first chunk's type is shown and the field gets
+  `typesByChunk`. When chunks disagree on the super type, the class gets `superTypesByChunk`.
+- `id` is the first chunk's class id. Class ids are local to a chunk.
+
+```
+metadata/java.lang.Thread/fieldsByName.group/chunks
+```
+
 ## Filters
 
 Filters use square brackets `[...]` to constrain results. Filters can be placed:
