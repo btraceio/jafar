@@ -36,6 +36,10 @@ import reactor.core.scheduler.Schedulers;
  *   <li>The shutdown race condition is fixed: when the outbound sink is already terminated during
  *       server shutdown, {@link StdioMcpSessionTransport#sendMessage} silently drops the response
  *       instead of propagating an error that would crash the Reactor Flux pipeline.
+ *   <li>Emission into the inbound and outbound sinks is serialized. The SDK completes requests on
+ *       its own worker threads, so two responses can be sent at once; a Reactor sink requires
+ *       serialized producers (Reactive Streams rule 1.3), and an unguarded concurrent {@code
+ *       tryEmitNext} returns {@code FAIL_NON_SERIALIZED}, which used to lose the response.
  * </ol>
  *
  * <p>Source copied from SDK 1.1.1 {@code StdioServerTransportProvider} and modified.
@@ -162,6 +166,24 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
 
     private final Sinks.One<Void> outboundReady = Sinks.one();
 
+    /**
+     * Guards every emission into {@link #outboundSink}. Responses are sent from whichever thread
+     * completed the request (the SDK's {@code boundedElastic} workers, the inbound reader for parse
+     * errors, the inbound pipeline's {@code doFinally}), and a Reactor sink accepts only one
+     * producer at a time: a concurrent {@code tryEmitNext} fails with {@code FAIL_NON_SERIALIZED}
+     * instead of waiting. A lock rather than {@code emitNext(..., busyLooping(...))} keeps the
+     * {@link Sinks.EmitResult} visible, so a sink terminated outside shutdown is still reported
+     * instead of silently dropped. The critical section only enqueues: delivery happens on {@code
+     * stdio-outbound} after {@code publishOn}.
+     */
+    private final Object outboundEmitLock = new Object();
+
+    /**
+     * Guards every emission into {@link #inboundSink}: the reader thread emits messages, while
+     * {@link #closeGracefully()} can complete the sink from any thread at the same time.
+     */
+    private final Object inboundEmitLock = new Object();
+
     StdioMcpSessionTransport() {
       this.inboundSink = Sinks.many().unicast().onBackpressureBuffer();
       this.outboundSink = Sinks.many().unicast().onBackpressureBuffer();
@@ -196,7 +218,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           .then(
               Mono.defer(
                   () -> {
-                    if (outboundSink.tryEmitNext(message).isSuccess()) {
+                    if (emitOutbound(message).isSuccess()) {
                       return Mono.empty();
                     }
                     // Sink terminated during shutdown — drop silently instead of crashing the
@@ -220,7 +242,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
           () -> {
             isClosing.set(true);
             logger.debug("Session transport closing gracefully");
-            inboundSink.tryEmitComplete();
+            completeInbound();
           });
     }
 
@@ -228,6 +250,30 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
     public void close() {
       isClosing.set(true);
       logger.debug("Session transport closed");
+    }
+
+    private Sinks.EmitResult emitOutbound(JSONRPCMessage message) {
+      synchronized (outboundEmitLock) {
+        return outboundSink.tryEmitNext(message);
+      }
+    }
+
+    private void completeOutbound() {
+      synchronized (outboundEmitLock) {
+        outboundSink.tryEmitComplete();
+      }
+    }
+
+    private Sinks.EmitResult emitInbound(JSONRPCMessage message) {
+      synchronized (inboundEmitLock) {
+        return inboundSink.tryEmitNext(message);
+      }
+    }
+
+    private void completeInbound() {
+      synchronized (inboundEmitLock) {
+        inboundSink.tryEmitComplete();
+      }
     }
 
     private void initProcessing() {
@@ -273,7 +319,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
               signalType -> {
                 // Signal the outbound pipeline to drain. Shutdown signal fires only
                 // after the outbound has fully flushed (see startOutboundProcessing).
-                this.outboundSink.tryEmitComplete();
+                completeOutbound();
               })
           .subscribe();
     }
@@ -296,7 +342,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                     try {
                       McpSchema.JSONRPCMessage message =
                           McpSchema.deserializeJsonRpcMessage(jsonMapper, line);
-                      if (!this.inboundSink.tryEmitNext(message).isSuccess()) {
+                      if (!emitInbound(message).isSuccess()) {
                         break;
                       }
                     } catch (Exception e) {
@@ -312,7 +358,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                         McpSchema.JSONRPCResponse parseResp =
                             new McpSchema.JSONRPCResponse(
                                 McpSchema.JSONRPC_VERSION, null, null, parseErr);
-                        outboundSink.tryEmitNext(parseResp);
+                        emitOutbound(parseResp);
                       } catch (Exception ignored) {
                         // Best-effort: a failed emit (e.g. closed pipe) must
                         // not propagate or break the read loop.
@@ -335,7 +381,7 @@ class FixedStdioServerTransportProvider implements McpServerTransportProvider, S
                 if (session != null) {
                   session.close();
                 }
-                inboundSink.tryEmitComplete();
+                completeInbound();
               }
             });
       }
