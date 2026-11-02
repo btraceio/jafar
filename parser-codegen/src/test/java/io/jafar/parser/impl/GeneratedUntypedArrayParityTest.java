@@ -34,13 +34,14 @@ import org.junit.jupiter.params.provider.EnumSource;
  * values) holding the same elements.
  *
  * <p>The recording is hand-encoded with {@link SyntheticRecording}, because the JMC writer cannot
- * write array fields on events. {@code test.Narrow} has 10 fields and gets the eager (HashMap)
- * deserializer under both strategies; {@code test.Wide} has 11 and gets the lazy (ArrayPool) one
+ * write array fields on events. Both event types have more than 10 fields, so they get the eager
+ * (HashMap) deserializer under {@link UntypedStrategy#FULL_ITERATION} and the lazy (ArrayPool) one
  * under {@link UntypedStrategy#SPARSE_ACCESS}. {@code test.Wide} also has an inline simple-type
  * field.
  *
- * <p>No field is {@code @Timestamp}/{@code @Timespan} annotated: the generated path does not
- * normalize ticks for scalars or arrays, while the generic reader does.
+ * <p>{@code Timestamp(TICKS)} and {@code Timespan(TICKS)} fields - a long scalar, an int scalar
+ * whose nanosecond value overflows int, an int array, and a long inside the nested {@code
+ * test.Nested} elements - must come out in nanoseconds, as the generic reader produces them.
  */
 public class GeneratedUntypedArrayParityTest {
   private static final long T_CHAR = 3;
@@ -52,6 +53,8 @@ public class GeneratedUntypedArrayParityTest {
   private static final long T_STRING = 9;
   private static final long T_NESTED = 30;
   private static final long T_LABEL = 31;
+  private static final long T_TIMESTAMP = 40;
+  private static final long T_TIMESPAN = 41;
   private static final long T_NARROW = 100;
   private static final long T_WIDE = 101;
 
@@ -64,6 +67,17 @@ public class GeneratedUntypedArrayParityTest {
   private static final short[] SHORTS = {0, -1, 1000, Short.MIN_VALUE, Short.MAX_VALUE};
   private static final char[] CHARS = {0, 'A', (char) 200, (char) 0xFFFF};
   private static final String[] STRINGS = {"a", "", "zażółć"};
+
+  // The recording ticks 1000 times slower than nanoseconds, so normalization is visible.
+  private static final long START_NANOS = 1_700_000_000_000_000_000L;
+  private static final long START_TICKS = 5_000_000L;
+  private static final long FREQUENCY = 1_000_000L;
+  private static final long NANOS_PER_TICK = 1_000_000_000L / FREQUENCY;
+  private static final int[] STAMP_TICKS = {(int) START_TICKS, (int) START_TICKS + 7};
+
+  private static SyntheticRecording.Element annotated(SyntheticRecording.Element f, long ann) {
+    return f.with(elem("annotation", "class", Long.toString(ann), "value", "TICKS"));
+  }
 
   private static SyntheticRecording.Element field(String name, long type, boolean array) {
     return array
@@ -84,7 +98,10 @@ public class GeneratedUntypedArrayParityTest {
                 field("shorts", T_SHORT, true),
                 field("chars", T_CHAR, true),
                 field("strings", T_STRING, true),
-                field("items", T_NESTED, true)));
+                field("items", T_NESTED, true),
+                annotated(field("start", T_LONG, false), T_TIMESTAMP),
+                annotated(field("dur", T_INT, false), T_TIMESPAN),
+                annotated(field("stamps", T_INT, true), T_TIMESTAMP)));
     if (wide) {
       fields.add(field("pad", T_LONG, false));
       // A simple type (a class wrapping one value) inline: a nested map in the generic reader.
@@ -97,7 +114,10 @@ public class GeneratedUntypedArrayParityTest {
   private static SyntheticRecording.Element metadata() {
     SyntheticRecording.Element nested =
         elem("class", "id", Long.toString(T_NESTED), "name", "test.Nested")
-            .with(field("a", T_INT, false), field("b", T_STRING, false));
+            .with(
+                field("a", T_INT, false),
+                field("b", T_STRING, false),
+                annotated(field("at", T_LONG, false), T_TIMESTAMP));
     return elem("root")
         .with(
             elem("metadata")
@@ -109,6 +129,8 @@ public class GeneratedUntypedArrayParityTest {
                     primitiveClass(T_FLOAT, "float"),
                     primitiveClass(T_DOUBLE, "double"),
                     primitiveClass(T_STRING, "java.lang.String"),
+                    elem("class", "id", Long.toString(T_TIMESTAMP), "name", "jdk.jfr.Timestamp"),
+                    elem("class", "id", Long.toString(T_TIMESPAN), "name", "jdk.jfr.Timespan"),
                     nested,
                     elem(
                             "class",
@@ -144,9 +166,13 @@ public class GeneratedUntypedArrayParityTest {
     for (char v : CHARS) w.varint(v);
     w.varint(STRINGS.length);
     for (String v : STRINGS) w.utf8(v);
-    w.varint(2); // items
-    w.intVarint(7).utf8("first");
-    w.intVarint(-8).utf8("second");
+    w.varint(2); // items: a, b, at (ticks)
+    w.intVarint(7).utf8("first").varint(START_TICKS + 1);
+    w.intVarint(-8).utf8("second").varint(START_TICKS + 2);
+    w.varint(START_TICKS + 5); // start (ticks)
+    w.intVarint(Integer.MAX_VALUE); // dur (ticks): in nanoseconds it overflows int
+    w.varint(STAMP_TICKS.length);
+    for (int v : STAMP_TICKS) w.intVarint(v);
     if (wide) {
       w.varint(123_456_789_000L); // pad
       w.utf8("labelled"); // label.string
@@ -161,8 +187,7 @@ public class GeneratedUntypedArrayParityTest {
     Path file = dir.resolve("generated-arrays.jfr");
     Files.write(
         file,
-        SyntheticRecording.chunk(
-            metadata(), events, 1_700_000_000_000_000_000L, 5_000_000L, 1_000_000L, 1000));
+        SyntheticRecording.chunk(metadata(), events, START_NANOS, START_TICKS, FREQUENCY, 1000));
     return file;
   }
 
@@ -246,6 +271,20 @@ public class GeneratedUntypedArrayParityTest {
         "labelled",
         ((Map<?, ?>) generated.get("test.Wide").get("label")).get("string"),
         strategy + " simple-type field");
+    assertEquals(
+        Long.valueOf(START_NANOS + 5 * NANOS_PER_TICK), narrow.get("start"), strategy + " start");
+    assertEquals(
+        Long.valueOf(Integer.MAX_VALUE * NANOS_PER_TICK), narrow.get("dur"), strategy + " dur");
+    assertTrue(
+        Arrays.equals(
+            new long[] {START_NANOS, START_NANOS + 7 * NANOS_PER_TICK},
+            (long[]) ((ArrayType) narrow.get("stamps")).getArray()),
+        strategy + " stamps");
+    Object items = ((ArrayType) narrow.get("items")).getArray();
+    assertEquals(
+        Long.valueOf(START_NANOS + NANOS_PER_TICK),
+        ((Map<?, ?>) ((Object[]) items)[0]).get("at"),
+        strategy + " items[0].at");
   }
 
   /** Wraps an array in a one-entry map so {@link Values#resolvedDeep} unwraps it fully. */
