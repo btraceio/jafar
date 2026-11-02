@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **MCP server no longer loses a response when two are sent at once.** The stdio transport emitted
+  into its Reactor sinks from whichever thread finished a request, and a sink accepts only one
+  producer at a time: a concurrent emit failed with `FAIL_NON_SERIALIZED`, was logged as "Failed
+  to enqueue message", and the response was dropped. The client then waited for its timeout.
+  Two tool calls in flight together were enough to trigger it. Emission into both sinks is now
+  serialized, so every response is written
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
