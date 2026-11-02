@@ -259,7 +259,7 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
 
 # === Memory Analysis ===
 events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top($2, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top($2, by=value)
 
 # === I/O Analysis ===
 events/jdk.FileRead | sum(bytesRead)

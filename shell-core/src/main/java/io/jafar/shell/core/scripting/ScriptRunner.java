@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,11 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes JFR shell script files with positional parameter substitution.
+ * Executes shell script files with positional parameter substitution.
  *
- * <p>Scripts are line-based text files containing shell commands and JfrPath queries. Lines
- * starting with '#' are comments. Positional parameters are substituted with values provided via
- * the constructor.
+ * <p>Scripts are line-based text files containing shell commands and queries in the current
+ * session's language (JfrPath, HdumpPath, ...). Lines starting with '#' are comments. Positional
+ * parameters are substituted with values provided via the constructor.
  *
  * <p>Supported parameter syntax:
  *
@@ -48,22 +48,32 @@ public final class ScriptRunner {
   private static final Pattern VAR_PATTERN =
       Pattern.compile("\\$(?:(\\d+|@)|\\{(\\d+|@)(?:(:[-?])(.*?))?\\})");
 
-  private final CommandDispatcher dispatcher;
-  private final CommandDispatcher.IO io;
+  /**
+   * Runs one script line in the shell that owns the script. Both shells provide one: {@code
+   * jfr-shell}'s {@code CommandDispatcher::dispatch} and {@code jafar-shell}'s {@code Shell}.
+   */
+  @FunctionalInterface
+  public interface LineDispatcher {
+    /**
+     * Executes one line.
+     *
+     * @return {@code false} when the line is not a command the shell knows
+     */
+    boolean dispatch(String line) throws Exception;
+  }
+
+  private final LineDispatcher dispatcher;
   private final List<String> arguments;
   private boolean continueOnError;
 
   /**
    * Creates a script runner.
    *
-   * @param dispatcher command dispatcher for executing commands
-   * @param io IO interface for output
+   * @param dispatcher executes each line
    * @param arguments positional arguments for substitution ($1, $2, etc.)
    */
-  public ScriptRunner(
-      CommandDispatcher dispatcher, CommandDispatcher.IO io, List<String> arguments) {
+  public ScriptRunner(LineDispatcher dispatcher, List<String> arguments) {
     this.dispatcher = dispatcher;
-    this.io = io;
     this.arguments = arguments;
     this.continueOnError = false;
   }

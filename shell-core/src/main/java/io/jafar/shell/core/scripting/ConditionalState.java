@@ -1,4 +1,4 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -97,6 +97,16 @@ public final class ConditionalState {
       throw new IllegalStateException("endif without if");
     }
     stack.pop();
+  }
+
+  /**
+   * Whether an {@code elif} here could still be taken: inside a block whose branches so far were
+   * all false and whose enclosing block is running. Otherwise its condition does not matter and
+   * should not be evaluated — evaluating it can run a lazy query or report an error for a branch
+   * that was never going to execute.
+   */
+  public boolean awaitingBranch() {
+    return !stack.isEmpty() && stack.peek().state == BranchState.CONDITION_FAILED;
   }
 
   /**

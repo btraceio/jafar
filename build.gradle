@@ -124,6 +124,22 @@ subprojects {
     }
 }
 
+// Test recordings are generated, not downloaded (test-recordings/README.md). Every test task and
+// every test-resource task depends on the generator, because the files land in the resource
+// directories those tasks read.
+subprojects { p ->
+    if (p.path != ':test-recordings') {
+        p.tasks.withType(Test).configureEach {
+            dependsOn ':test-recordings:generateTestRecordings'
+        }
+        p.tasks.withType(ProcessResources).configureEach {
+            if (name != 'processResources') {
+                dependsOn ':test-recordings:generateTestRecordings'
+            }
+        }
+    }
+}
+
 // Ensure formatting is checked during all builds
 allprojects {
     tasks.matching { it.name == 'check' }.configureEach {

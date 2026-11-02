@@ -23,7 +23,6 @@ public class UntypedJafarParserTest {
   void testUntypedParsingCountsEvents() throws Exception {
     URI uri = UntypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
-    Instant cutOffDate = Instant.parse("2024-08-13T16:24:00Z");
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
       AtomicInteger count = new AtomicInteger();
       HandlerRegistration<?> reg =
@@ -35,7 +34,14 @@ public class UntypedJafarParserTest {
                 assertTrue(
                     i.isAfter(ctl.chunkInfo().startTime().minus(1, ChronoUnit.MILLIS)),
                     i + " is not after " + ctl.chunkInfo().startTime());
-                assertTrue(i.isBefore(cutOffDate));
+                // No later than the chunk's end (the recording's own bound, rather than a date
+                // that only held for one particular file).
+                Instant chunkEnd =
+                    ctl.chunkInfo()
+                        .startTime()
+                        .plus(ctl.chunkInfo().duration())
+                        .plus(1, ChronoUnit.MILLIS);
+                assertTrue(i.isBefore(chunkEnd), i + " is after the chunk end " + chunkEnd);
                 count.incrementAndGet();
                 // this is a sanity test only; we can end early
                 //                ctl.abort();

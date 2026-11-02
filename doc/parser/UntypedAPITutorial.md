@@ -57,9 +57,11 @@ That's it! The handler receives every event as a Map, and you check the type nam
 Every event is represented as `Map<String, Object>` where:
 - Keys are field names (e.g., `"state"`, `"duration"`, `"eventThread"`)
 - Values can be:
-  - Primitive wrappers (`Long`, `Integer`, `Boolean`, etc.)
+  - Primitive wrappers: `Long` for JFR `int` and `long`, `Short`, `Character`, `Byte`,
+    `Boolean`, `Float`, `Double`
   - `String`
-  - `Instant` for timestamps
+  - `Long` epoch nanoseconds for `@Timestamp(TICKS)` fields and `Long` nanoseconds for
+    `@Timespan(TICKS)` fields (converted from ticks using the chunk's frequency)
   - `Map<String, Object>` for nested complex types
   - `ComplexType` for constant-pool references
   - `ArrayType` for array fields
@@ -326,14 +328,10 @@ parser.handle((type, value, ctl) -> {
         Object array = ((ArrayType) arrayObj).getArray();
 
         if (array instanceof long[]) {
+            // JFR 'int' and 'long' arrays both decode to long[]
             long[] longs = (long[]) array;
             for (long l : longs) {
                 System.out.println("Value: " + l);
-            }
-        } else if (array instanceof int[]) {
-            int[] ints = (int[]) array;
-            for (int i : ints) {
-                System.out.println("Value: " + i);
             }
         } else if (array instanceof byte[]) {
             byte[] bytes = (byte[]) array;
@@ -342,6 +340,23 @@ parser.handle((type, value, ctl) -> {
     }
 });
 ```
+
+The backing array type for each JFR element type:
+
+| JFR element type | `getArray()` returns |
+|---|---|
+| `int`, `long` | `long[]` |
+| `short` | `short[]` |
+| `char` | `char[]` |
+| `byte` | `byte[]` |
+| `boolean` | `boolean[]` |
+| `float` | `float[]` |
+| `double` | `double[]` |
+| `java.lang.String`, complex and constant-pool types | `Object[]` |
+
+`int` arrays are `long[]` for the same reason scalar `int` fields are `Long`: the untyped API
+represents every JFR `int` as a `long`. `@Timestamp(TICKS)` and `@Timespan(TICKS)` elements are
+converted to epoch nanoseconds and nanosecond durations, which do not fit in an `int`.
 
 ## Type Filtering
 
@@ -540,6 +555,63 @@ parser.handle((type, value, ctl) -> {
 });
 ```
 
+### Undecodable Events
+
+If an event's payload cannot be decoded (a corrupted or non-conforming recording), `run()` fails
+by default with an `IOException`. Its cause chain contains an
+`io.jafar.parser.api.EventDecodingException` whose message names the event type, the chunk and the
+event's position in it, for example
+`Cannot decode event of type jdk.ExecutionSample (id 101) in chunk 1 at position 271 (size 29)`.
+The same details are available from `getTypeName()`, `getTypeId()`, `getChunkIndex()`,
+`getPosition()` and `getSize()`, and `getCause()` is the decoder's reason.
+
+Event handlers never receive the bad event, not even partially. Events decoded before the failure
+have already been delivered. Chunks are parsed in parallel, so events from other chunks may have
+been delivered too.
+
+```java
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.run();
+} catch (IOException e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+        System.err.println(c);  // includes "Cannot decode event of type ..."
+    }
+}
+```
+
+To read such a recording on a best-effort basis instead, register a decode error handler. Return
+`true` to skip the event and continue with the next one, `false` to fail the parse. If the handler
+throws, the parse fails with that exception. It is called from the threads parsing the chunks, so
+it must be thread-safe:
+
+```java
+AtomicLong skipped = new AtomicLong();
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.onDecodeError(failure -> {
+        System.err.println("skipped: " + failure.getMessage());
+        return skipped.incrementAndGet() <= 100;  // give up after 100 bad events
+    });
+    p.run();
+}
+```
+
+Skipping recovers cleanly from a bad event *payload*: parsing resumes at the next event, located by
+the size the chunk declares for each event. A reference to a pooled string that does not exist is
+such a payload error too; it is never read as `null`.
+
+A corrupted *constant pool* entry is different, and always fails the parse, even with a decode error
+handler. Pool entries are not length-prefixed, so past an entry that cannot be read the rest of the
+checkpoint cannot be located, and no later string reference in the chunk could be trusted. The
+`IOException` names the pool and the entry, for example
+`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`.
+
+> The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
+> default; in Java, failing is. A corrupted constant pool entry is also reported through `OnError`
+> there: the entries indexed before it stay usable, and references to the rest are reported one by
+> one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
+
 ## Performance Considerations
 
 ### 1. Avoid Unnecessary String Checks
@@ -702,8 +774,9 @@ public class IOAnalyzer {
                     // Extract address and port
                     String address = Values.as(value, String.class, "address")
                                           .orElse("unknown");
-                    Integer port = Values.as(value, Integer.class, "port")
-                                        .orElse(0);
+                    // JFR int fields surface as Long in the untyped API
+                    Long port = Values.as(value, Long.class, "port")
+                                     .orElse(0L);
 
                     String endpoint = address + ":" + port;
 
