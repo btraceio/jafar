@@ -5,6 +5,7 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 ## Table of Contents
 
 - [Overview](#overview)
+- [In jafar-shell](#in-jafar-shell)
 - [Script File Format](#script-file-format)
 - [Positional Parameters](#positional-parameters)
 - [Variables](#variables)
@@ -17,13 +18,77 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 
 ## Overview
 
-JFR Shell scripts (`.jfrs` extension) are plain text files containing sequences of shell commands and JfrPath queries. Scripts support:
+JFR Shell scripts (`.jfrs` extension) are plain text files containing sequences of shell commands and JfrPath queries. The same scripting — variables, maps, `merge()`, lazy query variables, `if`/`elif`/`else`/`endif`, `echo`, `invalidate`, `script` — also works in the unified `jafar-shell`, against heap dumps, pprof and OTLP profiles as well as recordings; see [In jafar-shell](#in-jafar-shell) for the differences. Scripts support:
 
 - **Positional parameters** - Parameterize scripts with bash-style `$1`, `$2`, `$@` syntax
 - **Comments** - Document your scripts with `#` comments
 - **All shell commands** - Use any command available in interactive mode
 - **Error handling** - Continue-on-error mode for robust scripts
 - **Stdin support** - Read scripts from stdin for piping and shebangs
+
+## In jafar-shell
+
+`jafar-shell` opens JFR recordings, heap dumps (`.hprof`), pprof (`.pprof`, `.pb.gz`) and OTLP
+(`.otlp`) profiles side by side, and the scripting in this guide works the same way there — the
+parsing, scoping and condition rules are one implementation in `shell-core`, shared by both shells.
+A query-valued variable is written in the language of the session that is current when it is set
+(JfrPath, HdumpPath, or the pprof/OTLP samples grammar), run by that session's query evaluator the
+same way `show` runs it, and stays bound to that session. That is what makes cross-format scripts
+possible:
+
+```bash
+# cross.jfrs — $1 recording, $2 heap dump, $3 minimum object size (default 1000)
+set --global min = ${3:-1000}
+open $1
+set --global samples = events/jdk.ExecutionSample | count()
+open $2
+set big = objects[shallow > ${min}] | count
+set top = classes | top(3, by=instanceCount)
+echo heap: ${big} objects over ${min} bytes; top class ${top[0].name}
+echo jfr (session 1, read from session 2): ${samples} samples
+if ${samples} > 100 && ${big} > 0
+echo VERDICT both busy
+else
+echo VERDICT quiet
+endif
+```
+
+```
+jafar> script cross.jfrs app.jfr app.hprof 4096
+...
+heap: 26 objects over 4096 bytes; top class byte[]
+jfr (session 1, read from session 2): 551 samples
+VERDICT both busy
+
+Script executed successfully: 13 commands
+```
+
+`samples` is `--global` so that it is still visible after `open $2` makes the heap dump current;
+it keeps evaluating against the recording. Once its session is closed, reading the variable fails
+with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
+`vars` shows it as `(closed)`.
+
+A script may run another (`script` inside a script) up to 16 deep. In `jafar-shell` each script
+has its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported, so
+the commands you type next are not skipped; and a stray `endif` in a script is an error in that
+script rather than closing a block of the caller's.
+
+Where the two shells differ:
+
+| | `jfr-shell` | `jafar-shell` |
+|---|---|---|
+| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
+| `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
+| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
+| `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
+| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend` | the same commands (jfr-shell's implementations) on a recording; `metadata/...` and `chunks \| ...` remain queries |
+| `record` | saves to `~/.jfr-shell/recordings/` | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording` |
+| A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
+| Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
+
+`llm.*` settings follow the same scoping as other variables in both shells: set while a session is
+open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`
+keeps one for the whole shell.
 
 ## Script File Format
 
@@ -151,7 +216,7 @@ jfr-shell script script.jfrs /tmp/app.jfr 2048
 
 ## Variables
 
-JFR Shell supports variables for storing and reusing values in your analysis. Variables can hold scalar values (strings, numbers) or lazily-evaluated query results.
+Both shells support variables for storing and reusing values in your analysis. Variables can hold scalar values (strings, numbers), maps, or lazily-evaluated query results.
 
 ### Variable Types
 
@@ -162,7 +227,7 @@ set filename = "/tmp/output.txt"
 set limit = 20
 ```
 
-**Lazy Query Variables** store JfrPath queries that are evaluated on-demand:
+**Lazy Query Variables** store queries that are evaluated on-demand — JfrPath here, or in `jafar-shell` whatever language the current session speaks (`set big = objects[shallow > 1000]` on a heap dump):
 ```bash
 set fileReads = events/jdk.FileRead
 set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
@@ -182,7 +247,9 @@ Maps use JSON-like syntax and support strings, numbers, booleans, null, and nest
 
 ### Variable Scopes
 
-Variables can be session-scoped (default) or global:
+Variables can be session-scoped (default) or global. With no session open, `set` writes the global
+scope. A name is looked up in the current session first, then globally; `unset` removes from the
+scope `set` would write and, if the name is not there, from the other one.
 
 ```bash
 # Session-scoped (cleared when session closes)
@@ -485,7 +552,8 @@ An argument to `exists()` and `empty()` resolves exactly as the same reference d
 
 ### Interactive Mode
 
-In interactive mode, the prompt changes to show nesting depth:
+In interactive mode, the prompt changes to show nesting depth (in both shells), and `exit` warns
+about blocks left open:
 
 ```
 jfr> if ${count} > 0
@@ -576,6 +644,10 @@ else
 endif
 ```
 
+An `elif` condition is evaluated only when its branch could still be taken: after a branch has
+run, or inside a block that is being skipped, it is not evaluated at all — so it cannot report an
+error or run a lazy query for a branch that will not execute.
+
 ### Nesting
 
 Conditionals can be nested to arbitrary depth:
@@ -662,6 +734,12 @@ Run a script by specifying the full path:
 jfr> script /path/to/script.jfrs arg1 arg2 arg3
 ```
 
+In `jafar-shell` this is the form there is (`script list` and `script run` are `jfr-shell`'s):
+
+```bash
+jafar> script /path/to/cross.jfrs app.jfr app.hprof
+```
+
 ### From Command Line
 
 Execute scripts directly from the command line:
@@ -669,6 +747,9 @@ Execute scripts directly from the command line:
 ```bash
 # Run by path
 jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
+
+# In jafar-shell: same arguments and --continue-on-error; the script may open any format
+jafar-shell script /path/to/cross.jfrs app.jfr app.hprof
 
 # From stdin
 jfr-shell script - /tmp/app.jfr <<'EOF'
@@ -708,7 +789,9 @@ Executed 21/25 commands successfully.
 
 ## Recording Commands
 
-JFR Shell can record your interactive commands into an executable script file. This is perfect for:
+JFR Shell can record your interactive commands into an executable script file (`jafar-shell` has the same
+`record` command, for every format, saving to `~/.jafar-shell/recordings/` and replayed with
+`jafar-shell script <file>`). This is perfect for:
 
 - **Capturing ad-hoc analysis** - Record exploratory analysis for later reuse
 - **Creating templates** - Build script templates by example
@@ -897,9 +980,9 @@ Detailed thread analysis including execution samples, allocations, contention, a
 
 open $1
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
-events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
+events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName, agg=sum, value=allocated) | top($2, by=value)
 events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
-events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
+events/jdk.ThreadSleep | groupBy(thread/javaName, agg=sum, value=time) | top($2, by=value)
 close
 ```
 
@@ -920,7 +1003,7 @@ open $1
 events/jdk.GarbageCollection | stats(duration)
 events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
 events/jdk.GCHeapSummary | stats(heapUsed)
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 close
 ```
@@ -973,7 +1056,7 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
 
 # Memory Analysis
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 
 # Cleanup
 close

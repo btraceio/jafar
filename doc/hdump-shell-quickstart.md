@@ -228,6 +228,29 @@ hdump> classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(all
 hdump> classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(10)
 ```
 
+## Variables and Scripts
+
+`jafar-shell` has the same variables, conditionals and scripts as `jfr-shell`
+([Scripting Guide](cli/Scripting.md#in-jafar-shell)). A query stored in a variable is HdumpPath,
+run on first use and cached:
+
+```bash
+hdump> set big = objects[shallow > 4096] | count
+Set big = lazy[objects[shallow > 4096] | count] (not evaluated)
+hdump> set top = classes | top(3, by=instanceCount)
+hdump> echo ${big} large objects; most instances: ${top[0].name}
+26 large objects; most instances: byte[]
+hdump> show ${top}
+hdump> if ${big} > 0
+...(1)> echo large objects present
+...(1)> endif
+hdump> vars
+hdump> invalidate big          # re-run on next use
+```
+
+Variables set while a session is open belong to it; `set --global name = ...` makes one visible
+from every session, which is how a script carries a number from a recording into a heap dump.
+
 ## Output Options
 
 ### Limit Results

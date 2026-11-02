@@ -1,6 +1,5 @@
-package io.jafar.shell.cli;
+package io.jafar.shell.core.scripting;
 
-import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.MapValue;
 import io.jafar.shell.core.VariableStore.ScalarValue;
@@ -164,10 +163,13 @@ public final class VariableSubstitutor {
       return mv.getField(fieldPath);
     }
 
-    if (value instanceof LazyQueryValue lqv) {
+    if (value instanceof VariableStore.LazyValue lazy) {
+      // Any query-valued variable, whichever module's evaluator produced it: the rows are what
+      // get() returns, read the same way for every format.
+      Object rows = lazy.get();
       // Handle .size property
       if ("size".equals(fieldPath) && indexStr == null) {
-        return lqv.size();
+        return LazyRows.size(rows);
       }
 
       int idx = (indexStr != null) ? Integer.parseInt(indexStr) : 0;
@@ -180,7 +182,7 @@ public final class VariableSubstitutor {
         String firstField = parts[0];
         String restPath = parts.length > 1 ? parts[1] : null;
 
-        Object extracted = lqv.extract(idx, firstField);
+        Object extracted = LazyRows.extract(rows, idx, firstField);
         if (restPath != null && extracted instanceof Map) {
           // Navigate nested map structure
           @SuppressWarnings("unchecked")
@@ -189,7 +191,7 @@ public final class VariableSubstitutor {
         }
         return extracted;
       }
-      return lqv.extract(idx, fieldPath);
+      return LazyRows.extract(rows, idx, fieldPath);
     }
 
     return null;

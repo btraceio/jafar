@@ -20,6 +20,8 @@ bin/
 .idea
 
 *.jfr
+# Markers the test-recordings generator writes next to a recording it generated
+*.jfr.generated
 # Exception: TCK test recording needed for CI
 !jfr-shell-tck/src/main/resources/tck-test.jfr
 # Exception: small stripped regression fixtures committed directly

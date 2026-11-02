@@ -33,12 +33,17 @@ public final class JFRSession implements Session {
   private final ParsingContext parsingContext;
   private TypedJafarParser parser;
   private final List<HandlerRegistration<?>> registrations = new ArrayList<>();
-  private final Map<String, Long> eventTypeCounts = new HashMap<>();
+  // Concurrent: event handlers count into it from the parser's chunk threads
+  private final Map<String, Long> eventTypeCounts = new java.util.concurrent.ConcurrentHashMap<>();
   private final Set<String> metadataTypes = new HashSet<>();
   private final Set<String> allMetadataTypes = new HashSet<>();
   private final Set<String> nonPrimitiveMetadataTypes = new HashSet<>();
   private final Set<String> primitiveMetadataTypes = new HashSet<>();
   private final Map<String, Long> metadataTypeIds = new HashMap<>();
+  // Chunks are parsed in parallel, so onMetadata runs on several threads at once; the type sets
+  // above are filled under this lock (unsynchronized, a HashSet loses size updates and later
+  // overruns when copied: "Index N out of bounds for length N")
+  private final Object metadataLock = new Object();
   private java.util.List<Integer> cachedChunkIds;
   private Set<String> cpTypes; // lazily discovered
   private final AtomicLong totalEvents = new AtomicLong(0);
@@ -56,31 +61,40 @@ public final class JFRSession implements Session {
         new ChunkParserListener() {
           @Override
           public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-            // Build index to resolve super types recursively
-            Map<String, MetadataClass> byName = new HashMap<>();
-            for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
-            // Collect event and metadata types when metadata becomes available
-            for (MetadataClass clazz : metadata.getClasses()) {
-              allMetadataTypes.add(clazz.getName());
-              metadataTypeIds.put(clazz.getName(), clazz.getId());
-              if (!clazz.isPrimitive()) {
-                nonPrimitiveMetadataTypes.add(clazz.getName());
-              } else {
-                primitiveMetadataTypes.add(clazz.getName());
-              }
-              if (isEventType(clazz, byName)) {
-                eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
-              }
-              if (isBrowsableMetadataType(clazz)) {
-                metadataTypes.add(clazz.getName());
-              }
-            }
+            collectMetadata(metadata);
             return true;
           }
         });
 
     // Do a quick metadata-only scan to populate available types immediately
     scanMetadata();
+  }
+
+  /**
+   * Records one chunk's metadata classes. Called from the parser's chunk threads, possibly several
+   * at once, hence the lock.
+   */
+  private void collectMetadata(MetadataEvent metadata) {
+    // Build index to resolve super types recursively
+    Map<String, MetadataClass> byName = new HashMap<>();
+    for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
+    synchronized (metadataLock) {
+      for (MetadataClass clazz : metadata.getClasses()) {
+        allMetadataTypes.add(clazz.getName());
+        metadataTypeIds.put(clazz.getName(), clazz.getId());
+        if (!clazz.isPrimitive()) {
+          nonPrimitiveMetadataTypes.add(clazz.getName());
+        } else {
+          primitiveMetadataTypes.add(clazz.getName());
+        }
+        if (clazz.getName() != null && isEventType(clazz, byName)) {
+          eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
+        }
+        if (isBrowsableMetadataType(clazz)) {
+          metadataTypes.add(clazz.getName());
+        }
+      }
+    }
   }
 
   /**
@@ -95,23 +109,7 @@ public final class JFRSession implements Session {
           new ChunkParserListener() {
             @Override
             public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-              Map<String, MetadataClass> byName = new HashMap<>();
-              for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
-              for (MetadataClass clazz : metadata.getClasses()) {
-                allMetadataTypes.add(clazz.getName());
-                metadataTypeIds.put(clazz.getName(), clazz.getId());
-                if (!clazz.isPrimitive()) {
-                  nonPrimitiveMetadataTypes.add(clazz.getName());
-                } else {
-                  primitiveMetadataTypes.add(clazz.getName());
-                }
-                if (isEventType(clazz, byName)) {
-                  eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
-                }
-                if (isBrowsableMetadataType(clazz)) {
-                  metadataTypes.add(clazz.getName());
-                }
-              }
+              collectMetadata(metadata);
               // Return false to abort parsing immediately after metadata is collected
               return false;
             }
@@ -126,10 +124,12 @@ public final class JFRSession implements Session {
   /** Refresh discovered event types by rescanning metadata. */
   public synchronized void refreshTypes() throws IOException {
     eventTypeCounts.clear();
-    metadataTypes.clear();
-    allMetadataTypes.clear();
-    nonPrimitiveMetadataTypes.clear();
-    primitiveMetadataTypes.clear();
+    synchronized (metadataLock) {
+      metadataTypes.clear();
+      allMetadataTypes.clear();
+      nonPrimitiveMetadataTypes.clear();
+      primitiveMetadataTypes.clear();
+    }
     cachedChunkIds = null;
     scanMetadata();
   }
@@ -224,7 +224,8 @@ public final class JFRSession implements Session {
   /** Get available chunk ids (indices) discovered by scanning headers). */
   public synchronized java.util.List<Integer> getAvailableChunkIds() {
     if (cachedChunkIds != null) return cachedChunkIds;
-    java.util.List<Integer> out = new java.util.ArrayList<>();
+    // onChunkStart runs on each chunk's parser thread, in whatever order they start
+    java.util.Queue<Integer> out = new java.util.concurrent.ConcurrentLinkedQueue<>();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -241,14 +242,17 @@ public final class JFRSession implements Session {
           });
     } catch (Exception ignore) {
     }
-    cachedChunkIds = java.util.Collections.unmodifiableList(out);
+    java.util.List<Integer> ids = new java.util.ArrayList<>(out);
+    java.util.Collections.sort(ids);
+    cachedChunkIds = java.util.Collections.unmodifiableList(ids);
     return cachedChunkIds;
   }
 
   /** Get available constant-pool types discovered in this recording (lazy scan). */
   public synchronized Set<String> getAvailableConstantPoolTypes() {
     if (cpTypes != null) return cpTypes;
-    Set<String> out = new HashSet<>();
+    // onCheckpoint runs on the chunk threads, several at once
+    Set<String> out = java.util.concurrent.ConcurrentHashMap.newKeySet();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -269,7 +273,7 @@ public final class JFRSession implements Session {
     } catch (Exception ignore) {
       // Ignore discovery failures; fall back to empty set
     }
-    cpTypes = out;
+    cpTypes = new HashSet<>(out);
     return cpTypes;
   }
 

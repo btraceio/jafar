@@ -104,6 +104,13 @@ graph TB
 | `VariableStore` | Stores scalar, lazy query, and map variables |
 | `ConditionalState` | Stack-based if/elif/else/endif tracking |
 
+The format-neutral scripting pieces live in `shell-core`'s `io.jafar.shell.core.scripting`
+package and are shared by `jfr-shell`'s `CommandDispatcher` and `jafar-shell`'s unified `Shell`:
+`Conditionals` (with `ConditionalState` and `ConditionEvaluator`), `VariableSubstitutor`,
+`ScriptRunner`, `MapLiteralParser`, `MapMerge`, `VariableScopes` (session-then-global rules) and
+`EvaluatorLazyValue` (a query variable run by any module's `QueryEvaluator`). `jfr-shell` keeps
+its own JfrPath `LazyQueryValue` for recordings.
+
 ### Command Execution Flow
 
 ```mermaid

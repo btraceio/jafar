@@ -18,7 +18,9 @@
 //	java.lang.String    string, or nil for a null string
 //	inline complex      map[string]any
 //	constant pool ref   *Ref (resolve with Ref.Value)
-//	array               *Array
+//	array               *Array; Array.Elems is []int64 for int and long,
+//	                    []float32, []float64, []int16 or []uint16 for float,
+//	                    double, short or char, and []any otherwise
 //
 // Fields annotated with jdk.jfr.Timestamp(TICKS) and jdk.jfr.Timespan(TICKS)
 // are normalised: timestamps become nanoseconds since the epoch and timespans
@@ -264,6 +266,11 @@ type chunkParser struct {
 	// most numerous object the parser creates, and allocating them one at a
 	// time dominates its allocation count.
 	refSlab []Ref
+	// arraySlab hands out Array structs in blocks for arrays inside constant
+	// pool entries, which share their pool's lifetime. inPool is set while one
+	// is being decoded.
+	arraySlab []Array
+	inPool    bool
 	// arenas recycle the objects of one event, per event type; only populated
 	// when Options.ReuseValues is set. arena is the one in use while an event
 	// is being decoded, and nil at every other time, so that values cached in a

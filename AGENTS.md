@@ -42,7 +42,7 @@ The short version, expanded with evidence in that file:
 | **R3** | A fallback that hides a misconfiguration is a bug. Report where a value came from. |
 | **R4** | Documentation is code. Run the commands you write. |
 | **R5** | Prove the test fails without the fix, and say so in the commit message. |
-| **R6** | Compare failure sets **by name**, never by count — parts of this suite fail without the downloaded recordings. |
+| **R6** | Compare failure sets **by name**, never by count — a constant count can hide a swap, and some suites still have standing failures. |
 | **R7** | One source of truth for any list two places must agree on. |
 | **R8** | State plainly what you did not verify. |
 | **R9** | Inspect the payload, not the exit status. A green command proves nothing about what it sent. |
@@ -86,7 +86,7 @@ Key components:
 - **jafar-processor/**: Annotation processor for build-time typed handler generation (eliminates runtime bytecode generation)
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces (separate included build)
-- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions)
+- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions) and the scripting both shells run (`core.scripting`: variables, maps, `merge()`, `if`, `script`, lazy query variables)
 - **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
 - **jfr-shell-jafar/**: Jafar-parser backend plugin for jfr-shell (high priority, full-featured)
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
@@ -112,8 +112,8 @@ Key components:
 ## Quick start
 
 ```bash
-./get_resources.sh                    # binary test recordings — required before the first build
-./gradlew build                       # everything
+./gradlew build                       # everything; generates the test recordings first
+./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
 ./gradlew spotlessApply               # formatting (a pre-commit hook also runs this)
 ./gradlew :jfr-shell:run --console=plain

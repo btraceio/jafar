@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.VariableStore;
+import io.jafar.shell.core.scripting.ConditionEvaluator;
+import io.jafar.shell.core.scripting.VariableSubstitutor;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
