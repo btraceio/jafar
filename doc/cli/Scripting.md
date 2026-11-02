@@ -81,10 +81,15 @@ Where the two shells differ:
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend` | the same commands (jfr-shell's implementations) on a recording; `metadata/...` and `chunks \| ...` remain queries |
 | `record` | saves to `~/.jfr-shell/recordings/` | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording` |
 | A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
+
+The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
+(in `jafar-shell` they need the current session to be a recording), so the example scripts below run
+in either. `metadata/...`, `chunks[...]`, and a line with a pipeline or `--limit`
+(`chunks --format json | count()`, `chunks --limit 1`) remain queries; `cp <type> | crossref()` is the
+command.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`

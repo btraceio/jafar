@@ -56,8 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
   recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
   recorder, moved to `shell-core` and shared
-- **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
-  recording, using jfr-shell's implementations; they were taken as malformed queries
+- **`metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work at the `jafar-shell`
+  prompt** on a recording, using jfr-shell's implementations; they were taken as malformed queries
+  (`metadata --summary` failed with `Trailing characters at position 9`, so `jfr-shell`'s
+  `basic-analysis.jfrs` example did not run in `jafar-shell`). In a heap dump, pprof or OTLP
+  session, or with no session open, they say they need a JFR session
 - **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
   parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
   set could lose entries from its size count and later fail with "Index N out of bounds for length

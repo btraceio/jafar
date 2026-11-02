@@ -91,6 +91,21 @@ the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shel
 `addShellCommands` merges the shell's command list into first-word completion. A new shell-level
 command goes in `BASE_COMMANDS` there, not into four module completers.
 
+The JFR-only commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` are not
+reimplemented in `unified/Shell`: `Shell.JFR_COMMANDS` routes them to the `CommandDispatcher` the
+shell already builds for module completers (`moduleContext`). It shares the shell's
+`SessionManager` (so session-scoped variables too) and is given the shell's global `VariableStore`
+— jfr-shell's completer, which completes JFR sessions here, reads `${...}` global names from
+`dispatcher.getGlobalStore()`, and before that was passed it was a private, always-empty store. It
+prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
+commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
+the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
+used to be parsed as a query (`Trailing characters at position 9`). A line with a pipeline (any
+later word starting with `|`: `chunks --format json | count()`) or `--limit` is still a query —
+jfr-shell's handlers have neither and would print every row — except `cp <type> | crossref()`,
+which `cmdCp` takes. A `|` inside a word is an argument (`metadata --regex ^(jdk|datadog)\..*`). The same set gates completion in
+`unified/ShellCompleter`, so a heap dump session is not offered them.
+
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
 - API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)
