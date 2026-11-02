@@ -20,7 +20,6 @@ import io.jafar.shell.backend.ChunkSource;
 import io.jafar.shell.backend.ConstantPoolSource;
 import io.jafar.shell.backend.MetadataSource;
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,8 +31,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 
 /**
@@ -378,28 +377,34 @@ final class JafarSources {
 
   static final class JafarConstantPoolSource implements ConstantPoolSource {
 
+    /**
+     * Entries per pool type, summed over chunks.
+     *
+     * <p>Counted once per chunk, at chunk end. A chunk's pools accumulate across its checkpoints
+     * ({@code MutableConstantPools.addOrGetConstantPool}), so counting them at every checkpoint
+     * counts an entry once per checkpoint it survives. Chunks are parsed in parallel; each chunk's
+     * counts are merged under a lock.
+     */
     @Override
     public List<Map<String, Object>> loadSummary(Path recording) throws Exception {
-      final Map<String, Long> sizes = new HashMap<>();
+      final Map<String, Long> sizes = new HashMap<>(); // guarded by itself
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
             recording,
             new ChunkParserListener() {
               @Override
-              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+              public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
+                Map<String, Long> chunk = new HashMap<>();
                 context
                     .getConstantPools()
                     .pools()
                     .forEach(
-                        cp -> {
-                          try {
-                            String name = cp.getType().getName();
-                            long count = extractConstantPoolCount(cp);
-                            sizes.merge(name, count, Long::sum);
-                          } catch (Throwable ignore) {
-                          }
-                        });
+                        cp ->
+                            chunk.merge(cp.getType().getName(), (long) cp.entryCount(), Long::sum));
+                synchronized (sizes) {
+                  chunk.forEach((name, count) -> sizes.merge(name, count, Long::sum));
+                }
                 return true;
               }
             });
@@ -411,22 +416,14 @@ final class JafarSources {
         m.put("totalSize", e.getValue());
         rows.add(m);
       }
-      rows.sort((a, b) -> Long.compare((long) b.get("totalSize"), (long) a.get("totalSize")));
+      rows.sort(
+          (a, b) -> {
+            int bySize = Long.compare((long) b.get("totalSize"), (long) a.get("totalSize"));
+            return bySize != 0
+                ? bySize
+                : ((String) a.get("name")).compareTo((String) b.get("name"));
+          });
       return rows;
-    }
-
-    private static long extractConstantPoolCount(ConstantPool cp) {
-      try {
-        Field f = cp.getClass().getDeclaredField("offsets");
-        f.setAccessible(true);
-        Object offsets = f.get(cp);
-        try {
-          return (int) offsets.getClass().getMethod("size").invoke(offsets);
-        } catch (Throwable ignore) {
-        }
-      } catch (Throwable ignore) {
-      }
-      return cp.size();
     }
 
     @Override
@@ -434,38 +431,19 @@ final class JafarSources {
       return loadEntries(recording, typeName, null);
     }
 
+    /**
+     * Every entry of {@code typeName}, in chunk order.
+     *
+     * <p>Each chunk's entries are read once, at chunk end, when its pools hold every checkpoint's
+     * entries. They used to be drained at every checkpoint from the accumulated pools, so an entry
+     * appeared once per checkpoint it survived. Ids are chunk-local: rows from different chunks are
+     * different entries even when their ids are equal. Chunks are parsed in parallel; {@code
+     * filter} runs on the parser's worker threads and must not depend on shared mutable state.
+     */
     @Override
     public List<Map<String, Object>> loadEntries(
         Path recording, String typeName, Predicate<Map<String, Object>> filter) throws Exception {
-      final List<Map<String, Object>> rows = new ArrayList<>();
-      final BiConsumer<ConstantPool, String> drain =
-          (cp, tn) -> {
-            if (!cp.getType().getName().equals(tn)) {
-              return;
-            }
-            try {
-              cp.ensureIndexed();
-            } catch (Throwable ignore) {
-            }
-            Iterator<Long> it = cp.ids();
-            while (it.hasNext()) {
-              long id = it.next();
-              Object val = cp.get(id);
-              Map<String, Object> row = new HashMap<>();
-              row.put("id", id);
-              if (val instanceof Map<?, ?> map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> mv = (Map<String, Object>) map;
-                row.putAll(mv);
-              } else {
-                row.put("value", val);
-              }
-              if (filter == null || filter.test(row)) {
-                rows.add(row);
-              }
-            }
-          };
-
+      final Map<Integer, List<Map<String, Object>>> rowsByChunk = new TreeMap<>(); // guarded
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -477,32 +455,53 @@ final class JafarSources {
                 MapValueBuilder mvb = new MapValueBuilder(context);
                 GenericValueReader reader = new GenericValueReader(mvb);
                 context.put(GenericValueReader.class, reader);
-                return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
+                return true;
               }
 
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                context.remove(GenericValueReader.class);
-                return ChunkParserListener.super.onChunkEnd(context, chunkIndex, skipped);
-              }
-
-              @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                try {
-                  context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName));
-                } catch (Throwable ignore) {
+                List<Map<String, Object>> rows = new ArrayList<>();
+                Iterator<? extends ConstantPool> pools =
+                    context.getConstantPools().pools().iterator();
+                while (pools.hasNext()) {
+                  ConstantPool cp = pools.next();
+                  if (cp.getType().getName().equals(typeName)) {
+                    drain(cp, filter, rows);
+                  }
                 }
-                return true;
-              }
-
-              @Override
-              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName));
+                context.remove(GenericValueReader.class);
+                synchronized (rowsByChunk) {
+                  rowsByChunk.put(chunkIndex, rows);
+                }
                 return true;
               }
             });
       }
+      List<Map<String, Object>> rows = new ArrayList<>();
+      rowsByChunk.values().forEach(rows::addAll);
       return rows;
+    }
+
+    private static void drain(
+        ConstantPool cp, Predicate<Map<String, Object>> filter, List<Map<String, Object>> rows) {
+      cp.ensureIndexed();
+      Iterator<Long> it = cp.ids();
+      while (it.hasNext()) {
+        long id = it.next();
+        Object val = cp.get(id);
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", id);
+        if (val instanceof Map<?, ?> map) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> mv = (Map<String, Object>) map;
+          row.putAll(mv);
+        } else {
+          row.put("value", val);
+        }
+        if (filter == null || filter.test(row)) {
+          rows.add(row);
+        }
+      }
     }
 
     @Override

@@ -25,22 +25,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * {@code crossref()} counts per chunk, on chunk-local ids, deterministically.
+ * Constant pool queries ({@code crossref()}, {@code constants --summary}, {@code constants/<type>})
+ * count per chunk, on chunk-local ids, deterministically.
  *
  * <p>The fixture is a real recording made in this JVM. A disk recording flushes about once a
  * second, writing a checkpoint each time, so its single chunk has several checkpoints and the stack
  * trace pool grows across them (asserted as the first test's precondition). Two bugs it pins:
  *
  * <ul>
- *   <li>The pool size was added at every checkpoint, so an entry was counted once per checkpoint it
- *       survived: on a 36-checkpoint recording {@code cpTotal} was 1047 for 196 entries.
+ *   <li>The pool size was added (and in {@code loadEntries} the pool drained) at every checkpoint,
+ *       so an entry was counted once per checkpoint it survived: on a 36-checkpoint recording
+ *       {@code cpTotal} was 1047 for 196 entries.
  *   <li>Per-chunk state sat in single-slot arrays shared by the parser's worker threads and reset
  *       by every {@code onChunkStart}, and ids from different chunks were merged as if they were
  *       the same entries. On three concatenated copies of one chunk, five runs gave five different
  *       {@code cpTotal}/{@code cpReferenced} pairs, none the expected 3x.
  * </ul>
  */
-class CrossrefChunkLocalityTest {
+class ConstantPoolChunkLocalityTest {
   private static final String TYPE = "jdk.types.StackTrace";
   private static final int COPIES = 3;
 
@@ -136,6 +138,82 @@ class CrossrefChunkLocalityTest {
       runs.add(many.get("cpTotal") + "/" + many.get("cpReferenced"));
     }
     assertEquals(1, runs.stream().distinct().count(), "runs differ: " + runs);
+  }
+
+  @Test
+  void summaryCountsEachEntryOnce() throws Exception {
+    assertPoolGrowsAcrossCheckpoints();
+    Map<String, Long> expected = entryCountsAtChunkEnd(single);
+    assertEquals(expected, summary(single));
+  }
+
+  @Test
+  void entriesListEachEntryOnce() throws Exception {
+    assertPoolGrowsAcrossCheckpoints();
+    List<Map<String, Object>> rows = ConstantPoolProvider.loadEntries(single, TYPE);
+    List<Object> ids = rows.stream().map(r -> r.get("id")).toList();
+    assertEquals(entryCountsAtChunkEnd(single).get(TYPE), (long) rows.size(), "rows: " + ids);
+    assertEquals(ids.size(), ids.stream().distinct().count(), "duplicate ids in one chunk: " + ids);
+  }
+
+  @Test
+  void concatenatedChunksSumSummaryAndEntriesInChunkOrderOnEveryRun() throws Exception {
+    Map<String, Long> one = summary(single);
+    List<Object> oneIds =
+        ConstantPoolProvider.loadEntries(single, TYPE).stream().map(r -> r.get("id")).toList();
+    List<Object> expectedIds = new ArrayList<>();
+    for (int i = 0; i < COPIES; i++) {
+      expectedIds.addAll(oneIds); // ids are chunk-local: each chunk lists its own entries
+    }
+    for (int run = 0; run < 10; run++) {
+      Map<String, Long> many = summary(concatenated);
+      assertEquals(one.keySet(), many.keySet(), "run " + run);
+      one.forEach((type, n) -> assertEquals(COPIES * n, many.get(type), type));
+      List<Object> ids =
+          ConstantPoolProvider.loadEntries(concatenated, TYPE).stream()
+              .map(r -> r.get("id"))
+              .toList();
+      assertEquals(expectedIds, ids, "run " + run);
+    }
+  }
+
+  private static Map<String, Long> summary(Path jfr) throws Exception {
+    Map<String, Long> out = new java.util.TreeMap<>();
+    for (Map<String, Object> row : ConstantPoolProvider.loadSummary(jfr)) {
+      assertEquals(null, out.put((String) row.get("name"), (Long) row.get("totalSize")), "dup");
+    }
+    return out;
+  }
+
+  private static void assertPoolGrowsAcrossCheckpoints() throws Exception {
+    PoolSizes sizes = poolSizes(single);
+    assertTrue(
+        sizes.summedPerCheckpoint > sizes.atChunkEnd,
+        "fixture must have the " + TYPE + " pool in several checkpoints: " + sizes);
+  }
+
+  /** Every pool type's entry count at chunk end, summed over chunks: the parser's own index. */
+  private static Map<String, Long> entryCountsAtChunkEnd(Path jfr) throws Exception {
+    Map<String, Long> counts = new java.util.TreeMap<>();
+    try (StreamingChunkParser p = new StreamingChunkParser(new UntypedParserContextFactory())) {
+      p.parse(
+          jfr,
+          new ChunkParserListener() {
+            @Override
+            public boolean onChunkEnd(ParserContext c, int chunkIndex, boolean skipped) {
+              synchronized (counts) {
+                c.getConstantPools()
+                    .pools()
+                    .forEach(
+                        cp ->
+                            counts.merge(
+                                cp.getType().getName(), (long) cp.entryCount(), Long::sum));
+              }
+              return true;
+            }
+          });
+    }
+    return counts;
   }
 
   /** The {@value #TYPE} pool's size per checkpoint (summed) and at chunk end, over all chunks. */
