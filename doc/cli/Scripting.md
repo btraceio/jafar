@@ -518,7 +518,7 @@ if ${filename} contains ".jfr" and ${size} > 1000
 # Check if a variable exists
 if exists(myvar)
 
-# Check if a variable is empty (doesn't exist, null, or empty string/result)
+# Check if a variable is empty (doesn't exist, null, empty string, no rows, or a map with no entries)
 if empty(results)
 
 # Negation

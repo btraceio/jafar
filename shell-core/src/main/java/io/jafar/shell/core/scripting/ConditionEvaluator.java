@@ -1,6 +1,7 @@
 package io.jafar.shell.core.scripting;
 
 import io.jafar.shell.core.VariableStore;
+import java.util.Map;
 
 /**
  * Evaluates condition expressions for if/elif statements. Supports comparisons, arithmetic, logical
@@ -266,6 +267,18 @@ public final class ConditionEvaluator {
       if (v == null) return true;
       if (v instanceof String s) return s.isEmpty();
       return false;
+    }
+
+    if (val instanceof VariableStore.MapValue map) {
+      return map.value().isEmpty();
+    }
+
+    if (val instanceof EvaluatorLazyValue lazy) {
+      // A toMap() query is read as its map, as by ${v.size}: empty when the map has no entries
+      Map<String, Object> map = lazy.asMap();
+      if (map != null) {
+        return map.isEmpty();
+      }
     }
 
     if (val instanceof VariableStore.LazyValue lazy) {

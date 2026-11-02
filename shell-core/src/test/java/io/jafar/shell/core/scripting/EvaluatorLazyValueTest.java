@@ -318,9 +318,33 @@ class EvaluatorLazyValueTest {
         "same answer as the MapValue jfr-shell stores for this query");
     assertTrue(new ConditionEvaluator(null, global).evaluate("${gc.size} == 2"));
 
+    ConditionEvaluator cond = new ConditionEvaluator(null, global);
+    assertFalse(cond.evaluate("empty(gc)"), "a toMap() variable with entries is not empty");
+    assertFalse(cond.evaluate("empty(one)"));
+
     assertEquals("1", sub.substitute("${one.size}"), "a one-row query still counts rows");
     assertEquals("10", sub.substitute("${one}"), "and ${v} is still the first field");
     assertEquals("20", sub.substitute("${one.t2}"));
+  }
+
+  @Test
+  void emptyIsTrueOnlyForAMapWithoutEntries() throws Exception {
+    // empty() used to answer true for every map variable, so 'if !empty(cfg)' never ran
+    VariableStore global = new VariableStore();
+    global.set("cfg", new VariableStore.MapValue(Map.of("k", 1L)));
+    global.set("none", new VariableStore.MapValue(Map.of()));
+    var ref = sessions.open(Path.of("/tmp/x.fake"), null);
+    evaluator.rows = List.of(Map.of()); // what toMap() gives for no matching rows: one empty map
+    global.set(
+        "emptyGc",
+        new EvaluatorLazyValue(
+            evaluator, evaluator.parse("things | toMap(name, n)"), "emptyGc", ref, null));
+
+    ConditionEvaluator cond = new ConditionEvaluator(null, global);
+    assertFalse(cond.evaluate("empty(cfg)"));
+    assertTrue(cond.evaluate("!empty(cfg)"));
+    assertTrue(cond.evaluate("empty(none)"));
+    assertTrue(cond.evaluate("empty(emptyGc)"), "a toMap() of no rows is an empty map");
   }
 
   private static VariableStore mapStore(String name, Map<String, Object> map) {

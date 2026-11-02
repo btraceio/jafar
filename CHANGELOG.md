@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`empty(name)` is false for a map with entries**, in both shells. It answered true for every map
+  variable, so `if !empty(cfg)` never ran for `set cfg = {"k": 1}`, and in `jfr-shell` for a
+  `toMap()` variable. A map, or a `toMap()` query variable in `jafar-shell`, is now empty only when
+  it has no entries
 - **`${v.size}` of a `toMap()` variable in `jafar-shell` counts entries, as in `jfr-shell`.** The
   unified shell keeps every query variable lazy, and `toMap()` returns one row holding the map, so
   `${v.size}` answered 1: `map-operations.jfrs` printed `GC stats entries: 1` in `jafar-shell` and
