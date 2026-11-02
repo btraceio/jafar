@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedStrategy;
@@ -182,11 +183,14 @@ public class GeneratedUntypedParityTest {
                         delivered.incrementAndGet();
                       }
                     }));
+    // A failure while reading an event is an EventDecodingException, as on the generic path; only
+    // a failure to generate a deserializer is a GeneratedDeserializationException.
     Throwable t = e;
-    while (t != null && !(t instanceof EventStreamGenerated.GeneratedDeserializationException)) {
+    while (t != null && !(t instanceof EventDecodingException)) {
       t = t.getCause();
     }
-    assertNotNull(t, "no GeneratedDeserializationException in the cause chain of " + e);
+    assertNotNull(t, "no EventDecodingException in the cause chain of " + e);
+    assertEquals(victim, ((EventDecodingException) t).getTypeName(), t.getMessage());
     assertTrue(t.getMessage().contains(victim), t.getMessage());
     assertEquals("planted failure", t.getCause().getMessage());
   }

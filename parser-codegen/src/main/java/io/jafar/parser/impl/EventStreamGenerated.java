@@ -2,6 +2,7 @@ package io.jafar.parser.impl;
 
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.CheckpointEvent;
@@ -85,10 +86,12 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
   /**
    * Deserializes the event with a generated deserializer and hands it to {@link #onEventValue}.
    *
-   * <p>A failure to generate or run a deserializer is not swallowed: it is rethrown as {@link
-   * GeneratedDeserializationException} naming the event type, chunk and position, and the parse
-   * fails. (It used to be caught, which skipped the event <em>and</em>, by returning {@code false}
-   * to the chunk parser, every remaining event in its chunk.)
+   * <p>Same contract as {@link EventStream#onEvent}: a payload that cannot be decoded (including an
+   * event type id the chunk metadata does not declare) is passed to {@link #onDecodeError}; unless
+   * that returns {@code true} the parse fails with the {@link EventDecodingException}, which names
+   * the type, chunk and position. A failure to <em>generate</em> a deserializer is a parser bug,
+   * not bad data: it fails the parse with {@link GeneratedDeserializationException} and is never
+   * skipped.
    */
   @Override
   public final boolean onEvent(
@@ -97,31 +100,54 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
     Map<String, Object> value;
     try {
-      UntypedEventDeserializer deserializer = deserializerFor(context, typeId, eventClz);
+      if (eventClz == null) {
+        throw new IllegalStateException("No metadata for event type id " + typeId);
+      }
+      UntypedEventDeserializer deserializer = deserializerFor(context, eventClz);
       value = deserializer.deserialize(context.get(RecordingStream.class), context);
+    } catch (GeneratedDeserializationException e) {
+      throw e;
     } catch (Exception e) {
-      throw new GeneratedDeserializationException(
-          "Generated untyped deserializer failed for event type "
-              + (eventClz != null ? eventClz.getName() : "<unknown>")
-              + " (id "
-              + typeId
-              + ") in chunk "
-              + context.getChunkIndex()
-              + " at position "
-              + eventStartPos,
-          e);
+      EventDecodingException failure =
+          new EventDecodingException(
+              eventClz != null ? eventClz.getName() : null,
+              typeId,
+              context.getChunkIndex(),
+              eventStartPos,
+              rawSize,
+              e);
+      if (!onDecodeError(failure)) {
+        throw failure;
+      }
+      // Skipped. StreamingChunkParser repositions to eventStartPos + rawSize after onEvent returns
+      // true, so the next event is read from its own start whatever the decoder consumed.
+      return !ctl.abortFlag
+          && (delegate == null
+              || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
     }
+    // Outside the try: an exception from the handler is the handler's, not a decoding failure.
     onEventValue(eventClz, value, ctl);
     return !ctl.abortFlag
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
   }
 
+  /**
+   * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
+   *
+   * <p>When it returns {@code true}, the delegate listener's {@code onEvent} is still called for
+   * the skipped event (its position and size are valid); {@link #onEventValue} is not.
+   *
+   * @param failure names the event type, chunk and position; its cause is the decoder's reason
+   * @return {@code true} to skip the event and continue with the next one, {@code false} to fail
+   *     the parse with {@code failure}. The default fails the parse.
+   */
+  protected boolean onDecodeError(EventDecodingException failure) {
+    return false;
+  }
+
   private static UntypedEventDeserializer deserializerFor(
-      ParserContext context, long typeId, MetadataClass eventClz) {
-    if (eventClz == null) {
-      throw new IllegalStateException("No metadata for event type id " + typeId);
-    }
+      ParserContext context, MetadataClass eventClz) {
     // Within a chunk, the MetadataClass instance identifies the type: an identity lookup, with no
     // boxing of the id ...
     ChunkDeserializers local = context.get(ChunkDeserializers.class);
@@ -135,7 +161,16 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
           shared(
               context.get(UntypedDeserializerCache.class),
               UntypedCodeGenerator.cacheKey(eventClz, effective),
-              () -> UntypedCodeGenerator.generate(eventClz, effective));
+              () -> {
+                try {
+                  return UntypedCodeGenerator.generate(eventClz, effective);
+                } catch (RuntimeException e) {
+                  throw new GeneratedDeserializationException(
+                      "Failed to generate the untyped deserializer for event type "
+                          + eventClz.getName(),
+                      e);
+                }
+              });
       local.put(eventClz, deserializer);
     }
     return deserializer;
@@ -214,8 +249,9 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
   }
 
   /**
-   * Thrown when a generated deserializer cannot be generated or fails while reading an event. The
-   * cause carries the reason.
+   * Thrown when a deserializer cannot be generated: a parser bug, never skipped by {@link
+   * #onDecodeError}. The cause carries the reason. (A failure while <em>reading</em> an event is an
+   * {@link EventDecodingException}.)
    */
   public static final class GeneratedDeserializationException extends RuntimeException {
     private static final long serialVersionUID = 1L;

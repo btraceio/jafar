@@ -555,6 +555,63 @@ parser.handle((type, value, ctl) -> {
 });
 ```
 
+### Undecodable Events
+
+If an event's payload cannot be decoded (a corrupted or non-conforming recording), `run()` fails
+by default with an `IOException`. Its cause chain contains an
+`io.jafar.parser.api.EventDecodingException` whose message names the event type, the chunk and the
+event's position in it, for example
+`Cannot decode event of type jdk.ExecutionSample (id 101) in chunk 1 at position 271 (size 29)`.
+The same details are available from `getTypeName()`, `getTypeId()`, `getChunkIndex()`,
+`getPosition()` and `getSize()`, and `getCause()` is the decoder's reason.
+
+Event handlers never receive the bad event, not even partially. Events decoded before the failure
+have already been delivered. Chunks are parsed in parallel, so events from other chunks may have
+been delivered too.
+
+```java
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.run();
+} catch (IOException e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+        System.err.println(c);  // includes "Cannot decode event of type ..."
+    }
+}
+```
+
+To read such a recording on a best-effort basis instead, register a decode error handler. Return
+`true` to skip the event and continue with the next one, `false` to fail the parse. If the handler
+throws, the parse fails with that exception. It is called from the threads parsing the chunks, so
+it must be thread-safe:
+
+```java
+AtomicLong skipped = new AtomicLong();
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.onDecodeError(failure -> {
+        System.err.println("skipped: " + failure.getMessage());
+        return skipped.incrementAndGet() <= 100;  // give up after 100 bad events
+    });
+    p.run();
+}
+```
+
+Skipping recovers cleanly from a bad event *payload*: parsing resumes at the next event, located by
+the size the chunk declares for each event. A reference to a pooled string that does not exist is
+such a payload error too; it is never read as `null`.
+
+A corrupted *constant pool* entry is different, and always fails the parse, even with a decode error
+handler. Pool entries are not length-prefixed, so past an entry that cannot be read the rest of the
+checkpoint cannot be located, and no later string reference in the chunk could be trusted. The
+`IOException` names the pool and the entry, for example
+`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`.
+
+> The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
+> default; in Java, failing is. A corrupted constant pool entry is also reported through `OnError`
+> there: the entries indexed before it stay usable, and references to the rest are reported one by
+> one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
+
 ## Performance Considerations
 
 ### 1. Avoid Unnecessary String Checks

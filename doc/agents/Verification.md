@@ -102,10 +102,40 @@ looks identical to the file not being read at all.
 > it. The net that found them: decode the same recording through the generic reader and the
 > generated path and compare **counts per event type** and values (`GeneratedUntypedArrayParityTest`,
 > `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
-> types. The `catch` is gone too: every failure, I/O included, is rethrown as
-> `GeneratedDeserializationException` naming type, chunk and position, pinned by
-> `GeneratedUntypedParityTest.deserializerFailureFailsTheParseNamingTheEventType`. When a listener
+> types. The `catch` is gone too: every failure, I/O included, now fails the parse naming type,
+> chunk and position - a read failure as `EventDecodingException` (as on the generic path, with the
+> same opt-in `onDecodeError` skip), a generation failure as `GeneratedDeserializationException` -
+> pinned by `GeneratedUntypedParityTest.deserializerFailureFailsTheParseNamingTheEventType`. When a listener
 > method returns `boolean`, a `catch` that returns is a control-flow decision, not error handling.
+
+> **Case file — half an event, then silence; or half an event, then a crash.** `EventStream.onEvent`
+> (what `UntypedJafarParser` always uses), and its benchmark-only twins `EventStreamLazy` and
+> `EventStreamBaseline`, handed the half-built map to the handler from a `finally`, then, for an
+> `IOException`, returned `!abort && delegate != null && ...`: `false` with no delegate, which
+> `StreamingChunkParser` reads as "skip the rest of the chunk". Twenty events in one chunk, event 7's
+> string encoding byte set to `0x7f`: the handler got events 0–6, event 7 without `label`, and
+> nothing else, and `run()` returned normally. With a `withParserListener` delegate the same failure
+> was ignored and all 20 arrived, event 7 still half-built. The first attempt to reproduce it hit a
+> different path: the JMC writer pools event strings, so the marker bytes were in the
+> `java.lang.String` constant pool; that error surfaces as a `RuntimeException` from
+> `MutableConstantPool.get`, which was not caught, so the parse *failed* (after delivering the
+> partial map). Same bug, opposite symptom, decided by which byte was corrupted. Now
+> `EventDecodingException` names type, chunk and position, and nothing is delivered half-built;
+> pinned by `EventDecodeFailureTest` (7 of 8 fail on the old code). **When you corrupt a fixture to
+> reach a code path, read the stack to confirm which path it took before reasoning from the
+> outcome.**
+
+> **Case file — a skip that guesses.** Both untyped parsers skip constant pool entries to index
+> them, and both skipped a string whose encoding id they did not know as if it had no payload
+> (Java `ParsingUtils.skipUTF8`, Go `skipString`: `default: // unknown ids carry no payload`). One
+> bad tag byte therefore moved every later entry of the checkpoint: in a Go test pool of "one",
+> "two", "three" with entry 2's tag corrupted, entry 3 was decoded from inside "two" and failed
+> with `unexpected string constant id: 116` (`'t'`). And a reference that then found no entry
+> read as `null`, so in skip mode later events quietly lost strings. Found only because a
+> skip-mode test asserted the *next* event's value, not just that the bad one was reported. Both
+> now refuse unknown ids and report dangling string references (`EventDecodeFailureTest`
+> `CONSTANT_POOL`/`DANGLING_STRING_REF`, Go `TestCorruptedPoolStringIsReportedNotMisaligned`).
+> **A skip routine's default branch is a fallback too: if it cannot know the length, it must fail.**
 
 ## R4. Documentation is code — run it
 
