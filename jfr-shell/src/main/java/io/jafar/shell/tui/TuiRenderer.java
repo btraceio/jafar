@@ -20,6 +20,7 @@ import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
 import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.cli.ConditionalState;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -42,6 +43,7 @@ public final class TuiRenderer {
   private final SessionManager<? extends Session> sessions;
   private final TuiDetailBuilder detailBuilder;
   private TuiAdapter tuiAdapter;
+  private ConditionalState conditionalState;
 
   TuiRenderer(
       TuiContext ctx, SessionManager<? extends Session> sessions, TuiDetailBuilder detailBuilder) {
@@ -52,6 +54,11 @@ public final class TuiRenderer {
 
   void setTuiAdapter(TuiAdapter adapter) {
     this.tuiAdapter = adapter;
+  }
+
+  /** The dispatcher's if-block state, shown in the input title the way the CLI shows it. */
+  void setConditionalState(ConditionalState conditionalState) {
+    this.conditionalState = conditionalState;
   }
 
   void render(Frame frame) {
@@ -758,7 +765,7 @@ public final class TuiRenderer {
   private void renderInput(Frame frame, Rect area) {
     Block.Builder inputBlockBuilder =
         Block.builder()
-            .title(mnemonicTitle("Command >", 0))
+            .title(mnemonicTitle(inputTitle(conditionalState), 0))
             .borders(Borders.ALL)
             .borderType(BorderType.ROUNDED);
     if (ctx.focus == Focus.INPUT) {
@@ -766,6 +773,21 @@ public final class TuiRenderer {
     }
     TextInput textInput = TextInput.builder().block(inputBlockBuilder.build()).build();
     textInput.renderWithCursor(area, frame.buffer(), ctx.inputState, frame);
+  }
+
+  /**
+   * Title of the command input. Inside an if-block it shows the nesting depth, as the CLI prompt's
+   * {@code ...(N)>} does, and whether commands are currently being skipped: without it, commands
+   * typed in a skipped branch (a false condition, or one that failed to evaluate) would simply
+   * produce no output.
+   */
+  static String inputTitle(ConditionalState state) {
+    if (state == null || !state.inConditional()) {
+      return "Command >";
+    }
+    return "Command ...("
+        + state.depth()
+        + (state.isActive() ? ") >" : ", skipping until endif) >");
   }
 
   private void renderSearchBar(Frame frame, Rect area) {

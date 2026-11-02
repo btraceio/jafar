@@ -14,7 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A failed condition is now a command error: no branch of that if-block runs (its `endif` still
   closes it), a script stops there with a non-zero exit, and with `--continue-on-error` it resumes
   after the `endif` with the error counted. An `elif` after a branch that already ran is no longer
-  evaluated, so it cannot report a failure that decides nothing
+  evaluated, so it cannot report a failure that decides nothing; a missing condition is still
+  reported there
+- **`elif`/`else`/`endif` without an `if`, and a missing `endif`, now fail a script.** The first
+  three were printed and counted as successful commands; a script ending inside an `if` was
+  silently accepted. All are now script errors
+- **A script no longer leaves the interactive shell inside its if-blocks.** The interactive
+  `script` command runs on the shell's own dispatcher, so a script that stopped inside a block left
+  every command typed afterwards silently skipped. Blocks a script opens are closed when it
+  returns. The TUI's command input now shows an open block and whether it is skipping
+  (`Command ...(1, skipping until endif) >`), as the CLI prompt's `...(1)>` does
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that

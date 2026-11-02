@@ -496,6 +496,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("  elif <condition>               Else-if branch");
     terminal.writer().println("  else                           Else branch");
     terminal.writer().println("  endif                          End conditional block");
+    terminal
+        .writer()
+        .println("  A condition that fails to evaluate is an error, not false: no branch of");
+    terminal
+        .writer()
+        .println("  its block runs, and the block stays open (...(N)>) until its endif.");
     terminal.writer().println();
     terminal.writer().println("Scripting:");
     terminal.writer().println("  script list                    List available scripts");

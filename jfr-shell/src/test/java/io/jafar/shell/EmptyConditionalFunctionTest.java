@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ConditionEvaluationException;
+import io.jafar.shell.cli.ConditionalException;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -432,8 +432,7 @@ class EmptyConditionalFunctionTest {
   @Test
   void emptyWithMultipleArguments() {
     // empty() with multiple arguments fails the condition; no branch of the block runs
-    assertThrows(
-        ConditionEvaluationException.class, () -> dispatcher.dispatch("if empty(var1, var2)"));
+    assertThrows(ConditionalException.class, () -> dispatcher.dispatch("if empty(var1, var2)"));
     dispatcher.dispatch("echo Should not execute");
     dispatcher.dispatch("endif");
 

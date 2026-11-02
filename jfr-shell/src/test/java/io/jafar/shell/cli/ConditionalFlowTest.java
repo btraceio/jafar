@@ -14,7 +14,7 @@ import org.mockito.Mockito;
 /**
  * Tests for conditional control flow (if/elif/else/endif) robustness, particularly error handling:
  * a condition that cannot be evaluated must run no branch of its block (once both branches ran;
- * later the else branch silently ran), and must surface as a {@link ConditionEvaluationException}.
+ * later the else branch silently ran), and must surface as a {@link ConditionalException}.
  */
 class ConditionalFlowTest {
 
@@ -114,14 +114,14 @@ class ConditionalFlowTest {
   // ==================== Error Handling Tests ====================
 
   /** Dispatches a line that is expected to fail with a condition error, returning the error. */
-  private ConditionEvaluationException dispatchFailingCondition(String line) {
-    return assertThrows(ConditionEvaluationException.class, () -> dispatcher.dispatch(line));
+  private ConditionalException dispatchFailingCondition(String line) {
+    return assertThrows(ConditionalException.class, () -> dispatcher.dispatch(line));
   }
 
   @Test
   void testInvalidCondition_RunsNoBranch() {
     // A condition that cannot be evaluated is not a false one: neither branch may run.
-    ConditionEvaluationException e = dispatchFailingCondition("if 1 badoperator 2");
+    ConditionalException e = dispatchFailingCondition("if 1 badoperator 2");
     assertTrue(e.getMessage().startsWith("Condition evaluation failed: "), e.getMessage());
     dispatcher.dispatch("set branch1 = \"executed\"");
     dispatcher.dispatch("else");
@@ -137,7 +137,7 @@ class ConditionalFlowTest {
 
   @Test
   void testDivisionByZeroInCondition_RunsNoBranch() {
-    ConditionEvaluationException e = dispatchFailingCondition("if 1 / 0 > 1");
+    ConditionalException e = dispatchFailingCondition("if 1 / 0 > 1");
     assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
     dispatcher.dispatch("echo THEN");
     dispatcher.dispatch("else");
@@ -152,7 +152,7 @@ class ConditionalFlowTest {
 
   @Test
   void testEmptyCondition_RunsNoBranch() {
-    ConditionEvaluationException e = dispatchFailingCondition("if");
+    ConditionalException e = dispatchFailingCondition("if");
     assertTrue(e.getMessage().contains("if requires a condition"), e.getMessage());
     dispatcher.dispatch("echo branch1");
     dispatcher.dispatch("else");
@@ -184,7 +184,7 @@ class ConditionalFlowTest {
   void testFailedElif_SkipsElse() {
     dispatcher.dispatch("if 1 == 2");
     dispatcher.dispatch("echo IF");
-    ConditionEvaluationException e = dispatchFailingCondition("elif 1 / 0 > 1");
+    ConditionalException e = dispatchFailingCondition("elif 1 / 0 > 1");
     assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
     dispatcher.dispatch("echo ELIF");
     dispatcher.dispatch("else");
@@ -240,6 +240,42 @@ class ConditionalFlowTest {
     assertFalse(io.hasOutput("INNER_ELSE"));
     assertTrue(io.hasOutput("OUTER_STILL_ACTIVE"));
     assertFalse(io.hasOutput("OUTER_ELSE"));
+  }
+
+  @Test
+  void testKeywordsWithoutIf_AreConditionalErrors() {
+    // Once printed and counted as successful commands; a script with a stray endif "succeeded".
+    for (String line : List.of("else", "endif", "elif 1 == 1")) {
+      ConditionalException e = dispatchFailingCondition(line);
+      assertEquals(line.split(" ")[0] + " without if", e.getMessage());
+      assertFalse(dispatcher.getConditionalState().inConditional());
+    }
+    assertTrue(io.errors.isEmpty(), "reported by the caller, not printed: " + io.errors);
+  }
+
+  @Test
+  void testEmptyElifAfterTakenBranch_IsReported() {
+    // The condition is not evaluated (a branch already ran), but a missing one is a syntax error
+    // and must not depend on which branch happened to run.
+    dispatcher.dispatch("if 1 == 1");
+    ConditionalException e = dispatchFailingCondition("elif");
+    assertTrue(e.getMessage().startsWith("elif requires a condition"), e.getMessage());
+    dispatcher.dispatch("echo ELIF");
+    dispatcher.dispatch("endif");
+
+    assertFalse(io.hasOutput("ELIF"));
+    assertFalse(dispatcher.getConditionalState().inConditional());
+  }
+
+  @Test
+  void testEmptyIfInSkippedBlock_IsReported() {
+    dispatcher.dispatch("if 1 == 2");
+    ConditionalException e = dispatchFailingCondition("if");
+    assertTrue(e.getMessage().startsWith("if requires a condition"), e.getMessage());
+    assertEquals(2, dispatcher.getConditionalState().depth(), "the inner block is still entered");
+    dispatcher.dispatch("endif");
+    dispatcher.dispatch("endif");
+    assertFalse(dispatcher.getConditionalState().inConditional());
   }
 
   // ==================== Nested Conditionals Tests ====================

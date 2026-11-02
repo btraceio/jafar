@@ -710,4 +710,64 @@ class ScriptRunnerTest {
         result.getErrors().get(0).getMessage());
     assertEquals(List.of(), out, "MISSING must not be printed");
   }
+
+  // ---- A script does not leave its if-blocks open in the dispatcher that ran it ----
+
+  @Test
+  void scriptStoppedInsideBlockDoesNotLeaveItOpen() {
+    // The interactive shell runs scripts on its own dispatcher; a script that stopped at a failed
+    // condition used to leave the shell inside that block, silently skipping what was typed next.
+    List<String> out = new ArrayList<>();
+    List<String> err = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, err);
+
+    ScriptRunner.ExecutionResult result =
+        new ScriptRunner(dispatcher, null, List.of()).execute(FAILING_CONDITIONAL.lines().toList());
+
+    assertTrue(result.hasErrors());
+    assertFalse(dispatcher.getConditionalState().inConditional());
+    dispatcher.dispatch("echo TYPED_AFTERWARDS");
+    assertEquals(List.of("TYPED_AFTERWARDS"), out);
+  }
+
+  @Test
+  void scriptKeepsTheCallersOwnOpenBlock() {
+    List<String> out = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, new ArrayList<>());
+    dispatcher.dispatch("if 1 == 1"); // typed interactively before running the script
+
+    new ScriptRunner(dispatcher, null, List.of()).execute(List.of("if 1 / 0 > 1", "echo X"));
+
+    assertEquals(1, dispatcher.getConditionalState().depth(), "only the script's block is closed");
+    assertTrue(dispatcher.getConditionalState().isActive());
+  }
+
+  @Test
+  void missingEndifIsReportedAndClosed() {
+    List<String> out = new ArrayList<>();
+    CommandDispatcher dispatcher = realDispatcher(out, new ArrayList<>());
+
+    ScriptRunner.ExecutionResult result =
+        new ScriptRunner(dispatcher, null, List.of())
+            .execute(List.of("if 1 == 1", "echo INSIDE", "if 1 == 2", "echo NESTED"));
+
+    assertEquals(1, result.getErrors().size());
+    ScriptRunner.ScriptError error = result.getErrors().get(0);
+    assertEquals(4, error.getLineNumber());
+    assertEquals("2 if-block(s) not closed with endif by end of script", error.getMessage());
+    assertEquals(List.of("INSIDE"), out);
+    assertFalse(dispatcher.getConditionalState().inConditional());
+  }
+
+  @Test
+  void strayEndifFailsTheScript() {
+    List<String> out = new ArrayList<>();
+    ScriptRunner.ExecutionResult result =
+        new ScriptRunner(realDispatcher(out, new ArrayList<>()), null, List.of())
+            .execute(List.of("endif", "echo AFTER"));
+
+    assertEquals(1, result.getErrors().size());
+    assertEquals("endif without if", result.getErrors().get(0).getMessage());
+    assertEquals(List.of(), out, "fail-fast");
+  }
 }

@@ -602,10 +602,20 @@ Line 1: Condition evaluation failed: Expected ')' after function argument at pos
 ```
 
 Neither `EXISTS` nor `MISSING` is printed. In the interactive shell the error is printed, the prompt
-shows the block as open (`...(1)>`), its commands are skipped, and `endif` closes it.
+shows the block as open (`...(1)>`), its commands are skipped, and `endif` closes it. The TUI shows
+the same in the title of the command input: `Command ...(1, skipping until endif) >`.
 
 An `elif` condition is evaluated only when every earlier branch was false, and a condition inside
-a block that is already being skipped is not evaluated at all, so neither can fail there.
+a block that is already being skipped is not evaluated at all, so neither can fail there. A
+*missing* condition (`if` or `elif` alone) is a syntax error and is reported either way.
+
+#### Blocks Left Open by a Script
+
+A script that ends with an `if` still open is an error (`N if-block(s) not closed with endif by end
+of script`, reported against the last line). Whether a script ends that way or stops early at an
+error, the blocks it opened are closed when it returns: running a script from the interactive
+shell never leaves the shell inside one of the script's blocks. A block you opened interactively
+before running the script stays open.
 
 #### Unclosed Conditionals
 
@@ -630,6 +640,9 @@ else           # Error: else without if
 # Error: endif without if
 endif          # Error: endif without if
 ```
+
+These are command errors like a failed condition: a script stops at them (or, with
+`--continue-on-error`, counts them) and exits non-zero.
 
 ## Executing Scripts
 

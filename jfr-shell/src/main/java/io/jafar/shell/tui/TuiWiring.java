@@ -44,6 +44,7 @@ public final class TuiWiring {
       executor.setCompleter(adapter != null ? adapter.getCompleter() : null);
       browser.setTuiAdapter(adapter);
       renderer.setTuiAdapter(adapter);
+      renderer.setConditionalState(dispatcher.getConditionalState());
 
       // Exit browser mode on adapter swap
       if (ctx.browserMode) {
@@ -120,6 +121,7 @@ public final class TuiWiring {
     browser.setTuiAdapter(adapter);
     TuiRenderer renderer = new TuiRenderer(ctx, sessions, detailBuilder);
     renderer.setTuiAdapter(adapter);
+    renderer.setConditionalState(dispatcher.getConditionalState());
     TuiKeyHandler keyHandler =
         new TuiKeyHandler(ctx, backend::read, browser, executor, detailBuilder, sessions);
 

@@ -703,10 +703,12 @@ public class CommandDispatcher {
         return handleElif(line);
       }
       if ("else".equals(cmd)) {
+        requireOpenIf("else");
         conditionalState.handleElse();
         return true;
       }
       if ("endif".equals(cmd)) {
+        requireOpenIf("endif");
         conditionalState.exitIf();
         return true;
       }
@@ -880,7 +882,7 @@ public class CommandDispatcher {
           }
           return false;
       }
-    } catch (ConditionEvaluationException e) {
+    } catch (ConditionalException e) {
       // Not printed here: the caller reports it (ScriptRunner as a command error, the
       // interactive shells as an error line), so it is neither swallowed nor shown twice.
       throw e;
@@ -3478,16 +3480,19 @@ public class CommandDispatcher {
     String condition = line.length() > 2 ? line.substring(2).trim() : "";
 
     // In a skipped branch the block is skipped whatever its condition says, so the condition is
-    // neither evaluated nor reported.
+    // not evaluated. A missing condition is a syntax error and is reported regardless.
     if (!conditionalState.isActive()) {
       conditionalState.enterIf(false);
+      if (condition.isEmpty()) {
+        throw missingCondition("if");
+      }
       return true;
     }
 
     boolean result;
     try {
       result = evaluateCondition("if", condition);
-    } catch (ConditionEvaluationException e) {
+    } catch (ConditionalException e) {
       // The block is still entered, so that its elif/else/endif pair up; no branch of it runs.
       conditionalState.enterIfWithError();
       throw e;
@@ -3500,17 +3505,23 @@ public class CommandDispatcher {
     // Extract condition after "elif "
     String condition = line.length() > 4 ? line.substring(4).trim() : "";
 
+    requireOpenIf("elif");
+
     // Only evaluate when no earlier branch ran and the block is not skipped; otherwise the result
-    // could not change anything, and a failure in it would be reported for nothing.
+    // could not change anything, and a failure in it would be reported for nothing. A missing
+    // condition is a syntax error and is reported regardless.
     if (!conditionalState.elifNeedsEvaluation()) {
-      conditionalState.handleElif(false); // throws "elif without if" outside a block
+      conditionalState.handleElif(false);
+      if (condition.isEmpty()) {
+        throw missingCondition("elif");
+      }
       return true;
     }
 
     boolean result;
     try {
       result = evaluateCondition("elif", condition);
-    } catch (ConditionEvaluationException e) {
+    } catch (ConditionalException e) {
       conditionalState.handleElifWithError();
       throw e;
     }
@@ -3518,21 +3529,33 @@ public class CommandDispatcher {
     return true;
   }
 
+  /** Rejects an elif/else/endif that has no if-block to belong to. */
+  private void requireOpenIf(String keyword) {
+    if (!conditionalState.inConditional()) {
+      throw new ConditionalException(keyword + " without if", null);
+    }
+  }
+
+  /** A missing condition on a keyword whose condition was not going to be evaluated anyway. */
+  private static ConditionalException missingCondition(String keyword) {
+    return new ConditionalException(keyword + " requires a condition", null);
+  }
+
   /**
    * Evaluates an if/elif condition. Any failure — including a missing condition — becomes a {@link
-   * ConditionEvaluationException}, which {@link #dispatch} lets through to its caller rather than
-   * printing it and carrying on: a condition that could not be evaluated is not a false one.
+   * ConditionalException}, which {@link #dispatch} lets through to its caller rather than printing
+   * it and carrying on: a condition that could not be evaluated is not a false one.
    */
   private boolean evaluateCondition(String keyword, String condition) {
     if (condition.isEmpty()) {
-      throw new ConditionEvaluationException(
+      throw new ConditionalException(
           keyword + " requires a condition; skipping every branch of this if-block", null);
     }
     try {
       return new ConditionEvaluator(getSessionStore(), globalStore).evaluate(condition);
     } catch (Exception e) {
       String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw new ConditionEvaluationException(
+      throw new ConditionalException(
           "Condition evaluation failed: " + reason + "; skipping every branch of this if-block", e);
     }
   }

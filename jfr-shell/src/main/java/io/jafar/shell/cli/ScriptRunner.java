@@ -27,8 +27,8 @@ import java.util.regex.Pattern;
  *
  * <p>A command that throws from {@link CommandDispatcher#dispatch(String)} is recorded as an error
  * for its line. That includes an {@code if}/{@code elif} whose condition cannot be evaluated
- * ({@link ConditionEvaluationException}); the dispatcher has then entered the if-block with no
- * branch active, so with continue-on-error the script resumes after the block's {@code endif}.
+ * ({@link ConditionalException}); the dispatcher has then entered the if-block with no branch
+ * active, so with continue-on-error the script resumes after the block's {@code endif}.
  *
  * <p>Example script:
  *
@@ -102,46 +102,67 @@ public final class ScriptRunner {
   public ExecutionResult execute(List<String> lines) {
     int successCount = 0;
     List<ScriptError> errors = new ArrayList<>();
+    boolean stopped = false;
 
-    for (int i = 0; i < lines.size(); i++) {
-      String line = lines.get(i).trim();
-      int lineNumber = i + 1;
+    // The dispatcher may be the interactive shell's own: whatever blocks this script opens, it
+    // must not leave them open there, or the user's next commands would be silently skipped.
+    ConditionalState conditionals = dispatcher.getConditionalState();
+    int startDepth = conditionals.depth();
+    try {
+      for (int i = 0; i < lines.size(); i++) {
+        String line = lines.get(i).trim();
+        int lineNumber = i + 1;
 
-      // Skip comments and blank lines
-      if (line.isEmpty() || line.startsWith("#")) {
-        continue;
-      }
-
-      // Substitute variables
-      String processed;
-      try {
-        processed = substituteVariables(line);
-      } catch (IllegalArgumentException e) {
-        errors.add(new ScriptError(lineNumber, line, e.getMessage()));
-        if (!continueOnError) {
-          break;
+        // Skip comments and blank lines
+        if (line.isEmpty() || line.startsWith("#")) {
+          continue;
         }
-        continue;
-      }
 
-      // Dispatch command
-      try {
-        boolean handled = dispatcher.dispatch(processed);
-        if (!handled) {
-          errors.add(new ScriptError(lineNumber, line, "Unknown command"));
+        // Substitute variables
+        String processed;
+        try {
+          processed = substituteVariables(line);
+        } catch (IllegalArgumentException e) {
+          errors.add(new ScriptError(lineNumber, line, e.getMessage()));
           if (!continueOnError) {
+            stopped = true;
             break;
           }
-        } else {
-          successCount++;
+          continue;
         }
-      } catch (Exception e) {
-        String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-        errors.add(new ScriptError(lineNumber, line, errorMsg));
-        if (!continueOnError) {
-          break;
+
+        // Dispatch command
+        try {
+          boolean handled = dispatcher.dispatch(processed);
+          if (!handled) {
+            errors.add(new ScriptError(lineNumber, line, "Unknown command"));
+            if (!continueOnError) {
+              stopped = true;
+              break;
+            }
+          } else {
+            successCount++;
+          }
+        } catch (Exception e) {
+          String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+          errors.add(new ScriptError(lineNumber, line, errorMsg));
+          if (!continueOnError) {
+            stopped = true;
+            break;
+          }
         }
       }
+
+      if (!stopped && conditionals.depth() > startDepth) {
+        int unclosed = conditionals.depth() - startDepth;
+        errors.add(
+            new ScriptError(
+                lines.size(),
+                "",
+                unclosed + " if-block(s) not closed with endif by end of script"));
+      }
+    } finally {
+      conditionals.unwindTo(startDepth);
     }
 
     return new ExecutionResult(successCount, errors);

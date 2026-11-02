@@ -56,10 +56,11 @@ public final class ConditionalState {
 
   /**
    * Enters a new if-block whose condition could not be evaluated. Every branch of the block is
-   * skipped until the matching {@code endif}.
+   * skipped until the matching {@code endif}. (Inside an already-skipped branch this is equally
+   * correct: a {@link BranchState#CONDITION_ERROR} block never becomes active.)
    */
   public void enterIfWithError() {
-    stack.push(new IfBlock(isActive() ? BranchState.CONDITION_ERROR : BranchState.BRANCH_TAKEN));
+    stack.push(new IfBlock(BranchState.CONDITION_ERROR));
   }
 
   /**
@@ -82,12 +83,9 @@ public final class ConditionalState {
     if (stack.isEmpty()) {
       throw new IllegalStateException("elif without if");
     }
-    IfBlock current = stack.pop();
-    stack.push(
-        new IfBlock(
-            current.state == BranchState.CONDITION_FAILED
-                ? BranchState.CONDITION_ERROR
-                : BranchState.BRANCH_TAKEN));
+    // Whatever the block's state was, nothing in it may run from here on.
+    stack.pop();
+    stack.push(new IfBlock(BranchState.CONDITION_ERROR));
   }
 
   /**
@@ -164,6 +162,18 @@ public final class ConditionalState {
    */
   public int depth() {
     return stack.size();
+  }
+
+  /**
+   * Closes if-blocks until at most {@code depth} remain. Used to discard blocks a script opened and
+   * did not close, so they do not leak into the session that ran it.
+   *
+   * @param depth the nesting depth to return to
+   */
+  public void unwindTo(int depth) {
+    while (stack.size() > depth) {
+      stack.pop();
+    }
   }
 
   /** Resets the conditional state, clearing all if-blocks. */

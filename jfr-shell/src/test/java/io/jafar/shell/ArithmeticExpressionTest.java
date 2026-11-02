@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ConditionEvaluationException;
+import io.jafar.shell.cli.ConditionalException;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -226,9 +226,8 @@ class ArithmeticExpressionTest {
   @Test
   void divisionByZeroError() {
     // Division by zero fails the condition; no branch of the block runs
-    ConditionEvaluationException e =
-        assertThrows(
-            ConditionEvaluationException.class, () -> dispatcher.dispatch("if 10 / 0 == 0"));
+    ConditionalException e =
+        assertThrows(ConditionalException.class, () -> dispatcher.dispatch("if 10 / 0 == 0"));
     assertTrue(e.getMessage().contains("Division by zero"), e.getMessage());
     dispatcher.dispatch("echo Should not print");
     dispatcher.dispatch("endif");
