@@ -333,9 +333,11 @@ func (c *chunkParser) readCheckpoints() error {
 		if r.err != nil {
 			return c.checkpointFailure(r.err)
 		}
+		// readCheckpoint has already passed any problem through checkpointFailure;
+		// reporting it again would call OnError twice for one problem.
 		next, err := c.readCheckpoint(r)
 		if err != nil {
-			return c.checkpointFailure(err)
+			return err
 		}
 		if next == 0 {
 			return nil
@@ -349,22 +351,29 @@ func (c *chunkParser) readCheckpoints() error {
 }
 
 // readCheckpoint reads one checkpoint event and returns the offset delta to the
-// next one, or 0 when this is the last checkpoint of the chunk.
+// next one, or 0 when this is the last checkpoint of the chunk or the chain
+// cannot be followed past it.
+//
+// Every problem found here is reported through recoverable exactly once, and a
+// non-nil error is the one OnError returned: the caller must not report it again.
 func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
+	// Every problem here leaves this checkpoint's pools, and those of the
+	// checkpoints after it, unindexed, so it is recorded as an indexing failure.
+	fail := func(err error) (int, error) { return 0, c.checkpointFailure(err) }
 	start := r.position()
 	size := r.readVarint()
 	if r.err != nil {
-		return 0, r.err
+		return fail(r.err)
 	}
 	if size <= 0 {
-		return 0, fmt.Errorf("checkpoint at %d: unexpected event size %d", start, size)
+		return fail(fmt.Errorf("checkpoint at %d: unexpected event size %d", start, size))
 	}
 	end := start + int(size)
 	if end > len(c.data) {
-		return 0, fmt.Errorf("checkpoint at %d: event size %d runs past the chunk", start, size)
+		return fail(fmt.Errorf("checkpoint at %d: event size %d runs past the chunk", start, size))
 	}
 	if typeID := r.readVarint(); typeID != 1 {
-		return 0, fmt.Errorf("checkpoint at %d: unexpected event type %d (should be 1)", start, typeID)
+		return fail(fmt.Errorf("checkpoint at %d: unexpected event type %d (should be 1)", start, typeID))
 	}
 	r.readVarint() // start time
 	r.readVarint() // duration
@@ -372,10 +381,10 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 	r.readByte() // flush flag
 	poolCount := r.readVarint()
 	if r.err != nil {
-		return 0, r.err
+		return fail(r.err)
 	}
 	if poolCount < 0 || poolCount > int64(end-r.position()) {
-		return 0, fmt.Errorf("checkpoint at %d: implausible constant pool count %d", start, poolCount)
+		return fail(fmt.Errorf("checkpoint at %d: implausible constant pool count %d", start, poolCount))
 	}
 	for i := int64(0); i < poolCount; i++ {
 		if err := c.readConstantPool(r, start, end); err != nil {
@@ -387,7 +396,10 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 			return int(nextOffsetDelta), nil
 		}
 	}
-	return int(nextOffsetDelta), r.err
+	if r.err != nil {
+		return fail(r.err)
+	}
+	return int(nextOffsetDelta), nil
 }
 
 // maxZeroTypeIDs bounds the workaround for a JMC writer bug that emits zero

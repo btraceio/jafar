@@ -1073,3 +1073,66 @@ func TestDanglingReferenceInIntactChunkResolvesToNil(t *testing.T) {
 		t.Errorf("names = %v, want %v", names, want)
 	}
 }
+
+// A constant pool problem inside a checkpoint reaches OnError exactly once,
+// also when OnError returns it to abort parsing. readCheckpoint used to report
+// it and then readCheckpoints reported the returned error a second time, which
+// FailOnError hides because it just returns its argument.
+func TestConstantPoolErrorIsReportedOnceWhenOnErrorAborts(t *testing.T) {
+	data := pooledStringRecording(true, 1)
+
+	var reported []error
+	err := NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			reported = append(reported, err)
+			return err
+		},
+	}, func(*Event) error { return nil })
+	if len(reported) != 1 {
+		t.Fatalf("OnError called %d times with %q, want exactly once", len(reported), reported)
+	}
+	if !strings.Contains(reported[0].Error(), "constant pool java.lang.String, index 2: unexpected string constant id: 127") {
+		t.Errorf("reported = %q, want the corrupted pool entry named", reported[0])
+	}
+	if !errors.Is(err, reported[0]) {
+		t.Errorf("parse error = %v, want the error OnError returned (%v)", err, reported[0])
+	}
+}
+
+// A checkpoint that cannot be read at all (here: its event type is not 1) is
+// reported exactly once too. readCheckpoint now reports these problems itself
+// instead of leaving them to readCheckpoints, so this guards the other half of
+// the once-only contract.
+func TestBrokenCheckpointIsReportedOnceWhenOnErrorAborts(t *testing.T) {
+	data := pooledStringRecording(false, 1)
+	h, err := readChunkHeader(newReader(data), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := int(h.ConstantPoolOffset)
+	for data[pos]&0x80 != 0 { // skip the event size varint
+		pos++
+	}
+	pos++
+	if data[pos] != 1 {
+		t.Fatalf("byte after the checkpoint size = %d, want event type 1", data[pos])
+	}
+	data[pos] = 2
+
+	var reported []error
+	err = NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			reported = append(reported, err)
+			return err
+		},
+	}, func(*Event) error { return nil })
+	if len(reported) != 1 {
+		t.Fatalf("OnError called %d times with %q, want exactly once", len(reported), reported)
+	}
+	if !strings.Contains(reported[0].Error(), "unexpected event type 2 (should be 1)") {
+		t.Errorf("reported = %q, want the checkpoint event type named", reported[0])
+	}
+	if !errors.Is(err, reported[0]) {
+		t.Errorf("parse error = %v, want the error OnError returned (%v)", err, reported[0])
+	}
+}
