@@ -535,6 +535,11 @@ parser.handle((type, value, ctl) -> {
 });
 ```
 
+`abort()` stops the whole parse, not only the current chunk, and the handlers not yet called for
+that event are skipped. Chunks are parsed in parallel, so `count` can end slightly above 1000 -
+at most one extra event per other parsing thread - so cap on your own count if you need an exact
+number.
+
 ### Converting Ticks
 
 Convert JFR tick values to time units:

@@ -46,6 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `jfr-shell` TUI shows an open if-block.** The command input's title reads
   `Command ...(1, skipping until endif) >` inside a block that is skipping, as the CLI prompt shows
   `...(1)>`; commands typed there used to produce no output and no sign why
+- **`Control.abort()` stops the whole parse.** The abort flag was per thread, and chunks are
+  parsed on parallel threads, so an abort stopped only its own chunk: on the two-chunk
+  `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a multi-thread
+  pool, and 6 with a one-thread pool (the next chunk delivered one event before checking the
+  flag). The flag is now shared by every chunk of a run and checked at chunk start, at the
+  metadata and checkpoint callbacks (so a chunk mid-way through its constant pools stops there),
+  and before an event is decoded,
+  in the typed parser and both untyped event streams; the untyped parser also stops calling the
+  remaining handlers of an event once one aborts, as the typed parser always did. The contract,
+  including the at-most-one in-flight event per other thread, is in the `Control.abort()` Javadoc
 - **A failed parse says why.** Chunks are parsed on worker threads, so the cause reached the caller
   several wrappers deep, and both shells print only the outermost message: every corrupted
   recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
