@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`jafar-shell` scripts across formats.** The unified shell now has the full set of variable and
+  scripting commands `jfr-shell` has: map literals (`set cfg = {"min": 1024}`), `merge(...)`,
+  query-valued variables, `if`/`elif`/`else`/`endif`, `script <path> [args]` (`$1`,
+  `${2:-default}`, `$@`), `invalidate`, `vars --info`, and session-scoped versus `--global`
+  variables. A query variable is written in the current session's language — JfrPath, HdumpPath, or
+  the pprof/OTLP samples grammar — run on first use by that module's query evaluator exactly as
+  `show` runs it, cached, and bound to its session, so one script can hold a JFR count and a heap
+  dump count and branch on both. `show ${var}` prints a query variable's rows, `${var}` works inside
+  queries (including `--limit ${n}`), the prompt shows `if` nesting depth, and tab completion
+  offers these commands and their arguments in every session type. A query variable whose session
+  has been closed reports that when read instead of returning stale rows, and closing a session
+  drops the cached rows of variables bound to it; scripts nest up to 16 deep, and each script has
+  its own `if` blocks: one it leaves open is closed and reported, and a stray `endif` is an error in
+  the script instead of closing the caller's block. A script line that reports an
+  error stops the script (as the default stop-on-error mode always promised), instead of being
+  counted as a success. The parsing, scoping and
+  condition rules are one implementation in `shell-core` (`io.jafar.shell.core.scripting`), used by
+  both shells. See [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)
+- **Query variables on non-JFR sessions in the TUI.** `set x = <query>` on a heap dump, pprof or
+  OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
+  creates a lazy variable run by that module's evaluator
+
 ### Fixed
 - **`Control.abort()` stops the whole parse.** The abort flag was per thread, and chunks are
   parsed on parallel threads, so an abort stopped only its own chunk: on the two-chunk
@@ -18,6 +41,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the typed parser and both untyped event streams; the untyped parser also stops calling the
   remaining handlers of an event once one aborts, as the typed parser always did. The contract,
   including the at-most-one in-flight event per other thread, is in the `Control.abort()` Javadoc
+- **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
+  jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
+  "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
+  stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
+  stderr and exit status 1 on failure. Tables use jafar-shell's layout. The `jfr-shell` jbang alias
+  launches jfr-shell directly and is unaffected
+- **`record` in `jafar-shell`.** `record start [path] | stop | status` saves the commands typed
+  at the prompt as a script, for any format, to `~/.jafar-shell/recordings/` by default; the
+  recording is saved on exit, and `jafar-shell script <file>` replays it. It is jfr-shell's
+  recorder, moved to `shell-core` and shared
+- **`metadata`, `chunks`, `constants`/`cp` and `backend` work at the `jafar-shell` prompt** on a
+  recording, using jfr-shell's implementations; they were taken as malformed queries
+- **Metadata type lists of multi-chunk recordings could be corrupted.** Chunks are parsed in
+  parallel and `JFRSession` filled its type sets from several threads at once without a lock, so a
+  set could lose entries from its size count and later fail with "Index N out of bounds for length
+  N" (seen as an intermittent `metadata --summary` failure); per-event type counts were updated the
+  same way, and the chunk-id and constant-pool-type scans collected from the chunk threads into an
+  `ArrayList` and a `HashSet` (chunk ids could also come back out of order). All are now
+  thread-safe, and chunk ids are sorted
+- **A lazy JFR variable read while another thread invalidated it could return `null`.**
+  `LazyQueryValue` kept "evaluated" and the rows in two separate volatile fields, so a read could
+  see the flag of one state and the rows of the next; `copy()` could do the same. The cache is now
+  one field, and an `invalidate()` or `release()` made while an evaluation is running is no longer
+  undone when that evaluation finishes (it publishes only if nothing replaced the slot it started
+  from). Shells dispatch commands on one thread, so this needed concurrent access to a variable to
+  show
+- **`elif` conditions are not evaluated when their branch cannot run**, in both shells. After a
+  taken branch, or inside a skipped block, an `elif` was still evaluated: it could run an
+  expensive lazy query (a heap dump `objects | count`) for nothing, or print "Condition evaluation
+  failed" for a branch that was never going to execute
+- **Integers in map literals are integers.** `set cfg = {"port": 5432}` stored `5432.0`, so
+  `${cfg.port}` printed `5432.0` and `merge()` results carried doubles, in both shells. A
+  conditional expression in the map parser promoted the `long` branch to `double`. Decimals are
+  unchanged
+- **The shipped example scripts run.** `gc-analysis.jfrs` and `thread-profiling.jfrs` used
+  `top(N, by=sum(field))`, which JfrPath does not accept, and `thread-profiling.jfrs` grouped
+  `jdk.ThreadAllocationStatistics` by a field it does not have; `map-operations.jfrs` echoed a
+  `${...}` it never defined. The same queries were corrected in the scripting, script-execution and
+  command-recording guides
 - **Published fat jars no longer arrive twice on Maven Central.** Every shadow-jarred module
   (`jafar-shell`, `jfr-mcp`, `jafar-tools`, `jafar-parser`) published the identical fat jar as both
   the main artifact and the shadow plugin's `-all` classifier — measured `0.28.0` cost of that
@@ -39,6 +101,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looks
 
 ### Changed
+- **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
+  `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
+  for the whole shell. The LLM commands read the session's value first, then the global one
+- **`CommandRecorder` moved** from `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s
+  `io.jafar.shell.core.scripting`; jfr-shell's recordings are unchanged
+- **`ScriptRunner`, `VariableSubstitutor`, `ConditionEvaluator` and `ConditionalState` moved** from
+  `jfr-shell`'s `io.jafar.shell.cli` to `shell-core`'s `io.jafar.shell.core.scripting`;
+  `ScriptRunner` now takes a line dispatcher (`dispatcher::dispatch`) instead of a
+  `CommandDispatcher` and an unused `IO`
 - **Javadoc jars drop ~4 MiB each.** They were up to 90% javadoc's own bundled DejaVu web
   fonts; excluded at jar-packaging for every published module's docs
 - **The MCP server jar drops from 38.2 MiB to 13.2 MiB.**** Four cuts, all content-level (the jar

@@ -207,7 +207,10 @@ Exit codes: 0 for success, 1 for errors (sent to stderr).
 
 ## Variables
 
-Store and reuse values in your analysis sessions with `${var}` substitution.
+Store and reuse values in your analysis sessions with `${var}` substitution. The unified
+`jafar-shell` has the same variables, maps, conditionals and `script` command for heap dumps, pprof
+and OTLP profiles as well as recordings — see
+[Scripting in jafar-shell](../doc/cli/Scripting.md#in-jafar-shell).
 
 ### Scalar Variables
 
