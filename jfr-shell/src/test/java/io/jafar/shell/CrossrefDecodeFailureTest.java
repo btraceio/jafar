@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.impl.UntypedParserContextFactory;
@@ -120,6 +121,23 @@ class CrossrefDecodeFailureTest {
     String err = run(corrupt);
     assertFailedNaming(
         err, EVENT_PREFIX, eventFailure(1, bad), "Unexpected string constant id: 127");
+
+    // Programmatic callers get #135's typed exception in the cause chain.
+    java.io.IOException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            java.io.IOException.class,
+            () -> ConstantPoolProvider.crossref(corrupt, "java.lang.String"));
+    EventDecodingException decode = null;
+    for (Throwable c = e; c != null && decode == null; c = c.getCause()) {
+      if (c instanceof EventDecodingException d) {
+        decode = d;
+      }
+    }
+    assertTrue(decode != null, chain(e));
+    assertEquals(TYPE, decode.getTypeName());
+    assertEquals(1, decode.getChunkIndex());
+    assertEquals(bad[0], decode.getPosition());
+    assertEquals(bad[1], decode.getSize());
   }
 
   /**

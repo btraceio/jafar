@@ -1,6 +1,7 @@
 package io.jafar.shell.backend.impl;
 
 import io.jafar.parser.api.ConstantPool;
+import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
@@ -601,7 +602,7 @@ final class JafarSources {
                 try {
                   state.reader.readValue(stream, eventType);
                 } catch (Exception e) {
-                  throw CrossrefDecodeFailure.event(
+                  throw new EventDecodingException(
                       eventType.getName(),
                       typeId,
                       context.getChunkIndex(),
@@ -625,7 +626,7 @@ final class JafarSources {
               }
             });
       } catch (IOException | RuntimeException e) {
-        CrossrefDecodeFailure failure = findCause(e, CrossrefDecodeFailure.class);
+        RuntimeException failure = findDecodeFailure(e);
         if (failure == null) {
           throw e;
         }
@@ -639,7 +640,7 @@ final class JafarSources {
                 + ": "
                 + failure.getCause()
                 + "; counts from a partial read would be wrong, so none are reported",
-            failure.getCause());
+            failure); // keeps EventDecodingException's typed fields reachable for callers
       }
       return totals.toResult(typeName);
     }
@@ -753,38 +754,18 @@ final class JafarSources {
   }
 
   /**
-   * A value {@code crossref} could not decode. Unchecked because {@link ChunkParserListener}
-   * callbacks cannot throw checked exceptions; {@code crossref} unwraps it from the parser's
-   * wrapping and rethrows it as an {@link IOException}.
-   *
-   * <p>The event message has the same shape as {@code io.jafar.parser.api.EventDecodingException}
-   * (btraceio/jafar#135). Like that exception it records no stack trace of its own: it never leaves
-   * {@code crossref} (only its cause does), and the cause's trace covers the frames where decoding
-   * failed.
+   * A constant pool entry {@code crossref} could not decode; an event it could not decode is an
+   * {@link EventDecodingException}, whose message shape this follows. Unchecked because {@link
+   * ChunkParserListener} callbacks cannot throw checked exceptions; {@code crossref} unwraps it
+   * from the parser's wrapping and rethrows it as an {@link IOException}. Like {@code
+   * EventDecodingException} it records no stack trace of its own: it never leaves {@code crossref}
+   * (only its cause does), and the cause's trace covers the frames where decoding failed.
    */
   private static final class CrossrefDecodeFailure extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
     private CrossrefDecodeFailure(String message, Exception cause) {
       super(message, cause, false, false);
-    }
-
-    /** {@code position} is the event start within the chunk; {@code size} includes its header. */
-    static CrossrefDecodeFailure event(
-        String typeName, long typeId, int chunkIndex, long position, long size, Exception cause) {
-      return new CrossrefDecodeFailure(
-          "Cannot decode event of type "
-              + typeName
-              + " (id "
-              + typeId
-              + ") in chunk "
-              + chunkIndex
-              + " at position "
-              + position
-              + " (size "
-              + size
-              + ")",
-          cause);
     }
 
     /** {@code id} is chunk-local; {@code position} is the entry's offset within the chunk. */
@@ -803,10 +784,11 @@ final class JafarSources {
     }
   }
 
-  private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
+  /** The first {@code crossref} decode failure in {@code t}'s cause chain, or {@code null}. */
+  private static RuntimeException findDecodeFailure(Throwable t) {
     for (Throwable c = t; c != null; c = c.getCause()) {
-      if (type.isInstance(c)) {
-        return type.cast(c);
+      if (c instanceof CrossrefDecodeFailure || c instanceof EventDecodingException) {
+        return (RuntimeException) c;
       }
     }
     return null;
