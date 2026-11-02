@@ -307,10 +307,15 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   instead of reading it as null. Pinned by
   `TestCorruptedPoolStringIsReportedNotMisaligned` and
   `TestDanglingStringReferenceIsReported` here.
-* **Framing is enforced.** Constant pool entries have to lie within their
-  checkpoint event; the Java parser does not check this. It only matters for
-  malformed recordings, where this parser drops the pool rather than indexing
-  entries at garbage offsets.
+* **Checkpoint framing is checked differently.** Both parsers refuse to index
+  constant pool entries at offsets the checkpoint event's size contradicts, but
+  this one bounds every entry by the checkpoint's end and reports an entry that
+  runs past it through `Options.OnError`, keeping the pools read before it. The
+  Java parser checks once, after the last pool, that the pools end exactly where
+  the checkpoint's size says, and fails the parse otherwise (`Checkpoint at N:
+  ...`, as the JDK's own reader does); that also catches pools that end short,
+  which this parser does not check. Pinned by `CheckpointFramingTest` in
+  `parser-core`.
 * **Type IDs are chunk-scoped**, as they are in the format. A recording whose
   chunks come from different producers can map the same type ID to different
   type names, and each chunk is decoded against its own metadata.

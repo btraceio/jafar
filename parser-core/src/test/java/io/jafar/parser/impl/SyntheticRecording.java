@@ -50,6 +50,46 @@ final class SyntheticRecording {
     return elem("class", "id", Long.toString(id), "name", name, "simpleType", "true");
   }
 
+  /**
+   * A constant pool of a checkpoint event: the type id followed by its entries, each an index
+   * varint and the entry's encoded value. Entries are written verbatim, so a test can write one
+   * that is malformed; {@link #section} encodes pools for {@link #chunk(Element, byte[], List,
+   * long, long, long, long)}.
+   */
+  static final class Pool {
+    final long typeId;
+    private final List<Long> ids = new ArrayList<>();
+    private final List<byte[]> values = new ArrayList<>();
+
+    Pool(long typeId) {
+      this.typeId = typeId;
+    }
+
+    /** Adds an entry; {@code value} is its encoding, without the index. */
+    Pool entry(long id, byte[] value) {
+      ids.add(id);
+      values.add(value);
+      return this;
+    }
+
+    /** Adds a UTF-8 string entry. */
+    Pool string(long id, String value) {
+      return entry(id, new Bytes().utf8(value).toByteArray());
+    }
+
+    /** The constant pool section of a checkpoint holding {@code pools}: the count, then each. */
+    static byte[] section(Pool... pools) {
+      Bytes w = new Bytes().varint(pools.length);
+      for (Pool pool : pools) {
+        w.varint(pool.typeId).varint(pool.ids.size());
+        for (int i = 0; i < pool.ids.size(); i++) {
+          w.varint(pool.ids.get(i)).raw(pool.values.get(i));
+        }
+      }
+      return w.toByteArray();
+    }
+  }
+
   /** Accumulates the bytes of an event body or a chunk. */
   static final class Bytes {
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
