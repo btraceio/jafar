@@ -7,6 +7,7 @@ import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import java.lang.ref.WeakReference;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -34,6 +35,10 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
  * started from, so one still running cannot put rows back afterwards. None of those waits for an
  * evaluation: {@code release()} runs inside {@code SessionManager}'s monitor when a session closes,
  * and an evaluation's resolver may need that monitor.
+ *
+ * <p>A query whose result is one map ({@link QueryEvaluator#producesMap}, i.e. JfrPath's {@code
+ * toMap()}) stays lazy but is read as that map by {@link #asMap()}, so {@code ${v.size}} and {@code
+ * ${v.key}} give what jfr-shell gives for the map it stores.
  */
 public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   /** "Not evaluated"; a new one per invalidation, so an evaluation can tell it was superseded. */
@@ -50,6 +55,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   private final String queryString;
   private final SessionResolver resolver;
   private final int sessionId;
+  private final boolean mapQuery;
   private final WeakReference<SessionRef<? extends Session>> sessionRef;
   private final Object evaluationLock = new Object();
   private volatile Object cache;
@@ -82,6 +88,7 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
     this.queryString = queryString;
     this.resolver = resolver;
     this.sessionId = session.id;
+    this.mapQuery = evaluator.producesMap(query);
     this.sessionRef = new WeakReference<>(session);
     this.cache = cache;
   }
@@ -138,6 +145,25 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
       throw new IllegalStateException("Session #" + sessionId + " has been closed");
     }
     return ref;
+  }
+
+  /**
+   * The result as a map, when the query produces one ({@link QueryEvaluator#producesMap}) and the
+   * evaluator returned the single map row that implies; {@code null} for any other query, so a
+   * one-row result of an ordinary query is still read as rows.
+   *
+   * @throws Exception if evaluation fails, as {@link #get()}, which does the locking
+   */
+  public Map<String, Object> asMap() throws Exception {
+    if (!mapQuery) {
+      return null;
+    }
+    if (get() instanceof List<?> rows && rows.size() == 1 && rows.get(0) instanceof Map<?, ?> m) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> map = (Map<String, Object>) m;
+      return map;
+    }
+    return null;
   }
 
   @Override

@@ -75,6 +75,9 @@ public abstract class EventStreamLazy implements ChunkParserListener {
   /**
    * Called when an event's payload cannot be decoded, on the thread parsing its chunk.
    *
+   * <p>Chunks are decoded in parallel, so this can be called concurrently from several threads and
+   * must be thread-safe.
+   *
    * <p>When it returns {@code true}, the delegate listener's {@code onEvent} is still called for
    * the skipped event (its position and size are valid); {@link #onEventValue} is not.
    *

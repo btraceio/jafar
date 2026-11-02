@@ -608,9 +608,20 @@ such a payload error too; it is never read as `null`.
 
 A corrupted *constant pool* entry is different, and always fails the parse, even with a decode error
 handler. Pool entries are not length-prefixed, so past an entry that cannot be read the rest of the
-checkpoint cannot be located, and no later string reference in the chunk could be trusted. The
+checkpoint cannot be located, and no later reference in the chunk could be trusted. The
 `IOException` names the pool and the entry, for example
-`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`.
+`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`. A pool whose type
+the chunk metadata does not declare fails the same way, since its entries cannot be skipped either:
+`Constant pool of type 77 (1 entries): the type is not declared in the chunk metadata`. So an event
+handler never sees a partially indexed pool.
+
+A reference that does not resolve in an intact chunk reads as `null` for every pooled field except
+a string, as in the JDK's own reader. That includes the indices writers use for an absent value: 0,
+which HotSpot writes (an event recorded without a stack trace, for example), and `Long.MIN_VALUE`,
+which the JMC writer (`org.openjdk.jmc.flightrecorder.writer`, used by dd-trace-java) writes for a
+null value. A pool entry that cannot be decoded when it is resolved, such as one whose string field
+refers to a string entry that does not exist, makes `getValue()` (and so `Values.get` and
+`Values.resolvedDeep`) throw, the same exception every time.
 
 > The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
 > default; in Java, failing is. A corrupted constant pool entry is also reported through `OnError`

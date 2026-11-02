@@ -152,6 +152,11 @@ class ShellVariablesTest {
     }
 
     @Override
+    public boolean producesMap(Object query) {
+      return String.valueOf(query).contains("toMap");
+    }
+
+    @Override
     public List<String> getRootTypes() {
       return List.of("things");
     }
@@ -288,6 +293,22 @@ class ShellVariablesTest {
         assertThrows(
             IllegalArgumentException.class, () -> withSessions.set("x = merge(${rows}, {})"));
     assertTrue(e.getMessage().contains("Variable is not a map: rows"), e.getMessage());
+  }
+
+  @Test
+  void aToMapVariableReadsAsItsMap() throws Exception {
+    // map-operations.jfrs: 'GC stats entries: ${gcStats.size}' printed 1 (the row) here and the
+    // entry count in jfr-shell.
+    open();
+    withSessions.set("settings = things | toMap(name, value)");
+    assertInstanceOf(
+        EvaluatorLazyValue.class,
+        sessions.getCurrent().get().variables.get("settings"),
+        "still lazy");
+    assertEquals(0, evaluator.evaluations);
+    assertEquals(
+        List.of("2 entries, k=v n=2"),
+        withSessions.echo("${settings.size} entries, k=${settings.k} n=${settings.n}"));
   }
 
   @Test
