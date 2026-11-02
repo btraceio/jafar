@@ -9,6 +9,7 @@ import io.jafar.shell.core.CommandDescriptor;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
+import io.jafar.shell.core.llm.SecretCommands;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import io.jafar.shell.tui.TuiContext.TuiParsedLine;
@@ -199,17 +200,22 @@ public final class TuiCommandExecutor {
       return;
     }
 
-    ctx.commandHistory.add(command);
-    ctx.lastCommand = command;
+    // A credential is kept out of the history file and the up arrow, as in the line shells
+    if (!SecretCommands.setsSecret(command)) {
+      ctx.commandHistory.add(command);
+    }
+    // What the screen shows of the command: a credential's value is hidden from tab names and echo
+    String shown = SecretCommands.hideValue(command);
+    ctx.lastCommand = shown;
 
     int currentIdx = findUnpinnedTab();
     if (currentIdx < 0) {
-      ctx.tabs.add(new ResultTab(command));
+      ctx.tabs.add(new ResultTab(shown));
       currentIdx = ctx.tabs.size() - 1;
     }
     ctx.activeTabIndex = currentIdx;
     ResultTab activeTab = ctx.activeTab();
-    activeTab.name = command;
+    activeTab.name = shown;
     activeTab.marqueeTick0 = ctx.renderTick;
     activeTab.lines.clear();
     activeTab.scrollOffset = 0;
@@ -330,7 +336,7 @@ public final class TuiCommandExecutor {
     }
 
     // Echo command
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
 
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
@@ -401,7 +407,7 @@ public final class TuiCommandExecutor {
   /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
   private void submitAdapterCommand(String command, CommandDescriptor desc) {
     ResultTab activeTab = ctx.activeTab();
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
     ctx.asyncMaxLineWidth = 0;
@@ -766,7 +772,8 @@ public final class TuiCommandExecutor {
         if (colon > 0 && line.substring(0, colon).chars().allMatch(Character::isDigit)) {
           line = line.substring(colon + 1);
         }
-        if (!line.isEmpty()) {
+        // A key line from before this filter is dropped, and gone from the file at the next save
+        if (!line.isEmpty() && !SecretCommands.setsSecret(line)) {
           ctx.commandHistory.add(line);
         }
       }

@@ -1,5 +1,6 @@
 package io.jafar.shell.unified;
 
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
@@ -31,6 +32,7 @@ public final class ShellCompleter implements Completer {
     "open",
     "sessions",
     "use",
+    "session", // alias for 'use', as in jfr-shell
     "close",
     "info",
     "modules",
@@ -50,6 +52,13 @@ public final class ShellCompleter implements Completer {
     "endif",
     "script",
     "record",
+    // JFR-only (Shell.JFR_COMMANDS): offered with no session or a JFR one, see offersJfrCommands
+    "metadata",
+    "chunks",
+    "chunk",
+    "constants",
+    "cp",
+    "backend",
     "help",
     "exit",
     "quit"
@@ -108,8 +117,11 @@ public final class ShellCompleter implements Completer {
       offered.add(c.value());
     }
     String partial = line.word().toLowerCase(Locale.ROOT);
+    boolean jfr = offersJfrCommands();
     for (String cmd : BASE_COMMANDS) {
-      if (cmd.startsWith(partial) && offered.add(cmd)) {
+      if (cmd.startsWith(partial)
+          && (jfr || !Shell.JFR_COMMANDS.contains(cmd))
+          && offered.add(cmd)) {
         candidates.add(new Candidate(cmd));
       }
     }
@@ -134,7 +146,7 @@ public final class ShellCompleter implements Completer {
       case "ask", "as-query", "analyze", "investigate", "explain" ->
           completeDryRunFlag(line, candidates);
       case "open" -> completeOpen(reader, line, candidates);
-      case "use", "close" -> completeSessionRef(line, candidates);
+      case "use", "session", "close" -> completeSessionRef(line, candidates);
       case "info" -> completeInfoCommand(line, candidates, wordIndex);
       case "set", "let" -> completeSet(line, candidates, words, wordIndex);
       case "vars" -> completeVars(line, candidates, words, wordIndex);
@@ -168,8 +180,9 @@ public final class ShellCompleter implements Completer {
     String partial = line.word().toLowerCase(Locale.ROOT);
 
     // Always suggest base commands
+    boolean jfr = offersJfrCommands();
     for (String cmd : BASE_COMMANDS) {
-      if (cmd.startsWith(partial)) {
+      if (cmd.startsWith(partial) && (jfr || !Shell.JFR_COMMANDS.contains(cmd))) {
         candidates.add(new Candidate(cmd));
       }
     }
@@ -182,6 +195,15 @@ public final class ShellCompleter implements Completer {
         }
       }
     }
+  }
+
+  /**
+   * JFR-only commands are refused in a heap dump, pprof or OTLP session, so they are not offered
+   * there; with no session open they are, as the commands a recording will accept.
+   */
+  private boolean offersJfrCommands() {
+    var current = sessions.getCurrent();
+    return current.isEmpty() || current.get().session instanceof JFRSession;
   }
 
   /** The {@code --dry-run} flag, offered once a leading dash is typed. */

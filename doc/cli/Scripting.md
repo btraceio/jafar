@@ -68,23 +68,30 @@ it keeps evaluating against the recording. Once its session is closed, reading t
 with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
 `vars` shows it as `(closed)`.
 
-A script may run another (`script` inside a script) up to 16 deep. In `jafar-shell` each script
-has its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported, so
-the commands you type next are not skipped; and a stray `endif` in a script is an error in that
-script rather than closing a block of the caller's.
+A script may run another (`script` inside a script) up to 16 deep. In both shells each script has
+its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported (see
+[Blocks Left Open by a Script](#blocks-left-open-by-a-script)), so the commands you type next are
+not skipped; and a stray `endif` in a script is an error in that script rather than closing a block
+of the caller's.
 
 Where the two shells differ:
 
 | | `jfr-shell` | `jafar-shell` |
 |---|---|---|
-| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy (`${n}` still reads a count's value, and `merge()` takes a variable whose rows are one map, as `toMap()` gives) |
+| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy. `${n}` still reads a count's value; a query ending in `toMap()` is read as its map (`${v.size}` counts entries, `${v.key}` reads one), decided from the query, so a one-row result of any other query, such as `top(1)`, still has `.size` 1; `merge()` takes a variable whose rows are one map |
 | `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
 | Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|->` | `script <path> [args]` at the prompt; `jafar-shell script <file\|-> [args] [--continue-on-error]` on the command line, quiet like jfr-shell's, errors on stderr, exit status 1 on failure. Tables use jafar-shell's format, so output differs in layout from `jfr-shell script` |
 | `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
-| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend` | the same commands (jfr-shell's implementations) on a recording; `metadata/...` and `chunks \| ...` remain queries |
-| `record` | saves to `~/.jfr-shell/recordings/` | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording` |
+| [`record`](#recording-commands) | saves to `~/.jfr-shell/recordings/`; records each typed line except `record`, `help`, `exit`/`quit` and `script ...` (nor the lines the script runs, so a replay skips it) | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording`; records the same lines but keeps `script ...`, so a replay runs that script again |
 | A line that fails | the error is printed and the script carries on (only an unknown command stops it) | the script stops at the first line that reports an error, unless run with continue-on-error, and the summary names it |
 | Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
+
+The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
+(in `jafar-shell` they need the current session to be a recording), so the example scripts below run
+in either. `metadata/...`, `chunks[...]`, and a line with a pipeline or `--limit`
+(`chunks --format json | count()`, `chunks --limit 1`) remain queries; `cp <type> | crossref()` is the
+command.
+`session <id>` is an alias for `use <id>` in both shells.
 
 `llm.*` settings follow the same scoping as other variables in both shells: set while a session is
 open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`
@@ -322,7 +329,7 @@ ${varname[0]}
 # Access field from array element
 ${varname[0].fieldname}
 
-# Size property (works for lazy results and maps)
+# Size property: row count for a query, entry count for a map or a toMap() query
 ${varname.size}
 ```
 
@@ -518,13 +525,37 @@ if ${filename} contains ".jfr" and ${size} > 1000
 # Check if a variable exists
 if exists(myvar)
 
-# Check if a variable is empty (doesn't exist, null, or empty string/result)
+# Check if a variable is empty (doesn't exist, null, empty string, map with no entries,
+# or query result with no rows)
 if empty(results)
+
+# References: the same shapes ${...} accepts
+if exists(config.db.host)       # the field resolves to a non-null value
+if empty(config.db.user)        # missing, null, "", {} or [] all count as empty
+if !empty(results.thread.name)  # query results: field of the first row
+if exists(results[2].thread)    # field of row 2 (0-based); a missing row does not exist
+
+# LLM settings are names, including hyphenated ones
+if empty(llm.base-url)
+  echo "llm.base-url is not set"
+endif
 
 # Negation
 if !exists(optionalVar)
 if !empty(data)
 ```
+
+An argument to `exists()` and `empty()` resolves exactly as the same reference does in `${...}`:
+
+- `name.field.path` reads a map field or the first row of a query result; `name[idx].field` reads
+  row `idx`; `name[idx]` alone is the first value of that row, as `${name[idx]}` is.
+- `name.size` is the entry or row count, so it exists and is never empty.
+- A path on a plain value is ignored, as in `${...}`: after `set n = events/jdk.ExecutionSample |
+  count`, `${n.count}` is the count and `empty(n.count)` tests that count.
+- An `llm.*` setting name (case-insensitive, hyphens allowed) checks that setting and is never split
+  into a variable plus a field; an unset setting does not exist.
+- A malformed reference such as `config..db`, `results[x]` or `a-b` is an error rather than silently
+  empty.
 
 ### Interactive Mode
 
@@ -646,6 +677,53 @@ endif
 
 ### Error Handling
 
+#### Conditions That Cannot Be Evaluated
+
+A condition that fails to evaluate — a parse error, an undefined variable, a wrong number of
+function arguments, division by zero, a missing condition — is an error, not a `false`. **No branch
+of that if-block runs**: not the failing branch, and not any later `elif` or `else`, because taking
+one would mean guessing what the condition would have said. The block is still open, and its
+`endif` closes it. To branch on whether a variable is set, use `exists(name)` rather than letting
+`${name}` fail.
+
+In a script this is a command error like any other, in both shells:
+
+- by default the script stops at that line and exits with a non-zero status;
+- with `--continue-on-error` the script resumes after the block's `endif` and the error is counted
+  in the final report (the script still exits non-zero).
+
+```
+if empty(cfg..db)
+  echo EMPTY
+else
+  echo SET
+endif
+```
+
+```
+Script completed with errors:
+Line 1: Condition evaluation failed: Invalid variable reference: cfg..db; skipping every branch of this if-block
+  Command: if empty(cfg..db)
+```
+
+Neither `EMPTY` nor `SET` is printed. Interactively the error is printed, the prompt shows the
+block as open (`...(1)>`), its commands are skipped, and `endif` closes it. The jfr-shell TUI shows
+the same in the title of the command input: `Command ...(1, skipping until endif) >`.
+
+An `elif` condition is evaluated only when every earlier branch was false, and a condition inside
+a block that is already being skipped is not evaluated at all, so neither can fail there. A
+*missing* condition (`if` or `elif` alone) is a syntax error and is reported either way.
+
+#### Blocks Left Open by a Script
+
+Each script runs with its own `if` blocks, so whether it ends normally or stops early at an error,
+the blocks it opened are closed when it returns: running a script from the interactive shell never
+leaves the shell inside one of the script's blocks, and a block you opened before running it stays
+open. A script that runs to its end with an `if` still open is reported, and exits non-zero:
+`jfr-shell` adds an error `N if-block(s) not closed with endif by end of script` against the last
+line; `jafar-shell` prints `<script> left N if-block(s) open; closed them` (it also prints this
+after a script that stopped early at an error inside a block, alongside that error).
+
 #### Unclosed Conditionals
 
 If you exit the shell with unclosed conditionals, a warning is displayed:
@@ -669,6 +747,9 @@ else           # Error: else without if
 # Error: endif without if
 endif          # Error: endif without if
 ```
+
+These are command errors like a failed condition: a script stops at them (or, with
+`--continue-on-error`, counts them) and exits non-zero.
 
 ## Executing Scripts
 
@@ -805,7 +886,10 @@ jfr> record stop
 Recording stopped: /tmp/my-analysis.jfrs
 ```
 
-Recording also auto-saves when you exit the shell.
+Recording also auto-saves when you exit the shell. `jafar-shell` has the same three commands, saves
+to `~/.jafar-shell/recordings/` by default, and records lines typed at its prompt whatever the
+session type — see [In jafar-shell](#in-jafar-shell)
+for which lines each shell leaves out.
 
 ### Recorded Script Format
 
@@ -827,6 +911,17 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Recording stopped: 2025-12-26T14:32:10Z
 ```
+
+A `set` or `let` of `llm.api-key` is recorded without its value, as a comment —
+`# set --global llm.api-key = <redacted: not recorded>` — so the file holds no key and a replay uses
+whatever key the person replaying it has configured. The line is kept out of the shell's history
+too (`~/.jfr-shell/history`, `~/.jafar-shell/history`, also used by `--tui`), so the up arrow does
+not bring it back; a key line saved there by an earlier version is removed the next time the shell
+starts. The shells do not print it back either: `set`'s confirmation, `vars` and `vars --info` show
+`<hidden, ends in "TAIL">` (the last four characters, for a value of 16 or more) or `<hidden>`, and
+the TUI shows `set llm.api-key = <hidden>` in its tab names and echo. What you type is still visible
+while you type it, so for a key you use often prefer `~/.config/jafar/llm.properties` or the
+provider's environment variable.
 
 You can execute this script directly:
 

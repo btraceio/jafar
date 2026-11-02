@@ -12,6 +12,7 @@ import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.TableFormatter;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.scripting.CommandRecorder;
+import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -27,7 +28,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
@@ -49,12 +49,12 @@ public final class Shell implements AutoCloseable {
   private final ShellVariables variables;
   // The if-blocks of the input being read: the prompt's, or a running script's own (see runLines)
   private Conditionals conditionals = new Conditionals();
-  // 'record start' writes the lines typed at the prompt to a script (jfr-shell's recorder)
+  // 'record start|stop|status': the lines typed at the prompt, written as a replayable script
+  // by jfr-shell's recorder (moved to shell-core), to this shell's own directory
   private final CommandRecorder recorder =
       new CommandRecorder(
           Paths.get(System.getProperty("user.home"), ".jafar-shell", "recordings"), "Jafar Shell");
   // Built once: execute() passes it for every line
-  private final java.util.function.Consumer<String> errorSink = this::printError;
   private int scriptDepth;
   // Set by fail() while a line runs, so a script stops on a line that reported an error
   private String lineFailure;
@@ -70,8 +70,10 @@ public final class Shell implements AutoCloseable {
   private boolean running = true;
   // Running a script from the command line: quiet, errors to stderr, no history, no row cap
   private final boolean batch;
-  private final DefaultHistory history;
+  private final io.jafar.shell.core.SecretFilteringHistory
+      history; // never holds an llm.api-key line
   private final ShellCompleter fallbackCompleter;
+  private final org.jline.reader.Completer completer; // what Tab runs at this shell's prompt
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
   private final Map<String, org.jline.reader.Completer>
       completerCache; // Cache completers per module
@@ -101,6 +103,11 @@ public final class Shell implements AutoCloseable {
             .encoding(java.nio.charset.Charset.defaultCharset())
             .build(),
         true);
+  }
+
+  /** A shell on the given terminal; tests pass one over in-memory streams. */
+  Shell(Terminal terminal) throws IOException {
+    this(terminal, false);
   }
 
   private Shell(Terminal terminal, boolean batch) throws IOException {
@@ -142,7 +149,7 @@ public final class Shell implements AutoCloseable {
     } catch (Exception ignore) {
     }
 
-    this.history = new DefaultHistory();
+    this.history = new io.jafar.shell.core.SecretFilteringHistory();
     java.util.Map<String, Object> vars = new java.util.HashMap<>();
     vars.put(org.jline.reader.LineReader.HISTORY_FILE, histPath);
 
@@ -163,8 +170,9 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void error(String s) {
-            // Recorded like the shell's own errors, so a script stops on a failing JFR command
-            fail("Error: " + s);
+            // Recorded like the shell's own errors, so a script stops on a failing JFR command.
+            // The dispatcher's own catch already says "Error: ..."; do not print it twice.
+            fail(s.startsWith("Error: ") ? s : "Error: " + s);
           }
         };
 
@@ -174,7 +182,10 @@ public final class Shell implements AutoCloseable {
     @SuppressWarnings("unchecked")
     SessionManager<JFRSession> jfrSessions =
         (SessionManager<JFRSession>) (SessionManager<?>) sessions;
-    this.moduleContext = new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener);
+    // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
+    // global names from the dispatcher's store, which would otherwise be a private empty one.
+    this.moduleContext =
+        new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener, null, globalStore);
 
     // Create fallback completer for basic commands
     this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);
@@ -224,6 +235,16 @@ public final class Shell implements AutoCloseable {
             .completer(dynamicCompleter)
             .parser(parser)
             .build();
+    this.completer = dynamicCompleter;
+  }
+
+  /** The prompt's completer, for tests that check completion offers only what runs. */
+  org.jline.reader.Completer completer() {
+    return completer;
+  }
+
+  LineReader lineReader() {
+    return lineReader;
   }
 
   public void run() {
@@ -234,47 +255,12 @@ public final class Shell implements AutoCloseable {
         String prompt = getPrompt();
         String input = lineReader.readLine(prompt);
         if (input == null || input.isBlank()) continue;
-        input = input.trim();
-
-        if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
-          if (conditionals.state().inConditional()) {
-            terminal
-                .writer()
-                .println(
-                    "Warning: " + conditionals.state().depth() + " unclosed conditional block(s)");
-            terminal.flush();
-            conditionals.state().reset();
-          }
-          stopRecording();
-          running = false;
-          continue;
-        }
-
-        if (matchesCommand(input, "record")) {
-          handleRecord(argumentOf(input));
-          continue;
-        }
-        // As in jfr-shell: every other line is recorded as typed, before it runs, except 'script'
-        // (the recording should replay the script's lines, not run it a second time)
-        if (recorder.isRecording() && !matchesCommand(input, "script")) {
-          try {
-            recorder.recordCommand(input);
-          } catch (IOException e) {
-            terminal.writer().println("Warning: Failed to record command: " + e.getMessage());
-          }
-        }
-
-        if (!execute(input)) {
-          terminal.writer().println("Unknown command: " + input);
-          terminal.writer().println("Type 'help' for available commands.");
-          terminal.flush();
-        }
-
+        handleLine(input);
       } catch (UserInterruptException e) {
         terminal.writer().println("^C");
         terminal.flush();
       } catch (EndOfFileException e) {
-        stopRecording();
+        stopRecordingOnExit();
         terminal.writer().println();
         terminal.writer().println("Goodbye!");
         terminal.flush();
@@ -287,15 +273,68 @@ public final class Shell implements AutoCloseable {
     }
   }
 
+  /**
+   * One line typed at the prompt (or piped into it): {@code exit}/{@code quit}, {@code record},
+   * then {@link #execute}. Kept apart from {@link #execute} because these three belong to the
+   * prompt, not to scripts: a script line is neither recorded nor able to end the shell.
+   */
+  void handleLine(String input) {
+    input = input.trim();
+    if (input.isEmpty()) {
+      return;
+    }
+
+    if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+      if (conditionals.state().inConditional()) {
+        terminal
+            .writer()
+            .println("Warning: " + conditionals.state().depth() + " unclosed conditional block(s)");
+        terminal.flush();
+        conditionals.state().reset();
+      }
+      stopRecordingOnExit();
+      running = false;
+      return;
+    }
+
+    // Never written to the recording; in a branch that is not running it is skipped, like any line
+    if (matchesCommand(input, "record")) {
+      if (conditionals.isActive()) {
+        handleRecord(argumentOf(input));
+      }
+      return;
+    }
+
+    // 'help' is not recorded (jfr-shell does not either): it is not part of an analysis. 'script'
+    // is, unlike jfr-shell: the lines a script runs are not recorded (only prompt lines are), so
+    // leaving the invocation out too would make the replay silently skip that script.
+    if (recorder.isRecording() && !"help".equalsIgnoreCase(input)) {
+      try {
+        recorder.recordCommand(input);
+      } catch (IOException e) {
+        printError("Failed to record command: " + e.getMessage());
+      }
+    }
+
+    if (!execute(input)) {
+      terminal.writer().println("Unknown command: " + input);
+      terminal.writer().println("Type 'help' for available commands.");
+      terminal.flush();
+    }
+  }
+
   /** {@code record start [path] | record stop | record status}, as in jfr-shell. */
-  private void handleRecord(String args) {
-    String[] parts = args.isBlank() ? new String[0] : args.trim().split("\\s+", 2);
-    String sub = parts.length > 0 ? parts[0].toLowerCase(java.util.Locale.ROOT) : "";
+  private void handleRecord(String argText) {
+    String[] parts = argText.isEmpty() ? new String[0] : argText.split("\\s+", 2);
+    String usage = "Usage: record start [path] | record stop | record status";
+    if (parts.length == 0) {
+      printError(usage);
+      return;
+    }
     try {
-      switch (sub) {
+      switch (parts[0].toLowerCase(java.util.Locale.ROOT)) {
         case "start" -> {
-          Path path = parts.length > 1 ? Paths.get(expandHome(parts[1])) : null;
-          recorder.start(path);
+          recorder.start(parts.length > 1 ? Paths.get(expandHome(parts[1].trim())) : null);
           terminal.writer().println("Recording started: " + recorder.getCurrentRecordingPath());
         }
         case "stop" -> {
@@ -309,7 +348,7 @@ public final class Shell implements AutoCloseable {
                     recorder.isRecording()
                         ? "Recording to: " + recorder.getCurrentRecordingPath()
                         : "Not currently recording");
-        default -> printError("Usage: record start [path] | record stop | record status");
+        default -> printError("Unknown record command: " + parts[0] + "\n" + usage);
       }
     } catch (IOException | IllegalStateException e) {
       printError(e.getMessage());
@@ -317,8 +356,8 @@ public final class Shell implements AutoCloseable {
     terminal.flush();
   }
 
-  /** Saves a recording still running when the shell ends. */
-  private void stopRecording() {
+  /** Leaving the shell saves a recording still in progress, as jfr-shell does on {@code exit}. */
+  private void stopRecordingOnExit() {
     if (!recorder.isRecording()) {
       return;
     }
@@ -345,10 +384,12 @@ public final class Shell implements AutoCloseable {
     // if/elif/else/endif are taken even inside a branch that is not running, so nesting stays
     // balanced; every other line in such a branch is skipped.
     try {
-      if (conditionals.handle(input, variables.scopes(), errorSink)) {
+      if (conditionals.handle(input, variables.scopes())) {
         return true;
       }
-    } catch (IllegalStateException e) {
+    } catch (ConditionalException e) {
+      // A failed condition has entered its block with no branch running; printError marks the
+      // line failed, so a script counts it (and stops unless continue-on-error).
       printError(e.getMessage());
       return true;
     }
@@ -366,8 +407,13 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (input.startsWith("open ")) {
-      handleOpen(input.substring(5).trim());
+    if (matchesCommand(input, "open")) {
+      String path = argumentOf(input);
+      if (path.isEmpty()) {
+        printError("Usage: open <path>");
+      } else {
+        handleOpen(path);
+      }
       return true;
     }
 
@@ -376,8 +422,14 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (input.startsWith("use ")) {
-      handleUse(input.substring(4).trim());
+    // 'session' is jfr-shell's alias for 'use'
+    if (matchesCommand(input, "use") || matchesCommand(input, "session")) {
+      String ref = argumentOf(input);
+      if (ref.isEmpty()) {
+        printError("Usage: " + (input.startsWith("use") ? "use" : "session") + " <id|alias>");
+      } else {
+        handleUse(ref);
+      }
       return true;
     }
 
@@ -421,12 +473,23 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
+    String jfrCommand = jfrCommandOf(input);
+    if (jfrCommand != null) {
+      handleJfrCommand(jfrCommand, input);
+      return true;
+    }
+
     if (handleVariableCommand(input)) {
       return true;
     }
 
-    if (input.startsWith("show ")) {
-      handleShow(input.substring(5).trim());
+    if (matchesCommand(input, "show")) {
+      String query = argumentOf(input);
+      if (query.isEmpty()) {
+        printError("Usage: show <query>");
+      } else {
+        handleShow(query);
+      }
       return true;
     }
 
@@ -465,12 +528,6 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
-    if (isJfrCommand(input)) {
-      // metadata/chunks/constants/backend on a recording: jfr-shell's own implementations, run
-      // by the CommandDispatcher this shell already holds over the same sessions
-      return ((CommandDispatcher) moduleContext).dispatch(input);
-    }
-
     if (isQueryForCurrentSession(input)) {
       handleShow(input);
       return true;
@@ -482,6 +539,11 @@ public final class Shell implements AutoCloseable {
     }
 
     return false;
+  }
+
+  /** The dispatcher the JFR commands and jfr-shell's completer use; package-private for tests. */
+  CommandDispatcher jfrDispatcher() {
+    return (CommandDispatcher) moduleContext;
   }
 
   private void printError(String message) {
@@ -521,6 +583,109 @@ public final class Shell implements AutoCloseable {
       throw new IllegalStateException(failure);
     }
     return handled;
+  }
+
+  /**
+   * Commands that jfr-shell's {@link CommandDispatcher} implements and that read only the current
+   * JFR session: run by that dispatcher, which shares this shell's {@link #sessions} and prints to
+   * this terminal. Shared with {@link ShellCompleter} so completion offers exactly what runs.
+   */
+  static final java.util.Set<String> JFR_COMMANDS =
+      java.util.Set.of("metadata", "chunks", "chunk", "cp", "constants", "backend");
+
+  // The same names as an array, for the per-line match below: iterating it allocates nothing.
+  private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
+
+  /**
+   * True for {@code metadata --summary} or {@code chunks}; false for a query that starts with the
+   * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
+   * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
+   * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
+   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
+   * crossref()}, stays a command.
+   */
+  static boolean isJfrCommand(String input) {
+    return jfrCommandOf(input) != null;
+  }
+
+  /**
+   * The JFR command {@code input} starts with, or {@code null}. Runs for every line typed or read
+   * from a script, so it scans in place: no split, no regex, no lower-cased copy.
+   */
+  static String jfrCommandOf(String input) {
+    int n = input.length();
+    int start = skipSpace(input, 0);
+    int end = skipWord(input, start);
+    String command = null;
+    for (String name : JFR_COMMAND_NAMES) {
+      if (name.length() == end - start && input.regionMatches(true, start, name, 0, end - start)) {
+        command = name;
+        break;
+      }
+    }
+    if (command == null) {
+      return null;
+    }
+    // The remaining words: a pipeline (a word starting with '|') or --limit makes it a query.
+    // A '|' inside a word is an argument, e.g. 'metadata --regex ^(jdk|datadog)\..*'.
+    for (int word = skipSpace(input, end); word < n; word = skipSpace(input, end)) {
+      end = skipWord(input, word);
+      if (input.charAt(word) == '|') {
+        return isCrossref(command, input, word) ? command : null;
+      }
+      if (end - word == 7 && input.startsWith("--limit", word)) {
+        return null;
+      }
+    }
+    return command;
+  }
+
+  /** {@code cp <type> | crossref()}: the form jfr-shell's {@code cmdCp} takes as a command. */
+  private static boolean isCrossref(String command, String input, int pipe) {
+    if (!command.equals("cp") && !command.equals("constants")) {
+      return false;
+    }
+    int n = input.length();
+    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
+      return false; // cmdCp needs '|' and 'crossref()' as separate words
+    }
+    int word = skipSpace(input, pipe + 1);
+    int end = skipWord(input, word);
+    return end - word == 10
+        && input.regionMatches(true, word, "crossref()", 0, 10)
+        && skipSpace(input, end) == n;
+  }
+
+  private static int skipSpace(String s, int i) {
+    while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private static int skipWord(String s, int i) {
+    while (i < s.length() && !Character.isWhitespace(s.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  private void handleJfrCommand(String command, String input) {
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (current.isEmpty() || !(current.get().session instanceof JFRSession)) {
+      printError(
+          "'"
+              + command
+              + "' needs a JFR session; "
+              + current
+                  .map(
+                      ref ->
+                          "session #" + ref.id + " is " + ref.session.getType() + ". Open a .jfr ")
+                  .orElse("open a .jfr ")
+              + "recording or switch to one with 'use <id>'");
+      return;
+    }
+    jfrDispatcher().dispatch(input);
   }
 
   /**
@@ -641,41 +806,6 @@ public final class Shell implements AutoCloseable {
     }
     terminal.flush();
     return true;
-  }
-
-  private static final List<String> JFR_COMMANDS =
-      List.of("metadata", "chunks", "chunk", "constants", "cp", "backend");
-
-  /**
-   * {@code metadata --summary}, {@code chunks}, {@code cp jdk.types.Symbol}: a jfr-shell command on
-   * a recording. As in jfr-shell, the word alone or followed by arguments is the command, while
-   * {@code metadata/...}, {@code chunks[...]} and {@code chunks | ...} remain queries.
-   */
-  private boolean isJfrCommand(String input) {
-    int space = 0;
-    while (space < input.length() && !Character.isWhitespace(input.charAt(space))) {
-      space++;
-    }
-    // Compared in place: this runs for most lines that reach the query path
-    boolean command = false;
-    for (String c : JFR_COMMANDS) {
-      if (c.length() == space && input.startsWith(c)) {
-        command = true;
-        break;
-      }
-    }
-    if (!command) {
-      return false;
-    }
-    int next = space;
-    while (next < input.length() && Character.isWhitespace(input.charAt(next))) {
-      next++;
-    }
-    if (next < input.length() && input.charAt(next) == '|') {
-      return false;
-    }
-    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
-    return current.isPresent() && current.get().session instanceof JFRSession;
   }
 
   /**
@@ -1047,7 +1177,8 @@ public final class Shell implements AutoCloseable {
 
   /** Whether the line is exactly this command, or this command followed by arguments. */
   private static boolean matchesCommand(String input, String command) {
-    return input.equals(command) || input.startsWith(command + " ");
+    int n = command.length();
+    return input.startsWith(command) && (input.length() == n || input.charAt(n) == ' ');
   }
 
   /** Everything after the first word, trimmed; empty when the line is the command alone. */
@@ -1338,14 +1469,24 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Session Management:");
     terminal.writer().println("  open <path>        Open a file (auto-detects format)");
     terminal.writer().println("  sessions           List all open sessions");
-    terminal.writer().println("  use <id>           Switch to a session");
+    terminal
+        .writer()
+        .println("  use <id>           Switch to a session ('session <id>' is the same)");
     terminal.writer().println("  close [id]         Close session (current if no id given)");
     terminal.writer().println("  info [id]          Show session information");
     terminal.writer().println();
     terminal.writer().println("Query:");
     terminal.writer().println("  show <query>       Execute a query on current session");
-    terminal.writer().println("  metadata | chunks | constants (cp) | backend");
-    terminal.writer().println("                     jfr-shell's commands, on a recording");
+    terminal.writer().println();
+    terminal.writer().println("JFR recordings (need a JFR session):");
+    terminal
+        .writer()
+        .println("  metadata [--summary] [--search <glob>] [--events-only] ...  List types");
+    terminal.writer().println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
+    terminal.writer().println("  chunks [--summary] [--range N-M]  List chunks");
+    terminal.writer().println("  chunk <index> show  Show one chunk's details");
+    terminal.writer().println("  constants|cp [<type>] [--summary] [--range N-M]  Constant pools");
+    terminal.writer().println("  backend [list]     Show the JFR backend, or list them");
     terminal.writer().println();
     terminal.writer().println("Ask (LLM, optional):");
     terminal
@@ -1376,6 +1517,12 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println("Scripting:");
     terminal.writer().println("  if <condition> ... elif <condition> ... else ... endif");
     terminal.writer().println("                     e.g. if ${big.size} > 0 && exists(limit)");
+    terminal
+        .writer()
+        .println("                     A condition that fails to evaluate is an error, not");
+    terminal
+        .writer()
+        .println("                     false: no branch runs; the block stays open to endif");
     terminal.writer().println("  script <path> [args...]  Run a script; $1, ${2:-default}, $@");
     terminal.writer().println("  record start [path] | stop | status");
     terminal.writer().println("                     Save the commands you type as a script");
@@ -1433,6 +1580,8 @@ public final class Shell implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
+    stopRecordingOnExit();
+
     try {
       globalStore.clear();
     } catch (Exception ignore) {

@@ -65,6 +65,12 @@ public final class JfrQueryEvaluator implements QueryEvaluator {
         "Expected JfrPath.Query or String, got " + (query == null ? "null" : query.getClass()));
   }
 
+  /** A query ending in {@code toMap()}; the same test jfr-shell's {@code set} applies. */
+  @Override
+  public boolean producesMap(Object query) {
+    return query instanceof Query q && q.producesMap();
+  }
+
   @Override
   public List<String> getRootTypes() {
     return ROOT_TYPES;

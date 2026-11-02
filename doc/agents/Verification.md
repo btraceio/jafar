@@ -67,6 +67,7 @@ In this repository the recurring multiplicities are:
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
 | Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
+| Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
 > knew only the `JfrSelector` one; the interactive shell builds the dispatcher the other way. Fixed
@@ -85,6 +86,18 @@ In this repository the recurring multiplicities are:
 > is not: `ConsumeEdgeCasesTest` constructs the server with an evaluator that yields nothing, and an
 > analysis holding its own real one ignored the double and read the recording. Injection points do
 > not appear in a diff as changes — they appear as code that looks the same.
+
+> **Case file — one chunk.** `Control.abort()` kept its flag in a `ThreadLocal`, and
+> `StreamingChunkParser` parses each chunk on a pool thread, so an abort stopped only its own chunk.
+> Five abort tests asserted an exact count and stayed green because `test-ap.jfr` was one chunk. On
+> the two-chunk `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a
+> 14-thread pool and 6 with a one-thread pool (the next chunk ran on the aborting thread and
+> delivered one event before the flag was checked). The pool size comes from
+> `availableProcessors`, so the same bug looks different on each machine: run both ends with
+> `-XX:ActiveProcessorCount=1` and `=16`. A multi-chunk fixture costs nothing — a JFR chunk is
+> self-contained, so a recording concatenated with itself is a valid N-chunk recording
+> (`AbortProbe.fixtures`, Go's `TestMultipleChunks`). Constant-pool ids are chunk-local as well: key
+> anything per id on (chunk, id).
 
 ## R3. A fallback that hides a misconfiguration is a bug
 
@@ -116,11 +129,11 @@ looks identical to the file not being read at all.
 > unknown id as an empty string while `CheckpointEvent` indexed the pool, the next entry misread
 > as `Unknown type ID 3`, and `CheckpointEvent` logged a WARN and abandoned the rest of the
 > checkpoint, so on a real JDK 25 recording `constants/jdk.types.StackTrace | count()` printed the
-> WARN and a number. Since #135 indexing fails instead, and both commands report an error. What is
-> left: the shell prints only the parser's top-level message, "Error occurred while parsing JFR
-> recording"; which pool and index, and why, is in the cause chain the user never sees. (An
-> earlier version of this case file said crossref printed the clean numbers; that was the released
-> backend — see R1.)
+> WARN and a number. Since #135 indexing fails instead, and since #150 the top-level message carries
+> the cause, so both commands now print `Error occurred while parsing JFR recording: Constant pool
+> jdk.types.Bytecode, index 227: Unexpected string constant id: 127` — the entry that was
+> corrupted. (An earlier version of this case file said crossref printed the clean numbers; that
+> was the released backend — see R1.)
 
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
@@ -172,6 +185,18 @@ looks identical to the file not being read at all.
 > now refuse unknown ids and report dangling string references (`EventDecodeFailureTest`
 > `CONSTANT_POOL`/`DANGLING_STRING_REF`, Go `TestCorruptedPoolStringIsReportedNotMisaligned`).
 > **A skip routine's default branch is a fallback too: if it cannot know the length, it must fail.**
+
+> **Case file — the cause three wrappers down.** Once a corrupted pool failed the parse, both shells
+> said so in the same words for every cause: a real `settings=profile` recording with one pooled
+> string's `0x03` set to `0x7f` gave `Error: Error occurred while parsing JFR recording` in
+> `jfr-shell` and `Query error: Error occurred while parsing JFR recording` in `jafar-shell`. The
+> reason was in hand: chunks are parsed on worker threads, so it reached `run()` as chunk task →
+> future → `RuntimeException("Failed to process chunk")` → `IOException`, and both shells print
+> only `getMessage()` of the outermost one. `StreamingChunkParser` now appends the most specific
+> message in the chain that still contains the root cause's, so both shells print `… JFR
+> recording: Constant pool jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`.
+> Pinned by `ParseErrorMessageTest` on `NodePoolFixture`. **A failure is only reported once its
+> reason reaches the reader; check what the prompt prints, not what the stack trace holds.**
 
 ## R4. Documentation is code — run it
 

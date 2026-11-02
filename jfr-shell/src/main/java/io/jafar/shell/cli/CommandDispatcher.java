@@ -18,12 +18,15 @@ import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.Progress;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
+import io.jafar.shell.core.llm.SecretCommands;
+import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.ConditionalState;
 import io.jafar.shell.core.scripting.Conditionals;
 import io.jafar.shell.core.scripting.EvaluatorLazyValue;
 import io.jafar.shell.core.scripting.LazyRows;
 import io.jafar.shell.core.scripting.MapLiteralParser;
 import io.jafar.shell.core.scripting.MapMerge;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.core.scripting.VariableScopes;
 import io.jafar.shell.core.scripting.VariableSubstitutor;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -70,10 +73,11 @@ public class CommandDispatcher {
   private final IO io;
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
-  private final Conditionals conditionals = new Conditionals();
+  // Replaced for the duration of a script by runScript, so a script has an if-block stack of its
+  // own
+  private Conditionals conditionals = new Conditionals();
   // Built once: dispatch() consults them for every line
   private VariableScopes scopes;
-  private java.util.function.Consumer<String> errorSink;
   private final boolean verbose;
 
   @FunctionalInterface
@@ -689,6 +693,44 @@ public class CommandDispatcher {
     return conditionals.state();
   }
 
+  /**
+   * Runs script lines through {@link #dispatch} with an if-block stack of their own, as jafar-shell
+   * does for its scripts: a script can neither leave the caller inside a block (the interactive
+   * shell runs scripts on its own dispatcher, so every command typed afterwards would be silently
+   * skipped) nor close one of the caller's (a stray {@code endif} is the script's error).
+   *
+   * <p>A script that runs to its end with blocks still open has an error for that, reported against
+   * its last line. One that stopped early at an error has its open blocks closed without a second
+   * error: the first one already says why.
+   *
+   * @param lines the script
+   * @param arguments positional arguments ($1, $2, ...)
+   * @param continueOnError whether to run on after a failing line
+   * @return the outcome, including the open-block error if any
+   */
+  public ScriptRunner.ExecutionResult runScript(
+      List<String> lines, List<String> arguments, boolean continueOnError) {
+    Conditionals callers = conditionals;
+    conditionals = new Conditionals();
+    try {
+      ScriptRunner runner = new ScriptRunner(this::dispatch, arguments);
+      runner.setContinueOnError(continueOnError);
+      ScriptRunner.ExecutionResult result = runner.execute(lines);
+      int unclosed = conditionals.state().depth();
+      boolean stopped = result.hasErrors() && !continueOnError;
+      if (unclosed == 0 || stopped) {
+        return result;
+      }
+      List<ScriptRunner.ScriptError> errors = new ArrayList<>(result.getErrors());
+      errors.add(
+          new ScriptRunner.ScriptError(
+              lines.size(), "", unclosed + " if-block(s) not closed with endif by end of script"));
+      return new ScriptRunner.ExecutionResult(result.getSuccessCount(), errors);
+    } finally {
+      conditionals = callers;
+    }
+  }
+
   public boolean dispatch(String line) {
     // '?' is 'ask', with or without a space after it. Taken before the line is split
     // into words so that '?why is this slow' and '? why is this slow' are the same command; no
@@ -707,7 +749,7 @@ public class CommandDispatcher {
 
     try {
       // Handle conditional keywords - these must be processed even in inactive branches
-      if (conditionals.handle(line, scopes(), errorSink())) {
+      if (conditionals.handle(line, scopes())) {
         return true;
       }
 
@@ -880,6 +922,10 @@ public class CommandDispatcher {
           }
           return false;
       }
+    } catch (ConditionalException e) {
+      // Not printed here: the caller reports it (ScriptRunner as a command error, the
+      // interactive shells as an error line), so it is neither swallowed nor shown twice.
+      throw e;
     } catch (Exception e) {
       io.error("Error: " + e.getMessage());
       return true;
@@ -1508,6 +1554,8 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
+      io.println("  A condition that fails to evaluate is an error, not false: no branch");
+      io.println("  of its block runs, and the block stays open until its endif.");
       io.println("");
       io.println("Ask (LLM, optional):");
       io.println("  ask <q>   - Several queries, read each result, and conclude ('?' for short)");
@@ -1893,7 +1941,8 @@ public class CommandDispatcher {
       io.println("  String: contains (substring check)");
       io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
-      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Functions: exists(ref), empty(ref)");
+      io.println("    ref: var, var.field.path, var[idx].field, or an llm.* setting name");
       io.println("  Grouping: parentheses ( )");
       io.println("");
       io.println("Examples:");
@@ -2665,7 +2714,8 @@ public class CommandDispatcher {
       }
       store.set(varName, new ScalarValue(literal));
       if (verbose) {
-        io.println("Set " + varName + " = " + literal);
+        String shown = LlmSettings.isSecret(varName) ? SecretCommands.mask(literal) : literal;
+        io.println("Set " + varName + " = " + shown);
       }
       return;
     }
@@ -2930,12 +2980,8 @@ public class CommandDispatcher {
    * map.
    */
   private boolean isDefinitelyMap(JfrPath.Query query) {
-    if (query.pipeline == null || query.pipeline.isEmpty()) {
-      return false;
-    }
-    // Check the last operator in the pipeline
-    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
-    return lastOp instanceof JfrPath.ToMapOp;
+    // One definition, shared with jafar-shell's lazy variables (JfrQueryEvaluator.producesMap)
+    return query.producesMap();
   }
 
   private void cmdVars(List<String> args) {
@@ -2960,7 +3006,7 @@ public class CommandDispatcher {
       io.println("Global variables:");
       for (String name : globalStore.names()) {
         Value val = globalStore.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -2968,7 +3014,7 @@ public class CommandDispatcher {
       io.println("Session variables (session #" + cur.get().id + "):");
       for (String name : cur.get().variables.names()) {
         Value val = cur.get().variables.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -3017,7 +3063,7 @@ public class CommandDispatcher {
       io.println("Structure: " + mv.describe());
     } else if (val instanceof ScalarValue sv) {
       io.println("Type: scalar");
-      io.println("Value: " + sv.describe());
+      io.println("Value: " + SecretCommands.describe(name, sv));
     }
   }
 
@@ -3087,15 +3133,6 @@ public class CommandDispatcher {
       scopes = s;
     }
     return s;
-  }
-
-  private java.util.function.Consumer<String> errorSink() {
-    java.util.function.Consumer<String> e = errorSink;
-    if (e == null) {
-      e = io::error;
-      errorSink = e;
-    }
-    return e;
   }
 
   private VariableStore getTargetStore(boolean global) {
