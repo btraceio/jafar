@@ -25,8 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Constant pool queries ({@code crossref()}, {@code constants --summary}, {@code constants/<type>})
- * count per chunk, on chunk-local ids, deterministically.
+ * Constant pool queries ({@code crossref()}, {@code constants --summary}, {@code constants/<type>},
+ * {@code getAvailableTypes}) count per chunk, on chunk-local ids, deterministically.
  *
  * <p>The fixture is a real recording made in this JVM. A disk recording flushes about once a
  * second, writing a checkpoint each time, so its single chunk has several checkpoints and the stack
@@ -175,6 +175,34 @@ class ConstantPoolChunkLocalityTest {
               .toList();
       assertEquals(expectedIds, ids, "run " + run);
     }
+  }
+
+  @Test
+  void availableTypesAreEveryChunksPoolTypes() throws Exception {
+    assertPoolGrowsAcrossCheckpoints();
+    for (Path jfr : new Path[] {single, concatenated}) {
+      for (int run = 0; run < 5; run++) {
+        assertEquals(
+            entryCountsAtChunkEnd(jfr).keySet(),
+            new java.util.TreeSet<>(ConstantPoolProvider.getAvailableTypes(jfr)),
+            jfr.getFileName() + ", run " + run);
+      }
+    }
+  }
+
+  /** A file that is not a recording used to yield an empty set: indistinguishable from no pools. */
+  @Test
+  void availableTypesFailsOnAFileThatIsNotARecording() throws Exception {
+    Path notJfr = dir.resolve("not-a-recording.jfr");
+    Files.writeString(notJfr, "<!DOCTYPE html><html>Link Temporarily Disabled</html>");
+    java.io.IOException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            java.io.IOException.class, () -> ConstantPoolProvider.getAvailableTypes(notJfr));
+    StringBuilder chain = new StringBuilder();
+    for (Throwable c = e; c != null; c = c.getCause()) {
+      chain.append("\n  ").append(c);
+    }
+    assertTrue(chain.toString().contains("Invalid JFR Magic Number"), chain.toString());
   }
 
   private static Map<String, Long> summary(Path jfr) throws Exception {

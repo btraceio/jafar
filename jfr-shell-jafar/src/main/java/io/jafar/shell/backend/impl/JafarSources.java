@@ -4,7 +4,6 @@ import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
-import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.GenericValueReader;
@@ -506,24 +505,37 @@ final class JafarSources {
 
     @Override
     public Set<String> getAvailableTypes(Path recording) throws Exception {
-      Set<String> types = new HashSet<>();
+      // Read at chunk end, when the chunk's pools hold every checkpoint's types. This used to read
+      // them in the first onCheckpoint and return false, which skipped the rest of the checkpoint
+      // chain: only the pools of the first checkpoint read (the chunk's last) were seen.
+      Set<String> types = new HashSet<>(); // guarded by itself
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
             recording,
             new ChunkParserListener() {
               @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
+              public boolean onEvent(
+                  ParserContext context,
+                  long typeId,
+                  long eventStartPos,
+                  long rawSize,
+                  long payloadSize) {
+                // The whole checkpoint chain is read before the first event; the events are not
+                // needed. Returning false skips them, and onChunkEnd still runs.
+                return false;
               }
 
               @Override
-              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
-                context.getConstantPools().pools().forEach(cp -> types.add(cp.getType().getName()));
-                return false;
+              public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
+                Set<String> chunk = new HashSet<>();
+                context.getConstantPools().pools().forEach(cp -> chunk.add(cp.getType().getName()));
+                synchronized (types) {
+                  types.addAll(chunk);
+                }
+                return true;
               }
             });
-      } catch (Exception ignore) {
       }
       return types;
     }
