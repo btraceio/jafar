@@ -1,6 +1,7 @@
 package jfr
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -854,5 +855,30 @@ func TestDanglingStringReferenceIsReported(t *testing.T) {
 	}
 	if len(reported) != 1 || !strings.Contains(reported[0], "string constant 9 not found in the java.lang.String pool") {
 		t.Errorf("reported = %q, want one error for reference 9", reported)
+	}
+}
+
+// A constant pool problem inside a checkpoint reaches OnError exactly once,
+// also when OnError returns it to abort parsing. readCheckpoint used to report
+// it and then readCheckpoints reported the returned error a second time, which
+// FailOnError hides because it just returns its argument.
+func TestConstantPoolErrorIsReportedOnceWhenOnErrorAborts(t *testing.T) {
+	data := pooledStringRecording(true, 1)
+
+	var reported []error
+	err := NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			reported = append(reported, err)
+			return err
+		},
+	}, func(*Event) error { return nil })
+	if len(reported) != 1 {
+		t.Fatalf("OnError called %d times with %q, want exactly once", len(reported), reported)
+	}
+	if !strings.Contains(reported[0].Error(), "constant pool java.lang.String, index 2: unexpected string constant id: 127") {
+		t.Errorf("reported = %q, want the corrupted pool entry named", reported[0])
+	}
+	if !errors.Is(err, reported[0]) {
+		t.Errorf("parse error = %v, want the error OnError returned (%v)", err, reported[0])
 	}
 }
