@@ -865,6 +865,24 @@ class ShellArtifactTest {
 
   private record Result(int status, String output) {}
 
+  /**
+   * {@code constants --limit 2} took "--limit" as a type name and printed "(no rows)"; this shell
+   * runs the command through jfr-shell's dispatcher, so it showed the same.
+   */
+  @Test
+  void constantsLimitCapsTheSummary(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String output =
+        runJar(
+            dir,
+            "open " + recording + "\nconstants --limit 2 --format csv\nconstants --bogus\nexit\n");
+
+    assertTrue(
+        output.contains("totalSize,name\n3383,jdk.types.Symbol\n2060,jdk.types.Method\n"), output);
+    assertTrue(output.contains("Unknown option for constants: --bogus"), output);
+    assertFalse(output.contains("(no rows)"), output);
+  }
+
   /** Exit status, stdout and stderr of one run, kept apart. */
   private record Run(int exit, String out, String err) {}
 
