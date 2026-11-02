@@ -22,8 +22,10 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -416,6 +418,11 @@ public final class Shell implements AutoCloseable {
 
     if ("help".equalsIgnoreCase(input)) {
       printHelp();
+      return true;
+    }
+
+    if (input.regionMatches(true, 0, "help ", 0, 5)) {
+      printTopicHelp(input.substring(5).trim());
       return true;
     }
 
@@ -1481,7 +1488,7 @@ public final class Shell implements AutoCloseable {
     out.println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
     out.println("  chunks [--summary] [--range N-M]  List chunks");
     out.println("  chunk <index> show  Show one chunk's details");
-    out.println("  constants|cp [<type>] [--summary] [--range N-M]  Constant pools");
+    out.println("  constants|cp [<type>] [--summary] [--range N-M] [--limit N]  Constant pools");
     out.println("  backend [list]     Show the JFR backend, or list them");
     out.println();
     out.println("Ask (LLM, optional):");
@@ -1513,6 +1520,7 @@ public final class Shell implements AutoCloseable {
     out.println();
     out.println("General:");
     out.println("  help               Show this help message");
+    out.println("  help <command>     Detailed usage, e.g. 'help constants'");
     out.println("  modules            List available modules");
     out.println("  exit|quit          Exit shell");
     out.println();
@@ -1541,6 +1549,48 @@ public final class Shell implements AutoCloseable {
     }
     out.println();
     flush();
+  }
+
+  /** Help topics whose text describes JfrPath and jfr-shell's recording commands. */
+  private static final Set<String> JFR_HELP_TOPICS =
+      Set.of(
+          "show",
+          "select",
+          "events",
+          "metadata",
+          "types",
+          "chunks",
+          "chunk",
+          "constants",
+          "cp",
+          "backend");
+
+  /**
+   * {@code help <topic>}: jfr-shell's per-command help, from the CommandDispatcher this shell
+   * already holds, so the two shells cannot drift apart. That text describes JfrPath for the query
+   * topics, so with another kind of session current those topics point at that module instead.
+   */
+  private void printTopicHelp(String topic) {
+    String sub = topic.split("\\s+")[0].toLowerCase(Locale.ROOT);
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (JFR_HELP_TOPICS.contains(sub)
+        && current.isPresent()
+        && !(current.get().session instanceof JFRSession)) {
+      ShellModule module = moduleById.get(current.get().session.getType());
+      String name = module != null ? module.getDisplayName() : current.get().session.getType();
+      out.println(
+              "'help " + sub + "' describes JFR recordings; the current session is " + name + ".");
+      if (module != null && !module.getExamples().isEmpty()) {
+        out.println("Queries for " + name + ":");
+        for (String example : module.getExamples()) {
+          out.println("  " + example);
+        }
+      }
+      out.flush();
+      return;
+    }
+    ((CommandDispatcher) moduleContext).dispatch("help " + sub);
+    out.flush();
   }
 
   private void printModules() {

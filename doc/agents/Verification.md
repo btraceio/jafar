@@ -61,6 +61,19 @@ flags.
 > code under test said 622. A before/after comparison proves nothing about the parts both sides
 > took from the same place.
 
+`--tui` (both shells) is a full-screen app on the system terminal and ignores piped input. Drive
+it through a pseudo-terminal with [`tools/tui_drive.py`](tools/tui_drive.py). The script types each
+line and Enter, and writes the rendered screen after each command to `<out>/<n>.txt`:
+
+```bash
+mkdir -p /tmp/tui && python3 -I doc/agents/tools/tui_drive.py /tmp/tui \
+  java -jar jafar-shell/build/libs/jafar-shell-*-all.jar --tui rec.jfr -- \
+  'constants --limit 2' 'help constants'
+```
+
+The tip line keeps redrawing, so the screen never goes quiet. Each command therefore waits out the
+script's 90-second cap; run it in the background for more than a few commands.
+
 > **Case file — `set llm.backend = ollama`.** This command appeared in five documents, in the help
 > text, in `llm status`'s own advice, and in tab completion. It had never been run. The shell
 > answered `Invalid variable name: llm.backend`, because `set` validates names against

@@ -883,6 +883,46 @@ class ShellArtifactTest {
     assertFalse(output.contains("(no rows)"), output);
   }
 
+  /**
+   * 'help &lt;command&gt;' answered "Unknown command: help constants": this shell knew only a bare
+   * 'help'. It now shows jfr-shell's per-command help, and for the JFR query topics with another
+   * kind of session current, says so instead of describing JfrPath.
+   */
+  @Test
+  void helpTopicShowsCommandUsage(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "help set",
+                "open " + recording,
+                "help constants",
+                "help bogus",
+                "open " + dump,
+                "help show",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Unknown command: help"), output);
+    assertTrue(output.contains("Usage: set [--global] <name> = <value|expression>"), output);
+    assertTrue(
+        output.contains(
+            "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]"),
+        output);
+    assertTrue(output.contains("No specific help for 'bogus'"), output);
+    assertTrue(
+        output.contains("'help show' describes JFR recordings; the current session is"), output);
+    // the JfrPath text is not shown for the heap dump
+    int afterDump = output.indexOf("'help show' describes JFR recordings");
+    assertFalse(
+        output.substring(afterDump).contains("events/<type>[field/path op literal]"), output);
+  }
+
   /** Exit status, stdout and stderr of one run, kept apart. */
   private record Run(int exit, String out, String err) {}
 
