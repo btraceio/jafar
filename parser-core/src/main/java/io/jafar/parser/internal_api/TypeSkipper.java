@@ -18,25 +18,37 @@ public final class TypeSkipper {
   /**
    * Skips over a single field's data in the stream.
    *
+   * <p>Uses the same instructions as skipping the field inside its owning type, so a constant pool
+   * reference is one varint (also as array elements), a primitive is skipped by its encoding, and a
+   * simple type is skipped as the value it wraps. The instructions are built once per field and
+   * cached on it ({@link MetadataField#skipper()}).
+   *
+   * <p>This used to call {@code fieldType.skipDirect(stream)} for anything that was neither an
+   * array nor a constant pool reference. A primitive class has no fields, so its skipper has no
+   * instructions and nothing was skipped: a build-time generated handler (the only caller) then
+   * read every field after an undeclared {@code long startTime} from the wrong bytes. An array of
+   * constant pool references was skipped as whole values instead of as varints.
+   *
    * @param field the metadata field to skip
    * @param stream the recording stream to skip over
    * @throws IOException if an I/O error occurs during skipping
    */
   public static void skip(MetadataField field, RecordingStream stream) throws IOException {
-    MetadataClass fieldType = field.getType();
-    if (fieldType != null) {
-      int dimension = field.getDimension();
-      if (dimension > 0) {
-        int count = (int) stream.readVarint();
-        for (int i = 0; i < count; i++) {
-          fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
-        }
-      } else if (field.hasConstantPool()) {
-        stream.readVarint(); // skip CP reference
-      } else {
-        fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
-      }
+    if (field.getType() != null) {
+      field.skipper().skip(stream);
     }
+  }
+
+  /**
+   * Creates a TypeSkipper for one field's value, as it appears inside its owning type.
+   *
+   * @param field the field, whose type must be resolved
+   * @return a skipper for the field's value
+   */
+  public static TypeSkipper createFieldSkipper(MetadataField field) {
+    IntGrowableArray instructions = new IntGrowableArray(4);
+    fillSkipper(field, instructions);
+    return new TypeSkipper(instructions.toIntArray());
   }
 
   /**

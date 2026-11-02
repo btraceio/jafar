@@ -60,11 +60,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_CP_TEMPLATE =
       "        case \"%s\":\n"
+          + "          requireStorage(metadata, metaField, true, false);\n"
           + "          this.%s_cpRef = stream.readVarint();\n"
           + "          break;\n";
 
   private static final String SWITCH_CASE_CP_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
+          + "          requireStorage(metadata, metaField, true, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s_cpRef = new long[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -75,6 +77,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
+          + "          requireStorage(metadata, metaField, false, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new %s[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -85,6 +88,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   private static final String SWITCH_CASE_STRING_ARRAY_TEMPLATE =
       "        case \"%s\": {\n"
+          + "          requireStorage(metadata, metaField, false, true);\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new String[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -94,30 +98,40 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "        }\n";
 
   private static final String SWITCH_CASE_TEMPLATE =
-      "        case \"%s\":\n" + "          this.%s = %s;\n" + "          break;\n";
+      "        case \"%s\":\n"
+          + "          requireStorage(metadata, metaField, false, false);\n"
+          + "          this.%s = %s;\n"
+          + "          break;\n";
 
   private static final String RESET_FIELD_CP_TEMPLATE = "    this.%s_cpRef = 0L;\n";
   private static final String RESET_FIELD_PRIMITIVE_TEMPLATE = "    this.%s = %s;\n";
   private static final String RESET_FIELD_OBJECT_TEMPLATE = "    this.%s = null;\n";
 
+  // A chunk need not have a pool of every type; like the runtime-generated handlers
+  // (CodeGenerator), an absent pool yields null, and an empty array for an array field.
   private static final String GETTER_CP_TEMPLATE =
       "  @Override\n"
-          + "  public %s %s() {\n"
-          + "    if (%s == -1L || constantPools == null) {\n"
+          + "  public %1$s %2$s() {\n"
+          + "    if (%3$s == -1L || constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    return (%s) constantPools.getConstantPool(%s).get(%s_cpRef);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(%5$s);\n"
+          + "    return cp == null ? null : (%4$s) cp.get(%6$s_cpRef);\n"
           + "  }\n\n";
 
   private static final String GETTER_CP_ARRAY_TEMPLATE =
       "  @Override\n"
-          + "  public %s[] %s() {\n"
-          + "    if (%s == -1L || constantPools == null || this.%s_cpRef == null) {\n"
+          + "  public %1$s[] %2$s() {\n"
+          + "    if (%3$s == -1L || constantPools == null || this.%4$s_cpRef == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    %s[] result = new %s[this.%s_cpRef.length];\n"
-          + "    for (int i = 0; i < this.%s_cpRef.length; i++) {\n"
-          + "      result[i] = (%s) constantPools.getConstantPool(%s).get(this.%s_cpRef[i]);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(%10$s);\n"
+          + "    if (cp == null) {\n"
+          + "      return new %5$s[0];\n"
+          + "    }\n"
+          + "    %5$s[] result = new %6$s[this.%7$s_cpRef.length];\n"
+          + "    for (int i = 0; i < this.%8$s_cpRef.length; i++) {\n"
+          + "      result[i] = (%9$s) cp.get(this.%11$s_cpRef[i]);\n"
           + "    }\n"
           + "    return result;\n"
           + "  }\n\n";

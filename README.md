@@ -206,6 +206,19 @@ public interface JFRThread {
 
 **Note:** Annotation processor only processes **top-level interfaces**. Nested/inner classes with `@JfrType` are skipped and use runtime generation instead.
 
+**Note:** Fields an interface does not declare are skipped, so declare only what you read. Unlike
+runtime generation, a generated handler decides how to read each accessor at build time, without
+the recording's metadata: a complex type as a constant pool reference, a primitive or `String` as
+an inline value. A field the recording stores differently cannot be read by it, and the parse fails
+with an `IOException` naming the field, for example
+`JFRStackTraceHandler cannot read jdk.types.StackTrace.frames: the recording stores it as an array
+of inline values, but JFRStackTrace declares it as an array of constant pool references`. In JVM
+recordings this applies to `jdk.types.StackTrace.frames` (inline structures) and to `String`
+accessors for pooled simple types such as `jdk.types.Symbol` (`Method.name`, `Class.name`) and
+`jdk.types.ThreadState` (`ExecutionSample.state`). Interfaces that need such fields have to use
+runtime generation, together with the interfaces that lead to them (the processor skips nested
+interfaces).
+
 #### 3. Parse Events (Factories Auto-Discovered)
 
 ```java

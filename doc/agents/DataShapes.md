@@ -140,6 +140,29 @@ the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the
 instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
 so a field name cannot pass for key syntax.
 
+### A build-time handler is not a runtime handler
+
+`jafar-processor` generates handlers without the recording's metadata, and its output was wrong on
+real recordings in several ways while every test passed - the existing tests only checked the
+generated source text. They were found by compiling, loading and running that output: the skip by
+the first such test, the other two by comparing build-time against runtime handlers event by event
+on a JVM recording with the same interfaces.
+
+- **A skip that consumed nothing.** Undeclared fields were skipped with
+  `TypeSkipper.skip(MetadataField, ...)`, which called `fieldType.skipDirect(stream)`. A primitive
+  class has no fields, so its skipper has no instructions: an undeclared `long startTime` consumed
+  nothing, and `seq` came back as `-665084514` (the low bits of `startTime`). It now uses the same
+  per-field instructions as skipping the owning type.
+- **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
+  `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
+  `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently; they now fail
+  naming the field.
+- **One instance for every pooled entry.** A factory's `get` returns one reused handler per thread,
+  and the constant pool cached that instance for every entry: 935 of 1,261 samples named the wrong
+  thread, while every name was a real one. Pooled entries now come from `HandlerFactory.create`.
+
+Watch the comparison, not the values: each value looked right.
+
 ---
 
 ## Before you trust a shape

@@ -22,6 +22,8 @@ dependencies {
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testImplementation 'com.google.testing.compile:compile-testing:0.21.0'
+    // End-to-end tests: write recordings with the JMC writer and run the generated handlers on them
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

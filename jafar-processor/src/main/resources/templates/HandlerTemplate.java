@@ -50,6 +50,37 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
     }
   }
 
+  /**
+   * Checks that the recording stores a field the way this handler reads it. The handler is
+   * generated without the recording's metadata: a complex-typed accessor is read as a constant pool
+   * reference and a primitive or String accessor as an inline value. A field stored otherwise (for
+   * example jdk.types.StackTrace's inline frames array, or a String accessor for a pooled
+   * jdk.types.Symbol) cannot be read by this handler; reading it anyway would misread it and every
+   * field after it.
+   */
+  private static void requireStorage(
+      MetadataClass metadata, MetadataField field, boolean pooled, boolean array)
+      throws IOException {
+    boolean isPooled = field.hasConstantPool();
+    boolean isArray = field.getDimension() > 0;
+    if (isPooled != pooled || isArray != array) {
+      throw new IOException(
+          "{{HANDLER_NAME}} cannot read "
+              + metadata.getName()
+              + "."
+              + field.getName()
+              + ": the recording stores it as "
+              + describe(isPooled, isArray)
+              + ", but {{INTERFACE_NAME}} declares it as "
+              + describe(pooled, array));
+    }
+  }
+
+  private static String describe(boolean pooled, boolean array) {
+    String what = pooled ? "a constant pool reference" : "an inline value";
+    return array ? "an array of " + what.substring(what.indexOf(' ') + 1) + "s" : what;
+  }
+
   /** Resets instance fields for reuse. */
   public void reset() {
     this.constantPools = null;
