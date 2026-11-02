@@ -4,6 +4,7 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.SessionOwnership;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -39,21 +40,32 @@ public final class SessionRegistry {
       map.put("path", recordingPath.toString());
       map.put("openedAt", openedAt.toString());
 
-      // Add recording info
-      try {
-        var eventTypes = session.getAvailableTypes();
-        map.put("availableTypes", eventTypes.size());
-        // Opening reads metadata only; counting events takes a full scan of the recording.
-        map.put("totalEvents", null);
-        map.put("totalEventsNote", "Not counted at open. jfr_summary reports the count.");
+      // Add recording info. The types were read when the session opened, so this cannot fail.
+      map.put("availableTypes", session.getAvailableTypes().size());
+      // Opening reads metadata only; counting events takes a full scan of the recording.
+      map.put("totalEvents", null);
+      map.put("totalEventsNote", "Not counted at open. jfr_summary reports the count.");
 
-        // Calculate duration from recording metadata if available
-        var chunkIds = session.getAvailableChunkIds();
-        map.put("chunkCount", chunkIds.size());
-      } catch (Exception e) {
-        LOG.debug("Could not get session details: {}", e.getMessage());
+      // Chunks are listed lazily, by re-reading the file. If that fails, say so in the payload
+      // rather than leaving the key out, which would look like a server that never sends it.
+      try {
+        map.put("chunkCount", session.getAvailableChunkIds().size());
+      } catch (UncheckedIOException e) {
+        LOG.warn("Could not list chunks of session {} ({})", id, recordingPath, e);
+        map.put("chunkCount", null);
+        map.put("chunkCountError", describe(e));
       }
       return map;
+    }
+
+    private static String describe(Throwable e) {
+      StringBuilder sb = new StringBuilder(String.valueOf(e.getMessage()));
+      for (Throwable c = e.getCause(); c != null; c = c.getCause()) {
+        if (c.getMessage() != null && !sb.toString().contains(c.getMessage())) {
+          sb.append(": ").append(c.getMessage());
+        }
+      }
+      return sb.toString();
     }
 
     public Duration age() {
