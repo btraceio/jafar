@@ -36,10 +36,21 @@ func newConstantPool(chunk *chunkParser, typeID int64, hint int) *constantPool {
 	}
 }
 
-func (p *constantPool) addOffset(id int64, offset int) {
-	if _, ok := p.offsets[id]; !ok {
-		p.offsets[id] = offset
+// addOffset records where entry id starts, unless an earlier checkpoint of the
+// chunk already indexed it. It reports whether it recorded the offset.
+func (p *constantPool) addOffset(id int64, offset int) bool {
+	if _, ok := p.offsets[id]; ok {
+		return false
 	}
+	p.offsets[id] = offset
+	return true
+}
+
+// indexedEntry is a constant pool entry a checkpoint indexed, kept so that the
+// checkpoint can take the entry back when its framing turns out to be wrong.
+type indexedEntry struct {
+	pool *constantPool
+	id   int64
 }
 
 // has reports whether the chunk declared an entry with the given index and it

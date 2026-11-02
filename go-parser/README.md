@@ -307,15 +307,17 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   instead of reading it as null. Pinned by
   `TestCorruptedPoolStringIsReportedNotMisaligned` and
   `TestDanglingStringReferenceIsReported` here.
-* **Checkpoint framing is checked differently.** Both parsers refuse to index
-  constant pool entries at offsets the checkpoint event's size contradicts, but
-  this one bounds every entry by the checkpoint's end and reports an entry that
-  runs past it through `Options.OnError`, keeping the pools read before it. The
-  Java parser checks once, after the last pool, that the pools end exactly where
-  the checkpoint's size says, and fails the parse otherwise (`Checkpoint at N:
-  ...`, as the JDK's own reader does); that also catches pools that end short,
-  which this parser does not check. Pinned by `CheckpointFramingTest` in
-  `parser-core`.
+* **A misframed checkpoint is recoverable here.** Both parsers check that a
+  checkpoint's constant pools end exactly where the event's size says, as the
+  JDK's own reader does, and both name the checkpoint (`checkpoint at N:
+  constant pools end at X, but the event size S says it ends at Y`). This
+  parser also stops at an entry that runs past the event. It reports either
+  through `Options.OnError` and carries on: since the entry that went wrong
+  cannot be known, a checkpoint whose pools end short keeps none of the entries
+  it indexed, and references into them fail their events with the framing error
+  as the cause. The Java parser fails the parse. Pinned by
+  `TestCheckpointPoolsEndingShortOfTheEventSizeAreReported` here and
+  `CheckpointFramingTest` in `parser-core`.
 * **Type IDs are chunk-scoped**, as they are in the format. A recording whose
   chunks come from different producers can map the same type ID to different
   type names, and each chunk is decoded against its own metadata.
