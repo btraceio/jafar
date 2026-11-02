@@ -42,6 +42,13 @@ func (p *constantPool) addOffset(id int64, offset int) {
 	}
 }
 
+// has reports whether the chunk declared an entry with the given index and it
+// was indexed.
+func (p *constantPool) has(id int64) bool {
+	_, ok := p.offsets[id]
+	return ok
+}
+
 // value returns the decoded constant pool entry, decoding it on first use.
 func (p *constantPool) value(id int64) (any, error) {
 	if v, ok := p.cache[id]; ok {
@@ -83,6 +90,34 @@ func (p *constantPool) typeName() string {
 type constantPools struct {
 	chunk *chunkParser
 	pools map[int64]*constantPool
+	// indexingFailure is the first problem that stopped the checkpoints of
+	// the chunk from being indexed completely, or nil. When it is set, some
+	// declared entries may never have been indexed, so a reference that does
+	// not resolve may point at one of them rather than be dangling.
+	indexingFailure error
+}
+
+// recordIndexingFailure remembers the first checkpoint indexing failure.
+func (ps *constantPools) recordIndexingFailure(err error) {
+	if ps.indexingFailure == nil {
+		ps.indexingFailure = err
+	}
+}
+
+// missing explains a string reference that does not resolve: in a chunk with
+// an indexing failure that failure is the likeliest cause, so it is wrapped.
+func (ps *constantPools) missing(err error) error {
+	if ps.indexingFailure == nil {
+		return err
+	}
+	return fmt.Errorf("%w (constant pool indexing stopped early in this chunk: %w)", err, ps.indexingFailure)
+}
+
+// unindexedRef builds the error for a reference to an entry missing from its
+// pool in a chunk with an indexing failure. Only called when indexingFailure
+// is set.
+func (ps *constantPools) unindexedRef(p *constantPool, idx int64) error {
+	return fmt.Errorf("constant pool reference %d to %s does not resolve: the pool has no such entry (constant pool indexing stopped early in this chunk: %w)", idx, p.typeName(), ps.indexingFailure)
 }
 
 func newConstantPools(chunk *chunkParser) *constantPools {

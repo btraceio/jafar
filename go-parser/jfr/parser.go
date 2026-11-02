@@ -301,6 +301,14 @@ func (c *chunkParser) readChunkMetadata() error {
 	return nil
 }
 
+// checkpointFailure reports a problem that may leave some constant pool entries
+// of the chunk unindexed. It is remembered so that a reference to a missing
+// entry fails its event with it as the cause, rather than resolving to nil.
+func (c *chunkParser) checkpointFailure(err error) error {
+	c.pools.recordIndexingFailure(err)
+	return c.recoverable(err)
+}
+
 // readCheckpoints walks the checkpoint chain of the chunk. The chunk header
 // points at one end of the chain and every checkpoint carries a signed offset
 // delta to the next one, so the chain may run forwards or backwards.
@@ -310,31 +318,31 @@ func (c *chunkParser) readChunkMetadata() error {
 // place, rather than failing the chunk.
 func (c *chunkParser) readCheckpoints() error {
 	if c.header.ConstantPoolOffset <= 0 || c.header.ConstantPoolOffset >= int64(len(c.data)) {
-		return c.recoverable(fmt.Errorf("constant pool offset %d is outside the chunk", c.header.ConstantPoolOffset))
+		return c.checkpointFailure(fmt.Errorf("constant pool offset %d is outside the chunk", c.header.ConstantPoolOffset))
 	}
 	r := newReader(c.data)
 	pos := int(c.header.ConstantPoolOffset)
 	visited := make(map[int]bool)
 	for {
 		if visited[pos] {
-			return c.recoverable(fmt.Errorf("checkpoint at %d: cyclic checkpoint chain", pos))
+			return c.checkpointFailure(fmt.Errorf("checkpoint at %d: cyclic checkpoint chain", pos))
 		}
 		visited[pos] = true
 		r.err = nil
 		r.seek(pos)
 		if r.err != nil {
-			return c.recoverable(r.err)
+			return c.checkpointFailure(r.err)
 		}
 		next, err := c.readCheckpoint(r)
 		if err != nil {
-			return c.recoverable(err)
+			return c.checkpointFailure(err)
 		}
 		if next == 0 {
 			return nil
 		}
 		newPos := pos + next
 		if newPos < 0 || newPos >= len(c.data) {
-			return c.recoverable(fmt.Errorf("checkpoint at %d: next checkpoint offset %d is outside the chunk", pos, newPos))
+			return c.checkpointFailure(fmt.Errorf("checkpoint at %d: next checkpoint offset %d is outside the chunk", pos, newPos))
 		}
 		pos = newPos
 	}
@@ -373,7 +381,7 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 		if err := c.readConstantPool(r, start, end); err != nil {
 			// The remaining pools of this checkpoint cannot be located once one
 			// of them cannot be read, but the chain itself is still intact.
-			if err := c.recoverable(fmt.Errorf("checkpoint at %d: %w", start, err)); err != nil {
+			if err := c.checkpointFailure(fmt.Errorf("checkpoint at %d: %w", start, err)); err != nil {
 				return 0, err
 			}
 			return int(nextOffsetDelta), nil

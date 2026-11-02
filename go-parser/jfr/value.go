@@ -2,6 +2,7 @@ package jfr
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -302,6 +303,15 @@ func (c *chunkParser) readFieldValue(r *reader, owner *ClassType, f *Field, dept
 				typeID = f.Type.ID
 			}
 			f.pool = c.pools.getOrCreate(typeID)
+		}
+		// Only in a chunk whose checkpoints were not indexed completely: there
+		// a missing entry may be one that was declared and abandoned, so it
+		// cannot be passed off as a dangling reference. The indices writers
+		// use for an absent value stay nil references: 0 (HotSpot) and
+		// math.MinInt64 (the JMC writer, whose TypedValueImpl leaves a null
+		// value's index at Long.MIN_VALUE and writes it as the reference).
+		if c.pools.indexingFailure != nil && idx != 0 && idx != math.MinInt64 && !f.pool.has(idx) {
+			return nil, c.pools.unindexedRef(f.pool, idx)
 		}
 		return c.newRef(f.pool, idx), nil
 	}

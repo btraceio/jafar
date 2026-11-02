@@ -1,6 +1,8 @@
 package jfr
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -828,6 +830,26 @@ func TestCorruptedPoolStringIsReportedNotMisaligned(t *testing.T) {
 		!strings.Contains(reported[2], "string constant 3 not found") {
 		t.Errorf("reported = %q, want the pool entry, then references 2 and 3", reported)
 	}
+
+	// Each event error carries the indexing failure as its cause, as for any
+	// other pooled field (TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil).
+	var errs []error
+	if err := NewParser(data).ParseWith(Options{
+		OnError: func(err error) error {
+			errs = append(errs, err)
+			return nil
+		},
+	}, func(*Event) error { return nil }); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(errs) != 3 {
+		t.Fatalf("reported %d errors, want 3: %v", len(errs), errs)
+	}
+	for _, e := range errs[1:] {
+		if !errors.Is(e, errs[0]) || !strings.Contains(e.Error(), "indexing stopped early") {
+			t.Errorf("event error %q does not wrap the indexing failure", e)
+		}
+	}
 }
 
 // A reference to a string pool entry that does not exist is an error, not a
@@ -854,5 +876,200 @@ func TestDanglingStringReferenceIsReported(t *testing.T) {
 	}
 	if len(reported) != 1 || !strings.Contains(reported[0], "string constant 9 not found in the java.lang.String pool") {
 		t.Errorf("reported = %q, want one error for reference 9", reported)
+	}
+}
+
+// --- other pooled fields with a corrupted entry -----------------------------
+
+// nodeRefEvent encodes a test.Cyclic event whose node field is the given
+// constant pool index.
+func nodeRefEvent(node int64) []byte {
+	w := &writer{}
+	w.varint(tIDCyclic)
+	w.varint(node)
+	return w.buf
+}
+
+// nodeRefs are the node indices of the events of nodePoolRecording, in order:
+// an indexed entry whose next is 0, index 0 (how HotSpot writes an absent
+// value), math.MinInt64 (how the JMC writer writes a null one), an indexed
+// entry whose next is an entry stored after the bad one, the bad entry, an
+// entry stored after it, and an index the chunk never declared.
+var nodeRefs = []int64{5, 0, math.MinInt64, 1, 2, 3, 9}
+
+// nodePoolRecording stores test.Node entries 5, 1, 2, 3 in that order. With
+// corrupt, the name of entry 2 has an encoding id no encoding uses, so
+// indexing its checkpoint stops there and entries 2 and 3 are abandoned.
+func nodePoolRecording(corrupt bool) []byte {
+	bad := nodeEntry("b", 0)
+	if corrupt {
+		bad[0] = 0x7f
+	}
+	events := make([][]byte, len(nodeRefs))
+	for i, n := range nodeRefs {
+		events[i] = nodeRefEvent(n)
+	}
+	spec := chunkSpec{
+		metadata: cyclicMetadata(),
+		pools: []constantPoolData{
+			{typeID: tIDNode, entries: []poolEntry{
+				{id: 5, data: nodeEntry("e", 0)},
+				{id: 1, data: nodeEntry("a", 3)},
+				{id: 2, data: bad},
+				{id: 3, data: nodeEntry("c", 0)},
+			}},
+		},
+		events:     events,
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}
+	return spec.build()
+}
+
+// In a chunk whose checkpoints were not indexed completely, a non-zero
+// reference from any pooled field to an entry missing from its pool fails the
+// event, with the indexing failure as its cause: the entry may be one that was
+// declared and abandoned, and resolving it to nil would pass it off as absent.
+// Index 0 and math.MinInt64 stay nil references. A reference from inside an indexed entry to an
+// abandoned one makes that entry undecodable, which Ref.Err reports. The Java
+// parser applies the same policy in ConstantPoolAccessor.
+func TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		reuse := reuse
+		t.Run(fmt.Sprintf("reuse=%v", reuse), func(t *testing.T) {
+			// With ReuseValues the *Ref values are recycled once the handler
+			// returns, so everything is read inside it.
+			type seen struct {
+				index int64
+				name  any   // the resolved entry's name, or nil
+				next  any   // the resolved entry's next, resolved, or nil
+				err   error // Ref.Err after resolving
+			}
+			var delivered []seen
+			var reported []error
+			err := NewParser(nodePoolRecording(true)).ParseWith(Options{
+				ReuseValues: reuse,
+				OnError: func(err error) error {
+					reported = append(reported, err)
+					return nil
+				},
+			}, func(e *Event) error {
+				ref, ok := e.Values["node"].(*Ref)
+				if !ok {
+					t.Fatalf("reuse=%v: node = %#v, want a *Ref", reuse, e.Values["node"])
+				}
+				s := seen{index: ref.Index()}
+				if m, ok := ref.Value().(map[string]any); ok {
+					s.name = m["name"]
+					next, ok := m["next"].(*Ref)
+					if !ok {
+						t.Fatalf("reuse=%v: entry %d next = %#v, want a *Ref", reuse, ref.Index(), m["next"])
+					}
+					if next.Err() != nil {
+						t.Errorf("reuse=%v: entry %d next: Err = %v", reuse, ref.Index(), next.Err())
+					}
+					s.next = next.Value()
+				}
+				s.err = ref.Err()
+				if s.err != nil {
+					// An undecodable entry is decoded once; resolving it again
+					// returns the cached error (Java: MutableConstantPool's
+					// mapFailures rethrows the same exception).
+					if ref.Value() != nil || ref.Err() != s.err {
+						t.Errorf("reuse=%v: entry %d resolved again: Err = %v, want the cached %v", reuse, ref.Index(), ref.Err(), s.err)
+					}
+				}
+				delivered = append(delivered, s)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("reuse=%v: parse: %v", reuse, err)
+			}
+			var got []int64
+			for _, d := range delivered {
+				got = append(got, d.index)
+			}
+			if want := []int64{5, 0, math.MinInt64, 1}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("reuse=%v: delivered node indices = %v, want %v; reported: %v", reuse, got, want, reported)
+			}
+			if len(reported) != 4 {
+				t.Fatalf("reuse=%v: reported %d errors, want 4 (indexing, then the events referring to 2, 3 and 9): %v", reuse, len(reported), reported)
+			}
+			indexing := reported[0]
+			for _, want := range []string{"test.Node, index 2", "unexpected string constant id: 127"} {
+				if !strings.Contains(indexing.Error(), want) {
+					t.Errorf("reuse=%v: indexing error %q does not mention %q", reuse, indexing, want)
+				}
+			}
+			for i, idx := range []int64{2, 3, 9} {
+				msg := reported[i+1].Error()
+				ref := "constant pool reference " + itoa(idx) + " to test.Node does not resolve"
+				if !strings.Contains(msg, "test.Cyclic") || !strings.Contains(msg, ref) ||
+					!strings.Contains(msg, "indexing stopped early") {
+					t.Errorf("reuse=%v: event error %q should name test.Cyclic, %q and the indexing failure", reuse, msg, ref)
+				}
+				if !errors.Is(reported[i+1], indexing) {
+					t.Errorf("reuse=%v: event error %q does not wrap the indexing failure", reuse, msg)
+				}
+			}
+
+			// Entry 5 was indexed and its own next is 0: both stay as they were.
+			if d := delivered[0]; d.name != "e" || d.next != nil || d.err != nil {
+				t.Errorf("reuse=%v: entry 5 = %+v, want name e, next nil, no error", reuse, d)
+			}
+			// Index 0 and math.MinInt64 are absent values.
+			for _, d := range delivered[1:3] {
+				if d.name != nil || d.err != nil {
+					t.Errorf("reuse=%v: node %d = %+v, want nil without error", reuse, d.index, d)
+				}
+			}
+			// Entry 1 was indexed, but its next points at abandoned entry 3.
+			d := delivered[3]
+			if d.name != nil {
+				t.Errorf("reuse=%v: entry 1 = %+v, want nil: its next refers to an abandoned entry", reuse, d)
+			}
+			if d.err == nil || !errors.Is(d.err, indexing) ||
+				!strings.Contains(d.err.Error(), "constant pool reference 3 to test.Node does not resolve") {
+				t.Errorf("reuse=%v: entry 1 error = %v, want reference 3 wrapping the indexing failure", reuse, d.err)
+			}
+		})
+	}
+
+	err := NewParser(nodePoolRecording(true)).ParseWith(Options{OnError: FailOnError}, func(*Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "unexpected string constant id: 127") {
+		t.Errorf("FailOnError: parse error = %v, want the indexing failure", err)
+	}
+}
+
+// Without an indexing failure nothing changes: a dangling non-zero reference,
+// like index 0, resolves to nil without an error, as the JDK's own reader does.
+func TestDanglingReferenceInIntactChunkResolvesToNil(t *testing.T) {
+	var refs []*Ref
+	err := NewParser(nodePoolRecording(false)).ParseWith(Options{OnError: FailOnError}, func(e *Event) error {
+		refs = append(refs, e.Values["node"].(*Ref))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(refs) != len(nodeRefs) {
+		t.Fatalf("delivered %d events, want %d", len(refs), len(nodeRefs))
+	}
+	var names []any
+	for _, r := range refs {
+		if r.Err() != nil {
+			t.Errorf("node %d: Err = %v", r.Index(), r.Err())
+		}
+		m, _ := r.Value().(map[string]any)
+		if m == nil {
+			names = append(names, nil)
+		} else {
+			names = append(names, m["name"])
+		}
+	}
+	if want := []any{"e", nil, nil, "a", "b", "c", nil}; !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
 	}
 }
