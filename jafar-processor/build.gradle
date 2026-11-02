@@ -12,6 +12,9 @@ repositories {
     mavenLocal()
 }
 
+// parser-core must be configured first for its sourceSets (test helpers) to exist
+evaluationDependsOn(':parser-core')
+
 dependencies {
     implementation project(':parser-core')
 
@@ -24,6 +27,8 @@ dependencies {
     testImplementation 'com.google.testing.compile:compile-testing:0.21.0'
     // End-to-end tests: write recordings with the JMC writer and run the generated handlers on them
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
+    // NestedArrayFixture, built with parser-core's SyntheticRecording test helper
+    testImplementation project(':parser-core').sourceSets.test.output
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

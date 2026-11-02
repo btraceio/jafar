@@ -267,37 +267,37 @@ public final class TypeSkipper {
    * @throws IOException if an I/O error occurs during skipping
    */
   public void skip(RecordingStream stream, Listener listener) throws IOException {
-    for (int i = 0; i < instructions.length; i++) {
+    int i = 0;
+    while (i < instructions.length) {
       long from = stream.position();
-      int instruction = instructions[i];
-      if (instruction == Instructions.ARRAY) {
-        int endIndex =
-            (++i)
-                + instructions[
-                    i++]; // the next instruction for array is encoding the number of instructions
-        // per array item
-        int cnt = (int) stream.readVarint();
-        if (cnt == 0) {
-          i = endIndex;
-          continue;
-        }
-        int savedIndex = i;
-        for (int j = 0; j < cnt; ) {
-          instruction = instructions[i];
-          skip(instruction, stream);
-          if (endIndex == i++) {
-            i = savedIndex;
-            j++;
-          }
-        }
-        listener.onSkip(i, from, stream.position());
-
-        i = endIndex;
-        continue;
-      }
-      skip(instruction, stream);
+      int next = skipOne(i, stream);
       listener.onSkip(i, from, stream.position());
+      i = next;
     }
+  }
+
+  /**
+   * Skips the value described by the instruction at {@code i} and returns the index of the next
+   * instruction. An {@link Instructions#ARRAY} instruction is followed by the number of
+   * instructions describing one element; those may themselves contain arrays (an array of an inline
+   * type that has an array field), so elements are skipped recursively. The loop this replaced
+   * executed nested array instructions as no-ops and their element counts as instructions.
+   */
+  private int skipOne(int i, RecordingStream stream) throws IOException {
+    int instruction = instructions[i];
+    if (instruction != Instructions.ARRAY) {
+      skip(instruction, stream);
+      return i + 1;
+    }
+    int first = i + 2;
+    int end = first + instructions[i + 1];
+    int count = (int) stream.readVarint();
+    for (int j = 0; j < count; j++) {
+      for (int k = first; k < end; ) {
+        k = skipOne(k, stream);
+      }
+    }
+    return end;
   }
 
   private static void skip(int instruction, RecordingStream stream) throws IOException {

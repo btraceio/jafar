@@ -103,6 +103,14 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "          this.%s = %s;\n"
           + "          break;\n";
 
+  // @JfrField(raw = true): the field's encoded value as is. For a constant pool field that is the
+  // pool index, a varint, so either storage is accepted; only the shape (scalar) is checked.
+  private static final String SWITCH_CASE_RAW_TEMPLATE =
+      "        case \"%s\":\n"
+          + "          requireStorage(metadata, metaField, metaField.hasConstantPool(), false);\n"
+          + "          this.%s = %s;\n"
+          + "          break;\n";
+
   private static final String RESET_FIELD_CP_TEMPLATE = "    this.%s_cpRef = 0L;\n";
   private static final String RESET_FIELD_PRIMITIVE_TEMPLATE = "    this.%s = %s;\n";
   private static final String RESET_FIELD_OBJECT_TEMPLATE = "    this.%s = null;\n";
@@ -509,6 +517,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
         // Non-array handling
         if (field.needsConstantPool) {
           sb.append(switchCaseCp(field.jfrFieldName, field.fieldName));
+        } else if (field.isRaw) {
+          sb.append(
+              String.format(
+                  SWITCH_CASE_RAW_TEMPLATE,
+                  field.jfrFieldName,
+                  field.fieldName,
+                  generateReadCode(field)));
         } else {
           sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
         }

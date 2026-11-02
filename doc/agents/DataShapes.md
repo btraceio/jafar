@@ -153,7 +153,11 @@ reader.
   `TypeSkipper.skip(MetadataField, ...)`, which called `fieldType.skipDirect(stream)`. A primitive
   class has no fields, so its skipper has no instructions: an undeclared `long startTime` consumed
   nothing, and `seq` came back as `-665084514` (the low bits of `startTime`). It now uses the same
-  per-field instructions as skipping the owning type.
+  per-field instructions as skipping the owning type. Those instructions had a gap of their own:
+  inside array elements an array instruction was run as a no-op and its element count as an
+  instruction, so an array of an inline type with an array field was misskipped - and constant pool
+  entries after such an entry were indexed at the wrong offset, resolving to `null`
+  (`NestedArraySkipTest`).
 - **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
   `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
   `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently; they now fail

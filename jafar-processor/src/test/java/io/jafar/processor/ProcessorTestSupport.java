@@ -22,17 +22,17 @@ import javax.tools.JavaFileObject;
  * a recording with the generated factories registered, so tests exercise the processor's real
  * output end to end.
  */
-final class ProcessorTestSupport {
+public final class ProcessorTestSupport {
   private ProcessorTestSupport() {}
 
   /** A source file for {@code test.<simpleName>}. */
-  static JavaFileObject source(String simpleName, String body) {
+  public static JavaFileObject source(String simpleName, String body) {
     return JavaFileObjects.forSourceString(
         "test." + simpleName, "package test;\nimport io.jafar.parser.api.JfrType;\n" + body);
   }
 
   /** Compiles the sources with the processor and returns a loader for every compiled class. */
-  static ClassLoader compileAndLoad(JavaFileObject... sources) throws Exception {
+  public static ClassLoader compileAndLoad(JavaFileObject... sources) throws Exception {
     Compilation compilation = javac().withProcessors(new JfrTypeProcessor()).compile(sources);
     assertThat(compilation).succeeded();
     Map<String, byte[]> classes = new HashMap<>();
@@ -68,7 +68,7 @@ final class ProcessorTestSupport {
    * reflectively by the handler propagate unwrapped.
    */
   @SuppressWarnings({"unchecked", "rawtypes"})
-  static void parse(
+  public static void parse(
       Path jfr, ClassLoader loader, Class<?> iface, Consumer<Object> handler, String... factoryOf)
       throws Exception {
     try (TypedJafarParser p = TypedJafarParser.open(jfr.toString())) {
@@ -84,7 +84,7 @@ final class ProcessorTestSupport {
   }
 
   /** Invokes a no-argument method reflectively, rethrowing what the method threw. */
-  static Object call(Object target, String method) {
+  public static Object call(Object target, String method) {
     try {
       return target.getClass().getMethod(method).invoke(target);
     } catch (InvocationTargetException e) {
