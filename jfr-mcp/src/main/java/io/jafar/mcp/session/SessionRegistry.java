@@ -2,6 +2,7 @@ package io.jafar.mcp.session;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Failures;
 import io.jafar.shell.core.ScopedCurrentSession;
 import io.jafar.shell.core.SessionOwnership;
 import java.io.UncheckedIOException;
@@ -53,19 +54,9 @@ public final class SessionRegistry {
       } catch (UncheckedIOException e) {
         LOG.warn("Could not list chunks of session {} ({})", id, recordingPath, e);
         map.put("chunkCount", null);
-        map.put("chunkCountError", describe(e));
+        map.put("chunkCountError", Failures.describe(e));
       }
       return map;
-    }
-
-    private static String describe(Throwable e) {
-      StringBuilder sb = new StringBuilder(String.valueOf(e.getMessage()));
-      for (Throwable c = e.getCause(); c != null; c = c.getCause()) {
-        if (c.getMessage() != null && !sb.toString().contains(c.getMessage())) {
-          sb.append(": ").append(c.getMessage());
-        }
-      }
-      return sb.toString();
     }
 
     public Duration age() {

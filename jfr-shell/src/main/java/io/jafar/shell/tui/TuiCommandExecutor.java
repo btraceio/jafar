@@ -6,6 +6,7 @@ import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.CommandDescriptor;
+import io.jafar.shell.core.Failures;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
@@ -1062,6 +1063,9 @@ public final class TuiCommandExecutor {
     try {
       completer.complete(null, parsed, candidates);
     } catch (Exception e) {
+      // Leave the input as typed, but say why TAB offered nothing (e.g. the recording could not
+      // be re-read for chunk ids or constant-pool types).
+      addOutputLine("Completion failed: " + Failures.describe(e));
       return;
     }
 
