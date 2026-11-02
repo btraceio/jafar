@@ -228,6 +228,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private Filer filer;
   private Messager messager;
   private final Set<String> generatedFactories = new HashSet<>();
+  // Top-level @JfrType interfaces of this compilation, whose handlers this processor generates
+  private final Set<String> processedInterfaces = new HashSet<>();
   private TemplateEngine handlerTemplate;
   private TemplateEngine factoryTemplate;
 
@@ -260,6 +262,15 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   @Override
   public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+    // Known before generating any handler: a handler may read another interface's values inline
+    // with that interface's handler, generated in this same round (generatedHandlerName)
+    for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
+      if (element.getKind() == ElementKind.INTERFACE
+          && !((TypeElement) element).getNestingKind().isNested()) {
+        processedInterfaces.add(((TypeElement) element).getQualifiedName().toString());
+      }
+    }
+
     // Process @JfrType annotated interfaces
     for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
       if (element.getKind() != ElementKind.INTERFACE) {
@@ -951,9 +962,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   /**
-   * The handler this processor generates for {@code type}, which reads a value of it in place, or
-   * {@code null} when it generates none: {@code type} is not a top-level {@code @JfrType}
-   * interface.
+   * The generated handler of {@code type}, which reads a value of it in place, or {@code null} when
+   * there is none to call: {@code type} is not a top-level {@code @JfrType} interface, or it is one
+   * from the classpath (a precompiled library; {@code @JfrType} has runtime retention) whose
+   * handler is not there - this processor generates handlers only for this compilation's
+   * interfaces, and referencing a missing class would fail the build.
    */
   private String generatedHandlerName(TypeElement type) {
     if (type.getKind() != ElementKind.INTERFACE
@@ -961,7 +974,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
         || type.getNestingKind().isNested()) {
       return null;
     }
-    return type.getQualifiedName() + "Handler";
+    String interfaceName = type.getQualifiedName().toString();
+    String handlerName = interfaceName + "Handler";
+    if (processedInterfaces.contains(interfaceName)
+        || processingEnv.getElementUtils().getTypeElement(handlerName) != null) {
+      return handlerName;
+    }
+    return null;
   }
 
   private String getJfrTypeName(TypeMirror type) {
