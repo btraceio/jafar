@@ -332,6 +332,113 @@ class ShellArtifactTest {
     assertTrue(output.contains("Error: Invalid query:"), output);
   }
 
+  /**
+   * The JFR commands at the jafar-shell prompt. {@code metadata --summary} used to be parsed as a
+   * JfrPath query ({@code metadata} is a root) and fail with "Trailing characters at position 9".
+   */
+  @Test
+  void runsJfrCommandsOnJfrSession(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "metadata --summary",
+                "metadata class jdk.ThreadStart --fields",
+                "chunks --summary",
+                "chunk 0 show",
+                "cp --summary",
+                "constants --summary",
+                "backend",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("Unknown command"), output);
+    assertTrue(output.contains("totalChunks"), output);
+    assertTrue(output.contains("Current backend:"), output);
+    assertTrue(output.contains("eventThread"), output); // a field of jdk.ThreadStart
+  }
+
+  /**
+   * Lines that start with a command word but are queries: jfr-shell's handlers would print every
+   * chunk for {@code | count()} and ignore {@code --limit}. {@code cp <type> | crossref()} is the
+   * one pipeline that stays a command.
+   */
+  @Test
+  void keepsPipedAndLimitedLinesAsQueries(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "open " + recording,
+                "echo [count]",
+                "chunks --format json | count()",
+                "echo [limit]",
+                "chunks --limit 1",
+                "echo [crossref]",
+                "cp jdk.types.Symbol | crossref()",
+                "echo [regex]",
+                "metadata --regex ^jdk\\.Thread(Start|End)$",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Error"), output);
+    String count = between(output, "[count]", "[limit]");
+    assertTrue(count.contains("\"count\""), count); // the count, not the chunk rows
+    assertFalse(count.contains("startTicks"), count);
+    assertTrue(between(output, "[limit]", "[crossref]").contains("(1 rows)"), output);
+    assertTrue(
+        between(output, "[crossref]", "[regex]").contains("Constant Pool Crosscheck"), output);
+    String regex = output.substring(output.indexOf("[regex]"));
+    assertTrue(regex.contains("jdk.ThreadStart") && regex.contains("jdk.ThreadEnd"), regex);
+  }
+
+  private static String between(String s, String from, String to) {
+    int a = s.indexOf(from);
+    int b = s.indexOf(to, a + from.length());
+    assertTrue(a >= 0 && b > a, "markers " + from + ".." + to + " in " + s);
+    return s.substring(a, b);
+  }
+
+  @Test
+  void jfrCommandsSayTheyNeedJfrSession(@TempDir Path dir) throws Exception {
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+
+    String output = runJar(dir, "chunks\nopen " + dump + "\nmetadata --summary\nexit\n");
+
+    assertTrue(
+        output.contains(
+            "Error: 'chunks' needs a JFR session; open a .jfr recording or switch to one with"),
+        output);
+    assertTrue(
+        output.contains("Error: 'metadata' needs a JFR session; session #1 is hdump."), output);
+    assertFalse(output.contains("Unknown command"), output);
+  }
+
+  /** The example shipped with jfr-shell, run by jafar-shell's own {@code script}. */
+  @Test
+  void runsBasicAnalysisExample(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path script =
+        Path.of("../jfr-shell/src/main/resources/examples/basic-analysis.jfrs").toAbsolutePath();
+
+    String output = runJar(dir, "script " + script + " " + recording + "\nexit\n");
+
+    assertFalse(output.contains("Error"), output);
+    assertFalse(output.contains("error"), output);
+    assertTrue(output.contains("=== Metadata Summary ==="), output);
+    assertTrue(output.contains("Script executed successfully"), output);
+  }
+
   @Test
   void keepsJfrCommandLine(@TempDir Path dir) throws Exception {
     Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
@@ -356,6 +463,68 @@ class ShellArtifactTest {
     assertTrue(Shell.startsWithRoot("events", roots));
     assertFalse(Shell.startsWithRoot("objectsx", roots));
     assertFalse(Shell.startsWithRoot("bogus | count", roots));
+  }
+
+  @Test
+  void routesJfrCommandsButNotQueries() {
+    assertTrue(Shell.isJfrCommand("metadata"));
+    assertTrue(Shell.isJfrCommand("metadata --summary"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart"));
+    assertTrue(Shell.isJfrCommand("chunks --range 0-1"));
+    assertTrue(Shell.isJfrCommand("chunk 0 show"));
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol"));
+    assertTrue(Shell.isJfrCommand("constants --summary"));
+    assertTrue(Shell.isJfrCommand("backend list"));
+    assertFalse(Shell.isJfrCommand("metadata/jdk.ExecutionSample"));
+    assertFalse(Shell.isJfrCommand("constants/jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("metadata | count()"));
+    assertFalse(Shell.isJfrCommand("metadata |count()"));
+    assertFalse(Shell.isJfrCommand("events/jdk.ThreadStart"));
+    assertFalse(Shell.isJfrCommand("objects | count"));
+    assertFalse(Shell.isJfrCommand("metadata|count()"));
+    // A pipeline or --limit anywhere makes it a query: jfr-shell's handlers would ignore them
+    assertFalse(Shell.isJfrCommand("chunks --format json | count()"));
+    assertFalse(Shell.isJfrCommand("chunks --format json |count()"));
+    assertFalse(Shell.isJfrCommand("chunks --limit 1"));
+    assertFalse(Shell.isJfrCommand("constants --limit 2"));
+    assertFalse(Shell.isJfrCommand("constants --format json | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | crossref() | count()"));
+    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
+    assertFalse(Shell.isJfrCommand("chunks | crossref()"));
+    // ...except the pipeline cmdCp takes, and a '|' inside an argument
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol | crossref()"));
+    assertTrue(Shell.isJfrCommand("CONSTANTS jdk.types.Symbol |  CrossRef() "));
+    assertTrue(Shell.isJfrCommand("metadata --regex ^(jdk|datadog)\\.Thread.*"));
+    assertTrue(Shell.isJfrCommand("chunks --format json"));
+    assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart --tree --depth 2"));
+    assertFalse(Shell.isJfrCommand("metadatax"));
+    assertFalse(Shell.isJfrCommand(""));
+  }
+
+  @Test
+  void matchesJfrCommandWithoutRegardToCaseOrSpacing() {
+    assertEquals("metadata", Shell.jfrCommandOf("METADATA --summary"));
+    assertEquals("chunk", Shell.jfrCommandOf("  chunk\t0 show"));
+    assertEquals("cp", Shell.jfrCommandOf("cp"));
+    assertEquals("backend", Shell.jfrCommandOf("Backend list "));
+    assertEquals(null, Shell.jfrCommandOf("chunks \t| count()"));
+  }
+
+  /**
+   * jfr-shell's completer, which completes JFR sessions here, reads global variable names from the
+   * dispatcher's store; it must be the shell's own, not a private empty one.
+   */
+  @Test
+  void jfrDispatcherSharesTheShellsGlobalStore(@TempDir Path dir) throws Exception {
+    String home = System.getProperty("user.home");
+    System.setProperty("user.home", dir.toString());
+    try (Shell shell = new Shell()) {
+      shell.execute("set --global threshold = 5");
+      assertTrue(shell.jfrDispatcher().getGlobalStore().contains("threshold"));
+    } finally {
+      System.setProperty("user.home", home);
+    }
   }
 
   @Test

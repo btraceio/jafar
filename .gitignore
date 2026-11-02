@@ -26,6 +26,8 @@ bin/
 !jfr-shell-tck/src/main/resources/tck-test.jfr
 # Exception: small stripped regression fixtures committed directly
 !parser-core/src/test/resources/dd-trace-java-stripped/*.jfr
+# Shared Java/Go parser fixtures, built by parser-core's NodePoolFixture (see SharedFixturesTest)
+!go-parser/jfr/testdata/*.jfr
 **/.DS_Store
 
 harness*

@@ -1940,7 +1940,8 @@ public class CommandDispatcher {
       io.println("  String: contains (substring check)");
       io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
-      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Functions: exists(ref), empty(ref)");
+      io.println("    ref: var, var.field.path, var[idx].field, or an llm.* setting name");
       io.println("  Grouping: parentheses ( )");
       io.println("");
       io.println("Examples:");
@@ -2976,12 +2977,8 @@ public class CommandDispatcher {
    * map.
    */
   private boolean isDefinitelyMap(JfrPath.Query query) {
-    if (query.pipeline == null || query.pipeline.isEmpty()) {
-      return false;
-    }
-    // Check the last operator in the pipeline
-    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
-    return lastOp instanceof JfrPath.ToMapOp;
+    // One definition, shared with jafar-shell's lazy variables (JfrQueryEvaluator.producesMap)
+    return query.producesMap();
   }
 
   private void cmdVars(List<String> args) {

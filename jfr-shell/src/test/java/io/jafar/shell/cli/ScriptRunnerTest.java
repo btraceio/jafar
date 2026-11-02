@@ -687,15 +687,15 @@ class ScriptRunnerTest {
   }
 
   @Test
-  void unparseableConditionFromReportIsAnError() {
-    // The reported case: exists(rows[1].thread) could not be parsed, and the else branch ran.
+  void malformedReferenceInConditionIsAnError() {
+    // A malformed reference is an error (#144), and the else branch used to run anyway. (The
+    // originally reported exists(rows[1].thread) now parses, so it no longer exercises this.)
     List<String> out = new ArrayList<>();
     List<String> err = new ArrayList<>();
     ScriptRunner.ExecutionResult result =
         realDispatcher(out, err)
             .runScript(
-                List.of(
-                    "if exists(rows[1].thread)", "echo EXISTS", "else", "echo MISSING", "endif"),
+                List.of("if empty(cfg..db)", "echo EMPTY", "else", "echo SET", "endif"),
                 List.of(),
                 true);
 
@@ -705,9 +705,9 @@ class ScriptRunnerTest {
             .getErrors()
             .get(0)
             .getMessage()
-            .startsWith("Condition evaluation failed: Expected ')' after function argument"),
+            .startsWith("Condition evaluation failed: Invalid variable reference: cfg..db"),
         result.getErrors().get(0).getMessage());
-    assertEquals(List.of(), out, "MISSING must not be printed");
+    assertEquals(List.of(), out, "neither EMPTY nor SET may be printed");
   }
 
   // ---- A script runs with an if-block stack of its own ----

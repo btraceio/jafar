@@ -173,8 +173,7 @@ class EmptyConditionalFunctionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    // Behavior may vary - map variables might not support empty() the same way
-    assertNotNull(output);
+    assertTrue(output.contains("Map is empty"), "an empty map is empty: " + output);
   }
 
   @Test
@@ -188,8 +187,9 @@ class EmptyConditionalFunctionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    // May or may not execute depending on map handling
-    assertNotNull(output);
+    // empty() used to answer true for every map variable, entries or not
+    assertTrue(output.contains("Map is not empty"), "a map with entries is not empty: " + output);
+    assertFalse(output.contains("Map is empty"), output);
   }
 
   // ==================== Empty with Query Results ====================
