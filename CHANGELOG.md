@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A failed parse says why.** Chunks are parsed on worker threads, so the cause reached the caller
+  several wrappers deep, and both shells print only the outermost message: every corrupted
+  recording was reported as a bare `Error occurred while parsing JFR recording`. The message now
+  carries the cause, for example `Error occurred while parsing JFR recording: Constant pool
+  jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`. The prefix is unchanged
 - **`jafar-shell script <file>` runs in jafar-shell.** On the command line it was handed to
   jfr-shell, which reads only JFR recordings, so a script that opened a heap dump failed with
   "Unknown root: objects". It now runs in the unified shell with jfr-shell's arguments (`-` for
