@@ -105,13 +105,7 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
       throws IOException {
     boolean isPooled = field.hasConstantPool();
     boolean isArray = field.getDimension() > 0;
-    MetadataClass type = field.getType();
-    if (!isPooled) {
-      int depth = 0;
-      while (type != null && type.isSimpleType() && type.getFields().size() == 1 && depth++ < 10) {
-        type = type.getFields().get(0).getType();
-      }
-    }
+    MetadataClass type = isPooled ? field.getType() : unwrapSimple(field.getType());
     String typeName = type != null ? type.getName() : "?";
     boolean storageOk = pooled == 2 || isPooled == (pooled == 1);
     boolean typeOk = (pooled == 2 && isPooled) || java.util.Arrays.asList(types).contains(typeName);
@@ -130,6 +124,16 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
               + " of type "
               + (types.length == 0 ? "?" : String.join(" or ", types)));
     }
+  }
+
+  /** The type a chain of single-field simple types wraps, or {@code type} itself. */
+  private static MetadataClass unwrapSimple(MetadataClass type) {
+    MetadataClass t = type;
+    int depth = 0;
+    while (t != null && t.isSimpleType() && t.getFields().size() == 1 && depth++ < 10) {
+      t = t.getFields().get(0).getType();
+    }
+    return t;
   }
 
   /**
@@ -175,12 +179,8 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
   private static long planString(MetadataClass metadata, MetadataField field) throws IOException {
     boolean isPooled = field.hasConstantPool();
     boolean isArray = field.getDimension() > 0;
-    MetadataClass type = field.getType();
-    int depth = 0;
     // simple types are transparent, as in requireStorage and the runtime-generated handlers
-    while (type != null && type.isSimpleType() && type.getFields().size() == 1 && depth++ < 10) {
-      type = type.getFields().get(0).getType();
-    }
+    MetadataClass type = unwrapSimple(field.getType());
     String typeName = type != null ? type.getName() : "?";
     if (isArray || !"java.lang.String".equals(typeName)) {
       MetadataClass declared = field.getType();

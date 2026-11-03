@@ -592,7 +592,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
         sb.append(instanceFieldDeclaration(field.javaType, field.fieldName));
         if (field.isPooledString()) {
           // the pool a pooled string field refers to (-1 inline), and the reference
-          sb.append(instanceFieldDeclaration("long", field.fieldName + "_cpType"));
+          // -1 (inline) also in a new instance, which create() and inline reads do not reset
+          sb.append("  private long ").append(field.fieldName).append("_cpType = -1L;\n");
           sb.append(instanceFieldCpDeclaration(field.fieldName));
         }
       }
