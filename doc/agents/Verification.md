@@ -362,7 +362,10 @@ Two standing gaps in this area:
 > `HashMap`/`HashSet` and one `size++` is lost. `StreamingChunkParser` parses chunks on a pool, so
 > `JFRSession`'s `onMetadata` filled its type sets from two threads for this two-chunk recording.
 > A test constructing the session 300 times caught it in three runs of three (`284` entries iterated
-> against `size() == 301`, or the overrun itself); a lock around the collection fixed it. Two
+> against `size() == 301`, or the overrun itself); a lock around the collection fixed it. The lock
+> left `getMetadataTypeIds()` to whichever chunk wrote last — type ids are chunk-local (`boolean`
+> is 225 in one chunk of this file and 4 in the other) — so the collection is now kept per chunk and
+> merged in chunk order, and `JFRSessionDeterminismTest` asserts the answer never varies. Two
 > lessons: an intermittent failure is a symptom with a cause, and **any parser callback can run on
 > several threads at once** — check what it writes.
 >

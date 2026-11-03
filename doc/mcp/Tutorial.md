@@ -161,6 +161,11 @@ Opens a JFR recording file for analysis.
 }
 ```
 
+`chunkCount` is read from the chunk headers after the metadata. If that read fails, `chunkCount`
+is `null` and `chunkCountError` says why, naming the file, e.g.
+`"Failed to list chunks of /path/to/recording.jfr: Error occurred while parsing JFR recording: Invalid JFR Magic Number: 3c21444f"`
+for a file that was replaced by an HTML page after it was opened.
+
 ### jfr_list_types
 
 Lists all event types available in a JFR recording.
