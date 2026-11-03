@@ -1064,8 +1064,10 @@ public final class TuiCommandExecutor {
       completer.complete(null, parsed, candidates);
     } catch (Exception e) {
       // Leave the input as typed, but say why TAB offered nothing (e.g. the recording could not
-      // be re-read for chunk ids or constant-pool types).
-      addOutputLine("Completion failed: " + Failures.describe(e));
+      // be re-read for chunk ids or constant-pool types). A hint, not addOutputLine: while a
+      // command runs, addOutputLine appends to asyncOutputBuffer, a plain list the command thread
+      // is writing to; the hint is UI-thread state only.
+      ctx.showHintMessage("Completion failed: " + Failures.describe(e));
       return;
     }
 

@@ -45,6 +45,10 @@ public final class JFRSession implements Session {
   private volatile ConcurrentHashMap<String, Long> eventTypeCounts = new ConcurrentHashMap<>();
   private List<Integer> cachedChunkIds; // lazily discovered, guarded by this
   private Set<String> cpTypes; // lazily discovered, guarded by this
+  // A failed lazy scan, rethrown until refreshTypes(): completion asks on every TAB, and re-reading
+  // a large broken recording up to the failure point each time would stall every keypress.
+  private UncheckedIOException chunkIdsFailure; // guarded by this
+  private UncheckedIOException cpTypesFailure; // guarded by this
   private final AtomicLong totalEvents = new AtomicLong(0);
   private final AtomicInteger handlerCount = new AtomicInteger(0);
   private boolean hasRun = false;
@@ -172,13 +176,16 @@ public final class JFRSession implements Session {
 
   /**
    * Refresh discovered event types by rescanning metadata. Also drops the lazily discovered chunk
-   * ids and constant-pool types so the next call rescans them.
+   * ids and constant-pool types, and any failure recorded while discovering them, so the next call
+   * rescans them.
    *
    * @throws IOException if the recording cannot be parsed; the previous types are kept
    */
   public synchronized void refreshTypes() throws IOException {
     cachedChunkIds = null;
     cpTypes = null;
+    chunkIdsFailure = null;
+    cpTypesFailure = null;
     scanMetadata();
   }
 
@@ -195,17 +202,7 @@ public final class JFRSession implements Session {
       throw new IllegalStateException("Cannot register handlers after run() has been called");
     }
 
-    // Find the actual JFR type name once: it depends only on the class and the scanned types.
-    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
-    String countedType = null;
-    for (String key : eventTypeCounts.keySet()) {
-      if (key.toLowerCase().contains(typeName)
-          || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
-        countedType = key;
-        break;
-      }
-    }
-    final String counted = countedType;
+    final String counted = countedTypeOf(eventClass);
 
     // Wrap handler to count events
     JFRHandler<T> countingHandler =
@@ -223,6 +220,30 @@ public final class JFRSession implements Session {
     registrations.add(registration);
     handlerCount.incrementAndGet();
     return registration;
+  }
+
+  /**
+   * The JFR event type that events of {@code eventClass} are counted under, or {@code null}. The
+   * class's {@code @JfrType} name wins when the recording has that type; otherwise the first type,
+   * in recording order, whose name loosely matches the class's simple name. Iterating the recording
+   * order (not a hash order) keeps an ambiguous match, such as {@code JFRExecutionSample} against
+   * both {@code jdk.ExecutionSample} and {@code datadog.ExecutionSample}, the same on every run.
+   */
+  private String countedTypeOf(Class<?> eventClass) {
+    Set<String> eventTypes = types.eventTypes();
+    io.jafar.parser.api.JfrType declared =
+        eventClass.getAnnotation(io.jafar.parser.api.JfrType.class);
+    if (declared != null && eventTypes.contains(declared.value())) {
+      return declared.value();
+    }
+    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
+    for (String key : eventTypes) {
+      if (key.toLowerCase().contains(typeName)
+          || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
+        return key;
+      }
+    }
+    return null;
   }
 
   /**
@@ -283,10 +304,12 @@ public final class JFRSession implements Session {
   /**
    * Get available chunk ids (1-based, in recording order) discovered by reading chunk headers.
    *
-   * @throws UncheckedIOException if the recording cannot be parsed; nothing is cached then
+   * @throws UncheckedIOException if the recording cannot be parsed; the same failure is thrown
+   *     again, without re-reading the file, until {@link #refreshTypes()}
    */
   public synchronized List<Integer> getAvailableChunkIds() {
     if (cachedChunkIds != null) return cachedChunkIds;
+    if (chunkIdsFailure != null) throw chunkIdsFailure;
     // onChunkStart runs on one pool thread per chunk; the skip-list set orders by index.
     Set<Integer> ids = new ConcurrentSkipListSet<>();
     try (StreamingChunkParser parser =
@@ -304,7 +327,7 @@ public final class JFRSession implements Session {
             }
           });
     } catch (Exception e) {
-      throw failure("list chunks of", e);
+      throw chunkIdsFailure = failure("list chunks of", e);
     }
     cachedChunkIds = List.copyOf(ids);
     return cachedChunkIds;
@@ -313,10 +336,12 @@ public final class JFRSession implements Session {
   /**
    * Get available constant-pool types discovered in this recording (lazy scan).
    *
-   * @throws UncheckedIOException if the recording cannot be parsed; nothing is cached then
+   * @throws UncheckedIOException if the recording cannot be parsed; the same failure is thrown
+   *     again, without re-reading the file, until {@link #refreshTypes()}
    */
   public synchronized Set<String> getAvailableConstantPoolTypes() {
     if (cpTypes != null) return cpTypes;
+    if (cpTypesFailure != null) throw cpTypesFailure;
     // onCheckpoint runs concurrently for different chunks: collect per chunk, merge in order.
     ConcurrentSkipListMap<Integer, Set<String>> byChunk = new ConcurrentSkipListMap<>();
     try (StreamingChunkParser parser =
@@ -349,7 +374,7 @@ public final class JFRSession implements Session {
             }
           });
     } catch (Exception e) {
-      throw failure("discover constant-pool types of", e);
+      throw cpTypesFailure = failure("discover constant-pool types of", e);
     }
     Set<String> merged = new LinkedHashSet<>();
     byChunk.values().forEach(merged::addAll); // ascending chunk index
