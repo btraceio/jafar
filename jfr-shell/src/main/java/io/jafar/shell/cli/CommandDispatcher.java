@@ -1798,14 +1798,15 @@ public class CommandDispatcher {
       io.println("  chunks --range 1-5");
       io.println("");
       io.println(
-          "Chunks are indexed starting from 0. Each chunk contains a portion of the recording data.");
+          "Chunks are indexed starting from 1, in file order. Each chunk contains a portion of the"
+              + " recording data.");
       return;
     }
     if ("chunk".equals(sub)) {
       io.println("Usage: chunk <index> show");
       io.println("Show detailed information about a specific chunk.");
       io.println("Examples:");
-      io.println("  chunk 0 show");
+      io.println("  chunk 1 show");
       io.println("  chunk 2 show");
       io.println("");
       io.println(

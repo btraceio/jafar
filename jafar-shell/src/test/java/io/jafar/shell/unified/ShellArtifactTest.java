@@ -404,7 +404,7 @@ class ShellArtifactTest {
                 "metadata --summary",
                 "metadata class jdk.ThreadStart --fields",
                 "chunks --summary",
-                "chunk 0 show",
+                "chunk 1 show",
                 "cp --summary",
                 "constants --summary",
                 "backend",
@@ -754,8 +754,8 @@ class ShellArtifactTest {
     assertTrue(Shell.isJfrCommand("metadata"));
     assertTrue(Shell.isJfrCommand("metadata --summary"));
     assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart"));
-    assertTrue(Shell.isJfrCommand("chunks --range 0-1"));
-    assertTrue(Shell.isJfrCommand("chunk 0 show"));
+    assertTrue(Shell.isJfrCommand("chunks --range 1-2"));
+    assertTrue(Shell.isJfrCommand("chunk 1 show"));
     assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol"));
     assertTrue(Shell.isJfrCommand("constants --summary"));
     assertTrue(Shell.isJfrCommand("backend list"));
