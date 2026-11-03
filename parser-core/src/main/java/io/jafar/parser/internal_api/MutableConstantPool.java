@@ -47,6 +47,24 @@ public final class MutableConstantPool implements ConstantPool {
    */
   private final LongObjectHashMap<Map<String, Object>> mapEntries;
 
+  /**
+   * Entries that could not be decoded on the map path, with the exception {@link #getAsMap(long)}
+   * threw for each; {@code null} until the first failure.
+   *
+   * <p>Same design constraint as {@link #mapEntries}: accessed only from the single consumer
+   * thread, no synchronization.
+   */
+  private LongObjectHashMap<RuntimeException> mapFailures;
+
+  /**
+   * The index the JMC writer ({@code org.openjdk.jmc.flightrecorder.writer}) writes for a null
+   * value of a pooled type: {@code TypedValueImpl(TypeImpl, Object)} leaves the index at {@code
+   * Long.MIN_VALUE}. It is also {@link LongLongHashMap}'s reserved empty-slot key, which asserts on
+   * it; without {@code -ea} a lookup happened to find an empty slot and return offset 0. It never
+   * names an entry, so it is answered here.
+   */
+  private static final long ABSENT_JMC = Long.MIN_VALUE;
+
   /** The recording stream for reading constant pool data. */
   private final RecordingStream stream;
 
@@ -80,7 +98,7 @@ public final class MutableConstantPool implements ConstantPool {
    * @return the deserialized object, or {@code null} if not found
    */
   public Object get(long id) {
-    long offset = offsets.get(id);
+    long offset = getOffset(id);
     if (offset > 0) {
       Object o = entries.get(id);
       if (o == null) {
@@ -91,7 +109,9 @@ public final class MutableConstantPool implements ConstantPool {
         long savedPos = cpStream.position();
         try {
           cpStream.position(offset);
-          o = clazz.read(cpStream);
+          // a new instance: this entry is cached and returned for every reference to it, and a
+          // build-time factory's get() reuses one instance per thread (HandlerFactory.create)
+          o = clazz.readPooled(cpStream);
           if (o == null) {
             // For String constant pool entries, read the string directly.
             // Using the generic MapValueBuilder path would wrap the string in a Map,
@@ -138,16 +158,44 @@ public final class MutableConstantPool implements ConstantPool {
    * accessor deserialization, the result is shared across all accessors pointing to the same entry,
    * eliminating O(events) redundant deserializations.
    *
+   * <p>An entry that cannot be decoded throws, and so does every later call for it: the failure is
+   * cached per entry, like a value, and the same exception instance is rethrown without decoding
+   * the entry again. Its stack trace is that of the first attempt. The bytes are immutable, so a
+   * second attempt could only fail the same way, and repeating it would cost a builder, a reader, a
+   * partial map and an exception per referencing event. The Go parser keeps such errors per entry
+   * too ({@code constantPool.errors}).
+   *
    * @param id the ID of the constant pool entry
    * @return the map representation, or {@code null} if not found
+   * @throws RuntimeException if the entry cannot be decoded, for example because one of its string
+   *     fields refers to a {@code java.lang.String} pool entry that does not exist
    */
   public Map<String, Object> getAsMap(long id) {
-    long offset = offsets.get(id);
+    long offset = getOffset(id);
     if (offset <= 0) return null;
 
     Map<String, Object> v = mapEntries.get(id);
     if (v != null) return v;
 
+    if (mapFailures != null) {
+      RuntimeException failed = mapFailures.get(id);
+      if (failed != null) throw failed;
+    }
+    try {
+      return decodeAsMap(id, offset);
+    } catch (RuntimeException e) {
+      if (mapFailures == null) {
+        // Allocated on the first failure only; an intact pool never pays for it.
+        mapFailures = new LongObjectHashMap<>(4);
+      }
+      mapFailures.put(id, e);
+      throw e;
+    }
+  }
+
+  /** Decodes entry {@code id} at {@code offset} and caches it in {@link #mapEntries}. */
+  private Map<String, Object> decodeAsMap(long id, long offset) {
+    Map<String, Object> v;
     RecordingStream cpStream = stream.threadLocalStreamSlice();
     long savedPos = cpStream.position();
     try {
@@ -236,7 +284,7 @@ public final class MutableConstantPool implements ConstantPool {
    * @return {@code true} if the key exists, {@code false} otherwise
    */
   public boolean containsKey(long key) {
-    return offsets.containsKey(key);
+    return key != ABSENT_JMC && offsets.containsKey(key);
   }
 
   /**
@@ -246,6 +294,11 @@ public final class MutableConstantPool implements ConstantPool {
    * @param offset the file offset where the entry is located
    */
   public void addOffset(long id, long offset) {
+    if (id == ABSENT_JMC) {
+      // LongLongHashMap's empty-slot key: storing it asserts under -ea and otherwise corrupts the
+      // map. containsKey answers false for it, so a corrupted checkpoint would reach this.
+      return;
+    }
     offsets.put(id, offset);
   }
 
@@ -259,7 +312,7 @@ public final class MutableConstantPool implements ConstantPool {
    * @return absolute offset within the chunk stream, or {@code 0} if not present
    */
   public long getOffset(long id) {
-    return offsets.get(id);
+    return id != ABSENT_JMC ? offsets.get(id) : 0;
   }
 
   /** {@inheritDoc} */

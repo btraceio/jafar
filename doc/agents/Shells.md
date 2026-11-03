@@ -56,6 +56,76 @@ jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"
 ```
 
+## Scripting is shared: one implementation, four front ends
+
+Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping,
+`script` and `record` are in `shell-core`'s `io.jafar.shell.core.scripting`. Change them there; both shells pick
+the change up. Who calls them:
+
+| Front end | Dispatcher | Query variables |
+|---|---|---|
+| `jfr-shell` | `CommandDispatcher` | JfrPath `LazyQueryValue` (with eager `count()`/`sum()`/`toMap()`) |
+| `jafar-shell` prompt | `unified/Shell` + `ShellVariables` | `EvaluatorLazyValue` through the session's module `QueryEvaluator`; a `toMap()` query (`QueryEvaluator.producesMap`, one definition in `JfrPath.Query.producesMap`, also used by jfr-shell's eager path) is read as a map by `VariableSubstitutor` |
+| `jafar-shell --tui` / `jfr-shell --tui` | `CommandDispatcher` + `setModuleEvaluator` | JFR: `LazyQueryValue`; other formats: `EvaluatorLazyValue` |
+
+| `jafar-shell script <file\|->` | `unified/Shell.forScript` — no terminal, line reader or history | as at the `jafar-shell` prompt |
+
+**Which `main` runs.** `unified/Main` sends `show`, `metadata`, `chunks`, `constants`/`cp` and any
+JFR option (`--backend`, `--plugin-dir`, `--install-plugin`) to jfr-shell's command line
+(`io.jafar.shell.Main`) when they come before the command word; `script` runs in the unified
+shell, and options after it (`-b/--backend` included) are its own. The
+`jafar-shell` jbang alias runs `unified/Main` (the jar's `Main-Class`); the `jfr-shell` alias runs
+[`jafar-shell.java`](https://github.com/btraceio/jbang-catalog/blob/main/jafar-shell.java), whose
+`//MAIN io.jafar.shell.Main` skips `unified/Main` entirely — so routing changes never reach
+`jbang jfr-shell@btraceio ...` or the shebang scripts written for it. `ShellArtifactTest` drives
+both entry points from the fat jar (`runJarWithStatus`, `runClassWithStatus`).
+
+**A failure must be reported through the error channel, or scripts cannot see it.** Both shells
+print a failing command and return normally; `ScriptRunner` only sees what the shell records in its
+`ScriptRunner.ErrorTally` (`failingOnReportedErrors`). In `CommandDispatcher` that is `io.error`; in
+`unified/Shell` it is `error(...)`/`printError(...)`; in `LlmCommands` it is `Host.error`, which
+both hosts route to those. A new failure printed with `println` instead
+runs on in a script and ends in "Script executed successfully" — the bug this contract fixed.
+
+`EvaluatorLazyValue` evaluates exactly as `show` does — `parse` at `set`, `evaluate(session, parsed,
+resolver)` on first use — so a variable gives the same rows as typing its query. Any reader of
+variables must handle `VariableStore.LazyValue` in general, not one implementation: read rows with
+`LazyRows`.
+
+Threading: every front end dispatches on one thread (the readline loop; the TUI's single
+`tui-command` executor), and `VariableStore`, `VariableScopes` and `Conditionals` assume it.
+`EvaluatorLazyValue` and jfr-shell's `LazyQueryValue` are thread-safe on their own — one volatile
+cache slot holding the rows or a "not evaluated" token, evaluation serialized — because a variable
+can be read from wherever its store is reachable. `invalidate()` and `release()` install a fresh
+token and an evaluation publishes by compare-and-set against the token it started from, so an
+evaluation in flight cannot undo them. They must not lock against evaluation instead:
+`SessionManager.close` calls `release()` holding its monitor, and an evaluation's resolver calls
+`sessions.get()`. Do not split such state across two volatiles: `LazyQueryValue`
+once published `evaluated` and `cachedResult` separately, and `LazyQueryValueRaceTest` caught a
+read racing `invalidate()` returning `null` for a "cached" value in 5 runs of 5.
+
+In `jafar-shell`, once a session is open the module's completer takes over, and none of them knows
+the shell's own commands. `unified/ShellCompleter.ownsArguments` keeps the arguments of `set` (up to
+the `=`), `vars`, `unset`, `invalidate`, `script`, `if` and `elif` with the shell completer, and
+`addShellCommands` merges the shell's command list into first-word completion. A new shell-level
+command goes in `BASE_COMMANDS` there, not into four module completers.
+
+The JFR-only commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` are not
+reimplemented in `unified/Shell`: `Shell.JFR_COMMANDS` routes them to the `CommandDispatcher` the
+shell already builds for module completers (`moduleContext`). It shares the shell's
+`SessionManager` (so session-scoped variables too) and is given the shell's global `VariableStore`
+— jfr-shell's completer, which completes JFR sessions here, reads `${...}` global names from
+`dispatcher.getGlobalStore()`, and before that was passed it was a private, always-empty store. It
+prints through the shell's terminal. Its `Conditionals` are its own, which is one reason only these
+commands go to it — `set`, `if` and the rest stay with `ShellVariables`. The routing runs before
+the bare-query check because `metadata` and `constants` are JfrPath roots: `metadata --summary`
+used to be parsed as a query (`Trailing characters at position 9`). A line with a pipeline (any
+later word starting with `|`: `chunks --format json | count()`) or `--limit` is still a query —
+jfr-shell's handlers have neither and would print every row — except `cp <type> | crossref()`,
+which `cmdCp` takes and runs as the query `constants/<type> | crossref()`, so it prints what the
+query forms print. A `|` inside a word is an argument (`metadata --regex ^(jdk|datadog)\..*`). The same set gates completion in
+`unified/ShellCompleter`, so a heap dump session is not offered them.
+
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
 - API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)

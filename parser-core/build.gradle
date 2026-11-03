@@ -142,6 +142,13 @@ tasks.named('compileTestJava').configure { JavaCompile t ->
 def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 tasks.named('test') {
     javaLauncher.set(j21LauncherProvider)
+    // SharedFixturesTest compares go-parser/jfr/testdata with NodePoolFixture. Without these
+    // inputs an edited or deleted fixture, or JAFAR_WRITE_FIXTURES=1, leaves the task UP-TO-DATE
+    // and the drift check never runs.
+    inputs.files(rootProject.fileTree('go-parser/jfr/testdata'))
+        .withPropertyName('sharedFixtures')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
     // Ensure JUnit 5 and fixed report locations for CI collection
     useJUnitPlatform()
     reports {

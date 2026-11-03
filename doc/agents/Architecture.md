@@ -16,6 +16,20 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations
 - **Untyped API**: Returns events as `Map<String, Object>` with wrapper types for arrays/complex values
+- Two Java implementations produce untyped values. The generic `EventStream` (`GenericValueReader` +
+  `MapValueBuilder`) is in `parser-core`. `EventStreamGenerated` in `parser-codegen` generates a
+  deserializer per event type with `UntypedCodeGenerator`, shaped by the `UntypedStrategy`.
+  `UntypedJafarParserImpl` picks between them through the `UntypedEventStreamFactory` SPI
+  (ServiceLoader, like `DeserializerFactory`): every strategy reads with the generated reader when
+  `parser-codegen` is on the classpath, and with the generic one when it is not or when
+  `-Djafar.untyped.generated=false` is set. `UntypedJafarParserImpl.usesGeneratedReader()` reports
+  which, and `UntypedStrategyDispatchTest` observes it through the shared deserializer cache. They
+  must yield the same values: the contract is in
+  `UntypedCodeGenerator`'s Javadoc and `GeneratedUntypedParityTest` compares every event of
+  `tck-test.jfr`. Generated code calls the generic path's own helpers through
+  `GeneratedDeserializerSupport` rather than re-implementing them. Generated deserializers are
+  shared across chunks only by structural key, never by class id — see
+  [DataShapes.md](DataShapes.md#a-type-id-is-not-a-type).
 - Both APIs support handler registration and synchronous event processing
 
 ## Key Classes to Understand
@@ -27,10 +41,12 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
   threads, and only the callbacks of one chunk run in sequence. A listener that collects into one
   `ArrayList`, `HashMap`, counter or single "current chunk" slot loses data, throws, or mixes
   chunks — and on a machine with three or fewer processors (one thread) it looks correct. Keep
-  state per chunk, keyed by `ParserContext.getChunkIndex()`, and merge in chunk order after
-  `parse` returns; `JafarSources.PerChunk` in `jfr-shell-jafar` does exactly that, and
-  `MultiChunkDeterminismTest` in `jfr-shell` is the net. The Go parser is sequential, so this has
-  no Go counterpart.
+  state per chunk, keyed by `ParserContext.getChunkIndex()` or kept in the chunk's own
+  `ParserContext`, and merge in chunk order after `parse` returns. In this repository:
+  `JafarSources.PerChunk` (metadata and chunk sources), `JafarSources.ChunkState` (`crossref`) and
+  `JFRSession`'s per-chunk scan. The nets are `MultiChunkDeterminismTest`,
+  `ConstantPoolChunkLocalityTest` and `JFRSessionDeterminismTest` in `jfr-shell`/`shell-core`. The
+  Go parser is sequential, so this has no Go counterpart.
 - `Values`: Utility class for extracting values from untyped event maps
 
 ## Testing Strategy

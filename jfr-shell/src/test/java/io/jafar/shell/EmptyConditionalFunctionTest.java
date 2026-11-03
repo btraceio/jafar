@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ConditionalException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.junit.jupiter.api.AfterEach;
@@ -172,8 +173,7 @@ class EmptyConditionalFunctionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    // Behavior may vary - map variables might not support empty() the same way
-    assertNotNull(output);
+    assertTrue(output.contains("Map is empty"), "an empty map is empty: " + output);
   }
 
   @Test
@@ -187,8 +187,9 @@ class EmptyConditionalFunctionTest {
     dispatcher.dispatch("endif");
 
     String output = io.getOutput();
-    // May or may not execute depending on map handling
-    assertNotNull(output);
+    // empty() used to answer true for every map variable, entries or not
+    assertTrue(output.contains("Map is not empty"), "a map with entries is not empty: " + output);
+    assertFalse(output.contains("Map is empty"), output);
   }
 
   // ==================== Empty with Query Results ====================
@@ -430,13 +431,11 @@ class EmptyConditionalFunctionTest {
 
   @Test
   void emptyWithMultipleArguments() {
-    // empty() with multiple arguments should produce error
-    dispatcher.dispatch("if empty(var1, var2)");
+    // empty() with multiple arguments fails the condition; no branch of the block runs
+    assertThrows(ConditionalException.class, () -> dispatcher.dispatch("if empty(var1, var2)"));
     dispatcher.dispatch("echo Should not execute");
     dispatcher.dispatch("endif");
 
-    String error = io.getError();
-    // Should produce error about wrong number of arguments
-    assertNotNull(error);
+    assertFalse(io.getOutput().contains("Should not execute"));
   }
 }

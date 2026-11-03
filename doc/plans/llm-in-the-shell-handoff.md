@@ -116,7 +116,7 @@ investigation become mergeable.
 | Not done | Why |
 |---|---|
 | Streaming output | The `IO` hook (`CommandDispatcher.IO.println`) supports it, but an `ask` reply is a query and one sentence — streaming it adds machinery for no perceptible gain. B, whose replies are long, is where it earns its place. |
-| A `set` command in `jafar-shell` | The unified shell is wired for `ask` (it is the only entry point that opens all four formats), but it still has no `set`/`vars`, so `llm.*` settings there resolve from its global `VariableStore` — which nothing populates — and then from `JAFAR_LLM_*` environment variables. Giving that shell a `set` command is gap G8 in `performance-engineer-in-a-box.md`; the LLM host adapter already reads the store, so it starts working the day `set` lands. |
+| ~~`if` and query-valued variables in `jafar-shell`~~ | Done since: `jafar-shell` has the full variable and scripting set — maps, `merge()`, lazy query variables run by each module's `QueryEvaluator`, `if`, `script`, `invalidate`, session vs `--global` scope — shared with `jfr-shell` through `shell-core`'s `io.jafar.shell.core.scripting`. `llm.*` settings are scoped like other variables, and the LLM host adapter reads the session's store, then the global one, as `jfr-shell`'s does. Gap G8 in `performance-engineer-in-a-box.md`. |
 | Multi-turn conversation | `ask` is one shot. Conversation state belongs in `VariableStore` so `vars` shows it and scripts can reset it, but it is only worth building with B's loop. |
 | Cost in currency | Usage is reported in tokens. Converting to money means shipping a price table that goes stale; the token counts are exact and the pricing is one lookup away. |
 | Live API test | No test in this repository calls a hosted provider. See §6. |

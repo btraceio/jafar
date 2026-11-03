@@ -4,8 +4,8 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import picocli.CommandLine;
@@ -155,6 +156,7 @@ public final class Main implements Callable<Integer> {
       }
 
       JfrBackend current = registry.getCurrent();
+      warnIfBackendNotFromThisBuild(current);
 
       // If user specified a backend, verify it was selected
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
@@ -187,6 +189,62 @@ public final class Main implements Callable<Integer> {
       System.err.println("Error: " + e.getMessage());
       return false;
     }
+  }
+
+  /** Backends built in this repository, versioned with the shell. */
+  private static final Set<String> IN_TREE_BACKENDS = Set.of("jafar", "jdk");
+
+  /**
+   * Prints {@link #backendBuildMismatch} to stderr when it applies.
+   *
+   * @param backend the backend the shell is about to use
+   */
+  static void warnIfBackendNotFromThisBuild(JfrBackend backend) {
+    String warning = backendBuildMismatch(Version.VALUE, backend);
+    if (warning != null) {
+      System.err.println(warning);
+    }
+  }
+
+  /**
+   * A development build of the shell ({@code -SNAPSHOT}) does not contain its backends: unless told
+   * otherwise it runs whatever {@code jfr-shell-jafar} is installed under {@code
+   * ~/.jfr-shell/plugins}, which it fetches from Maven Central on its first start. Typing a change
+   * to {@code jfr-shell-jafar} into such a shell then exercises the released backend, silently
+   * (doc/agents/Verification.md, R1). This names that case. A backend reporting {@code dev} has no
+   * jar manifest, so it was loaded from this tree's classes (Gradle tests, an IDE) and is not
+   * flagged; neither is a release build of the shell, nor a backend from outside this repository.
+   *
+   * @param shellVersion this shell's version
+   * @param backend the selected backend
+   * @return the warning, or {@code null} when the backend is the one built with this shell
+   */
+  static String backendBuildMismatch(String shellVersion, JfrBackend backend) {
+    if (shellVersion == null || !shellVersion.endsWith("-SNAPSHOT") || backend == null) {
+      return null;
+    }
+    String id = backend.getId();
+    String version = backend.getVersion();
+    if (!IN_TREE_BACKENDS.contains(id)
+        || version == null
+        || "dev".equals(version)
+        || version.equals(shellVersion)) {
+      return null;
+    }
+    String module = "jfr-shell-" + id;
+    return "Warning: this jfr-shell is a development build ("
+        + shellVersion
+        + ") but its '"
+        + id
+        + "' backend is version "
+        + version
+        + ", not the one built with it. To run the built backend, pass -Djfr.shell.backend.jars="
+        + module
+        + "/build/libs/"
+        + module
+        + "-"
+        + shellVersion
+        + ".jar (doc/agents/Verification.md, R1).";
   }
 
   /**
@@ -242,6 +300,7 @@ public final class Main implements Callable<Integer> {
         }
 
         JfrBackend current = registry.getCurrent();
+        warnIfBackendNotFromThisBuild(current);
         if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
           // Check if plugin can be auto-installed
           if (PluginManager.getInstance().canInstall(backend)) {
@@ -520,6 +579,7 @@ public final class Main implements Callable<Integer> {
         }
 
         JfrBackend current = registry.getCurrent();
+        warnIfBackendNotFromThisBuild(current);
         if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
           // Check if plugin can be auto-installed
           if (PluginManager.getInstance().canInstall(backend)) {
@@ -551,6 +611,14 @@ public final class Main implements Callable<Integer> {
       }
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
+
+      // '#!/usr/bin/env -S jbang jfr-shell@btraceio script -': the kernel passes the script's own
+      // path after '-', so that file is the script and $1 is the argument after it
+      var shebang = ScriptRunner.shebangScript(scriptPath, arguments);
+      if (shebang.isPresent()) {
+        scriptPath = shebang.get().toString();
+        arguments = new ArrayList<>(arguments.subList(1, arguments.size()));
+      }
 
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
@@ -592,41 +660,21 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        CommandDispatcher.IO scriptIO =
-            new CommandDispatcher.IO() {
-              @Override
-              public void println(String s) {
-                System.out.println(s);
-              }
-
-              @Override
-              public void printf(String fmt, Object... args) {
-                System.out.printf(fmt, args);
-              }
-
-              @Override
-              public void error(String s) {
-                System.err.println(s);
-              }
-            };
-
-        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
-        runner.setContinueOnError(continueOnError);
-
-        ScriptRunner.ExecutionResult result;
+        List<String> lines;
         if (fromStdin) {
           // Read from stdin
-          List<String> lines = new ArrayList<>();
+          lines = new ArrayList<>();
           try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
             }
           }
-          result = runner.execute(lines);
         } else {
-          result = runner.execute(path);
+          lines = Files.readAllLines(path);
         }
+        ScriptRunner.ExecutionResult result =
+            dispatcher.runScript(lines, arguments, continueOnError);
 
         // Print captured output
         if (output.length() > 0) {

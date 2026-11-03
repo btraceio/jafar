@@ -18,6 +18,17 @@ import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.Progress;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
+import io.jafar.shell.core.llm.SecretCommands;
+import io.jafar.shell.core.scripting.ConditionalException;
+import io.jafar.shell.core.scripting.ConditionalState;
+import io.jafar.shell.core.scripting.Conditionals;
+import io.jafar.shell.core.scripting.EvaluatorLazyValue;
+import io.jafar.shell.core.scripting.LazyRows;
+import io.jafar.shell.core.scripting.MapLiteralParser;
+import io.jafar.shell.core.scripting.MapMerge;
+import io.jafar.shell.core.scripting.ScriptRunner;
+import io.jafar.shell.core.scripting.VariableScopes;
+import io.jafar.shell.core.scripting.VariableSubstitutor;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -32,7 +43,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,9 +70,15 @@ public class CommandDispatcher {
 
   private final SessionManager<? extends Session> sessions;
   private final IO io;
+  // Every io.error, so runScript fails a line that reported an error rather than counting it
+  private final ScriptRunner.ErrorTally errorTally = new ScriptRunner.ErrorTally();
   private final SessionChangeListener listener;
   private final VariableStore globalStore;
-  private final ConditionalState conditionalState = new ConditionalState();
+  // Replaced for the duration of a script by runScript, so a script has an if-block stack of its
+  // own
+  private Conditionals conditionals = new Conditionals();
+  // Built once: dispatch() consults them for every line
+  private VariableScopes scopes;
   private final boolean verbose;
 
   @FunctionalInterface
@@ -110,11 +126,32 @@ public class CommandDispatcher {
       VariableStore globalStore,
       boolean verbose) {
     this.sessions = sessions;
-    this.io = io;
+    this.io = io != null ? countingErrors(io, errorTally) : null;
     this.listener = listener;
     this.selector = selector;
     this.globalStore = globalStore != null ? globalStore : new VariableStore();
     this.verbose = verbose || isVerboseEnabled();
+  }
+
+  /** The caller's IO, with each {@code error} also recorded in {@code tally}. */
+  private static IO countingErrors(IO io, ScriptRunner.ErrorTally tally) {
+    return new IO() {
+      @Override
+      public void println(String s) {
+        io.println(s);
+      }
+
+      @Override
+      public void printf(String fmt, Object... args) {
+        io.printf(fmt, args);
+      }
+
+      @Override
+      public void error(String s) {
+        tally.record(s);
+        io.error(s);
+      }
+    };
   }
 
   /**
@@ -128,8 +165,12 @@ public class CommandDispatcher {
   /**
    * Check if verbose mode is enabled via system property or environment variable. This allows
    * runtime control of verbosity for debugging.
+   *
+   * <p>{@code -Djfr.shell.verbose=true} (or {@code 1}, {@code on}), else {@code JFR_SHELL_VERBOSE}.
+   * Read by both shells' script modes, so the switch means the same thing in {@code jfr-shell
+   * script} and {@code jafar-shell script}.
    */
-  private static boolean isVerboseEnabled() {
+  public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
       String v = prop.trim().toLowerCase();
@@ -173,6 +214,11 @@ public class CommandDispatcher {
                 @Override
                 public void println(String line) {
                   io.println(line);
+                }
+
+                @Override
+                public void error(String line) {
+                  io.error(line); // the channel 'script' counts
                 }
 
                 @Override
@@ -675,7 +721,47 @@ public class CommandDispatcher {
 
   /** Returns the conditional state for tracking if-blocks. */
   public ConditionalState getConditionalState() {
-    return conditionalState;
+    return conditionals.state();
+  }
+
+  /**
+   * Runs script lines through {@link #dispatch} with an if-block stack of their own, as jafar-shell
+   * does for its scripts: a script can neither leave the caller inside a block (the interactive
+   * shell runs scripts on its own dispatcher, so every command typed afterwards would be silently
+   * skipped) nor close one of the caller's (a stray {@code endif} is the script's error).
+   *
+   * <p>A script that runs to its end with blocks still open has an error for that, reported against
+   * its last line. One that stopped early at an error has its open blocks closed without a second
+   * error: the first one already says why.
+   *
+   * @param lines the script
+   * @param arguments positional arguments ($1, $2, ...)
+   * @param continueOnError whether to run on after a failing line
+   * @return the outcome, including the open-block error if any
+   */
+  public ScriptRunner.ExecutionResult runScript(
+      List<String> lines, List<String> arguments, boolean continueOnError) {
+    Conditionals callers = conditionals;
+    conditionals = new Conditionals();
+    try {
+      ScriptRunner runner =
+          new ScriptRunner(
+              ScriptRunner.failingOnReportedErrors(this::dispatch, errorTally), arguments);
+      runner.setContinueOnError(continueOnError);
+      ScriptRunner.ExecutionResult result = runner.execute(lines);
+      int unclosed = conditionals.state().depth();
+      boolean stopped = result.hasErrors() && !continueOnError;
+      if (unclosed == 0 || stopped) {
+        return result;
+      }
+      List<ScriptRunner.ScriptError> errors = new ArrayList<>(result.getErrors());
+      errors.add(
+          new ScriptRunner.ScriptError(
+              lines.size(), "", unclosed + " if-block(s) not closed with endif by end of script"));
+      return new ScriptRunner.ExecutionResult(result.getSuccessCount(), errors);
+    } finally {
+      conditionals = callers;
+    }
   }
 
   public boolean dispatch(String line) {
@@ -696,23 +782,12 @@ public class CommandDispatcher {
 
     try {
       // Handle conditional keywords - these must be processed even in inactive branches
-      if ("if".equals(cmd)) {
-        return handleIf(line);
-      }
-      if ("elif".equals(cmd)) {
-        return handleElif(line);
-      }
-      if ("else".equals(cmd)) {
-        conditionalState.handleElse();
-        return true;
-      }
-      if ("endif".equals(cmd)) {
-        conditionalState.exitIf();
+      if (conditionals.handle(line, scopes())) {
         return true;
       }
 
       // Skip command if in inactive conditional branch
-      if (!conditionalState.isActive()) {
+      if (!conditionals.isActive()) {
         return true; // Command "handled" (skipped)
       }
 
@@ -739,14 +814,6 @@ public class CommandDispatcher {
       // Handle 'constants/...' as a direct query (equivalent to 'show constants/...')
       if (cmd.startsWith("constants/")) {
         if (currentJfrSession() == null) return false;
-        // Detect: constants/<type> | crossref()
-        if (args.size() >= 2
-            && "|".equals(args.get(0))
-            && args.get(1).equalsIgnoreCase("crossref()")) {
-          String typeName = parts[0].substring("constants/".length());
-          cmdCrossref(typeName);
-          return true;
-        }
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
         showArgs.addAll(args);
@@ -880,6 +947,10 @@ public class CommandDispatcher {
           }
           return false;
       }
+    } catch (ConditionalException e) {
+      // Not printed here: the caller reports it (ScriptRunner as a command error, the
+      // interactive shells as an error line), so it is neither swallowed nor shown twice.
+      throw e;
     } catch (Exception e) {
       io.error("Error: " + e.getMessage());
       return true;
@@ -959,21 +1030,37 @@ public class CommandDispatcher {
         return;
       }
       sessions.close(String.valueOf(cur.get().id));
+      forgetSession(cur.get().id);
       if (verbose) {
         io.println("Closed session #" + cur.get().id);
       }
     } else if (args.size() == 1 && "--all".equals(args.get(0))) {
+      List<Integer> ids = new ArrayList<>();
+      sessions.list().forEach(r -> ids.add(r.id));
       sessions.closeAll();
+      ids.forEach(this::forgetSession);
       if (verbose) {
         io.println("Closed all sessions");
       }
     } else {
       String key = args.get(0);
+      var target = sessions.get(key);
       boolean ok = sessions.close(key);
+      if (ok) {
+        forgetSession(target.get().id);
+      }
       if (!ok) io.error("No such session: " + key);
       else if (verbose) io.println("Closed session " + key);
     }
     sessions.current().ifPresent(listener::onCurrentSessionChanged);
+  }
+
+  /** Drops cached rows bound to a closed session from every surviving store, copies included. */
+  private void forgetSession(int id) {
+    EvaluatorLazyValue.forgetSession(globalStore, id);
+    for (var ref : sessions.list()) {
+      EvaluatorLazyValue.forgetSession(ref.variables, id);
+    }
   }
 
   private void cmdInfo(List<String> args) {
@@ -1492,6 +1579,8 @@ public class CommandDispatcher {
       io.println("  elif      - Else-if branch");
       io.println("  else      - Else branch");
       io.println("  endif     - End conditional block");
+      io.println("  A condition that fails to evaluate is an error, not false: no branch");
+      io.println("  of its block runs, and the block stays open until its endif.");
       io.println("");
       io.println("Ask (LLM, optional):");
       io.println("  ask <q>   - Several queries, read each result, and conclude ('?' for short)");
@@ -1751,6 +1840,8 @@ public class CommandDispatcher {
       io.println("  - Map literals: set config = {\"key\": \"value\", \"count\": 42}");
       io.println("  - Variable copies: set backup = original or set backup = $original");
       io.println("  - JfrPath queries (lazy): set reads = events/jdk.FileRead[bytesRead>1000]");
+      io.println(
+          "    (in the TUI, a heap dump, pprof or OTLP session takes its own query language)");
       io.println("");
       io.println("Options:");
       io.println("  --global  Store in global scope (persists across sessions)");
@@ -1875,7 +1966,8 @@ public class CommandDispatcher {
       io.println("  String: contains (substring check)");
       io.println("  Logical: && (and), || (or), ! (not) - keywords and symbols both supported");
       io.println("  Arithmetic: +, -, *, /");
-      io.println("  Functions: exists(var), empty(var)");
+      io.println("  Functions: exists(ref), empty(ref)");
+      io.println("    ref: var, var.field.path, var[idx].field, or an llm.* setting name");
       io.println("  Grouping: parentheses ( )");
       io.println("");
       io.println("Examples:");
@@ -2390,84 +2482,6 @@ public class CommandDispatcher {
     }
   }
 
-  private void cmdCrossref(String typeName) throws Exception {
-    var cur = sessions.current();
-    if (cur.isEmpty()) {
-      io.error("No session open. Use 'open <file>' first.");
-      return;
-    }
-    if (!ConstantPoolProvider.isSupported()) {
-      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
-      io.error(
-          "Backend '"
-              + backend.getId()
-              + "' does not support constant pool queries. Use 'jafar' backend for full introspection.");
-      return;
-    }
-    Map<String, Object> result =
-        ConstantPoolProvider.crossref(cur.get().session.getFilePath(), typeName);
-    long total = ((Number) result.get("cpTotal")).longValue();
-    long referenced = ((Number) result.get("cpReferenced")).longValue();
-    long unused = ((Number) result.get("cpUnused")).longValue();
-    double usedPct = ((Number) result.get("usedPercent")).doubleValue();
-    double unusedPct = ((Number) result.get("unusedPercent")).doubleValue();
-    io.println(result.get("type") + " Constant Pool Crosscheck");
-    io.println(String.format("Type:              %s", result.get("type")));
-    io.println(String.format("Total CP entries:  %d", total));
-    io.println(String.format("Referenced:        %7d  (%.1f%%)", referenced, usedPct));
-    io.println(String.format("Unreferenced:      %7d  (%.1f%%)", unused, unusedPct));
-    long decodeFailures = result.get("decodeFailures") instanceof Number n ? n.longValue() : 0L;
-    if (decodeFailures > 0) {
-      io.println(
-          String.format(
-              "Decode failures:   %7d  (events/entries not counted; numbers are lower bounds)",
-              decodeFailures));
-    }
-
-    @SuppressWarnings("unchecked")
-    Map<String, Long> eventCounts = (Map<String, Long>) result.get("eventCounts");
-    // Unique CP entries per event type, counted per chunk and summed (CP ids are chunk-local).
-    @SuppressWarnings("unchecked")
-    Map<String, Long> uniqueByEventType = (Map<String, Long>) result.get("uniqueByEventType");
-    @SuppressWarnings("unchecked")
-    Map<String, Long> totalRefsByEventType = (Map<String, Long>) result.get("totalRefsByEventType");
-    String shortName =
-        typeName.contains(".") ? typeName.substring(typeName.lastIndexOf('.') + 1) : typeName;
-    String uniqueColName = "unique" + shortName;
-
-    Set<String> allEventTypes = new HashSet<>();
-    if (eventCounts != null) allEventTypes.addAll(eventCounts.keySet());
-    if (uniqueByEventType != null) allEventTypes.addAll(uniqueByEventType.keySet());
-
-    if (!allEventTypes.isEmpty()) {
-      io.println("");
-      io.println("Referencing event types:");
-      List<Map<String, Object>> histoRows = new ArrayList<>();
-      allEventTypes.stream()
-          .sorted(
-              (a, b) ->
-                  Long.compare(
-                      eventCounts != null ? eventCounts.getOrDefault(b, 0L) : 0L,
-                      eventCounts != null ? eventCounts.getOrDefault(a, 0L) : 0L))
-          .forEach(
-              evtType -> {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("eventType", evtType);
-                row.put("events", eventCounts != null ? eventCounts.getOrDefault(evtType, 0L) : 0L);
-                long uniqueCount =
-                    uniqueByEventType != null ? uniqueByEventType.getOrDefault(evtType, 0L) : 0L;
-                row.put(uniqueColName, uniqueCount);
-                row.put(
-                    "directRefs",
-                    totalRefsByEventType != null
-                        ? totalRefsByEventType.getOrDefault(evtType, 0L)
-                        : 0L);
-                histoRows.add(row);
-              });
-      TableRenderer.render(histoRows, io);
-    }
-  }
-
   /** constants [--summary] [<kind>] [--range N-M] constants <kind> [--range N-M] */
   private void cmdCp(List<String> args) throws Exception {
     var cur = sessions.current();
@@ -2511,7 +2525,9 @@ public class CommandDispatcher {
         io.error("Usage: cp <type> | crossref()");
         return;
       }
-      cmdCrossref(cleanArgs.get(0));
+      // The same query as 'show constants/<type> | crossref()', so every form agrees.
+      String query = "constants/" + cleanArgs.get(0) + " | crossref()";
+      cmdShow(List.of(query, "--format", format), "show " + query + " --format " + format);
       return;
     }
 
@@ -2652,7 +2668,8 @@ public class CommandDispatcher {
       }
       store.set(varName, new ScalarValue(literal));
       if (verbose) {
-        io.println("Set " + varName + " = " + literal);
+        String shown = LlmSettings.isSecret(varName) ? SecretCommands.mask(literal) : literal;
+        io.println("Set " + varName + " = " + shown);
       }
       return;
     }
@@ -2660,7 +2677,7 @@ public class CommandDispatcher {
     // Check for map literal first (before substitution)
     if (exprPart.startsWith("{")) {
       try {
-        Map<String, Object> map = parseMapLiteral(exprPart);
+        Map<String, Object> map = MapLiteralParser.parse(exprPart);
         store.set(varName, new VariableStore.MapValue(map));
         if (verbose) {
           io.println("Set " + varName + " = " + new VariableStore.MapValue(map).describe());
@@ -2673,10 +2690,10 @@ public class CommandDispatcher {
     }
 
     // Check for merge function syntax
-    String exprTrimmed = exprPart.trim();
-    if (exprTrimmed.startsWith("merge(") && exprTrimmed.endsWith(")")) {
+    if (MapMerge.isMergeCall(exprPart)) {
       try {
-        Map<String, Object> merged = parseMergeFunction(exprTrimmed, store);
+        // Arguments resolve in the target store only, as they always have here.
+        Map<String, Object> merged = MapMerge.evaluate(exprPart, store::get);
         store.set(varName, new VariableStore.MapValue(merged));
         if (verbose) {
           io.println("Set " + varName + " = " + new VariableStore.MapValue(merged).describe());
@@ -2690,8 +2707,7 @@ public class CommandDispatcher {
 
     // Perform variable substitution if expression contains ${...} references
     // BUT skip if it's a merge() function (which handles ${...} internally)
-    if (VariableSubstitutor.hasVariables(exprPart)
-        && !(exprPart.trim().startsWith("merge(") && exprPart.trim().endsWith(")"))) {
+    if (VariableSubstitutor.hasVariables(exprPart) && !MapMerge.isMergeCall(exprPart)) {
       try {
         VariableSubstitutor sub = new VariableSubstitutor(getSessionStore(), globalStore);
         exprPart = sub.substitute(exprPart);
@@ -2739,6 +2755,8 @@ public class CommandDispatcher {
         Value valueToCopy = existingValue;
         if (existingValue instanceof LazyQueryValue lazyValue) {
           valueToCopy = lazyValue.copy();
+        } else if (existingValue instanceof EvaluatorLazyValue lazyValue) {
+          valueToCopy = lazyValue.copy();
         }
         store.set(varName, valueToCopy);
         if (verbose) {
@@ -2759,6 +2777,30 @@ public class CommandDispatcher {
     var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
+      return;
+    }
+
+    if (!(cur.get().session instanceof JFRSession) && moduleEvaluator != null) {
+      // A heap dump, pprof or OTLP session (the TUI reaches these through this dispatcher): the
+      // query is in that module's language, parsed and run by its evaluator, as 'show' does.
+      Object parsed;
+      try {
+        parsed = moduleEvaluator.parse(exprPart);
+      } catch (Exception e) {
+        io.error("Invalid query: " + e.getMessage());
+        return;
+      }
+      @SuppressWarnings("unchecked")
+      SessionResolver resolver =
+          id ->
+              (Optional<SessionManager.SessionRef<? extends Session>>)
+                  (Optional<?>) sessions.get(id);
+      EvaluatorLazyValue lazy =
+          new EvaluatorLazyValue(moduleEvaluator, parsed, exprPart, cur.get(), resolver);
+      store.set(varName, lazy);
+      if (verbose) {
+        io.println("Set " + varName + " = " + lazy.describe());
+      }
       return;
     }
 
@@ -2875,233 +2917,6 @@ public class CommandDispatcher {
   }
 
   /**
-   * Parses a map literal in JSON-like syntax: {"key": value, "nested": {...}} Supports: strings,
-   * numbers, booleans, null, nested maps
-   *
-   * @param input map literal string starting with { and ending with }
-   * @return parsed map
-   * @throws IllegalArgumentException if syntax is invalid
-   */
-  private Map<String, Object> parseMapLiteral(String input) {
-    MapLiteralParser parser = new MapLiteralParser(input);
-    return parser.parseMap();
-  }
-
-  /** Simple recursive-descent parser for map literals */
-  private static class MapLiteralParser {
-    private final String input;
-    private int pos = 0;
-
-    MapLiteralParser(String input) {
-      this.input = input.trim();
-    }
-
-    Map<String, Object> parseMap() {
-      skipWs();
-      if (peek() != '{') {
-        throw error("Expected '{'");
-      }
-      consume(); // {
-
-      Map<String, Object> map = new LinkedHashMap<>();
-      skipWs();
-
-      if (peek() == '}') {
-        consume();
-        return map;
-      }
-
-      while (true) {
-        skipWs();
-
-        // Parse key (must be string)
-        if (peek() != '"') {
-          throw error("Expected string key");
-        }
-        String key = parseString();
-
-        skipWs();
-        if (peek() != ':') {
-          throw error("Expected ':' after key");
-        }
-        consume();
-
-        skipWs();
-        Object value = parseValue();
-        map.put(key, value);
-
-        skipWs();
-        char next = peek();
-        if (next == '}') {
-          consume();
-          break;
-        } else if (next == ',') {
-          consume();
-        } else {
-          throw error("Expected ',' or '}'");
-        }
-      }
-
-      return map;
-    }
-
-    private Object parseValue() {
-      skipWs();
-      char ch = peek();
-
-      if (ch == '"') {
-        return parseString();
-      } else if (ch == '{') {
-        return parseMap();
-      } else if (ch == 't' || ch == 'f') {
-        return parseBoolean();
-      } else if (ch == 'n') {
-        return parseNull();
-      } else if (ch == '-' || Character.isDigit(ch)) {
-        return parseNumber();
-      } else {
-        throw error("Unexpected character: " + ch);
-      }
-    }
-
-    private String parseString() {
-      if (peek() != '"') {
-        throw error("Expected '\"'");
-      }
-      consume(); // opening "
-
-      StringBuilder sb = new StringBuilder();
-      while (pos < input.length()) {
-        char ch = input.charAt(pos);
-        if (ch == '"') {
-          consume();
-          return sb.toString();
-        } else if (ch == '\\') {
-          if (pos + 1 >= input.length()) {
-            throw error("Lone backslash at end of string");
-          }
-          consume();
-          char escaped = input.charAt(pos);
-          switch (escaped) {
-            case 'n' -> sb.append('\n');
-            case 't' -> sb.append('\t');
-            case 'r' -> sb.append('\r');
-            case '"' -> sb.append('"');
-            case '\\' -> sb.append('\\');
-            default -> throw error("Invalid escape: \\" + escaped);
-          }
-          consume();
-        } else {
-          sb.append(ch);
-          consume();
-        }
-      }
-      throw error("Unterminated string");
-    }
-
-    private Number parseNumber() {
-      int start = pos;
-      if (peek() == '-') {
-        consume();
-      }
-
-      int digitStart = pos;
-      while (pos < input.length() && Character.isDigit(peek())) {
-        consume();
-      }
-
-      // Validate at least one digit after optional minus sign
-      if (pos == digitStart) {
-        throw error("Expected digit after minus sign");
-      }
-
-      boolean isDouble = false;
-      if (pos < input.length() && peek() == '.') {
-        isDouble = true;
-        consume();
-        int decimalStart = pos;
-        while (pos < input.length() && Character.isDigit(peek())) {
-          consume();
-        }
-        // Validate at least one digit after decimal point
-        if (pos == decimalStart) {
-          throw error("Expected digit after decimal point");
-        }
-      }
-
-      String numStr = input.substring(start, pos);
-      try {
-        return isDouble ? Double.parseDouble(numStr) : Long.parseLong(numStr);
-      } catch (NumberFormatException e) {
-        throw error("Invalid number: " + numStr);
-      }
-    }
-
-    private Boolean parseBoolean() {
-      if (input.startsWith("true", pos)) {
-        pos += 4;
-        if (!isDelimiter(pos)) {
-          throw error("Invalid boolean literal - expected delimiter after 'true'");
-        }
-        return true;
-      } else if (input.startsWith("false", pos)) {
-        pos += 5;
-        if (!isDelimiter(pos)) {
-          throw error("Invalid boolean literal - expected delimiter after 'false'");
-        }
-        return false;
-      }
-      throw error("Expected 'true' or 'false'");
-    }
-
-    private Object parseNull() {
-      if (input.startsWith("null", pos)) {
-        pos += 4;
-        if (!isDelimiter(pos)) {
-          throw error("Invalid null literal - expected delimiter after 'null'");
-        }
-        return null;
-      }
-      throw error("Expected 'null'");
-    }
-
-    /**
-     * Checks if the position is at a valid delimiter (comma, closing brace, or end of input).
-     *
-     * @param position the position to check
-     * @return true if at a delimiter
-     */
-    private boolean isDelimiter(int position) {
-      if (position >= input.length()) {
-        return true; // End of input
-      }
-      char c = input.charAt(position);
-      return c == ',' || c == '}' || Character.isWhitespace(c);
-    }
-
-    private char peek() {
-      if (pos >= input.length()) {
-        throw error("Unexpected end of input");
-      }
-      return input.charAt(pos);
-    }
-
-    private void consume() {
-      pos++;
-    }
-
-    private void skipWs() {
-      while (pos < input.length() && Character.isWhitespace(input.charAt(pos))) {
-        pos++;
-      }
-    }
-
-    private IllegalArgumentException error(String message) {
-      return new IllegalArgumentException(message + " at position " + pos);
-    }
-  }
-
-  /**
    * Determines if a query will definitely produce a single scalar value based on static analysis of
    * its pipeline operators. Only queries ending with count or sum are considered scalar.
    */
@@ -3119,144 +2934,8 @@ public class CommandDispatcher {
    * map.
    */
   private boolean isDefinitelyMap(JfrPath.Query query) {
-    if (query.pipeline == null || query.pipeline.isEmpty()) {
-      return false;
-    }
-    // Check the last operator in the pipeline
-    JfrPath.PipelineOp lastOp = query.pipeline.get(query.pipeline.size() - 1);
-    return lastOp instanceof JfrPath.ToMapOp;
-  }
-
-  /**
-   * Parses and executes a merge function call: merge(${map1}, ${map2}, ...)
-   *
-   * @param expr the merge function expression
-   * @param store the variable store for resolving variables
-   * @return merged map
-   */
-  private Map<String, Object> parseMergeFunction(String expr, VariableStore store) {
-    // Extract argument list between merge( and )
-    String argList = expr.substring(6, expr.length() - 1).trim();
-
-    if (argList.isEmpty()) {
-      throw new IllegalArgumentException("merge() requires at least 2 arguments");
-    }
-
-    // Parse arguments
-    List<String> args = parseMergeArgs(argList);
-
-    if (args.size() < 2) {
-      throw new IllegalArgumentException(
-          "merge() requires at least 2 arguments, got " + args.size());
-    }
-
-    // Resolve each argument to a map
-    List<Map<String, Object>> maps = new ArrayList<>();
-    for (String arg : args) {
-      Map<String, Object> map = resolveMapArg(arg, store);
-      maps.add(map);
-    }
-
-    // Merge all maps
-    return mergeMaps(maps);
-  }
-
-  /**
-   * Parses merge function arguments, splitting by comma while respecting nested structures.
-   *
-   * @param argList comma-separated argument list
-   * @return list of trimmed arguments
-   */
-  private List<String> parseMergeArgs(String argList) {
-    List<String> args = new ArrayList<>();
-    int start = 0;
-    int depth = 0;
-    boolean inString = false;
-
-    for (int i = 0; i < argList.length(); i++) {
-      char c = argList.charAt(i);
-
-      // Track string boundaries
-      if (c == '"' && (i == 0 || argList.charAt(i - 1) != '\\')) {
-        inString = !inString;
-      }
-
-      if (!inString) {
-        // Track nesting depth
-        if (c == '(' || c == '{' || c == '[') {
-          depth++;
-        }
-        if (c == ')' || c == '}' || c == ']') {
-          depth--;
-        }
-
-        // Split on comma at depth 0
-        if (c == ',' && depth == 0) {
-          args.add(argList.substring(start, i).trim());
-          start = i + 1;
-        }
-      }
-    }
-
-    // Add last argument
-    args.add(argList.substring(start).trim());
-
-    return args;
-  }
-
-  /**
-   * Resolves a merge argument to a map. Supports variable references and map literals.
-   *
-   * @param arg the argument string
-   * @param store the variable store
-   * @return resolved map
-   */
-  private Map<String, Object> resolveMapArg(String arg, VariableStore store) {
-    // Check for variable reference: ${varName}
-    if (arg.startsWith("${") && arg.endsWith("}")) {
-      String varName = arg.substring(2, arg.length() - 1);
-      VariableStore.Value value = store.get(varName);
-
-      if (value == null) {
-        throw new IllegalArgumentException("Variable not found: " + varName);
-      }
-      if (!(value instanceof VariableStore.MapValue mapValue)) {
-        throw new IllegalArgumentException(
-            "Variable is not a map: "
-                + varName
-                + " (type: "
-                + value.getClass().getSimpleName()
-                + ")");
-      }
-
-      return mapValue.value();
-    }
-
-    // Check for map literal: {...}
-    if (arg.startsWith("{") && arg.endsWith("}")) {
-      return parseMapLiteral(arg);
-    }
-
-    throw new IllegalArgumentException(
-        "Merge argument must be a map variable (${name}) or map literal {...}: " + arg);
-  }
-
-  /**
-   * Merges multiple maps into a single map. Last wins for duplicate keys.
-   *
-   * @param maps list of maps to merge
-   * @return merged map with insertion order preserved
-   */
-  private Map<String, Object> mergeMaps(List<Map<String, Object>> maps) {
-    Map<String, Object> result = new LinkedHashMap<>();
-
-    // Iterate through maps in order
-    for (Map<String, Object> map : maps) {
-      // Last wins: putAll overwrites existing keys
-      result.putAll(map);
-    }
-
-    return result;
+    // One definition, shared with jafar-shell's lazy variables (JfrQueryEvaluator.producesMap)
+    return query.producesMap();
   }
 
   private void cmdVars(List<String> args) {
@@ -3281,7 +2960,7 @@ public class CommandDispatcher {
       io.println("Global variables:");
       for (String name : globalStore.names()) {
         Value val = globalStore.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -3289,7 +2968,7 @@ public class CommandDispatcher {
       io.println("Session variables (session #" + cur.get().id + "):");
       for (String name : cur.get().variables.names()) {
         Value val = cur.get().variables.get(name);
-        io.println("  " + name + " = " + val.describe());
+        io.println("  " + name + " = " + SecretCommands.describe(name, val));
       }
     }
 
@@ -3320,13 +2999,13 @@ public class CommandDispatcher {
     io.println("Variable: " + name);
     io.println("Scope: " + scope);
 
-    if (val instanceof LazyQueryValue lqv) {
+    if (val instanceof VariableStore.LazyValue lqv) {
       io.println("Type: lazy query");
       io.println("Source: " + lqv.getQueryString());
       io.println("Cached: " + (lqv.isCached() ? "yes" : "no"));
       if (lqv.isCached()) {
         try {
-          int size = lqv.size();
+          int size = LazyRows.size(lqv.get());
           io.println("Rows: " + size);
         } catch (Exception e) {
           io.println("Rows: error - " + e.getMessage());
@@ -3338,7 +3017,7 @@ public class CommandDispatcher {
       io.println("Structure: " + mv.describe());
     } else if (val instanceof ScalarValue sv) {
       io.println("Type: scalar");
-      io.println("Value: " + sv.describe());
+      io.println("Value: " + SecretCommands.describe(name, sv));
     }
   }
 
@@ -3351,21 +3030,12 @@ public class CommandDispatcher {
     String varName = args.get(0);
     boolean isGlobal = args.contains("--global");
 
-    VariableStore store = getTargetStore(isGlobal);
-    if (store.remove(varName)) {
+    if (scopes().remove(varName, isGlobal)) {
       if (verbose) {
         io.println("Removed " + varName);
       }
     } else {
-      // Try the other store if not found
-      VariableStore other = isGlobal ? getSessionStore() : globalStore;
-      if (other != null && other.remove(varName)) {
-        if (verbose) {
-          io.println("Removed " + varName);
-        }
-      } else {
-        io.error("Variable not found: " + varName);
-      }
+      io.error("Variable not found: " + varName);
     }
   }
 
@@ -3398,7 +3068,7 @@ public class CommandDispatcher {
       return;
     }
 
-    if (val instanceof LazyQueryValue lqv) {
+    if (val instanceof VariableStore.LazyValue lqv) {
       lqv.invalidate();
       if (verbose) {
         io.println("Invalidated cache for " + varName);
@@ -3408,12 +3078,19 @@ public class CommandDispatcher {
     }
   }
 
-  private VariableStore getTargetStore(boolean global) {
-    if (global) {
-      return globalStore;
+  /** Session-then-global scoping, shared with jafar-shell. */
+  private VariableScopes scopes() {
+    VariableScopes s = scopes;
+    if (s == null) {
+      // Lazily, because test doubles subclass this dispatcher with a null IO and sessions
+      s = new VariableScopes(globalStore, this::getSessionStore);
+      scopes = s;
     }
-    var cur = sessions.current();
-    return cur.isPresent() ? cur.get().variables : globalStore;
+    return s;
+  }
+
+  private VariableStore getTargetStore(boolean global) {
+    return scopes().target(global);
   }
 
   private VariableStore getSessionStore() {
@@ -3422,14 +3099,7 @@ public class CommandDispatcher {
   }
 
   private Value resolveVariable(String name) {
-    VariableStore sessionStore = getSessionStore();
-    if (sessionStore != null && sessionStore.contains(name)) {
-      return sessionStore.get(name);
-    }
-    if (globalStore.contains(name)) {
-      return globalStore.get(name);
-    }
-    return null;
+    return scopes().resolve(name);
   }
 
   /**
@@ -3471,66 +3141,5 @@ public class CommandDispatcher {
       return "\"" + value + "\"";
     }
     return value.toString();
-  }
-
-  // ---- Conditional handling ----
-
-  private boolean handleIf(String line) {
-    // Extract condition after "if "
-    String condition = line.length() > 2 ? line.substring(2).trim() : "";
-
-    if (condition.isEmpty()) {
-      io.error("if requires a condition");
-      conditionalState.enterIf(false);
-      return true;
-    }
-
-    // Only evaluate if we're in an active branch
-    boolean result = false;
-
-    if (conditionalState.isActive() || !conditionalState.inConditional()) {
-      try {
-        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-        result = evaluator.evaluate(condition);
-      } catch (Exception e) {
-        io.error("Condition evaluation failed: " + e.getMessage());
-        result = false;
-        // Continue to enterIf - don't return early
-      }
-    }
-
-    // CRITICAL: Always update state, even after errors
-    conditionalState.enterIf(result);
-    return true;
-  }
-
-  private boolean handleElif(String line) {
-    // Extract condition after "elif "
-    String condition = line.length() > 4 ? line.substring(4).trim() : "";
-
-    if (condition.isEmpty()) {
-      io.error("elif requires a condition");
-      conditionalState.handleElif(false);
-      return true;
-    }
-
-    // Only evaluate if needed (previous branches failed and parent is active)
-    boolean result = false;
-    int depth = conditionalState.depth();
-
-    if (depth > 0) {
-      try {
-        ConditionEvaluator evaluator = new ConditionEvaluator(getSessionStore(), globalStore);
-        result = evaluator.evaluate(condition);
-      } catch (Exception e) {
-        io.error("Condition evaluation failed: " + e.getMessage());
-        result = false;
-        // Continue to handleElif - don't return early
-      }
-    }
-
-    // CRITICAL: Always update state
-    conditionalState.handleElif(result);
-    return true;
   }
 }

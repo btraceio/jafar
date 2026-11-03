@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,6 +48,7 @@ final class FakeSseDaemon implements AutoCloseable {
 
   private final AtomicInteger sessionSeq = new AtomicInteger();
   private final Map<String, AsyncContext> streams = new ConcurrentHashMap<>();
+  private final Set<String> forgotten = ConcurrentHashMap.newKeySet();
   private final List<Received> received = new CopyOnWriteArrayList<>();
   private final List<String> sessionsOpened = new CopyOnWriteArrayList<>();
   private final List<String> authHeaders = new CopyOnWriteArrayList<>();
@@ -143,6 +145,19 @@ final class FakeSseDaemon implements AutoCloseable {
     streams.clear();
   }
 
+  /**
+   * Forgets every session, so their POSTs get 404, but leaves their streams open: the window in
+   * which a reply already on its way can still reach a client that has given the session up.
+   */
+  void forgetSessionsKeepingStreams() {
+    forgotten.addAll(streams.keySet());
+  }
+
+  /** Sends {@code json} as a {@code message} event on {@code sessionId}'s stream. */
+  void emitTo(String sessionId, String json) {
+    emit(sessionId, json);
+  }
+
   boolean hasOpenStream() {
     return !streams.isEmpty();
   }
@@ -226,7 +241,7 @@ final class FakeSseDaemon implements AutoCloseable {
         return;
       }
       String sessionId = req.getParameter("sessionId");
-      if (sessionId == null || !streams.containsKey(sessionId)) {
+      if (sessionId == null || !streams.containsKey(sessionId) || forgotten.contains(sessionId)) {
         resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
         resp.getWriter().write("Session not found");
         return;

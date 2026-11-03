@@ -95,7 +95,7 @@ echo
 echo "Key Takeaways:"
 echo "  • Use toMap() to convert query results to accessible maps"
 echo "  • Use merge() to combine multiple data sources"
-echo "  • Access fields with ${map.field} or ${map.nested.field}"
+echo "  • Access fields with a dotted path inside ${...}: name.field, name.nested.field"
 echo "  • Maps make report building intuitive and flexible"
 
 # Close the session

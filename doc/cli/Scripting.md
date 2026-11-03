@@ -5,6 +5,7 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 ## Table of Contents
 
 - [Overview](#overview)
+- [In jafar-shell](#in-jafar-shell)
 - [Script File Format](#script-file-format)
 - [Positional Parameters](#positional-parameters)
 - [Variables](#variables)
@@ -17,13 +18,114 @@ JFR Shell supports powerful scripting capabilities that allow you to automate JF
 
 ## Overview
 
-JFR Shell scripts (`.jfrs` extension) are plain text files containing sequences of shell commands and JfrPath queries. Scripts support:
+JFR Shell scripts (`.jfrs` extension) are plain text files containing sequences of shell commands and JfrPath queries. The same scripting — variables, maps, `merge()`, lazy query variables, `if`/`elif`/`else`/`endif`, `echo`, `invalidate`, `script` — also works in the unified `jafar-shell`, against heap dumps, pprof and OTLP profiles as well as recordings; see [In jafar-shell](#in-jafar-shell) for the differences. Scripts support:
 
 - **Positional parameters** - Parameterize scripts with bash-style `$1`, `$2`, `$@` syntax
 - **Comments** - Document your scripts with `#` comments
 - **All shell commands** - Use any command available in interactive mode
 - **Error handling** - Continue-on-error mode for robust scripts
 - **Stdin support** - Read scripts from stdin for piping and shebangs
+
+## In jafar-shell
+
+`jafar-shell` opens JFR recordings, heap dumps (`.hprof`), pprof (`.pprof`, `.pb.gz`) and OTLP
+(`.otlp`) profiles side by side, and the scripting in this guide works the same way there — the
+parsing, scoping and condition rules are one implementation in `shell-core`, shared by both shells.
+A query-valued variable is written in the language of the session that is current when it is set
+(JfrPath, HdumpPath, or the pprof/OTLP samples grammar), run by that session's query evaluator the
+same way `show` runs it, and stays bound to that session. That is what makes cross-format scripts
+possible:
+
+```bash
+# cross.jfrs — $1 recording, $2 heap dump, $3 minimum object size (default 1000)
+set --global min = ${3:-1000}
+open $1
+set --global samples = events/jdk.ExecutionSample | count()
+open $2
+set big = objects[shallow > ${min}] | count
+set top = classes | top(3, by=instanceCount)
+echo heap: ${big} objects over ${min} bytes; top class ${top[0].name}
+echo jfr (session 1, read from session 2): ${samples} samples
+if ${samples} > 100 && ${big} > 0
+echo VERDICT both busy
+else
+echo VERDICT quiet
+endif
+```
+
+```
+jafar> script cross.jfrs app.jfr app.hprof 4096
+...
+heap: 26 objects over 4096 bytes; top class byte[]
+jfr (session 1, read from session 2): 551 samples
+VERDICT both busy
+
+Script executed successfully: 13 commands
+```
+
+`samples` is `--global` so that it is still visible after `open $2` makes the heap dump current;
+it keeps evaluating against the recording. Once its session is closed, reading the variable fails
+with `Session #1 has been closed` rather than returning rows from a file that is no longer open, and
+`vars` shows it as `(closed)`.
+
+A script may run another (`script` inside a script) up to 16 deep. In both shells each script has
+its own `if` blocks: if it ends inside one, the blocks it left open are closed and reported (see
+[Blocks Left Open by a Script](#blocks-left-open-by-a-script)), so the commands you type next are
+not skipped; and a stray `endif` in a script is an error in that script rather than closing a block
+of the caller's. A script that leaves blocks open, or nests deeper than 16, has
+failed: the `script` line fails, and `jafar-shell script` exits 1.
+
+The same script runs without a prompt — from a file, or from stdin with `-`:
+
+```bash
+jafar-shell script cross.jfrs app.jfr app.hprof 4096
+jafar-shell script - app.jfr app.hprof < cross.jfrs
+```
+
+Results go to stdout and errors to stderr. As in `jfr-shell script`, the banner, the `Opening
+...`/`Session 1 opened` lines and the `Set x = ...` confirmations are left out, and the interactive
+history is not touched. `JFR_SHELL_VERBOSE=1` (or `-Djfr.shell.verbose=true`) brings the
+confirmations back, in either shell's script mode. The exit status is 1 if any line failed; `--continue-on-error` runs the
+remaining lines after a failure.
+
+**A JFR-only script behaves differently here.** `jafar-shell script f.jfrs ...` used to be handed
+to jfr-shell's command line; it now runs in the unified shell. The data a query returns is the
+same, but running the shipped examples both ways shows what changes:
+
+- Tables are drawn without the box and end with `(N rows)`; `info` prints its own layout.
+- String values in result tables print as the parser's wrapper, `{name=G1New}` or
+  `{string=java/lang/Object}`, where jfr-shell prints `G1New`.
+- The other rows of the table below: `show ${var} | ...` and `true`/`false`.
+
+To keep jfr-shell's behaviour, run the script with `jfr-shell script` (the `jfr-shell` jbang alias,
+or `java -cp jafar-shell-<version>-all.jar io.jafar.shell.Main script ...`). `-b/--backend` on
+`jafar-shell script` picks the backend for recordings but keeps the script in this shell. Scripts
+with the shebang line `#!/usr/bin/env -S jbang jfr-shell@btraceio script -` are not affected: the
+`jfr-shell` jbang alias launches jfr-shell's own entry point (`io.jafar.shell.Main`), not this one.
+
+Where the two shells differ:
+
+| | `jfr-shell` | `jafar-shell` |
+|---|---|---|
+| Query variables | JfrPath; `count()`/`sum()` results are stored as scalars at once, `toMap()` as a map | any session's language; always lazy. `${n}` still reads a count's value; a query ending in `toMap()` is read as its map (`${v.size}` counts entries, `${v.key}` reads one), decided from the query, so a one-row result of any other query, such as `top(1)`, still has `.size` 1; `merge()` takes a variable whose rows are one map |
+| `show ${var}` | `show ${var} \| <pipeline>` re-pipes a JfrPath variable's rows | `show ${var}` alone prints the variable's rows; piping a variable is not supported |
+| Running scripts | `script <path>`, `script run <name>`, `script list`, `jfr-shell script <file\|-> [args]` | `script <path> [args]` at the prompt, and `jafar-shell script <file\|-> [args] [--continue-on-error] [-b <backend>]` on the command line — both in this shell, so a script can open every format. On the command line it is quiet like jfr-shell's, errors go to stderr, and the exit status is 1 on failure; `-b` picks the backend for recordings, as in jfr-shell |
+| `$1` in an interactive `script` | the current session's recording is prepended as `$1` | arguments are exactly what you typed |
+| JFR commands | `metadata`, `chunks`, `chunk`, `constants`/`cp`, `backend` | the same commands (jfr-shell's implementations) on a recording; `metadata/...`, `chunks \| ...` and `show metadata` remain queries |
+| [`record`](#recording-commands) | saves to `~/.jfr-shell/recordings/`; records each typed line except `record`, `help`, `exit`/`quit` and `script ...` (nor the lines the script runs, so a replay skips it) | the same command, any format; saves to `~/.jafar-shell/recordings/`, header `# Jafar Shell Recording`; records the same lines but keeps `script ...`, so a replay runs that script again |
+| A failing line | stops the script (unless `--continue-on-error`), is listed, and makes `script` exit 1 | the same, at the prompt and on the command line |
+| Booleans and quotes | `set b = true` is not a boolean literal; strings use `"..."` | `true`/`false` are booleans; `'...'` quotes too |
+
+The JFR commands `metadata`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in both shells
+(in `jafar-shell` they need the current session to be a recording), so the example scripts below run
+in either. `metadata/...`, `chunks[...]`, and a line with a pipeline or `--limit`
+(`chunks --format json | count()`, `chunks --limit 1`) remain queries; `cp <type> | crossref()` is the
+command.
+`session <id>` is an alias for `use <id>` in both shells.
+
+`llm.*` settings follow the same scoping as other variables in both shells: set while a session is
+open, they belong to that session (and go when it closes); `set --global llm.backend = ollama`
+keeps one for the whole shell.
 
 ## Script File Format
 
@@ -151,7 +253,7 @@ jfr-shell script script.jfrs /tmp/app.jfr 2048
 
 ## Variables
 
-JFR Shell supports variables for storing and reusing values in your analysis. Variables can hold scalar values (strings, numbers) or lazily-evaluated query results.
+Both shells support variables for storing and reusing values in your analysis. Variables can hold scalar values (strings, numbers), maps, or lazily-evaluated query results.
 
 ### Variable Types
 
@@ -162,7 +264,7 @@ set filename = "/tmp/output.txt"
 set limit = 20
 ```
 
-**Lazy Query Variables** store JfrPath queries that are evaluated on-demand:
+**Lazy Query Variables** store queries that are evaluated on-demand — JfrPath here, or in `jafar-shell` whatever language the current session speaks (`set big = objects[shallow > 1000]` on a heap dump):
 ```bash
 set fileReads = events/jdk.FileRead
 set threadStats = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
@@ -182,7 +284,9 @@ Maps use JSON-like syntax and support strings, numbers, booleans, null, and nest
 
 ### Variable Scopes
 
-Variables can be session-scoped (default) or global:
+Variables can be session-scoped (default) or global. With no session open, `set` writes the global
+scope. A name is looked up in the current session first, then globally; `unset` removes from the
+scope `set` would write and, if the name is not there, from the other one.
 
 ```bash
 # Session-scoped (cleared when session closes)
@@ -255,7 +359,7 @@ ${varname[0]}
 # Access field from array element
 ${varname[0].fieldname}
 
-# Size property (works for lazy results and maps)
+# Size property: row count for a query, entry count for a map or a toMap() query
 ${varname.size}
 ```
 
@@ -451,17 +555,42 @@ if ${filename} contains ".jfr" and ${size} > 1000
 # Check if a variable exists
 if exists(myvar)
 
-# Check if a variable is empty (doesn't exist, null, or empty string/result)
+# Check if a variable is empty (doesn't exist, null, empty string, map with no entries,
+# or query result with no rows)
 if empty(results)
+
+# References: the same shapes ${...} accepts
+if exists(config.db.host)       # the field resolves to a non-null value
+if empty(config.db.user)        # missing, null, "", {} or [] all count as empty
+if !empty(results.thread.name)  # query results: field of the first row
+if exists(results[2].thread)    # field of row 2 (0-based); a missing row does not exist
+
+# LLM settings are names, including hyphenated ones
+if empty(llm.base-url)
+  echo "llm.base-url is not set"
+endif
 
 # Negation
 if !exists(optionalVar)
 if !empty(data)
 ```
 
+An argument to `exists()` and `empty()` resolves exactly as the same reference does in `${...}`:
+
+- `name.field.path` reads a map field or the first row of a query result; `name[idx].field` reads
+  row `idx`; `name[idx]` alone is the first value of that row, as `${name[idx]}` is.
+- `name.size` is the entry or row count, so it exists and is never empty.
+- A path on a plain value is ignored, as in `${...}`: after `set n = events/jdk.ExecutionSample |
+  count`, `${n.count}` is the count and `empty(n.count)` tests that count.
+- An `llm.*` setting name (case-insensitive, hyphens allowed) checks that setting and is never split
+  into a variable plus a field; an unset setting does not exist.
+- A malformed reference such as `config..db`, `results[x]` or `a-b` is an error rather than silently
+  empty.
+
 ### Interactive Mode
 
-In interactive mode, the prompt changes to show nesting depth:
+In interactive mode, the prompt changes to show nesting depth (in both shells), and `exit` warns
+about blocks left open:
 
 ```
 jfr> if ${count} > 0
@@ -552,6 +681,10 @@ else
 endif
 ```
 
+An `elif` condition is evaluated only when its branch could still be taken: after a branch has
+run, or inside a block that is being skipped, it is not evaluated at all — so it cannot report an
+error or run a lazy query for a branch that will not execute.
+
 ### Nesting
 
 Conditionals can be nested to arbitrary depth:
@@ -573,6 +706,53 @@ endif
 ```
 
 ### Error Handling
+
+#### Conditions That Cannot Be Evaluated
+
+A condition that fails to evaluate — a parse error, an undefined variable, a wrong number of
+function arguments, division by zero, a missing condition — is an error, not a `false`. **No branch
+of that if-block runs**: not the failing branch, and not any later `elif` or `else`, because taking
+one would mean guessing what the condition would have said. The block is still open, and its
+`endif` closes it. To branch on whether a variable is set, use `exists(name)` rather than letting
+`${name}` fail.
+
+In a script this is a command error like any other, in both shells:
+
+- by default the script stops at that line and exits with a non-zero status;
+- with `--continue-on-error` the script resumes after the block's `endif` and the error is counted
+  in the final report (the script still exits non-zero).
+
+```
+if empty(cfg..db)
+  echo EMPTY
+else
+  echo SET
+endif
+```
+
+```
+Script completed with errors:
+Line 1: Condition evaluation failed: Invalid variable reference: cfg..db; skipping every branch of this if-block
+  Command: if empty(cfg..db)
+```
+
+Neither `EMPTY` nor `SET` is printed. Interactively the error is printed, the prompt shows the
+block as open (`...(1)>`), its commands are skipped, and `endif` closes it. The jfr-shell TUI shows
+the same in the title of the command input: `Command ...(1, skipping until endif) >`.
+
+An `elif` condition is evaluated only when every earlier branch was false, and a condition inside
+a block that is already being skipped is not evaluated at all, so neither can fail there. A
+*missing* condition (`if` or `elif` alone) is a syntax error and is reported either way.
+
+#### Blocks Left Open by a Script
+
+Each script runs with its own `if` blocks, so whether it ends normally or stops early at an error,
+the blocks it opened are closed when it returns: running a script from the interactive shell never
+leaves the shell inside one of the script's blocks, and a block you opened before running it stays
+open. A script that runs to its end with an `if` still open is reported, and exits non-zero:
+`jfr-shell` adds an error `N if-block(s) not closed with endif by end of script` against the last
+line; `jafar-shell` prints `<script> left N if-block(s) open; closed them` (it also prints this
+after a script that stopped early at an error inside a block, alongside that error).
 
 #### Unclosed Conditionals
 
@@ -597,6 +777,9 @@ else           # Error: else without if
 # Error: endif without if
 endif          # Error: endif without if
 ```
+
+These are command errors like a failed condition: a script stops at them (or, with
+`--continue-on-error`, counts them) and exits non-zero.
 
 ## Executing Scripts
 
@@ -638,6 +821,12 @@ Run a script by specifying the full path:
 jfr> script /path/to/script.jfrs arg1 arg2 arg3
 ```
 
+In `jafar-shell` this is the form there is (`script list` and `script run` are `jfr-shell`'s):
+
+```bash
+jafar> script /path/to/cross.jfrs app.jfr app.hprof
+```
+
 ### From Command Line
 
 Execute scripts directly from the command line:
@@ -645,6 +834,9 @@ Execute scripts directly from the command line:
 ```bash
 # Run by path
 jfr-shell script /path/to/script.jfrs arg1 arg2 arg3
+
+# In jafar-shell: same arguments and --continue-on-error; the script may open any format
+jafar-shell script /path/to/cross.jfrs app.jfr app.hprof
 
 # From stdin
 jfr-shell script - /tmp/app.jfr <<'EOF'
@@ -657,9 +849,12 @@ EOF
 jfr-shell script - /tmp/app.jfr < analysis.jfrs
 ```
 
+`jafar-shell script` takes the same arguments and runs the script in the unified shell, where it
+can open heap dumps and profiles too — see [In jafar-shell](#in-jafar-shell).
+
 ### Error Handling
 
-By default, script execution stops on the first error (fail-fast mode). Use `--continue-on-error` to execute all commands:
+By default, script execution stops on the first error (fail-fast mode). A line fails when it is not a command, when it throws, or when the shell reports an error for it — a query that does not parse, `No session open`, a file that is not there, or an `ask`/`as-query`/`explain` that ran nothing (no backend, no query in the reply, nothing to explain). Use `--continue-on-error` to execute all commands:
 
 ```bash
 # Stop on first error (default)
@@ -684,7 +879,9 @@ Executed 21/25 commands successfully.
 
 ## Recording Commands
 
-JFR Shell can record your interactive commands into an executable script file. This is perfect for:
+JFR Shell can record your interactive commands into an executable script file (`jafar-shell` has the same
+`record` command, for every format, saving to `~/.jafar-shell/recordings/` and replayed with
+`jafar-shell script <file>`). This is perfect for:
 
 - **Capturing ad-hoc analysis** - Record exploratory analysis for later reuse
 - **Creating templates** - Build script templates by example
@@ -722,7 +919,10 @@ jfr> record stop
 Recording stopped: /tmp/my-analysis.jfrs
 ```
 
-Recording also auto-saves when you exit the shell.
+Recording also auto-saves when you exit the shell. `jafar-shell` has the same three commands, saves
+to `~/.jafar-shell/recordings/` by default, and records lines typed at its prompt whatever the
+session type — see [In jafar-shell](#in-jafar-shell)
+for which lines each shell leaves out.
 
 ### Recorded Script Format
 
@@ -744,6 +944,17 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # Recording stopped: 2025-12-26T14:32:10Z
 ```
+
+A `set` or `let` of `llm.api-key` is recorded without its value, as a comment —
+`# set --global llm.api-key = <redacted: not recorded>` — so the file holds no key and a replay uses
+whatever key the person replaying it has configured. The line is kept out of the shell's history
+too (`~/.jfr-shell/history`, `~/.jafar-shell/history`, also used by `--tui`), so the up arrow does
+not bring it back; a key line saved there by an earlier version is removed the next time the shell
+starts. The shells do not print it back either: `set`'s confirmation, `vars` and `vars --info` show
+`<hidden, ends in "TAIL">` (the last four characters, for a value of 16 or more) or `<hidden>`, and
+the TUI shows `set llm.api-key = <hidden>` in its tab names and echo. What you type is still visible
+while you type it, so for a key you use often prefer `~/.config/jafar/llm.properties` or the
+provider's environment variable.
 
 You can execute this script directly:
 
@@ -786,6 +997,12 @@ Add this line at the top of your script:
 ```
 
 This tells the shell to execute the script using JBang's jfr-shell distribution.
+
+Run as `./analyze.jfrs /tmp/app.jfr`, the kernel executes `jbang jfr-shell@btraceio script -
+./analyze.jfrs /tmp/app.jfr`. When the path is `-` and the first argument is a file whose first line
+starts with `#!`, `script` runs that file and passes the arguments after it as `$1`, `$2`, ... —
+so `$1` is `/tmp/app.jfr`, and stdin is not read. `jafar-shell script` does the same, so
+`#!/usr/bin/env -S jbang jafar-shell@btraceio script -` gives a script that can open any format.
 
 ### Making Scripts Executable
 
@@ -873,9 +1090,9 @@ Detailed thread analysis including execution samples, allocations, contention, a
 
 open $1
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top($2, by=count)
-events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName) | top($2, by=sum(allocated))
+events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName, agg=sum, value=allocated) | top($2, by=value)
 events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top($2, by=count)
-events/jdk.ThreadSleep | groupBy(thread/javaName) | top($2, by=sum(time))
+events/jdk.ThreadSleep | groupBy(thread/javaName, agg=sum, value=time) | top($2, by=value)
 close
 ```
 
@@ -896,7 +1113,7 @@ open $1
 events/jdk.GarbageCollection | stats(duration)
 events/jdk.GarbageCollection | groupBy(name) | top(10, by=count)
 events/jdk.GCHeapSummary | stats(heapUsed)
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
 close
 ```
@@ -949,7 +1166,7 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 events/jdk.ExecutionSample | groupBy(stackTrace) | top(10, by=count)
 
 # Memory Analysis
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 
 # Cleanup
 close

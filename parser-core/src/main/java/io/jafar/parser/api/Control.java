@@ -100,7 +100,31 @@ public interface Control {
     long position();
   }
 
-  /** Immediately abort the curent processing */
+  /**
+   * Stops the current parse - the whole recording, not only the chunk being processed.
+   *
+   * <p>Chunks are parsed in parallel, one task per chunk on a pool of {@code
+   * max(availableProcessors - 2, 1)} threads, so "stop" has to be stated per thread. For the {@code
+   * run()} during which it is called:
+   *
+   * <ul>
+   *   <li><b>The calling thread</b> invokes no further handler once {@code abort()} returns: not
+   *       the remaining handlers registered for the same event, and no handler for a later event,
+   *       in this chunk or any other chunk this thread goes on to pick up.
+   *   <li><b>Any other thread</b> already dispatching an event when the abort lands may still
+   *       deliver that one event - to some or all of its handlers - and then delivers nothing
+   *       further. A handler can therefore be called after another handler has aborted, at most
+   *       once per other parsing thread; a handler that needs an exact count should keep and check
+   *       its own.
+   *   <li><b>Chunks that have not started</b> are skipped, and a chunk still reading its metadata
+   *       or constant pools stops at its next metadata or checkpoint callback. Parser listeners
+   *       still receive {@code onChunkEnd} for every chunk (with {@code skipped = true} for those
+   *       cut short or skipped), and {@code onRecordingEnd}.
+   *   <li>No exception is thrown; {@code run()} returns normally.
+   *   <li>The abort belongs to that run. A later {@code run()} on the same parser starts afresh and
+   *       delivers every event again.
+   * </ul>
+   */
   void abort();
 
   /**

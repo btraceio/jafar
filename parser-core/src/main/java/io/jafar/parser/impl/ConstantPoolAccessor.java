@@ -53,6 +53,16 @@ public final class ConstantPoolAccessor implements ComplexType {
     return pool.getAsMap(pointer);
   }
 
+  /**
+   * Mirrors the condition under which {@link MutableConstantPool#getAsMap(long)} builds a
+   * single-entry wrapper map, so the two cannot disagree about what a wrapper is.
+   */
+  @Override
+  public boolean isSimpleType() {
+    MetadataClass type = context.getMetadataLookup().getClass(typeId);
+    return type != null && type.isSimpleType() && type.getFields().size() == 1;
+  }
+
   @Override
   public String toString() {
     return Objects.toString(getValue());

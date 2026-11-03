@@ -5,8 +5,6 @@ import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Represents a checkpoint event in JFR recordings.
@@ -15,7 +13,6 @@ import org.slf4j.LoggerFactory;
  * about constant pools and other metadata that may be referenced by subsequent events.
  */
 public final class CheckpointEvent extends AbstractEvent {
-  private static final Logger log = LoggerFactory.getLogger(CheckpointEvent.class);
 
   /** The start time of the checkpoint in nanoseconds. */
   public final long startTime;
@@ -31,6 +28,12 @@ public final class CheckpointEvent extends AbstractEvent {
 
   private final RecordingStream stream;
 
+  /** Offset of this checkpoint event in the chunk; its size field is the first thing there. */
+  private final long start;
+
+  /** Size of this checkpoint event in bytes, including the size field itself. */
+  private final int size;
+
   /**
    * Constructs a new CheckpointEvent from the recording stream.
    *
@@ -40,7 +43,8 @@ public final class CheckpointEvent extends AbstractEvent {
   CheckpointEvent(RecordingStream stream) throws IOException {
     super(stream);
     this.stream = stream;
-    int size = (int) stream.readVarint();
+    this.start = stream.position();
+    this.size = (int) stream.readVarint();
     if (size == 0) {
       throw new IOException("Unexpected event size. Should be > 0");
     }
@@ -60,7 +64,8 @@ public final class CheckpointEvent extends AbstractEvent {
    * <p>This method processes all constant pool entries associated with this checkpoint, applying
    * type filtering and value processing as configured in the parser context.
    *
-   * @throws IOException if an I/O error occurs during reading
+   * @throws IOException if an I/O error occurs during reading, or if the constant pools do not end
+   *     exactly where the checkpoint event's size says the event ends
    */
   void readConstantPools() throws IOException {
     ParserContext context = stream.getContext();
@@ -82,10 +87,15 @@ public final class CheckpointEvent extends AbstractEvent {
       try {
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
         if (clz == null) {
-          log.warn(
-              "Unknown type ID {} in constant pool; remaining CP entries in this checkpoint are abandoned",
-              typeId);
-          return;
+          // Without the type its entries cannot be skipped, so - as for an entry that cannot be
+          // skipped - the rest of this checkpoint cannot be located. Abandoning it with a warning
+          // left non-string references into it resolving to null (Verification.md R3).
+          throw new IOException(
+              "Constant pool of type "
+                  + typeId
+                  + " ("
+                  + count
+                  + " entries): the type is not declared in the chunk metadata");
         }
         boolean skip = skipAll || (typeFilter != null && !typeFilter.test(clz));
 
@@ -99,11 +109,34 @@ public final class CheckpointEvent extends AbstractEvent {
           if (!skip && !constantPool.containsKey(id)) {
             constantPool.addOffset(id, stream.position());
           }
-          clz.skipDirect(stream);
+          try {
+            clz.skipDirect(stream);
+          } catch (IOException e) {
+            // Entries are not length-prefixed: past an entry that cannot be skipped, the offsets of
+            // the rest of this checkpoint cannot be known, so the chunk cannot be read reliably.
+            throw new IOException(
+                "Constant pool " + clz.getName() + ", index " + id + ": " + e.getMessage(), e);
+          }
         }
       } catch (IOException e) {
         throw e;
       }
+    }
+    // Entries are not length-prefixed, so a wrong length inside one (a corrupted string length
+    // varint, say) still skips without error and indexes every later entry at the wrong offset.
+    // The checkpoint's size is the only check that catches it. The JDK's ChunkParser fails here
+    // too ("Size of check point event doesn't match content").
+    long end = start + size;
+    if (stream.position() != end) {
+      throw new IOException(
+          "Checkpoint at "
+              + start
+              + ": constant pools end at "
+              + stream.position()
+              + ", but the event size "
+              + size
+              + " says it ends at "
+              + end);
     }
   }
 }

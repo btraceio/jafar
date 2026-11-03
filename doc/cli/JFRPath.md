@@ -1090,11 +1090,29 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
-Constant pool ids are local to a chunk, so every number is computed per chunk and summed. In
-the per-event-type table, `events` counts events that reference the type directly or through
-other constant pool entries. `unique<Type>` counts the distinct entries they reach, so an id that
-appears in two chunks counts twice. `directRefs` counts direct references, including repeats.
-This is available in `jfr-shell`; the unified `jafar-shell` does not support `crossref()` yet.
+`crossref()` yields one row:
+
+| column | meaning |
+|---|---|
+| `type` | the constant pool type |
+| `total` | its entries (an entry is one id in one chunk) |
+| `referenced` / `unreferenced` | entries some event reaches, directly or through other pool entries, and the rest |
+| `referencedPercent` / `unreferencedPercent` | the same as percentages of `total` |
+| `referencingEventTypes` | per event type that reaches the type, most events first: `eventType`, `events` (events that reach it), `uniqueRefs` (distinct entries they reach), `directRefs` (direct references) |
+
+Tables show `referencingEventTypes` as `<N items>`; `--format json` and variables (`set x =
+constants/<type> | crossref()`) carry the whole list, and the row chains like any other (`| select(type,
+referenced)`). It must directly follow a bare `constants/<type>`: after a filter, a projection or
+another operator, or on another root, it is an error. `cp <type> | crossref()` runs the same query.
+
+`crossref()` decodes every event and every constant pool entry in the recording. If any of them
+cannot be decoded, the command fails with an error naming the event type or pool entry, the chunk
+and the position, and prints no counts: figures from a partial read would be wrong.
+
+Constant pool ids are local to a chunk, so every constants query counts per chunk: an entry is one
+id in one chunk. `constants --summary` and `crossref()` report the sum of the chunks' figures, and
+`constants/<type>` lists each chunk's entries in chunk order, so a recording made of several chunks
+can list the same id more than once; those rows are different entries.
 
 ## Operator Chaining
 

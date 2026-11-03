@@ -2,6 +2,7 @@ package jfr
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -11,27 +12,116 @@ const maxValueDepth = 64
 
 // Array is the value of a JFR array field.
 //
-// Elements carry the same Go types as scalar fields of the element type: array
-// elements that are constant pool references are *Ref, inline complex elements
-// are map[string]any.
+// Elems holds the elements in a slice whose Go type depends on the element
+// type, so that numeric elements are stored unboxed and decoding them
+// allocates nothing per element:
+//
+//	ElementType     Elems
+//	int, long       []int64   (int sign extended from 32 bits;
+//	                           @Timestamp/@Timespan(TICKS) in nanoseconds)
+//	float           []float32
+//	double          []float64
+//	short           []int16
+//	char            []uint16
+//	anything else   []any     (each element has the Go type of a scalar
+//	                           field of the element type)
+//
+// Array elements that are constant pool references are *Ref and inline complex
+// elements are map[string]any, in an []any whatever their type. Switch on the
+// type of Elems to read the elements in bulk; Len and At work on any array.
 type Array struct {
 	// ElementType is the JFR type name of the elements.
 	ElementType string
-	// Values holds the decoded elements.
-	Values []any
+	// Elems is the slice of elements; see the table above for its type.
+	Elems any
+}
+
+// arrayKind is where the decoder stores the elements of an array field.
+type arrayKind uint8
+
+const (
+	arrayValues arrayKind = iota
+	arrayInts
+	arrayFloats
+	arrayDoubles
+	arrayShorts
+	arrayChars
+)
+
+// arrayKindOf returns where the elements of an array field are stored.
+// Constant pool references are always *Ref values, whatever their type.
+func arrayKindOf(f *Field) arrayKind {
+	if f.ConstantPool || f.Type == nil || !f.Type.primitive {
+		return arrayValues
+	}
+	switch f.Type.Name {
+	case "int", "long":
+		return arrayInts
+	case "float":
+		return arrayFloats
+	case "double":
+		return arrayDoubles
+	case "short":
+		return arrayShorts
+	case "char":
+		return arrayChars
+	default:
+		return arrayValues
+	}
 }
 
 // Len returns the number of elements.
-func (a *Array) Len() int { return len(a.Values) }
+func (a *Array) Len() int {
+	switch e := a.Elems.(type) {
+	case []int64:
+		return len(e)
+	case []float32:
+		return len(e)
+	case []float64:
+		return len(e)
+	case []int16:
+		return len(e)
+	case []uint16:
+		return len(e)
+	case []any:
+		return len(e)
+	default:
+		return 0
+	}
+}
+
+// At returns element i as an interface value, carrying the same Go type a
+// scalar field of the element type would. For a numeric slice this boxes the
+// element; switch on Elems and index the slice to avoid that.
+//
+// At panics if i is out of range, like a slice index.
+func (a *Array) At(i int) any {
+	switch e := a.Elems.(type) {
+	case []int64:
+		return e[i]
+	case []float32:
+		return e[i]
+	case []float64:
+		return e[i]
+	case []int16:
+		return e[i]
+	case []uint16:
+		return e[i]
+	case []any:
+		return e[i]
+	default:
+		return []any(nil)[i] // no elements: panics with the usual index message
+	}
+}
 
 func (a *Array) String() string {
 	var sb strings.Builder
 	sb.WriteByte('[')
-	for i, v := range a.Values {
+	for i, n := 0, a.Len(); i < n; i++ {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		fmt.Fprintf(&sb, "%v", v)
+		fmt.Fprintf(&sb, "%v", a.At(i))
 	}
 	sb.WriteByte(']')
 	return sb.String()
@@ -147,13 +237,54 @@ func (c *chunkParser) readField(r *reader, into map[string]any, owner *ClassType
 	if f.Type != nil {
 		elementType = f.Type.Name
 	}
-	arr := c.newArray(elementType, int(n))
-	for i := int64(0); i < n; i++ {
-		v, err := c.readFieldValue(r, owner, f, depth)
-		if err != nil {
-			return err
+	arr := c.newArray(elementType)
+	switch arrayKindOf(f) {
+	case arrayInts:
+		// Elements are stored unboxed; resolve the field's tick
+		// normalisation once for the whole array.
+		ints := sized[int64](arr, int(n))
+		temporal := c.temporalKind(owner, f.Name)
+		isInt := f.Type.Name == "int"
+		for i := range ints {
+			v := r.readVarint()
+			if isInt {
+				// See readPrimitive: truncate to 32 bits, then sign extend.
+				v = int64(int32(v))
+			}
+			ints[i] = c.applyTemporal(temporal, v)
 		}
-		arr.Values[i] = v
+	case arrayFloats:
+		floats := sized[float32](arr, int(n))
+		for i := range floats {
+			floats[i] = r.readFloat32()
+		}
+	case arrayDoubles:
+		doubles := sized[float64](arr, int(n))
+		for i := range doubles {
+			doubles[i] = r.readFloat64()
+		}
+	case arrayShorts:
+		shorts := sized[int16](arr, int(n))
+		for i := range shorts {
+			shorts[i] = int16(r.readVarint())
+		}
+	case arrayChars:
+		chars := sized[uint16](arr, int(n))
+		for i := range chars {
+			chars[i] = uint16(r.readVarint())
+		}
+	default:
+		values := sized[any](arr, int(n))
+		for i := range values {
+			v, err := c.readFieldValue(r, owner, f, depth)
+			if err != nil {
+				return err
+			}
+			values[i] = v
+		}
+	}
+	if r.err != nil {
+		return r.err
 	}
 	into[f.Name] = arr
 	return nil
@@ -172,6 +303,15 @@ func (c *chunkParser) readFieldValue(r *reader, owner *ClassType, f *Field, dept
 				typeID = f.Type.ID
 			}
 			f.pool = c.pools.getOrCreate(typeID)
+		}
+		// Only in a chunk whose checkpoints were not indexed completely: there
+		// a missing entry may be one that was declared and abandoned, so it
+		// cannot be passed off as a dangling reference. The indices writers
+		// use for an absent value stay nil references: 0 (HotSpot) and
+		// math.MinInt64 (the JMC writer, whose TypedValueImpl leaves a null
+		// value's index at Long.MIN_VALUE and writes it as the reference).
+		if c.pools.indexingFailure != nil && idx != 0 && idx != math.MinInt64 && !f.pool.has(idx) {
+			return nil, c.pools.unindexedRef(f.pool, idx)
 		}
 		return c.newRef(f.pool, idx), nil
 	}

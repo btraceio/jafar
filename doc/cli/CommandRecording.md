@@ -48,7 +48,9 @@ jfr> record start
 Recording started: /Users/you/.jfr-shell/recordings/session-20251226143022.jfrs
 ```
 
-By default, recordings go to `~/.jfr-shell/recordings/` with a timestamp filename.
+By default, recordings go to `~/.jfr-shell/recordings/` with a timestamp filename. In `jafar-shell`,
+`record` works the same way for every format, saves to `~/.jafar-shell/recordings/`, and the result
+replays with `jafar-shell script <file>`.
 
 Or specify a custom path:
 
@@ -263,7 +265,7 @@ jfr> info
 jfr> events/jdk.ExecutionSample | count()
 jfr> events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)
 jfr> events/jdk.GarbageCollection | stats(duration)
-jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 jfr> close
 jfr> record stop
 ```
@@ -286,7 +288,7 @@ jfr> record stop
 jfr> record start ~/jfr-scripts/memory-profiling.jfrs
 jfr> open /tmp/sample.jfr
 jfr> events/jdk.ObjectAllocationInNewTLAB | sum(allocationSize)
-jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+jfr> events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 jfr> events/jdk.GarbageCollection | stats(duration)
 jfr> record stop
 
@@ -592,6 +594,12 @@ Recent recordings appear first.
    - **Fix:** Update path in the script
 3. Different JFR event types
    - **Fix:** Use `--continue-on-error` flag
+4. An LLM command fails as unauthorized, or uses another key than when you recorded
+   - **Cause:** `set llm.api-key = ...` is recorded as a comment without its value
+     (`# set llm.api-key = <redacted: not recorded>`), so the replay uses the key configured
+     where it runs
+   - **Fix:** Configure a key in `~/.config/jafar/llm.properties` or the provider's environment
+     variable — see [LLM setup](LlmSetup.md)
 
 ## Next Steps
 

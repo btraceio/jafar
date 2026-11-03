@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Fetches the binary JFR recordings the test suites and benchmarks use.
+# Fetches the real JFR recordings. Optional: the build generates synthetic
+# stand-ins (test-recordings module), and CI tests against those. Run this to
+# test and benchmark against the real ones locally; the generator then leaves
+# them alone.
+#
+# A recording with a .generated marker next to it is a synthetic stand-in and is
+# replaced; its marker is removed once the real file is in place.
 #
 # Every file is checked for the JFR magic number before it is accepted, whether
 # it was just downloaded, already on disk, or restored from a CI cache. A file
@@ -59,7 +65,10 @@ fetch() {
 # Ensures $dest holds a valid recording, downloading it from $url if needed.
 obtain() {
   local name="$1" url="$2" dest="$3" tmp
-  if [ -e "$dest" ]; then
+  if [ -e "$dest.generated" ]; then
+    # Kept until the download succeeds, so a failed download leaves a usable file.
+    echo "Replacing the generated $name with the real recording"
+  elif [ -e "$dest" ]; then
     if is_jfr "$dest"; then
       return 0
     fi
@@ -84,21 +93,25 @@ obtain() {
     return 0
   fi
   mv -f "$tmp" "$dest"
+  rm -f "$dest.generated"
 }
 
-# Copies a valid recording into parser-core's test resources, replacing an
-# invalid copy. A missing or invalid source is already reported by obtain.
+# Copies a real recording into parser-core's test resources, replacing an
+# invalid or generated copy. A missing or invalid source is already reported by
+# obtain.
 copy_valid() {
   local src="$1" dest="$2"
-  if is_jfr "$dest"; then
+  if is_jfr "$dest" && [ ! -e "$dest.generated" ]; then
     return 0
   fi
-  if [ -e "$dest" ]; then
+  if [ -e "$dest" ] && ! is_jfr "$dest"; then
     echo "Removing $dest: not a JFR recording" >&2
     rm -f "$dest"
   fi
-  if is_jfr "$src"; then
+  # Only a real source replaces the copy; a generated one is the generator's to mirror.
+  if is_jfr "$src" && [ ! -e "$src.generated" ]; then
     cp -f "$src" "$dest"
+    rm -f "$dest.generated"
   fi
 }
 
@@ -118,7 +131,7 @@ copy_valid "$JFR_FILE" "$PARSER_RES_DIR/test-dd.jfr"
 
 if [ "${#FAILED[@]}" -gt 0 ]; then
   echo "ERROR: could not obtain: ${FAILED[*]}" >&2
-  echo "Tests and benchmarks that use these recordings will fail or be skipped." >&2
+  echo "The build's generated stand-ins are used for these instead (./gradlew :test-recordings:generateTestRecordings)." >&2
   echo "Use a mirror via JAFAR_TEST_AP_URL / JAFAR_TEST_JFR_URL / JAFAR_TEST_DD_URL." >&2
   exit 1
 fi

@@ -12,14 +12,20 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -33,14 +39,16 @@ public final class JFRSession implements Session {
   private final ParsingContext parsingContext;
   private TypedJafarParser parser;
   private final List<HandlerRegistration<?>> registrations = new ArrayList<>();
-  private final Map<String, Long> eventTypeCounts = new HashMap<>();
-  private final Set<String> metadataTypes = new HashSet<>();
-  private final Set<String> allMetadataTypes = new HashSet<>();
-  private final Set<String> nonPrimitiveMetadataTypes = new HashSet<>();
-  private final Set<String> primitiveMetadataTypes = new HashSet<>();
-  private final Map<String, Long> metadataTypeIds = new HashMap<>();
-  private java.util.List<Integer> cachedChunkIds;
-  private Set<String> cpTypes; // lazily discovered
+  // Replaced whole by scanMetadata(); never mutated after publication.
+  private volatile TypeIndex types = TypeIndex.EMPTY;
+  // Keys are fixed by scanMetadata(); values are incremented from parser threads during run().
+  private volatile ConcurrentHashMap<String, Long> eventTypeCounts = new ConcurrentHashMap<>();
+  private List<Integer> cachedChunkIds; // lazily discovered, guarded by this
+  private Set<String> cpTypes; // lazily discovered, guarded by this
+  // A failed lazy scan, rethrown until refreshTypes(): completion asks on every TAB, and re-reading
+  // a large broken recording up to the failure point each time would stall every keypress.
+  private UncheckedIOException chunkIdsFailure; // guarded by this
+  private UncheckedIOException cpTypesFailure; // guarded by this
   private final AtomicLong totalEvents = new AtomicLong(0);
   private final AtomicInteger handlerCount = new AtomicInteger(0);
   private boolean hasRun = false;
@@ -50,44 +58,62 @@ public final class JFRSession implements Session {
     this.recordingPath = recordingPath;
     this.parsingContext = parsingContext;
     this.parser = parsingContext.newTypedParser(recordingPath);
+    // Populate the available types up front. There is deliberately no second collector on the
+    // typed parser: it would re-read the same metadata from parser threads during run(), racing
+    // with readers, and add nothing this scan has not already found.
+    try {
+      scanMetadata();
+    } catch (IOException | RuntimeException e) {
+      // The caller never receives this instance, so nobody else can close the typed parser.
+      try {
+        parser.close();
+      } catch (Exception closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
+  }
 
-    // Set up metadata collection to discover event types
-    this.parser.withParserListener(
-        new ChunkParserListener() {
-          @Override
-          public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-            // Build index to resolve super types recursively
-            Map<String, MetadataClass> byName = new HashMap<>();
-            for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
-            // Collect event and metadata types when metadata becomes available
-            for (MetadataClass clazz : metadata.getClasses()) {
-              allMetadataTypes.add(clazz.getName());
-              metadataTypeIds.put(clazz.getName(), clazz.getId());
-              if (!clazz.isPrimitive()) {
-                nonPrimitiveMetadataTypes.add(clazz.getName());
-              } else {
-                primitiveMetadataTypes.add(clazz.getName());
-              }
-              if (isEventType(clazz, byName)) {
-                eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
-              }
-              if (isBrowsableMetadataType(clazz)) {
-                metadataTypes.add(clazz.getName());
-              }
-            }
-            return true;
-          }
-        });
+  /**
+   * Types discovered in the recording, merged from every chunk in recording order. Sets keep the
+   * order in which types were first seen. For a name defined by several chunks, {@code
+   * metadataTypeIds} holds the id from the last chunk (type ids are chunk-local), which is what a
+   * sequential parse overwriting one map would return.
+   */
+  private record TypeIndex(
+      Set<String> eventTypes,
+      Set<String> metadataTypes,
+      Set<String> allMetadataTypes,
+      Set<String> nonPrimitiveMetadataTypes,
+      Set<String> primitiveMetadataTypes,
+      Map<String, Long> metadataTypeIds) {
 
-    // Do a quick metadata-only scan to populate available types immediately
-    scanMetadata();
+    static final TypeIndex EMPTY =
+        new TypeIndex(Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Map.of());
+  }
+
+  /** What one chunk's metadata contributes; only that chunk's parser thread touches it. */
+  private static final class ChunkTypes {
+    final Set<String> eventTypes = new LinkedHashSet<>();
+    final Set<String> metadataTypes = new LinkedHashSet<>();
+    final Set<String> allMetadataTypes = new LinkedHashSet<>();
+    final Set<String> nonPrimitiveMetadataTypes = new LinkedHashSet<>();
+    final Set<String> primitiveMetadataTypes = new LinkedHashSet<>();
+    final Map<String, Long> metadataTypeIds = new LinkedHashMap<>();
   }
 
   /**
    * Scan the recording file to collect metadata and populate available event types. Uses
-   * StreamingChunkParser directly to efficiently get metadata and abort immediately.
+   * StreamingChunkParser directly and skips each chunk's events once its metadata is read.
+   *
+   * <p>{@code StreamingChunkParser} parses chunks on a thread pool, so {@code onMetadata} runs
+   * concurrently for different chunks. Each chunk collects into its own {@link ChunkTypes}, and the
+   * chunks are merged in recording order after {@code parse} returns.
+   *
+   * @throws IOException if the recording cannot be parsed
    */
   private void scanMetadata() throws IOException {
+    ConcurrentSkipListMap<Integer, ChunkTypes> byChunk = new ConcurrentSkipListMap<>();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -95,42 +121,71 @@ public final class JFRSession implements Session {
           new ChunkParserListener() {
             @Override
             public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+              ChunkTypes out =
+                  byChunk.computeIfAbsent(context.getChunkIndex(), k -> new ChunkTypes());
               Map<String, MetadataClass> byName = new HashMap<>();
               for (MetadataClass mc : metadata.getClasses()) byName.put(mc.getName(), mc);
               for (MetadataClass clazz : metadata.getClasses()) {
-                allMetadataTypes.add(clazz.getName());
-                metadataTypeIds.put(clazz.getName(), clazz.getId());
+                out.allMetadataTypes.add(clazz.getName());
+                out.metadataTypeIds.put(clazz.getName(), clazz.getId());
                 if (!clazz.isPrimitive()) {
-                  nonPrimitiveMetadataTypes.add(clazz.getName());
+                  out.nonPrimitiveMetadataTypes.add(clazz.getName());
                 } else {
-                  primitiveMetadataTypes.add(clazz.getName());
+                  out.primitiveMetadataTypes.add(clazz.getName());
                 }
-                if (isEventType(clazz, byName)) {
-                  eventTypeCounts.putIfAbsent(clazz.getName(), 0L);
+                if (clazz.getName() != null && isEventType(clazz, byName)) {
+                  out.eventTypes.add(clazz.getName());
                 }
                 if (isBrowsableMetadataType(clazz)) {
-                  metadataTypes.add(clazz.getName());
+                  out.metadataTypes.add(clazz.getName());
                 }
               }
-              // Return false to abort parsing immediately after metadata is collected
+              // Skip this chunk's events; metadata is all this scan needs.
               return false;
             }
           });
+    } catch (IOException e) {
+      throw e;
     } catch (Exception e) {
-      // If metadata scanning fails, just continue without types - they'll be available after run()
-      System.err.println("Warning: Failed to scan metadata: " + recordingPath);
-      e.printStackTrace();
+      // StreamingChunkParser.close() declares Exception
+      throw new IOException("Failed to scan metadata of " + recordingPath, e);
     }
+
+    // parse() has joined every chunk task, so the per-chunk collections are safely published.
+    ChunkTypes merged = new ChunkTypes();
+    for (ChunkTypes chunk : byChunk.values()) { // ascending chunk index
+      merged.eventTypes.addAll(chunk.eventTypes);
+      merged.metadataTypes.addAll(chunk.metadataTypes);
+      merged.allMetadataTypes.addAll(chunk.allMetadataTypes);
+      merged.nonPrimitiveMetadataTypes.addAll(chunk.nonPrimitiveMetadataTypes);
+      merged.primitiveMetadataTypes.addAll(chunk.primitiveMetadataTypes);
+      merged.metadataTypeIds.putAll(chunk.metadataTypeIds);
+    }
+    ConcurrentHashMap<String, Long> counts = new ConcurrentHashMap<>();
+    for (String t : merged.eventTypes) counts.put(t, 0L);
+    types =
+        new TypeIndex(
+            Collections.unmodifiableSet(merged.eventTypes),
+            Collections.unmodifiableSet(merged.metadataTypes),
+            Collections.unmodifiableSet(merged.allMetadataTypes),
+            Collections.unmodifiableSet(merged.nonPrimitiveMetadataTypes),
+            Collections.unmodifiableSet(merged.primitiveMetadataTypes),
+            Collections.unmodifiableMap(merged.metadataTypeIds));
+    eventTypeCounts = counts;
   }
 
-  /** Refresh discovered event types by rescanning metadata. */
+  /**
+   * Refresh discovered event types by rescanning metadata. Also drops the lazily discovered chunk
+   * ids and constant-pool types, and any failure recorded while discovering them, so the next call
+   * rescans them.
+   *
+   * @throws IOException if the recording cannot be parsed; the previous types are kept
+   */
   public synchronized void refreshTypes() throws IOException {
-    eventTypeCounts.clear();
-    metadataTypes.clear();
-    allMetadataTypes.clear();
-    nonPrimitiveMetadataTypes.clear();
-    primitiveMetadataTypes.clear();
     cachedChunkIds = null;
+    cpTypes = null;
+    chunkIdsFailure = null;
+    cpTypesFailure = null;
     scanMetadata();
   }
 
@@ -147,18 +202,16 @@ public final class JFRSession implements Session {
       throw new IllegalStateException("Cannot register handlers after run() has been called");
     }
 
+    final String counted = countedTypeOf(eventClass);
+
     // Wrap handler to count events
     JFRHandler<T> countingHandler =
         (event, ctl) -> {
           totalEvents.incrementAndGet();
-          String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
-          // Try to find the actual JFR type name
-          for (String key : eventTypeCounts.keySet()) {
-            if (key.toLowerCase().contains(typeName)
-                || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
-              eventTypeCounts.merge(key, 1L, Long::sum);
-              break;
-            }
+          if (counted != null) {
+            // Called from parser threads, one per chunk: computeIfPresent on a ConcurrentHashMap
+            // is atomic. Read the field each time: refreshTypes() may have replaced the map.
+            eventTypeCounts.computeIfPresent(counted, (k, v) -> v + 1);
           }
           handler.handle(event, ctl);
         };
@@ -167,6 +220,30 @@ public final class JFRSession implements Session {
     registrations.add(registration);
     handlerCount.incrementAndGet();
     return registration;
+  }
+
+  /**
+   * The JFR event type that events of {@code eventClass} are counted under, or {@code null}. The
+   * class's {@code @JfrType} name wins when the recording has that type; otherwise the first type,
+   * in recording order, whose name loosely matches the class's simple name. Iterating the recording
+   * order (not a hash order) keeps an ambiguous match, such as {@code JFRExecutionSample} against
+   * both {@code jdk.ExecutionSample} and {@code datadog.ExecutionSample}, the same on every run.
+   */
+  private String countedTypeOf(Class<?> eventClass) {
+    Set<String> eventTypes = types.eventTypes();
+    io.jafar.parser.api.JfrType declared =
+        eventClass.getAnnotation(io.jafar.parser.api.JfrType.class);
+    if (declared != null && eventTypes.contains(declared.value())) {
+      return declared.value();
+    }
+    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
+    for (String key : eventTypes) {
+      if (key.toLowerCase().contains(typeName)
+          || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
+        return key;
+      }
+    }
+    return null;
   }
 
   /**
@@ -193,38 +270,48 @@ public final class JFRSession implements Session {
    * @return set of type names
    */
   public Set<String> getAvailableTypes() {
-    return eventTypeCounts.keySet();
+    return types.eventTypes();
   }
 
   /** Get available metadata (non-event) types discovered in this recording. */
   public Set<String> getAvailableMetadataTypes() {
-    return Collections.unmodifiableSet(metadataTypes);
+    return types.metadataTypes();
   }
 
   /** Get all metadata classes (events and non-events). */
   public Set<String> getAllMetadataTypes() {
-    return Collections.unmodifiableSet(allMetadataTypes);
+    return types.allMetadataTypes();
   }
 
   /** Get all non-primitive metadata class names. */
   public Set<String> getNonPrimitiveMetadataTypes() {
-    return Collections.unmodifiableSet(nonPrimitiveMetadataTypes);
+    return types.nonPrimitiveMetadataTypes();
   }
 
   /** Get all primitive metadata class names. */
   public Set<String> getPrimitiveMetadataTypes() {
-    return Collections.unmodifiableSet(primitiveMetadataTypes);
+    return types.primitiveMetadataTypes();
   }
 
-  /** Get map of metadata type names to their type IDs. */
+  /**
+   * Get map of metadata type names to their type IDs. Type ids are chunk-local; for a name defined
+   * by several chunks this is the id from the last chunk in recording order.
+   */
   public Map<String, Long> getMetadataTypeIds() {
-    return Collections.unmodifiableMap(metadataTypeIds);
+    return types.metadataTypeIds();
   }
 
-  /** Get available chunk ids (indices) discovered by scanning headers). */
-  public synchronized java.util.List<Integer> getAvailableChunkIds() {
+  /**
+   * Get available chunk ids (1-based, in recording order) discovered by reading chunk headers.
+   *
+   * @throws UncheckedIOException if the recording cannot be parsed; the same failure is thrown
+   *     again, without re-reading the file, until {@link #refreshTypes()}
+   */
+  public synchronized List<Integer> getAvailableChunkIds() {
     if (cachedChunkIds != null) return cachedChunkIds;
-    java.util.List<Integer> out = new java.util.ArrayList<>();
+    if (chunkIdsFailure != null) throw chunkIdsFailure;
+    // onChunkStart runs on one pool thread per chunk; the skip-list set orders by index.
+    Set<Integer> ids = new ConcurrentSkipListSet<>();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -235,20 +322,28 @@ public final class JFRSession implements Session {
                 ParserContext context,
                 int chunkIndex,
                 io.jafar.parser.internal_api.ChunkHeader header) {
-              out.add(chunkIndex);
-              return true;
+              ids.add(chunkIndex);
+              return false; // the header is all we need; skip metadata and events
             }
           });
-    } catch (Exception ignore) {
+    } catch (Exception e) {
+      throw chunkIdsFailure = failure("list chunks of", e);
     }
-    cachedChunkIds = java.util.Collections.unmodifiableList(out);
+    cachedChunkIds = List.copyOf(ids);
     return cachedChunkIds;
   }
 
-  /** Get available constant-pool types discovered in this recording (lazy scan). */
+  /**
+   * Get available constant-pool types discovered in this recording (lazy scan).
+   *
+   * @throws UncheckedIOException if the recording cannot be parsed; the same failure is thrown
+   *     again, without re-reading the file, until {@link #refreshTypes()}
+   */
   public synchronized Set<String> getAvailableConstantPoolTypes() {
     if (cpTypes != null) return cpTypes;
-    Set<String> out = new HashSet<>();
+    if (cpTypesFailure != null) throw cpTypesFailure;
+    // onCheckpoint runs concurrently for different chunks: collect per chunk, merge in order.
+    ConcurrentSkipListMap<Integer, Set<String>> byChunk = new ConcurrentSkipListMap<>();
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -262,15 +357,35 @@ public final class JFRSession implements Session {
             @Override
             public boolean onCheckpoint(
                 ParserContext context, io.jafar.parser.internal_api.CheckpointEvent event) {
+              Set<String> out =
+                  byChunk.computeIfAbsent(context.getChunkIndex(), k -> new LinkedHashSet<>());
               context.getConstantPools().pools().forEach(cp -> out.add(cp.getType().getName()));
               return true; // continue to ALL checkpoints to discover all CP types
             }
+
+            @Override
+            public boolean onEvent(
+                ParserContext context,
+                long typeId,
+                long eventStartPos,
+                long rawSize,
+                long payloadSize) {
+              return false; // every checkpoint of this chunk is read; skip its events
+            }
           });
-    } catch (Exception ignore) {
-      // Ignore discovery failures; fall back to empty set
+    } catch (Exception e) {
+      throw cpTypesFailure = failure("discover constant-pool types of", e);
     }
-    cpTypes = out;
+    Set<String> merged = new LinkedHashSet<>();
+    byChunk.values().forEach(merged::addAll); // ascending chunk index
+    cpTypes = Collections.unmodifiableSet(merged);
     return cpTypes;
+  }
+
+  private UncheckedIOException failure(String what, Exception e) {
+    String message = "Failed to " + what + " " + recordingPath;
+    return new UncheckedIOException(
+        message, e instanceof IOException io ? io : new IOException(message, e));
   }
 
   /**

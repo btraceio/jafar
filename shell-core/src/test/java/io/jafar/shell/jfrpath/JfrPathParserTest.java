@@ -6,6 +6,26 @@ import org.junit.jupiter.api.Test;
 
 class JfrPathParserTest {
 
+  /** Was "Unknown pipeline function: crossref" although the evaluator advertised the operator. */
+  @Test
+  void parsesCrossref() {
+    for (String q :
+        new String[] {
+          "constants/jdk.types.StackTrace | crossref()",
+          "constants/jdk.types.StackTrace|CrossRef()",
+          "constants/jdk.types.StackTrace | crossref"
+        }) {
+      JfrPath.Query query = JfrPathParser.parse(q);
+      assertEquals(JfrPath.Root.CONSTANTS, query.root, q);
+      assertEquals(java.util.List.of("jdk.types.StackTrace"), query.segments, q);
+      assertEquals(1, query.pipeline.size(), q);
+      assertInstanceOf(JfrPath.CrossrefOp.class, query.pipeline.get(0), q);
+    }
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JfrPathParser.parse("constants/jdk.types.StackTrace | crossref(x)"));
+  }
+
   @Test
   void parsesRootSegmentsAndSimpleFilter() {
     var q = JfrPathParser.parse("events/jdk.ExecutionSample[thread/name~\"main\"]");

@@ -950,6 +950,13 @@ public final class JfrPathParser {
       return parseFlameGraph();
     } else if ("asdatetime".equals(name)) {
       return parseAsDateTime(valuePath);
+    } else if ("crossref".equals(name)) {
+      if (peek() == '(') {
+        pos++;
+        skipWs();
+        expect(')');
+      }
+      return new JfrPath.CrossrefOp();
     } else {
       throw error("Unknown pipeline function: " + name);
     }

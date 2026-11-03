@@ -63,6 +63,13 @@ public final class MetadataClass extends AbstractMetadataElement {
   /** Cached simple type flag. */
   private Boolean isSimpleType;
 
+  /**
+   * Tick-normalization kinds by field name, computed by {@code TemporalNormalizer} on first use.
+   * Held by the instance because instances are per chunk: {@link #equals} ignores annotations and
+   * field names, so a table cached under it would carry one chunk's decision into another.
+   */
+  private volatile Map<String, Integer> temporalKinds;
+
   /** Raw simple type string value. */
   private String simpleTypeVal;
 
@@ -214,6 +221,24 @@ public final class MetadataClass extends AbstractMetadataElement {
    *
    * @return true if this is a simple type, false otherwise
    */
+  /**
+   * Returns this class's tick-normalization kinds by field name, computing them once with {@code
+   * compute}. For {@code io.jafar.parser.impl.TemporalNormalizer}; not part of the stable API.
+   *
+   * @param compute builds the table from this class's fields and their annotations
+   * @return the table; never null
+   */
+  public Map<String, Integer> temporalKinds(
+      java.util.function.Function<MetadataClass, Map<String, Integer>> compute) {
+    Map<String, Integer> kinds = temporalKinds;
+    if (kinds == null) {
+      // Computing it twice under contention is harmless: the result is the same.
+      kinds = compute.apply(this);
+      temporalKinds = kinds;
+    }
+    return kinds;
+  }
+
   public boolean isSimpleType() {
     if (isSimpleType == null) {
       isSimpleType = Boolean.parseBoolean(simpleTypeVal);
@@ -389,6 +414,29 @@ public final class MetadataClass extends AbstractMetadataElement {
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
+  }
+
+  /**
+   * Reads a constant pool entry of this type. Like {@link #read}, except that a build-time factory
+   * is asked for a new instance ({@link HandlerFactory#create}) rather than its reused one, because
+   * the pool caches the result for every later reference.
+   *
+   * @param stream the recording stream positioned at the entry
+   * @param <T> the type of the result
+   * @return the deserialized entry, or null if no deserializer is available
+   * @throws RuntimeException if deserialization fails
+   */
+  @SuppressWarnings("unchecked")
+  public <T> T readPooled(RecordingStream stream) {
+    HandlerFactory<?> f = factory;
+    if (f != null) {
+      try {
+        return (T) f.create(stream, this, getContext().getConstantPools());
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+    return read(stream);
   }
 
   private static boolean isPrimitive(String typeName) {

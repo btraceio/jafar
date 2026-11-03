@@ -165,7 +165,9 @@ public final class JfrSessionTools {
                 + "JfrPath forms: events/<eventType>, events/<eventType>[filter], events/<eventType> | pipeline. "
                 + "Common types: jdk.ExecutionSample, jdk.GCPhasePause, jdk.MonitorEnter, jdk.FileRead. "
                 + "Pipeline ops: count(), groupBy(field), top(n), select(f1,f2), stats(field). "
-                + "Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10)",
+                + "Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10). "
+                + "Constant pools: constants/jdk.types.StackTrace | crossref() counts the pool's "
+                + "entries that events reference and those none does, per referencing event type.",
             schema),
         (exchange, args) -> handleJfrQuery(args.arguments()));
   }

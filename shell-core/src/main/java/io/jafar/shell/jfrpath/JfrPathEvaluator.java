@@ -701,6 +701,71 @@ public final class JfrPathEvaluator {
 
   private record Slice(int start, int end) {}
 
+  private static final String CROSSREF_USAGE =
+      "crossref() must directly follow constants/<type>, with no filter or projection:"
+          + " constants/<type> | crossref()";
+
+  /**
+   * {@code constants/<type> | crossref()}: one summary row. {@code referencingEventTypes} lists,
+   * per event type that reaches the type (directly or through other pool entries), the events that
+   * do, the distinct entries they reach and their direct references; most events first.
+   */
+  private List<Map<String, Object>> aggregateCrossref(JFRSession session, Query query)
+      throws Exception {
+    if (query.root != Root.CONSTANTS
+        || query.segments.size() != 1
+        || (query.predicates != null && !query.predicates.isEmpty())) {
+      throw new IllegalArgumentException(CROSSREF_USAGE);
+    }
+    if (!ConstantPoolProvider.isSupported()) {
+      JfrBackend backend = BackendRegistry.getInstance().getCurrent();
+      throw new UnsupportedOperationException(
+          "Backend '" + backend.getId() + "' does not support constant pool queries");
+    }
+    String type = query.segments.get(0);
+    Map<String, Object> result = ConstantPoolProvider.crossref(session.getRecordingPath(), type);
+    Map<String, Long> events = longMap(result.get("eventCounts"));
+    Map<String, Long> unique = longMap(result.get("uniqueRefsByEventType"));
+    Map<String, Long> direct = longMap(result.get("totalRefsByEventType"));
+
+    Set<String> eventTypes = new HashSet<>(events.keySet());
+    eventTypes.addAll(unique.keySet());
+    eventTypes.addAll(direct.keySet());
+    List<Map<String, Object>> referencing = new ArrayList<>(eventTypes.size());
+    eventTypes.stream()
+        .sorted(
+            Comparator.comparing((String t) -> events.getOrDefault(t, 0L))
+                .reversed()
+                .thenComparing(Comparator.naturalOrder()))
+        .forEach(
+            t -> {
+              Map<String, Object> r = new LinkedHashMap<>();
+              r.put("eventType", t);
+              r.put("events", events.getOrDefault(t, 0L));
+              r.put("uniqueRefs", unique.getOrDefault(t, 0L));
+              r.put("directRefs", direct.getOrDefault(t, 0L));
+              referencing.add(r);
+            });
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("type", result.get("type"));
+    row.put("total", ((Number) result.get("cpTotal")).longValue());
+    row.put("referenced", ((Number) result.get("cpReferenced")).longValue());
+    row.put("unreferenced", ((Number) result.get("cpUnused")).longValue());
+    row.put("referencedPercent", ((Number) result.get("usedPercent")).doubleValue());
+    row.put("unreferencedPercent", ((Number) result.get("unusedPercent")).doubleValue());
+    row.put("referencingEventTypes", referencing);
+    return List.of(row);
+  }
+
+  private static Map<String, Long> longMap(Object o) {
+    Map<String, Long> out = new HashMap<>();
+    if (o instanceof Map<?, ?> m) {
+      m.forEach((k, v) -> out.put(String.valueOf(k), ((Number) v).longValue()));
+    }
+    return out;
+  }
+
   // Aggregations
   private List<Map<String, Object>> evaluateAggregate(
       JFRSession session, Query query, ProgressListener progress) throws Exception {
@@ -770,6 +835,7 @@ public final class JfrPathEvaluator {
           case JfrPath.FlameGraphOp fg -> aggregateFlameGraph(session, query, fg.direction);
           case JfrPath.AsDateTimeOp ft ->
               aggregateAsDateTime(session, query, ft.valuePath, ft.format);
+          case JfrPath.CrossrefOp cr -> aggregateCrossref(session, query);
         };
 
     // Apply remaining operators in sequence
@@ -3171,6 +3237,9 @@ public final class JfrPathEvaluator {
           applyStackProfile(rows, sp.direction, sp.buckets, sp.minPct);
       case JfrPath.FlameGraphOp fg -> applyFlameGraph(rows, fg.direction);
       case JfrPath.AsDateTimeOp ft -> applyAsDateTime(rows, ft.valuePath, ft.format);
+      // Not a row transform: it re-reads the whole recording, so on rows it would silently
+      // ignore what came before it.
+      case JfrPath.CrossrefOp cr -> throw new IllegalArgumentException(CROSSREF_USAGE);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }

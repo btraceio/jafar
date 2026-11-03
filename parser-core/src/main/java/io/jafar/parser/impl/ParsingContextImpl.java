@@ -6,8 +6,10 @@ import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.DeserializerFactory;
 import io.jafar.parser.internal_api.ParserContextFactory;
+import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 
 /**
@@ -32,6 +34,34 @@ public final class ParsingContextImpl implements ParsingContext {
   private static DeserializerFactory discoverDeserializerFactory() {
     Iterator<DeserializerFactory> it = ServiceLoader.load(DeserializerFactory.class).iterator();
     return it.hasNext() ? it.next() : null;
+  }
+
+  // Like DeserializerFactory: classpath-static. Absent when parser-codegen is not on the classpath.
+  private static final UntypedEventStreamFactory UNTYPED_STREAM_FACTORY =
+      discoverUntypedStreamFactory();
+
+  private static UntypedEventStreamFactory discoverUntypedStreamFactory() {
+    try {
+      Iterator<UntypedEventStreamFactory> it =
+          ServiceLoader.load(UntypedEventStreamFactory.class).iterator();
+      return it.hasNext() ? it.next() : null;
+    } catch (ServiceConfigurationError e) {
+      // A provider that is on the classpath but cannot be loaded (a broken or mismatched
+      // parser-codegen jar) must not take every parser down with an ExceptionInInitializerError,
+      // and must not silently degrade either: say so, then read with the generic reader.
+      org.slf4j.LoggerFactory.getLogger(ParsingContextImpl.class)
+          .warn("Generated untyped reader unavailable, using the generic reader: {}", e.toString());
+      return null;
+    }
+  }
+
+  /**
+   * The generated untyped reader's factory.
+   *
+   * @return the factory, or {@code null} when {@code parser-codegen} is not on the classpath
+   */
+  static UntypedEventStreamFactory untypedStreamFactory() {
+    return UNTYPED_STREAM_FACTORY;
   }
 
   /** Constructs a new ParsingContextImpl. */

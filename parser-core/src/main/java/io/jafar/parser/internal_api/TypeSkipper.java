@@ -18,25 +18,37 @@ public final class TypeSkipper {
   /**
    * Skips over a single field's data in the stream.
    *
+   * <p>Uses the same instructions as skipping the field inside its owning type, so a constant pool
+   * reference is one varint (also as array elements), a primitive is skipped by its encoding, and a
+   * simple type is skipped as the value it wraps. The instructions are built once per field and
+   * cached on it ({@link MetadataField#skipper()}).
+   *
+   * <p>This used to call {@code fieldType.skipDirect(stream)} for anything that was neither an
+   * array nor a constant pool reference. A primitive class has no fields, so its skipper has no
+   * instructions and nothing was skipped: a build-time generated handler (the only caller) then
+   * read every field after an undeclared {@code long startTime} from the wrong bytes. An array of
+   * constant pool references was skipped as whole values instead of as varints.
+   *
    * @param field the metadata field to skip
    * @param stream the recording stream to skip over
    * @throws IOException if an I/O error occurs during skipping
    */
   public static void skip(MetadataField field, RecordingStream stream) throws IOException {
-    MetadataClass fieldType = field.getType();
-    if (fieldType != null) {
-      int dimension = field.getDimension();
-      if (dimension > 0) {
-        int count = (int) stream.readVarint();
-        for (int i = 0; i < count; i++) {
-          fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
-        }
-      } else if (field.hasConstantPool()) {
-        stream.readVarint(); // skip CP reference
-      } else {
-        fieldType.skipDirect(stream); // Use TypeSkipper directly — avoids ASM reachability
-      }
+    if (field.getType() != null) {
+      field.skipper().skip(stream);
     }
+  }
+
+  /**
+   * Creates a TypeSkipper for one field's value, as it appears inside its owning type.
+   *
+   * @param field the field, whose type must be resolved
+   * @return a skipper for the field's value
+   */
+  public static TypeSkipper createFieldSkipper(MetadataField field) {
+    IntGrowableArray instructions = new IntGrowableArray(4);
+    fillSkipper(field, instructions);
+    return new TypeSkipper(instructions.toIntArray());
   }
 
   /**
@@ -57,12 +69,14 @@ public final class TypeSkipper {
 
     // Special case: simple types in constant pools store unwrapped field values
     // The CP entries contain the raw unwrapped type data, not the simple type structure
-    if (clz.isSimpleType() && clz.getFields().size() == 1) {
+    if (clz.isSimpleType() && clz.getFields().size() == 1 && unwrappable(clz.getFields().get(0))) {
       MetadataField singleField = clz.getFields().get(0);
       MetadataClass fieldType = singleField.getType();
 
       // Recursively unwrap nested simple types to get the actual field type
-      while (fieldType.isSimpleType() && fieldType.getFields().size() == 1) {
+      while (fieldType.isSimpleType()
+          && fieldType.getFields().size() == 1
+          && unwrappable(fieldType.getFields().get(0))) {
         fieldType = fieldType.getFields().get(0).getType();
       }
 
@@ -106,6 +120,17 @@ public final class TypeSkipper {
   }
 
   /**
+   * Whether a simple type's single field is encoded inline as a plain value, so that the field's
+   * type can stand in for the simple type. An array or pooled field keeps its own framing and has
+   * to go through {@link #fillSkipper}: {@code jdk.types.ChunkHeader} is a simple type whose only
+   * field is {@code byte[] payload}, and unwrapping it to {@code byte} skipped one byte of a
+   * 68-byte array. Mirrors {@code unwrappable} in {@code go-parser/jfr/constantpool.go}.
+   */
+  private static boolean unwrappable(MetadataField field) {
+    return field.getDimension() == 0 && !field.hasConstantPool();
+  }
+
+  /**
    * Fills the instruction list with skipping instructions for a field.
    *
    * @param fld the metadata field to generate instructions for
@@ -123,6 +148,9 @@ public final class TypeSkipper {
     boolean withCp = fld.hasConstantPool();
     while (fldClz.isSimpleType()) {
       List<MetadataField> fl = fldClz.getFields();
+      if (fl.size() != 1 || !unwrappable(fl.get(0))) {
+        break; // skipped field by field below, keeping the inner field's own framing
+      }
       fldClz = fl.get(0).getType();
     }
     String name = fldClz.getName();
@@ -239,37 +267,37 @@ public final class TypeSkipper {
    * @throws IOException if an I/O error occurs during skipping
    */
   public void skip(RecordingStream stream, Listener listener) throws IOException {
-    for (int i = 0; i < instructions.length; i++) {
+    int i = 0;
+    while (i < instructions.length) {
       long from = stream.position();
-      int instruction = instructions[i];
-      if (instruction == Instructions.ARRAY) {
-        int endIndex =
-            (++i)
-                + instructions[
-                    i++]; // the next instruction for array is encoding the number of instructions
-        // per array item
-        int cnt = (int) stream.readVarint();
-        if (cnt == 0) {
-          i = endIndex;
-          continue;
-        }
-        int savedIndex = i;
-        for (int j = 0; j < cnt; ) {
-          instruction = instructions[i];
-          skip(instruction, stream);
-          if (endIndex == i++) {
-            i = savedIndex;
-            j++;
-          }
-        }
-        listener.onSkip(i, from, stream.position());
-
-        i = endIndex;
-        continue;
-      }
-      skip(instruction, stream);
+      int next = skipOne(i, stream);
       listener.onSkip(i, from, stream.position());
+      i = next;
     }
+  }
+
+  /**
+   * Skips the value described by the instruction at {@code i} and returns the index of the next
+   * instruction. An {@link Instructions#ARRAY} instruction is followed by the number of
+   * instructions describing one element; those may themselves contain arrays (an array of an inline
+   * type that has an array field), so elements are skipped recursively. The loop this replaced
+   * executed nested array instructions as no-ops and their element counts as instructions.
+   */
+  private int skipOne(int i, RecordingStream stream) throws IOException {
+    int instruction = instructions[i];
+    if (instruction != Instructions.ARRAY) {
+      skip(instruction, stream);
+      return i + 1;
+    }
+    int first = i + 2;
+    int end = first + instructions[i + 1];
+    int count = (int) stream.readVarint();
+    for (int j = 0; j < count; j++) {
+      for (int k = first; k < end; ) {
+        k = skipOne(k, stream);
+      }
+    }
+    return end;
   }
 
   private static void skip(int instruction, RecordingStream stream) throws IOException {
