@@ -55,14 +55,17 @@ public interface ConstantPoolSource {
    * <p>Counts total CP entries for the type and how many are actually referenced by events,
    * returning counts and percentages.
    *
+   * <p>CP ids are chunk-local: every count is computed per chunk and summed, so an id that appears
+   * in two chunks counts as two entries.
+   *
    * @param recording path to the JFR recording file
    * @param typeName the CP type name (e.g., "jdk.types.StackTrace")
-   *     <p>CP ids are chunk-local: every count is computed per chunk and summed, so an id that
-   *     appears in two chunks counts as two entries.
-   * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent, and
-   *     per event type ({@code Map<String, Long>}): eventCounts (events referencing the type,
-   *     directly or through other CP entries), uniqueByEventType (distinct entries of the type they
-   *     reach) and totalRefsByEventType (direct references, with repeats)
+   * @return map with keys: type, cpTotal, cpReferenced, cpUnused, usedPercent, unusedPercent; per
+   *     event type ({@code Map<String, Long>}): eventCounts (events referencing the type, directly
+   *     or through other CP entries), uniqueByEventType (distinct entries of the type they reach)
+   *     and totalRefsByEventType (direct references, with repeats); and decodeFailures (events and
+   *     CP entries that failed to decode and are not counted -- non-zero makes the counts lower
+   *     bounds)
    * @throws Exception if parsing fails
    */
   default Map<String, Object> crossref(Path recording, String typeName) throws Exception {

@@ -19,6 +19,7 @@ import io.jafar.shell.backend.ChunkSource;
 import io.jafar.shell.backend.ConstantPoolSource;
 import io.jafar.shell.backend.MetadataSource;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -337,6 +338,15 @@ final class JafarSources {
               : (" " + String.join(" ", ann.stream().map(String::valueOf).toList())));
     }
 
+    /**
+     * What chunks must agree on for a field: type, dimensions and whether values are constant pool
+     * references (which changes how they decode). Shown in {@code typesByChunk} on a conflict.
+     */
+    private static String typeSignature(Map<String, Object> field) {
+      return typeWithDimensions(field)
+          + (Boolean.TRUE.equals(field.get("hasConstantPool")) ? " (constant pool)" : "");
+    }
+
     private static String typeWithDimensions(Map<String, Object> field) {
       Object dim = field.get("dimension");
       int d = dim instanceof Number n ? n.intValue() : -1;
@@ -359,9 +369,10 @@ final class JafarSources {
      *       show {@code null} for it; the {@code fields} display marks it {@code [chunks: ...]}.
      *   <li>Fields: union in declaration order, later chunks' new fields appended. Annotations and
      *       settings: union, first chunk wins for a setting both define.
-     *   <li>Conflicts are reported, not resolved: if chunks give a field different types, it keeps
-     *       the first chunk's type and gets {@code typesByChunk} (chunk -> type); a class whose
-     *       chunks disagree on the super type gets {@code superTypesByChunk}.
+     *   <li>Conflicts are reported, not resolved: if chunks give a field a different type,
+     *       dimension or constant-pool flag, it keeps the first chunk's and gets {@code
+     *       typesByChunk} (chunk -> signature); a class whose chunks disagree on the super type
+     *       gets {@code superTypesByChunk}.
      *   <li>{@code id} is the first chunk's. Class ids are chunk-local; the other chunks' ids
      *       differ and are not kept.
      * </ul>
@@ -408,7 +419,7 @@ final class JafarSources {
             Map<String, Object> fm = (Map<String, Object>) fe.getValue();
             typesByField
                 .computeIfAbsent(name, k -> new LinkedHashMap<>())
-                .put(chunk, typeWithDimensions(fm));
+                .put(chunk, typeSignature(fm));
             Map<String, Object> merged = fields.get(name);
             if (merged == null) {
               merged = new HashMap<>(fm);
@@ -802,8 +813,11 @@ final class JafarSources {
                               if (targetMcp.getOffset(id) != 0) chunk.allIds.add(id);
                             }
                           }
-                          // Build per-chunk CP reference edges for ALL types
-                          if (stream != null) {
+                          // CP reference edges, only from types that can lead to the target: by
+                          // this chunk's metadata, no path to the target starts anywhere else, so
+                          // decoding other pools (Symbol, Thread, ...) produced edges nothing used.
+                          if (stream != null
+                              && chunk.ancestorTypes.contains(pool.getType().getName())) {
                             MutableConstantPool mcp = (MutableConstantPool) pool;
                             Iterator<Long> it = mcp.ids();
                             while (it.hasNext()) {
@@ -815,7 +829,8 @@ final class JafarSources {
                               try {
                                 stream.position(offset);
                                 edgeReader.readValue(stream, mcp.getType());
-                              } catch (Throwable ignore) {
+                              } catch (Exception e) {
+                                chunk.decodeFailures++; // reported, see decodeFailures
                               } finally {
                                 stream.position(saved);
                                 chunk.edgeProc.endEntry();
@@ -845,7 +860,10 @@ final class JafarSources {
                 allRefs.clear();
                 try {
                   reader.readValue(stream, eventType);
-                } catch (Throwable ignore) {
+                } catch (Exception e) {
+                  // The refs read before the failure would make the counts look complete.
+                  chunk.decodeFailures++;
+                  return true;
                 }
                 chunk.recordEvent(eventType.getName(), allRefs, typeName);
                 return true;
@@ -855,12 +873,14 @@ final class JafarSources {
 
       long total = 0;
       long referenced = 0;
+      long decodeFailures = 0;
       Map<String, Long> eventCounts = new HashMap<>();
       Map<String, Long> uniqueByEventType = new HashMap<>();
       Map<String, Long> totalRefsByEventType = new HashMap<>();
       for (CrossrefChunk chunk : perChunk.inChunkOrder()) {
         total += chunk.totalCpCount;
         referenced += chunk.referencedCpCount;
+        decodeFailures += chunk.decodeFailures;
         chunk.eventCounts.forEach((k, v) -> eventCounts.merge(k, v, Long::sum));
         chunk.uniqueByEventType.forEach((k, v) -> uniqueByEventType.merge(k, v, Long::sum));
         chunk.totalRefsByEventType.forEach((k, v) -> totalRefsByEventType.merge(k, v, Long::sum));
@@ -877,6 +897,9 @@ final class JafarSources {
       result.put("eventCounts", eventCounts);
       result.put("uniqueByEventType", uniqueByEventType);
       result.put("totalRefsByEventType", totalRefsByEventType);
+      // Events and constant pool entries that failed to decode and are left out of the counts
+      // above; non-zero means the counts are lower bounds.
+      result.put("decodeFailures", decodeFailures);
       return result;
     }
 
@@ -929,6 +952,7 @@ final class JafarSources {
       // Results, kept after finish().
       long totalCpCount;
       long referencedCpCount;
+      long decodeFailures;
       final Map<String, Long> eventCounts = new HashMap<>();
       final Map<String, Long> uniqueByEventType = new HashMap<>();
       final Map<String, Long> totalRefsByEventType = new HashMap<>();
@@ -1022,51 +1046,60 @@ final class JafarSources {
         Map<String, Set<String>> referencedBy,
         Set<String> visited) {
       if (!visited.add(type.getName())) return;
+      // crossref decodes CP edges only from the ancestor types this builds, so a field skipped
+      // here would silently drop paths. A field whose type does not resolve has no name to
+      // record and cannot be decoded either.
       for (MetadataField f : type.getFields()) {
-        try {
-          if (f.hasConstantPool()) {
-            referencedBy
-                .computeIfAbsent(f.getType().getName(), k -> new HashSet<>())
-                .add(rootTypeName);
-          } else if (f.getType() != null && !f.getType().isPrimitive()) {
-            collectCpRefs(f.getType(), rootTypeName, referencedBy, visited);
-          }
-        } catch (Throwable ignore) {
+        MetadataClass fieldType = f.getType();
+        if (fieldType == null) continue;
+        if (f.hasConstantPool()) {
+          referencedBy.computeIfAbsent(fieldType.getName(), k -> new HashSet<>()).add(rootTypeName);
+        } else if (!fieldType.isPrimitive()) {
+          collectCpRefs(fieldType, rootTypeName, referencedBy, visited);
         }
       }
     }
 
     /**
-     * BFS over the CP reference graph starting from {@code seeds}, returning the set of target-type
-     * IDs reachable.
+     * BFS over the CP reference graph starting from {@code seeds}, returning a new mutable set of
+     * the target-type IDs reached (seeds of the target type included). Each node is visited once;
+     * only nodes whose type has outgoing edges are queued.
      */
     private static Set<Long> bfsCpReachable(
         Map<String, Set<Long>> seeds,
         Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges,
         String targetType) {
-      Map<String, Set<Long>> reachable = new HashMap<>();
-      seeds.forEach(
-          (type, ids) -> reachable.computeIfAbsent(type, k -> new HashSet<>()).addAll(ids));
+      Map<String, Set<Long>> visited = new HashMap<>();
+      ArrayDeque<String> pendingTypes = new ArrayDeque<>();
+      ArrayDeque<Long> pendingIds = new ArrayDeque<>();
+      seeds.forEach((type, ids) -> visit(type, ids, cpEdges, visited, pendingTypes, pendingIds));
+      while (!pendingIds.isEmpty()) {
+        String type = pendingTypes.poll();
+        Map<String, Set<Long>> refs = cpEdges.get(type).get(pendingIds.poll());
+        if (refs == null) continue;
+        refs.forEach(
+            (refType, refIds) ->
+                visit(refType, refIds, cpEdges, visited, pendingTypes, pendingIds));
+      }
+      Set<Long> reached = visited.get(targetType);
+      return reached != null ? reached : new HashSet<>();
+    }
 
-      boolean changed;
-      do {
-        changed = false;
-        for (Map.Entry<String, Set<Long>> e : new ArrayList<>(reachable.entrySet())) {
-          Map<Long, Map<String, Set<Long>>> typeEdges = cpEdges.get(e.getKey());
-          if (typeEdges == null) continue;
-          for (Long id : new ArrayList<>(e.getValue())) {
-            Map<String, Set<Long>> refs = typeEdges.get(id);
-            if (refs == null) continue;
-            for (Map.Entry<String, Set<Long>> ref : refs.entrySet()) {
-              if (reachable
-                  .computeIfAbsent(ref.getKey(), k -> new HashSet<>())
-                  .addAll(ref.getValue())) changed = true;
-            }
-          }
+    private static void visit(
+        String type,
+        Set<Long> ids,
+        Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges,
+        Map<String, Set<Long>> visited,
+        ArrayDeque<String> pendingTypes,
+        ArrayDeque<Long> pendingIds) {
+      Set<Long> seen = visited.computeIfAbsent(type, k -> new HashSet<>());
+      boolean hasEdges = cpEdges.containsKey(type);
+      for (Long id : ids) {
+        if (seen.add(id) && hasEdges) {
+          pendingTypes.add(type);
+          pendingIds.add(id);
         }
-      } while (changed);
-
-      return new HashSet<>(reachable.getOrDefault(targetType, Collections.emptySet()));
+      }
     }
   }
 

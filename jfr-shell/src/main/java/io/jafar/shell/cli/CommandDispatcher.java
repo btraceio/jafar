@@ -2416,6 +2416,13 @@ public class CommandDispatcher {
     io.println(String.format("Total CP entries:  %d", total));
     io.println(String.format("Referenced:        %7d  (%.1f%%)", referenced, usedPct));
     io.println(String.format("Unreferenced:      %7d  (%.1f%%)", unused, unusedPct));
+    long decodeFailures = result.get("decodeFailures") instanceof Number n ? n.longValue() : 0L;
+    if (decodeFailures > 0) {
+      io.println(
+          String.format(
+              "Decode failures:   %7d  (events/entries not counted; numbers are lower bounds)",
+              decodeFailures));
+    }
 
     @SuppressWarnings("unchecked")
     Map<String, Long> eventCounts = (Map<String, Long>) result.get("eventCounts");

@@ -38,6 +38,24 @@ class MergeClassDefinitionsTest {
   }
 
   @Test
+  void aConstantPoolFlagConflictIsReported() {
+    Map<String, Object> inline = field("owner", "jdk.types.Foo", -1);
+    inline.put("hasConstantPool", false);
+    Map<String, Object> pooled = field("owner", "jdk.types.Foo", -1);
+    pooled.put("hasConstantPool", true);
+    SortedMap<Integer, Map<String, Object>> defs = new TreeMap<>();
+    defs.put(1, def(1, "x.T", null, inline));
+    defs.put(2, def(2, "x.T", null, pooled));
+
+    Map<String, Object> merged = JafarSources.JafarMetadataSource.mergeClassDefinitions(defs);
+
+    Map<?, ?> owner = (Map<?, ?>) ((Map<?, ?>) merged.get("fieldsByName")).get("owner");
+    assertEquals(false, owner.get("hasConstantPool"), "first chunk's flag is kept");
+    assertEquals(
+        Map.of(1, "jdk.types.Foo", 2, "jdk.types.Foo (constant pool)"), owner.get("typesByChunk"));
+  }
+
+  @Test
   void conflictingSuperTypesAreReported() {
     SortedMap<Integer, Map<String, Object>> defs = new TreeMap<>();
     defs.put(1, def(1, "x.T", null));
