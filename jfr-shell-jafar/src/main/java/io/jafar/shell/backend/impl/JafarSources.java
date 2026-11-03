@@ -5,6 +5,7 @@ import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
+import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.GenericValueReader;
@@ -605,6 +606,17 @@ final class JafarSources {
   static final class JafarConstantPoolSource implements ConstantPoolSource {
 
     /**
+     * Returns {@code false} at a chunk's last checkpoint, for listeners that need its pools but not
+     * its events. {@code StreamingChunkParser.readConstantPool} follows the checkpoint chain until
+     * {@code nextOffsetDelta == 0} and reports that checkpoint last, so the chunk's pools are
+     * complete there; returning {@code false} skips the event section, and {@code onChunkEnd} still
+     * runs. Without it these listeners walked every event of the chunk for nothing.
+     */
+    private static boolean continueUnlessLastCheckpoint(CheckpointEvent event) {
+      return event.nextOffsetDelta != 0;
+    }
+
+    /**
      * Entries per pool type, summed over chunks.
      *
      * <p>Counted once per chunk, at chunk end. A chunk's pools accumulate across its checkpoints
@@ -620,6 +632,11 @@ final class JafarSources {
         parser.parse(
             recording,
             new ChunkParserListener() {
+              @Override
+              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                return continueUnlessLastCheckpoint(event);
+              }
+
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
                 Map<String, Long> chunk = new HashMap<>();
@@ -683,6 +700,11 @@ final class JafarSources {
                 GenericValueReader reader = new GenericValueReader(mvb);
                 context.put(GenericValueReader.class, reader);
                 return true;
+              }
+
+              @Override
+              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                return continueUnlessLastCheckpoint(event);
               }
 
               @Override
