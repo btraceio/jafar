@@ -336,10 +336,14 @@ public abstract class BackendTck {
     ChunkSource source = backend.createChunkSource();
     Path recording = getTestRecording();
 
-    Map<String, Object> chunk = source.loadChunk(recording, 0);
+    // A chunk is addressed by the index loadAllChunks reports, not by list position.
+    Map<String, Object> first = source.loadAllChunks(recording).get(0);
+    Map<String, Object> chunk =
+        source.loadChunk(recording, ((Number) first.get("index")).intValue());
 
     assertNotNull(chunk, "First chunk should exist in test recording");
     assertTrue(chunk.containsKey("size"), "Chunk should have 'size' field");
+    assertEquals(first, chunk, "loadChunk(index) should return the row listed with that index");
   }
 
   @Test

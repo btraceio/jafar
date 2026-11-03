@@ -1795,7 +1795,7 @@ public class CommandDispatcher {
       io.println("Examples:");
       io.println("  chunks");
       io.println("  chunks --summary");
-      io.println("  chunks --range 0-5");
+      io.println("  chunks --range 1-5");
       io.println("");
       io.println(
           "Chunks are indexed starting from 0. Each chunk contains a portion of the recording data.");

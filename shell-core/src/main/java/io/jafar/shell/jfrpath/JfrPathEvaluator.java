@@ -213,7 +213,7 @@ public final class JfrPathEvaluator {
             "Backend '" + backend.getId() + "' does not support chunk queries");
       }
       if (!query.segments.isEmpty()) {
-        // show chunks/0 - specific chunk by ID
+        // show chunks/1 - specific chunk by the index `chunks` lists (1-based)
         try {
           int chunkId = Integer.parseInt(query.segments.get(0));
           Map<String, Object> chunk = ChunkProvider.loadChunk(session.getRecordingPath(), chunkId);

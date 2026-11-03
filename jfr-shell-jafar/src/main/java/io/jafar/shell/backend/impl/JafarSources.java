@@ -510,10 +510,12 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> loadChunk(Path recording, int chunkIndex) throws Exception {
-      // Simple: load all chunks and return by position (index is 0-based position)
-      List<Map<String, Object>> allChunks = loadAllChunks(recording);
-      if (chunkIndex >= 0 && chunkIndex < allChunks.size()) {
-        return allChunks.get(chunkIndex);
+      // By the index the rows carry (1-based, file order), which is what `chunks` lists and
+      // completion offers. This used to be a 0-based position, so `chunks/1` showed chunk 2.
+      for (ChunkHeader header : loadHeaders(recording)) {
+        if (header.order == chunkIndex) {
+          return createChunkRow(header.order, header);
+        }
       }
       return null;
     }
