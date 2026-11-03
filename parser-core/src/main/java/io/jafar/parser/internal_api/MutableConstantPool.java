@@ -109,7 +109,9 @@ public final class MutableConstantPool implements ConstantPool {
         long savedPos = cpStream.position();
         try {
           cpStream.position(offset);
-          o = clazz.read(cpStream);
+          // a new instance: this entry is cached and returned for every reference to it, and a
+          // build-time factory's get() reuses one instance per thread (HandlerFactory.create)
+          o = clazz.readPooled(cpStream);
           if (o == null) {
             // For String constant pool entries, read the string directly.
             // Using the generic MapValueBuilder path would wrap the string in a Map,
@@ -292,6 +294,11 @@ public final class MutableConstantPool implements ConstantPool {
    * @param offset the file offset where the entry is located
    */
   public void addOffset(long id, long offset) {
+    if (id == ABSENT_JMC) {
+      // LongLongHashMap's empty-slot key: storing it asserts under -ea and otherwise corrupts the
+      // map. containsKey answers false for it, so a corrupted checkpoint would reach this.
+      return;
+    }
     offsets.put(id, offset);
   }
 

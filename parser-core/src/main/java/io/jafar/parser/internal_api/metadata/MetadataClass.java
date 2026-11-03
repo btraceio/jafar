@@ -416,6 +416,29 @@ public final class MetadataClass extends AbstractMetadataElement {
     }
   }
 
+  /**
+   * Reads a constant pool entry of this type. Like {@link #read}, except that a build-time factory
+   * is asked for a new instance ({@link HandlerFactory#create}) rather than its reused one, because
+   * the pool caches the result for every later reference.
+   *
+   * @param stream the recording stream positioned at the entry
+   * @param <T> the type of the result
+   * @return the deserialized entry, or null if no deserializer is available
+   * @throws RuntimeException if deserialization fails
+   */
+  @SuppressWarnings("unchecked")
+  public <T> T readPooled(RecordingStream stream) {
+    HandlerFactory<?> f = factory;
+    if (f != null) {
+      try {
+        return (T) f.create(stream, this, getContext().getConstantPools());
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+    return read(stream);
+  }
+
   private static boolean isPrimitive(String typeName) {
     return typeName.equals("byte")
         || typeName.equals("short")

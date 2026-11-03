@@ -45,6 +45,23 @@ public final class {{FACTORY_NAME}} implements HandlerFactory<{{INTERFACE_NAME}}
 
   /**
    * {@inheritDoc}
+   *
+   * <p>A new handler on every call: constant pool entries are cached by their pool and must not
+   * share the thread-local instance {@link #get} reuses.
+   */
+  @Override
+  public {{INTERFACE_NAME}} create(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) {
+    {{HANDLER_NAME}} handler = new {{HANDLER_NAME}}();
+    try {
+      handler.read(stream, metadata, constantPools);
+    } catch (java.io.IOException e) {
+      throw new RuntimeException("Failed to read constant pool entry", e);
+    }
+    return handler;
+  }
+
+  /**
+   * {@inheritDoc}
    */
   @Override
   public String getJfrTypeName() {
