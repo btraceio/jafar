@@ -103,6 +103,16 @@ test {
     // jqwik configuration
     systemProperty 'jqwik.tries.default', '1000'
     systemProperty 'jqwik.shrinking.mode', 'FULL'
+
+    // JarLaunchTest runs the jar users get ('java -jar'), not the classes: its manifest matters
+    // (resolved when the task runs: the shadowJar block below sets its name and classifier)
+    // It gets the jafar backend as a local override jar, so starting the shell installs nothing.
+    dependsOn shadowJar, ':jfr-shell-jafar:jar'
+    doFirst {
+        systemProperty 'jfr.shell.jar', shadowJar.archiveFile.get().asFile.absolutePath
+        systemProperty 'jfr.shell.jafar.backend.jar',
+            project(':jfr-shell-jafar').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+    }
 }
 
 processResources {
@@ -130,9 +140,15 @@ shadowJar {
     relocate 'picocli', 'io.jafar.shaded.picocli'
     relocate 'org.jline', 'io.jafar.shaded.jline'
 
-    // Ensure main class is set
+    // Ensure main class is set.
+    // Enable-Native-Access: jline-terminal-jna loads JNA, whose System.load is a restricted method
+    // (JEP 472). Without this attribute, JDK 24+ prints four "WARNING: A restricted method ..."
+    // lines on every start of 'java -jar' (the jlinkDist launchers run 'java -jar' too). The
+    // attribute applies only to the jar given to 'java -jar'; a classpath launch needs
+    // --enable-native-access=ALL-UNNAMED on the command line instead.
     manifest {
-        attributes 'Main-Class': 'io.jafar.shell.Main'
+        attributes 'Main-Class': 'io.jafar.shell.Main',
+                   'Enable-Native-Access': 'ALL-UNNAMED'
     }
 }
 

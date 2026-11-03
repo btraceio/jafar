@@ -2,6 +2,7 @@ package io.jafar.shell.unified;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.management.HotSpotDiagnosticMXBean;
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -523,6 +525,307 @@ class ShellArtifactTest {
     assertTrue(output.toLowerCase().contains("chunks"), output);
   }
 
+  /**
+   * JfrPath values that are constant-pool wrappers ({@code {name=G1New}}, {@code {cause=...}},
+   * {@code {string=java/lang/Object}}) print as their plain value, as jfr-shell prints them, in
+   * every output format. See {@code doc/agents/DataShapes.md}.
+   */
+  @Test
+  void printsJfrConstantsAsPlainValues(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.enable("jdk.JavaMonitorWait").withThreshold(java.time.Duration.ZERO);
+      r.start();
+      System.gc();
+      Object lock = new Object();
+      synchronized (lock) {
+        lock.wait(20);
+      }
+      r.stop();
+      r.dump(recording);
+    }
+    Path script = dir.resolve("constants.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open " + recording,
+            "echo TABLE",
+            "events/jdk.GarbageCollection | groupBy(cause)",
+            "events/jdk.JavaMonitorWait | groupBy(monitorClass/name)",
+            "echo CSV",
+            "show events/jdk.GarbageCollection --limit 1 --format csv",
+            "echo JSON",
+            "show events/jdk.GarbageCollection --limit 1 --format json",
+            "echo META",
+            "show metadata/jdk.types.Symbol --format json",
+            ""));
+
+    assertPlainConstants(runJar(dir, "", "script", script.toString()));
+    // jfr-shell's own entry point, from the same jar, prints them the same way
+    Result jfrShell =
+        runClassWithStatus(dir, "io.jafar.shell.Main", "", "script", script.toString());
+    assertEquals(0, jfrShell.status(), jfrShell.output());
+    assertPlainConstants(jfrShell.output());
+  }
+
+  private static void assertPlainConstants(String output) {
+    String data = output.substring(0, output.indexOf("META"));
+    assertFalse(data.contains("{cause="), output);
+    assertFalse(data.contains("{name="), output);
+    assertFalse(data.contains("{string="), output);
+    assertFalse(data.contains("\"cause\": {"), output);
+    String table = output.substring(output.indexOf("TABLE"), output.indexOf("CSV"));
+    assertTrue(table.contains("| System.gc()"), output);
+    assertTrue(table.contains("| java/lang/Object"), output);
+    String csv = output.substring(output.indexOf("CSV"), output.indexOf("JSON"));
+    assertTrue(csv.contains(",System.gc(),"), output);
+    String json = output.substring(output.indexOf("JSON"), output.indexOf("META"));
+    assertTrue(json.contains("\"cause\": \"System.gc()\""), output);
+    // metadata is structure: a one-field type's fieldsByName is data and keeps its key
+    String meta = output.substring(output.indexOf("META"));
+    assertTrue(meta.matches("(?s).*\"fieldsByName\": \\{\\s*\"string\": \\{.*"), output);
+  }
+
+  /**
+   * A projected path — {@code events/<type>/<path>}, {@code metadata/<type>/fields}, {@code
+   * metadata/<type>/<field>}, {@code constants/<type>/<path>}, {@code chunks/<n>/<path>} — prints
+   * the values it names, and the same values in both shells. The JSON of the two entry points is
+   * compared whole, so a projection that drifts in either fails here.
+   */
+  @Test
+  void projectedPathsMatchJfrShell(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    Path script = dir.resolve("projections.jfrs");
+    Files.writeString(
+        script,
+        String.join(
+            "\n",
+            "open " + recording,
+            "echo P1",
+            "show events/jdk.GarbageCollection/cause --format json",
+            "echo P2",
+            "show metadata/jdk.GarbageCollection/fields --format json",
+            "echo P3",
+            "show metadata/jdk.GarbageCollection/cause --format json",
+            "echo P4",
+            "show constants/jdk.types.GCName/name --format json",
+            "echo P5",
+            "show chunks/1/size --format json",
+            "echo TABLE",
+            "show events/jdk.GarbageCollection/cause --limit 1",
+            "echo END",
+            ""));
+
+    String unified = runJar(dir, "", "script", script.toString());
+    Result jfrShell =
+        runClassWithStatus(dir, "io.jafar.shell.Main", "", "script", script.toString());
+    assertEquals(0, jfrShell.status(), jfrShell.output());
+
+    String json = between(unified, "P1", "TABLE");
+    assertTrue(between(json, "P1", "P2").contains("\"System.gc()\""), unified);
+    assertFalse(between(json, "P1", "P2").contains("duration"), unified);
+    assertTrue(between(json, "P2", "P3").contains("\"cause\""), unified);
+    assertTrue(between(json, "P3", "P4").contains("\"type\": \"jdk.types.GCCause\""), unified);
+    assertTrue(between(json, "P4", "P5").contains("\"G1New\""), unified);
+    // one chunk, so chunk 1 is as long as the file
+    assertTrue(
+        between(unified, "P5", "TABLE").contains(String.valueOf(Files.size(recording))), unified);
+    String table = between(unified, "TABLE", "END");
+    assertTrue(table.contains("value"), unified);
+    assertTrue(table.contains("System.gc()"), unified);
+    assertFalse(table.contains("duration"), unified);
+    // last, so that a missing projection fails above on what it lost, not on a diff
+    assertEquals(between(jfrShell.output(), "P1", "TABLE"), json, unified);
+  }
+
+  /**
+   * What {@code explain} is given after a projection must survive redaction. The values were
+   * remembered under the table's {@code value} header, which is in the default redact list, so the
+   * model received {@code <redacted>} for every one. Drives a real shell in-process and passes what
+   * it remembered through the real {@code Redactor} with default settings.
+   */
+  @Test
+  void projectedValuesReachExplainUnredacted(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    var out = new java.io.ByteArrayOutputStream();
+    try (Shell shell =
+        Shell.forScript(new java.io.PrintStream(out, true), new java.io.PrintStream(out, true))) {
+      assertTrue(shell.execute("open " + recording), out.toString());
+      assertTrue(shell.execute("show events/jdk.GarbageCollection/cause"), out.toString());
+      var redactor =
+          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+
+      String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
+
+      assertFalse(sent.contains("<redacted>"), sent);
+      assertTrue(sent.contains("System.gc()"), sent);
+      assertTrue(out.toString().contains("value"), "the table still prints a value column");
+    }
+  }
+
+  /**
+   * {@code show ${v}} of a variable set to a projected path prints the values the path names, as
+   * typing the path does — the variable holds rows (its evaluator returns whole events), and
+   * printing those made the same path look different through a variable.
+   */
+  @Test
+  void projectedVariablePrintsItsValues(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    var out = new java.io.ByteArrayOutputStream();
+    try (Shell shell =
+        Shell.forScript(new java.io.PrintStream(out, true), new java.io.PrintStream(out, true))) {
+      assertTrue(shell.execute("open " + recording), out.toString());
+      assertTrue(shell.execute("set v = events/jdk.GarbageCollection/cause"), out.toString());
+
+      out.reset();
+      assertTrue(shell.execute("show ${v}"), out.toString());
+      String table = out.toString();
+      assertTrue(table.contains("value") && table.contains("System.gc()"), table);
+      assertFalse(table.contains("duration"), table);
+
+      out.reset();
+      assertTrue(shell.execute("show ${v} --format json"), out.toString());
+      String json = out.toString();
+      assertTrue(json.contains("\"System.gc()\""), json);
+      assertFalse(json.contains("duration"), json);
+
+      var redactor =
+          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+      String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
+      assertTrue(sent.contains("cause=") && sent.contains("System.gc()"), sent);
+      assertFalse(sent.contains("<redacted>"), sent);
+
+      // the variable itself still holds the rows its query returns
+      out.reset();
+      assertTrue(shell.execute("echo ${v.size}"), out.toString());
+      assertTrue(out.toString().trim().matches("[1-9][0-9]*"), out.toString());
+
+      // a --global variable whose recording is closed says so instead of printing anything,
+      // shown from another session (with none open, show stops at "No session open")
+      assertTrue(shell.execute("set --global w = events/jdk.GarbageCollection/cause"));
+      shell.execute("close");
+      assertTrue(shell.execute("open " + recording), out.toString());
+      out.reset();
+      shell.execute("show ${w}");
+      assertTrue(out.toString().contains("has been closed"), out.toString());
+      assertFalse(out.toString().contains("System.gc()"), out.toString());
+    }
+  }
+
+  @Test
+  void projectedColumnNamesTheField() {
+    java.util.function.Function<String, String> column =
+        q -> Shell.projectedColumn(io.jafar.shell.jfrpath.JfrPathParser.parse(q));
+
+    assertEquals("cause", column.apply("events/jdk.GarbageCollection/cause"));
+    assertEquals(
+        "eventThread/osName", column.apply("events/jdk.GarbageCollection/eventThread/osName"));
+    assertEquals(
+        "stackTrace/frames", column.apply("events/jdk.ExecutionSample/stackTrace/frames/0"));
+    assertEquals(
+        "stackTrace/frames", column.apply("events/jdk.ExecutionSample/stackTrace/frames/0:3"));
+    assertEquals(
+        "stackTrace/frames/0/lineNumber",
+        column.apply("events/jdk.ExecutionSample/stackTrace/frames/0/lineNumber"));
+    assertEquals("size", column.apply("chunks/1/size"));
+    assertEquals("fields", column.apply("metadata/jdk.GarbageCollection/fields"));
+    assertEquals("name", column.apply("constants/jdk.types.GCName/name"));
+    // a field that is sensitive by name is still redacted, now on its own name
+    var redactor =
+        io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+    assertEquals(
+        "[{message=<redacted>}]",
+        String.valueOf(
+            redactor.redactRows(
+                Shell.valueRows(
+                    List.of("secret"), column.apply("events/jdk.JavaErrorThrow/message")))));
+  }
+
+  /**
+   * Rendering 50 rows of 100,000 must not pay for the other 99,950: a view that copied on access,
+   * or a caller that materialised it before the table truncates, costs about +330 bytes a row over
+   * the plain table (measured cold, 3 columns); the view costs +40 to +90.
+   */
+  @Test
+  void tableOfALargeJfrResultDoesNotCopyItsRows() {
+    var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        threads instanceof com.sun.management.ThreadMXBean t
+            && t.isThreadAllocatedMemorySupported()
+            && t.isThreadAllocatedMemoryEnabled(),
+        "per-thread allocation counter not available");
+    var counter = (com.sun.management.ThreadMXBean) threads;
+    int n = 100_000;
+    List<Map<String, Object>> rows = new java.util.ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      Map<String, Object> row = new java.util.LinkedHashMap<>();
+      row.put("gcId", (long) i);
+      row.put("name", new java.util.HashMap<>(Map.of("name", "G1New")));
+      row.put("eventThread", new java.util.HashMap<>(Map.of("osName", "VM Thread", "id", 0L)));
+      rows.add(row);
+    }
+    long thread = Thread.currentThread().threadId();
+
+    long start = counter.getThreadAllocatedBytes(thread);
+    String plain = io.jafar.shell.core.TableFormatter.formatTable(rows, 50);
+    long base = counter.getThreadAllocatedBytes(thread) - start;
+    start = counter.getThreadAllocatedBytes(thread);
+    @SuppressWarnings("unchecked")
+    var shaped =
+        (List<Map<String, Object>>) Shell.forDisplay(rows, "jfr", "events/jdk.GarbageCollection");
+    String table = io.jafar.shell.core.TableFormatter.formatTable(shaped, 50);
+    long viewed = counter.getThreadAllocatedBytes(thread) - start;
+
+    assertTrue(table.contains("G1New") && !table.contains("{name="), table);
+    assertTrue(plain.contains("{name=G1New}"), plain);
+    long overPerRow = (viewed - base) / n;
+    assertTrue(overPerRow < 200, "+" + overPerRow + " bytes a row over the plain table");
+  }
+
+  @Test
+  void unwrapsOnlyJfrRecordingValues() {
+    List<Map<String, Object>> rows = List.of(Map.of("value", Map.of("name", "kept")));
+
+    assertSame(rows, Shell.forDisplay(rows, "hdump", "objects"));
+    assertSame(rows, Shell.forDisplay(rows, "pprof", "samples"));
+    assertSame(rows, Shell.forDisplay(rows, "otlp", "samples"));
+    assertSame(rows, Shell.forDisplay(rows, "jfr", "metadata/jdk.types.Symbol"));
+    assertSame(rows, Shell.forDisplay(rows, "jfr", "chunks"));
+    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", "events/x"));
+    assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", null));
+    // the parsed query, as handleShow passes it, decides the same way as its text
+    assertSame(
+        rows,
+        Shell.forDisplay(
+            rows, "jfr", io.jafar.shell.jfrpath.JfrPathParser.parse("metadata/jdk.types.Symbol")));
+    assertEquals(
+        List.of(Map.of("value", "kept")),
+        Shell.forDisplay(rows, "jfr", io.jafar.shell.jfrpath.JfrPathParser.parse("events/x")));
+  }
+
   @Test
   void hasOneLoggingProvider(@TempDir Path dir) throws Exception {
     assertFalse(runJar(dir, "", "--version").contains("multiple SLF4J providers"));
@@ -770,15 +1073,19 @@ class ShellArtifactTest {
     assertFalse(Shell.isJfrCommand("chunks --format json | count()"));
     assertFalse(Shell.isJfrCommand("chunks --format json |count()"));
     assertFalse(Shell.isJfrCommand("chunks --limit 1"));
-    assertFalse(Shell.isJfrCommand("constants --limit 2"));
     assertFalse(Shell.isJfrCommand("constants --format json | count()"));
     assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | count()"));
     assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | crossref() | count()"));
-    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
     assertFalse(Shell.isJfrCommand("chunks | crossref()"));
     // ...except the pipeline cmdCp takes, and a '|' inside an argument
     assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol | crossref()"));
     assertTrue(Shell.isJfrCommand("CONSTANTS jdk.types.Symbol |  CrossRef() "));
+    // cmdCp takes '| crossref()' without spaces around the pipe, and --limit
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol|crossref()"));
+    assertTrue(Shell.isJfrCommand("constants --limit 2"));
+    assertTrue(Shell.isJfrCommand("cp --summary --limit 1 --format csv"));
+    assertTrue(Shell.isJfrCommand("constants jdk.types.Symbol --limit 2"));
     assertTrue(Shell.isJfrCommand("metadata --regex ^(jdk|datadog)\\.Thread.*"));
     assertTrue(Shell.isJfrCommand("chunks --format json"));
     assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart --tree --depth 2"));
@@ -864,6 +1171,64 @@ class ShellArtifactTest {
   }
 
   private record Result(int status, String output) {}
+
+  /**
+   * {@code constants --limit 2} took "--limit" as a type name and printed "(no rows)"; this shell
+   * runs the command through jfr-shell's dispatcher, so it showed the same.
+   */
+  @Test
+  void constantsLimitCapsTheSummary(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    String output =
+        runJar(
+            dir,
+            "open " + recording + "\nconstants --limit 2 --format csv\nconstants --bogus\nexit\n");
+
+    assertTrue(
+        output.contains("totalSize,name\n3383,jdk.types.Symbol\n2060,jdk.types.Method\n"), output);
+    assertTrue(output.contains("Unknown option for constants: --bogus"), output);
+    assertFalse(output.contains("(no rows)"), output);
+  }
+
+  /**
+   * 'help &lt;command&gt;' answered "Unknown command: help constants": this shell knew only a bare
+   * 'help'. It now shows jfr-shell's per-command help, and for the JFR query topics with another
+   * kind of session current, says so instead of describing JfrPath.
+   */
+  @Test
+  void helpTopicShowsCommandUsage(@TempDir Path dir) throws Exception {
+    Path recording = Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath();
+    Path dump = dir.resolve("dump.hprof");
+    ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class)
+        .dumpHeap(dump.toString(), true);
+    String output =
+        runJar(
+            dir,
+            String.join(
+                "\n",
+                "help set",
+                "open " + recording,
+                "help constants",
+                "help bogus",
+                "open " + dump,
+                "help show",
+                "exit",
+                ""));
+
+    assertFalse(output.contains("Unknown command: help"), output);
+    assertTrue(output.contains("Usage: set [--global] <name> = <value|expression>"), output);
+    assertTrue(
+        output.contains(
+            "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]"),
+        output);
+    assertTrue(output.contains("No specific help for 'bogus'"), output);
+    assertTrue(
+        output.contains("'help show' describes JFR recordings; the current session is"), output);
+    // the JfrPath text is not shown for the heap dump
+    int afterDump = output.indexOf("'help show' describes JFR recordings");
+    assertFalse(
+        output.substring(afterDump).contains("events/<type>[field/path op literal]"), output);
+  }
 
   /** Exit status, stdout and stderr of one run, kept apart. */
   private record Run(int exit, String out, String err) {}

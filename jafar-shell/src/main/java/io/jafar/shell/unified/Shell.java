@@ -2,6 +2,8 @@ package io.jafar.shell.unified;
 
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.cli.ConstantValues;
+import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
@@ -14,7 +16,10 @@ import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.ConditionalException;
 import io.jafar.shell.core.scripting.Conditionals;
+import io.jafar.shell.core.scripting.EvaluatorLazyValue;
 import io.jafar.shell.core.scripting.ScriptRunner;
+import io.jafar.shell.jfrpath.JfrPath;
+import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,8 +27,10 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -419,6 +426,11 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
+    if (input.regionMatches(true, 0, "help ", 0, 5)) {
+      printTopicHelp(input.substring(5).trim());
+      return true;
+    }
+
     if ("modules".equalsIgnoreCase(input)) {
       printModules();
       return true;
@@ -606,8 +618,9 @@ public final class Shell implements AutoCloseable {
    * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
    * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
    * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
-   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
-   * crossref()}, stays a command.
+   * every row and ignore the rest. Two exceptions, both jfr-shell's {@code cmdCp}: the one pipeline
+   * a command takes, {@code cp <type> | crossref()} (spaces around the pipe optional), and {@code
+   * --limit} on {@code cp} / {@code constants}, which that command implements.
    */
   static boolean isJfrCommand(String input) {
     return jfrCommandOf(input) != null;
@@ -638,8 +651,11 @@ public final class Shell implements AutoCloseable {
       if (input.charAt(word) == '|') {
         return isCrossref(command, input, word) ? command : null;
       }
-      if (end - word == 7 && input.startsWith("--limit", word)) {
-        return null;
+      if (end - word == 7
+          && input.startsWith("--limit", word)
+          && !command.equals("cp")
+          && !command.equals("constants")) {
+        return null; // cp / constants take --limit; the other commands would ignore it
       }
     }
     return command;
@@ -651,9 +667,7 @@ public final class Shell implements AutoCloseable {
       return false;
     }
     int n = input.length();
-    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
-      return false; // cmdCp needs '|' and 'crossref()' as separate words
-    }
+    // cmdCp matches '| crossref()' with or without a space after the pipe
     int word = skipSpace(input, pipe + 1);
     int end = skipWord(input, word);
     return end - word == 10
@@ -1098,16 +1112,30 @@ public final class Shell implements AutoCloseable {
         && whole.matches()
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
-        Object rows = lazy.get();
         // The flags may use variables too ('--limit ${n}'); the row variable itself is not text
         String flags = variables.substitute(whole.group(2));
         java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(flags);
         java.util.regex.Matcher lim = LIMIT_FLAG.matcher(flags);
-        if (lim.find() && rows instanceof List<?> list) {
-          rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
+        Integer limit = lim.find() ? Integer.valueOf(lim.group(1)) : null;
+        String format = fmt.find() ? fmt.group(1) : ref.outputFormat;
+        // The parsed query the variable was defined with, so it is not parsed again here
+        Object definedAs =
+            lazy instanceof EvaluatorLazyValue bound ? bound.parsedQuery() : lazy.getQueryString();
+        // A variable holds rows, as its evaluator returns them; a projected JFR path
+        // (events/<type>/<field>, ...) prints the values it names, as typing the path does
+        if (lazy instanceof EvaluatorLazyValue bound
+            && definedAs instanceof JfrPath.Query q
+            && ShowShape.of(q) != ShowShape.ROWS
+            && bound.boundSession().session instanceof JFRSession jfr) {
+          showJfrProjection(jfr, q, lazy.getQueryString(), limit, format);
+          return;
+        }
+        Object rows = lazy.get();
+        if (limit != null && rows instanceof List<?> list) {
+          rows = list.subList(0, Math.min(limit, list.size()));
         }
         rememberResult(lazy.getQueryString(), rows);
-        printResult(rows, fmt.find() ? fmt.group(1) : ref.outputFormat);
+        printResult(rows, format, rowsTypeOf(lazy, ref.session.getType()), definedAs);
       } catch (Exception e) {
         printError(e.getMessage());
       }
@@ -1141,18 +1169,134 @@ public final class Shell implements AutoCloseable {
     }
 
     try {
+      // A JFR query is parsed once here and the parsed query passed on, to evaluate() and to the
+      // display shaping, rather than each of them parsing the text again. Other formats keep the
+      // text, as their evaluators were always given.
+      Object parsedOrText = cleanQuery;
+      if (ref.session instanceof JFRSession jfr
+          && evaluator.parse(cleanQuery) instanceof JfrPath.Query q) {
+        // JfrQueryEvaluator.evaluate returns whole events for events/<type>/<path>; the path is
+        // honoured here, the way jfr-shell's show honours it
+        if (ShowShape.of(q) != ShowShape.ROWS) {
+          showJfrProjection(jfr, q, cleanQuery, limit, format);
+          return;
+        }
+        parsedOrText = q;
+      }
       CrossSessionContext ctx = buildCrossSessionContext();
-      Object result = evaluator.evaluate(ref.session, cleanQuery, ctx);
+      Object result = evaluator.evaluate(ref.session, parsedOrText, ctx);
       if (limit != null && result instanceof List<?> list) {
         result = list.subList(0, Math.min(limit, list.size()));
       }
       rememberResult(cleanQuery, result);
-      printResult(result, format);
+      printResult(result, format, ref.session.getType(), parsedOrText);
     } catch (Exception e) {
       error("Query error: " + e.getMessage());
       printStackTraceIfInteractive(e);
       flush();
     }
+  }
+
+  /**
+   * The type of the session whose rows a query variable holds: the session it was set in, which
+   * need not be the current one. Read right after {@code get()} succeeded, which it does only while
+   * that session is open ({@link EvaluatorLazyValue} fails every read once it is closed or gone),
+   * so the type is that session's.
+   */
+  static String rowsTypeOf(VariableStore.LazyValue lazy, String currentType) {
+    String type = lazy instanceof EvaluatorLazyValue bound ? bound.sessionType() : null;
+    return type != null ? type : currentType;
+  }
+
+  /**
+   * Shows a JfrPath query that names values rather than rows — {@code events/<type>/<path>}, {@code
+   * constants/<type>/<path>}, {@code metadata/<type>/fields} — or one field's metadata, {@code
+   * metadata/<type>/<field>}, routed by {@link ShowShape} as jfr-shell's {@code show} routes it.
+   *
+   * <p>Values print as a {@code value} column in a table or CSV, as in jfr-shell, and as a plain
+   * array in JSON. They are not passed to the module's {@link QueryEvaluator}: its {@code evaluate}
+   * returns rows, which {@code ask}, query variables and cross-session joins rely on, so the
+   * projection is a matter of what {@code show} prints.
+   */
+  private void showJfrProjection(
+      JFRSession session, JfrPath.Query q, String query, Integer limit, String format)
+      throws Exception {
+    JfrPathEvaluator eval = new JfrPathEvaluator();
+    if (ShowShape.of(q) == ShowShape.FIELD_METADATA) {
+      // As jfr-shell prints it: the field's map itself in JSON, a one-row table otherwise
+      Map<String, Object> field = ShowShape.fieldMetadata(eval, session, q);
+      if (field == null) {
+        out.println("(no rows)");
+        flush();
+        return;
+      }
+      Map<String, Object> copy = new java.util.LinkedHashMap<>(field);
+      rememberResult(query, List.of(copy));
+      if ("json".equalsIgnoreCase(format)) {
+        out.println(toJson(copy, 0));
+        flush();
+      } else {
+        Map<String, Object> shown = new java.util.LinkedHashMap<>(copy);
+        shown.remove("annotationsFull"); // jfr-shell hides it outside JSON
+        printResult(List.of(shown), format, session.getType(), q);
+      }
+      return;
+    }
+    List<Object> values = ShowShape.values(eval, session, q, limit);
+    if (limit != null && limit < values.size()) {
+      values = values.subList(0, limit);
+    }
+    // The constants are unwrapped once, as they are printed (printResult for the table and CSV,
+    // ConstantValues.unwrapEach for JSON); explain gets the values as they came, as it does rows
+    rememberResult(query, valueRows(values, projectedColumn(q)));
+    if ("json".equalsIgnoreCase(format)) {
+      out.println(
+          toJson(
+              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values,
+              0));
+      flush();
+    } else {
+      // a 'value' column, as jfr-shell prints one
+      printResult(valueRows(values, "value"), format, session.getType(), q);
+    }
+  }
+
+  private static final java.util.regex.Pattern INDEX_SEGMENT =
+      java.util.regex.Pattern.compile("-?\\d*(?::-?\\d*)?");
+
+  /**
+   * The column a projected path's values are remembered under for {@code explain}: the path below
+   * the event type, constant type, metadata type or chunk index, without trailing index or slice
+   * segments — {@code cause}, {@code stackTrace/frames} for {@code stackTrace/frames/0}, {@code
+   * stackTrace/frames/0/lineNumber}.
+   *
+   * <p>Not {@code value}, the header the table prints: {@code value} is in the default redact list,
+   * so every remembered value reached the model as {@code <redacted>}. Named after the field, the
+   * redaction decision is taken on the field's real name — {@link io.jafar.shell.core.llm.Redactor}
+   * matches the last path segment — as it is for rows.
+   */
+  static String projectedColumn(JfrPath.Query q) {
+    List<String> path = q.segments.subList(1, q.segments.size());
+    int end = path.size();
+    while (end > 0 && INDEX_SEGMENT.matcher(path.get(end - 1)).matches()) {
+      end--;
+    }
+    return end == 0 ? "value" : String.join("/", path.subList(0, end));
+  }
+
+  /** One-column rows over the values, made as they are read rather than copied up front. */
+  static List<Map<String, Object>> valueRows(List<Object> values, String column) {
+    return new java.util.AbstractList<>() {
+      @Override
+      public Map<String, Object> get(int index) {
+        return java.util.Collections.singletonMap(column, values.get(index));
+      }
+
+      @Override
+      public int size() {
+        return values.size();
+      }
+    };
   }
 
   /**
@@ -1180,6 +1324,11 @@ public final class Shell implements AutoCloseable {
   private static String argumentOf(String input) {
     int space = input.indexOf(' ');
     return space < 0 ? "" : input.substring(space + 1).trim();
+  }
+
+  /** The rows the next {@code explain} would be given: the most recent row-shaped result. */
+  List<Map<String, Object>> rememberedRows() {
+    return lastResultRows;
   }
 
   /** The LLM commands, primed with the most recent result so {@code explain} has something. */
@@ -1332,11 +1481,28 @@ public final class Shell implements AutoCloseable {
     };
   }
 
+  /**
+   * Prints rows from the current session as a table, for {@code ask}/{@code as-query}; the query
+   * that produced them is not passed down, see {@link #forDisplay}.
+   */
   private void printResult(Object result) {
-    printResult(result, "table");
+    printResult(
+        result,
+        "table",
+        sessions.getCurrent().map(ref -> ref.session.getType()).orElse(null),
+        null);
   }
 
-  private void printResult(Object result, String format) {
+  /**
+   * Prints a query result.
+   *
+   * @param sessionType the type of the session that produced {@code result}
+   * @param query the query that produced it — the parsed {@code JfrPath.Query} when there is one,
+   *     else its text — or {@code null} if not known; with the session type, it decides whether JFR
+   *     constants are unwrapped, see {@link #forDisplay}
+   */
+  private void printResult(Object result, String format, String sessionType, Object query) {
+    result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
         out.println(toJson(result, 0));
@@ -1368,6 +1534,40 @@ public final class Shell implements AutoCloseable {
       out.println("Result: " + result);
     }
     flush();
+  }
+
+  /**
+   * Unwraps JFR constant-pool wrappers in the cells of JFR result rows, so a value prints as {@code
+   * G1New} rather than {@code {name=G1New}}, by the rule jfr-shell uses for its CSV and JSON
+   * output: {@link ConstantValues}. Only the results of {@code events/} and {@code constants/}
+   * queries are unwrapped; {@code metadata/} and {@code chunks/} results are structure, where a
+   * single-entry map is data ({@code fieldsByName} of {@code jdk.types.Symbol}).
+   *
+   * <p>A {@code null} query — rows rendered for {@code ask}/{@code as-query}, which only ever go to
+   * the table — is unwrapped, as jfr-shell's table renderer collapses every single-entry cell
+   * whatever the query.
+   *
+   * <p>Heap dump, pprof and OTLP rows are returned unchanged: their values are not parser wrappers,
+   * and a single-entry map there is data.
+   *
+   * <p>The result is a read-only view over {@code result}, not a copy (see {@link
+   * ConstantValues#unwrapCells}): a table that shows the first rows of a large result unwraps only
+   * those, and rows other code holds, such as a query variable's cache, are never modified.
+   */
+  @SuppressWarnings("unchecked")
+  static Object forDisplay(Object result, String sessionType, Object query) {
+    if (!"jfr".equals(sessionType) || !(result instanceof List<?> list)) {
+      return result;
+    }
+    if (query instanceof JfrPath.Query parsed
+        ? !ConstantValues.holdsRecordingValues(parsed)
+        : query != null && !ConstantValues.holdsRecordingValues(String.valueOf(query))) {
+      return result;
+    }
+    if (!list.isEmpty() && !(list.get(0) instanceof Map<?, ?>)) {
+      return ConstantValues.unwrapEach(list);
+    }
+    return ConstantValues.unwrapCells((List<Map<String, Object>>) list);
   }
 
   @SuppressWarnings("unchecked")
@@ -1481,7 +1681,7 @@ public final class Shell implements AutoCloseable {
     out.println("  metadata class <name> [--tree|--json] [--fields] [--annotations]");
     out.println("  chunks [--summary] [--range N-M]  List chunks");
     out.println("  chunk <index> show  Show one chunk's details");
-    out.println("  constants|cp [<type>] [--summary] [--range N-M]  Constant pools");
+    out.println("  constants|cp [<type>] [--summary] [--range N-M] [--limit N]  Constant pools");
     out.println("  backend [list]     Show the JFR backend, or list them");
     out.println();
     out.println("Ask (LLM, optional):");
@@ -1513,6 +1713,7 @@ public final class Shell implements AutoCloseable {
     out.println();
     out.println("General:");
     out.println("  help               Show this help message");
+    out.println("  help <command>     Detailed usage, e.g. 'help constants'");
     out.println("  modules            List available modules");
     out.println("  exit|quit          Exit shell");
     out.println();
@@ -1541,6 +1742,48 @@ public final class Shell implements AutoCloseable {
     }
     out.println();
     flush();
+  }
+
+  /** Help topics whose text describes JfrPath and jfr-shell's recording commands. */
+  private static final Set<String> JFR_HELP_TOPICS =
+      Set.of(
+          "show",
+          "select",
+          "events",
+          "metadata",
+          "types",
+          "chunks",
+          "chunk",
+          "constants",
+          "cp",
+          "backend");
+
+  /**
+   * {@code help <topic>}: jfr-shell's per-command help, from the CommandDispatcher this shell
+   * already holds, so the two shells cannot drift apart. That text describes JfrPath for the query
+   * topics, so with another kind of session current those topics point at that module instead.
+   */
+  private void printTopicHelp(String topic) {
+    String sub = topic.split("\\s+")[0].toLowerCase(Locale.ROOT);
+    Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();
+    if (JFR_HELP_TOPICS.contains(sub)
+        && current.isPresent()
+        && !(current.get().session instanceof JFRSession)) {
+      ShellModule module = moduleById.get(current.get().session.getType());
+      String name = module != null ? module.getDisplayName() : current.get().session.getType();
+      out.println(
+          "'help " + sub + "' describes JFR recordings; the current session is " + name + ".");
+      if (module != null && !module.getExamples().isEmpty()) {
+        out.println("Queries for " + name + ":");
+        for (String example : module.getExamples()) {
+          out.println("  " + example);
+        }
+      }
+      out.flush();
+      return;
+    }
+    ((CommandDispatcher) moduleContext).dispatch("help " + sub);
+    out.flush();
   }
 
   private void printModules() {

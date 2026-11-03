@@ -48,9 +48,38 @@ The untyped parser delivers a string constant as a single-entry map, `{string=[B
   names, symbols and group-by keys reaching the model became `{string=<redacted>}`. The redaction
   looked like it was working. Fixed by unwrapping before the decision, so the decision is taken on
   the outer field's real name.
+- **A column name chosen for display was redacted too.** `jafar-shell` remembered the values of a
+  projected path (`show events/jdk.GarbageCollection/cause`) for `explain` under the table's
+  `value` header — and `value` is in the same default list, so the model received `<redacted>`
+  for every value, and a fluent answer anyway. They are now remembered under the projected path
+  (`cause`, `stackTrace/frames/0/lineNumber`), so the decision is again taken on the field's real
+  name; `ShellArtifactTest.projectedValuesReachExplainUnredacted` passes what the shell remembers
+  through the real `Redactor`.
+
+- **The unified shell printed the wrapper.** `jafar-shell`'s `printResult` handed JFR rows
+  straight to `TableFormatter` and its CSV/JSON writers, so `gc-analysis.jfrs` grouped by
+  `{name=G1New}` and `thread-profiling.jfrs` by `{string=java/lang/Object}`. jfr-shell never showed
+  it because its `TableRenderer.toCell` collapses a single-entry map — a rule that lived in a
+  renderer, so a second shell with its own renderer did not inherit it — and nor did jfr-shell's
+  own CSV and JSON writers, which printed `{name=G1New}` and `"name": {"name": "G1New"}`. The rule
+  now lives in `ConstantValues` (jfr-shell), used by jfr-shell's CSV/JSON output and by every
+  format of `jafar-shell` (`Shell.forDisplay`).
+
+### A single-entry map is not always a wrapper
+
+The converse of the above, and the first version of that fix got it wrong. The wrapper is a plain
+`java.util.HashMap`, so nothing about the value says "constant": `metadata/jdk.types.Symbol` has
+one field, its `fieldsByName` is `{string={name=string, type=java.lang.String, ...}}`, and
+collapsing every single-entry cell of a JFR result printed it as the inner map — the field's name
+gone, in `--format json` where a script would read it. `ConstantValues.holdsRecordingValues`
+decides by where the rows came from instead: `events/` and `constants/` hold recording values and
+are unwrapped; `metadata/` and `chunks/` are structure and are not. jfr-shell's table still
+collapses every single-entry cell, whatever the root; a table is for reading, not for parsing.
 
 `JfrAnalyses.unwrapValue` handles the `ArrayType`/`ComplexType` case; `Redactor` handles the
-single-entry-map case. If you are reading event values anywhere else, one of those two applies.
+single-entry-map case; `TuiTableRenderer.unwrap` handles both for display, and `ConstantValues`
+decides when display may use it. If you are reading event values anywhere else, one of those
+applies.
 
 ### A display list is not a data list
 
@@ -206,6 +235,21 @@ output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFacto
 runtime run, or the parser discovers the factories and both runs are build-time; print the class
 of one event to be sure which ran.
 
+### A path that parses is not a path that is read
+
+`JfrPathEvaluator.evaluate` reads the root and the first segment of
+`events/jdk.GarbageCollection/cause` — the event type — and returns whole events; the rest of the
+path is honoured only by `evaluateValues`. Nothing fails: the query parses, rows come back, and they
+even contain a `cause` column. jfr-shell's `show` picked the right method by counting segments;
+`jafar-shell` called `evaluate` for everything, so for `events/`, `metadata/`, `constants/` and
+`chunks/` a projected path printed every column of every row. Both shells now route through
+`ShowShape.of`, and `ShellArtifactTest.projectedPathsMatchJfrShell` compares their JSON.
+
+The same evaluator read `chunks/0/size` one way in `evaluate` (`0` is the chunk index) and another
+in `evaluateValues` (`0` is a field of every chunk), so the projection found no field `0` and
+returned an empty list — in jfr-shell too, where it had always printed `(no values)`. When two
+methods interpret one path, check that they agree segment by segment.
+
 ---
 
 ## Before you trust a shape
@@ -213,7 +257,8 @@ of one event to be sure which ran.
 - Print the value once, in the real path, with a real recording. Not the type — the value.
 - If it comes from metadata, ask whether it means *declared* or *present*.
 - If it is a count, ask what populated it and when.
-- If it is a string from a recording, assume it is wrapped until you have seen otherwise.
+- If it is a string from a recording, assume it is wrapped until you have seen otherwise — and if
+  it is a single-entry map from metadata, assume it is data.
 - If a structure has a display form and a data form, you want the data form, and the display form
   will not tell you that you took the wrong one.
 - If it is a column name, check it against a row before you sort or filter by it. Silence means the
