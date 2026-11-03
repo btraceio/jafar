@@ -39,6 +39,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **JFR constant-pool strings print as strings in CSV and JSON, and in every `jafar-shell`
+  format.** Result values that the parser hands over as single-entry constants printed as their
+  wrapper — `{name=G1New}`, `{cause=G1 Evacuation Pause}`, `{string=java/lang/Object}`: in
+  jfr-shell's `--format csv` and `--format json` (`"name": {"name": "G1New"}`), and in every
+  `jafar-shell` format, so `gc-analysis.jfrs` and `thread-profiling.jfrs` grouped and listed by
+  `{name=G1New}` there. Both shells now unwrap those cells the way jfr-shell's table always has,
+  for the results of `events/` and `constants/` queries, including `events/<type>/<field>` value
+  lists. `metadata/` and `chunks/` output is unchanged, since a single-entry map there is data
+  (`fieldsByName` of a one-field type such as `jdk.types.Symbol`), and so are heap dump, pprof and
+  OTLP output and the rows passed to `explain`/`ask`. A script that read `.name.name` or
+  `.key.string` from `--format json` output reads `.name` and `.key` now
+- **`jafar-shell` honours a projected path.** `show events/jdk.GarbageCollection/cause` printed
+  every column of every event, because the unified shell evaluated every JfrPath query as rows and
+  the evaluator reads only the event type of such a path. It now prints the values the path names,
+  as jfr-shell does, for `events/<type>/<path>`, `constants/<type>/<path>`,
+  `metadata/<type>/fields` and `chunks/<n>/<path>`, and one field's metadata for
+  `metadata/<type>/<field>`: a `value` column in tables and CSV, a plain array in JSON. Both shells
+  route through one `ShowShape`, so a path means the same thing in each. `show ${v}` of a variable
+  set to such a path prints the same values, though the variable itself still holds the rows its
+  query returns (`${v[0]}`, `${v.size}`), and `explain` after either gets those values under the
+  field's name (`cause`, `stackTrace/frames/0/lineNumber`) — not under the `value` header, which
+  is in the default redact list. `ask` and cross-session joins still receive rows
+- **`chunks/<n>/<field>` returns the field.** `chunks/0/size` printed `(no values)` in jfr-shell:
+  the projection read `0` as a field of every chunk rather than as the chunk index `chunks/0`
+  uses. It now projects from chunk `n`, and honours filters such as `chunks[compressed=true]`
+- **Projected paths with an index no longer write debug output.** Any projection with a `0`
+  segment — the documented `events/jdk.ExecutionSample/stackTrace/frames/0`, `chunks/0/size` —
+  printed `[extractWithIndexing] DEBUG=false, proj = [...]` to stderr and appended a line to
+  `/tmp/jfr-shell-debug.log` for every event projected, in both shells. The leftover debug hook
+  (with its undocumented `jfr.shell.debug` / `JFR_SHELL_DEBUG` switch) is removed; the opt-in
+  `-Djfr.shell.query.debug` filter tracing is unchanged
 - **The public untyped parser now honours `UntypedStrategy`** (#124). `UntypedJafarParserImpl.run()`
   always built the generic `EventStream`; the generated, strategy-aware `EventStreamGenerated`
   was reachable only from tests and benchmarks. It is now selected through an
@@ -124,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdin, positional `$1...`, `--continue-on-error`, `-b/--backend`), quiet output, errors on
   stderr and exit status 1 on failure. It needs no terminal and leaves the interactive history
   untouched. Tables use jafar-shell's layout; a JFR-only script gets the unified shell's semantics
-  (the same data, but string values printed as `{name=G1New}`; see
+  (the same data in another table layout; see
   [Scripting in jafar-shell](doc/cli/Scripting.md#in-jafar-shell)),
   and `jfr-shell script` keeps jfr-shell's. The `jfr-shell` jbang alias launches jfr-shell directly
   and is unaffected

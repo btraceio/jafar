@@ -327,6 +327,24 @@ named failing set — so a reader can tell growth from regression.
 > failure message (`-Dmcp.test.timeout.ms`, "raise if the machine is loaded"), forward it from the
 > Gradle task**: advice that the build silently ignores is R3's fallback in disguise.
 
+> **Case file — allocation counts that moved with warm-up.** Reviewing the JFR-constant
+> unwrapping, `ThreadMXBean.getThreadAllocatedBytes` around `TableFormatter.formatTable(rows, 50)`
+> over a million 8-column rows, after **3** warm-up rounds, reported the no-unwrap baseline at
+> 142,224 bytes and the harness's copy-free view at 24 MB. After **15** rounds the same harness
+> measured 32,142,248 bytes and 56 MB, identically on three runs — about 226 times the baseline
+> figure that had been quoted. The JIT's escape analysis had been removing per-row iterator and
+> wrapper allocations in the short-warmed run, and the figures went into a review before anyone
+> looked twice; the correction then misattributed a number from a *different* harness and view
+> implementation (96 MB, the production view) to "the same code". The ranking held throughout —
+> in one harness, 15 rounds: eager copy plus table 524 B/row, production view plus table 96 B/row,
+> table alone 32 B/row — the magnitudes did not. Warm up well past the point the number stops
+> moving, run at least three times, put the old and new code **in one harness** with the same
+> warm-up (a harness that measures "the old way" through a library call silently measures the new
+> way once the library changes), and label each figure with what it includes. An allocation bound
+> in a test wants a margin wide enough for that variance, measured cold, as the test runs:
+> `ShellArtifactTest.tableOfALargeJfrResultDoesNotCopyItsRows` allows +200 B/row over the plain
+> table, where the view measured +40 to +88 and a copy +322 to +348.
+
 ## R7. One source of truth for any list two places must agree on
 
 If a list is duplicated, the copies will disagree, and the disagreement will be invisible until a

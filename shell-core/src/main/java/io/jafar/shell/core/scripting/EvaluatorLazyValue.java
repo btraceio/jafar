@@ -187,6 +187,22 @@ public final class EvaluatorLazyValue implements VariableStore.LazyValue {
   }
 
   /**
+   * The parsed query, as {@code evaluator.parse(queryString)} returned it when this was defined.
+   */
+  public Object parsedQuery() {
+    return query;
+  }
+
+  /**
+   * The session this value is bound to, while it is open.
+   *
+   * @throws IllegalStateException if that session is gone or closed, with the message a read gives
+   */
+  public SessionRef<? extends Session> boundSession() {
+    return liveSession();
+  }
+
+  /**
    * The type of that session ({@code jfr}, {@code hdump}, ...), or {@code null} once it is gone.
    */
   public String sessionType() {

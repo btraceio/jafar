@@ -1251,9 +1251,9 @@ public class CommandDispatcher {
               if (isFlameGraph(rows)) {
                 FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
               } else if ("json".equalsIgnoreCase(format)) {
-                printJson(rows, io);
+                printJson(forOutput(rows, lqv.getQueryString()), io);
               } else if ("csv".equalsIgnoreCase(format)) {
-                CsvRenderer.render(rows, io);
+                CsvRenderer.render(forOutput(rows, lqv.getQueryString()), io);
               } else if ("tui".equalsIgnoreCase(format)) {
                 TuiTableRenderer.render(rows, io);
               } else {
@@ -1283,9 +1283,9 @@ public class CommandDispatcher {
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, expr), io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, expr), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.render(rows, io);
       } else {
@@ -1300,12 +1300,13 @@ public class CommandDispatcher {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       rememberResult(expr, rows);
+      boolean unwrap = ConstantValues.holdsRecordingValues(q);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, unwrap), io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, unwrap), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.render(rows, io);
       } else {
@@ -1361,27 +1362,11 @@ public class CommandDispatcher {
       cmdTypes(List.of());
       return;
     }
-    if (q.root == JfrPath.Root.METADATA && q.segments.size() == 2) {
-      String typeName = q.segments.get(0);
-      String fieldName = q.segments.get(1);
-      if ("fields".equals(fieldName) || "fieldsByName".equals(fieldName)) {
-        // Delegate to generic evaluator to support 'fields' and 'fieldsByName'
-        var values = eval.evaluateValues((JFRSession) cur.get().session, q);
-        if (limit != null && limit < values.size()) values = values.subList(0, limit);
-        if ("json".equalsIgnoreCase(format)) {
-          printJson(values, io);
-        } else if ("csv".equalsIgnoreCase(format)) {
-          CsvRenderer.renderValues(values, io);
-        } else if ("tui".equalsIgnoreCase(format)) {
-          TuiTableRenderer.renderValues(values, io);
-        } else {
-          TableRenderer.renderValues(values, io);
-        }
-        return;
-      }
-      var evalMeta = new JfrPathEvaluator();
-      Map<String, Object> fm =
-          evalMeta.loadFieldMetadata(cur.get().session.getFilePath(), typeName, fieldName);
+    // events/<type>/<path>, metadata/<type>/fields, metadata/<type>/<field>, ... — the same
+    // routing jafar-shell's 'show' uses
+    ShowShape shape = ShowShape.of(q);
+    if (shape == ShowShape.FIELD_METADATA) {
+      Map<String, Object> fm = ShowShape.fieldMetadata(eval, (JFRSession) cur.get().session, q);
       if (fm == null) {
         io.println("(no rows)");
       } else {
@@ -1404,16 +1389,15 @@ public class CommandDispatcher {
       }
       return;
     }
-    if (q.segments.size() > 1) {
-      var values =
-          (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateValuesWithLimit((JFRSession) cur.get().session, q, limit)
-              : eval.evaluateValues((JFRSession) cur.get().session, q);
+    if (shape == ShowShape.VALUES) {
+      var values = ShowShape.values(eval, (JFRSession) cur.get().session, q, limit);
       if (limit != null && limit < values.size()) values = values.subList(0, limit);
+      List<?> shaped =
+          ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values;
       if ("json".equalsIgnoreCase(format)) {
-        printJson(values, io);
+        printJson(shaped, io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.renderValues(values, io);
+        CsvRenderer.renderValues(shaped, io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.renderValues(values, io);
       } else {
@@ -1426,7 +1410,7 @@ public class CommandDispatcher {
               : eval.evaluate((JFRSession) cur.get().session, q);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       if ("json".equalsIgnoreCase(format)) {
-        printJson(rows, io);
+        printJson(forOutput(rows, ConstantValues.holdsRecordingValues(q)), io);
       } else if ("csv".equalsIgnoreCase(format)) {
         // Hide internal columns for metadata tables (CSV view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
@@ -1439,7 +1423,7 @@ public class CommandDispatcher {
           copy.remove("fieldCount");
           rows = List.of(copy);
         }
-        CsvRenderer.render(rows, io);
+        CsvRenderer.render(forOutput(rows, ConstantValues.holdsRecordingValues(q)), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         // Hide internal columns for metadata tables (TUI view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
@@ -1989,6 +1973,23 @@ public class CommandDispatcher {
       return;
     }
     io.println("No specific help for '" + sub + "'. Try 'help show'.");
+  }
+
+  /**
+   * Rows for CSV/JSON output: with constant-pool wrappers unwrapped when they hold recording
+   * values, see {@link ConstantValues}. The table renderers collapse those cells themselves.
+   */
+  private static List<Map<String, Object>> forOutput(
+      List<Map<String, Object>> rows, boolean recordingValues) {
+    return recordingValues ? ConstantValues.unwrapCells(rows) : rows;
+  }
+
+  /**
+   * As {@link #forOutput(List, boolean)}, for a route that holds only the query text, which is
+   * parsed here and so only for the formats that need it.
+   */
+  private static List<Map<String, Object>> forOutput(List<Map<String, Object>> rows, String query) {
+    return forOutput(rows, ConstantValues.holdsRecordingValues(query));
   }
 
   private static boolean isFlameGraph(List<Map<String, Object>> rows) {
