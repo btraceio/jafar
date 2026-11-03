@@ -4,12 +4,24 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+      # Plane tags (RELEASING.md "Version planes"); '*' does not cross '/', so
+      # each needs its own pattern or the push starts no run
+      - 'core/v[0-9]+.[0-9]+.[0-9]+'
+      - 'mcp/v[0-9]+.[0-9]+.[0-9]+'
+      - 'llm-anthropic/v[0-9]+.[0-9]+.[0-9]+'
+      - 'llm-openai/v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to publish/update (e.g., 0.9.0)'
         required: true
         type: string
+      plane:
+        description: 'Release plane (RELEASING.md "Version planes")'
+        required: false
+        type: choice
+        options: [shell, core, mcp, llm-anthropic, llm-openai]
+        default: shell
       publish_backends_only:
         description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar, llm-anthropic)'
         required: false
@@ -33,6 +45,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_tag: ${{ steps.version.outputs.tag }}
+      plane: ${{ steps.version.outputs.plane }}
       is_manual: ${{ steps.version.outputs.is_manual }}
       publish_backends_only: ${{ steps.version.outputs.publish_backends_only }}
       update_catalog_only: ${{ steps.version.outputs.update_catalog_only }}
