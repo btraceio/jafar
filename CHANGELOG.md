@@ -56,8 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as jfr-shell does, for `events/<type>/<path>`, `constants/<type>/<path>`,
   `metadata/<type>/fields` and `chunks/<n>/<path>`, and one field's metadata for
   `metadata/<type>/<field>`: a `value` column in tables and CSV, a plain array in JSON. Both shells
-  route through one `ShowShape`, so a path means the same thing in each. Query variables, `ask` and
-  cross-session joins still receive rows
+  route through one `ShowShape`, so a path means the same thing in each. `show ${v}` of a variable
+  set to such a path prints the same values, though the variable itself still holds the rows its
+  query returns (`${v[0]}`, `${v.size}`), and `explain` after either gets those values under the
+  field's name (`cause`, `stackTrace/frames/0/lineNumber`) — not under the `value` header, which
+  is in the default redact list. `ask` and cross-session joins still receive rows
 - **`chunks/<n>/<field>` returns the field.** `chunks/0/size` printed `(no values)` in jfr-shell:
   the projection read `0` as a field of every chunk rather than as the chunk index `chunks/0`
   uses. It now projects from chunk `n`, and honours filters such as `chunks[compressed=true]`

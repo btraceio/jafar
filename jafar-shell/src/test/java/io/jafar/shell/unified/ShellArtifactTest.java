@@ -679,6 +679,62 @@ class ShellArtifactTest {
     }
   }
 
+  /**
+   * {@code show ${v}} of a variable set to a projected path prints the values the path names, as
+   * typing the path does — the variable holds rows (its evaluator returns whole events), and
+   * printing those made the same path look different through a variable.
+   */
+  @Test
+  void projectedVariablePrintsItsValues(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    var out = new java.io.ByteArrayOutputStream();
+    try (Shell shell =
+        Shell.forScript(new java.io.PrintStream(out, true), new java.io.PrintStream(out, true))) {
+      assertTrue(shell.execute("open " + recording), out.toString());
+      assertTrue(shell.execute("set v = events/jdk.GarbageCollection/cause"), out.toString());
+
+      out.reset();
+      assertTrue(shell.execute("show ${v}"), out.toString());
+      String table = out.toString();
+      assertTrue(table.contains("value") && table.contains("System.gc()"), table);
+      assertFalse(table.contains("duration"), table);
+
+      out.reset();
+      assertTrue(shell.execute("show ${v} --format json"), out.toString());
+      String json = out.toString();
+      assertTrue(json.contains("\"System.gc()\""), json);
+      assertFalse(json.contains("duration"), json);
+
+      var redactor =
+          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+      String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
+      assertTrue(sent.contains("cause=") && sent.contains("System.gc()"), sent);
+      assertFalse(sent.contains("<redacted>"), sent);
+
+      // the variable itself still holds the rows its query returns
+      out.reset();
+      assertTrue(shell.execute("echo ${v.size}"), out.toString());
+      assertTrue(out.toString().trim().matches("[1-9][0-9]*"), out.toString());
+
+      // a --global variable whose recording is closed says so instead of printing anything,
+      // shown from another session (with none open, show stops at "No session open")
+      assertTrue(shell.execute("set --global w = events/jdk.GarbageCollection/cause"));
+      shell.execute("close");
+      assertTrue(shell.execute("open " + recording), out.toString());
+      out.reset();
+      shell.execute("show ${w}");
+      assertTrue(out.toString().contains("has been closed"), out.toString());
+      assertFalse(out.toString().contains("System.gc()"), out.toString());
+    }
+  }
+
   @Test
   void projectedColumnNamesTheField() {
     java.util.function.Function<String, String> column =

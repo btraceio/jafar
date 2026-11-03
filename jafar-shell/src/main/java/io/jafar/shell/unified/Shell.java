@@ -1103,20 +1103,30 @@ public final class Shell implements AutoCloseable {
         && whole.matches()
         && variables.scopes().resolve(whole.group(1)) instanceof VariableStore.LazyValue lazy) {
       try {
-        Object rows = lazy.get();
         // The flags may use variables too ('--limit ${n}'); the row variable itself is not text
         String flags = variables.substitute(whole.group(2));
         java.util.regex.Matcher fmt = FORMAT_FLAG.matcher(flags);
         java.util.regex.Matcher lim = LIMIT_FLAG.matcher(flags);
-        if (lim.find() && rows instanceof List<?> list) {
-          rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
+        Integer limit = lim.find() ? Integer.valueOf(lim.group(1)) : null;
+        String format = fmt.find() ? fmt.group(1) : ref.outputFormat;
+        // The parsed query the variable was defined with, so it is not parsed again here
+        Object definedAs =
+            lazy instanceof EvaluatorLazyValue bound ? bound.parsedQuery() : lazy.getQueryString();
+        // A variable holds rows, as its evaluator returns them; a projected JFR path
+        // (events/<type>/<field>, ...) prints the values it names, as typing the path does
+        if (lazy instanceof EvaluatorLazyValue bound
+            && definedAs instanceof JfrPath.Query q
+            && ShowShape.of(q) != ShowShape.ROWS
+            && bound.boundSession().session instanceof JFRSession jfr) {
+          showJfrProjection(jfr, q, lazy.getQueryString(), limit, format);
+          return;
+        }
+        Object rows = lazy.get();
+        if (limit != null && rows instanceof List<?> list) {
+          rows = list.subList(0, Math.min(limit, list.size()));
         }
         rememberResult(lazy.getQueryString(), rows);
-        printResult(
-            rows,
-            fmt.find() ? fmt.group(1) : ref.outputFormat,
-            rowsTypeOf(lazy, ref.session.getType()),
-            lazy.getQueryString());
+        printResult(rows, format, rowsTypeOf(lazy, ref.session.getType()), definedAs);
       } catch (Exception e) {
         printError(e.getMessage());
       }
