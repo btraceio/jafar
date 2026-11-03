@@ -1248,13 +1248,12 @@ public class CommandDispatcher {
               var eval = new JfrPathEvaluator(listMatchMode);
               rows = eval.applyToRows(rows, dummyQuery.pipeline);
               if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
-              boolean unwrap = ConstantValues.holdsRecordingValues(lqv.getQueryString());
               if (isFlameGraph(rows)) {
                 FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
               } else if ("json".equalsIgnoreCase(format)) {
-                printJson(forOutput(rows, unwrap), io);
+                printJson(forOutput(rows, lqv.getQueryString()), io);
               } else if ("csv".equalsIgnoreCase(format)) {
-                CsvRenderer.render(forOutput(rows, unwrap), io);
+                CsvRenderer.render(forOutput(rows, lqv.getQueryString()), io);
               } else if ("tui".equalsIgnoreCase(format)) {
                 TuiTableRenderer.render(rows, io);
               } else {
@@ -1281,13 +1280,12 @@ public class CommandDispatcher {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
       if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
       rememberResult(expr, rows);
-      boolean unwrap = ConstantValues.holdsRecordingValues(expr);
       if (isFlameGraph(rows)) {
         FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(forOutput(rows, unwrap), io);
+        printJson(forOutput(rows, expr), io);
       } else if ("csv".equalsIgnoreCase(format)) {
-        CsvRenderer.render(forOutput(rows, unwrap), io);
+        CsvRenderer.render(forOutput(rows, expr), io);
       } else if ("tui".equalsIgnoreCase(format)) {
         TuiTableRenderer.render(rows, io);
       } else {
@@ -1984,6 +1982,14 @@ public class CommandDispatcher {
   private static List<Map<String, Object>> forOutput(
       List<Map<String, Object>> rows, boolean recordingValues) {
     return recordingValues ? ConstantValues.unwrapCells(rows) : rows;
+  }
+
+  /**
+   * As {@link #forOutput(List, boolean)}, for a route that holds only the query text, which is
+   * parsed here and so only for the formats that need it.
+   */
+  private static List<Map<String, Object>> forOutput(List<Map<String, Object>> rows, String query) {
+    return forOutput(rows, ConstantValues.holdsRecordingValues(query));
   }
 
   private static boolean isFlameGraph(List<Map<String, Object>> rows) {

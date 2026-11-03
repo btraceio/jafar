@@ -1112,13 +1112,11 @@ public final class Shell implements AutoCloseable {
           rows = list.subList(0, Math.min(Integer.parseInt(lim.group(1)), list.size()));
         }
         rememberResult(lazy.getQueryString(), rows);
-        // The variable runs in the session it was set in, which need not be the current one
-        String type =
-            lazy instanceof EvaluatorLazyValue bound && bound.sessionType() != null
-                ? bound.sessionType()
-                : ref.session.getType();
         printResult(
-            rows, fmt.find() ? fmt.group(1) : ref.outputFormat, type, lazy.getQueryString());
+            rows,
+            fmt.find() ? fmt.group(1) : ref.outputFormat,
+            rowsTypeOf(lazy, ref.session.getType()),
+            lazy.getQueryString());
       } catch (Exception e) {
         printError(e.getMessage());
       }
@@ -1152,26 +1150,43 @@ public final class Shell implements AutoCloseable {
     }
 
     try {
-      // JfrQueryEvaluator.evaluate returns whole events for events/<type>/<path>; the path is
-      // honoured here, the way jfr-shell's show honours it
+      // A JFR query is parsed once here and the parsed query passed on, to evaluate() and to the
+      // display shaping, rather than each of them parsing the text again. Other formats keep the
+      // text, as their evaluators were always given.
+      Object parsedOrText = cleanQuery;
       if (ref.session instanceof JFRSession jfr
-          && evaluator.parse(cleanQuery) instanceof JfrPath.Query q
-          && ShowShape.of(q) != ShowShape.ROWS) {
-        showJfrProjection(jfr, q, cleanQuery, limit, format);
-        return;
+          && evaluator.parse(cleanQuery) instanceof JfrPath.Query q) {
+        // JfrQueryEvaluator.evaluate returns whole events for events/<type>/<path>; the path is
+        // honoured here, the way jfr-shell's show honours it
+        if (ShowShape.of(q) != ShowShape.ROWS) {
+          showJfrProjection(jfr, q, cleanQuery, limit, format);
+          return;
+        }
+        parsedOrText = q;
       }
       CrossSessionContext ctx = buildCrossSessionContext();
-      Object result = evaluator.evaluate(ref.session, cleanQuery, ctx);
+      Object result = evaluator.evaluate(ref.session, parsedOrText, ctx);
       if (limit != null && result instanceof List<?> list) {
         result = list.subList(0, Math.min(limit, list.size()));
       }
       rememberResult(cleanQuery, result);
-      printResult(result, format, ref.session.getType(), cleanQuery);
+      printResult(result, format, ref.session.getType(), parsedOrText);
     } catch (Exception e) {
       error("Query error: " + e.getMessage());
       printStackTraceIfInteractive(e);
       flush();
     }
+  }
+
+  /**
+   * The type of the session whose rows a query variable holds: the session it was set in, which
+   * need not be the current one. Read right after {@code get()} succeeded, which it does only while
+   * that session is open ({@link EvaluatorLazyValue} fails every read once it is closed or gone),
+   * so the type is that session's.
+   */
+  static String rowsTypeOf(VariableStore.LazyValue lazy, String currentType) {
+    String type = lazy instanceof EvaluatorLazyValue bound ? bound.sessionType() : null;
+    return type != null ? type : currentType;
   }
 
   /**
@@ -1204,7 +1219,7 @@ public final class Shell implements AutoCloseable {
       } else {
         Map<String, Object> shown = new java.util.LinkedHashMap<>(copy);
         shown.remove("annotationsFull"); // jfr-shell hides it outside JSON
-        printResult(List.of(shown), format, session.getType(), query);
+        printResult(List.of(shown), format, session.getType(), q);
       }
       return;
     }
@@ -1212,19 +1227,28 @@ public final class Shell implements AutoCloseable {
     if (limit != null && limit < values.size()) {
       values = values.subList(0, limit);
     }
-    if (ConstantValues.holdsRecordingValues(q)) {
-      values = ConstantValues.unwrapEach(values);
-    }
-    List<Map<String, Object>> rows = new ArrayList<>(values.size());
-    for (Object value : values) {
-      rows.add(java.util.Collections.singletonMap("value", value));
-    }
+    // One 'value' column over the values as they came; the constants are unwrapped once, as they
+    // are printed (printResult for the table and CSV, ConstantValues.unwrapEach for JSON)
+    List<Object> raw = values;
+    List<Map<String, Object>> rows =
+        new java.util.AbstractList<>() {
+          @Override
+          public Map<String, Object> get(int index) {
+            return java.util.Collections.singletonMap("value", raw.get(index));
+          }
+
+          @Override
+          public int size() {
+            return raw.size();
+          }
+        };
     rememberResult(query, rows);
     if ("json".equalsIgnoreCase(format)) {
-      out.println(toJson(values, 0));
+      out.println(
+          toJson(ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(raw) : raw, 0));
       flush();
     } else {
-      printResult(rows, format, session.getType(), query);
+      printResult(rows, format, session.getType(), q);
     }
   }
 
@@ -1421,10 +1445,11 @@ public final class Shell implements AutoCloseable {
    * Prints a query result.
    *
    * @param sessionType the type of the session that produced {@code result}
-   * @param query the query text that produced it, or {@code null} if not known; with the session
-   *     type, it decides whether JFR constants are unwrapped first, see {@link #forDisplay}
+   * @param query the query that produced it — the parsed {@code JfrPath.Query} when there is one,
+   *     else its text — or {@code null} if not known; with the session type, it decides whether JFR
+   *     constants are unwrapped, see {@link #forDisplay}
    */
-  private void printResult(Object result, String format, String sessionType, String query) {
+  private void printResult(Object result, String format, String sessionType, Object query) {
     result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
@@ -1472,13 +1497,19 @@ public final class Shell implements AutoCloseable {
    *
    * <p>Heap dump, pprof and OTLP rows are returned unchanged: their values are not parser wrappers,
    * and a single-entry map there is data.
+   *
+   * <p>The result is a read-only view over {@code result}, not a copy (see {@link
+   * ConstantValues#unwrapCells}): a table that shows the first rows of a large result unwraps only
+   * those, and rows other code holds, such as a query variable's cache, are never modified.
    */
   @SuppressWarnings("unchecked")
-  static Object forDisplay(Object result, String sessionType, String query) {
+  static Object forDisplay(Object result, String sessionType, Object query) {
     if (!"jfr".equals(sessionType) || !(result instanceof List<?> list)) {
       return result;
     }
-    if (query != null && !ConstantValues.holdsRecordingValues(query)) {
+    if (query instanceof JfrPath.Query parsed
+        ? !ConstantValues.holdsRecordingValues(parsed)
+        : query != null && !ConstantValues.holdsRecordingValues(String.valueOf(query))) {
       return result;
     }
     if (!list.isEmpty() && !(list.get(0) instanceof Map<?, ?>)) {

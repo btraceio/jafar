@@ -658,6 +658,14 @@ class ShellArtifactTest {
     assertSame(rows, Shell.forDisplay(rows, "jfr", "chunks"));
     assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", "events/x"));
     assertEquals(List.of(Map.of("value", "kept")), Shell.forDisplay(rows, "jfr", null));
+    // the parsed query, as handleShow passes it, decides the same way as its text
+    assertSame(
+        rows,
+        Shell.forDisplay(
+            rows, "jfr", io.jafar.shell.jfrpath.JfrPathParser.parse("metadata/jdk.types.Symbol")));
+    assertEquals(
+        List.of(Map.of("value", "kept")),
+        Shell.forDisplay(rows, "jfr", io.jafar.shell.jfrpath.JfrPathParser.parse("events/x")));
   }
 
   @Test
