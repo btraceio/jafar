@@ -51,8 +51,9 @@ jobs:
       - name: Publish
         if: steps.version-check.outputs.is_snapshot == 'true'
         run: |
-          # Publish all modules (parser, tools, jfr-mcp, backend plugins) except jfr-shell
-          ./gradlew publish publishToMavenLocal -x :jfr-shell:publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
+          # Publish all modules, including io.btrace:jafar-shell (the unified shell jar, whose
+          # publication lives in :jfr-shell) so the jafar-shell-latest JBang alias resolves
+          ./gradlew publish publishToMavenLocal --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
           cd jafar-gradle-plugin
           ./gradlew publish --max-workers=1 --no-build-cache --stacktrace --info --no-watch-fs --no-daemon
         env:
