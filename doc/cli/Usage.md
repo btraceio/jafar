@@ -58,7 +58,7 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
 - `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
 - `chunks [--summary] [--range N-M]`: List chunk information.
 - `chunk <index> show`: Show specific chunk details.
-- `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
+- `constants [<type>] [--summary] [--range N-M] [--limit N]`: Browse constant pool entries.
 - `constants/<type> | crossref()`: Crosscheck CP entries against event references.
 - `events/<type>[filter] [--limit N]`: Query events (shorthand for `show events`, both forms work).
 

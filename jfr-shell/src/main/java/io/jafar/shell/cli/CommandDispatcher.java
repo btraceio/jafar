@@ -1615,13 +1615,14 @@ public class CommandDispatcher {
     }
     if ("constants".equals(sub)) {
       io.println(
-          "Usage: constants [<type>] [--summary] [--range N-M] [--format table|json|csv|tui]");
+          "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]");
       io.println("       constants/<type> | crossref()");
       io.println("Browse constant pool entries in the current recording.");
       io.println("");
       io.println("Options:");
       io.println("  --summary      Show per-type counts only (default when no type specified)");
       io.println("  --range N-M    Show entries from N to M (inclusive, for specific type)");
+      io.println("  --limit N      Show at most N rows (summary rows, or entries after --range)");
       io.println("Examples:");
       io.println("  constants                     # browse all CP types");
       io.println("  constants jdk.types.Symbol     # list entries for a type");
@@ -1800,12 +1801,14 @@ public class CommandDispatcher {
       io.println(
           "Deprecated: use 'constants' instead. This alias will be removed in a future release.");
       io.println("");
-      io.println("Usage: cp [--summary] [<type>] [--range N-M] [--format table|json|csv|tui]");
+      io.println(
+          "Usage: cp [--summary] [<type>] [--range N-M] [--limit N] [--format table|json|csv|tui]");
       io.println("       cp <type> | crossref()");
       io.println("Browse constant pools in the current recording.");
       io.println("Options:");
       io.println("  --summary      Show per-type counts only (default when no type specified)");
       io.println("  --range N-M    Show entries from N to M (inclusive, for specific type)");
+      io.println("  --limit N      Show at most N rows (summary rows, or entries after --range)");
       io.println("Examples:");
       io.println("  constants");
       io.println("  constants jdk.types.Symbol");
@@ -2483,7 +2486,12 @@ public class CommandDispatcher {
     }
   }
 
-  /** constants [--summary] [<kind>] [--range N-M] constants <kind> [--range N-M] */
+  private static final Set<String> CP_OPTIONS_WITH_VALUE = Set.of("--range", "--format", "--limit");
+
+  private static final Pattern CP_CROSSREF =
+      Pattern.compile("^(.*?)\\s*\\|\\s*(?i:crossref)\\(\\s*\\)\\s*$");
+
+  /** constants [--summary] [<kind>] [--range N-M] [--limit N] [--format F] | crossref() */
   private void cmdCp(List<String> args) throws Exception {
     var cur = sessions.current();
     if (cur.isEmpty()) {
@@ -2500,25 +2508,49 @@ public class CommandDispatcher {
     }
 
     boolean summary = args.contains("--summary");
-    int pipeIdx = args.indexOf("|");
-    boolean crossref =
-        pipeIdx >= 0
-            && pipeIdx + 1 < args.size()
-            && args.get(pipeIdx + 1).equalsIgnoreCase("crossref()");
-    List<String> cleanArgs = new ArrayList<>(args);
+    // '<type> | crossref()', with or without spaces around the pipe. Matched on the words joined
+    // back together: 'cp T|crossref()' arrives as the single word 'T|crossref()', and taken as a
+    // type name it listed the entries of a type called that ("(no rows)").
+    Matcher crossrefMatch = CP_CROSSREF.matcher(String.join(" ", args));
+    boolean crossref = crossrefMatch.matches();
+    List<String> cleanArgs =
+        new ArrayList<>(
+            crossref
+                ? Arrays.asList(crossrefMatch.group(1).trim().split("\\s+"))
+                : new ArrayList<>(args));
+    cleanArgs.removeIf(String::isEmpty);
     cleanArgs.remove("--summary");
-    if (crossref) {
-      int pi = cleanArgs.indexOf("|");
-      if (pi >= 0) {
-        cleanArgs.remove(pi + 1); // "crossref()" — higher index first
-        cleanArgs.remove(pi); // "|"
-      }
-    }
 
     String range = extractOption(cleanArgs, "--range");
     String format = extractOption(cleanArgs, "--format");
     if (format == null) {
       format = cur.get().outputFormat;
+    }
+    String limitText = extractOption(cleanArgs, "--limit");
+    Integer limit = null;
+    if (limitText != null) {
+      try {
+        limit = Integer.parseInt(limitText);
+      } catch (NumberFormatException e) {
+        limit = -1;
+      }
+      if (limit < 0) {
+        io.error("Invalid --limit: " + limitText + " (expected a non-negative integer)");
+        return;
+      }
+    }
+    // What is left is the type name. An option left here was unknown or lacked its value; taken
+    // as a type it would list the entries of a type called "--limit": "(no rows)", and no error.
+    for (String a : cleanArgs) {
+      if (a.startsWith("--")) {
+        io.error(
+            CP_OPTIONS_WITH_VALUE.contains(a)
+                ? "Missing value for " + a
+                : "Unknown option for constants: " + a);
+        io.error(
+            "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]");
+        return;
+      }
     }
 
     if (crossref) {
@@ -2536,6 +2568,9 @@ public class CommandDispatcher {
       // cp or cp --summary: show type summary
       List<Map<String, Object>> summaryRows =
           ConstantPoolProvider.loadSummary(cur.get().session.getFilePath());
+      if (limit != null && summaryRows.size() > limit) {
+        summaryRows = summaryRows.subList(0, limit);
+      }
       if ("json".equalsIgnoreCase(format)) {
         printJson(summaryRows, io);
       } else if ("csv".equalsIgnoreCase(format)) {
@@ -2557,6 +2592,9 @@ public class CommandDispatcher {
         int start = Integer.parseInt(parts[0]);
         int end = parts.length > 1 ? Integer.parseInt(parts[1]) : entries.size() - 1;
         entries = entries.subList(Math.max(0, start), Math.min(entries.size(), end + 1));
+      }
+      if (limit != null && entries.size() > limit) {
+        entries = entries.subList(0, limit);
       }
 
       if ("json".equalsIgnoreCase(format)) {
