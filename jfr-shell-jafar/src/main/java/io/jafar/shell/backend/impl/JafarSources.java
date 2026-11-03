@@ -5,6 +5,7 @@ import io.jafar.parser.api.EventDecodingException;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
+import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.GenericValueReader;
@@ -23,6 +24,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,9 +33,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.TreeMap;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Jafar-specific implementations of Source interfaces. Contains the actual parsing logic using
@@ -43,13 +48,68 @@ final class JafarSources {
 
   private JafarSources() {}
 
+  /**
+   * One accumulator per chunk, read back in chunk order.
+   *
+   * <p>{@link StreamingChunkParser} submits every chunk to its own pool thread, so listener
+   * callbacks for different chunks run concurrently, while the callbacks for one chunk run in
+   * sequence on one thread. State shared by all chunks therefore races: a plain {@code ArrayList}
+   * loses rows or throws {@code ArrayIndexOutOfBoundsException}, a single slot reset in {@code
+   * onChunkStart} is overwritten by the other chunk mid-flight, and even a synchronized list comes
+   * back in whatever order the chunks finished. Each chunk instead gets its own accumulator, keyed
+   * by {@link ParserContext#getChunkIndex()} (the same number {@code onChunkStart} receives), so it
+   * is only ever touched by one thread. {@code parse} joins every chunk task before returning,
+   * which publishes the accumulators to the caller ({@code Future.get} happens-after the task), and
+   * {@link #inChunkOrder()} merges them in recording order so results do not depend on scheduling.
+   *
+   * <p>{@link #of} is called on per-event paths, so after the first call for a chunk it is one
+   * lookup in the chunk's own {@link ParserContext} storage: no boxing of the chunk index, no
+   * lambda, no skip-list search. The skip list is written once per chunk and read once at the end.
+   */
+  private static final class PerChunk<T> {
+    private static final AtomicLong KEYS = new AtomicLong();
+
+    private final ConcurrentSkipListMap<Integer, T> byChunk = new ConcurrentSkipListMap<>();
+    private final Supplier<T> factory;
+    // Contexts are created per chunk per parse; the key only has to be unique among the PerChunks
+    // of one parse, and a counter makes it unique in the JVM.
+    private final String key = PerChunk.class.getName() + '#' + KEYS.incrementAndGet();
+
+    PerChunk(Supplier<T> factory) {
+      this.factory = factory;
+    }
+
+    @SuppressWarnings("unchecked")
+    T of(ParserContext context) {
+      Object cached = context.get(key, Object.class);
+      if (cached != null) {
+        return (T) cached;
+      }
+      T created = factory.get();
+      context.put(key, Object.class, created);
+      byChunk.put(context.getChunkIndex(), created);
+      return created;
+    }
+
+    /** Call only after {@code parse} has returned. */
+    Collection<T> inChunkOrder() {
+      return byChunk.values();
+    }
+
+    /** Chunk index -> accumulator, in chunk order. Call only after {@code parse} has returned. */
+    SortedMap<Integer, T> byChunkIndex() {
+      return Collections.unmodifiableSortedMap(byChunk);
+    }
+  }
+
   // ==================== MetadataSource Implementation ====================
 
   static final class JafarMetadataSource implements MetadataSource {
 
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-      final AtomicReference<Map<String, Object>> ref = new AtomicReference<>();
+      // Every chunk that defines the type contributes; see mergeClassDefinitions.
+      final PerChunk<Map<String, Object>[]> perChunk = new PerChunk<>(() -> new Map[1]);
       if (System.getProperty("jfr.shell.completion.debug") != null) {
         System.err.println("[DEBUG] JafarMetadataSource.loadClass() called for: " + typeName);
       }
@@ -85,7 +145,7 @@ final class JafarSources {
                   if (System.getProperty("jfr.shell.completion.debug") != null) {
                     System.err.println("[DEBUG]   Found matching class: " + typeName);
                   }
-                  ref.set(convertClass(clazz));
+                  perChunk.of(context)[0] = convertClass(clazz);
                 } else {
                   if (System.getProperty("jfr.shell.completion.debug") != null) {
                     System.err.println("[DEBUG]   Class NOT found: " + typeName);
@@ -96,12 +156,21 @@ final class JafarSources {
             });
       }
 
+      SortedMap<Integer, Map<String, Object>> defsByChunk = new TreeMap<>();
+      perChunk
+          .byChunkIndex()
+          .forEach(
+              (chunk, slot) -> {
+                if (slot[0] != null) defsByChunk.put(chunk, slot[0]);
+              });
+      Map<String, Object> result =
+          defsByChunk.isEmpty() ? null : mergeClassDefinitions(defsByChunk);
       if (System.getProperty("jfr.shell.completion.debug") != null) {
         System.err.println(
             "[DEBUG] JafarMetadataSource.loadClass() returning: "
-                + (ref.get() != null ? "non-null" : "NULL"));
+                + (result != null ? "non-null" : "NULL"));
       }
-      return ref.get();
+      return result;
     }
 
     @Override
@@ -125,7 +194,7 @@ final class JafarSources {
 
     @Override
     public List<Map<String, Object>> loadAllClasses(Path recording) throws Exception {
-      List<Map<String, Object>> result = new ArrayList<>();
+      PerChunk<List<Map<String, Object>>> perChunk = new PerChunk<>(ArrayList::new);
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -133,13 +202,29 @@ final class JafarSources {
             new ChunkParserListener() {
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+                List<Map<String, Object>> rows = perChunk.of(context);
                 for (MetadataClass clazz : metadata.getClasses()) {
-                  result.add(convertClass(clazz));
+                  rows.add(convertClass(clazz));
                 }
                 return false;
               }
             });
       }
+      // One row per class name, not per chunk: name -> chunk -> definition, names in first-seen
+      // order. Rows used to repeat for every chunk (340 rows for 304 classes in tck-test.jfr).
+      Map<String, SortedMap<Integer, Map<String, Object>>> byName = new LinkedHashMap<>();
+      perChunk
+          .byChunkIndex()
+          .forEach(
+              (chunk, defs) -> {
+                for (Map<String, Object> def : defs) {
+                  byName
+                      .computeIfAbsent((String) def.get("name"), k -> new TreeMap<>())
+                      .put(chunk, def);
+                }
+              });
+      List<Map<String, Object>> result = new ArrayList<>(byName.size());
+      byName.values().forEach(defsByChunk -> result.add(mergeClassDefinitions(defsByChunk)));
       return result;
     }
 
@@ -167,17 +252,14 @@ final class JafarSources {
 
       // Settings
       try {
-        Map<String, Map<String, Object>> settingsByName = new HashMap<>();
+        Map<String, Map<String, Object>> settingsByName = new LinkedHashMap<>();
         List<String> settingsDisplay = new ArrayList<>();
         for (Map.Entry<String, Map<String, Object>> e : clazz.getSettingsByName().entrySet()) {
           String sName = e.getKey();
           @SuppressWarnings("unchecked")
           Map<String, Object> sm = (Map<String, Object>) e.getValue();
           settingsByName.put(sName, sm);
-          String st = String.valueOf(sm.get("type"));
-          Object dv = sm.get("defaultValue");
-          String def = dv == null ? null : String.valueOf(dv);
-          settingsDisplay.add(sName + ":" + st + (def != null ? (" (" + def + ")") : ""));
+          settingsDisplay.add(settingDisplay(sName, sm));
         }
         meta.put("settingsByName", settingsByName);
         meta.put("settings", settingsDisplay);
@@ -185,7 +267,8 @@ final class JafarSources {
       }
 
       // Fields
-      Map<String, Map<String, Object>> fieldsByName = new HashMap<>();
+      // Declaration order: the merge across chunks keeps it, and appends fields later chunks add.
+      Map<String, Map<String, Object>> fieldsByName = new LinkedHashMap<>();
       List<String> fieldsDisplay = new ArrayList<>();
       for (MetadataField f : clazz.getFields()) {
         try {
@@ -203,7 +286,6 @@ final class JafarSources {
           } catch (Throwable t) {
             dim = -1;
           }
-          String dimSuffix = dim > 0 ? "[]".repeat(dim) : "";
           fm.put("name", fName);
           fm.put("type", fType);
           fm.put("dimension", dim);
@@ -232,13 +314,7 @@ final class JafarSources {
           fm.put("annotations", ann);
           fm.put("annotationsFull", annFull);
           fieldsByName.put(fName, fm);
-          String disp =
-              fName
-                  + ":"
-                  + fType
-                  + dimSuffix
-                  + (ann.isEmpty() ? "" : (" " + String.join(" ", ann)));
-          fieldsDisplay.add(disp);
+          fieldsDisplay.add(fieldDisplay(fm));
         } catch (Throwable ignoreField) {
           // skip problematic field
         }
@@ -247,6 +323,180 @@ final class JafarSources {
       meta.put("fields", fieldsDisplay);
       meta.put("fieldCount", fieldsDisplay.size());
       return meta;
+    }
+
+    private static String settingDisplay(String name, Map<String, Object> setting) {
+      Object dv = setting.get("defaultValue");
+      return name + ":" + setting.get("type") + (dv != null ? (" (" + dv + ")") : "");
+    }
+
+    /** {@code name:type[]... @Ann...}, as listed under {@code fields}. */
+    private static String fieldDisplay(Map<String, Object> field) {
+      List<?> ann = (List<?>) field.get("annotations");
+      return field.get("name")
+          + ":"
+          + typeWithDimensions(field)
+          + (ann == null || ann.isEmpty()
+              ? ""
+              : (" " + String.join(" ", ann.stream().map(String::valueOf).toList())));
+    }
+
+    /**
+     * What chunks must agree on for a field: type, dimensions and whether values are constant pool
+     * references (which changes how they decode). Shown in {@code typesByChunk} on a conflict.
+     */
+    private static String typeSignature(Map<String, Object> field) {
+      return typeWithDimensions(field)
+          + (Boolean.TRUE.equals(field.get("hasConstantPool")) ? " (constant pool)" : "");
+    }
+
+    private static String typeWithDimensions(Map<String, Object> field) {
+      Object dim = field.get("dimension");
+      int d = dim instanceof Number n ? n.intValue() : -1;
+      return field.get("type") + (d > 0 ? "[]".repeat(d) : "");
+    }
+
+    /**
+     * Merges one class's definitions from several chunks, given as chunk index -> {@link
+     * #convertClass} output, into one class.
+     *
+     * <p>Chunks can disagree. Metadata is written per chunk, and a recording can concatenate chunks
+     * from different writers: in {@code tck-test.jfr}, 36 classes appear in both chunks with
+     * different ids, and 4 of them have fields only chunk 1 declares ({@code java.lang.Thread} has
+     * {@code group} and {@code virtual}). Picking one chunk's definition loses fields that exist in
+     * the others, so the merge keeps everything and records where it came from:
+     *
+     * <ul>
+     *   <li>{@code chunks}: the chunks that define the class, and on every field the chunks that
+     *       define that field. A field missing from some chunks is why events from those chunks
+     *       show {@code null} for it; the {@code fields} display marks it {@code [chunks: ...]}.
+     *   <li>Fields: union in declaration order, later chunks' new fields appended. Annotations and
+     *       settings: union, first chunk wins for a setting both define.
+     *   <li>Conflicts are reported, not resolved: if chunks give a field a different type,
+     *       dimension or constant-pool flag, it keeps the first chunk's and gets {@code
+     *       typesByChunk} (chunk -> signature); a class whose chunks disagree on the super type
+     *       gets {@code superTypesByChunk}.
+     *   <li>{@code id} is the first chunk's. Class ids are chunk-local; the other chunks' ids
+     *       differ and are not kept.
+     * </ul>
+     *
+     * A class defined by one chunk comes out as that definition plus the {@code chunks} keys.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> mergeClassDefinitions(
+        SortedMap<Integer, Map<String, Object>> defsByChunk) {
+      List<Integer> classChunks = new ArrayList<>(defsByChunk.keySet());
+      Map<String, Object> first = defsByChunk.get(classChunks.get(0));
+
+      Map<String, Object> out = new LinkedHashMap<>();
+      out.put("id", first.get("id"));
+      out.put("name", first.get("name"));
+      out.put("superType", first.get("superType"));
+
+      List<String> classAnn = null;
+      List<String> classAnnFull = null;
+      Map<String, Map<String, Object>> settingsByName = null;
+      Map<String, Map<String, Object>> fields = new LinkedHashMap<>();
+      Map<String, Map<Integer, String>> typesByField = new HashMap<>();
+      Map<Integer, Object> superTypes = new LinkedHashMap<>();
+
+      for (Map.Entry<Integer, Map<String, Object>> e : defsByChunk.entrySet()) {
+        Integer chunk = e.getKey();
+        Map<String, Object> def = e.getValue();
+        superTypes.put(chunk, def.get("superType"));
+        if (def.get("classAnnotations") instanceof List<?> l) {
+          classAnn = union(classAnn, (List<String>) l);
+        }
+        if (def.get("classAnnotationsFull") instanceof List<?> l) {
+          classAnnFull = union(classAnnFull, (List<String>) l);
+        }
+        if (def.get("settingsByName") instanceof Map<?, ?> m) {
+          if (settingsByName == null) settingsByName = new LinkedHashMap<>();
+          for (Map.Entry<?, ?> se : m.entrySet()) {
+            settingsByName.putIfAbsent((String) se.getKey(), (Map<String, Object>) se.getValue());
+          }
+        }
+        if (def.get("fieldsByName") instanceof Map<?, ?> fbn) {
+          for (Map.Entry<?, ?> fe : fbn.entrySet()) {
+            String name = (String) fe.getKey();
+            Map<String, Object> fm = (Map<String, Object>) fe.getValue();
+            typesByField
+                .computeIfAbsent(name, k -> new LinkedHashMap<>())
+                .put(chunk, typeSignature(fm));
+            Map<String, Object> merged = fields.get(name);
+            if (merged == null) {
+              merged = new HashMap<>(fm);
+              merged.put("chunks", new ArrayList<>(List.of(chunk)));
+              fields.put(name, merged);
+            } else {
+              ((List<Integer>) merged.get("chunks")).add(chunk);
+              merged.put(
+                  "annotations",
+                  union(
+                      (List<String>) merged.get("annotations"),
+                      (List<String>) fm.get("annotations")));
+              merged.put(
+                  "annotationsFull",
+                  union(
+                      (List<String>) merged.get("annotationsFull"),
+                      (List<String>) fm.get("annotationsFull")));
+            }
+          }
+        }
+      }
+
+      if (classAnn != null) out.put("classAnnotations", classAnn);
+      if (classAnnFull != null) out.put("classAnnotationsFull", classAnnFull);
+      if (settingsByName != null) {
+        List<String> settings = new ArrayList<>(settingsByName.size());
+        settingsByName.forEach((name, sm) -> settings.add(settingDisplay(name, sm)));
+        out.put("settingsByName", settingsByName);
+        out.put("settings", settings);
+      }
+
+      List<String> display = new ArrayList<>(fields.size());
+      for (Map.Entry<String, Map<String, Object>> fe : fields.entrySet()) {
+        Map<String, Object> fm = fe.getValue();
+        StringBuilder line = new StringBuilder(fieldDisplay(fm));
+        List<Integer> fieldChunks = (List<Integer>) fm.get("chunks");
+        if (!fieldChunks.equals(classChunks)) {
+          line.append(" [chunks: ").append(joinChunks(fieldChunks)).append(']');
+        }
+        Map<Integer, String> types = typesByField.get(fe.getKey());
+        if (new HashSet<>(types.values()).size() > 1) {
+          fm.put("typesByChunk", types);
+          StringBuilder t = new StringBuilder();
+          types.forEach(
+              (c, type) ->
+                  t.append(t.length() == 0 ? "" : ", ").append(c).append('=').append(type));
+          line.append(" [types by chunk: ").append(t).append(']');
+        }
+        display.add(line.toString());
+      }
+      out.put("fieldsByName", fields);
+      out.put("fields", display);
+      out.put("fieldCount", display.size());
+      out.put("chunks", classChunks);
+      if (new HashSet<>(superTypes.values()).size() > 1) {
+        out.put("superTypesByChunk", superTypes);
+      }
+      return out;
+    }
+
+    private static List<String> union(List<String> acc, List<String> more) {
+      if (acc == null) return more == null ? null : new ArrayList<>(more);
+      if (more == null) return acc;
+      List<String> out = new ArrayList<>(acc);
+      for (String s : more) {
+        if (!out.contains(s)) out.add(s);
+      }
+      return out;
+    }
+
+    private static String joinChunks(List<Integer> chunks) {
+      StringBuilder sb = new StringBuilder();
+      for (Integer c : chunks) sb.append(sb.length() == 0 ? "" : ", ").append(c);
+      return sb.toString();
     }
   }
 
@@ -261,10 +511,12 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> loadChunk(Path recording, int chunkIndex) throws Exception {
-      // Simple: load all chunks and return by position (index is 0-based position)
-      List<Map<String, Object>> allChunks = loadAllChunks(recording);
-      if (chunkIndex >= 0 && chunkIndex < allChunks.size()) {
-        return allChunks.get(chunkIndex);
+      // By the index the rows carry (1-based, file order), which is what `chunks` lists and
+      // completion offers. This used to be a 0-based position, so `chunks/1` showed chunk 2.
+      for (ChunkHeader header : loadHeaders(recording)) {
+        if (header.order == chunkIndex) {
+          return createChunkRow(header.order, header);
+        }
       }
       return null;
     }
@@ -272,58 +524,23 @@ final class JafarSources {
     @Override
     public List<Map<String, Object>> loadChunks(
         Path recording, Predicate<Map<String, Object>> filter) throws Exception {
-      return loadChunksWithLimit(recording, filter, -1);
-    }
-
-    /**
-     * Load chunks with optional filter and limit. Supports early termination when limit is reached.
-     *
-     * @param recording path to the JFR recording
-     * @param filter optional predicate to filter chunks, null for all
-     * @param limit maximum number of chunks to collect (-1 for unlimited)
-     * @return list of matching chunk rows
-     */
-    private List<Map<String, Object>> loadChunksWithLimit(
-        Path recording, Predicate<Map<String, Object>> filter, int limit) throws Exception {
-      // Synchronized because chunks may be processed in parallel
-      final List<Map<String, Object>> rows = Collections.synchronizedList(new ArrayList<>());
-      try (StreamingChunkParser parser =
-          new StreamingChunkParser(new UntypedParserContextFactory())) {
-        parser.parse(
-            recording,
-            new ChunkParserListener() {
-              @Override
-              public boolean onChunkStart(
-                  ParserContext context, int chunkIndex, ChunkHeader header) {
-                // Check if we've already collected enough chunks from previous iterations
-                if (limit > 0 && rows.size() >= limit) {
-                  return false; // Stop processing - we already have enough
-                }
-                Map<String, Object> row = createChunkRow(chunkIndex, header);
-                if (filter == null || filter.test(row)) {
-                  rows.add(row);
-                }
-                // Always return true to complete processing of this chunk
-                // The limit check at the start of next onChunkStart will stop if needed
-                return true;
-              }
-
-              @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                // Stop processing metadata if we already have enough chunks
-                return limit <= 0 || rows.size() < limit;
-              }
-            });
+      List<Map<String, Object>> rows = new ArrayList<>();
+      for (ChunkHeader header : loadHeaders(recording)) {
+        Map<String, Object> row = createChunkRow(header.order, header);
+        if (filter == null || filter.test(row)) {
+          rows.add(row);
+        }
       }
       return rows;
     }
 
-    @Override
-    public Map<String, Object> getChunkSummary(Path recording) throws Exception {
-      final long[] stats = new long[5]; // count, totalSize, minSize, maxSize, compressedCount
-      stats[2] = Long.MAX_VALUE; // minSize
-      stats[3] = Long.MIN_VALUE; // maxSize
-
+    /**
+     * Chunk headers in recording order. Rows used to be appended from {@code onChunkStart} on the
+     * parser's pool threads, so they came back in completion order and {@link #loadChunk} picked a
+     * chunk by a position that changed from run to run.
+     */
+    private static List<ChunkHeader> loadHeaders(Path recording) throws Exception {
+      PerChunk<ChunkHeader[]> perChunk = new PerChunk<>(() -> new ChunkHeader[1]);
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -332,21 +549,32 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
-                stats[0]++;
-                stats[1] += header.size;
-                stats[2] = Math.min(stats[2], header.size);
-                stats[3] = Math.max(stats[3], header.size);
-                if (header.compressed) {
-                  stats[4]++;
-                }
-                return true;
-              }
-
-              @Override
-              public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
+                perChunk.of(context)[0] = header;
+                return false; // the header is all we need
               }
             });
+      }
+      List<ChunkHeader> headers = new ArrayList<>();
+      for (ChunkHeader[] slot : perChunk.inChunkOrder()) {
+        headers.add(slot[0]);
+      }
+      return headers;
+    }
+
+    @Override
+    public Map<String, Object> getChunkSummary(Path recording) throws Exception {
+      // Aggregated after the parse: the counters used to be updated from every chunk's thread.
+      final long[] stats = new long[5]; // count, totalSize, minSize, maxSize, compressedCount
+      stats[2] = Long.MAX_VALUE; // minSize
+      stats[3] = Long.MIN_VALUE; // maxSize
+      for (ChunkHeader header : loadHeaders(recording)) {
+        stats[0]++;
+        stats[1] += header.size;
+        stats[2] = Math.min(stats[2], header.size);
+        stats[3] = Math.max(stats[3], header.size);
+        if (header.compressed) {
+          stats[4]++;
+        }
       }
 
       Map<String, Object> summary = new HashMap<>();
@@ -378,6 +606,17 @@ final class JafarSources {
   static final class JafarConstantPoolSource implements ConstantPoolSource {
 
     /**
+     * Returns {@code false} at a chunk's last checkpoint, for listeners that need its pools but not
+     * its events. {@code StreamingChunkParser.readConstantPool} follows the checkpoint chain until
+     * {@code nextOffsetDelta == 0} and reports that checkpoint last, so the chunk's pools are
+     * complete there; returning {@code false} skips the event section, and {@code onChunkEnd} still
+     * runs. Without it these listeners walked every event of the chunk for nothing.
+     */
+    private static boolean continueUnlessLastCheckpoint(CheckpointEvent event) {
+      return event.nextOffsetDelta != 0;
+    }
+
+    /**
      * Entries per pool type, summed over chunks.
      *
      * <p>Counted once per chunk, at chunk end. A chunk's pools accumulate across its checkpoints
@@ -393,6 +632,11 @@ final class JafarSources {
         parser.parse(
             recording,
             new ChunkParserListener() {
+              @Override
+              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                return continueUnlessLastCheckpoint(event);
+              }
+
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
                 Map<String, Long> chunk = new HashMap<>();
@@ -456,6 +700,11 @@ final class JafarSources {
                 GenericValueReader reader = new GenericValueReader(mvb);
                 context.put(GenericValueReader.class, reader);
                 return true;
+              }
+
+              @Override
+              public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
+                return continueUnlessLastCheckpoint(event);
               }
 
               @Override

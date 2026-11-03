@@ -35,8 +35,8 @@ Access type metadata (structure, fields, annotations).
 Access chunk-level information from the recording.
 - **Returns**: Chunk metadata (offset, size, duration, compression status)
 - **Example**: `chunks`
-- **Specific chunk**: `chunks/0` (by index)
-- **Field of a chunk**: `chunks/0/size`
+- **Specific chunk**: `chunks/1` (by the `index` that `chunks` lists: 1-based, in file order)
+- **Field of a chunk**: `chunks/1/size`
 
 ### `constants`
 Access constant pool entries.
@@ -74,6 +74,23 @@ Convenient shortcuts for metadata navigation:
 ```
 metadata/jdk.types.Method/fields.name           # Same as /fields/name
 metadata/jdk.types.Method/fieldsByName.name     # Access field by name
+```
+
+### Metadata across chunks
+Each chunk of a recording carries its own metadata, and chunks can disagree, for example when
+a recording joins chunks written by different JVMs or profilers. The Jafar backend returns one
+class per name:
+
+- `fields` / `fieldsByName` contain every field declared by any chunk, in declaration order.
+- `chunks` lists the chunks that define the class. Each field has its own `chunks` list, and in
+  `fields` a field that some chunks lack is marked, e.g. `group:jdk.types.ThreadGroup [chunks: 1]`.
+  Events from the other chunks have no value for that field.
+- When chunks give a field different types, the first chunk's type is shown and the field gets
+  `typesByChunk`. When chunks disagree on the super type, the class gets `superTypesByChunk`.
+- `id` is the first chunk's class id. Class ids are local to a chunk.
+
+```
+metadata/java.lang.Thread/fieldsByName.group/chunks
 ```
 
 ## Filters
@@ -1021,13 +1038,13 @@ chunks
 
 Specific chunk by index:
 ```
-chunks/0
+chunks/1
 chunks/5
 ```
 
 One field of a chunk:
 ```
-chunks/0/size
+chunks/1/size
 ```
 
 Filter chunks:
@@ -1220,7 +1237,7 @@ show chunks[size>10000000]
 show chunks[compressed=true]
 
 # Specific chunk
-show chunks/0
+show chunks/1
 ```
 
 ### Constant Pool Examples

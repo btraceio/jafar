@@ -406,7 +406,7 @@ class ShellArtifactTest {
                 "metadata --summary",
                 "metadata class jdk.ThreadStart --fields",
                 "chunks --summary",
-                "chunk 0 show",
+                "chunk 1 show",
                 "cp --summary",
                 "constants --summary",
                 "backend",
@@ -619,7 +619,7 @@ class ShellArtifactTest {
             "echo P4",
             "show constants/jdk.types.GCName/name --format json",
             "echo P5",
-            "show chunks/0/size --format json",
+            "show chunks/1/size --format json",
             "echo TABLE",
             "show events/jdk.GarbageCollection/cause --limit 1",
             "echo END",
@@ -636,7 +636,7 @@ class ShellArtifactTest {
     assertTrue(between(json, "P2", "P3").contains("\"cause\""), unified);
     assertTrue(between(json, "P3", "P4").contains("\"type\": \"jdk.types.GCCause\""), unified);
     assertTrue(between(json, "P4", "P5").contains("\"G1New\""), unified);
-    // one chunk, so chunk 0 is as long as the file
+    // one chunk, so chunk 1 is as long as the file
     assertTrue(
         between(unified, "P5", "TABLE").contains(String.valueOf(Files.size(recording))), unified);
     String table = between(unified, "TABLE", "END");
@@ -750,7 +750,7 @@ class ShellArtifactTest {
     assertEquals(
         "stackTrace/frames/0/lineNumber",
         column.apply("events/jdk.ExecutionSample/stackTrace/frames/0/lineNumber"));
-    assertEquals("size", column.apply("chunks/0/size"));
+    assertEquals("size", column.apply("chunks/1/size"));
     assertEquals("fields", column.apply("metadata/jdk.GarbageCollection/fields"));
     assertEquals("name", column.apply("constants/jdk.types.GCName/name"));
     // a field that is sensitive by name is still redacted, now on its own name
@@ -1057,8 +1057,8 @@ class ShellArtifactTest {
     assertTrue(Shell.isJfrCommand("metadata"));
     assertTrue(Shell.isJfrCommand("metadata --summary"));
     assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart"));
-    assertTrue(Shell.isJfrCommand("chunks --range 0-1"));
-    assertTrue(Shell.isJfrCommand("chunk 0 show"));
+    assertTrue(Shell.isJfrCommand("chunks --range 1-2"));
+    assertTrue(Shell.isJfrCommand("chunk 1 show"));
     assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol"));
     assertTrue(Shell.isJfrCommand("constants --summary"));
     assertTrue(Shell.isJfrCommand("backend list"));

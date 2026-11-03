@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Metadata of multi-chunk recordings: one class per name, every chunk's fields.** Each chunk
+  carries its own metadata, and chunks can disagree (a recording can join chunks from different
+  writers). `metadata` and `metadata/<type>` listed a class once per chunk, or showed whichever
+  chunk's definition a parser thread happened to finish last, so fields that only some chunks
+  declare came and went from run to run. The jafar backend now merges them: the union of fields,
+  a `chunks` list on the class and on each field (`group:jdk.types.ThreadGroup [chunks: 1]` in
+  `fields`), and `typesByChunk` / `superTypesByChunk` where chunks conflict
+- **`chunks` lists chunks in file order.** Rows were collected from the parser's worker threads
+  and came back in whatever order the chunks finished; `chunks --summary` was summed from those
+  threads without synchronization
 - **JFR constant-pool strings print as strings in CSV and JSON, and in every `jafar-shell`
   format.** Result values that the parser hands over as single-entry constants printed as their
   wrapper — `{name=G1New}`, `{cause=G1 Evacuation Pause}`, `{string=java/lang/Object}`: in
@@ -61,11 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query returns (`${v[0]}`, `${v.size}`), and `explain` after either gets those values under the
   field's name (`cause`, `stackTrace/frames/0/lineNumber`) — not under the `value` header, which
   is in the default redact list. `ask` and cross-session joins still receive rows
-- **`chunks/<n>/<field>` returns the field.** `chunks/0/size` printed `(no values)` in jfr-shell:
-  the projection read `0` as a field of every chunk rather than as the chunk index `chunks/0`
+- **`chunks/<n>/<field>` returns the field.** `chunks/1/size` printed `(no values)` in jfr-shell:
+  the projection read `1` as a field of every chunk rather than as the chunk index `chunks/1`
   uses. It now projects from chunk `n`, and honours filters such as `chunks[compressed=true]`
 - **Projected paths with an index no longer write debug output.** Any projection with a `0`
-  segment — the documented `events/jdk.ExecutionSample/stackTrace/frames/0`, `chunks/0/size` —
+  segment — the documented `events/jdk.ExecutionSample/stackTrace/frames/0`, `chunks/1/size` —
   printed `[extractWithIndexing] DEBUG=false, proj = [...]` to stderr and appended a line to
   `/tmp/jfr-shell-debug.log` for every event projected, in both shells. The leftover debug hook
   (with its undocumented `jfr.shell.debug` / `JFR_SHELL_DEBUG` switch) is removed; the opt-in
@@ -251,6 +261,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vars --info` show `<hidden, ends in "TAIL">`. The stored value is unchanged
 
 ### Changed
+- **`chunks/<n>` and `chunk <n> show` address a chunk by the `index` `chunks` lists** (1-based,
+  in file order), which is also what tab completion offers and what `chunks --range` filters on.
+  They took a 0-based position, so `chunks/1` showed the second chunk and the last chunk could
+  not be shown by its listed index. `chunks/0` now matches no chunk
+- **`constants --summary` and `constants/<type>` no longer read the event section.** They need
+  only a chunk's constant pools, which are complete after its last checkpoint; on a 10.8 MB,
+  800,000-event recording each call takes about a quarter of the time it did
 - **`llm.*` settings in `jafar-shell` are scoped like other variables**, as they are in
   `jfr-shell`: set while a session is open they belong to that session; `set --global` keeps them
   for the whole shell. The LLM commands read the session's value first, then the global one

@@ -117,6 +117,26 @@ unless you know that. `getEventTypeCounts()` is truthful only after a scan; for 
 Related: the numbers shown by `metadata --events-only` are **class IDs**, not counts.
 `jdk.ActiveRecording` displays as `1830` and has one event.
 
+### A checkpoint's pool is not that checkpoint's entries
+
+`CheckpointEvent.readConstantPools` adds every checkpoint's entries to **one pool per type per
+chunk** (`addOrGetConstantPool`). The pool a `ChunkParserListener` sees in `onCheckpoint` therefore
+holds everything read so far in the chunk, and it grows with each checkpoint. `JafarSources` drained
+and counted the whole pool at every checkpoint. Chunk 1 of `tck-test.jfr` has 152 checkpoints, so
+its 875 distinct `jdk.types.Symbol` ids came back as 28882 rows: `cp/jdk.types.Symbol` answered
+31390 instead of 3383, and `loadSummary` and `crossref`'s `cpTotal` summed the same growing sizes.
+The answer hid behind a concurrency bug that made it vary (see `ChunkParserListener` in
+[Architecture.md](Architecture.md#key-classes-to-understand)). Once the race was fixed, the count was
+stable but still wrong. Counting distinct ids per chunk is what showed the error.
+
+The opposite shortcut fails too: `getAvailableTypes` stopped at the first checkpoint it saw, which
+in chunk 1 holds 1 of the chunk's 29 types, so it reported 13 of the recording's 32 types.
+
+Read a chunk's pools once, when they are complete. `StreamingChunkParser` reads the whole checkpoint
+chain before the first event, so that is at the first event or at chunk end; the checkpoint whose
+`nextOffsetDelta` is 0 is also the last one read. `ConstantPoolChunkLocalityTest` and the TCK's
+constant pool checks pin the counts.
+
 ### A missing column is not an error
 
 `Values.get(row, path)` returns `null` when the path names nothing, and `compareValues(null, null)`

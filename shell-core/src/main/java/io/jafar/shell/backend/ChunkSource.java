@@ -21,7 +21,8 @@ public interface ChunkSource {
    * Load a specific chunk by index.
    *
    * @param recording path to the JFR recording file
-   * @param chunkIndex the chunk index to load
+   * @param chunkIndex the chunk's {@code index} as {@link #loadAllChunks} reports it: 1-based, in
+   *     file order
    * @return chunk metadata row, or null if not found
    * @throws Exception if parsing fails
    */

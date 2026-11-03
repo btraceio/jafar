@@ -1780,17 +1780,18 @@ public class CommandDispatcher {
       io.println("Examples:");
       io.println("  chunks");
       io.println("  chunks --summary");
-      io.println("  chunks --range 0-5");
+      io.println("  chunks --range 1-5");
       io.println("");
       io.println(
-          "Chunks are indexed starting from 0. Each chunk contains a portion of the recording data.");
+          "Chunks are indexed starting from 1, in file order. Each chunk contains a portion of the"
+              + " recording data.");
       return;
     }
     if ("chunk".equals(sub)) {
       io.println("Usage: chunk <index> show");
       io.println("Show detailed information about a specific chunk.");
       io.println("Examples:");
-      io.println("  chunk 0 show");
+      io.println("  chunk 1 show");
       io.println("  chunk 2 show");
       io.println("");
       io.println(
@@ -2412,7 +2413,7 @@ public class CommandDispatcher {
       List<Map<String, Object>> chunks =
           ChunkProvider.loadAllChunks(cur.get().session.getFilePath());
 
-      // Apply range filter if provided: --range 0-5
+      // Apply range filter if provided: --range 1-5 (the listed, 1-based index)
       if (range != null) {
         String[] parts = range.split("-");
         int start = Integer.parseInt(parts[0]);
