@@ -386,8 +386,9 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 	if poolCount < 0 || poolCount > int64(end-r.position()) {
 		return fail(fmt.Errorf("checkpoint at %d: implausible constant pool count %d", start, poolCount))
 	}
+	var indexed []indexedEntry
 	for i := int64(0); i < poolCount; i++ {
-		if err := c.readConstantPool(r, start, end); err != nil {
+		if err := c.readConstantPool(r, end, &indexed); err != nil {
 			// The remaining pools of this checkpoint cannot be located once one
 			// of them cannot be read, but the chain itself is still intact.
 			if err := c.checkpointFailure(fmt.Errorf("checkpoint at %d: %w", start, err)); err != nil {
@@ -399,6 +400,21 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 	if r.err != nil {
 		return fail(r.err)
 	}
+	// Entries are not length-prefixed, so a wrong length inside one (a corrupted
+	// string length varint, say) still skips without error and puts every later
+	// entry at the wrong offset; the checkpoint's size is the only check that
+	// catches it. Which entry went wrong cannot be known, so none of the entries
+	// this checkpoint indexed is kept: references to them fail with this as the
+	// cause instead of decoding other bytes. The Java parser and the JDK's own
+	// reader fail on the same condition; the chain itself is still intact.
+	if r.position() != end {
+		for _, e := range indexed {
+			delete(e.pool.offsets, e.id)
+		}
+		if err := c.checkpointFailure(fmt.Errorf("checkpoint at %d: constant pools end at %d, but the event size %d says it ends at %d", start, r.position(), size, end)); err != nil {
+			return 0, err
+		}
+	}
 	return int(nextOffsetDelta), nil
 }
 
@@ -408,8 +424,9 @@ const maxZeroTypeIDs = 1024
 
 // readConstantPool reads the entries of one constant pool of a checkpoint,
 // recording where each entry starts. end is the exclusive end offset of the
-// enclosing checkpoint event; every entry has to lie within it.
-func (c *chunkParser) readConstantPool(r *reader, checkpointStart, end int) error {
+// enclosing checkpoint event; every entry has to lie within it. The entries it
+// newly indexes are appended to indexed.
+func (c *chunkParser) readConstantPool(r *reader, end int, indexed *[]indexedEntry) error {
 	var typeID int64
 	for i := 0; ; i++ {
 		typeID = r.readVarint()
@@ -448,7 +465,9 @@ func (c *chunkParser) readConstantPool(r *reader, checkpointStart, end int) erro
 		if r.position() > end {
 			return fmt.Errorf("constant pool %s, index %d: entry runs past the checkpoint event", class.Name, id)
 		}
-		pool.addOffset(id, offset)
+		if pool.addOffset(id, offset) {
+			*indexed = append(*indexed, indexedEntry{pool, id})
+		}
 	}
 	return nil
 }

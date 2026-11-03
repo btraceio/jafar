@@ -29,6 +29,19 @@ override is given, `PluginManager` also picks a SNAPSHOT under `~/.m2/repository
 newer than the installed version: a `./gradlew publishToMavenLocal` you forgot about is a third
 backend you may be running.)
 
+A development (`-SNAPSHOT`) jfr-shell now says when this has happened. If the `jafar` or `jdk`
+backend it selected reports a different version, it prints to stderr, before the prompt:
+
+```
+Warning: this jfr-shell is a development build (0.0.0-SNAPSHOT) but its 'jafar' backend is version 0.29.0, not the one built with it. …
+```
+
+That line means everything typed into that shell ran the release. The warning is a backstop, not
+a replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from
+a fresh one. `jafar-shell` bundles the backend built with it and uses that one even when a released
+plugin is installed (its `backend` command reports `Version: dev`), so its shadow jar needs no
+flags.
+
 > **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
 > built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
 > numbers", "the race reproduces on my commit and on its parent" — ran the released 0.29.0 backend
@@ -38,6 +51,15 @@ backend you may be running.)
 > run. It surfaced only because a
 > redesign that had to change the numbers (1047 → 196) printed exactly the old ones. Unit tests
 > were never affected: Gradle puts `project(':jfr-shell-jafar')` on the test classpath.
+
+> **Case file — "identical to the unmodified build".** A parser change was checked by running
+> `constants/jdk.types.StackTrace | crossref()` in a jar built from the change and in one built
+> from its parent, and diffing the output: identical, so nothing had moved. Both jars loaded
+> `io.jafar.parser.*` from the build, which the plugin loader takes from the shell jar first, but
+> `JafarSources` from the released 0.29.0 plugin, so the diff compared one release's counting with
+> itself. Its "16538 entries" were the released backend counting an entry once per checkpoint; the
+> code under test said 622. A before/after comparison proves nothing about the parts both sides
+> took from the same place.
 
 > **Case file — `set llm.backend = ollama`.** This command appeared in five documents, in the help
 > text, in `llm status`'s own advice, and in tab completion. It had never been run. The shell

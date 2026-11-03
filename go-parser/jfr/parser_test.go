@@ -909,6 +909,117 @@ func TestDanglingStringReferenceIsReported(t *testing.T) {
 	}
 }
 
+// misframedString encodes a UTF-8 string entry whose length varint is delta
+// away from the payload length.
+func misframedString(s string, delta int) []byte {
+	out := []byte{strUTF8}
+	out = appendVarint(out, int64(len(s)+delta))
+	return append(out, s...)
+}
+
+// stringPoolRecording is pooledStringRecording's chunk with the string pool's
+// entries given: events refer to refs in the string pool and to symbol 7, which
+// lives in the same checkpoint.
+func stringPoolRecording(entries []poolEntry, refs ...int64) []byte {
+	var events [][]byte
+	for _, ref := range refs {
+		events = append(events, sampleEvent{
+			startTicks: testStartTicks + 100, name: stringRef(ref), symbol: 7,
+			nestedB: utf8String("inline"),
+		}.encode())
+	}
+	return chunkSpec{
+		metadata: testMetadata(),
+		pools: []constantPoolData{
+			{typeID: tIDSymbol, entries: []poolEntry{{id: 7, data: utf8String("sym-seven")}}},
+			{typeID: tIDString, entries: entries},
+		},
+		events:     events,
+		startNanos: testStartNanos,
+		startTicks: testStartTicks,
+		frequency:  testFrequency,
+		duration:   1000,
+	}.build()
+}
+
+// A checkpoint's constant pools have to end where its size says it ends. A
+// string length that is one too small still skips without error, so without
+// this check the entries after it were indexed at the wrong offsets and read
+// as other bytes, silently. Which entry went wrong cannot be known, so the
+// whole checkpoint's entries are dropped and every reference into them fails
+// with the framing error as its cause. The Java parser fails the parse on the
+// same condition (CheckpointFramingTest), as the JDK's own reader does.
+func TestCheckpointPoolsEndingShortOfTheEventSizeAreReported(t *testing.T) {
+	cases := []struct {
+		name    string
+		strings []poolEntry
+		want    string
+	}{
+		{
+			// Skips "tw", leaving the checkpoint's last byte unread.
+			name:    "last entry too short",
+			strings: []poolEntry{{id: 1, data: utf8String("one")}, {id: 2, data: misframedString("two", -1)}},
+			want:    "constant pools end at",
+		},
+		{
+			// Every later read still decodes: the left-over 'e' is read as index
+			// 101, entry 2's index byte (2) as a pool reference tag, and entry 2's
+			// own tag as that reference; the last four bytes are unread. Entry 1
+			// itself would have decoded as "on".
+			name:    "first entry too short",
+			strings: []poolEntry{{id: 1, data: misframedString("one", -1)}, {id: 2, data: utf8String("two")}},
+			want:    "constant pools end at",
+		},
+		{
+			// Already caught before this check: the entry runs past the event.
+			name:    "last entry too long",
+			strings: []poolEntry{{id: 1, data: utf8String("one")}, {id: 2, data: misframedString("two", +1)}},
+			want:    "entry runs past the checkpoint event",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := stringPoolRecording(tc.strings, 1, 2)
+
+			err := NewParser(data).ParseWith(Options{OnError: FailOnError}, func(*Event) error { return nil })
+			if err == nil || !strings.Contains(err.Error(), "checkpoint at ") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("FailOnError: parse error = %v, want the checkpoint named and %q", err, tc.want)
+			}
+
+			var delivered []any
+			var errs []error
+			if err := NewParser(data).ParseWith(Options{
+				OnError: func(err error) error {
+					errs = append(errs, err)
+					return nil
+				},
+			}, func(e *Event) error {
+				delivered = append(delivered, e.Values["name"])
+				return nil
+			}); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if tc.want != "constant pools end at" {
+				return // the per-entry check keeps the entries before the bad one
+			}
+			if len(delivered) != 0 {
+				t.Errorf("delivered names %v: entries of a misframed checkpoint were decoded", delivered)
+			}
+			if len(errs) != 3 {
+				t.Fatalf("reported %d errors, want the framing error and one per event: %v", len(errs), errs)
+			}
+			if !strings.Contains(errs[0].Error(), tc.want) {
+				t.Errorf("first error = %v, want the framing error", errs[0])
+			}
+			for _, e := range errs[1:] {
+				if !errors.Is(e, errs[0]) {
+					t.Errorf("event error %q does not wrap the framing error", e)
+				}
+			}
+		})
+	}
+}
+
 // --- other pooled fields: shared Java/Go fixtures ---------------------------
 
 // The node-pool recordings under testdata are built by parser-core's
