@@ -613,8 +613,9 @@ public final class Shell implements AutoCloseable {
    * same word. {@code metadata/jdk.ExecutionSample}, {@code constants/...} and {@code chunks[...]}
    * are not the bare word. A line with a pipeline ({@code chunks --format json | count()}) or
    * {@code --limit} is a query too: jfr-shell's commands have neither, so its handlers would print
-   * every row and ignore the rest. The one pipeline a command takes, {@code cp <type> |
-   * crossref()}, stays a command.
+   * every row and ignore the rest. Two exceptions, both jfr-shell's {@code cmdCp}: the one pipeline
+   * a command takes, {@code cp <type> | crossref()} (spaces around the pipe optional), and {@code
+   * --limit} on {@code cp} / {@code constants}, which that command implements.
    */
   static boolean isJfrCommand(String input) {
     return jfrCommandOf(input) != null;
@@ -645,8 +646,11 @@ public final class Shell implements AutoCloseable {
       if (input.charAt(word) == '|') {
         return isCrossref(command, input, word) ? command : null;
       }
-      if (end - word == 7 && input.startsWith("--limit", word)) {
-        return null;
+      if (end - word == 7
+          && input.startsWith("--limit", word)
+          && !command.equals("cp")
+          && !command.equals("constants")) {
+        return null; // cp / constants take --limit; the other commands would ignore it
       }
     }
     return command;
@@ -658,9 +662,7 @@ public final class Shell implements AutoCloseable {
       return false;
     }
     int n = input.length();
-    if (pipe + 1 < n && !Character.isWhitespace(input.charAt(pipe + 1))) {
-      return false; // cmdCp needs '|' and 'crossref()' as separate words
-    }
+    // cmdCp matches '| crossref()' with or without a space after the pipe
     int word = skipSpace(input, pipe + 1);
     int end = skipWord(input, word);
     return end - word == 10
@@ -1579,7 +1581,7 @@ public final class Shell implements AutoCloseable {
       ShellModule module = moduleById.get(current.get().session.getType());
       String name = module != null ? module.getDisplayName() : current.get().session.getType();
       out.println(
-              "'help " + sub + "' describes JFR recordings; the current session is " + name + ".");
+          "'help " + sub + "' describes JFR recordings; the current session is " + name + ".");
       if (module != null && !module.getExamples().isEmpty()) {
         out.println("Queries for " + name + ":");
         for (String example : module.getExamples()) {

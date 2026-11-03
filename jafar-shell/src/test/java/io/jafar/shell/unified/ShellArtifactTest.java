@@ -770,15 +770,19 @@ class ShellArtifactTest {
     assertFalse(Shell.isJfrCommand("chunks --format json | count()"));
     assertFalse(Shell.isJfrCommand("chunks --format json |count()"));
     assertFalse(Shell.isJfrCommand("chunks --limit 1"));
-    assertFalse(Shell.isJfrCommand("constants --limit 2"));
     assertFalse(Shell.isJfrCommand("constants --format json | count()"));
     assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | count()"));
     assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol | crossref() | count()"));
-    assertFalse(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
     assertFalse(Shell.isJfrCommand("chunks | crossref()"));
     // ...except the pipeline cmdCp takes, and a '|' inside an argument
     assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol | crossref()"));
     assertTrue(Shell.isJfrCommand("CONSTANTS jdk.types.Symbol |  CrossRef() "));
+    // cmdCp takes '| crossref()' without spaces around the pipe, and --limit
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol |crossref()"));
+    assertTrue(Shell.isJfrCommand("cp jdk.types.Symbol|crossref()"));
+    assertTrue(Shell.isJfrCommand("constants --limit 2"));
+    assertTrue(Shell.isJfrCommand("cp --summary --limit 1 --format csv"));
+    assertTrue(Shell.isJfrCommand("constants jdk.types.Symbol --limit 2"));
     assertTrue(Shell.isJfrCommand("metadata --regex ^(jdk|datadog)\\.Thread.*"));
     assertTrue(Shell.isJfrCommand("chunks --format json"));
     assertTrue(Shell.isJfrCommand("metadata class jdk.ThreadStart --tree --depth 2"));

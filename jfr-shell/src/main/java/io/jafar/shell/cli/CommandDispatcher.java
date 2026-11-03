@@ -2487,6 +2487,9 @@ public class CommandDispatcher {
 
   private static final Set<String> CP_OPTIONS_WITH_VALUE = Set.of("--range", "--format", "--limit");
 
+  private static final Pattern CP_CROSSREF =
+      Pattern.compile("^(.*?)\\s*\\|\\s*(?i:crossref)\\(\\s*\\)\\s*$");
+
   /** constants [--summary] [<kind>] [--range N-M] [--limit N] [--format F] | crossref() */
   private void cmdCp(List<String> args) throws Exception {
     var cur = sessions.current();
@@ -2504,20 +2507,18 @@ public class CommandDispatcher {
     }
 
     boolean summary = args.contains("--summary");
-    int pipeIdx = args.indexOf("|");
-    boolean crossref =
-        pipeIdx >= 0
-            && pipeIdx + 1 < args.size()
-            && args.get(pipeIdx + 1).equalsIgnoreCase("crossref()");
-    List<String> cleanArgs = new ArrayList<>(args);
+    // '<type> | crossref()', with or without spaces around the pipe. Matched on the words joined
+    // back together: 'cp T|crossref()' arrives as the single word 'T|crossref()', and taken as a
+    // type name it listed the entries of a type called that ("(no rows)").
+    Matcher crossrefMatch = CP_CROSSREF.matcher(String.join(" ", args));
+    boolean crossref = crossrefMatch.matches();
+    List<String> cleanArgs =
+        new ArrayList<>(
+            crossref
+                ? Arrays.asList(crossrefMatch.group(1).trim().split("\\s+"))
+                : new ArrayList<>(args));
+    cleanArgs.removeIf(String::isEmpty);
     cleanArgs.remove("--summary");
-    if (crossref) {
-      int pi = cleanArgs.indexOf("|");
-      if (pi >= 0) {
-        cleanArgs.remove(pi + 1); // "crossref()" — higher index first
-        cleanArgs.remove(pi); // "|"
-      }
-    }
 
     String range = extractOption(cleanArgs, "--range");
     String format = extractOption(cleanArgs, "--format");

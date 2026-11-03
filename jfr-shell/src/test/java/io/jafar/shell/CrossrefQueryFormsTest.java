@@ -77,6 +77,11 @@ class CrossrefQueryFormsTest {
     assertEquals(bare, run("show " + QUERY));
     assertEquals(bare, run("cp " + TYPE + " | crossref()"));
     assertEquals(bare, run("constants " + TYPE + " | crossref()"));
+    // without spaces around the pipe: 'cp T|crossref()' is one word to the command's parser
+    assertEquals(bare, run("cp " + TYPE + "|crossref()"));
+    assertEquals(bare, run("cp " + TYPE + " |crossref()"));
+    assertEquals(bare, run("cp " + TYPE + "| crossref()"));
+    assertEquals(bare, run("constants " + TYPE + "|crossref()"));
   }
 
   @Test
