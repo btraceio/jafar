@@ -48,6 +48,13 @@ The untyped parser delivers a string constant as a single-entry map, `{string=[B
   names, symbols and group-by keys reaching the model became `{string=<redacted>}`. The redaction
   looked like it was working. Fixed by unwrapping before the decision, so the decision is taken on
   the outer field's real name.
+- **A column name chosen for display was redacted too.** `jafar-shell` remembered the values of a
+  projected path (`show events/jdk.GarbageCollection/cause`) for `explain` under the table's
+  `value` header — and `value` is in the same default list, so the model received `<redacted>`
+  for every value, and a fluent answer anyway. They are now remembered under the projected path
+  (`cause`, `stackTrace/frames/0/lineNumber`), so the decision is again taken on the field's real
+  name; `ShellArtifactTest.projectedValuesReachExplainUnredacted` passes what the shell remembers
+  through the real `Redactor`.
 
 - **The unified shell printed the wrapper.** `jafar-shell`'s `printResult` handed JFR rows
   straight to `TableFormatter` and its CSV/JSON writers, so `gc-analysis.jfrs` grouped by

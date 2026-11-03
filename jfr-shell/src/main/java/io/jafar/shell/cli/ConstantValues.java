@@ -67,8 +67,9 @@ public final class ConstantValues {
    * <p>Nothing is copied: a row of the view is a small wrapper made when {@code get(i)} is called,
    * reading through to the source row, and a cell is unwrapped when it is read — an unwrapped value
    * is one the source already holds, so reading a cell allocates nothing for the value itself. A
-   * table that prints 50 rows of a million therefore unwraps 50 rows' cells, not a million (the
-   * eager copy this replaces cost about 470 bytes a row before truncation).
+   * table that prints 50 rows of a million therefore unwraps 50 rows' cells, not a million. The
+   * eager copy this replaces allocated about 470 bytes per 8-column row, for every row, before
+   * truncation (copy alone; with the table, 524 against the view's 96 and the table's own 32).
    *
    * <p>The view never modifies the source, and every mutator throws {@link
    * UnsupportedOperationException}, so it is safe over rows other code holds, such as a query

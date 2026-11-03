@@ -647,6 +647,108 @@ class ShellArtifactTest {
     assertEquals(between(jfrShell.output(), "P1", "TABLE"), json, unified);
   }
 
+  /**
+   * What {@code explain} is given after a projection must survive redaction. The values were
+   * remembered under the table's {@code value} header, which is in the default redact list, so the
+   * model received {@code <redacted>} for every one. Drives a real shell in-process and passes what
+   * it remembered through the real {@code Redactor} with default settings.
+   */
+  @Test
+  void projectedValuesReachExplainUnredacted(@TempDir Path dir) throws Exception {
+    Path recording = dir.resolve("gc.jfr");
+    try (jdk.jfr.Recording r = new jdk.jfr.Recording()) {
+      r.enable("jdk.GarbageCollection");
+      r.start();
+      System.gc();
+      r.stop();
+      r.dump(recording);
+    }
+    var out = new java.io.ByteArrayOutputStream();
+    try (Shell shell =
+        Shell.forScript(new java.io.PrintStream(out, true), new java.io.PrintStream(out, true))) {
+      assertTrue(shell.execute("open " + recording), out.toString());
+      assertTrue(shell.execute("show events/jdk.GarbageCollection/cause"), out.toString());
+      var redactor =
+          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+
+      String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
+
+      assertFalse(sent.contains("<redacted>"), sent);
+      assertTrue(sent.contains("System.gc()"), sent);
+      assertTrue(out.toString().contains("value"), "the table still prints a value column");
+    }
+  }
+
+  @Test
+  void projectedColumnNamesTheField() {
+    java.util.function.Function<String, String> column =
+        q -> Shell.projectedColumn(io.jafar.shell.jfrpath.JfrPathParser.parse(q));
+
+    assertEquals("cause", column.apply("events/jdk.GarbageCollection/cause"));
+    assertEquals(
+        "eventThread/osName", column.apply("events/jdk.GarbageCollection/eventThread/osName"));
+    assertEquals(
+        "stackTrace/frames", column.apply("events/jdk.ExecutionSample/stackTrace/frames/0"));
+    assertEquals(
+        "stackTrace/frames", column.apply("events/jdk.ExecutionSample/stackTrace/frames/0:3"));
+    assertEquals(
+        "stackTrace/frames/0/lineNumber",
+        column.apply("events/jdk.ExecutionSample/stackTrace/frames/0/lineNumber"));
+    assertEquals("size", column.apply("chunks/0/size"));
+    assertEquals("fields", column.apply("metadata/jdk.GarbageCollection/fields"));
+    assertEquals("name", column.apply("constants/jdk.types.GCName/name"));
+    // a field that is sensitive by name is still redacted, now on its own name
+    var redactor =
+        io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+    assertEquals(
+        "[{message=<redacted>}]",
+        String.valueOf(
+            redactor.redactRows(
+                Shell.valueRows(
+                    List.of("secret"), column.apply("events/jdk.JavaErrorThrow/message")))));
+  }
+
+  /**
+   * Rendering 50 rows of 100,000 must not pay for the other 99,950: a view that copied on access,
+   * or a caller that materialised it before the table truncates, costs about +330 bytes a row over
+   * the plain table (measured cold, 3 columns); the view costs +40 to +90.
+   */
+  @Test
+  void tableOfALargeJfrResultDoesNotCopyItsRows() {
+    var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        threads instanceof com.sun.management.ThreadMXBean t
+            && t.isThreadAllocatedMemorySupported()
+            && t.isThreadAllocatedMemoryEnabled(),
+        "per-thread allocation counter not available");
+    var counter = (com.sun.management.ThreadMXBean) threads;
+    int n = 100_000;
+    List<Map<String, Object>> rows = new java.util.ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      Map<String, Object> row = new java.util.LinkedHashMap<>();
+      row.put("gcId", (long) i);
+      row.put("name", new java.util.HashMap<>(Map.of("name", "G1New")));
+      row.put("eventThread", new java.util.HashMap<>(Map.of("osName", "VM Thread", "id", 0L)));
+      rows.add(row);
+    }
+    long thread = Thread.currentThread().threadId();
+
+    long start = counter.getThreadAllocatedBytes(thread);
+    String plain = io.jafar.shell.core.TableFormatter.formatTable(rows, 50);
+    long base = counter.getThreadAllocatedBytes(thread) - start;
+    start = counter.getThreadAllocatedBytes(thread);
+    @SuppressWarnings("unchecked")
+    var shaped =
+        (List<Map<String, Object>>) Shell.forDisplay(rows, "jfr", "events/jdk.GarbageCollection");
+    String table = io.jafar.shell.core.TableFormatter.formatTable(shaped, 50);
+    long viewed = counter.getThreadAllocatedBytes(thread) - start;
+
+    assertTrue(table.contains("G1New") && !table.contains("{name="), table);
+    assertTrue(plain.contains("{name=G1New}"), plain);
+    long overPerRow = (viewed - base) / n;
+    assertTrue(overPerRow < 200, "+" + overPerRow + " bytes a row over the plain table");
+  }
+
   @Test
   void unwrapsOnlyJfrRecordingValues() {
     List<Map<String, Object>> rows = List.of(Map.of("value", Map.of("name", "kept")));

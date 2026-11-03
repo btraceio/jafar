@@ -1227,29 +1227,57 @@ public final class Shell implements AutoCloseable {
     if (limit != null && limit < values.size()) {
       values = values.subList(0, limit);
     }
-    // One 'value' column over the values as they came; the constants are unwrapped once, as they
-    // are printed (printResult for the table and CSV, ConstantValues.unwrapEach for JSON)
-    List<Object> raw = values;
-    List<Map<String, Object>> rows =
-        new java.util.AbstractList<>() {
-          @Override
-          public Map<String, Object> get(int index) {
-            return java.util.Collections.singletonMap("value", raw.get(index));
-          }
-
-          @Override
-          public int size() {
-            return raw.size();
-          }
-        };
-    rememberResult(query, rows);
+    // The constants are unwrapped once, as they are printed (printResult for the table and CSV,
+    // ConstantValues.unwrapEach for JSON); explain gets the values as they came, as it does rows
+    rememberResult(query, valueRows(values, projectedColumn(q)));
     if ("json".equalsIgnoreCase(format)) {
       out.println(
-          toJson(ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(raw) : raw, 0));
+          toJson(
+              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values,
+              0));
       flush();
     } else {
-      printResult(rows, format, session.getType(), q);
+      // a 'value' column, as jfr-shell prints one
+      printResult(valueRows(values, "value"), format, session.getType(), q);
     }
+  }
+
+  private static final java.util.regex.Pattern INDEX_SEGMENT =
+      java.util.regex.Pattern.compile("-?\\d*(?::-?\\d*)?");
+
+  /**
+   * The column a projected path's values are remembered under for {@code explain}: the path below
+   * the event type, constant type, metadata type or chunk index, without trailing index or slice
+   * segments — {@code cause}, {@code stackTrace/frames} for {@code stackTrace/frames/0}, {@code
+   * stackTrace/frames/0/lineNumber}.
+   *
+   * <p>Not {@code value}, the header the table prints: {@code value} is in the default redact list,
+   * so every remembered value reached the model as {@code <redacted>}. Named after the field, the
+   * redaction decision is taken on the field's real name — {@link io.jafar.shell.core.llm.Redactor}
+   * matches the last path segment — as it is for rows.
+   */
+  static String projectedColumn(JfrPath.Query q) {
+    List<String> path = q.segments.subList(1, q.segments.size());
+    int end = path.size();
+    while (end > 0 && INDEX_SEGMENT.matcher(path.get(end - 1)).matches()) {
+      end--;
+    }
+    return end == 0 ? "value" : String.join("/", path.subList(0, end));
+  }
+
+  /** One-column rows over the values, made as they are read rather than copied up front. */
+  static List<Map<String, Object>> valueRows(List<Object> values, String column) {
+    return new java.util.AbstractList<>() {
+      @Override
+      public Map<String, Object> get(int index) {
+        return java.util.Collections.singletonMap(column, values.get(index));
+      }
+
+      @Override
+      public int size() {
+        return values.size();
+      }
+    };
   }
 
   /**
@@ -1277,6 +1305,11 @@ public final class Shell implements AutoCloseable {
   private static String argumentOf(String input) {
     int space = input.indexOf(' ');
     return space < 0 ? "" : input.substring(space + 1).trim();
+  }
+
+  /** The rows the next {@code explain} would be given: the most recent row-shaped result. */
+  List<Map<String, Object>> rememberedRows() {
+    return lastResultRows;
   }
 
   /** The LLM commands, primed with the most recent result so {@code explain} has something. */
