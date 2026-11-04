@@ -3,8 +3,10 @@ package io.jafar.shell.unified;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ConstantValues;
+import io.jafar.shell.cli.FlameGraphRenderer;
 import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
+import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
@@ -85,6 +87,7 @@ public final class Shell implements AutoCloseable {
   private final ShellCompleter fallbackCompleter;
   private final org.jline.reader.Completer completer; // what Tab runs at this shell's prompt
   private final Object moduleContext; // Context for module completers (e.g., CommandDispatcher)
+  private final CommandDispatcher.IO jfrIo; // the dispatcher's IO; jfr-shell renderers print to it
   private final Map<String, org.jline.reader.Completer>
       completerCache; // Cache completers per module
   private io.jafar.shell.cli.LlmCommands llmCommands;
@@ -207,6 +210,7 @@ public final class Shell implements AutoCloseable {
     @SuppressWarnings("unchecked")
     SessionManager<JFRSession> jfrSessions =
         (SessionManager<JFRSession>) (SessionManager<?>) sessions;
+    this.jfrIo = ioAdapter;
     // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
     // global names from the dispatcher's store, which would otherwise be a private empty one.
     this.moduleContext =
@@ -1502,6 +1506,15 @@ public final class Shell implements AutoCloseable {
    *     constants are unwrapped, see {@link #forDisplay}
    */
   private void printResult(Object result, String format, String sessionType, Object query) {
+    // flamegraph() yields one row holding the call tree; whatever the format, jfr-shell writes it
+    // as an HTML page and prints its URL, so this shell does the same.
+    if (result instanceof List<?> rows
+        && rows.size() == 1
+        && rows.get(0) instanceof Map<?, ?> row
+        && row.get("__flamegraph") instanceof FlameNode root) {
+      FlameGraphRenderer.render(root, jfrIo);
+      return;
+    }
     result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
