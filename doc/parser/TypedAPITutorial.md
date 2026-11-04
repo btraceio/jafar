@@ -609,7 +609,7 @@ public class ThreadAnalyzer {
 
 ## Next Steps
 
-- Learn about the [Untyped API](unTypedAPITutorial.md) for dynamic event handling
+- Learn about the [Untyped API](UntypedAPITutorial.md) for dynamic event handling
 - Explore [JFR Shell](../cli/Tutorial.md) for interactive analysis
 - Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 

@@ -309,20 +309,15 @@ integration set (`-DenableIntegrationTests=true`, not run by CI) has 27, stale t
 
 ```bash
 ./gradlew :jfr-shell:test --rerun-tasks
-python3 - <<'PY' > /tmp/fail_now.txt
-import glob, xml.etree.ElementTree as ET
-names = []
-for f in glob.glob("jfr-shell/build/test-results/test/*.xml"):
-    for tc in ET.parse(f).getroot().iter('testcase'):
-        if tc.find('failure') is not None or tc.find('error') is not None:
-            names.append(f"{tc.get('classname')}.{tc.get('name')}")
-print("\n".join(sorted(names)))
-PY
+scripts/failing-set.sh > /tmp/fail_now.txt
 diff /tmp/fail_base.txt /tmp/fail_now.txt && echo "zero new failures"
 ```
 
-Record the baseline **before** you start changing code. Report both numbers — total tests and the
-named failing set — so a reader can tell growth from regression.
+`scripts/failing-set.sh` prints the named failing set from the JUnit XML reports (test, test8,
+endToEndTest, or a flat directory of downloaded reports); CI publishes the same named set as an
+artifact and in the run summary of every PR. Record the baseline **before** you start changing
+code. Report both numbers — total tests and the named failing set — so a reader can tell growth
+from regression.
 
 > **Case file — the diagnose deadline between green and failure.**
 > `McpJfrTransportTest.jfrDiagnoseReturnsReport` failed on every run while every sibling passed.
@@ -531,28 +526,19 @@ The same obligation runs through `doc/agents/`:
 Checking the links costs nothing, so there is no excuse for a dead one you introduced:
 
 ```bash
-python3 - <<'EOF'
-import re, pathlib
-for p in list(pathlib.Path("doc").rglob("*.md")) + [pathlib.Path("AGENTS.md")]:
-    body, fenced = [], False
-    for line in p.read_text().split("\n"):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced           # a regex in a code block is not a link
-        elif not fenced:
-            body.append(line)
-    for m in re.finditer(r"\]\((?!https?://)([^)#]+)(#[^)]*)?\)", "\n".join(body)):
-        if not (p.parent / m.group(1)).resolve().exists():
-            print("MISSING", p, "->", m.group(1))
-EOF
+scripts/check-doc-links.sh
 ```
 
-It currently reports 23 misses, none of them under `doc/agents/`: three are the deliberate
-`filename.md` placeholders in [doc/README.md](../README.md), four are footnote-style `[1]`–`[4]`
-references in `doc/design/jfr2pprof.md` that are not links at all, and the remaining sixteen are
-older pages pointing at files that were renamed or never existed — `jfrpath.md`,
-`../jfr-shell/README.md`, `unTypedAPITutorial.md`. They predate this page and are left alone here
-rather than swept up in an unrelated change. The bar is that **your** change adds none, which the
-same command tells you in a second.
+It runs in CI on every PR (`guardrails` job in `pr-tests.yml`) and also scans the top-level
+`README.md`, `CLAUDE.md` and `CONTRIBUTING.md`, which the hand-run recipe never did — that is how
+it caught `README.md` pointing at `parser/ARCHITECTURE.md`, a file that lives at
+`parser-core/ARCHITECTURE.md`. The legacy misses that predated the gate are frozen as an allowlist
+inside the script: an allowlisted miss is tolerated, a new miss fails, and an allowlist entry
+whose link was fixed fails too until it is deleted — the list can only shrink. Three of the
+allowed ones are the deliberate `filename.md` placeholders in
+[doc/README.md](../README.md), four are footnote-style `[1]`–`[4]` references in
+`doc/design/jfr2pprof.md` that are not links at all. The bar is that **your** change adds none,
+which the script tells you in a second.
 
 ---
 

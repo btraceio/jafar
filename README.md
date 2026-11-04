@@ -303,7 +303,7 @@ For processing **1 million ExecutionSample events:**
 
 ## Core API overview
 
-For the architecture of the `parser` module, see the [Parser Architecture](parser/ARCHITECTURE.md).
+For the architecture of the `parser` module, see the [Parser Architecture](parser-core/ARCHITECTURE.md).
 - `JafarParser`
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: start a session.
   - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).

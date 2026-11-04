@@ -1159,7 +1159,7 @@ jfr> events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(sampledThread/javaNa
 
 - Master [Event Decoration](#event-decoration-and-joining) for advanced correlation analysis
 - Learn the [Typed API](../parser/TypedAPITutorial.md) for programmatic parsing
-- Explore the [Untyped API](../parser/unTypedAPITutorial.md) for flexible parsing
+- Explore the [Untyped API](../parser/UntypedAPITutorial.md) for flexible parsing
 - Read [JfrPath Reference](JFRPath.md) for complete syntax
 - Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 

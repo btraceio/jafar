@@ -367,7 +367,7 @@ Press Tab at any point to see context-appropriate suggestions.
 
 ## See Also
 
-- [JfrPath Reference](jfrpath.md) — Complete query language reference
+- [JfrPath Reference](JFRPath.md) — Complete query language reference
 - [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) — Interactive tutorial
 - [HdumpPath Reference](hdumppath.md) — Heap dump query language (same shell, similar syntax)
 - [Heap Dump Quick Start](hdump-shell-quickstart.md) — Get started with heap dump analysis
