@@ -32,6 +32,33 @@ jobs:
         run: |
           scripts/tests/test_failing_set.sh
           scripts/tests/test_check_doc_links.sh
+          scripts/tests/test_parity_check.sh
+
+  parity:
+    # The blocking Java/Go untyped-parser parity statement (see .agents/skills/pr-writing).
+    # Runs on pull_request only: the statement lives in the PR body. On merge_group the
+    # job is skipped, which satisfies a required check; the authoritative run is the
+    # pull_request one.
+    name: Parity (Java/Go untyped parsers)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the parity statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json files -q '.files[].path' > /tmp/parity-files.txt
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/parity-body.md
+          scripts/parity-check.sh --files-from /tmp/parity-files.txt --body-file /tmp/parity-body.md
 
   tests:
     name: Tests (JDK ${{ matrix.java }})

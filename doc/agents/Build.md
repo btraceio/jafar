@@ -72,6 +72,9 @@ scripts/failing-set.sh
 
 # Documentation link check (R4)
 scripts/check-doc-links.sh
+
+# Java/Go untyped-parser parity gate, local mode
+scripts/parity-check.sh --base origin/main
 ```
 
 ## Go parser Commands
