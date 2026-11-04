@@ -8,10 +8,12 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
 - Keep public API minimal; prefer package-private for internals. Use meaningful names and final where sensible.
 
-## Pre-commit Formatting
+## Formatting
 - Spotless enforces formatting for Java, Groovy, and Gradle files.
-- Git hook: `.githooks/pre-commit` runs `./gradlew spotlessApply` and restages changes.
-- If hooks don't run, set `git config core.hooksPath .githooks` once.
+- Every `build` runs `spotlessCheck` (the root build wires it into every module's
+  `check`); run `./gradlew spotlessApply` before committing to keep builds green.
+- The repository ships no git hooks; do not set `core.hooksPath` for it — that would
+  replace your own global hooks.
 
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations

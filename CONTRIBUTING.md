@@ -31,9 +31,9 @@ We are committed to providing a welcoming and inclusive environment for all cont
    cd jafar
    ```
 
-2. **Configure Git hooks** (for automatic code formatting):
+2. **Format your changes before committing** (Spotless checks formatting on every build):
    ```bash
-   git config core.hooksPath .githooks
+   ./gradlew spotlessApply
    ```
 
 3. **Optionally fetch the real test recordings** (the build generates synthetic ones otherwise; see
@@ -129,9 +129,8 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 JAFAR uses [Spotless](https://github.com/diffplug/spotless) for automatic code formatting.
 
-- **Automatic**: Git pre-commit hook runs `spotlessApply` and restages changes
 - **Manual**: Run `./gradlew spotlessApply` before committing
-- **CI check**: PRs must pass `spotlessCheck`
+- **Build check**: every `build` runs `spotlessCheck`, locally and in CI
 
 ### API Design Principles
 
