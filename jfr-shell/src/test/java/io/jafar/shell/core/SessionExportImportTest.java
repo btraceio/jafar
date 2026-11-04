@@ -1,6 +1,7 @@
 package io.jafar.shell.core;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
@@ -190,6 +191,41 @@ class SessionExportImportTest {
     // The query can be re-evaluated if needed
     Object importedResult = importedQuery.get();
     assertNotNull(importedResult, "Query should be re-evaluable");
+
+    sm2.closeAll();
+  }
+
+  @Test
+  void importPreservesQueryWithQuotedLiteral() throws Exception {
+    Path testJfr =
+        Paths.get("..", "parser-core", "src", "test", "resources", "test-ap.jfr")
+            .normalize()
+            .toAbsolutePath();
+    assumeTrue(Files.exists(testJfr), "test-ap.jfr not found; run ./get_resources.sh");
+
+    String queryString = "events/jdk.ExecutionSample[sampledThread/javaName=\"main\"]";
+
+    SessionManager<JFRSession> sm = new SessionManager<>(factory(), ctx);
+    SessionRef<JFRSession> originalRef = sm.open(testJfr, "test-session");
+    originalRef.variables.set(
+        "mainSamples",
+        new LazyQueryValue(JfrPathParser.parse(queryString), originalRef, queryString));
+
+    Path exportFile = tempDir.resolve("session-quoted.json");
+    SessionExporter exporter = new SessionExporter();
+    exporter.exportToJson(
+        exporter.captureSnapshot(originalRef, ExportOptions.defaults()), exportFile);
+    sm.closeAll();
+
+    SessionManager<JFRSession> sm2 = new SessionManager<>(factory(), ctx);
+    TestIO testIO = new TestIO();
+    SessionRef<JFRSession> importedRef =
+        new SessionImporter(testIO).importFromJson(exportFile, ImportOptions.defaults(), sm2);
+
+    assertTrue(testIO.errors.isEmpty(), "Should have no errors: " + testIO.errors);
+    assertTrue(importedRef.variables.contains("mainSamples"));
+    LazyQueryValue importedQuery = (LazyQueryValue) importedRef.variables.get("mainSamples");
+    assertEquals(queryString, importedQuery.getQueryString());
 
     sm2.closeAll();
   }

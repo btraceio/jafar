@@ -88,6 +88,9 @@ public class SessionImporter {
         }
       };
 
+  /** Regex for a JSON string literal; group 1 is the escaped content between the quotes. */
+  private static final String JSON_STRING = "\"((?:[^\"\\\\]|\\\\.)*)\"";
+
   private final IO io;
 
   public SessionImporter() {
@@ -356,10 +359,10 @@ public class SessionImporter {
     List<String> result = new ArrayList<>();
     String arrayBlock = extractArray(json, arrayName);
 
-    Pattern pattern = Pattern.compile("\"([^\"]*)\"");
+    Pattern pattern = Pattern.compile(JSON_STRING);
     Matcher matcher = pattern.matcher(arrayBlock);
     while (matcher.find()) {
-      result.add(matcher.group(1));
+      result.add(unescapeJson(matcher.group(1)));
     }
 
     return result;
@@ -369,10 +372,10 @@ public class SessionImporter {
     Map<String, String> result = new HashMap<>();
     String settingsBlock = extractObject(json, "sessionSettings");
 
-    Pattern pattern = Pattern.compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"");
+    Pattern pattern = Pattern.compile(JSON_STRING + "\\s*:\\s*" + JSON_STRING);
     Matcher matcher = pattern.matcher(settingsBlock);
     while (matcher.find()) {
-      result.put(matcher.group(1), matcher.group(2));
+      result.put(unescapeJson(matcher.group(1)), unescapeJson(matcher.group(2)));
     }
 
     return result;
@@ -402,7 +405,7 @@ public class SessionImporter {
   }
 
   private String extractString(String json, String fieldName) {
-    Pattern pattern = Pattern.compile("\"" + fieldName + "\"\\s*:\\s*\"([^\"]*)\"");
+    Pattern pattern = Pattern.compile("\"" + fieldName + "\"\\s*:\\s*" + JSON_STRING);
     Matcher matcher = pattern.matcher(json);
     if (matcher.find()) {
       return unescapeJson(matcher.group(1));
