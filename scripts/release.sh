@@ -107,7 +107,10 @@ if [[ "$DERIVED_VERSION" == "0.0.0" ]]; then
 fi
 
 CURRENT_VERSION="$DERIVED_VERSION"
-[[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+# 0.0.0 means "no release tags anywhere" (see derive-version.sh): a first release
+# is bootstrapped by hand-tagging (RELEASING.md, "Version planes"), never by
+# deriving 0.1.0 from a tag that does not exist.
+[[ "$CURRENT_VERSION" != "0.0.0" && "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "Could not determine the latest release version (derived: '$DERIVED_VERSION'). Is this a repository with vX.Y.Z release tags?"
 
 echo "Latest release tag: v$CURRENT_VERSION"

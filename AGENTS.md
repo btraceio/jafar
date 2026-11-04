@@ -73,7 +73,7 @@ Key components:
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
 | Shells, JfrPath, tab completion, backend plugins | [doc/agents/Shells.md](doc/agents/Shells.md) |
-| On-demand procedures (skills) | `.agents/skills/` — `babysit-pr` (steward a PR), `verify-change` (R1/R5/R6 before claiming done), `pr-writing` (commits, PR bodies, parity statement). `.claude/skills` is a symlink for Claude Code |
+| On-demand procedures (skills) | `.agents/skills/` — `babysit-pr` (steward a PR), `verify-change` (R1/R5/R6 before claiming done), `pr-writing` (commits, PR bodies, parity statement), `release-steward` (cut a release, watch the publish). `.claude/skills` is a symlink for Claude Code |
 | MCP server, tools, findings contract | [doc/agents/Mcp.md](doc/agents/Mcp.md) |
 | `ask` / `as-query` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
 | Release process | [doc/agents/Release.md](doc/agents/Release.md), [RELEASING.md](RELEASING.md) |
