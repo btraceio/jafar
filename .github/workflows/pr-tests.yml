@@ -28,11 +28,8 @@ jobs:
       - name: Documentation link check (R4)
         run: scripts/check-doc-links.sh
 
-      - name: Gate script tests (R5 on the gates)
-        run: |
-          scripts/tests/test_failing_set.sh
-          scripts/tests/test_check_doc_links.sh
-          scripts/tests/test_parity_check.sh
+      - name: Guardrail regression suite (R5 on the gates)
+        run: scripts/tests/run_all.sh
 
   parity:
     # The blocking Java/Go untyped-parser parity statement (see .agents/skills/pr-writing).
@@ -111,7 +108,8 @@ jobs:
           ./gradlew --stacktrace --no-daemon :jfr-mcp:endToEndTest \
             --tests '*McpAgentWorkflowEndToEndTest.hprofWorkflow*' \
             --tests '*McpAgentWorkflowEndToEndTest.pprofWorkflow*' \
-            --tests '*McpAgentWorkflowEndToEndTest.otlpWorkflow*'
+            --tests '*McpAgentWorkflowEndToEndTest.otlpWorkflow*' \
+            --tests '*McpAgentTaskEvalTest*'
 
       - name: Check API compatibility (JDK 21)
         if: matrix.java == '21'
