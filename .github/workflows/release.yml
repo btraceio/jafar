@@ -16,12 +16,6 @@ on:
         description: 'Version to publish/update (e.g., 0.9.0)'
         required: true
         type: string
-      plane:
-        description: 'Release plane (RELEASING.md "Version planes")'
-        required: false
-        type: choice
-        options: [shell, core, mcp, llm-anthropic, llm-openai]
-        default: shell
       publish_backends_only:
         description: 'Publish only backend artifacts (jfr-shell-jdk, jfr-shell-jafar, llm-anthropic)'
         required: false
@@ -56,21 +50,17 @@ jobs:
           # Manual-input versions are user-supplied; keep them out of the script
           # text and validate the format before they are echoed anywhere
           INPUT_VERSION: ${{ github.event.inputs.version }}
-          INPUT_PLANE: ${{ github.event.inputs.plane }}
           PUBLISH_BACKENDS_ONLY_INPUT: ${{ github.event.inputs.publish_backends_only }}
           UPDATE_CATALOG_ONLY_INPUT: ${{ github.event.inputs.update_catalog_only }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Manual trigger - use input version and plane
+            # Manual trigger - only the two repair modes below; publishing a
+            # release (any plane) and the catalog update need the tag push
             VERSION="$INPUT_VERSION"
             if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
               echo "ERROR: version input '$VERSION' is not X.Y.Z"; exit 1
             fi
-            case "$INPUT_PLANE" in
-              ''|shell) PLANE="shell"; TAG="v${VERSION}" ;;
-              core|mcp|llm-anthropic|llm-openai) PLANE="$INPUT_PLANE"; TAG="${PLANE}/v${VERSION}" ;;
-              *) echo "ERROR: unknown plane input '$INPUT_PLANE' (shell, core, mcp, llm-anthropic, llm-openai)"; exit 1 ;;
-            esac
+            PLANE="shell"; TAG="v${VERSION}"
             IS_MANUAL="true"
             PUBLISH_BACKENDS_ONLY="$PUBLISH_BACKENDS_ONLY_INPUT"
             UPDATE_CATALOG_ONLY="$UPDATE_CATALOG_ONLY_INPUT"
@@ -80,7 +70,10 @@ jobs:
             elif [ "$UPDATE_CATALOG_ONLY" = "true" ]; then
               echo "Manual catalog update for version: $VERSION"
             else
-              echo "Manual workflow trigger for version: $VERSION"
+              # Every other job is skipped for manual runs; fail rather than
+              # report a release that published nothing
+              echo "::error::A manual run only publishes backends or updates the JBang catalog; tick one of those. To release a plane, push its tag from main: scripts/release.sh <shell|core|mcp|llm-anthropic|llm-openai> <major|minor|patch>"
+              exit 1
             fi
           else
             # Tag trigger - the tag names its plane: bare vX.Y.Z = shell (the
