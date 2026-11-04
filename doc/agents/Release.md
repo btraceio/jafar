@@ -71,6 +71,12 @@ per-plane catalog updates already happen in `release.yml`).
 
 ## Verification an agent owes a release
 
+The version gates are regression-tested: `scripts/tests/test_derive_version.sh` pins the
+tag derivation (on-tag release, past-tag snapshot, plane isolation, the untagged-plane
+fallback, newest-anywhere) and `scripts/tests/test_release_plan.sh` pins the release
+preflight (dry-run derivation, the branch policy, and the refusal of a repository with
+no release tags — the "untagged-*" incident class).
+
 ```bash
 scripts/release.sh --dry-run [plane] <type>     # branch policy + tag/version derivation
 ./gradlew test shadowJar spotlessCheck          # the full gate before tagging
