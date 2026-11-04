@@ -159,3 +159,8 @@ change; these cover *what a change must not leave behind*.
   just as much a signal for the Java one. Parity is about behaviour and intent, not line-by-line
   translation - where an implementation can do better idiomatically, do better and note the
   divergence in `go-parser/README.md` under "Differences from the Java parser".
+
+  **Enforced:** a one-sided change to the untyped parser's production code fails CI until the PR
+  body carries a `Parity: ported in this PR` or `Parity: not applicable — <reason>` line
+  (`scripts/parity-check.sh`, the `parity` job in `pr-tests.yml`; locally:
+  `scripts/parity-check.sh --base origin/main`).
