@@ -18,6 +18,21 @@ permissions:
   actions: read
 
 jobs:
+  guardrails:
+    name: Guardrails (doc links, gate tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Documentation link check (R4)
+        run: scripts/check-doc-links.sh
+
+      - name: Gate script tests (R5 on the gates)
+        run: |
+          scripts/tests/test_failing_set.sh
+          scripts/tests/test_check_doc_links.sh
+
   tests:
     name: Tests (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
@@ -186,6 +201,28 @@ jobs:
           if [ "$count" = "0" ]; then
             echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > reports/placeholder.xml
           fi
+
+      - name: Named failing set (R6)
+        run: |
+          set -euo pipefail
+          : > failing-set.txt
+          scripts/failing-set.sh reports > failing-set.txt
+          if [ -s failing-set.txt ]; then
+            {
+              echo "### Failing tests by name (R6)"
+              echo '```'
+              cat failing-set.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload named failing set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-set-by-name
+          path: failing-set.txt
+          retention-days: 14
 
       - name: Publish combined JUnit PR annotations
         uses: dorny/test-reporter@v1

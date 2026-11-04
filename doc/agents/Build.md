@@ -66,6 +66,12 @@ java -jar demo/build/libs/demo-all.jar [jafar|jmc|jfr|jfr-stream] /path/to/recor
 
 # Publish to local Maven repository
 ./gradlew publishToMavenLocal
+
+# Named failing test set, for before/after comparison (R6)
+scripts/failing-set.sh
+
+# Documentation link check (R4)
+scripts/check-doc-links.sh
 ```
 
 ## Go parser Commands
