@@ -5,8 +5,9 @@ description: Write commits, PR descriptions and the parity statement for this re
 
 # Writing a PR
 
-Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the two load-bearing parts
-are the verification statement and the parity statement, because a gate checks the second one.
+Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the load-bearing parts
+are the verification statement and the gate-checked statements — parity and API-Break — because
+CI checks those.
 
 ## Commits
 
@@ -44,6 +45,28 @@ must state, in the PR body, what happens on the other side. This is a blocking C
 Name the direction (`Java → Go` / `Go → Java`); the obligation is symmetric. The standing
 convention (PRs #135, #150) records the reasoning, not just the verdict. Divergences that are
 kept go into `go-parser/README.md` under "Differences from the Java parser".
+
+## The API-Break statement
+
+A PR that breaks a gated API surface — an incompatible change to any public member of the
+surfaces listed in `gradle/api-surfaces.txt`, beyond the accepted ratchet in
+`gradle/api-accepted-breaks.txt` — must say so in the PR body:
+
+    API-Break: <non-empty reason>
+
+This is a blocking CI check (`scripts/api-break-check.sh`, the `api-break` job in
+`pr-tests.yml`, run on pull requests only, like the parity statement). The statement is
+matched with `^[[:space:]]*API-Break:[[:space:]]*[^[:space:]]`: the reason must be
+non-empty — `API-Break:` followed by spaces only is rejected, and the check fails as if
+no statement were present.
+
+When it is needed: when
+`scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main`
+exits 1 — or, without running anything, when the diff knowingly removes or changes the
+signature of a public member of a gated package, or adds an abstract method to a gated
+interface. Purely additive changes do not need it. The gate, its tag-derived baselines
+and the shrink-only accepted-breaks ratchet are documented in
+[doc/agents/Gates.md](../../../doc/agents/Gates.md).
 
 ## Scope
 

@@ -9,6 +9,11 @@ plugins {
 // tagging; no version numbers are edited (see RELEASING.md).
 apply from: rootProject.file('gradle/version-from-tag.gradle')
 
+// Per-surface japicmp API gate (root-level apiCompat< Surface> tasks driven by
+// gradle/api-surfaces.txt; baselines materialized by scripts/api-baseline.sh).
+// Not part of check: it needs the baseline script and the network.
+apply from: rootProject.file('gradle/api-compat.gradle')
+
 repositories {
     mavenLocal()
     mavenCentral()

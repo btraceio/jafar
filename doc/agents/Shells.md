@@ -128,7 +128,9 @@ query forms print. A `|` inside a word is an argument (`metadata --regex ^(jdk|d
 
 ## Backend Plugin Development
 - Plugins sync with main project version (no independent versioning)
-- API compatibility enforced via japicmp (runs on non-SNAPSHOT builds)
+- API compatibility checked on every PR (the `api-compat` CI job: japicmp against a tag-derived
+  baseline) — an incompatible change needs a revert or an `API-Break:` statement
+  (see [Gates.md](Gates.md))
 - Breaking plugin API changes require major version bump
 - See doc/cli/PluginAPICompatibility.md for full policy
 

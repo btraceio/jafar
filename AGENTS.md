@@ -69,6 +69,7 @@ Key components:
 | Area | Document |
 |---|---|
 | **How to verify a change** | [doc/agents/Verification.md](doc/agents/Verification.md) |
+| **Every gate** — what it checks, how to run it, regenerate its baseline, its escape hatch | [doc/agents/Gates.md](doc/agents/Gates.md) |
 | Build commands, prerequisites, Go parser | [doc/agents/Build.md](doc/agents/Build.md) |
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |

@@ -11,6 +11,21 @@ set -euo pipefail
 #   no tags for the plane          -> falls back to the newest bare vX.Y.Z tag
 #                                     (also -SNAPSHOT), or 0.0.0-SNAPSHOT
 #
+# Modes besides the default (all take --plane P):
+#   --newest        -> the newest plane version, X.Y.Z (0.0.0 when none)
+#   --baseline      -> the API-baseline version, X.Y.Z
+#   --baseline-tag  -> the API-baseline tag name (vX.Y.Z or <plane>/vX.Y.Z)
+#
+# The baseline is what the versioned artifact is compared against, so it is
+# the *previous* release, never the one being made: the newest well-formed
+# plane tag anywhere in the repo, EXCLUDING the tag HEAD sits exactly on.
+# A plane with no qualifying tag of its own rides the newest bare vX.Y.Z
+# (same fallback as --newest). Non-conforming tags (rc, untagged-*) are
+# rejected through plane_release_re. When nothing qualifies, the mode fails
+# with "no baseline tag for plane P" on stderr and exit 1 — it never prints
+# 0.0.0, which would silently compare against a nonexistent release (R3).
+# scripts/api-baseline.sh is the consumer.
+#
 # Planes (tag shape -> plane name):
 #   vX.Y.Z                -> shell          (the project's original line)
 #   core/vX.Y.Z           -> core           (parser, tools, gradle plugin; also
@@ -92,12 +107,69 @@ newest_plane_tag() {
     fi
 }
 
+# newest_qualifying_tag <re> <glob> <excluded>: print the newest tag (sort
+# -rV) among <glob> whose name matches <re>, skipping every tag listed in
+# <excluded> (newline-separated; the tags HEAD sits exactly on). Returns 1
+# when none matches.
+newest_qualifying_tag() {
+    local re="$1" glob="$2" excluded="$3" candidate
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        if [[ -n "$excluded" ]] && grep -qxF -- "$candidate" <<<"$excluded"; then
+            continue
+        fi
+        printf '%s\n' "$candidate"
+        return 0
+    done < <(git for-each-ref "$glob" --format='%(refname:short)' \
+                 | grep -E "$re" | sort -rV)
+    return 1
+}
+
+# baseline_tag: print the name of the API-baseline tag for $PLANE — the
+# newest well-formed plane tag anywhere in the repo, excluding the tag HEAD
+# sits exactly on, so a release commit's baseline is the previous release.
+# A plane with no qualifying tag of its own rides the newest bare vX.Y.Z
+# (the same fallback as newest_plane_tag; for the shell plane the bare shape
+# IS the plane shape, so the exact-tag exclusion keeps applying there too,
+# otherwise the fallback would undo it). Fails loudly when nothing
+# qualifies; never falls back to 0.0.0 (R3). See the header comment.
+baseline_tag() {
+    # every tag pointing exactly at HEAD; none of them may be the baseline
+    local excluded
+    excluded=$(git tag --points-at HEAD 2>/dev/null || true)
+
+    local glob='refs/tags/v[0-9]*.[0-9]*.[0-9]*'
+    [[ "$PLANE" != "shell" ]] && glob="refs/tags/${PLANE}/v[0-9]*.[0-9]*.[0-9]*"
+    if newest_qualifying_tag "$(plane_release_re "$PLANE")" "$glob" "$excluded"; then
+        return 0
+    fi
+
+    local fallback_excluded=""
+    [[ "$PLANE" == "shell" ]] && fallback_excluded="$excluded"
+    if newest_qualifying_tag "$PLAIN_RELEASE_RE" \
+            'refs/tags/v[0-9]*.[0-9]*.[0-9]*' "$fallback_excluded"; then
+        return 0
+    fi
+
+    printf 'no baseline tag for plane %s\n' "$PLANE" >&2
+    return 1
+}
+
 PLANE="shell"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --plane) plane_for "${2:?--plane requires a plane name}"; PLANE="$2"; shift 2 ;;
         --newest)
             newest_plane_tag
+            exit 0
+            ;;
+        --baseline-tag)
+            baseline_tag
+            exit 0
+            ;;
+        --baseline)
+            BASELINE=$(baseline_tag)
+            strip_plane "$BASELINE"
             exit 0
             ;;
         *) printf 'Unknown argument: %s\n' "$1" >&2; exit 1 ;;
