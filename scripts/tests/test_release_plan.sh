@@ -34,12 +34,15 @@ mkscratch() { # mkscratch -> scratch repo with a bare origin, with the scripts a
     R="$S/work"
     git init -q -b main "$R"
     git -C "$R" remote add origin "$ORIGIN"
+    # Local to the scratch repo, before the first commit: the developer's global
+    # tag.gpgSign forces an annotated signed tag (and an editor) on every
+    # `git tag`, and commit.gpgSign makes every fixture commit need a reachable
+    # signing agent. A hermetic test must not depend on either.
+    git -C "$R" config tag.gpgSign false
+    git -C "$R" config commit.gpgSign false
     git -C "$R" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
     git -C "$R" push -q -u origin main
     git -C "$R" config advice.detachedHead false
-    # Local to the scratch repo: the developer's global tag.gpgSign forces an
-    # annotated signed tag (and an editor) on every `git tag`.
-    git -C "$R" config tag.gpgSign false
     mkdir -p "$R/scripts"
     cp "$repo/scripts/derive-version.sh" "$repo/scripts/release.sh" "$R/scripts/"
     chmod +x "$R/scripts/"*.sh
