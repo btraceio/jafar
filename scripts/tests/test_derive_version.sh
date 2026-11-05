@@ -26,9 +26,11 @@ mkrepo() { # mkrepo -> scratch repo with default config
     R=$(mktemp -d)
     git -C "$R" init -q -b main
     # Local to the scratch repo: the developer's global tag.gpgSign forces an
-    # annotated signed tag (and an editor) on every `git tag`; a hermetic test
-    # repo tags lightweight and unauthenticated.
+    # annotated signed tag (and an editor) on every `git tag`, and commit.gpgSign
+    # makes every fixture commit need a reachable signing agent. A hermetic test
+    # must not depend on either; real repositories are untouched.
     git -C "$R" config tag.gpgSign false
+    git -C "$R" config commit.gpgSign false
     git -C "$R" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
     git -C "$R" config advice.detachedHead false
 }

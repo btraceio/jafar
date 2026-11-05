@@ -92,6 +92,9 @@ check "Java change plus Go test: still one-sided" 1 "no parity statement" gate
 # 10. Local mode against a scratch git repo.
 scratch=$(mktemp -d)
 git -C "$scratch" init -q -b main
+# Hermetic: fixture commits must not need the developer's signing agent.
+git -C "$scratch" config commit.gpgSign false
+git -C "$scratch" config tag.gpgSign false
 git -C "$scratch" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
 git -C "$scratch" checkout -q -b feature
 mkdir -p "$scratch/parser-core/src/main/java/io/jafar/parser/impl"
