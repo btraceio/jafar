@@ -149,6 +149,8 @@ tasks.named('test') {
         .withPropertyName('sharedFixtures')
         .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
+    // The allocation tests need their own JVM args and the budget file; they run in allocationTest
+    exclude 'io/jafar/parser/alloc/**'
     // Ensure JUnit 5 and fixed report locations for CI collection
     useJUnitPlatform()
     reports {
@@ -176,6 +178,8 @@ tasks.register('test8', Test) {
     group = 'verification'
     testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
     classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    // The allocation tests need their own JVM args and the budget file; they run in allocationTest8
+    exclude 'io/jafar/parser/alloc/**'
     shouldRunAfter tasks.named('test')
     javaLauncher.set(j8LauncherProvider)
     dependsOn tasks.named('compileTest8JavaCompat')
@@ -189,6 +193,74 @@ tasks.register('test8', Test) {
     }
 }
 
+// --- Allocation budget gate (D9) ---------------------------------------------------------
+// The -XX:ActiveProcessorCount=4 pin is load-bearing, not a tuning knob: StreamingChunkParser
+// sizes its chunk pool max(processors - 2, 1), so the pin fixes the pool at 2 threads, matching
+// tck-test.jfr's 2 chunks. AllocationMeter sums the pool threads' ABSOLUTE allocated-bytes
+// counters, which is only valid for fresh threads of this parse; a pool that followed the host
+// CPU count would also vary the thread-to-chunk mapping and, with it, the measured figure.
+//
+// -XX:TieredStopAtLevel=1 pins compilation to C1, which performs no escape analysis and therefore
+// no timing-dependent scalar replacement. Measured with default tiered compilation (T12), the
+// pool-thread sum wobbled by 0.6-6% between otherwise identical runs, because whether C2 had
+// compiled (and eliminated allocations in) the hot decode loop by the measured parse depends on
+// background compile-queue timing. Under C1 the same measurement is byte-identical across runs,
+// so the budget is the bytecode-level truth of what the parse allocates, not what the JIT happens
+// to eliminate on a given run — and escape-analysis elimination is not a guarantee the parser
+// may rely on anyway (AC-3.2/AC-3.3; spec Q6 anticipated exactly this trade-off).
+def allocationBudgetsFile = rootProject.file('gradle/allocation-budgets.properties')
+
+tasks.register('allocationTest', Test) {
+    description = 'Asserts the untyped parse of tck-test.jfr stays within its allocation budget (JDK 21).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/alloc/**'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
+    // A budget change re-runs the gate, and so does a fixture change: without the recording as
+    // an input, an edited tck-test.jfr would leave the task UP-TO-DATE with a stale verdict.
+    inputs.file(allocationBudgetsFile)
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/allocationTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/allocationTest"))
+    }
+}
+
+// Same gate in the JDK 8 cell, modelled on `test8`: the test8 source set (compiled to Java 8
+// bytecode by compileTest8JavaCompat) run on the JDK 8 launcher. test8Implementation extendsFrom
+// testImplementation, so the test-support dependency above reaches this classpath too.
+tasks.register('allocationTest8', Test) {
+    description = 'Asserts the untyped parse of tck-test.jfr stays within its allocation budget (JDK 8).'
+    group = 'verification'
+    testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
+    classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    include 'io/jafar/parser/alloc/**'
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileTest8JavaCompat')
+    useJUnitPlatform()
+    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
+    inputs.file(allocationBudgetsFile)
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/allocationTest8"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/allocationTest8"))
+    }
+}
+
+tasks.named('check') {
+    // `build` runs the JDK 21 allocation cell; allocationTest8 runs in the CI JDK 8 cell
+    dependsOn tasks.named('allocationTest')
+}
+
 dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
@@ -199,6 +271,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    // Allocation meter + budgets (test-support); test8 inherits it because test8Implementation
+    // extendsFrom testImplementation
+    testImplementation project(':test-support')
     // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 

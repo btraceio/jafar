@@ -1,0 +1,35 @@
+plugins {
+    id 'java-library'
+}
+
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle), re-applied per subproject
+// as everywhere else. Shared test tooling (allocation meter and budgets, golden files): this
+// module is deliberately NOT published — it never applies the maven-publish plugin and is a
+// testImplementation-only dependency of the modules that use it.
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+// Java 8: the meter is compiled against the same floor as parser-core's test8 cell, so it can be
+// used from both the JDK 21 and JDK 8 allocation tests (D9).
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+dependencies {
+    // `api`, not `testImplementation`: the budget/golden tests in the consuming modules use
+    // Assertions/Assumptions (AllocationBudgets, GoldenFile) through this artifact, so a plain
+    // `testImplementation project(':test-support')` must suffice for them.
+    api 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

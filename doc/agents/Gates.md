@@ -41,6 +41,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Named failing set (R6) | Test failures are compared by name, never by count — a constant count can hide a swap | `scripts/failing-set.sh \| diff <before-dump> -` (dump before the change, diff after) | none — the standing set is dumped per run; compare dumps with `diff` | none | `aggregate-test-report` | the script is sub-second; the cost is the test suite's, not its own |
 | API compatibility (japicmp per plane) | Every gated surface in `gradle/api-surfaces.txt` (parser, shell, mcp, hdump, pprof, otlp, llm-spi) is compared against the released bytes of its plane's baseline; incompatible changes beyond the accepted ratchet need a statement | `scripts/api-baseline.sh && ./gradlew apiCompat && scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main` | shrink `gradle/api-accepted-breaks.txt`: entries are deleted when a baseline tag moves past the break; adding one is growth and needs the statement | `API-Break: <non-empty reason>` in the PR body | `api-compat` (comparison, every trigger) + `api-break` (statement, pull_request only) | 12.6 s warm with cached baselines, full chain (measured); ~26 s cold — 12.5 s baseline materialization + 13 s `apiCompat` (measured); CI numbers land with the PR that adds the jobs |
 | Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, and parser implementation code declares no mutable static field | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
+| Allocation budgets | Every public parse entry point (untyped JFR, typed JFR, hdump, pprof, otlp) allocates, per fixed fixture, at most the bytes recorded in `gradle/allocation-budgets.properties` on its own JDK cell — chunk-pool decode threads included | `./gradlew :parser-core:allocationTest :parser-codegen:allocationTest :hdump-parser:test :pprof-parser:test :otlp-parser:test :parser-core:allocationTest8 :parser-codegen:allocationTest8` | edit `gradle/allocation-budgets.properties` (re-measure per the recipe in its comments); lowering a value is free, a raise needs the statement | `Alloc-Budget: <non-empty reason>` in the PR body | `tests` (both matrix cells) + `alloc-budget` (statement, pull_request only) | the four allocation tasks ~4 s each warm (measured; ~17 s combined); hdump/pprof/otlp add no task — their budget tests run inside the modules' existing `test` suites |
 
 ## API evolution
 
@@ -132,3 +133,71 @@ failing and a passing check.
 - The store also freezes transitive bytecode dependencies (generic type
   arguments flowing through public signatures) that source-text reach-in
 counts do not include; all are frozen, so the ratchet still holds.
+
+## Allocation budgets
+
+**What is budgeted.** `gradle/allocation-budgets.properties` records, per
+public parse entry point, fixture and JDK major, the bytes one parse may
+allocate: the untyped JFR parse (`parser-core.untyped.tck-test.jfr`, on the
+committed `tck-test.jfr`), the typed JFR parse
+(`parser-codegen.typed.tck-test.jfr`), and the hdump, pprof and otlp parse
+entry points on their deterministic builders' minimal fixtures. The first
+two run in dedicated Gradle tasks — `allocationTest` (JDK 21) and
+`allocationTest8` (JDK 8) — outside the ordinary test suites; the latter
+three parse single-threaded (verified: no `Executor`/`new Thread`/parallel
+stream on their parse path; every run logs `poolThreads=0`), so they run in
+the normal `test` task with a calling-thread meter and carry explicit
+`jdk8=excluded: …` lines instead of a JDK 8 budget.
+
+**The meter.** `AllocationMeter` (`test-support`) sums the calling thread's
+allocation delta plus the *absolute* counters of every chunk-pool thread,
+read on that thread from the `onChunkEnd` parser-listener callback while the
+thread is still alive — pool threads die at parse end and report -1
+afterwards. The JFR cells assert pool-thread freshness (no thread id repeats
+between warm-up and measured parses): a reused thread's absolute counter
+would double-count. Every run prints an `alloc <key> measured=… budget=…
+tol=… vm=…` line (R3: where the value came from), and the JFR tests an
+`aggregate=… callingThreadOnly=… pool=…` audit line — the split that shows
+the pool threads, not the caller, carry the decode (46.3 MB of 46.4 MB on
+jdk21), which is what makes a calling-thread-only meter blind to the
+regressions this gate exists to catch.
+
+**The pins.** The allocation tasks run with `-XX:ActiveProcessorCount=4`,
+which pins `StreamingChunkParser`'s per-parse pool at `max(4-2,1) = 2`
+threads — exactly the two chunks of `tck-test.jfr` — and with
+`-XX:TieredStopAtLevel=1` (C1): under default tiered compilation, whether
+C2's escape analysis has eliminated allocations in the hot decode loop by
+the measured parse depends on compile-queue timing, wobbling the same
+measurement by 0.6–6% between runs; under C1 it is byte-identical.
+
+**Determinism, spread, tolerances.** Two warm-up parses are discarded (the
+first pays ~14× the steady state in lazy init). The pool-thread share
+measured byte-identical across consecutive runs and across all four locally
+installed JDK 21 builds (Temurin, Zulu, Liberica, Graal — the measurement
+tables and per-build comments are in the budget file). Each key's tolerance
+is recorded there with its rationale: 2048 (untyped jdk21/jdk8, hdump, otlp),
+4096 (pprof), 310,000 (typed — covering an occasional one-off lazy-init
+outlier on a pool thread under Zulu, root cause not hunted, R8). A measured
+value more than the tolerance *below* the budget fails with "re-tighten:
+set <key>=<n>", so a loosened budget cannot linger.
+
+**Raising a budget.** `scripts/alloc-budget-check.sh --base origin/main`
+compares the budget file against the base ref: raising a value, raising a
+tolerance, or turning a budgeted key into `excluded: …` requires
+`Alloc-Budget: <non-empty reason>` in the PR body. Lowering a value, adding
+a key, or leaving the file unchanged passes; deleting the file is refused
+(it would un-gate every key). Re-measuring a key: the recipe — toolchain
+forcing, `cleanTest` + `--no-build-cache`, per-task `--rerun`, auditing the
+`vm=` line — is recorded in the budget file's comments. Gradle's build cache
+restores another JVM's test result because the test JVM is not in the cache
+key, so a green cached or `UP-TO-DATE` run is not evidence of a
+measurement. (The `vm=` line of the audit output names the JVM that actually
+ran — trust it, not the exit status.)
+
+**R8 — what is not verified.** The jdk8 keys were measured on Zulu 8.0.482,
+not Temurin: sdkman no longer offers a Temurin 8 build, and CI's JDK 8 cell
+runs Temurin. CI's JDK 21 and JDK 8 cells also run Temurin patch levels with
+no local copy. The tolerances carry headroom for exactly this (2048 where
+the measured build-to-build spread is 16–64 bytes); if a CI cell reds on a
+budget key, the first move is to re-measure on the CI image and adjust the
+value — with an `Alloc-Budget:` statement if the change is a raise.

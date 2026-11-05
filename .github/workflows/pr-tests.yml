@@ -132,6 +132,33 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/api-break-body.md
           scripts/api-break-check.sh --reports build/reports/api-compat --base "origin/${{ github.base_ref }}" --body-file /tmp/api-break-body.md
 
+  alloc-budget:
+    # The blocking allocation-budget ratchet statement (see .agents/skills/pr-writing
+    # and doc/agents/Gates.md). Runs on pull_request only, like `parity`: the
+    # statement lives in the PR body. On merge_group the job is skipped, which
+    # satisfies a required check; the authoritative run is the pull_request one.
+    name: Alloc budget statement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the Alloc-Budget statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/alloc-body.md
+          scripts/alloc-budget-check.sh --base "origin/${{ github.base_ref }}" --body-file /tmp/alloc-body.md
+
   tests:
     name: Tests (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
@@ -166,11 +193,14 @@ jobs:
       # No recording download: the build generates the test recordings
       # (:test-recordings:generateTestRecordings, a dependency of every test task).
 
+      # The JDK 21 cell's `build` runs the JDK 21 allocation tests through `check`
+      # (check dependsOn allocationTest); the JDK 8 cell names its allocation
+      # tasks explicitly because it never runs `build` (doc/agents/Gates.md).
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
           java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8 :parser-codegen:compileJava :parser-codegen:test8
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8 :parser-codegen:compileJava :parser-codegen:test8 :parser-core:allocationTest8 :parser-codegen:allocationTest8
           else
             ./gradlew --stacktrace --no-daemon build
           fi
@@ -228,7 +258,10 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml; do
+          # allocationTest* covers allocationTest and allocationTest8 (the dedicated
+          # allocation tasks report under their own test-results dirs), so the
+          # named failing set and the combined report see those cells too.
+          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml **/build/test-results/allocationTest*/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done

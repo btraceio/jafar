@@ -1,13 +1,13 @@
 ---
 name: pr-writing
-description: Write commits, PR descriptions and the parity statement for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the Java/Go parity statement the parity gate requires.
+description: Write commits, PR descriptions and the gate-checked PR-body statements for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the statements the CI gates require (Java/Go parity, API-Break, Alloc-Budget).
 ---
 
 # Writing a PR
 
 Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the load-bearing parts
-are the verification statement and the gate-checked statements — parity and API-Break — because
-CI checks those.
+are the verification statement and the gate-checked statements — parity, API-Break and
+Alloc-Budget — because CI checks those.
 
 ## Commits
 
@@ -66,6 +66,25 @@ exits 1 — or, without running anything, when the diff knowingly removes or cha
 signature of a public member of a gated package, or adds an abstract method to a gated
 interface. Purely additive changes do not need it. The gate, its tag-derived baselines
 and the shrink-only accepted-breaks ratchet are documented in
+[doc/agents/Gates.md](../../../doc/agents/Gates.md).
+
+## The Alloc-Budget statement
+
+A PR that raises an allocation budget must say so in the PR body:
+
+    Alloc-Budget: <non-empty reason>
+
+This is a blocking CI check (`scripts/alloc-budget-check.sh`, the `alloc-budget` job in
+`pr-tests.yml`, run on pull requests only, like the parity and API-Break statements). The
+statement is matched with `^[[:space:]]*Alloc-Budget:[[:space:]]*[^[:space:]]`: the reason
+must be non-empty — `Alloc-Budget:` followed by spaces only is rejected, and the check
+fails as if no statement were present.
+
+When it is needed: when `scripts/alloc-budget-check.sh --base origin/main` exits 1 — or,
+without running anything, when the diff raises a value or a tolerance in
+`gradle/allocation-budgets.properties`, or turns a budgeted key into `excluded: …`.
+Lowering a value, adding a new key, or leaving the file unchanged needs no statement. The
+gate, the allocation meter and the per-JDK keys are documented in
 [doc/agents/Gates.md](../../../doc/agents/Gates.md).
 
 ## Scope
