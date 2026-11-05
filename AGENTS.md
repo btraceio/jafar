@@ -110,6 +110,7 @@ Key components:
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 - **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
+- **arch-tests/**: ArchUnit freeze rules for module and package boundaries (not published)
 
 ## Quick start
 

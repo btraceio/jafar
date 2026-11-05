@@ -40,6 +40,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Formatting (Spotless) | Every Java file is formatted; runs on every Gradle build | `./gradlew spotlessCheck` | `./gradlew spotlessApply` rewrites the files — no baseline to regenerate | none | inside every Gradle invocation in `tests` | 9.5 s warm, local (measured) |
 | Named failing set (R6) | Test failures are compared by name, never by count — a constant count can hide a swap | `scripts/failing-set.sh \| diff <before-dump> -` (dump before the change, diff after) | none — the standing set is dumped per run; compare dumps with `diff` | none | `aggregate-test-report` | the script is sub-second; the cost is the test suite's, not its own |
 | API compatibility (japicmp per plane) | Every gated surface in `gradle/api-surfaces.txt` (parser, shell, mcp, hdump, pprof, otlp, llm-spi) is compared against the released bytes of its plane's baseline; incompatible changes beyond the accepted ratchet need a statement | `scripts/api-baseline.sh && ./gradlew apiCompat && scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main` | shrink `gradle/api-accepted-breaks.txt`: entries are deleted when a baseline tag moves past the break; adding one is growth and needs the statement | `API-Break: <non-empty reason>` in the PR body | `api-compat` (comparison, every trigger) + `api-break` (statement, pull_request only) | 12.6 s warm with cached baselines, full chain (measured); ~26 s cold — 12.5 s baseline materialization + 13 s `apiCompat` (measured); CI numbers land with the PR that adds the jobs |
+| Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, and parser implementation code declares no mutable static field | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
 
 ## API evolution
 
@@ -73,3 +74,61 @@ exemption (a breaking change ships on a new major plane tag) applies only from
 1.0 and is not automated: the gate runs on PRs, which cannot see tagging
 decisions, so the exemption stays a documented reason inside the statement
 rather than a code path.
+
+## Architecture boundaries (ArchUnit freeze)
+
+**The rules.** The `arch-tests` module
+(`arch-tests/src/test/java/io/jafar/arch/`) runs five frozen ArchUnit rules,
+in plain words:
+
+- **(a)** only the parser plane (`parser-core`, `parser-codegen`) may depend
+  on `io.jafar.parser.impl..` or `io.jafar.parser.internal_api..`;
+- **(b)** only `hdump-parser` may depend on `io.jafar.hdump.impl..`,
+  `io.jafar.hdump.internal..` or `io.jafar.hdump.index..`;
+- **(c)** within `parser-core`, `hdump-parser`, `pprof-parser` and
+  `otlp-parser`, classes in an `..api..` package never depend on that module's
+  `impl`/`internal`/`internal_api`/`index` packages (`parser-codegen` is
+  deliberately absent from this rule — generating classes *into*
+  `io.jafar.parser.impl` is its purpose);
+- **(d)** the parser modules and `shell-core` never depend on the consumer
+  modules (shells, plugins, MCP, processors, tools) — the dependency direction
+  is shells → shell-core → parser, never the reverse;
+- **(e)** classes in the parser modules' non-api packages declare no field
+  that is `static` and not `final` (synthetic fields are ignored).
+
+**Membership comes from class dirs.** Every covered module's *compiled*
+classes are imported from `<module>/build/classes/java/main`, and module
+membership — defined once, in `arch-tests/build.gradle` — is what the rules
+test, not package names: packages overlap across modules
+(`io.jafar.parser.impl` exists in both parser-core and parser-codegen), so a
+package-name rule would be ambiguous. `ModuleCoverageTest` keeps the import
+non-vacuous: every covered module must import more than zero classes — the
+Java-25 shell modules and the Java-8 parser modules alike — and every module
+in `settings.gradle` must be either classified in a group or exempt. The
+exemption convention: modules named `test-*` are test tooling
+(`test-recordings`, and any later test-support module), `parser` is the
+aggregate re-export with no sources of its own, and `arch-tests` covers itself.
+An unclassified module fails with `classify <m> in arch-tests/build.gradle`.
+
+**The freeze store.** Violations that exist today are grandfathered in a
+committed text store, `arch-tests/src/test/resources/archunit_store/`.
+No ordinary run can add to it: store creation and refreeze are off unless
+`-ParchFreeze` is passed, so a new violation fails the build and must be
+fixed. There is deliberately no PR-body statement for one (Q14): a deliberate
+grandfathering is a hand edit to the store, visible in the diff.
+`ArchRuleFireTest` proves each rule fires on a synthetic violator, naming the
+rule, and proves in CI mode that the store is byte-identical after both a
+failing and a passing check.
+
+**R8 — what this gate does not see.**
+
+- `demo/` is a separate Gradle build; its reach-in is not covered.
+- parser-core's multi-release overlay class dirs (`java9`, `java13`, `java21`)
+  are not imported: they override classes already counted from the main class
+  dir, and importing both would register the same class names twice.
+- `jafar-processor`'s two reach-ins live in code-generation templates shipped
+  as resources (`templates/FactoryTemplate.java`, `HandlerTemplate.java`),
+  which are never compiled, so no bytecode-level rule sees them.
+- The store also freezes transitive bytecode dependencies (generic type
+  arguments flowing through public signatures) that source-text reach-in
+counts do not include; all are frozen, so the ratchet still holds.
