@@ -3,6 +3,21 @@
 The parser APIs, coding style, testing strategy, and the composite build.
 The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 
+## Module boundaries are enforced
+
+Module boundaries are enforced, not just recommended: the `arch-tests` module
+imports the compiled classes of every covered module and runs frozen ArchUnit
+rules over them — nothing outside the parser plane (`parser-core`,
+`parser-codegen`) may depend on `io.jafar.parser.impl`/`internal_api`, nothing
+outside `hdump-parser` may depend on its `impl`/`internal`/`index` packages,
+`api` packages never depend on their module's implementation packages, parser
+modules and `shell-core` never depend on the consumer modules, and parser
+implementation code declares no mutable static fields. The rules run in every
+`./gradlew build` (the `tests` CI job), and a new violation fails the build —
+there is no escape statement; today's violations are grandfathered in a
+committed freeze store. The commands, the store's regeneration rules and the
+documented gaps are in [Gates.md](Gates.md).
+
 ## Coding Style & Naming Conventions
 - Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.

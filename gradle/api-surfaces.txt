@@ -1,0 +1,45 @@
+# api-surfaces.txt — the single list of API surfaces gated by the japicmp
+# compatibility check (R7). One list feeds both halves of the gate:
+#   scripts/api-baseline.sh      materializes each surface's baseline jar
+#                                under build/api-baseline/<surface>/
+#   gradle/api-compat.gradle     registers the per-surface japicmp tasks and
+#                                cross-checks the plane column below against
+#                                the plane map in gradle/version-from-tag.gradle
+#
+# Columns (whitespace-separated):
+#   surface    short name, used in task names, report paths and BASELINE stamps
+#   project    the Gradle project whose CURRENT jar is compared (e.g. :parser)
+#   plane      the version plane whose baseline tag derives the baseline
+#              (scripts/derive-version.sh --plane <plane> --baseline-tag)
+#   baseline   maven:<artifactId> — group io.btrace, downloaded straight from
+#              Maven Central with .sha1 verification (never resolved through
+#              Gradle; the composite substitution would compare current code
+#              with itself) — or tag — built from a checkout of the plane's
+#              baseline tag in a temp worktree
+#   includes   comma list of pkg: and class: entries scoping the comparison
+#
+# Plane notes, verified against version-from-tag.gradle's planeByProject:
+#   - `parser` (the aggregate) is mapped to the core plane, like parser-core
+#     and parser-codegen; the published jafar-parser jar carries the api
+#     classes (kb/a1-japicmp-baselines).
+#   - `shell` covers shell-core's backend SPI and Session, which ship inside
+#     the published jafar-shell aggregate — so that row's baseline is maven:,
+#     even though the compared project is :shell-core.
+#   - hdump-parser is explicitly mapped to the shell plane in
+#     version-from-tag.gradle; pprof-parser and otlp-parser have NO map entry
+#     and therefore default to the shell plane. They ride the shell plane
+#     today; the plane stated here must stay in sync with version-from-tag
+#     (T3 fails the build on drift).
+#   - shell-core is not published standalone, so the LLM SPI surface
+#     (llm-spi) needs a tag-checkout baseline like the other unpublished
+#     modules (kb/a1-japicmp-baselines).
+#
+# A surface whose project is absent at its baseline tag is refused by
+# scripts/api-baseline.sh (exit 1 naming the project and the tag).
+parser :parser core maven:jafar-parser pkg:io.jafar.parser.api
+shell :shell-core shell maven:jafar-shell pkg:io.jafar.shell.backend,class:io.jafar.shell.core.Session
+mcp :jfr-mcp mcp maven:jfr-mcp pkg:io.jafar.mcp
+hdump :hdump-parser shell tag pkg:io.jafar.hdump.api
+pprof :pprof-parser shell tag pkg:io.jafar.pprof.api
+otlp :otlp-parser shell tag pkg:io.jafar.otlp.api
+llm-spi :shell-core shell tag pkg:io.jafar.shell.core.llm

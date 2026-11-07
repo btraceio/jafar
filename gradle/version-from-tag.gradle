@@ -59,10 +59,15 @@ def planeByProject = [
     'jafar-gradle-plugin': 'core', 'gradle-plugin': 'core',
     // mcp plane
     'jfr-mcp': 'mcp',
+    // unpublished; explicit so the API gate's plane is stated, not defaulted
+    'pprof-parser': 'shell', 'otlp-parser': 'shell',
     // llm planes
     'llm-anthropic': 'llm-anthropic', 'llm-openai': 'llm-openai',
 ]
 def plane = planeByProject.getOrDefault(project.name, 'shell')
+// The plane this project releases on, for gradle/api-compat.gradle's per-surface
+// API gate (R7 drift check against the plane column of gradle/api-surfaces.txt).
+project.ext.jafarPlane = plane
 
 // exactMatch: is the current commit exactly on this plane's release tag?
 // The newest X.Y.Z among well-formed v-tag names in the list, or null. Self-contained: script

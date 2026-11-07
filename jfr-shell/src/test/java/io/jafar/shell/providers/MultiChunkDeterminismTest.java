@@ -2,6 +2,7 @@ package io.jafar.shell.providers;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import io.jafar.testsupport.ProcessorCount;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +40,9 @@ class MultiChunkDeterminismTest {
 
   @BeforeAll
   static void recordingHasSeveralChunks() throws Exception {
+    // Matrix wiring (step 5): prove -Pjafar.activeProcessorCount=N reached this JVM (R9) before
+    // the determinism nets below run.
+    ProcessorCount.assertExpected();
     // Without at least two chunks there is nothing to race.
     assertEquals(2, ChunkProvider.loadAllChunks(TCK_RECORDING).size(), "chunks in fixture");
   }

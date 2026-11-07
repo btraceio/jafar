@@ -1,0 +1,8 @@
+# golden v1 — regenerate: ./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun
+fixture=test-jfr.jfr
+fixture-sha256=948831eb5332536709ffe5ab2e807f29cb5285fb1948a1d767a5c371748a456e
+lines=2672
+digest=b9f850f4d352d928e4bf309d6eb4a04c820c70288a673b67040e302cf3b3e0e4
+count.jdk.CPULoad=80
+count.jdk.ExecutionSample=2000
+count.jdk.GCHeapSummary=100

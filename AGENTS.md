@@ -69,6 +69,7 @@ Key components:
 | Area | Document |
 |---|---|
 | **How to verify a change** | [doc/agents/Verification.md](doc/agents/Verification.md) |
+| **Every gate** — what it checks, how to run it, regenerate its baseline, its escape hatch | [doc/agents/Gates.md](doc/agents/Gates.md) |
 | Build commands, prerequisites, Go parser | [doc/agents/Build.md](doc/agents/Build.md) |
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
@@ -109,6 +110,8 @@ Key components:
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 - **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
+- **arch-tests/**: ArchUnit freeze rules for module and package boundaries (not published)
+- **test-support/**: shared test utilities (allocation meter and budgets, golden files); not published
 
 ## Quick start
 

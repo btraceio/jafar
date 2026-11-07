@@ -1,12 +1,13 @@
 ---
 name: pr-writing
-description: Write commits, PR descriptions and the parity statement for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the Java/Go parity statement the parity gate requires.
+description: Write commits, PR descriptions and the gate-checked PR-body statements for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the statements the CI gates require (Java/Go parity, API-Break, Alloc-Budget).
 ---
 
 # Writing a PR
 
-Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the two load-bearing parts
-are the verification statement and the parity statement, because a gate checks the second one.
+Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the load-bearing parts
+are the verification statement and the gate-checked statements — parity, API-Break and
+Alloc-Budget — because CI checks those.
 
 ## Commits
 
@@ -44,6 +45,47 @@ must state, in the PR body, what happens on the other side. This is a blocking C
 Name the direction (`Java → Go` / `Go → Java`); the obligation is symmetric. The standing
 convention (PRs #135, #150) records the reasoning, not just the verdict. Divergences that are
 kept go into `go-parser/README.md` under "Differences from the Java parser".
+
+## The API-Break statement
+
+A PR that breaks a gated API surface — an incompatible change to any public member of the
+surfaces listed in `gradle/api-surfaces.txt`, beyond the accepted ratchet in
+`gradle/api-accepted-breaks.txt` — must say so in the PR body:
+
+    API-Break: <non-empty reason>
+
+This is a blocking CI check (`scripts/api-break-check.sh`, the `api-break` job in
+`pr-tests.yml`, run on pull requests only, like the parity statement). The statement is
+matched with `^[[:space:]]*API-Break:[[:space:]]*[^[:space:]]`: the reason must be
+non-empty — `API-Break:` followed by spaces only is rejected, and the check fails as if
+no statement were present.
+
+When it is needed: when
+`scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main`
+exits 1 — or, without running anything, when the diff knowingly removes or changes the
+signature of a public member of a gated package, or adds an abstract method to a gated
+interface. Purely additive changes do not need it. The gate, its tag-derived baselines
+and the shrink-only accepted-breaks ratchet are documented in
+[doc/agents/Gates.md](../../../doc/agents/Gates.md).
+
+## The Alloc-Budget statement
+
+A PR that raises an allocation budget must say so in the PR body:
+
+    Alloc-Budget: <non-empty reason>
+
+This is a blocking CI check (`scripts/alloc-budget-check.sh`, the `alloc-budget` job in
+`pr-tests.yml`, run on pull requests only, like the parity and API-Break statements). The
+statement is matched with `^[[:space:]]*Alloc-Budget:[[:space:]]*[^[:space:]]`: the reason
+must be non-empty — `Alloc-Budget:` followed by spaces only is rejected, and the check
+fails as if no statement were present.
+
+When it is needed: when `scripts/alloc-budget-check.sh --base origin/main` exits 1 — or,
+without running anything, when the diff raises a value or a tolerance in
+`gradle/allocation-budgets.properties`, or turns a budgeted key into `excluded: …`.
+Lowering a value, adding a new key, or leaving the file unchanged needs no statement. The
+gate, the allocation meter and the per-JDK keys are documented in
+[doc/agents/Gates.md](../../../doc/agents/Gates.md).
 
 ## Scope
 

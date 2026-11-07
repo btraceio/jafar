@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.jafar.parser.api.JfrType;
 import io.jafar.parser.api.ParsingContext;
+import io.jafar.testsupport.ProcessorCount;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,9 @@ class JFRSessionDeterminismTest {
 
   @BeforeAll
   static void recordingHasSeveralChunks() throws Exception {
+    // Matrix wiring (step 5): prove -Pjafar.activeProcessorCount=N reached this JVM (R9) before
+    // the determinism nets below run.
+    ProcessorCount.assertExpected();
     // Without at least two chunks there is nothing to race.
     try (JFRSession s = new JFRSession(TCK_RECORDING, ParsingContext.create())) {
       assertEquals(List.of(1, 2), s.getAvailableChunkIds(), "chunks in fixture");

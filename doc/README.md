@@ -25,6 +25,7 @@ Guidance for contributors and AI coding assistants. The entry point is
 | Document | Description |
 |----------|-------------|
 | [Verification.md](agents/Verification.md) | **How to know a change works here** — the rules, and the case files behind each |
+| [Gates.md](agents/Gates.md) | **Every gate** — what it checks, how to run it, regenerate its baseline, its escape hatch |
 | [DataShapes.md](agents/DataShapes.md) | Structures that lie — the wrong-shape bug class that keeps recurring |
 | [Build.md](agents/Build.md) | Prerequisites, build and test commands, the Go parser's toolchain |
 | [Architecture.md](agents/Architecture.md) | Parser APIs, coding style, testing strategy, composite build |

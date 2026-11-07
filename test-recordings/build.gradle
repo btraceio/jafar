@@ -23,6 +23,7 @@ dependencies {
 
     testImplementation project(':parser-core')
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
@@ -68,4 +69,22 @@ tasks.register('generateBenchmarkRecording', JavaExec) {
         project.findProperty('shape') ?: 'ap'
     // The writer holds one chunk at a time; allocation is high but short-lived.
     maxHeapSize = '2g'
+}
+
+// The adversarial fuzz seeds (T24): deterministic recordings targeting the paths random bit
+// flips cannot reach, committed as the Jazzer regression corpus Jazzer replays in every
+// :parser-core:test run. The seed files have NO .jfr extension because .gitignore ignores *.jfr
+// and they must be committed; Jazzer's regression mode replays every file in the directory
+// whatever it is called. Drift against the generator is checked by AdversarialRecordingsTest.
+def adversarialInputs =
+    rootProject.file('parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped')
+tasks.register('generateAdversarialRecordings', JavaExec) {
+    description = 'Generates the adversarial fuzz-corpus seeds (adv-<case>) under parser-core.'
+    group = 'verification'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.jafar.testrecordings.TestRecordingGenerator'
+    args 'adversarial', adversarialInputs.absolutePath
+    inputs.files(sourceSets.main.runtimeClasspath).withPropertyName('generator')
+    // The directory holds only these seeds, so its content doubles as the task's output state.
+    outputs.dir(adversarialInputs).withPropertyName('adversarialInputs')
 }

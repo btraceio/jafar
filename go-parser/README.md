@@ -394,3 +394,16 @@ module is built outside the repository tree.
 
 The event counts pinned by `recording_test.go` were cross-checked against the
 JDK's own `jfr summary` tool.
+
+`internal/differential` is a harness, not API: it is the Go half of the
+Java/Go differential gate that [doc/agents/Gates.md](../doc/agents/Gates.md)
+in the repository root documents. `differential.Dump` renders a recording
+into the canonical dump format shared with the Java side's `JfrCanonicalDump`
+(one sorted line per event, constant pools resolved deep, floats as IEEE-754
+bit patterns, a header naming the side, the fixture's sha256 and the event
+count), and `internal/differential/cmd/jfrdump` is the thin command the
+Java-side `:parser-core:differentialTest` task invokes
+(`go run ./internal/differential/cmd/jfrdump`). It lives outside `jfr/` on
+purpose — being test tooling, not parser production code, the Java/Go parity
+rules that track production changes to the untyped parsers do not apply to
+it — and nothing in this module's public surface depends on it.
