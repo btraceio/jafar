@@ -58,6 +58,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ubuntu-latest (ubuntu-26.04) has no preinstalled JDK 8 and the build's
+      # configure phase resolves the :parser toolchain-8 eagerly: without this
+      # step every Gradle invocation fails before running a single task.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

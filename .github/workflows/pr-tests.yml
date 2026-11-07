@@ -71,6 +71,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # api-baseline.sh builds tag checkouts with it too, so it must come
+      # before any Gradle invocation. JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -180,6 +190,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -310,6 +329,16 @@ jobs:
             fi
           fi
 
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
       - name: Set up JDK 21
         if: steps.gate.outputs.run == 'true'
         uses: actions/setup-java@v4
@@ -361,10 +390,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Ensure the runner uses JDK 21 as the default when matrix is '8',
-      # while JDK 8 is available for Gradle toolchains
-      - name: Install JDK 8 for Gradle toolchains (matrix=8)
-        if: matrix.java == '8'
+      # The runner image (ubuntu-latest since 2026-11, ubuntu-26.04) no longer
+      # preinstalls JDK 8, and the build's configure phase resolves the :parser
+      # toolchain-8 eagerly (the publishing block reads component artifacts at
+      # configuration time): without this step every Gradle invocation fails
+      # before running a single task. JDK 21 stays the runner default in both
+      # cells; JDK 8 only serves the Gradle toolchains.
+      - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
           distribution: temurin
