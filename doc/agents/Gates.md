@@ -42,6 +42,10 @@ executed (R4); the wall-time column records what those runs measured.
 | API compatibility (japicmp per plane) | Every gated surface in `gradle/api-surfaces.txt` (parser, shell, mcp, hdump, pprof, otlp, llm-spi) is compared against the released bytes of its plane's baseline; incompatible changes beyond the accepted ratchet need a statement | `scripts/api-baseline.sh && ./gradlew apiCompat && scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main` | shrink `gradle/api-accepted-breaks.txt`: entries are deleted when a baseline tag moves past the break; adding one is growth and needs the statement | `API-Break: <non-empty reason>` in the PR body | `api-compat` (comparison, every trigger) + `api-break` (statement, pull_request only) | 12.6 s warm with cached baselines, full chain (measured); ~26 s cold — 12.5 s baseline materialization + 13 s `apiCompat` (measured); CI numbers land with the PR that adds the jobs |
 | Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, and parser implementation code declares no mutable static field | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
 | Allocation budgets | Every public parse entry point (untyped JFR, typed JFR, hdump, pprof, otlp) allocates, per fixed fixture, at most the bytes recorded in `gradle/allocation-budgets.properties` on its own JDK cell — chunk-pool decode threads included | `./gradlew :parser-core:allocationTest :parser-codegen:allocationTest :hdump-parser:test :pprof-parser:test :otlp-parser:test :parser-core:allocationTest8 :parser-codegen:allocationTest8` | edit `gradle/allocation-budgets.properties` (re-measure per the recipe in its comments); lowering a value is free, a raise needs the statement | `Alloc-Budget: <non-empty reason>` in the PR body | `tests` (both matrix cells) + `alloc-budget` (statement, pull_request only) | the four allocation tasks ~4 s each warm (measured; ~17 s combined); hdump/pprof/otlp add no task — their budget tests run inside the modules' existing `test` suites |
+| Golden value dumps | Every corpus fixture — JFR: the committed two-chunk `tck-test.jfr` plus the two generated recordings; hdump, pprof, otlp: their deterministic builders' fixtures — is rendered to a sorted, value-complete canonical dump and compared against a committed digest plus per-type counts; the JFR digests cover events, constants and metadata | `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' --rerun`; `./gradlew :hdump-parser:cleanTest :pprof-parser:cleanTest :hdump-parser:test --tests '*Golden*' :pprof-parser:test --tests '*Golden*' --no-build-cache`; `./gradlew :otlp-parser:cleanTest :otlp-parser:test --tests '*Golden*' --no-build-cache` (the `cleanTest` + `--no-build-cache` pairs work around the same `--rerun` cache lie the allocation gate records) | `-Pjafar.golden.update --rerun` per fixture: `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :hdump-parser:test --tests '*HdumpGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :pprof-parser:test --tests '*PprofGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :otlp-parser:test --tests '*OtlpGoldenDumpTest' -Pjafar.golden.update --rerun` | none — an intended value change regenerates the golden and the diff *is* the review; a real recording that replaced a generated fixture is refused, never compared (the D1 skip below) | `tests` (JDK 21 cell, inside `./gradlew build`) | JFR suite 3.7–4.1 s warm (measured); hdump+pprof ~1.8 s combined, otlp ~1.8 s (measured) |
+| Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
+| Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
+| Known-escapes allowlist | An input listed in `parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` may escape the oracle only with exactly its pinned delivered throwable; an entry whose input no longer escapes FAILS "stale known-escape <sha>: remove the entry" — the list is shrink-only | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` (the oracle enforces it; `EscapeOracleTest` proves each rule permanently) | none — no test or tool ever writes the list; growth is a visible hand edit in the diff, always with a `# reason:` line | the list itself — there is deliberately no third PR-body statement (I1, D3) | `tests` (JDK 21 cell, inside `:parser-core:test`) | included in the corpus row's ~6 s |
 
 ## API evolution
 
@@ -201,3 +205,166 @@ no local copy. The tolerances carry headroom for exactly this (2048 where
 the measured build-to-build spread is 16–64 bytes); if a CI cell reds on a
 budget key, the first move is to re-measure on the CI image and adjust the
 value — with an `Alloc-Budget:` statement if the change is a raise.
+
+## Format correctness: golden dumps, the fuzz corpus, adversarial recordings
+
+The step-4 nets pin *parsed values*, not just "did not throw" (R9): a
+golden dump per fixture, a fuzz corpus with a cause-chain oracle, and
+deterministically generated adversarial recordings. All three run inside
+the ordinary `tests` job — no new CI time beyond the suites themselves.
+
+### Golden value dumps
+
+**What is rendered.** For JFR, `JfrCanonicalDump` (`test-support`) is the
+one canonical line format: every event as `<type> k=v …` built from
+`Values.resolvedDeep`, sorted dotted keys, arrays as `.0 .1 …`,
+`byte[]` and string-constant wrappers as `b<len>:<hex>`, `\n`/`\r`
+escaped, floats and doubles as `f:%016x` IEEE-754 bit patterns, no chunk
+identity. hdump, pprof and otlp render their public `api` models into
+sorted `<kind> k=v…` lines (classes/fields/instances/roots/strings;
+samples with resolved locations, functions, strings, mappings, value
+types; profiles, samples, locations, functions, the string table,
+attributes).
+
+**How a golden is stored.** One text file per fixture at
+`<module>/src/test/golden/<fixture>.golden`: `fixture=`,
+`fixture-sha256=`, `lines=`, `digest=` and sorted `count.<type>=` lines.
+The digest is the sha256 over the sorted per-line sha256 values, so the
+repo never stores a full dump and the comparison never holds one in
+memory either. A changed dump line, a changed count or a changed line
+total each fail, naming the fixture, the first differing golden line,
+both digests and the regeneration command.
+
+**Regeneration.** An intended value change regenerates the golden with
+`-Pjafar.golden.update --rerun` (per-fixture commands in the table) and
+the resulting golden diff is the review. The commands are the ones the
+failure messages print, and were executed to produce the committed
+goldens (R4).
+
+**The D1 skip — real recordings are refused.** `./get_resources.sh` can
+replace a generated recording with a real download (it deletes the
+`.generated` marker). A golden test on an unmarked fixture is *aborted
+(SKIPPED)* — never compared, never failed, never passed — with:
+
+> `<path> is a real recording (no .generated marker): golden compare
+> refused. Fix: delete it, then ./gradlew :test-recordings:generateTestRecordings`
+
+so a fixture swap cannot silently change what the gate checks. The
+committed `tck-test.jfr` is a real recording by design; its golden tests
+do not run the guard on it.
+
+**The fixture-sha rule.** The golden pins the fixture bytes' sha256
+(pprof and otlp builders produce deterministic bytes, so theirs is
+pinned; the hdump case is the exception below). A differing sha fails
+with "fixture bytes changed (generator/builder output), not a parser
+value change — regenerate: <cmd>": a builder change can never masquerade
+as a parser value change, and a parser change can never be waved away
+as a builder change.
+
+**Where the full dump goes.** On a digest mismatch the full sorted dump
+is written to `<module>/build/golden-actual/<fixture>.dump`, with the
+new golden beside it — for `tck-test.jfr` that is about 454 MB
+(453,889,122 bytes, measured), which is why goldens are stored as
+digests. A green run never materializes the dump.
+
+**Determinism and cost.** Three consecutive runs produced identical
+digests per fixture (measured). The JFR suite costs ~4 s warm, the
+hdump+pprof and otlp suites ~2 s each (measured); the tck digest itself
+computes in ~2 s at `-Xmx1g`.
+
+### The Jazzer regression corpus
+
+The `@FuzzTest` target `UntypedParserFuzzTest#parseUntyped` lives in
+parser-core's JDK-21 `test` source set (Jazzer `jazzer-junit` 0.30.0,
+Apache-2.0). In regression mode — ordinary
+`./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun`,
+no `JAZZER_FUZZ=1` and no separate driver — Jazzer replays every file committed
+under
+`parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/`
+(plus a built-in `<empty input>` case). The committed seeds are the
+adversarial recordings below; a new input is a hand-minimized crash file
+from a fuzz session, committed like any other change.
+
+**The cause-chain oracle (D4).** The verdict walks the *whole* cause
+chain, not just the delivered throwable: any `Error` anywhere in the
+chain fails, and the root cause must be an `io.jafar.*` exception or an
+`IOException`. Every failure message names the input's sha256 and the
+chain (`A <- B <- C`). `EscapeOracleTest` proves each rule permanently,
+including the injected-IAE, SOE-in-chain, OOM, hang and stale-escape
+fires.
+
+**The hang bound.** Each input's parse runs on a single-thread executor
+and is bounded by `jafar.fuzz.inputTimeoutMs` (default 10000 ms); a
+timeout fails "hang" naming the input sha. A hang has no throwable, so
+it can never be pinned in the known-escapes list.
+
+**Quiet logs.** The parser's slf4j logging is quieted in the test JVM
+(`org.slf4j.simpleLogger.log.io.jafar=error`) and the oracle silences
+stderr around the parse (see R8 below for why, and for what that hides).
+
+### Known escapes (I1)
+
+`parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt`
+is a **shrink-only** allowlist, enforced the way the ArchUnit freeze
+store is: no test or tool ever writes it, and growth is possible only
+by a visible hand edit in the diff — always an entry line
+(`<sha256-of-input> <delivered-throwable-FQCN>`) preceded by a
+`# reason:` line. The "delivered" throwable is the outermost of the
+chain the oracle saw.
+
+- a listed input passes **only** when it escapes with exactly that
+  delivered throwable — anything else fails;
+- a listed input that no longer escapes at all fails "stale known-escape
+  <sha>: remove the entry", so fixing a parser defect is forced to shrink
+  the list;
+- a hang can never be listed;
+- an entry only ever corresponds to an input committed in the corpus dir
+  (the outcome tests enforce that).
+
+There is deliberately no third PR-body statement (D3): a crash or
+escape found by fuzzing or the adversarial recordings is pinned here,
+and the parser itself is not fixed in this run — a fix under ~20 lines
+is reported to the coordinator and not applied. The three pinned entries
+today are the adversarial cases `deep-metadata`, `huge-length` and
+`string-table-size`, each delivering `java.io.IOException` around a
+non-jafar root cause.
+
+### Adversarial recordings
+
+`test-recordings` generates six deterministic adversarial recordings
+(`adv-*` seeds) into the fuzz corpus dir, so they replay in every
+`:parser-core:test` run and their outcomes are additionally pinned by
+`AdversarialOutcomeTest`. See
+[test-recordings/README.md](../../test-recordings/README.md) for the
+case table and the file-naming rule.
+
+**R8 — what this step covers, and what it does not.**
+
+- Constants and metadata *are* covered for JFR: the digests include
+  golden-only `C ` (constant-pool) and `M ` (metadata) lines keyed by
+  chunk ordinal — 10,089 such lines in the `tck-test.jfr` golden. The
+  pools are readable at `onChunkEnd`, so nothing was left out.
+- The hdump golden pins a **null** fixture sha: the HPROF generator
+  writes `System.currentTimeMillis()` into the header, so the file's
+  bytes differ on every build. The timestamp is excluded from the dump
+  and commented in the test, but the fixture-sha rule cannot guard that
+  golden against builder changes.
+- `parser-core/src/test/resources/test-dd.jfr` is deliberately not in
+  the corpus: it is a byte-for-byte copy of `test-jfr.jfr`, so a golden
+  for it would be a permanently identical second file with no added
+  coverage.
+- The `huge-length` seed declares a string length of `1 << 24`, not the
+  exact `2^31` an earlier build used. The 2^31 declared length narrows
+  to a negative `int` and drives an uninterruptible per-unit loop that
+  survives `shutdownNow()` — an abandoned executor burned ~17 CPU-hours
+  on it before the seed was shrunk. The 2^31 variant is the real
+  unbounded-work vector: recorded here, not fixed (D3).
+- The oracle silences stderr around the parse: the deep-metadata case
+  makes the parser log an exception per recursion level, and one green
+  replay before that fix wrote a **506 MB JUnit XML** (4.8M stack-frame
+  lines in system-err; 14.7 KB after). The verdict carries the chain;
+  parse logs are noise. The side effect is accepted: parser WARN/ERROR
+  logging on a fuzz input is invisible in the XML.
+- The pprof and otlp renderers cover `mapping` lines, but none of the
+  committed fixtures contains a mapping — that decode path is not
+  pinned by a golden today.

@@ -155,7 +155,27 @@ allprojects {
     // credentials would let a test reach a live, billable API. An empty settings file is used
     // because an explicit JAFAR_LLM_CONFIG wins over ~/.config/jafar/llm.properties; owner-only so
     // it does not trigger the file-permissions warning.
+    //
+    // Golden-value-dump wiring (safety harness step 4): the corpus fixtures and every module's
+    // goldens are repo-root relative, so the tests can run from any working directory; the
+    // mismatch artifacts (the full dump + the new golden) land under the module's own
+    // build/golden-actual. Golden regeneration is opt-in via -Pjafar.golden.update: a plain run
+    // compares and never silently rewrites the committed goldens.
     tasks.withType(Test).configureEach { testTask ->
+        testTask.systemProperty 'jafar.repo.root', rootProject.rootDir.absolutePath
+        testTask.systemProperty 'jafar.golden.dir', testTask.project.file('src/test/golden').absolutePath
+        testTask.systemProperty 'jafar.golden.actualDir',
+            testTask.project.layout.buildDirectory.dir('golden-actual').get().asFile.absolutePath
+        if (rootProject.hasProperty('jafar.golden.update')) {
+            testTask.systemProperty 'jafar.golden.update', 'true'
+        }
+        // Committed goldens are task inputs: an edited or regenerated golden re-runs the test
+        // instead of leaving it UP-TO-DATE with a stale verdict. Modules without a golden dir
+        // contribute no input.
+        def goldenDir = testTask.project.file('src/test/golden')
+        if (goldenDir.isDirectory()) {
+            testTask.inputs.dir(goldenDir).withPathSensitivity(PathSensitivity.RELATIVE)
+        }
         doFirst {
             testTask.environment.keySet().removeIf {
                 it.startsWith('JAFAR_LLM_') || it == 'LLM_ENABLED' ||

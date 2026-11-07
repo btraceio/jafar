@@ -151,6 +151,11 @@ tasks.named('test') {
     inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
     // The allocation tests need their own JVM args and the budget file; they run in allocationTest
     exclude 'io/jafar/parser/alloc/**'
+    // Quiet the parser's slf4j-simple logging (AC-4.5, kb/fuzz-robustness-baseline item 3): the
+    // fuzz corpus replays corrupted recordings whose metadata reads dump a stack trace per event
+    // at WARN, swamping CI output. io.jafar loggers go to ERROR; nothing else changes. Verified
+    // before the change: no parser-core test captures stderr or asserts on log output.
+    systemProperty 'org.slf4j.simpleLogger.log.io.jafar', 'error'
     // Ensure JUnit 5 and fixed report locations for CI collection
     useJUnitPlatform()
     reports {
@@ -274,6 +279,12 @@ dependencies {
     // Allocation meter + budgets (test-support); test8 inherits it because test8Implementation
     // extendsFrom testImplementation
     testImplementation project(':test-support')
+    // Jazzer regression mode (AC-4.5, kb/a2-jazzer-jdk-floor): replays the committed corpus of
+    // io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/ as plain JUnit parameters in
+    // this test JVM. JAZZER_FUZZ is never set here, so the run stays in regression mode; Jazzer
+    // still dynamically attaches its instrumentation agent (byte-buddy), which prints its own
+    // INFO/WARNING lines to stderr — that is Jazzer's output, not parser logging.
+    testImplementation 'com.code-intelligence:jazzer-junit:0.30.0'
     // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 

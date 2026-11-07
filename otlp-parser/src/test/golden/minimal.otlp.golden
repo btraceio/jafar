@@ -1,0 +1,12 @@
+# golden v1 — regenerate: ./gradlew :otlp-parser:test --tests '*OtlpGoldenDumpTest' -Pjafar.golden.update --rerun
+fixture=minimal.otlp
+fixture-sha256=b12440fd1a22bfbe9066d8aec40f266494097f6ad22ac5376ab5e7db1e30a435
+lines=12
+digest=e84ce50d723bb5d3eba5516e4aff2973f82730cfae66da98cb36e09f1ebc5960
+count.attribute=1
+count.function=1
+count.location=1
+count.profile=1
+count.sample=1
+count.stack=1
+count.string=6

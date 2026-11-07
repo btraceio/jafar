@@ -39,6 +39,40 @@ the markers; the generator leaves an unmarked recording alone and says so in the
 
 CI never downloads, so it always tests against the generated recordings.
 
+## Adversarial recordings
+
+`./gradlew :test-recordings:generateAdversarialRecordings` writes six deterministic adversarial recordings
+for the fuzz corpus: hand-built shapes that target the parsing paths random bit flips cannot reach (the
+measured baseline: 0 crashes in 200 random mutations). The cases live in the
+`io.jafar.testrecordings.adversarial.AdversarialRecordings` enum, written by a byte-level chunk writer
+(`RawChunkWriter` — a deliberate copy of parser-core's test `SyntheticRecording`, because this module cannot
+see parser-core's test classes). Each case is built only from fixed constants — no clocks, no randomness —
+so generating twice yields identical bytes, and `AdversarialRecordingsTest` fails when a committed seed
+drifts from the generator output, naming the file and the regeneration command.
+
+| Seed | Corrupts | Intended path (stack-verified) | Pinned outcome |
+|---|---|---|---|
+| `adv-valid-base` | nothing (control) | parses and delivers events | 4 events delivered exactly |
+| `adv-string-table-size` | the metadata string table declares 25 entries while the element tree references index 108 | `MutableMetadataLookup.getString` | pinned escape (see below): `IOException` wrapping an `IllegalArgumentException` root |
+| `adv-huge-length` | a UTF-8 string length of `1<<24` (16 MiB) declared against a ~405-byte recording, with no payload behind it | `readUTF8` allocation, `RecordingStream.read` rejection | pinned escape: `IOException` wrapping a `RuntimeException("unexpected EOF")` root |
+| `adv-bad-cp-id` | a constant-pool entry of an undeclared type | `CheckpointEvent.readConstantPools` | legal escape: `IOException` "the type is not declared in the chunk metadata" |
+| `adv-deep-metadata` | `'deep'` elements nested 200,000 deep | the recursive `readSubelements` (the SOE vector) | pinned escape: `IOException` with a `StackOverflowError` in the chain |
+| `adv-bad-chunk-offsets` | chunk 1's size field disagrees with chunk 2's offset | the next `ChunkHeader` read | legal escape: `IOException` "Invalid JFR Magic Number: 20001" |
+
+The seeds are written to `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/`
+— Jazzer's regression-inputs directory, so every ordinary `./gradlew :parser-core:test` run replays them.
+Each file's specific outcome is additionally asserted by parser-core's `AdversarialOutcomeTest` ("did not
+crash" is not an outcome); the three seeds that escape the fuzz oracle's cause-chain contract are pinned in
+`parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` (shrink-only; a stale entry fails).
+
+The seed files carry **no `.jfr` extension**: `.gitignore` ignores `*.jfr`, and the seeds must be committed —
+`git check-ignore` exits 1 for `adv-valid-base`. Jazzer replays every file in the directory regardless of its
+name. Separately, the `huge-length` case declares `1<<24` and not the exact `2^31`: the 2^31 declared
+length narrows to a negative int and drives an uninterruptible loop in the parser — the real unbounded-work
+vector, recorded rather than fixed (D3) — see [the gates document](../doc/agents/Gates.md).
+
+For one-off dumps, `TestRecordingGenerator` has a manual mode: `adversarial <output-dir>`.
+
 ## Benchmark recordings
 
 ```bash
