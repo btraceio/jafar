@@ -1,0 +1,143 @@
+name: Nightly Fuzz
+
+# The Jazzer fuzz run (spec AC-7.1): coverage-guided sessions of the step-4
+# fuzz targets, each bounded by -Pjafar.fuzz.maxDuration (default 5m; the
+# build wires it to Jazzer's jazzer.max.duration, which overrides the
+# @FuzzTest(maxDuration) default of the same value), plus the Java/Go
+# differentialTest (Q15: always on the nightly). Findings are advisory
+# (kb/design-principles rule 4): a crash fails this job but never blocks a PR
+# — a scheduled run cannot see a PR. The crash input is uploaded as an
+# artifact and NOTHING is committed (AC-7.1, Q11); a human minimizes it and
+# adds it to the committed corpus, with the known-escapes.txt entry the
+# oracle's failure message names, by a visible hand edit.
+#
+# Fuzzing is far too slow for PR CI, so this runs on a schedule, on demand,
+# and on any branch named nightly/* — which is how a branch that is not
+# merged yet gets the workflow before it reaches the default branch:
+# workflow_dispatch only works for workflows already there. See
+# go-parser-bench.yml for the same pattern with bench/** and
+# nightly-jmh.yml for the JMH half of the nightly.
+
+on:
+  workflow_dispatch:
+    # A short local verification used the same command with
+    # -Pjafar.fuzz.maxDuration=30s (see doc/agents/Gates.md); an unattended
+    # nightly has time for the full 5m per target.
+    inputs:
+      max_duration:
+        description: 'Per-target Jazzer session bound (-Pjafar.fuzz.maxDuration, e.g. 5m, 30s)'
+        required: false
+        default: '5m'
+  schedule:
+    # Nightly, 02:17 UTC. Off the hour to avoid the scheduling stampede.
+    - cron: '17 2 * * *'
+  push:
+    branches:
+      - 'nightly/**'
+
+concurrency:
+  group: nightly-fuzz-${{ github.ref }}
+  # A fuzz session's findings are the point; do not cancel one because another
+  # commit landed while it was running.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # inputs.* is empty for schedule and push, so those runs fall back to the
+  # same default while a workflow_dispatch run can pass a shorter bound.
+  MAX_DURATION: ${{ inputs.max_duration || '5m' }}
+
+jobs:
+  fuzz:
+    name: Jazzer fuzz + Java/Go differential
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      # Jazzer fuzzes exactly one @FuzzTest per run (AgentConfigurator refuses
+      # a second fuzz test in the same JVM: "Only a single fuzz test should be
+      # executed per fuzzing run"), so the targets are looped OUTSIDE Gradle,
+      # one ./gradlew invocation each. JAZZER_FUZZ=1 is inherited by the
+      # forked test JVM and switches the target from corpus replay to
+      # coverage-guided fuzzing. A target whose oracle catches an escape exits
+      # nonzero — the loop records that and moves on so every target still
+      # gets its session, then fails the step at the end; the differential and
+      # the artifact uploads below run either way (if: always()). Adding a
+      # step-4 fuzz target means adding a line here plus its committed
+      # Inputs/ corpus directory.
+      - name: Run Jazzer fuzz sessions
+        run: |
+          status=0
+          targets=(
+            'io.jafar.parser.fuzz.UntypedParserFuzzTest.parseUntyped'
+          )
+          for target in "${targets[@]}"; do
+            echo "::group::Fuzz $target"
+            JAZZER_FUZZ=1 ./gradlew --no-daemon :parser-core:test \
+              --tests "$target" \
+              -Pjafar.fuzz.maxDuration="$MAX_DURATION" \
+              --rerun || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      # The differential always runs on the nightly (Q15). It needs the Go
+      # toolchain on PATH — see the differentialTest task in
+      # parser-core/build.gradle for why `build` cannot assume that. This
+      # step is guarded too, because a red fuzz step above must not skip the
+      # toolchain install (the differential itself is guarded below; without
+      # Go it would only fail louder).
+      - name: Set up Go
+        if: always()
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Run Java/Go differential
+        if: always()
+        run: ./gradlew --no-daemon :parser-core:differentialTest --rerun
+
+      # Where the fuzz files land (verified locally, see doc/agents/Gates.md):
+      # crash inputs go to Jazzer's artifact_prefix, which is the COMMITTED
+      # corpus directory under parser-core/src/test/resources (so a committed
+      # crash would be replayed as a regression test on the next build); the
+      # coverage-guided corpus grows under parser-core/.cifuzz-corpus. The
+      # globs deliberately cover any inputs directory (a future fuzz target
+      # gets its own <Class>Inputs dir). Both are uploaded only (AC-7.1,
+      # Q11): this workflow commits nothing. No crash files is the normal,
+      # healthy case, hence if-no-files-found: warn.
+      - name: Upload crash inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jazzer-crash-inputs
+          path: |
+            parser-core/**/crash-*
+            parser-core/**/timeout-*
+            parser-core/**/oom-*
+            parser-core/**/leak-*
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload generated corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jazzer-generated-corpus
+          path: parser-core/.cifuzz-corpus/
+          if-no-files-found: warn
+          retention-days: 90

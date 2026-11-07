@@ -205,16 +205,39 @@ java -Xmx8g -Xms4g -XX:+UseG1GC -jar myapp.jar
 
 ## Performance Regression Testing
 
-**Status**: Not yet automated in CI.
+**Status**: Automated, nightly and on demand, by the advisory workflow
+`.github/workflows/nightly-jmh.yml`: it runs this repository's JMH tasks
+(`:parser-core:jmh` and `:pprof-parser:jmh`), uploads their JSON results as the
+`jmh-results` artifact (90-day retention), and appends a trend table against the
+previous successful run's artifact to the run summary. The trend is advisory — a
+timing regression never fails the run, because a wall-clock gate would be flaky
+or inert; only malformed result data does. The first run has no baseline and
+reports "no baseline".
 
-**Planned**: Integration of JMH benchmarks into CI pipeline with historical tracking.
+To run the benchmarks manually (short iterations for a quick check — the nightly
+uses `-wi 2 -i 5 -f 1` by default, and its `workflow_dispatch` input `jmh_args`
+accepts a shorter or longer sweep):
 
-To run benchmarks manually:
 ```bash
-./gradlew :benchmarks:jmh
+mkdir -p build/jmh
+./gradlew --no-daemon :parser-core:jmh -PjmhArgs="-rf json -rff build/jmh/parser-core.json -wi 0 -i 1 -f 1 -r 1s"
+./gradlew --no-daemon :pprof-parser:jmh -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json -wi 0 -i 1 -f 1 -r 1s"
 ```
 
-Results are saved to: `benchmarks/build/results/jmh/results.json`
+Results are saved to `build/jmh/parser-core.json` and `build/jmh/pprof-parser.json`,
+relative to the repository root (the JMH tasks run with the repo root as their
+working directory, so the benchmark `@Param` fixture paths resolve; JMH does not
+create the result file's parent directory, hence the `mkdir`). A trend table over
+those files, exactly as the workflow builds it:
+
+```bash
+python3 scripts/jmh_trend.py --current build/jmh
+```
+
+The workflow triggers nightly (03:41 UTC, off the hour), on `workflow_dispatch`,
+and on every push to a branch named `nightly/**` — the last one is how the
+workflow itself is exercised before it reaches the default branch
+(`workflow_dispatch` only works for workflows already on the default branch).
 
 ## Known Performance Limitations
 
@@ -233,6 +256,11 @@ Results are saved to: `benchmarks/build/results/jmh/results.json`
 
 ## Reproducing These Results
 
+The numbers above are a historical record from an earlier benchmark setup; the
+commands below run the JMH benchmarks this repository ships today
+(`:parser-core:jmh` and `:pprof-parser:jmh` — see "Performance Regression
+Testing" for the nightly schedule and the trend).
+
 ```bash
 # Clone repository
 git clone https://github.com/btraceio/jafar.git
@@ -241,10 +269,12 @@ cd jafar
 # Optional: the real test recordings (the build generates synthetic ones otherwise)
 ./get_resources.sh
 
-# Run benchmarks
-./gradlew :benchmarks:jmh
+# Run benchmarks (short iterations; the nightly uses -wi 2 -i 5 -f 1)
+mkdir -p build/jmh
+./gradlew --no-daemon :parser-core:jmh -PjmhArgs="-rf json -rff build/jmh/parser-core.json -wi 0 -i 1 -f 1 -r 1s"
+./gradlew --no-daemon :pprof-parser:jmh -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json -wi 0 -i 1 -f 1 -r 1s"
 
-# Results will be in benchmarks/build/results/jmh/results.json
+# Results will be in build/jmh/parser-core.json and build/jmh/pprof-parser.json
 ```
 
 ## Disclaimer

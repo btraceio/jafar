@@ -47,6 +47,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
 | Known-escapes allowlist | An input listed in `parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` may escape the oracle only with exactly its pinned delivered throwable; an entry whose input no longer escapes FAILS "stale known-escape <sha>: remove the entry" — the list is shrink-only | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` (the oracle enforces it; `EscapeOracleTest` proves each rule permanently) | none — no test or tool ever writes the list; growth is a visible hand edit in the diff, always with a `# reason:` line | the list itself — there is deliberately no third PR-body statement (I1, D3) | `tests` (JDK 21 cell, inside `:parser-core:test`) | included in the corpus row's ~6 s |
 | Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps and the shared-`ParsingContext` stress test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
+| Java/Go differential oracle | The Java and the Go untyped parser dump every corpus fixture plus the shared `go-parser/jfr/testdata` node-pool recordings under the one canonical line format (`JfrCanonicalDump` on the Java side, `go-parser/internal/differential` on the Go side), and the dumps must be identical modulo the root-caused allowlist: headers validated first (fixture sha256, event count vs line count, one-sided errors), then event totals and per-type histograms exact, then a line merge whose first mismatch names the event type, the field path and both lines | `./gradlew :parser-core:differentialTest --rerun` (needs `go` on PATH — a missing `go` fails the test naming PATH and the exact attempted command, never skips) | none — the allowlist `parser-core/src/test/resources/differential/allowlist.txt` is hand-edited and shrink-only; fixing a divergence is forced to shrink it | none — each allowlist entry documents a root-caused divergence with its proof in its `# reason:` line; a new divergence is fixed or root-caused, never waved through | `differential` (runs when `parser-core/`, `parser-codegen/` or `go-parser/` changes, and on every non-PR trigger) | ~9 s warm locally over the 6 fixtures (measured); the task deliberately sits outside `check` because it needs the Go toolchain |
 
 ## API evolution
 
@@ -368,6 +369,106 @@ case table and the file-naming rule.
   logging on a fuzz input is invisible in the XML.
 - The pprof and otlp renderers cover `mapping` lines, but none of the
   committed fixtures contains a mapping — that decode path is not
+  pinned by a golden today.
+
+## Differential oracles: Java vs Go untyped dumps
+
+The golden dumps pin one parser's values against a committed digest; the
+differential pins two parsers against each other. The Java untyped parser
+and the Go untyped parser each render the same fixtures into the **one
+canonical line format** and the two dumps must be identical modulo the
+root-caused allowlist.
+
+**The one format (R7).** Every event is one line `<type> k=v …` built from
+`Values.resolvedDeep` (Java) / `jfr.ResolveDeepMap` (Go) — deep
+constant-pool resolution, never the collapsed variant — with sorted dotted
+keys, arrays as `.0 .1 …`, `byte[]` and string-constant wrappers as
+`b<len>:<hex>`, `\n` and `\r` escaped, floats and doubles as `f:%016x`
+IEEE-754 bit patterns (bit equality, not decimal — the two parsers' float
+formatting never agrees, their bits do), `null` printed as `null`, and no
+chunk identity anywhere. Each dump starts with
+`# jafar-dump v1 side=<java|go> fixture-sha256=<hex> events=<n>`; a refused
+recording yields a header `… error=<msg>` and nothing else, so an empty or
+stale dump can never pass as agreement.
+
+**What runs.** `:parser-core:differentialTest` — deliberately outside
+`check` and excluded from the ordinary `test` task, because it needs the Go
+toolchain — runs `JavaGoDifferentialTest` over the JFR corpus
+(`tck-test.jfr` plus the two generated recordings) and the shared
+`go-parser/jfr/testdata` node-pool fixtures. The Java side dumps in-JVM
+through `JfrCanonicalDump`; the Go side is
+`go run ./internal/differential/cmd/jfrdump` inside `go-parser`, its stderr
+relayed into the test log. A missing `go` on PATH fails the test naming
+PATH and the exact attempted command (R3) — it never skips.
+
+**The compare.** `DumpComparator` validates the headers first (kb/probe-pitfalls
+1–2: a stale or empty dump, a swapped side, a header/body count disagreement
+or a one-sided `error=` each fails with its cause before any line is
+compared — never "all lines differ"), then requires the event totals and
+per-type histograms to match exactly (`tck-test.jfr`: 67,657 events on both
+sides, identical histograms), then line-merges the two sorted dumps; the
+first mismatch fails naming the event type, the field path (with both value
+renderings) and both full lines.
+
+**The allowlist.**
+`parser-core/src/test/resources/differential/allowlist.txt` is a
+shrink-only, hand-edited list, enforced the way the fuzz known-escapes list
+and the ArchUnit freeze store are: no test or tool writes it, and growth is
+a visible hand edit in the diff. Two entry kinds: `equiv <type> <fieldPath>
+<rule>` normalizes both sides' rendering *before* comparing — the values
+themselves stay compared, so an equiv can never hide a value divergence —
+and documents a representational difference; `diverge <type> <fieldPath>
+side=<java|go>` excludes the field on both sides and names the side at fault
+— a real cross-parser divergence. Every entry carries its proof in its
+`# reason:` line. A stale entry fails — an equiv whose rule normalized
+nothing on any fixture carrying its type, a diverge whose field no longer
+differs — so fixing a divergence is forced to shrink the list. The list is
+corpus-level while the compare runs fixture by fixture, so an entry whose
+event type appears in no corpus fixture is silent: a typo'd type name is a
+review catch, not a gate catch.
+
+**The endpoint outcome (root-caused).** The one landed entry is
+`equiv datadog.Endpoint endpoint unwrap-empty-key`. On the 18
+`datadog.Endpoint` events of `tck-test.jfr`, Java renders
+`endpoint.=GET /actuator/health` and Go `endpoint=GET /actuator/health`:
+identical values — confirmed by `jfr print` and the JDK consumer API, both
+of which deliver the flat scalar string — differing only in the wrapper.
+The field is a pooled `java.lang.String` (a primitive class with no metadata
+fields), so the Java untyped map path must key its value under the synthetic
+empty field name, while Go's `java.lang.String` pool special case returns
+the scalar. The rule renames the empty key; the value stays compared. The
+full proof, with the code lines on both sides, is the entry's comment block
+in the allowlist itself.
+
+**The one corpus exclusion.** `node-pool-dangling-name.jfr` is excluded by
+exact name in `JavaGoDifferentialTest`: its undecodable pool entry makes
+the Java parse refuse (`error=` on the Java side) while Go delivers all
+events rendering the entry as `null` — a one-sided whole-recording refusal
+the per-field allowlist grammar cannot key, and which must keep failing
+loudly: tolerating a one-sided `error=` would gut the header validation that
+catches stale and failed dumps. The divergence itself is documented under
+[Differences from the Java parser](../../go-parser/README.md) in the Go
+README and pinned by both parsers' own suites
+(`UnindexedPoolReferenceTest.DANGLING_NAME` in parser-core,
+`TestUndecodableEntryFailsOnResolutionTheSameWayEachTime` in go-parser).
+
+**The parity relation.** Two different contracts, both alive.
+`scripts/parity-check.sh` gates *change scope*: a production change to one
+untyped parser must be considered for the other, with a `Parity:` statement
+when it is not ported. The differential gates *behavior*: whatever each
+side ships must parse the same bytes into the same values. The Go harness
+deliberately lives in `go-parser/internal/differential/`, outside
+`go-parser/jfr/`, so its existence is no one-sided production change and the
+parity gate stays clean (AC-6.6).
+
+**Cost and gating.** ~9 s warm locally over the 6 fixtures (measured in the
+step-6 task reports; the Gradle side is dominated by compile/up-to-date
+checks). The CI job is path-gated — it runs when `parser-core/`,
+`parser-codegen/` or `go-parser/` changes, and on every non-PR trigger —
+so a docs-only PR does not pay for it, and on failure it uploads
+`parser-core/build/differential/` (both sides' dumps) for review. It cannot
+live in `go-parser.yml`: that workflow is filtered to `go-parser/**` and
+would never see a Java-side change (AC-6.5).
 
 ## Concurrency: the processor-count matrix
 
@@ -446,4 +547,149 @@ a field touched in a `ChunkParserListener` callback must be keyed by
 no static race checker owns this codebase's deliberately concurrent
 design; the matrix is the gate, the lint is the review judgment.
 
-  pinned by a golden today.
+## Nightly (advisory)
+
+The scheduled workflows are nets, not gates (principle 4): they run overnight
+and on demand, their findings are reports for humans, and nothing they find
+blocks a PR. A workflow in this section therefore has no table row — the
+table is the PR-blocking contract, and a scheduled run cannot see a PR.
+
+### JMH trend — [`nightly-jmh.yml`](../../.github/workflows/nightly-jmh.yml)
+
+**Triggers.** Nightly at 03:41 UTC (off the hour, out of the scheduling
+stampede), `workflow_dispatch` with an input `jmh_args` (default
+`-wi 2 -i 5 -f 1`; a dispatch run can pass a shorter or longer sweep), and
+every push to a branch named `nightly/**`. That last trigger is how a
+workflow is exercised before it reaches the default branch:
+`workflow_dispatch` only works for workflows already on the default branch —
+the same pattern as `go-parser-bench.yml`'s `bench/**`.
+
+**What runs.** The repository's two JMH task sets, with their JSON output
+pinned by `-rff`:
+
+```bash
+mkdir -p build/jmh
+./gradlew --no-daemon :parser-core:jmh -PjmhArgs="-rf json -rff build/jmh/parser-core.json <JMH_ARGS>"
+./gradlew --no-daemon :pprof-parser:jmh -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json <JMH_ARGS>"
+```
+
+The tasks are JavaExec with the repo root as their working directory, so the
+benchmark `@Param` fixture paths resolve and the results land in
+`build/jmh/<module>.json` — and JMH does not create the result file's parent
+directory, hence the `mkdir`. Locally the same commands were executed with
+the short sweep `-wi 0 -i 1 -f 1 -r 1s` (they are the manual commands in
+[PERFORMANCE.md](../../PERFORMANCE.md)): the pprof-parser run produced real
+records, and the parser-core run produced an **empty result JSON** — its
+benchmark class was missing its `@Setup`, every iteration NPE'd and JMH
+swallowed the failures (the Gradle task still exited 0). That is exactly the
+lie the trend script's unusable-data guard exists for; the benchmark was
+fixed afterwards (5473/21765 ops/s on the fixed class), so the empty-result
+guard is today exercised by the trend script's own tests rather than by a
+live benchmark.
+
+**Artifacts.** `build/jmh/*.json` is uploaded as `jmh-results` (90-day
+retention, `if: always()`). The next run fetches the previous *successful*
+run's `jmh-results` with the runner's own `gh` (`gh run list --workflow
+nightly-jmh.yml --status success -L1`, then `gh run download`, with
+`GH_TOKEN: github.token`), and pipes
+`python3 scripts/jmh_trend.py --current build/jmh [--previous …]` into
+`$GITHUB_STEP_SUMMARY`: benchmark, params, score ± error, unit and Δ% per
+benchmark, keyed on benchmark+params (JMH's own grouping). A missing or
+expired previous artifact is not an error — the report says "no baseline".
+
+**Advisory by design.** The trend script exits 0 on *any* timing change — a
+50% regression is still 0 — because a wall-clock gate would be flaky or
+inert. Exit 2 is reserved for unusable result data (unparseable JSON, a
+record lacking `benchmark` or `primaryMetric`, a non-numeric score, a
+current run with no result JSON at all): that is a pipeline bug, not a
+performance statement, and only that fails the workflow.
+`scripts/tests/test_jmh_trend.sh` (part of `run_all.sh`) proves each rule on
+the real JMH payload shape — the numbers nest under `primaryMetric`, and
+`scoreError` can arrive as the string `"NaN"`.
+
+**R8 — what is not verified before merge.** The `schedule` and
+`workflow_dispatch` triggers, the GitHub-side `gh run download` and
+artifact plumbing, and the run-summary rendering execute only on GitHub
+runners, after the workflow reaches the default branch. What was verified
+pre-merge: the JMH commands locally with the short sweep (real records for
+pprof-parser; the parser-core empty-array finding and fix above), the trend
+script over the real JSON — including a doctored previous run for the Δ%
+path — the hermetic test suite, and the YAML parse. The first scheduled run
+is the first real execution.
+
+### Jazzer fuzz — [`nightly-fuzz.yml`](../../.github/workflows/nightly-fuzz.yml)
+
+**Triggers.** Nightly at 02:17 UTC (off the hour, out of the scheduling
+stampede), `workflow_dispatch` with an input `max_duration` (default `5m`;
+a dispatch run can pass a shorter bound for a quick check), and every push
+to a branch named `nightly/**` — the same pre-merge mechanism as the JMH
+workflow above.
+
+**What runs.** One coverage-guided Jazzer session (`JAZZER_FUZZ=1`) per
+step-4 fuzz target — currently
+`io.jafar.parser.fuzz.UntypedParserFuzzTest.parseUntyped` — because Jazzer
+fuzzes exactly one `@FuzzTest` per run (its `AgentConfigurator` refuses a
+second fuzz test in the same JVM), so the targets are looped outside
+Gradle:
+
+```bash
+JAZZER_FUZZ=1 ./gradlew --no-daemon :parser-core:test \
+  --tests 'io.jafar.parser.fuzz.UntypedParserFuzzTest.parseUntyped' \
+  -Pjafar.fuzz.maxDuration=<DURATION> --rerun
+```
+
+The workflow then runs `:parser-core:differentialTest` (the nightly always
+carries the Java/Go differential, spec Q15) after `setup-go` 1.24, since
+that task needs Go on PATH and plain `build` cannot assume it. A target
+whose oracle catches an escape exits nonzero; the loop records that and
+still runs the remaining targets, then fails the step — the differential
+and the artifact uploads run either way (`if: always()`).
+
+**The session bound.** `@FuzzTest(maxDuration)` defaults to `"5m"` in
+jazzer-junit 0.30.0 and is only a fallback: Jazzer resolves the bound from
+the `jazzer.max.duration` system property (or `JAZZER_MAX_DURATION` env)
+first, and applies the annotation value only when that option is still at
+its default. `parser-core/build.gradle` therefore wires
+`-Pjafar.fuzz.maxDuration` (default `5m`) to that system property, and the
+annotation stays bare. `UntypedParserFuzzTest.sessionBoundIsWiredToTheTestJvm`
+is the wiring's permanent fire proof: it fails if the build stops setting
+the property, and also refuses the two values that would silently *unbound*
+a session — an empty string (Jazzer: unlimited) and a zero duration
+(libFuzzer's `-max_total_time=0` means no limit). Verified against the
+0.30.0 jars: the override flows through `Opt.maxDuration` to libFuzzer's
+`-max_total_time=<seconds>`.
+
+**Artifacts, and why nothing is committed (AC-7.1, Q11).** Crash inputs
+land where Jazzer's `artifact_prefix` points — the **committed corpus
+directory** under
+`parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/`
+(so a committed crash would be replayed as a regression test on the next
+build) — and the coverage-guided corpus grows under
+`parser-core/.cifuzz-corpus/`. The workflow uploads both as artifacts
+(`jazzer-crash-inputs`, `jazzer-generated-corpus`; 90-day retention,
+`if: always()`, `if-no-files-found: warn` — no crashes is the healthy
+case) and commits **nothing**. A human takes it from there: minimize the
+crash input, add it to the committed corpus by a visible hand edit, and pin
+the escape in `known-escapes.txt` exactly as the oracle's failure message
+names it (`<sha256> <delivered-throwable>` with a `# reason:` comment) —
+never a parser fix inside that change (D3).
+
+**It finds real things.** The first local session
+(`-Pjafar.fuzz.maxDuration=30s`) found a D4 escape in 19 runs (the exec/s
+lines of its libFuzzer output are in the T38 report): an input whose parse
+escapes as `IOException` wrapping a `java.nio.BufferUnderflowException`
+root, input sha256
+`b231c025371f1a865e3b5cb0a231bb500a4fc147fc2f173c8d13b887fb91c376`, DEDUP
+`b97439600fb31b5d`, crash file preserved with the T38 task report for that
+human minimization (and deleted from the tree). Until it is pinned, a fuzz
+session can hit it at any time and the nightly fuzz step goes red — that
+is the net reporting a real finding, not a flake.
+
+**R8 — what is not verified before merge.** The `schedule` and
+`workflow_dispatch` triggers, the GitHub-side artifact upload, and the
+runner's Go/JDK setup execute only on GitHub runners, after the workflow
+reaches the default branch. What was verified pre-merge: the exact fuzz
+command locally at `30s` (real coverage-guided output; the escape above is
+its finding), the crash and corpus file locations on disk, the wiring fire
+proof, the YAML parse, and `:parser-core:differentialTest` green. The
+first scheduled run is the first real execution on a runner.

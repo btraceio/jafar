@@ -151,11 +151,29 @@ tasks.named('test') {
     inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
     // The allocation tests need their own JVM args and the budget file; they run in allocationTest
     exclude 'io/jafar/parser/alloc/**'
+    // The Java/Go differential needs the Go toolchain on PATH, which `test` (and therefore
+    // `build`) must not assume: the class runs only in its own differentialTest task, excluded
+    // here (see that task's comment for why it is not in `check` either).
+    exclude '**/JavaGoDifferentialTest*'
     // Quiet the parser's slf4j-simple logging (AC-4.5, kb/fuzz-robustness-baseline item 3): the
     // fuzz corpus replays corrupted recordings whose metadata reads dump a stack trace per event
     // at WARN, swamping CI output. io.jafar loggers go to ERROR; nothing else changes. Verified
     // before the change: no parser-core test captures stderr or asserts on log output.
     systemProperty 'org.slf4j.simpleLogger.log.io.jafar', 'error'
+    // Jazzer session bound (step 7, AC-7.1): the duration a coverage-guided session (JAZZER_FUZZ=1)
+    // of the fuzz test below may run before libFuzzer stops. jazzer-junit 0.30.0 resolves that
+    // bound from the jazzer.max.duration system property (the JAZZER_MAX_DURATION env var works
+    // too) BEFORE falling back to @FuzzTest(maxDuration), whose default is "5m" — so the
+    // annotation stays at its default and this property is the single knob, fed by
+    // -Pjafar.fuzz.maxDuration=<duration> (default 5m; e.g. 30s for a short local run). In
+    // regression mode (JAZZER_FUZZ unset) nothing consults the bound, so the property is inert.
+    // Verified against jazzer-junit 0.30.0: AgentConfigurator.forFuzzing applies the annotation
+    // value only via Opt.maxDuration.setIfDefault, and FuzzTestExecutor passes Opt.maxDuration
+    // to libFuzzer as -max_total_time=<seconds>.
+    def fuzzMaxDuration = providers.gradleProperty('jafar.fuzz.maxDuration').orElse('5m').get()
+    systemProperty 'jazzer.max.duration', fuzzMaxDuration
+    // A changed bound must re-run the task, not leave it UP-TO-DATE with the old session length.
+    inputs.property('jazzerMaxDuration', fuzzMaxDuration)
     // Ensure JUnit 5 and fixed report locations for CI collection
     useJUnitPlatform()
     reports {
@@ -258,6 +276,49 @@ tasks.register('allocationTest8', Test) {
         html.required.set(true)
         junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/allocationTest8"))
         html.outputLocation.set(layout.buildDirectory.dir("reports/tests/allocationTest8"))
+    }
+}
+
+// --- Java/Go differential gate (safety-harness step 6) ---------------------------------
+// differentialTest runs the end-to-end Java/Go differential (JavaGoDifferentialTest) over the
+// JfrCorpus fixtures and the shared go-parser/jfr/testdata node-pool recordings: each fixture is
+// dumped by JfrCanonicalDump (side=java) in this JVM and by `go run
+// ./internal/differential/cmd/jfrdump` (side=go) in a child process, and DumpComparator compares
+// the two dumps line by line under the committed allowlist.
+//
+// Deliberately NOT part of `check` (so not of `build`): the task needs the Go toolchain on PATH,
+// which no plain Java build may assume — a machine without Go must still pass `build`. Run it
+// explicitly with `./gradlew :parser-core:differentialTest`, or in CI where setup-go has installed
+// the toolchain (the path-filtered `differential` job).
+tasks.register('differentialTest', Test) {
+    description = 'Compares the Java and Go untyped parsers over the shared JFR corpus (needs Go on PATH).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/differential/JavaGoDifferentialTest*'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    // The dump materializes the whole deep-resolved corpus in memory (tck-test.jfr alone renders
+    // 67,657 events of nested values); `test` runs with the same headroom.
+    jvmArgs '-Xmx8g'
+    // Where JavaGoDifferentialTest finds the Go module whose jfrdump command it drives
+    systemProperty 'jafar.go.dir', rootProject.file('go-parser').absolutePath
+    // The whole Go module is an input: the differential verdict covers go-parser/jfr (the parser
+    // under test) and go-parser/internal/differential (the harness) equally, so any change under
+    // go-parser/** must re-run the gate instead of leaving it UP-TO-DATE with a stale verdict.
+    inputs.dir(rootProject.file('go-parser'))
+        .withPropertyName('goDifferentialSources')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    // ... and so is the committed allowlist the compare applies.
+    inputs.file(rootProject.file('parser-core/src/test/resources/differential/allowlist.txt'))
+        .withPropertyName('differentialAllowlist')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    shouldRunAfter tasks.named('test')
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/differentialTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/differentialTest"))
     }
 }
 
