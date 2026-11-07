@@ -2,11 +2,13 @@ package io.jafar.parser.golden;
 
 import io.jafar.testsupport.GoldenFile;
 import io.jafar.testsupport.JfrCorpus;
+import io.jafar.testsupport.ProcessorCount;
 import io.jafar.testsupport.jfr.JfrCanonicalDump;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.List;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -31,6 +33,16 @@ class JfrGoldenDumpTest {
   /** The documented regeneration command, printed in every failure and stored in every golden. */
   private static final String REGEN_COMMAND =
       "./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun";
+
+  /**
+   * Matrix wiring (AC-4.3): dumps must be deterministic at {@code ActiveProcessorCount=1} and
+   * {@code =16}, so this class asserts that the {@code -Pjafar.activeProcessorCount=N} flag reached
+   * its forked JVM (R9) before comparing against the committed digest.
+   */
+  @BeforeAll
+  static void assertProcessorCountMatrixReachedThisJvm() {
+    ProcessorCount.assertExpected();
+  }
 
   @ParameterizedTest
   @EnumSource(JfrCorpus.class)

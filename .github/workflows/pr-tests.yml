@@ -18,6 +18,115 @@ permissions:
   actions: read
 
 jobs:
+  concurrency-matrix:
+    # Step 5 of the generated-code safety harness (doc/agents/Gates.md,
+    # "Concurrency: the processor-count matrix"). The determinism nets, the
+    # pool-mirror abort tests, the golden dumps and the shared-ParsingContext
+    # stress test must hold at BOTH extremes of StreamingChunkParser's
+    # per-parse pool of max(nproc-2,1) threads: a few-core runner cannot
+    # reproduce a chunk-callback interleaving (the recorded fire case in
+    # Gates.md stays green at =1), while =16 runs the pool the races live on.
+    # The allocation cells are NOT part of this job: allocationTest* keeps
+    # its own -XX:ActiveProcessorCount=4 pin (D9, same doc).
+    name: Concurrency matrix (ActiveProcessorCount=${{ matrix.apc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        apc: [ 1, 16 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      # --rerun per task, never once at the end: setup-gradle restores the
+      # build cache, and a test task restored FROM-CACHE reports a previous
+      # JVM's results. The R9 audit line below must come from this run's JVMs
+      # (the same cache lie the allocation gate records in Gates.md).
+      - name: Run the concurrency nets at ActiveProcessorCount=${{ matrix.apc }}
+        run: |
+          ./gradlew --stacktrace --no-daemon -Pjafar.activeProcessorCount=${{ matrix.apc }} \
+            :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
+            :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
+            :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
+            :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+
+      # R9: a green task proves nothing about which JVM produced it. Every
+      # covered class calls test-support's ProcessorCount.assertExpected() in
+      # @BeforeAll, which asserts the expected count and prints
+      # "availableProcessors=<n> expected=<N|unset> pool=<max(n-2,1)>" to
+      # real stdout — recorded in the JUnit XML's system-out. Each class's XML
+      # must carry the line with THIS cell's count; the trailing space in the
+      # needle pins =1 against =16.
+      - name: Prove the matrix count reached the test JVMs (R9)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          classes=(
+            JFRSessionDeterminismTest
+            MultiChunkDeterminismTest
+            ConstantPoolChunkLocalityTest
+            EventDecodeFailureTest
+            JfrGoldenDumpTest
+            GeneratedEventDecodeFailureTest
+            SharedParsingContextStressTest
+          )
+          needle="availableProcessors=${{ matrix.apc }} "
+          status=0
+          for c in "${classes[@]}"; do
+            xmls=(**/build/test-results/test/TEST-*."$c".xml)
+            if [ ${#xmls[@]} -eq 0 ]; then
+              echo "R9 FAIL: no JUnit XML for $c — the class did not run"
+              status=1
+              continue
+            fi
+            if ! grep -q -- "$needle" "${xmls[@]}"; then
+              echo "R9 FAIL: $c did not report \"$needle\" — the matrix flag did not reach its JVM"
+              status=1
+            else
+              echo "R9 ok: $c reports $(grep -h -o 'availableProcessors=[0-9]* expected=[^ ]* pool=[0-9]*' "${xmls[@]}" | head -1)"
+            fi
+          done
+          exit $status
+
+      # Same collection shape as the `tests` job: flat XML plus a placeholder
+      # when empty, so the artifact is always well-formed.
+      - name: Prepare artifacts (collect XML; add placeholder if empty)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/xml
+          shopt -s globstar nullglob
+          copied=0
+          for f in **/build/test-results/test/*.xml; do
+            cp "$f" artifacts/xml/
+            copied=1
+          done
+          if [ "$copied" -eq 0 ]; then
+            echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
+          fi
+
+      - name: Upload JUnit XML reports (apc-${{ matrix.apc }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml-apc-${{ matrix.apc }}
+          path: artifacts/xml
+          retention-days: 14
+
   guardrails:
     name: Guardrails (doc links, gate tests)
     runs-on: ubuntu-latest

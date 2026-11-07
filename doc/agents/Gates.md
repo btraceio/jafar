@@ -46,6 +46,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
 | Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
 | Known-escapes allowlist | An input listed in `parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` may escape the oracle only with exactly its pinned delivered throwable; an entry whose input no longer escapes FAILS "stale known-escape <sha>: remove the entry" — the list is shrink-only | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` (the oracle enforces it; `EscapeOracleTest` proves each rule permanently) | none — no test or tool ever writes the list; growth is a visible hand edit in the diff, always with a `# reason:` line | the list itself — there is deliberately no third PR-body statement (I1, D3) | `tests` (JDK 21 cell, inside `:parser-core:test`) | included in the corpus row's ~6 s |
+| Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps and the shared-`ParsingContext` stress test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
 
 ## API evolution
 
@@ -367,4 +368,82 @@ case table and the file-naming rule.
   logging on a fuzz input is invisible in the XML.
 - The pprof and otlp renderers cover `mapping` lines, but none of the
   committed fixtures contains a mapping — that decode path is not
+
+## Concurrency: the processor-count matrix
+
+**The hazard.** JFR chunk callbacks (`ChunkParserListener`, per-event
+handlers) run concurrently on `StreamingChunkParser`'s per-parse pool of
+`max(nproc-2,1)` threads. Listener state that looks single-threaded — one
+plain instance field, one shared `ArrayList` — corrupts silently, and a
+runner with one or two cores cannot reproduce the interleaving at all. The
+Go parser already runs `go test -race` in CI; Java has no in-process
+equivalent, so the matrix is the Java answer to the same threat: run the
+existing determinism nets at both pool extremes instead of writing new
+races-in-a-bottle.
+
+**The matrix.** `-Pjafar.activeProcessorCount=N` (root `build.gradle`)
+injects `-XX:ActiveProcessorCount=N` plus `jafar.expectedProcessors=N` into
+every Test JVM — except `allocationTest*`, which keeps its own
+`-XX:ActiveProcessorCount=4` pin (D9: pool = 2 = the two chunks of
+`tck-test.jfr`). Every covered class calls test-support's
+`ProcessorCount.assertExpected()` from `@BeforeAll`: it asserts the expected
+value arrived and always prints
+`availableProcessors=<n> expected=<N|unset> pool=<max(n-2,1)>` to real
+stdout, which the JUnit XML records in its system-out. That audit line is
+the R9 proof that the flag reached the forked JVM — the CI job greps every
+covered class's XML for it, fails naming any class whose line is missing,
+and the trailing space in the needle pins `=1` against `=16`.
+
+**What runs at both counts.** The three shell determinism nets
+(`MultiChunkDeterminismTest`, `ConstantPoolChunkLocalityTest`,
+`JFRSessionDeterminismTest`), the pool-mirror abort tests
+(`EventDecodeFailureTest`, `GeneratedEventDecodeFailureTest`), the JFR
+golden dumps — their digests are identical at `=1` and `=16` — and the
+shared-`ParsingContext` stress test.
+
+**The stress test.** `SharedParsingContextStressTest` (parser-codegen) runs,
+through one shared `ParsingContext`, N=8 concurrent parses of `tck-test.jfr`
+(half typed, half untyped) released together by a `CyclicBarrier`, R=3
+rounds. Each parse's per-chunk event sequences must `equals` a
+fresh-context reference exactly — bucketed by chunk ordinal, written only by
+the chunk's own pool thread — with no sleeps and no timing assertions;
+`@Timeout(10, MINUTES)` is a hang guard only.
+
+**The recorded fire cases (R5).** Both recorded races are probabilistic; each
+was re-run until it failed, then reverted (sha-verified against the
+pre-mutation file):
+
+- *The shared per-chunk list (AC-5.2).* Feeding `JafarSources`'
+  `loadAllClasses` `PerChunk` collection one shared unsynchronized
+  `ArrayList` fails at `=16`:
+  `MultiChunkDeterminismTest.allClassesAreStable` — "run 27 of 200 differs
+  from run 1: element 9: {id=178, name=java.lang.Class, …} vs {id=7,
+  name=jdk.ResidentSetSize, …}" (2 failures in 6 mutation runs). **At `=1`
+  the same mutation stayed green** — recorded, and the reason the matrix
+  needs both cells: a single-core runner is blind to this class of race.
+- *The shared deserializer cache (AC-5.3).* Making
+  `UntypedDeserializerCache`'s delegate a plain `HashMap` fails the stress
+  test at the default 16-core host (pool = 14) with
+  `IOException: … java.util.ConcurrentModificationException` from
+  `EventStreamGenerated.shared` on a chunk pool thread (2 failures in 5
+  mutation runs). The `=1` outcome of that specific mutation was not
+  separately recorded (R8): with pool = 1 each parse's chunks are
+  serialized, so the same blindness as the first case is expected.
+
+**Times.** Measured warm, as separate invocations, in the step-5 task
+reports: the determinism nets 10 s at `=1` / 6 s at `=16`; the abort + golden
+suites ~4 s / ~3 s; the stress test ~8 s / ~7.3 s (5.5 s test method). The
+single combined invocation the `concurrency-matrix` job runs has not been
+measured locally — T31 is a Gradle-free task in a wave whose Gradle slot
+belonged to another task — so its wall time lands with the first CI run,
+and the coordinator re-runs the exact command in Verification (R4).
+
+**The advisory half.** The review-time hazard lint (AC-5.4, Q12) is written
+down in
+[the verify-change skill](../../.agents/skills/verify-change/SKILL.md):
+a field touched in a `ChunkParserListener` callback must be keyed by
+`getChunkIndex()` or be thread-confined. It is deliberately not a CI check —
+no static race checker owns this codebase's deliberately concurrent
+design; the matrix is the gate, the lint is the review judgment.
+
   pinned by a golden today.

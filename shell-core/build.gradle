@@ -48,6 +48,10 @@ dependencies {
     // Backend plugins for testing
     testRuntimeOnly project(':jfr-shell-jafar')
     testRuntimeOnly project(':jfr-shell-jdk')
+
+    // ProcessorCount.assertExpected() (safety harness step 5): JFRSessionDeterminismTest calls it
+    // from @BeforeAll so a matrix run proves -Pjafar.activeProcessorCount=N reached the forked JVM.
+    testImplementation project(':test-support')
 }
 
 // Run the plugin-system tests as part of check. japicmp no longer runs here: the per-surface

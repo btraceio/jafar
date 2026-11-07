@@ -151,6 +151,27 @@ allprojects {
         dependsOn rootProject.tasks.named('spotlessCheck')
     }
 
+    // Processor-count matrix (safety harness step 5, kb/design-concurrency item 1): chunk
+    // callbacks run on StreamingChunkParser's pool of max(processors - 2, 1) threads, so a
+    // single-count CI runner cannot reproduce a race that needs more cores. With
+    // -Pjafar.activeProcessorCount=N every Test JVM below forks with -XX:ActiveProcessorCount=N
+    // and is told so via jafar.expectedProcessors, which the covered test classes assert in-JVM
+    // through test-support's ProcessorCount.assertExpected() — a run proves the flag reached the
+    // forked JVM instead of silently running unpinned (R9/R3).
+    //
+    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=4
+    // themselves (D9) because the allocation budgets assume a chunk pool of exactly 2 threads;
+    // the matrix flag must not vary their pool size or thread-to-chunk mapping.
+    def matrixProcessorCount = null
+    if (rootProject.hasProperty('jafar.activeProcessorCount')) {
+        def rawMatrixCount = rootProject.property('jafar.activeProcessorCount').toString().trim()
+        matrixProcessorCount = Integer.parseInt(rawMatrixCount) // malformed flag fails the build
+        if (matrixProcessorCount < 1) {
+            throw new GradleException(
+                "-Pjafar.activeProcessorCount must be >= 1, got ${matrixProcessorCount}")
+        }
+    }
+
     // Tests must not see the developer's LLM setup. Settings would change what they assert, and
     // credentials would let a test reach a live, billable API. An empty settings file is used
     // because an explicit JAFAR_LLM_CONFIG wins over ~/.config/jafar/llm.properties; owner-only so
@@ -162,6 +183,20 @@ allprojects {
     // build/golden-actual. Golden regeneration is opt-in via -Pjafar.golden.update: a plain run
     // compares and never silently rewrites the committed goldens.
     tasks.withType(Test).configureEach { testTask ->
+        if (matrixProcessorCount != null && testTask.name.startsWith('allocationTest')) {
+            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=4;
+            // say so at execution time so a matrix run's log shows why the flag did not apply
+            // here (R3: report where a value came from).
+            testTask.doFirst {
+                testTask.logger.lifecycle(
+                    "jafar: {} keeps its -XX:ActiveProcessorCount=4 pin; " +
+                    "-Pjafar.activeProcessorCount={} does not apply (D9)",
+                    testTask.name, matrixProcessorCount)
+            }
+        } else if (matrixProcessorCount != null) {
+            testTask.jvmArgs "-XX:ActiveProcessorCount=${matrixProcessorCount}"
+            testTask.systemProperty 'jafar.expectedProcessors', String.valueOf(matrixProcessorCount)
+        }
         testTask.systemProperty 'jafar.repo.root', rootProject.rootDir.absolutePath
         testTask.systemProperty 'jafar.golden.dir', testTask.project.file('src/test/golden').absolutePath
         testTask.systemProperty 'jafar.golden.actualDir',
