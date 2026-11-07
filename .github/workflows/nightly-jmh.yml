@@ -1,0 +1,139 @@
+name: Nightly JMH Benchmarks
+
+# The JMH trend run (spec AC-7.2): the existing :parser-core:jmh and
+# :pprof-parser:jmh tasks, run overnight and on demand, with their JSON results
+# uploaded as the `jmh-results` artifact and compared against the previous
+# successful run's artifact by scripts/jmh_trend.py. The comparison is advisory
+# only — a wall-clock gate would be flaky or inert (kb/dead-ends) — so a
+# regression never fails this workflow; only malformed result data does.
+#
+# JMH is too slow for PR CI (kb/design-principles rule 4), so this runs on a
+# schedule, on demand, and on any branch named nightly/* — which is how a
+# branch that is not merged yet gets the workflow before it reaches the default
+# branch: workflow_dispatch only works for workflows already there. See
+# go-parser-bench.yml for the same pattern with bench/**.
+
+on:
+  workflow_dispatch:
+    # Short local verification used the same tasks with
+    # -wi 0 -i 1 -f 1 -r 1s (see doc/agents/Gates.md); an unattended nightly
+    # run has time for more iterations, so it uses -wi 2 -i 5 -f 1.
+    inputs:
+      jmh_args:
+        description: 'Extra JMH options replacing the default -wi 2 -i 5 -f 1 (e.g. -wi 0 -i 1 -f 1 -r 1s)'
+        required: false
+        default: '-wi 2 -i 5 -f 1'
+  schedule:
+    # Nightly, 03:41 UTC. Off the hour to avoid the scheduling stampede.
+    - cron: '41 3 * * *'
+  push:
+    branches:
+      - 'nightly/**'
+
+concurrency:
+  group: nightly-jmh-${{ github.ref }}
+  # A benchmark run's results are the point; do not cancel one because another
+  # commit landed while it was running.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # gh run list / gh run download below read the previous run's artifact.
+  actions: read
+
+env:
+  # inputs.* is empty for schedule and push, so those runs fall back to the
+  # same defaults while a workflow_dispatch run can pick a shorter/longer sweep.
+  JMH_ARGS: ${{ inputs.jmh_args || '-wi 2 -i 5 -f 1' }}
+
+jobs:
+  jmh:
+    name: JMH trend
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ubuntu-latest (ubuntu-26.04) has no preinstalled JDK 8 and the build's
+      # configure phase resolves the :parser toolchain-8 eagerly: without this
+      # step every Gradle invocation fails before running a single task.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      # The JMH tasks are JavaExec tasks with the repo root as their working
+      # directory, so -rff writes relative to the repo root and the benchmark
+      # @Param paths (parser-core/src/test/resources/...) resolve. JMH does not
+      # create the result file's parent directory, so build/jmh is made first.
+      # The JSON output (-rf json -rff) is what the trend script and the
+      # artifact consume.
+      - name: Run parser-core JMH
+        run: |
+          mkdir -p build/jmh
+          ./gradlew --no-daemon :parser-core:jmh \
+            -PjmhArgs="-rf json -rff build/jmh/parser-core.json $JMH_ARGS"
+
+      - name: Run pprof-parser JMH
+        run: |
+          mkdir -p build/jmh
+          ./gradlew --no-daemon :pprof-parser:jmh \
+            -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json $JMH_ARGS"
+
+      # The previous successful run of this workflow is the baseline. GH_TOKEN
+      # is the runner's token; gh is the runner's own binary (the local shim
+      # rule in AGENTS.md is about developer machines, not runners). No
+      # previous run (first nightly, or the workflow has not run on the default
+      # branch yet) is not an error: the trend script reports "no baseline".
+      - name: Fetch previous results
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --workflow nightly-jmh.yml --status success -L1 --json databaseId --jq '.[0].databaseId || ""')"
+          if [ -z "$run_id" ]; then
+            echo "no previous successful nightly-jmh run: nothing to compare against"
+            echo "have_previous=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "baseline run: $run_id"
+          # An expired artifact (90-day retention) leaves the run with no
+          # baseline rather than a failed nightly: the trend report is advisory,
+          # and the reason is printed to the log either way.
+          if gh run download "$run_id" -n jmh-results -D build/jmh-previous; then
+            echo "have_previous=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "warning: could not download the jmh-results artifact of run $run_id — treating this run as having no baseline"
+            echo "have_previous=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report trend vs previous run
+        run: |
+          set -euo pipefail
+          args=(--current build/jmh)
+          if [ "${{ steps.previous.outputs.have_previous }}" = "true" ]; then
+            args+=(--previous build/jmh-previous)
+          fi
+          # The script exits 0 for any timing change (advisory) and 2 only for
+          # malformed result data, which is a pipeline bug worth failing on.
+          python3 scripts/jmh_trend.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload JMH results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmh-results
+          path: build/jmh/*.json
+          retention-days: 90

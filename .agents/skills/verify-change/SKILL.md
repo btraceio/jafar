@@ -55,6 +55,46 @@ scripts/failing-set.sh | diff /tmp/fail_base.txt - && echo "zero new failures"
 
 Report both numbers: total tests and the named failing set.
 
+## Chunk-callback state (advisory)
+
+Not every hazard has a gate. JFR chunk callbacks (`ChunkParserListener`,
+per-event handlers) run concurrently on `StreamingChunkParser`'s per-parse
+pool of `max(nproc-2,1)` threads — callbacks for different chunks of one
+recording run at the same time. When writing or reviewing one:
+
+- A field touched in a `ChunkParserListener` callback must be keyed by
+  `getChunkIndex()` (per-chunk state, like `JafarSources`' `PerChunk`
+  collection) or be thread-confined to the callback's own thread
+  (`ThreadLocal`, or a local captured per chunk). A plain instance field
+  shared across the chunks of one parse is a silent-corruption bug: two
+  chunk threads race on it and one chunk's values quietly overwrite the
+  other's — no exception, just wrong data.
+- A 1–2 core runner cannot reproduce the interleaving, so a green local run
+  proves nothing. The deterministic evidence is the processor-count matrix
+  (see [doc/agents/Gates.md](../../../doc/agents/Gates.md), "Concurrency:
+  the processor-count matrix"): run the nets at both counts before claiming
+  a chunk-callback change is safe —
+
+  ```bash
+  for n in 1 16; do
+    ./gradlew -Pjafar.activeProcessorCount=$n \
+      :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
+      :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
+      :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
+      :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+  done
+  ```
+
+- Check the evidence, not the exit status (R9): every covered class's JUnit
+  XML must carry the `availableProcessors=<n> expected=<n> pool=<…>` audit
+  line from `ProcessorCount.assertExpected()`. If it is missing, the flag
+  never reached that JVM and the run proved nothing.
+
+This lint is advisory, not a CI gate (AC-5.4, Q12): the matrix job in
+`.github/workflows/pr-tests.yml` runs the covered classes; this rule is the
+review judgment for code the matrix does not reach, and no static checker
+owns it.
+
 ## Report
 
 State what was verified and how, and what was **not** verified (R8). A PR that says "tests pass"

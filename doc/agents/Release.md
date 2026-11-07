@@ -51,9 +51,11 @@ RELEASING.md). The tag pushes trigger the release workflow, which:
   so — the app release is the only way that fix reaches the app's users.
 - **Backend and LLM plugins resolve the shell's interfaces at run time** (classloader
   delegation), so a *non-breaking* shell-core change ships nothing outside the shell and mcp
-  planes. An **API-breaking change** (japicmp = a major version bump per the plugin API policy)
-  requires tagging every SPI-consuming plane — shell, mcp, llm-anthropic, llm-openai — the same
-  day, each with its own number. Never publish a breaking SPI change without those tags.
+  planes. An **API-breaking change** (flagged by the PR's japicmp gate — see [Gates.md](Gates.md) —
+  and a major version bump per the plugin API policy) requires tagging every SPI-consuming plane
+  — shell, mcp, llm-anthropic, llm-openai — the same day, each with its own number. The API
+  baselines follow the newest plane tag (`scripts/api-baseline.sh`), never a hardcoded version.
+  Never publish a breaking SPI change without those tags.
 - **The Go module versions with the core plane** (parser parity — see AGENTS.md): a core release
   tags it; other planes must not.
 - **jbang-catalog**: `jafar-shell` aliases = the shell plane, `jfr-mcp` = the mcp plane,

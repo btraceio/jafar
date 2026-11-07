@@ -49,3 +49,8 @@ include ':otlp-parser'
 include ':otlp-shell'
 include ':jafar-shell'
 include ':jfr2pprof'
+// ArchUnit module-boundary rules (not published; see doc/agents/Gates.md)
+include ':arch-tests'
+// Shared test utilities: allocation meter and budgets, golden files (not published; see
+// doc/agents/Gates.md)
+include ':test-support'

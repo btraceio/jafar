@@ -18,6 +18,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.ParserContextFactory;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.testsupport.ProcessorCount;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -56,6 +58,18 @@ class GeneratedEventDecodeFailureTest {
   private static final int BAD = EventDecodeFailureTest.BAD;
 
   @TempDir Path dir;
+
+  /**
+   * Matrix wiring (kb/design-concurrency item 1): this class carries pool-size-dependent tests
+   * ({@link #decodeErrorHandlerIsCalledOncePerBadEventAcrossConcurrentChunks} mirrors the parser's
+   * {@code max(processors - 2, 1)} pool), so it asserts that the {@code
+   * -Pjafar.activeProcessorCount=N} flag reached its forked JVM (R9) instead of passing green on an
+   * unpinned one.
+   */
+  @BeforeAll
+  static void assertProcessorCountMatrixReachedThisJvm() {
+    ProcessorCount.assertExpected();
+  }
 
   @ParameterizedTest
   @EnumSource(EventDecodeFailureTest.Corruption.class)

@@ -9,6 +9,11 @@ plugins {
 // tagging; no version numbers are edited (see RELEASING.md).
 apply from: rootProject.file('gradle/version-from-tag.gradle')
 
+// Per-surface japicmp API gate (root-level apiCompat< Surface> tasks driven by
+// gradle/api-surfaces.txt; baselines materialized by scripts/api-baseline.sh).
+// Not part of check: it needs the baseline script and the network.
+apply from: rootProject.file('gradle/api-compat.gradle')
+
 repositories {
     mavenLocal()
     mavenCentral()
@@ -146,11 +151,66 @@ allprojects {
         dependsOn rootProject.tasks.named('spotlessCheck')
     }
 
+    // Processor-count matrix (safety harness step 5, kb/design-concurrency item 1): chunk
+    // callbacks run on StreamingChunkParser's pool of max(processors - 2, 1) threads, so a
+    // single-count CI runner cannot reproduce a race that needs more cores. With
+    // -Pjafar.activeProcessorCount=N every Test JVM below forks with -XX:ActiveProcessorCount=N
+    // and is told so via jafar.expectedProcessors, which the covered test classes assert in-JVM
+    // through test-support's ProcessorCount.assertExpected() — a run proves the flag reached the
+    // forked JVM instead of silently running unpinned (R9/R3).
+    //
+    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=4
+    // themselves (D9) because the allocation budgets assume a chunk pool of exactly 2 threads;
+    // the matrix flag must not vary their pool size or thread-to-chunk mapping.
+    def matrixProcessorCount = null
+    if (rootProject.hasProperty('jafar.activeProcessorCount')) {
+        def rawMatrixCount = rootProject.property('jafar.activeProcessorCount').toString().trim()
+        matrixProcessorCount = Integer.parseInt(rawMatrixCount) // malformed flag fails the build
+        if (matrixProcessorCount < 1) {
+            throw new GradleException(
+                "-Pjafar.activeProcessorCount must be >= 1, got ${matrixProcessorCount}")
+        }
+    }
+
     // Tests must not see the developer's LLM setup. Settings would change what they assert, and
     // credentials would let a test reach a live, billable API. An empty settings file is used
     // because an explicit JAFAR_LLM_CONFIG wins over ~/.config/jafar/llm.properties; owner-only so
     // it does not trigger the file-permissions warning.
+    //
+    // Golden-value-dump wiring (safety harness step 4): the corpus fixtures and every module's
+    // goldens are repo-root relative, so the tests can run from any working directory; the
+    // mismatch artifacts (the full dump + the new golden) land under the module's own
+    // build/golden-actual. Golden regeneration is opt-in via -Pjafar.golden.update: a plain run
+    // compares and never silently rewrites the committed goldens.
     tasks.withType(Test).configureEach { testTask ->
+        if (matrixProcessorCount != null && testTask.name.startsWith('allocationTest')) {
+            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=4;
+            // say so at execution time so a matrix run's log shows why the flag did not apply
+            // here (R3: report where a value came from).
+            testTask.doFirst {
+                testTask.logger.lifecycle(
+                    "jafar: {} keeps its -XX:ActiveProcessorCount=4 pin; " +
+                    "-Pjafar.activeProcessorCount={} does not apply (D9)",
+                    testTask.name, matrixProcessorCount)
+            }
+        } else if (matrixProcessorCount != null) {
+            testTask.jvmArgs "-XX:ActiveProcessorCount=${matrixProcessorCount}"
+            testTask.systemProperty 'jafar.expectedProcessors', String.valueOf(matrixProcessorCount)
+        }
+        testTask.systemProperty 'jafar.repo.root', rootProject.rootDir.absolutePath
+        testTask.systemProperty 'jafar.golden.dir', testTask.project.file('src/test/golden').absolutePath
+        testTask.systemProperty 'jafar.golden.actualDir',
+            testTask.project.layout.buildDirectory.dir('golden-actual').get().asFile.absolutePath
+        if (rootProject.hasProperty('jafar.golden.update')) {
+            testTask.systemProperty 'jafar.golden.update', 'true'
+        }
+        // Committed goldens are task inputs: an edited or regenerated golden re-runs the test
+        // instead of leaving it UP-TO-DATE with a stale verdict. Modules without a golden dir
+        // contribute no input.
+        def goldenDir = testTask.project.file('src/test/golden')
+        if (goldenDir.isDirectory()) {
+            testTask.inputs.dir(goldenDir).withPathSensitivity(PathSensitivity.RELATIVE)
+        }
         doFirst {
             testTask.environment.keySet().removeIf {
                 it.startsWith('JAFAR_LLM_') || it == 'LLM_ENABLED' ||

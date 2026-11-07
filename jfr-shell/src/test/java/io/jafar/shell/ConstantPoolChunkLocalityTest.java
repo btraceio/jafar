@@ -11,6 +11,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.providers.ConstantPoolProvider;
+import io.jafar.testsupport.ProcessorCount;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -52,6 +53,9 @@ class ConstantPoolChunkLocalityTest {
 
   @BeforeAll
   static void record() throws Exception {
+    // Matrix wiring (step 5): prove -Pjafar.activeProcessorCount=N reached this JVM (R9) before
+    // the determinism nets below run.
+    ProcessorCount.assertExpected();
     single = dir.resolve("single.jfr");
     try (Recording r = new Recording()) {
       r.enable("jdk.ExecutionSample").withPeriod(Duration.ofMillis(10)).withStackTrace();

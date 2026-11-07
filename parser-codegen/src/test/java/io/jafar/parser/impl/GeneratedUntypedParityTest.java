@@ -22,6 +22,7 @@ import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
+import io.jafar.testsupport.JfrCorpus;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
@@ -29,7 +30,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -38,10 +41,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.openjdk.jmc.flightrecorder.writer.api.Recording;
 import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
 import org.openjdk.jmc.flightrecorder.writer.api.Type;
@@ -57,6 +63,12 @@ import org.openjdk.jmc.flightrecorder.writer.api.Types;
  * two chunks written by different producers that reuse 50 type ids for different types — the case
  * that broke a deserializer cache keyed by type id.
  *
+ * <p>Runs over the whole JFR golden corpus ({@link JfrCorpus}): the committed {@code tck-test.jfr}
+ * plus the deterministic generated recordings {@code test-ap.jfr} and {@code test-jfr.jfr}. Unlike
+ * the golden tests, no {@code .generated} marker check runs here — both paths read the same file,
+ * so this is an internal consistency comparison of the two decoders over identical bytes and is
+ * meaningful for any recording, real or generated (D1 guards goldens, not parity).
+ *
  * <p>Each event is rendered canonically — map keys sorted, every leaf tagged with its Java class,
  * arrays with their component type, constant-pool references resolved two levels deep — and the
  * per-type multisets of renderings are compared. Chunks are parsed on parallel threads, so event
@@ -66,12 +78,36 @@ public class GeneratedUntypedParityTest {
   private static final Path TCK_RECORDING =
       Paths.get("..", "jfr-shell-tck", "src", "main", "resources", "tck-test.jfr");
 
-  @ParameterizedTest(name = "tck {0}")
-  @EnumSource(UntypedStrategy.class)
-  void generatedPathDeliversTheSameEventsAsTheGenericPath(UntypedStrategy strategy)
-      throws Exception {
+  /**
+   * Vacuity guard per corpus fixture: the generic path must see at least this many event types, or
+   * the recording does not exercise the paths under test. Measured values; tck's 70 is a floor kept
+   * from the single-fixture era, the generated fixtures are small and pinned exactly.
+   */
+  private static final Map<JfrCorpus, Integer> MIN_EVENT_TYPES =
+      Collections.unmodifiableMap(
+          new EnumMap<>(JfrCorpus.class) {
+            {
+              put(JfrCorpus.TCK_TEST, 70);
+              put(JfrCorpus.TEST_AP, 4);
+              put(JfrCorpus.TEST_JFR, 3);
+            }
+          });
+
+  static Stream<Arguments> corpusTimesStrategy() {
+    return Arrays.stream(JfrCorpus.values())
+        .flatMap(c -> Arrays.stream(UntypedStrategy.values()).map(s -> Arguments.of(c, s)));
+  }
+
+  /**
+   * Whole-corpus parity (AC-6.7): every {@link JfrCorpus} fixture × every {@link UntypedStrategy}.
+   * No marker check — see the class Javadoc.
+   */
+  @ParameterizedTest(name = "{0} {1}")
+  @MethodSource("corpusTimesStrategy")
+  void generatedPathDeliversTheSameEventsAsTheGenericPath(
+      JfrCorpus corpus, UntypedStrategy strategy) throws Exception {
     // Guard against a vacuous pass: the recording must actually exercise the path.
-    assertParity(TCK_RECORDING, strategy, 70);
+    assertParity(corpus.path(), strategy, MIN_EVENT_TYPES.get(corpus));
   }
 
   /**

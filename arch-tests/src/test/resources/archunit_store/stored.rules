@@ -1,0 +1,10 @@
+#
+#Thu Nov 05 15:34:51 CET 2026
+a\:\ classes\ outside\ the\ parser\ plane\ (parser-core,\ parser-codegen)\ must\ not\ depend\ on\ io.jafar.parser.impl..\ or\ io.jafar.parser.internal_api..=9c872481-ab8c-4119-ae8b-e62746c3e55a
+b\:\ classes\ outside\ hdump-parser\ must\ not\ depend\ on\ io.jafar.hdump.impl..,\ io.jafar.hdump.internal..\ or\ io.jafar.hdump.index..=e7350ca6-a9cd-456c-9d6f-3f10c7c4c3d3
+c\:\ classes\ in\ io.jafar.hdump.api..\ must\ not\ depend\ on\ hdump-parser\ implementation\ packages\ (io.jafar.hdump.impl..,\ io.jafar.hdump.internal..,\ io.jafar.hdump.internal_api..,\ io.jafar.hdump.index..)=8975afec-5162-4bae-bad6-e1e0a6665d29
+c\:\ classes\ in\ io.jafar.otlp.api..\ must\ not\ depend\ on\ otlp-parser\ implementation\ packages\ (io.jafar.otlp.impl..,\ io.jafar.otlp.internal..,\ io.jafar.otlp.internal_api..,\ io.jafar.otlp.index..)=8da06111-4fc4-4173-b6db-2ee9c294c21e
+c\:\ classes\ in\ io.jafar.parser.api..\ must\ not\ depend\ on\ parser-core\ implementation\ packages\ (io.jafar.parser.impl..,\ io.jafar.parser.internal..,\ io.jafar.parser.internal_api..,\ io.jafar.parser.index..)=6c9cee7a-bf3d-42d6-98bc-a55c33ccac00
+c\:\ classes\ in\ io.jafar.pprof.api..\ must\ not\ depend\ on\ pprof-parser\ implementation\ packages\ (io.jafar.pprof.impl..,\ io.jafar.pprof.internal..,\ io.jafar.pprof.internal_api..,\ io.jafar.pprof.index..)=99699526-8947-4499-ae31-64f3da071dce
+d\:\ classes\ residing\ in\ parser\ modules\ or\ shell-core\ must\ not\ depend\ on\ classes\ residing\ in\ consumer\ modules=04527f4b-e77f-4938-9f94-f9b3963c9319
+e\:\ classes\ residing\ in\ parser\ modules\ in\ non-api\ packages\ must\ not\ declare\ a\ field\ that\ is\ static\ and\ not\ final\ (synthetic\ fields\ are\ ignored)=c12de4e4-7b6b-417f-b473-11058d88374a
