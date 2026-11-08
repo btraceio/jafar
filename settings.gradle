@@ -17,6 +17,16 @@ pluginManagement {
     }
 }
 
+// Toolchain auto-provisioning: the runner images (ubuntu-latest since 2026-11, ubuntu-26.04)
+// no longer preinstall JDK 8, and the build's configure phase resolves the :parser toolchain-8
+// eagerly (the jfr-mcp publishing block reads component artifacts at configuration time), so
+// a machine without the JDKs already installed fails every Gradle invocation before any
+// task runs. The resolver downloads a missing JDK from the Foojay Disco API on first use and
+// caches it under ~/.gradle/jdks; locally installed JDKs are always preferred when found.
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
 // Wire the plugin build to use the in-repo parser project instead of a published module
 includeBuild('jafar-gradle-plugin') {
     dependencySubstitution {
