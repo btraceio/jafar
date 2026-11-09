@@ -22,9 +22,12 @@ file-bound: `JFRSession(Path)` and the `EventSource` SPI both require a finite f
 - Repository convention on all three platforms: `<temp base>/<yyyy_MM_dd_HH_mm_ss>_<pid>`
   (Linux/macOS verified by an in-repo reproducer run 2026-11-08; Windows confirmed
   against Oracle's JFR guide example + `jdk/jfr/internal/Repository.java` format).
-  The temp base is the HotSpot `os::get_temp_directory()` semantics — `/tmp` on
-  Linux/macOS, `%TEMP%`/`%TMP%` on Windows — **not** `java.io.tmpdir`, which a target
-  or local `-Djava.io.tmpdir` override can move independently. [R-M3]
+  The temp base is the HotSpot `os::get_temp_directory()` semantics — hardcoded `/tmp` on
+  Linux (a target-side `-XX:AltTempDir` is not discoverable from outside; the
+  `--repository` flag covers it), the per-user Darwin temp dir on macOS (HotSpot
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`, which `$TMPDIR` points at — verified empirically
+  during implementation), `%TEMP%`/`%TMP%` on Windows — **not** `java.io.tmpdir`, which a
+  `-Djava.io.tmpdir` override moves independently. [R-M3] [verified-mac]
 - `jdk.jfr.repository` is a *system property*, not a perf counter: hsperfdata cannot
   map PID → repository. Attach-free discovery = scan the temp base for
   `yyyy_MM_dd_HH_mm_ss_<pid>` directories and match the trailing PID. `openRepository`'s
@@ -131,11 +134,15 @@ push stream into it; backends parse finite files, live streaming is a JDK-API co
      (close-on-lost-race included), new session made current [R-m3].
 
 3. **`LiveEventDecoder`** — `RecordedEvent` → `EventSource.Event(typeName, Map)` shape
-   compatible with what `JfrPathEvaluator` consumes. Adapted from
-   `JdkJfrBackend.convertEvent/convertValue` (extracted, made reusable) plus the fixes
-   backend conversion lacks: `RecordedThread` gets `javaName`/`osThreadId` fields so
-   `thread/javaName`-style filters behave like the file-based jdk backend, and
-   `startTime`/`duration` are decorated. Called from `TailRunner`, not the queue
+   compatible with what `JfrPathEvaluator` consumes. The strict field conversion is shared
+   with `JdkJfrBackend` (extraction kept byte-identical for the file path). The live
+   `decode` additionally: rewrites the built-in `startTime`/`duration` (whose raw flatten
+   values are chunk-relative ticks) to absolute epoch nanos / duration nanos, and degrades
+   an unconvertible field to a marker instead of failing the stream — the JDK 25 consumer
+   throws on `stackTrace`-typed fields for the repo's own fixtures (pre-existing
+   `JdkJfrBackend` defect, tracked in a follow-up issue; thread identity needs no special
+   handling: `RecordedThread.getFields()` already carries `javaName`/`osThreadId`, which
+   corrects the round-1 review's "lossy thread" claim). [R-NEW1] [verified-mac] Called from `TailRunner`, not the queue
    producer.
 
 4. **Per-event filtering** — additions to `JfrPathEvaluator` (shell-core):
