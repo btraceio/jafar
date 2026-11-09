@@ -3,6 +3,7 @@ package io.jafar.shell;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.scripting.CommandRecorder;
 import io.jafar.shell.core.scripting.ScriptRunner;
@@ -27,7 +28,7 @@ public final class Shell implements AutoCloseable {
 
   private final Terminal terminal;
   private final LineReader lineReader;
-  private final SessionManager<JFRSession> sessions;
+  private final SessionManager<Session> sessions;
   private final CommandDispatcher dispatcher;
   private boolean running = true;
   private final io.jafar.shell.core.SecretFilteringHistory
@@ -396,7 +397,12 @@ public final class Shell implements AutoCloseable {
           .getCurrent()
           .ifPresent(
               ref -> {
-                Path recordingPath = ref.session.getRecordingPath();
+                // Only file sessions carry a recording to auto-bind; live sessions (and any
+                // other non-file session type) are skipped rather than bound.
+                if (!(ref.session instanceof JFRSession jfrSession)) {
+                  return;
+                }
+                Path recordingPath = jfrSession.getRecordingPath();
                 effectiveArgs.add(0, recordingPath.toString());
                 terminal.writer().println("Using session recording: " + recordingPath);
                 terminal.flush();

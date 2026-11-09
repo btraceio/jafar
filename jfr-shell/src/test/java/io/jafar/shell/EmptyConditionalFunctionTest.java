@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.scripting.ConditionalException;
 import java.nio.file.Path;
@@ -67,7 +68,7 @@ class EmptyConditionalFunctionTest {
   }
 
   private ParsingContext ctx;
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private CommandDispatcher dispatcher;
   private BufferIO io;
 

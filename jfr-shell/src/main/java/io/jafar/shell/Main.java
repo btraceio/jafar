@@ -4,6 +4,7 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.plugin.PluginManager;
@@ -338,7 +339,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager<JFRSession> sessions =
+        SessionManager<Session> sessions =
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
@@ -631,7 +632,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager<JFRSession> sessions =
+        SessionManager<Session> sessions =
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();

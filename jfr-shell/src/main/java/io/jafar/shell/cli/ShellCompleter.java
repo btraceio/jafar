@@ -50,7 +50,7 @@ public final class ShellCompleter implements Completer {
   private static final Path SCRIPTS_DIR =
       Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
 
-  private final SessionManager<JFRSession> sessions;
+  private final SessionManager<io.jafar.shell.core.Session> sessions;
   private final CommandDispatcher dispatcher;
   private final CompletionContextAnalyzer analyzer;
   private final MetadataService metadata;
@@ -58,7 +58,8 @@ public final class ShellCompleter implements Completer {
   private final org.jline.reader.impl.completer.FileNameCompleter fileCompleter =
       new org.jline.reader.impl.completer.FileNameCompleter();
 
-  public ShellCompleter(SessionManager<JFRSession> sessions, CommandDispatcher dispatcher) {
+  public ShellCompleter(
+      SessionManager<io.jafar.shell.core.Session> sessions, CommandDispatcher dispatcher) {
     this.sessions = sessions;
     this.dispatcher = dispatcher;
     this.analyzer = new CompletionContextAnalyzer();
@@ -369,9 +370,12 @@ public final class ShellCompleter implements Completer {
         // Suggest type names after 'metadata class '
         if (sessions.getCurrent().isPresent()) {
           String cur = line.word();
-          for (String t : sessions.getCurrent().get().session.getAllMetadataTypes()) {
-            if (t.startsWith(cur)) {
-              candidates.add(new Candidate(t));
+          // Metadata type names exist only for file-backed JFR sessions
+          if (sessions.getCurrent().get().session instanceof JFRSession jfr) {
+            for (String t : jfr.getAllMetadataTypes()) {
+              if (t.startsWith(cur)) {
+                candidates.add(new Candidate(t));
+              }
             }
           }
         }
@@ -432,9 +436,12 @@ public final class ShellCompleter implements Completer {
     // Constant pool type completion
     if (sessions.getCurrent().isPresent()) {
       String cur = line.word();
-      for (String t : sessions.getCurrent().get().session.getAvailableConstantPoolTypes()) {
-        if (t.startsWith(cur)) {
-          candidates.add(new Candidate(t));
+      // Constant-pool types exist only for file-backed JFR sessions
+      if (sessions.getCurrent().get().session instanceof JFRSession jfr) {
+        for (String t : jfr.getAvailableConstantPoolTypes()) {
+          if (t.startsWith(cur)) {
+            candidates.add(new Candidate(t));
+          }
         }
       }
     }

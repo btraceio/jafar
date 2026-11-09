@@ -207,14 +207,11 @@ public final class Shell implements AutoCloseable {
     // Session change listener (no-op for unified shell - prompt updates handled separately)
     CommandDispatcher.SessionChangeListener sessionChangeListener = current -> {};
 
-    @SuppressWarnings("unchecked")
-    SessionManager<JFRSession> jfrSessions =
-        (SessionManager<JFRSession>) (SessionManager<?>) sessions;
     this.jfrIo = ioAdapter;
     // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
     // global names from the dispatcher's store, which would otherwise be a private empty one.
     this.moduleContext =
-        new CommandDispatcher(jfrSessions, ioAdapter, sessionChangeListener, null, globalStore);
+        new CommandDispatcher(sessions, ioAdapter, sessionChangeListener, null, globalStore);
 
     // Create fallback completer for basic commands
     this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);

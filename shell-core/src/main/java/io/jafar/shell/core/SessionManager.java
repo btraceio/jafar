@@ -89,6 +89,31 @@ public final class SessionManager<S extends Session> {
     }
   }
 
+  /**
+   * Registers an externally-created session (e.g. a live JFR session attached to a running JVM's
+   * event repository) — the counterpart of {@link #open} for sessions that have no {@link Path}
+   * source. Mirrors {@code open} exactly: alias pre-check, post-create re-check (the session is
+   * closed when a concurrent registration claimed the alias), and the new session becomes current.
+   * Unregistration stays manager-owned: the session's own {@code close()} must not call back into
+   * the manager (closeById removes the entry before calling close, so a reverse call would be a
+   * guarded no-op at best and re-entrant locking at worst).
+   */
+  public SessionRef<S> register(S session, String alias) {
+    synchronized (this) {
+      if (alias != null && byAlias.containsKey(alias)) {
+        throw new IllegalArgumentException("Alias already in use: " + alias);
+      }
+      int id = nextId.getAndIncrement();
+      SessionRef<S> ref = new SessionRef<>(id, alias, session);
+      byId.put(id, ref);
+      if (alias != null) {
+        byAlias.put(alias, id);
+      }
+      currentId = id;
+      return ref;
+    }
+  }
+
   public synchronized List<SessionRef<S>> list() {
     return new ArrayList<>(byId.values());
   }

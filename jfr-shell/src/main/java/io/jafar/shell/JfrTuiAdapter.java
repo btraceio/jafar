@@ -36,8 +36,11 @@ public final class JfrTuiAdapter implements TuiAdapter {
   public JfrTuiAdapter(SessionManager<?> sessions, Object context) {
     this.sessions = sessions;
     CommandDispatcher dispatcher = context instanceof CommandDispatcher cd ? cd : null;
+    // Erasure-safe wildcard-to-Session view (see JfrModule.getCompleter); ShellCompleter
+    // narrows per-call where it needs JFRSession, so a live session flows through safely.
     this.completer =
-        new ShellCompleter((SessionManager<JFRSession>) (SessionManager<?>) sessions, dispatcher);
+        new ShellCompleter(
+            (SessionManager<io.jafar.shell.core.Session>) (SessionManager<?>) sessions, dispatcher);
   }
 
   @Override

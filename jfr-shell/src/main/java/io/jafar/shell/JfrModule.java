@@ -87,7 +87,9 @@ public final class JfrModule implements ShellModule {
   @Override
   public Completer getCompleter(SessionManager<?> sessions, Object context) {
     CommandDispatcher dispatcher = context instanceof CommandDispatcher cd ? cd : null;
-    return new ShellCompleter((SessionManager<JFRSession>) sessions, dispatcher);
+    // Erasure-safe: any SessionManager<? extends Session> is the same object as a
+    // SessionManager<Session>; ShellCompleter narrows per-call where it needs JFRSession.
+    return new ShellCompleter((SessionManager<io.jafar.shell.core.Session>) sessions, dispatcher);
   }
 
   @Override
