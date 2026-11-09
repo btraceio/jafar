@@ -2434,6 +2434,195 @@ public final class JfrPathEvaluator {
     return out;
   }
 
+  /**
+   * Per-event predicate evaluation for live streaming ({@code tail}): evaluates the query's event
+   * type membership (single or multi-type) and its bracket predicates against ONE event map — the
+   * same predicate semantics {@link #consume} applies per event over a file.
+   *
+   * <p>Pipeline operators are NOT evaluated here; use {@link #applyEventOps} for the per-event
+   * subset.
+   */
+  public boolean matchesEvent(Query query, Map<String, Object> event) {
+    if (query.root != Root.EVENTS) {
+      throw new UnsupportedOperationException("per-event matching only supports 'events/' queries");
+    }
+    if (!query.eventTypes.isEmpty()) {
+      if (query.isMultiType) {
+        if (!new HashSet<>(query.eventTypes).contains(typeOf(event))) return false;
+      } else if (!query.eventTypes.get(0).equals(typeOf(event))) {
+        return false;
+      }
+    }
+    return matchesAll(event, query.predicates);
+  }
+
+  /**
+   * The event type name carried by an event map passed to {@link #matchesEvent} / {@link
+   * #applyEventOps}. Live callers deliver maps decorated with a {@code "__type"} key (or the
+   * reserved key below) because the raw map of field values does not carry the type.
+   */
+  public static final String EVENT_TYPE_KEY = "__eventType";
+
+  private static String typeOf(Map<String, Object> event) {
+    Object t = event.get(EVENT_TYPE_KEY);
+    return t != null ? String.valueOf(t) : null;
+  }
+
+  /**
+   * Applies the per-event-capable subset of the pipeline to ONE event map: {@code filter}, {@code
+   * select}, {@code len}, string/number transforms ({@code uppercase}, {@code lowercase}, {@code
+   * trim}, {@code abs}, {@code round}, {@code floor}, {@code ceil}), {@code formatduration}, {@code
+   * contains}, {@code replace}, {@code asdatetime}. Returns the transformed map, or {@code null}
+   * when a filter op excluded the event.
+   *
+   * <p>Row-set operators (aggregations, ordering, windowing — {@code count}, {@code groupBy},
+   * {@code top}, {@code sortby}, {@code head/tail}, {@code distinct}, {@code toMap}, {@code
+   * timeRange}, {@code quantiles}, {@code stats}, {@code sum}, {@code stackprofile}, {@code
+   * flamegraph}, {@code crossref}, {@code decorate*}, {@code sketch}) throw {@link
+   * UnsupportedPipelineOperationException} naming the operator: they need the full row set, which
+   * does not exist in a live stream.
+   */
+  public Map<String, Object> applyEventOps(
+      List<JfrPath.PipelineOp> pipeline, Map<String, Object> event) {
+    Map<String, Object> current = event;
+    if (pipeline == null) return current;
+    for (JfrPath.PipelineOp op : pipeline) {
+      current = applyEventOp(current, op);
+      if (current == null) return null;
+    }
+    return current;
+  }
+
+  private Map<String, Object> applyEventOp(Map<String, Object> row, JfrPath.PipelineOp op) {
+    return switch (op) {
+      case JfrPath.FilterOp f -> matchesPredicate(row, f.predicate) ? row : null;
+      case JfrPath.ContainsOp co -> {
+        Object val = eventValue(row, co.valuePath);
+        yield val instanceof String s && s.contains(co.substr) ? row : null;
+      }
+      case JfrPath.SelectOp sel -> applySelectEvent(row, sel);
+      case JfrPath.LenOp len -> {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        Object val = eventValue(row, len.valuePath);
+        int l = 0;
+        if (val instanceof String s) {
+          l = s.length();
+        } else if (val instanceof Collection<?> c) {
+          l = c.size();
+        } else if (val != null && val.getClass().isArray()) {
+          l = java.lang.reflect.Array.getLength(val);
+        }
+        out.put("len", l);
+        yield out;
+      }
+      case JfrPath.UppercaseOp up -> stringTransformEvent(row, up.valuePath, String::toUpperCase);
+      case JfrPath.LowercaseOp lo -> stringTransformEvent(row, lo.valuePath, String::toLowerCase);
+      case JfrPath.TrimOp tr -> stringTransformEvent(row, tr.valuePath, String::trim);
+      case JfrPath.AbsOp ab -> numberTransformEvent(row, ab.valuePath, Math::abs);
+      case JfrPath.RoundOp ro -> numberTransformEvent(row, ro.valuePath, Math::round);
+      case JfrPath.FloorOp fl -> numberTransformEvent(row, fl.valuePath, Math::floor);
+      case JfrPath.CeilOp ce -> numberTransformEvent(row, ce.valuePath, Math::ceil);
+      case JfrPath.FormatDurationOp fd -> {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        Object val = eventValue(row, fd.valuePath);
+        if (val instanceof Number n) {
+          String formatted = formatDuration(n.longValue());
+          putTransformed(row, out, fd.valuePath, formatted);
+        }
+        yield out;
+      }
+      case JfrPath.ReplaceOp rp -> {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        Object val = eventValue(row, rp.valuePath);
+        if (val instanceof String s) {
+          putTransformed(row, out, rp.valuePath, s.replace(rp.target, rp.replacement));
+        }
+        yield out;
+      }
+      case JfrPath.AsDateTimeOp ft -> {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        Object val = eventValue(row, ft.valuePath);
+        if (val instanceof Number n) {
+          Instant instant = Instant.ofEpochSecond(0, n.longValue());
+          putTransformed(
+              row, out, ft.valuePath, getFormatter(ft.format).format(instant.atZone(SYSTEM_ZONE)));
+        }
+        yield out;
+      }
+      default -> throw new UnsupportedPipelineOperationException(opName(op));
+    };
+  }
+
+  private static Object eventValue(Map<String, Object> row, List<String> path) {
+    return path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+  }
+
+  private static void putTransformed(
+      Map<String, Object> original,
+      Map<String, Object> out,
+      List<String> path,
+      String transformed) {
+    String key = path.isEmpty() ? null : String.join("/", path);
+    if (key != null) {
+      out.put(key, transformed);
+    } else if (!original.isEmpty()) {
+      out.put(original.keySet().iterator().next(), transformed);
+    }
+  }
+
+  private static Map<String, Object> stringTransformEvent(
+      Map<String, Object> row, List<String> path, java.util.function.Function<String, String> fn) {
+    Object val = eventValue(row, path);
+    if (!(val instanceof String s)) {
+      return new LinkedHashMap<>(row);
+    }
+    Map<String, Object> out = new LinkedHashMap<>(row);
+    putTransformed(row, out, path, fn.apply(s));
+    return out;
+  }
+
+  private static Map<String, Object> numberTransformEvent(
+      Map<String, Object> row, List<String> path, java.util.function.DoubleUnaryOperator fn) {
+    Object val = eventValue(row, path);
+    if (!(val instanceof Number n)) {
+      return new LinkedHashMap<>(row);
+    }
+    double transformed = fn.applyAsDouble(n.doubleValue());
+    Map<String, Object> out = new LinkedHashMap<>(row);
+    // Same value type as the row-based applyNumberTransform: a double, not a string
+    String key = path.isEmpty() ? null : String.join("/", path);
+    if (key != null) {
+      out.put(key, transformed);
+    } else if (!row.isEmpty()) {
+      out.put(row.keySet().iterator().next(), transformed);
+    }
+    return out;
+  }
+
+  private Map<String, Object> applySelectEvent(Map<String, Object> row, JfrPath.SelectOp op) {
+    Map<String, Object> selected = new LinkedHashMap<>();
+    for (JfrPath.SelectItem item : op.items) {
+      String columnName = item.outputName();
+      Object value;
+      if (item instanceof JfrPath.FieldSelection fieldSel) {
+        value = Values.get(row, fieldSel.fieldPath.toArray());
+      } else if (item instanceof JfrPath.ExpressionSelection exprSel) {
+        value = evaluateExpression(exprSel.expression, row);
+      } else {
+        throw new IllegalStateException("Unknown SelectItem type");
+      }
+      selected.put(columnName, value);
+    }
+    return selected;
+  }
+
+  private static String opName(JfrPath.PipelineOp op) {
+    String simple = op.getClass().getSimpleName();
+    return simple.endsWith("Op")
+        ? simple.substring(0, simple.length() - 2).toLowerCase(java.util.Locale.ROOT)
+        : simple.toLowerCase(java.util.Locale.ROOT);
+  }
+
   private boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
     for (Predicate p : predicates) {
       if (p instanceof FieldPredicate fp) {
