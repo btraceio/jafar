@@ -20,7 +20,6 @@ import java.util.function.Consumer;
 import jdk.jfr.EventType;
 import jdk.jfr.ValueDescriptor;
 import jdk.jfr.consumer.RecordedEvent;
-import jdk.jfr.consumer.RecordedObject;
 import jdk.jfr.consumer.RecordingFile;
 
 /**
@@ -135,36 +134,9 @@ public final class JdkJfrBackend implements JfrBackend {
     }
 
     private static Map<String, Object> convertEvent(RecordedEvent event) {
-      Map<String, Object> map = new LinkedHashMap<>();
-      for (ValueDescriptor field : event.getFields()) {
-        String name = field.getName();
-        Object value = event.getValue(name);
-        map.put(name, convertValue(value));
-      }
-      return map;
-    }
-
-    private static Object convertValue(Object value) {
-      if (value == null) {
-        return null;
-      }
-      if (value instanceof RecordedObject ro) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        for (ValueDescriptor field : ro.getFields()) {
-          String name = field.getName();
-          map.put(name, convertValue(ro.getValue(name)));
-        }
-        return map;
-      }
-      if (value instanceof List<?> list) {
-        List<Object> result = new ArrayList<>(list.size());
-        for (Object item : list) {
-          result.add(convertValue(item));
-        }
-        return result;
-      }
-      // Primitives and strings pass through
-      return value;
+      // Shared with the live tail path; must stay byte-identical to the previous inline
+      // implementation (no decorations here — file-backend output shape is a contract).
+      return io.jafar.shell.live.LiveEventDecoder.decodeFields(event);
     }
   }
 
