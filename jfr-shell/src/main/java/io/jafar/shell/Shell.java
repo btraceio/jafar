@@ -440,6 +440,10 @@ public final class Shell implements AutoCloseable {
     terminal.writer().println();
     terminal.writer().println("Session Management:");
     terminal.writer().println("  open <path> [--alias NAME]     Open a recording as a new session");
+    terminal
+        .writer()
+        .println("  connect [<pid>] [--alias N]    List local JVMs / attach a live JFR session");
+    terminal.writer().println("  tail [filter] [--limit N]      Stream events from a live session");
     terminal.writer().println("  sessions                       List all sessions");
     terminal.writer().println("  use <id|alias>                 Switch current session");
     terminal.writer().println("  info [id|alias]                Show session information");

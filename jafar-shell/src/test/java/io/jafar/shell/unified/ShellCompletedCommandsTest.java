@@ -72,6 +72,9 @@ class ShellCompletedCommandsTest {
         run("endif"); // a bare 'if' opens a (false) block; close it so later lines still run
       }
     }
+    // connect/tail are jfr-shell-only (live streaming ships in jfr-shell, issue #92; the
+    // unified shell is an explicit Phase-1 exclusion — doc/design/jfr-event-streaming.md).
+    refused.removeAll(List.of("connect", "tail"));
     assertEquals(List.of(), refused, "offered by completion, refused by the shell");
   }
 

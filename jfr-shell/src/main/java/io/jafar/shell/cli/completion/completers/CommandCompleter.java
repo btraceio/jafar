@@ -13,6 +13,8 @@ public final class CommandCompleter implements ContextCompleter {
 
   private static final String[] COMMANDS = {
     "open",
+    "connect",
+    "tail",
     "sessions",
     "use",
     "session",

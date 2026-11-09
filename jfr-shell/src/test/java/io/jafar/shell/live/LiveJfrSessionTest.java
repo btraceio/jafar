@@ -47,7 +47,11 @@ class LiveJfrSessionTest {
         seen++;
       }
       assertTrue(seen >= 100, "expected at least 100 events, got " + seen);
-      assertEquals("running", session.getStreamState());
+      // A finite file stream may already have hit EOF and closed itself — that is correct;
+      // the state must simply never be an error.
+      assertTrue(
+          session.getStreamState().equals("running") || session.getStreamState().equals("closed"),
+          session.getStreamState());
     }
   }
 
@@ -126,7 +130,9 @@ class LiveJfrSessionTest {
       assertEquals(recording().toString(), stats.get("repository"));
       assertInstanceOf(Long.class, stats.get("eventsSeen"));
       assertTrue((Long) stats.get("eventsSeen") >= 1);
-      assertEquals("running", stats.get("state"));
+      assertTrue(
+          stats.get("state").equals("running") || stats.get("state").equals("closed"),
+          String.valueOf(stats.get("state")));
       assertInstanceOf(String.class, stats.get("attachedAt"));
       assertEquals("jfr-live", session.getType());
       assertEquals(Path.of("live-pid-4242"), session.getFilePath());

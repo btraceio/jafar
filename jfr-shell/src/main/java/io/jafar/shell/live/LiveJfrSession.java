@@ -78,14 +78,25 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
           }
         });
     this.stream.onEvent(this::enqueue);
-    this.stream.onClose(() -> streamState.compareAndSet("running", "closed"));
-    this.stream.onError(e -> streamState.compareAndSet("running", "error: " + e.getMessage()));
+    this.stream.onClose(
+        () -> {
+          streamState.compareAndSet("starting", "closed");
+          streamState.compareAndSet("running", "closed");
+        });
+    this.stream.onError(
+        e -> {
+          streamState.compareAndSet("starting", "error: " + e.getMessage());
+          streamState.compareAndSet("running", "error: " + e.getMessage());
+        });
   }
 
   /** Starts the stream ({@code startAsync}). Call once, after construction. */
   public void start() {
     stream.startAsync();
-    streamState.set("running");
+    // startAsync's dispatch may deliver ALL events and close (openFile reaches EOF) before
+    // this line runs — the close/error transitions below are CAS-based so that overwriting
+    // "closed"/"error" back to "running" here is impossible.
+    streamState.compareAndSet("starting", "running");
   }
 
   /** Factory for the underlying {@link EventStream} (injection seam for tests). */

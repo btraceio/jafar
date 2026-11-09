@@ -32,7 +32,18 @@ public final class LiveEventDecoder {
 
   /** Full live conversion: field map with startTime/duration rewritten to absolute values. */
   public static Map<String, Object> decode(RecordedEvent event) {
-    Map<String, Object> map = decodeFields(event);
+    // Lenient per-field conversion: a single unconvertible field (e.g. the stackTrace quirk,
+    // see the follow-up issue) must not kill a live stream, so it degrades to a marker. The
+    // file backend keeps the strict path.
+    Map<String, Object> map = new java.util.LinkedHashMap<>();
+    for (ValueDescriptor field : event.getFields()) {
+      String name = field.getName();
+      try {
+        map.put(name, convertValue(event.getValue(name)));
+      } catch (RuntimeException e) {
+        map.put(name, "<unconvertible: " + e.getClass().getSimpleName() + ">");
+      }
+    }
     // The built-in startTime/duration field values from the raw flatten are chunk-relative
     // ticks; rewrite them with the absolute values the query pipeline's time handling expects.
     // JFR reserves these field names — no custom event type can declare its own.

@@ -32,6 +32,12 @@ import io.jafar.shell.core.scripting.VariableSubstitutor;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import io.jafar.shell.live.DefaultLiveStreams;
+import io.jafar.shell.live.JvmProcess;
+import io.jafar.shell.live.JvmProcesses;
+import io.jafar.shell.live.LiveJfrSession;
+import io.jafar.shell.live.LiveStreams;
+import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.providers.ChunkProvider;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
@@ -89,6 +95,12 @@ public class CommandDispatcher {
   private final JfrSelector selector;
   private QueryEvaluator moduleEvaluator;
   private LlmCommands llmCommands;
+
+  // Live streaming (issue #92): injectable so tests drive connect/tail with fakes.
+  private LiveStreams liveStreams = DefaultLiveStreams.INSTANCE;
+  // >0 while dispatch is executing inside runScript — tail requires --limit there because
+  // script output is buffered to script end and no interrupt path exists.
+  private int scriptDepth;
 
   // The last query typed by hand and its rows, so `explain` can describe what you are looking at.
   // Held here rather than pushed into LlmCommands on every query, because constructing that is
@@ -299,6 +311,10 @@ public class CommandDispatcher {
                     }
                     return List.of();
                   }
+                  if (cur.isPresent() && cur.get().session instanceof LiveJfrSession) {
+                    throw new IllegalStateException(
+                        "LLM queries are not supported for a live session (use tail)");
+                  }
                   throw new IllegalStateException("No query evaluator available for this session");
                 }
 
@@ -375,6 +391,32 @@ public class CommandDispatcher {
       return jfr;
     }
     return null;
+  }
+
+  /** Returns the current session as a live streaming session, or {@code null}. */
+  private LiveJfrSession currentLiveSession() {
+    var cur = sessions.current();
+    if (cur.isPresent() && cur.get().session instanceof LiveJfrSession live) {
+      return live;
+    }
+    return null;
+  }
+
+  /**
+   * Guard for file-bound commands while a live session is current: prints the standard message and
+   * returns true (caller should stop). File sessions pass through (returns false).
+   */
+  private boolean liveSessionGuard(String what) {
+    if (currentLiveSession() != null) {
+      io.error(what + " is not supported for a live session (use tail)");
+      return true;
+    }
+    return false;
+  }
+
+  /** Replaces the live-discovery seam (tests inject fakes here). */
+  public void setLiveStreams(LiveStreams liveStreams) {
+    this.liveStreams = java.util.Objects.requireNonNull(liveStreams, "liveStreams");
   }
 
   // The recording's own documentation for its event types, read once per recording. Parsing
@@ -743,6 +785,7 @@ public class CommandDispatcher {
       List<String> lines, List<String> arguments, boolean continueOnError) {
     Conditionals callers = conditionals;
     conditionals = new Conditionals();
+    scriptDepth++;
     try {
       ScriptRunner runner =
           new ScriptRunner(
@@ -761,6 +804,7 @@ public class CommandDispatcher {
       return new ScriptRunner.ExecutionResult(result.getSuccessCount(), errors);
     } finally {
       conditionals = callers;
+      scriptDepth--;
     }
   }
 
@@ -793,6 +837,7 @@ public class CommandDispatcher {
 
       // Handle 'events' alias (equivalent to 'show events ...')
       if (cmd.equals("events") || cmd.startsWith("events/")) {
+        if (liveSessionGuard("event queries")) return true;
         if (currentJfrSession() == null) return false;
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
@@ -803,6 +848,7 @@ public class CommandDispatcher {
 
       // Handle 'metadata/...' as a direct query (equivalent to 'show metadata/...')
       if (cmd.startsWith("metadata/")) {
+        if (liveSessionGuard("metadata queries")) return true;
         if (currentJfrSession() == null) return false;
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
@@ -813,6 +859,7 @@ public class CommandDispatcher {
 
       // Handle 'constants/...' as a direct query (equivalent to 'show constants/...')
       if (cmd.startsWith("constants/")) {
+        if (liveSessionGuard("constants queries")) return true;
         if (currentJfrSession() == null) return false;
         List<String> showArgs = new ArrayList<>(args.size() + 1);
         showArgs.add(parts[0]);
@@ -865,10 +912,19 @@ public class CommandDispatcher {
         case "info":
           cmdInfo(args);
           return true;
+        case "connect":
+          cmdConnect(args);
+          return true;
+        case "tail":
+          cmdTail(args);
+          return true;
         case "show":
         case "select":
           if ("select".equals(cmd) && verbose) {
             io.println("Note: 'select' is deprecated. Use 'show' instead.");
+          }
+          if (liveSessionGuard("show")) {
+            return true;
           }
           if (currentJfrSession() != null) {
             cmdShow(args, line);
@@ -886,6 +942,7 @@ public class CommandDispatcher {
           cmdHelp(args);
           return true;
         case "metadata":
+          if (liveSessionGuard("metadata")) return true;
           if (currentJfrSession() == null) return false;
           // Support: 'metadata class <name> [--tree|--json] [--fields] [--annotations]' and listing
           if (!args.isEmpty() && "class".equalsIgnoreCase(args.get(0))) {
@@ -895,6 +952,7 @@ public class CommandDispatcher {
           }
           return true;
         case "types":
+          if (liveSessionGuard("types")) return true;
           if (currentJfrSession() == null) return false;
           if (verbose) {
             io.println("Note: 'types' is deprecated. Use 'metadata' instead.");
@@ -902,15 +960,18 @@ public class CommandDispatcher {
           cmdTypes(args);
           return true;
         case "chunks":
+          if (liveSessionGuard("chunks")) return true;
           if (currentJfrSession() == null) return false;
           cmdChunks(args);
           return true;
         case "chunk":
+          if (liveSessionGuard("chunk")) return true;
           if (currentJfrSession() == null) return false;
           cmdChunk(args);
           return true;
         case "cp":
         case "constants":
+          if (liveSessionGuard("constants")) return true;
           if (currentJfrSession() == null) return false;
           cmdCp(args);
           return true;
@@ -931,6 +992,7 @@ public class CommandDispatcher {
           cmdInvalidate(args);
           return true;
         case "backend":
+          if (liveSessionGuard("backend")) return true;
           if (currentJfrSession() == null) return false;
           cmdBackend(args);
           return true;
@@ -1019,6 +1081,180 @@ public class CommandDispatcher {
     } else {
       sessions.current().ifPresent(listener::onCurrentSessionChanged);
     }
+  }
+
+  /**
+   * {@code connect} — no args: list local JVMs; {@code connect <pid> [--alias N] [--repository
+   * DIR]}: attach a live session to the target's JFR event repository and make it current.
+   */
+  private void cmdConnect(List<String> args) {
+    if (args.isEmpty() || args.get(0).startsWith("--")) {
+      cmdConnectList();
+      return;
+    }
+    String pidArg = args.get(0);
+    int pid;
+    try {
+      pid = Integer.parseInt(pidArg);
+      if (pid <= 0) throw new NumberFormatException();
+    } catch (NumberFormatException e) {
+      io.error("Usage: connect | connect <pid> [--alias NAME] [--repository <dir>]");
+      return;
+    }
+    String alias = null;
+    Path repository = null;
+    for (int i = 1; i < args.size(); i++) {
+      switch (args.get(i)) {
+        case "--alias" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--alias requires a name");
+            return;
+          }
+          alias = args.get(++i);
+        }
+        case "--repository" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--repository requires a directory");
+            return;
+          }
+          repository = Path.of(args.get(++i));
+        }
+        default -> {
+          io.error("Unknown connect option: " + args.get(i));
+          return;
+        }
+      }
+    }
+
+    if (repository == null) {
+      try {
+        repository = liveStreams.findRepository(pid);
+      } catch (Exception e) {
+        io.error("connect failed: " + e.getMessage());
+        return;
+      }
+    }
+
+    LiveJfrSession session;
+    try {
+      session = liveStreams.attach(pid, repository);
+    } catch (Exception e) {
+      io.error("connect failed: " + e.getMessage());
+      return;
+    }
+    try {
+      // Erasure bridge: the manager is typed SessionManager<? extends Session>; a live session
+      // registers through the Session-typed view (register is the manager's only mutation here).
+      @SuppressWarnings("unchecked")
+      SessionManager<Session> typed = (SessionManager<Session>) (SessionManager<?>) sessions;
+      typed.register(session, alias);
+    } catch (RuntimeException e) {
+      session.close();
+      io.error("connect failed: " + e.getMessage());
+      return;
+    }
+    io.println(
+        "Connected to PID "
+            + pid
+            + " (repository: "
+            + repository
+            + ")"
+            + (alias != null ? " as '" + alias + "'" : "")
+            + "; use 'tail' to stream events, 'close' to detach");
+  }
+
+  private void cmdConnectList() {
+    List<JvmProcess> processes;
+    try {
+      processes = liveStreams.listLocalJvm();
+    } catch (Exception e) {
+      io.error("Could not list local JVMs: " + e.getMessage());
+      return;
+    }
+    if (processes.isEmpty()) {
+      io.println("No local JVMs found (perf-data tree under " + JvmProcesses.tempBase() + ")");
+      return;
+    }
+    io.println("Local JVMs (use 'connect <pid>' to attach):");
+    for (JvmProcess p : processes) {
+      String cmd = p.command() == null ? "<unreadable>" : p.command();
+      if (cmd.length() > 90) {
+        cmd = cmd.substring(0, 89) + "…";
+      }
+      io.println("  " + p.pid() + "  " + (p.hasRepository() ? "[jfr] " : "      ") + cmd);
+    }
+    io.println("[jfr] = disk-backed JFR event repository found");
+  }
+
+  /**
+   * {@code tail [filter] [--limit N] [--format table|json]} — stream events from the live session
+   * captured at command start until interrupted, the target closes, or the limit is reached. In
+   * script mode {@code --limit} is required (no interrupt path, buffered output).
+   */
+  private void cmdTail(List<String> args) {
+    LiveJfrSession session = currentLiveSession();
+    if (session == null) {
+      io.error("No live session open (use 'connect <pid>' first)");
+      return;
+    }
+    long limit = -1;
+    String format = "table";
+    List<String> filterParts = new ArrayList<>();
+    for (int i = 0; i < args.size(); i++) {
+      String a = args.get(i);
+      switch (a) {
+        case "--limit", "-l" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--limit requires a number");
+            return;
+          }
+          try {
+            limit = Long.parseLong(args.get(++i));
+            if (limit <= 0) throw new NumberFormatException();
+          } catch (NumberFormatException e) {
+            io.error("--limit requires a positive number");
+            return;
+          }
+        }
+        case "--format", "-f" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--format requires table|json");
+            return;
+          }
+          format = args.get(++i);
+          if (!format.equals("table") && !format.equals("json")) {
+            io.error("Unknown format: " + format + " (table|json)");
+            return;
+          }
+        }
+        default -> filterParts.add(a);
+      }
+    }
+    if (scriptDepth > 0 && limit <= 0) {
+      io.error("tail in script mode requires --limit (no interrupt path while a script runs)");
+      return;
+    }
+
+    io.jafar.shell.jfrpath.JfrPath.Query filter = null;
+    if (!filterParts.isEmpty()) {
+      String expr = String.join(" ", filterParts);
+      try {
+        filter = JfrPathParser.parse(expr);
+        if (filter.root != JfrPath.Root.EVENTS) {
+          io.error("tail filters must use the events root (e.g. 'events/jdk.ExecutionSample')");
+          return;
+        }
+      } catch (Exception e) {
+        io.error("Invalid tail filter: " + e.getMessage());
+        return;
+      }
+    }
+
+    TailRunner.Format fmt =
+        format.equals("json") ? TailRunner.Format.JSON : TailRunner.Format.TABLE;
+    // tail binds to the session captured NOW: a later 'use' does not re-target it; closing
+    // this session (or the target dying) ends the stream with a summary line.
+    TailRunner.run(session, filter, fmt, limit, new TailRunner.PrintSink(io));
   }
 
   private void cmdClose(List<String> args) throws Exception {
@@ -1546,6 +1782,8 @@ public class CommandDispatcher {
       io.println("");
       io.println("Session commands:");
       io.println("  open      - Open a file");
+      io.println("  connect   - List local JVMs / attach a live JFR session (connect <pid>)");
+      io.println("  tail      - Stream events from a live session (tail [filter] [--limit N])");
       io.println("  close     - Close session");
       io.println("  sessions  - List open sessions");
       io.println("  use       - Switch to session");
@@ -1598,6 +1836,38 @@ public class CommandDispatcher {
         || "explain".equals(sub)
         || "llm".equals(sub)) {
       io.println(LlmCommands.helpText());
+      return;
+    }
+    if ("connect".equals(sub)) {
+      io.println("Usage: connect | connect <pid> [--alias NAME] [--repository <dir>]");
+      io.println("List local JVMs, or attach to a running JVM's JFR event repository");
+      io.println("(JEP-349 style live streaming, no attach API, local machine only).");
+      io.println("");
+      io.println("Options:");
+      io.println("  --alias NAME       Name the live session (for 'use NAME')");
+      io.println("  --repository DIR   Use this JFR repository directory instead of discovery");
+      io.println("");
+      io.println("Notes:");
+      io.println("  - The target needs a DISK-backed recording (e.g.");
+      io.println("    -XX:StartFlightRecording=disk=true); in-memory recordings only");
+      io.println("    reach the repository at rotation/dump.");
+      io.println("  - While a live session is current, file-bound commands (show, metadata,");
+      io.println("    chunks, cp) are not available - use 'tail' to stream events.");
+      io.println("  - 'close' detaches. The target JVM is never modified.");
+      return;
+    }
+    if ("tail".equals(sub)) {
+      io.println("Usage: tail [filter] [--limit N] [--format table|json]");
+      io.println("Stream events from the current live session until Ctrl-C, the target");
+      io.println("JVM exits, or the limit is reached. Filter is a JfrPath expression with");
+      io.println("per-event operators only (filter/select/transforms) - aggregations like");
+      io.println("count()/groupBy() need the full row set and are rejected.");
+      io.println("");
+      io.println("Examples:");
+      io.println("  tail                                        # all events");
+      io.println("  tail events/jdk.ExecutionSample             # one type only");
+      io.println("  tail \"events/jdk.FileRead | filter(bytesRead > 0)\"");
+      io.println("  tail events/jdk.FileRead --limit 100 --format json");
       return;
     }
     if ("events".equals(sub)) {
