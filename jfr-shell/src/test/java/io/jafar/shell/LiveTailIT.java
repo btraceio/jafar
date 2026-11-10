@@ -22,9 +22,27 @@ import picocli.CommandLine;
  * process spawning and the platform's hsperfdata/repository conventions; on platforms where
  * discovery does not find the child's repository the test reports what it searched (see the PR's
  * not-verified section).
+ *
+ * <p>Output is captured via {@link Main.TailCommand}'s package-private PrintStream overrides
+ * ({@code outOverride}/{@code errOverride}), NOT by swapping the process-global streams from worker
+ * threads — no global {@code System.out}/{@code System.err} state is touched, so no sequential
+ * hand-off, resource locks, or top-level restore are needed.
  */
 @Timeout(180)
 class LiveTailIT {
+
+  /**
+   * Builds a fresh CLI whose one-shot {@code tail} command writes to the given streams via the
+   * injectable overrides (picocli instantiates annotation-declared subcommands eagerly at
+   * construction, so this is the same instance {@code execute} runs).
+   */
+  private static CommandLine cliWith(PrintStream out, PrintStream err) {
+    CommandLine cli = new CommandLine(new Main());
+    Main.TailCommand tail = (Main.TailCommand) cli.getSubcommands().get("tail").getCommand();
+    tail.outOverride = out;
+    tail.errOverride = err;
+    return cli;
+  }
 
   private static final String EMITTER_SOURCE =
       """
@@ -44,11 +62,6 @@ class LiveTailIT {
       """;
 
   private static final String EVENT_TYPE = "LiveTailEmitter$Heartbeat";
-
-  private static void restore(PrintStream out, PrintStream err, PrintStream o, PrintStream e) {
-    System.setOut(o);
-    System.setErr(e);
-  }
 
   @Test
   void liveTailEndToEnd() throws Exception {
@@ -74,8 +87,10 @@ class LiveTailIT {
       long deadline = System.currentTimeMillis() + 30_000;
       while (System.currentTimeMillis() < deadline) {
         try {
-          repo = JvmProcesses.findRepository((int) childPid).orElse(null);
-          if (repo != null) break;
+          // throwing contract: not-found throws, so poll = catch-and-retry (the child JVM may
+          // not have written its repository yet when discovery first runs)
+          repo = JvmProcesses.findRepository((int) childPid);
+          break;
         } catch (Exception ignored) {
           // not up yet
         }
@@ -91,16 +106,9 @@ class LiveTailIT {
           new Thread(
               () -> {
                 PrintStream ps = new PrintStream(out);
-                PrintStream origOut = System.out, origErr = System.err;
-                System.setOut(ps);
-                System.setErr(ps);
                 try {
-                  rc.set(
-                      new CommandLine(new Main())
-                          .execute("tail", Long.toString(childPid), "--limit", "5"));
+                  rc.set(cliWith(ps, ps).execute("tail", Long.toString(childPid), "--limit", "5"));
                 } finally {
-                  System.setOut(origOut);
-                  System.setErr(origErr);
                   done.countDown();
                 }
               });
@@ -124,12 +132,9 @@ class LiveTailIT {
           new Thread(
               () -> {
                 PrintStream ps = new PrintStream(filtered);
-                PrintStream origOut = System.out, origErr = System.err;
-                System.setOut(ps);
-                System.setErr(ps);
                 try {
                   rc2.set(
-                      new CommandLine(new Main())
+                      cliWith(ps, ps)
                           .execute(
                               "tail",
                               Long.toString(childPid),
@@ -137,8 +142,6 @@ class LiveTailIT {
                               "--limit",
                               "3"));
                 } finally {
-                  System.setOut(origOut);
-                  System.setErr(origErr);
                   done2.countDown();
                 }
               });
@@ -165,14 +168,9 @@ class LiveTailIT {
                         }
                       }
                     };
-                PrintStream origOut = System.out, origErr = System.err;
-                System.setOut(ps);
-                System.setErr(ps);
                 try {
-                  rc3.set(new CommandLine(new Main()).execute("tail", Long.toString(childPid)));
+                  rc3.set(cliWith(ps, ps).execute("tail", Long.toString(childPid)));
                 } finally {
-                  System.setOut(origOut);
-                  System.setErr(origErr);
                   done3.countDown();
                 }
               });
@@ -237,14 +235,9 @@ class LiveTailIT {
                         }
                       }
                     };
-                PrintStream origOut = System.out, origErr = System.err;
-                System.setOut(ps);
-                System.setErr(ps);
                 try {
-                  rc4.set(new CommandLine(new Main()).execute("tail", Long.toString(childPid)));
+                  rc4.set(cliWith(ps, ps).execute("tail", Long.toString(childPid)));
                 } finally {
-                  System.setOut(origOut);
-                  System.setErr(origErr);
                   done4.countDown();
                 }
               });

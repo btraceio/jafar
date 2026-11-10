@@ -127,8 +127,7 @@ class JvmProcessesTest {
     syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
 
     var found = JvmProcesses.findRepository(pid, base);
-    assertTrue(found.isPresent());
-    assertEquals("2026_11_09_10_00_00_" + pid, found.get().getFileName().toString());
+    assertEquals("2026_11_09_10_00_00_" + pid, found.getFileName().toString());
   }
 
   @Test
@@ -182,19 +181,164 @@ class JvmProcessesTest {
     assertThrows(IOException.class, () -> JvmProcesses.findRepository(pid, base));
   }
 
+  /**
+   * Exercises the owner-ACCEPT side of the {@code isPlausibleRepository} owner check (owner ==
+   * user.name). The owner-REJECTION branch is NOT covered here: changing a file's owner requires
+   * privileges, so a mismatch cannot be synthesized in this fixture — see {@link
+   * #foreignOwnerRepositoryIsRejectedViaSeam} for the parameterized-seam coverage.
+   */
   @Test
-  void foreignOwnerRepositoryIsRejected() throws Exception {
+  void ownedRepositoryIsAccepted() throws Exception {
     int pid = (int) ProcessHandle.current().pid();
     Path base = syntheticBase(pid);
     Path repo = syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
     try {
       Files.setPosixFilePermissions(repo, PosixFilePermissions.fromString("rwxrwxrwx"));
-      // owner cannot be changed without privileges; the owner check compares against
-      // user.name, so verify the check accepts our own and exercises the code path
-      assertTrue(JvmProcesses.findRepository(pid, base).isPresent());
+      assertNotNull(JvmProcesses.findRepository(pid, base));
     } catch (UnsupportedOperationException e) {
       // non-POSIX filesystem (Windows CI): permission model differs, skip
     }
+  }
+
+  /** True owner rejection, via the 3-arg hardening seam (synthetic current user). */
+  @Test
+  void foreignOwnerRepositoryIsRejectedViaSeam() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
+    var e =
+        assertThrows(
+            IOException.class, () -> JvmProcesses.findRepository(pid, base, "somebody-else"));
+    assertTrue(e.getMessage().contains("No JFR event repository"), e.getMessage());
+  }
+
+  /** Fail-closed hardening: a blank current user rejects every candidate. */
+  @Test
+  void blankCurrentUserIsRejectedFailClosed() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
+    assertThrows(IOException.class, () -> JvmProcesses.findRepository(pid, base, "  "));
+  }
+
+  /** A symlinked INNER entry (chunk file) rejects the whole candidate. */
+  @Test
+  void symlinkedInnerChunkEntryIsRejected() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    Path repo = syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
+    Path outside = Files.write(tmp.resolve("outside.bin"), new byte[] {'x'});
+    try {
+      Files.delete(repo.resolve("0_0.jfr"));
+      Files.createSymbolicLink(repo.resolve("planted.jfr"), outside);
+    } catch (UnsupportedOperationException | IOException e) {
+      // filesystem without symlink support: nothing to test here
+      return;
+    }
+    assertThrows(IOException.class, () -> JvmProcesses.findRepository(pid, base));
+  }
+
+  /** A 10-digit directory PID tail beyond int range is skipped, not a NumberFormatException. */
+  @Test
+  void overIntPidDirectoryNameIsSkippedNotFatal() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    Files.createDirectories(base.resolve("2026_11_09_10_00_00_9999999999"));
+    var e = assertThrows(IOException.class, () -> JvmProcesses.findRepository(pid, base));
+    assertTrue(e.getMessage().contains("No JFR event repository"), e.getMessage());
+  }
+
+  /** An oversize perf-data file is a reject boundary: null, never a truncated parse. */
+  @Test
+  void oversizePerfFileDegradesToNull() throws Exception {
+    Path big = tmp.resolve("perf-oversize");
+    byte[] valid = perfFile("x", ByteOrder.LITTLE_ENDIAN);
+    byte[] oversized = new byte[1024 * 1024 + 1];
+    System.arraycopy(valid, 0, oversized, 0, valid.length);
+    Files.write(big, oversized);
+    assertNull(JvmProcesses.readJavaCommand(big));
+  }
+
+  /** Invalid UTF-8 in the command vector degrades to null (strict decoder, no mojibake). */
+  @Test
+  void invalidUtf8CommandBytesDegradeToNull() throws Exception {
+    for (ByteOrder order : new ByteOrder[] {ByteOrder.LITTLE_ENDIAN, ByteOrder.BIG_ENDIAN}) {
+      byte[] bad = perfFile("ok", order);
+      // corrupt the command vector's first byte into a lone 0xFF (never valid UTF-8)
+      for (int i = 32; i < bad.length; i++) {
+        if (bad[i] == 'o' && i + 1 < bad.length && bad[i + 1] == 'k') {
+          bad[i] = (byte) 0xFF;
+          break;
+        }
+      }
+      Path f = tmp.resolve("perf-bad-utf8-" + order);
+      Files.write(f, bad);
+      assertNull(JvmProcesses.readJavaCommand(f), order.toString());
+    }
+  }
+
+  /** An entryLength crafted to overflow int arithmetic must not throw out of the parser. */
+  @Test
+  void overflowingEntryLengthDegradesToNull() throws Exception {
+    byte[] buf = new byte[64];
+    ByteBuffer b = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
+    b.order(ByteOrder.BIG_ENDIAN).putInt(0, 0xcafec0c0).order(ByteOrder.LITTLE_ENDIAN);
+    b.put(4, (byte) 0);
+    b.put(5, (byte) 2); // major
+    b.putInt(8, 64); // used
+    b.putInt(24, 32); // entry offset
+    b.putInt(28, 1); // num entries
+    b.position(32);
+    b.putInt(0x7FFFFFF0); // entryLength: entryStart + entryLength overflows int
+    b.putInt(4); // nameOffset
+    b.putInt(4); // vectorLength
+    b.put((byte) 'B');
+    b.put((byte) 0);
+    b.put((byte) 3);
+    b.put((byte) 1);
+    b.putInt(8); // dataOffset
+    Path f = tmp.resolve("perf-overflow");
+    Files.write(f, buf);
+    assertDoesNotThrow(() -> assertNull(JvmProcesses.readJavaCommand(f)));
+  }
+
+  /** Symlinked hsperfdata dir / PID file are skipped (planted-entry defense). */
+  @Test
+  void symlinkedPerfDataEntriesAreSkipped() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    Path outsidePerf = tmp.resolve("outside-perf");
+    Files.write(outsidePerf, perfFile("com.example.Outside", ByteOrder.LITTLE_ENDIAN));
+    try {
+      Files.createSymbolicLink(
+          base.resolve("hsperfdata_" + System.getProperty("user.name"))
+              .resolve(String.valueOf(pid)),
+          outsidePerf);
+    } catch (UnsupportedOperationException | IOException e) {
+      return; // no symlink support
+    }
+    List<JvmProcess> list = JvmProcesses.listLocalJvm(base);
+    // the symlinked PID file is skipped: any listed row for the pid is PID-only
+    for (JvmProcess p : list) {
+      if (p.pid() == pid) {
+        assertNull(p.command(), "symlinked PID file must not be read: " + p);
+      }
+    }
+  }
+
+  /** Shared repository index: multiple PIDs in one base walk, one row per PID. */
+  @Test
+  void listingCoversMultiplePidsWithOneBaseWalk() throws Exception {
+    int pid = (int) ProcessHandle.current().pid();
+    Path base = syntheticBase(pid);
+    syntheticRepo(base, pid, "2026_11_09_10_00_00_" + pid);
+    // a second PID with no repository: row still lists, repository null
+    Path hs = base.resolve("hsperfdata_" + System.getProperty("user.name"));
+    Files.write(hs.resolve("99999998"), new byte[] {'x'});
+    List<JvmProcess> list = JvmProcesses.listLocalJvm(base);
+    assertEquals(2, list.size());
+    assertTrue(list.get(0).hasRepository());
+    assertFalse(list.get(1).hasRepository());
   }
 
   @Test

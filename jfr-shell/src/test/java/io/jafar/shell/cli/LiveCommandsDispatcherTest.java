@@ -8,6 +8,7 @@ import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.live.JvmProcess;
 import io.jafar.shell.live.LiveJfrSession;
+import io.jafar.shell.live.LiveStreamView;
 import io.jafar.shell.live.LiveStreams;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -119,11 +120,29 @@ class LiveCommandsDispatcherTest {
           }
 
           @Override
-          public LiveJfrSession attach(int pid, Path repository) {
+          public LiveStreamView attach(int pid, Path repository) {
             return attachedSession;
+          }
+
+          @Override
+          public Path searchedBase() {
+            return Path.of("/fake-base");
           }
         };
     dispatcher.setLiveStreams(seam);
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void tearDown() throws Exception {
+    // closeAll covers every session registered during the test (attach alias, file session,
+    // the "second" live session); the direct close covers the unregistered attach leak. Both
+    // are idempotent (LiveJfrSession.close is guarded by the closed flag).
+    if (sm != null) {
+      sm.closeAll();
+    }
+    if (attachedSession != null) {
+      attachedSession.close();
+    }
   }
 
   // ---- connect ----
@@ -192,6 +211,32 @@ class LiveCommandsDispatcherTest {
           io.text().contains("not supported for a live session"),
           "'" + cmd + "' should be guarded, got: " + io.text());
     }
+  }
+
+  @Test
+  void lazyQueryVariablesAreGuardedUnderLiveSession() {
+    attachFirst();
+    io.clear();
+    dispatcher.dispatch("set v = events/jdk.FileRead");
+    assertTrue(
+        io.text().contains("lazy query variables is not supported for a live session"), io.text());
+    io.clear();
+    dispatcher.dispatch("vars");
+    assertFalse(io.text().contains("v "), io.text());
+  }
+
+  @Test
+  void setNonQueryFormsStillWorkUnderLiveSession() {
+    attachFirst();
+    io.clear();
+    assertTrue(dispatcher.dispatch("set x = 5"), io.text());
+    assertFalse(io.text().contains("not supported for a live session"), io.text());
+    io.clear();
+    assertTrue(dispatcher.dispatch("set output json"), io.text());
+    assertFalse(io.text().contains("not supported for a live session"), io.text());
+    io.clear();
+    assertTrue(dispatcher.dispatch("set llm.backend = ollama"), io.text());
+    assertFalse(io.text().contains("not supported for a live session"), io.text());
   }
 
   @Test
@@ -278,6 +323,15 @@ class LiveCommandsDispatcherTest {
   }
 
   @Test
+  void tailRejectsUnknownDashDashOptions() {
+    attachFirst();
+    assertTrue(dispatcher.dispatch("tail events/jdk.FileRead --limt 5"));
+    assertTrue(io.text().contains("Unknown tail option: --limt"), io.text());
+    // no streaming happened: no event rows, no summary
+    assertFalse(io.text().contains("tail finished"), io.text());
+  }
+
+  @Test
   void tailInScriptModeRequiresLimit() {
     attachFirst();
     // simulate script mode
@@ -286,6 +340,26 @@ class LiveCommandsDispatcherTest {
     io.clear();
     var result = dispatcher.runScript(List.of("tail --limit 2"), List.of(), false);
     assertFalse(result.hasErrors(), io.text());
+    assertTrue(io.text().contains("tail finished"), io.text());
+
+    // the guard's negative half: a bare tail inside a script must fail the script line
+    // (no interrupt path while a script runs)
+    io.clear();
+    var guarded = dispatcher.runScript(List.of("tail"), List.of(), false);
+    assertTrue(guarded.hasErrors(), io.text());
+    assertTrue(io.text().contains("requires --limit"), io.text());
+  }
+
+  @Test
+  void scriptDepthIsAlwaysDecremented() {
+    attachFirst();
+    // a script whose line errors must still leave the script-depth guard at 0 for later
+    // non-script dispatches (AtomicInteger decrement runs in finally)
+    var result = dispatcher.runScript(List.of("tail"), List.of(), false);
+    assertTrue(result.hasErrors(), io.text());
+    io.clear();
+    assertTrue(dispatcher.dispatch("tail --limit 1"), io.text());
+    assertFalse(io.text().contains("requires --limit"), io.text());
     assertTrue(io.text().contains("tail finished"), io.text());
   }
 
@@ -305,7 +379,8 @@ class LiveCommandsDispatcherTest {
     attachFirst();
     assertTrue(
         dispatcher.dispatch(
-            "tail events/io.jafar.shell.cli.LiveCommandsDispatcherTest$ProbeEvent --limit 2 --format json"));
+            "tail events/io.jafar.shell.cli.LiveCommandsDispatcherTest$ProbeEvent --limit 2"
+                + " --format json"));
     long jsonLines =
         io.text()
             .lines()

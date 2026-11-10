@@ -72,10 +72,29 @@ class ShellCompletedCommandsTest {
         run("endif"); // a bare 'if' opens a (false) block; close it so later lines still run
       }
     }
-    // connect/tail are jfr-shell-only (live streaming ships in jfr-shell, issue #92; the
-    // unified shell is an explicit Phase-1 exclusion — doc/design/jfr-event-streaming.md).
-    refused.removeAll(List.of("connect", "tail"));
     assertEquals(List.of(), refused, "offered by completion, refused by the shell");
+  }
+
+  /**
+   * Live streaming (connect/tail, issue #92) ships in jfr-shell only — the unified shell is an
+   * explicit Phase-1 exclusion (doc/design/jfr-event-streaming.md): Tab must never offer the two
+   * words (the module completer's list is filtered by Shell.UNRUN_FIRST_WORDS), and typing them
+   * must be refused loudly by the flagged-off dispatcher's guard, not with a bare "Unknown
+   * command".
+   */
+  @Test
+  void liveStreamingWordsAreNeitherOfferedNorSilentlyUnknown() {
+    run("open " + RECORDING);
+    List<String> offered = firstWords();
+    assertFalse(offered.contains("connect"), offered.toString());
+    assertFalse(offered.contains("tail"), offered.toString());
+
+    String connect = run("connect");
+    assertFalse(connect.contains("Unknown command"), connect);
+    assertTrue(connect.contains("not supported in this shell"), connect);
+    String tail = run("tail");
+    assertFalse(tail.contains("Unknown command"), tail);
+    assertTrue(tail.contains("not supported in this shell"), tail);
   }
 
   @Test

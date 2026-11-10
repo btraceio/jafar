@@ -106,6 +106,58 @@ class LiveJfrSessionTest {
     assertNull(session.pollEvent(100));
   }
 
+  /**
+   * E1: close() with a FULL queue must still deliver the end-marker — pollEvent terminates promptly
+   * instead of hanging forever (the bare non-blocking offer used to drop the marker when the
+   * 1024-slot queue was full).
+   */
+  @Test
+  @Timeout(60)
+  void closeGuaranteesMarkerUnderFullQueue() throws Exception {
+    LiveJfrSession session = newSession(recording());
+    // Do not consume: the queue fills to capacity and drop-oldest evicts.
+    long deadline = System.currentTimeMillis() + 30_000;
+    while (session.getReceivedCount() < 3000 && System.currentTimeMillis() < deadline) {
+      Thread.sleep(50);
+    }
+    assertTrue(session.getDroppedCount() > 0, "queue should be saturated");
+    session.close();
+    // Marker present even though the queue was full at close time: termination is bounded by
+    // backlog (<=1024) + marker.
+    boolean terminated = false;
+    for (int i = 0; i < 1100; i++) {
+      if (session.pollEvent(100) == null) {
+        terminated = true;
+        break;
+      }
+    }
+    assertTrue(terminated, "pollEvent must terminate after close with a full queue");
+  }
+
+  /**
+   * E2: with MORE events emitted than the queue holds, close() still ends the stream and every
+   * counted drop is a real event — never the end-marker (if the marker were evicted, this drain
+   * would never terminate and the @Timeout would fail).
+   */
+  @Test
+  @Timeout(60)
+  void enqueueNeverEvictsMarker() throws Exception {
+    LiveJfrSession session = newSession(recording());
+    long deadline = System.currentTimeMillis() + 30_000;
+    while (session.getReceivedCount() < 3000 && System.currentTimeMillis() < deadline) {
+      Thread.sleep(50);
+    }
+    assertTrue(session.getReceivedCount() >= 3000);
+    session.close();
+    long drained = 0;
+    while (session.pollEvent(200) != null) {
+      drained++;
+      assertTrue(drained <= 1024, "draining exceeded the queue capacity — marker was evicted");
+    }
+    assertTrue(session.getDroppedCount() > 0);
+    assertTrue(session.isClosed());
+  }
+
   @Test
   @Timeout(60)
   void availableTypesArriveViaOnMetadata() throws Exception {
