@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -24,7 +25,7 @@ class ShowConstantPoolFilterTest {
   void filtersCpEntriesByStringEquality() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
@@ -32,7 +33,8 @@ class ShowConstantPoolFilterTest {
     // Load unfiltered symbol entries
     List<Map<String, Object>> all =
         evaluator.evaluate(
-            sessions.getCurrent().get().session, JfrPathParser.parse("cp/jdk.types.Symbol"));
+            (JFRSession) sessions.getCurrent().get().session,
+            JfrPathParser.parse("cp/jdk.types.Symbol"));
     assertFalse(all.isEmpty(), "Expected symbol entries");
 
     // Find one concrete string value
@@ -50,7 +52,8 @@ class ShowConstantPoolFilterTest {
     String expr =
         "cp/jdk.types.Symbol[string=\"" + match.replace("\\", "\\\\").replace("\"", "\\\"") + "\"]";
     List<Map<String, Object>> filtered =
-        evaluator.evaluate(sessions.getCurrent().get().session, JfrPathParser.parse(expr));
+        evaluator.evaluate(
+            (JFRSession) sessions.getCurrent().get().session, JfrPathParser.parse(expr));
     assertFalse(filtered.isEmpty(), "Expected at least one filtered row");
     assertTrue(filtered.size() <= all.size(), "Filtered size should be <= full size");
     for (Map<String, Object> r : filtered) {

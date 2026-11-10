@@ -2434,6 +2434,191 @@ public final class JfrPathEvaluator {
     return out;
   }
 
+  /**
+   * Per-event predicate evaluation for live streaming ({@code tail}): evaluates the query's event
+   * type membership (single or multi-type) and its bracket predicates against ONE event map — the
+   * same predicate semantics {@link #consume} applies per event over a file.
+   *
+   * <p>Pipeline operators are NOT evaluated here; use {@link #applyEventOps} for the per-event
+   * subset.
+   */
+  public boolean matchesEvent(Query query, String typeName, Map<String, Object> event) {
+    if (query.root != Root.EVENTS) {
+      throw new UnsupportedOperationException("per-event matching only supports 'events/' queries");
+    }
+    if (!matchesType(query, typeName)) return false;
+    return matchesAll(event, query.predicates);
+  }
+
+  /**
+   * Shared event-type membership rule for per-event matching: empty (or absent) eventTypes match
+   * all types; a multi-type query matches when the type name is listed; a single-type query matches
+   * on exact equality. Uses {@code List.contains} over the immutable query list — no per-event
+   * allocation on the live tail hot path.
+   */
+  public static boolean matchesType(Query query, String typeName) {
+    if (query.eventTypes == null || query.eventTypes.isEmpty()) return true;
+    // Immutable query lists reject contains(null); a null type name can only match the
+    // match-all (empty list) case above.
+    if (typeName == null) return false;
+    if (query.isMultiType) return query.eventTypes.contains(typeName);
+    return query.eventTypes.get(0).equals(typeName);
+  }
+
+  /**
+   * Applies the per-event-capable subset of the pipeline to ONE event map: {@code filter}, {@code
+   * select}, {@code len}, string/number transforms ({@code uppercase}, {@code lowercase}, {@code
+   * trim}, {@code abs}, {@code round}, {@code floor}, {@code ceil}), {@code formatduration}, {@code
+   * contains}, {@code replace}, {@code asdatetime}. Returns the transformed map, or {@code null}
+   * when a filter op excluded the event.
+   *
+   * <p>Row-set operators (aggregations, ordering, windowing) throw {@link
+   * UnsupportedPipelineOperationException} naming the operator: they need the full row set, which
+   * does not exist in a live stream. The per-event-capable subset is declared per operator via
+   * {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op reaching this path is rejected
+   * by that check.
+   *
+   * <p>The input map is MUTATED IN PLACE by the transform operators ({@code len}, {@code
+   * uppercase}, {@code lowercase}, {@code trim}, {@code abs}, {@code round}, {@code floor}, {@code
+   * ceil}, {@code formatduration}, {@code replace}, {@code asdatetime}); callers must pass a
+   * per-event map they exclusively own (the live tail path passes a freshly decoded map). {@code
+   * select} still returns a new map (projection semantics).
+   */
+  public Map<String, Object> applyEventOps(
+      List<JfrPath.PipelineOp> pipeline, Map<String, Object> event) {
+    Map<String, Object> current = event;
+    if (pipeline == null) return current;
+    for (JfrPath.PipelineOp op : pipeline) {
+      current = applyEventOp(current, op);
+      if (current == null) return null;
+    }
+    return current;
+  }
+
+  private Map<String, Object> applyEventOp(Map<String, Object> row, JfrPath.PipelineOp op) {
+    if (!op.isPerEventApplicable()) {
+      throw new UnsupportedPipelineOperationException(opName(op));
+    }
+    return switch (op) {
+      case JfrPath.FilterOp f -> matchesPredicate(row, f.predicate) ? row : null;
+      case JfrPath.ContainsOp co -> {
+        Object val = eventValue(row, co.valuePath);
+        yield val instanceof String s && s.contains(co.substr) ? row : null;
+      }
+      case JfrPath.SelectOp sel -> applySelectEvent(row, sel);
+      case JfrPath.LenOp len -> {
+        Object val = eventValue(row, len.valuePath);
+        int l = 0;
+        if (val instanceof String s) {
+          l = s.length();
+        } else if (val instanceof Collection<?> c) {
+          l = c.size();
+        } else if (val != null && val.getClass().isArray()) {
+          l = java.lang.reflect.Array.getLength(val);
+        }
+        row.put("len", l);
+        yield row;
+      }
+      case JfrPath.UppercaseOp up -> stringTransformEvent(row, up.valuePath, String::toUpperCase);
+      case JfrPath.LowercaseOp lo -> stringTransformEvent(row, lo.valuePath, String::toLowerCase);
+      case JfrPath.TrimOp tr -> stringTransformEvent(row, tr.valuePath, String::trim);
+      case JfrPath.AbsOp ab -> numberTransformEvent(row, ab.valuePath, Math::abs);
+      case JfrPath.RoundOp ro -> numberTransformEvent(row, ro.valuePath, Math::round);
+      case JfrPath.FloorOp fl -> numberTransformEvent(row, fl.valuePath, Math::floor);
+      case JfrPath.CeilOp ce -> numberTransformEvent(row, ce.valuePath, Math::ceil);
+      case JfrPath.FormatDurationOp fd -> {
+        Object val = eventValue(row, fd.valuePath);
+        if (val instanceof Number n) {
+          String formatted = formatDuration(n.longValue());
+          putTransformed(row, fd.valuePath, formatted);
+        }
+        yield row;
+      }
+      case JfrPath.ReplaceOp rp -> {
+        Object val = eventValue(row, rp.valuePath);
+        if (val instanceof String s) {
+          putTransformed(row, rp.valuePath, s.replace(rp.target, rp.replacement));
+        }
+        yield row;
+      }
+      case JfrPath.AsDateTimeOp ft -> {
+        Object val = eventValue(row, ft.valuePath);
+        if (val instanceof Number n) {
+          Instant instant = Instant.ofEpochSecond(0, n.longValue());
+          putTransformed(
+              row, ft.valuePath, getFormatter(ft.format).format(instant.atZone(SYSTEM_ZONE)));
+        }
+        yield row;
+      }
+      default -> throw new AssertionError("per-event drift: " + opName(op));
+    };
+  }
+
+  private static Object eventValue(Map<String, Object> row, List<String> path) {
+    return path.isEmpty() ? row.values().iterator().next() : Values.get(row, path.toArray());
+  }
+
+  private static void putTransformed(
+      Map<String, Object> row, List<String> path, String transformed) {
+    String key = path.isEmpty() ? null : String.join("/", path);
+    if (key != null) {
+      row.put(key, transformed);
+    } else if (!row.isEmpty()) {
+      row.put(row.keySet().iterator().next(), transformed);
+    }
+  }
+
+  private static Map<String, Object> stringTransformEvent(
+      Map<String, Object> row, List<String> path, java.util.function.Function<String, String> fn) {
+    Object val = eventValue(row, path);
+    if (!(val instanceof String s)) {
+      return row;
+    }
+    putTransformed(row, path, fn.apply(s));
+    return row;
+  }
+
+  private static Map<String, Object> numberTransformEvent(
+      Map<String, Object> row, List<String> path, java.util.function.DoubleUnaryOperator fn) {
+    Object val = eventValue(row, path);
+    if (!(val instanceof Number n)) {
+      return row;
+    }
+    double transformed = fn.applyAsDouble(n.doubleValue());
+    // Same value type as the row-based applyNumberTransform: a double, not a string
+    String key = path.isEmpty() ? null : String.join("/", path);
+    if (key != null) {
+      row.put(key, transformed);
+    } else if (!row.isEmpty()) {
+      row.put(row.keySet().iterator().next(), transformed);
+    }
+    return row;
+  }
+
+  private Map<String, Object> applySelectEvent(Map<String, Object> row, JfrPath.SelectOp op) {
+    Map<String, Object> selected = new LinkedHashMap<>();
+    for (JfrPath.SelectItem item : op.items) {
+      String columnName = item.outputName();
+      Object value;
+      if (item instanceof JfrPath.FieldSelection fieldSel) {
+        value = Values.get(row, fieldSel.fieldPath.toArray());
+      } else if (item instanceof JfrPath.ExpressionSelection exprSel) {
+        value = evaluateExpression(exprSel.expression, row);
+      } else {
+        throw new IllegalStateException("Unknown SelectItem type");
+      }
+      selected.put(columnName, value);
+    }
+    return selected;
+  }
+
+  private static String opName(JfrPath.PipelineOp op) {
+    String simple = op.getClass().getSimpleName();
+    return simple.endsWith("Op")
+        ? simple.substring(0, simple.length() - 2).toLowerCase(java.util.Locale.ROOT)
+        : simple.toLowerCase(java.util.Locale.ROOT);
+  }
+
   private boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
     for (Predicate p : predicates) {
       if (p instanceof FieldPredicate fp) {
@@ -3669,6 +3854,16 @@ public final class JfrPathEvaluator {
   }
 
   private boolean matchOp(Object val, JfrPath.Op op, Object literal) {
+    if (literal == null) {
+      // Null-literal predicates are presence checks: 'field == null' matches a missing/null
+      // field, 'field != null' matches a present one. Other operators against null are
+      // meaningless and match nothing.
+      return switch (op) {
+        case EQ -> val == null;
+        case NE -> val != null;
+        default -> false;
+      };
+    }
     if (val == null) return false;
     int cmp = compareValues(val, literal);
     return switch (op) {

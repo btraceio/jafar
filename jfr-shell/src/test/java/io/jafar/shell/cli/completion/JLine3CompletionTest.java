@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -37,7 +38,7 @@ class JLine3CompletionTest {
 
   @TempDir Path tempDir;
 
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private ShellCompleter completer;
   private DefaultParser jlineParser;
 

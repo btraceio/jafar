@@ -54,3 +54,6 @@ doc/temp/
 
 # jqwik test run state
 .jqwik-database
+
+# Working notes from investigation sessions; not part of the repository
+scratch/

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -36,7 +37,7 @@ class CrossrefQueryFormsTest {
   private static final String QUERY = "constants/" + TYPE + " | crossref()";
 
   private CrossrefDecodeFailureTest.BufferIO io;
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private CommandDispatcher dispatcher;
 
   private static Path recording() {
@@ -87,7 +88,7 @@ class CrossrefQueryFormsTest {
   @Test
   void rowCarriesTheBackendFigures() throws Exception {
     Map<String, Object> expected = ConstantPoolProvider.crossref(recording(), TYPE);
-    JFRSession session = sessions.current().orElseThrow().session;
+    JFRSession session = (JFRSession) sessions.current().orElseThrow().session;
     List<Map<String, Object>> rows =
         new JfrPathEvaluator().evaluate(session, JfrPathParser.parse(QUERY));
 

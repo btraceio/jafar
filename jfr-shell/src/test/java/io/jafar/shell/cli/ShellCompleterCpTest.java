@@ -8,6 +8,7 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextAnalyzer;
 import io.jafar.shell.cli.completion.CompletionContextType;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -21,7 +22,7 @@ class ShellCompleterCpTest {
   @Test
   void suggestsCpTypes() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
@@ -29,7 +30,7 @@ class ShellCompleterCpTest {
               .thenReturn(Set.of("java.lang.Thread", "java.lang.Class"));
           return s;
         };
-    SessionManager<JFRSession> sm = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sm = new SessionManager<>(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);
@@ -54,14 +55,14 @@ class ShellCompleterCpTest {
             "java.lang.String",
             "jdk.types.Module",
             "jdk.types.ChunkHeader");
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAvailableConstantPoolTypes()).thenReturn(cpTypes);
           return s;
         };
-    SessionManager<JFRSession> sm = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sm = new SessionManager<>(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);
@@ -93,14 +94,14 @@ class ShellCompleterCpTest {
             "java.lang.String",
             "jdk.types.Module",
             "jdk.types.ChunkHeader");
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAvailableConstantPoolTypes()).thenReturn(cpTypes);
           return s;
         };
-    SessionManager<JFRSession> sm = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sm = new SessionManager<>(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);

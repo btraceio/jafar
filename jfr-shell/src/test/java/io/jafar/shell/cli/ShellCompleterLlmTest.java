@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,14 +32,14 @@ class ShellCompleterLlmTest {
 
   private static List<String> complete(String line) {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           Mockito.when(s.getRecordingPath()).thenReturn(path);
           Mockito.when(s.getAvailableTypes()).thenReturn(Set.of());
           return s;
         };
-    SessionManager<JFRSession> sessions = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sessions = new SessionManager<>(factory, ctx);
     ShellCompleter completer = new ShellCompleter(sessions, null);
     List<Candidate> candidates = new ArrayList<>();
     completer.complete(null, new ShellCompleterTest.SimpleParsedLine(line), candidates);

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import java.io.IOException;
@@ -664,7 +665,7 @@ class ScriptRunnerTest {
 
   /** A real dispatcher (conditionals live there) whose output is captured. */
   private static CommandDispatcher realDispatcher(List<String> out, List<String> err) {
-    SessionManager<JFRSession> sm =
+    SessionManager<Session> sm =
         new SessionManager<>((path, c) -> Mockito.mock(JFRSession.class), ParsingContext.create());
     return new CommandDispatcher(
         sm,

@@ -322,7 +322,16 @@ public final class JfrPath {
           StackProfileOp,
           AsDateTimeOp,
           FlameGraphOp,
-          CrossrefOp {}
+          CrossrefOp {
+
+    /**
+     * Whether this operator is applicable to a single streamed event (live tail path). Row-set
+     * operators (aggregations, ordering, windowing) return the default {@code false}.
+     */
+    default boolean isPerEventApplicable() {
+      return false;
+    }
+  }
 
   public static final class CountOp implements PipelineOp {}
 
@@ -453,6 +462,11 @@ public final class JfrPath {
   }
 
   public static final class FilterOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final Predicate predicate;
 
     public FilterOp(Predicate predicate) {
@@ -469,6 +483,11 @@ public final class JfrPath {
   }
 
   public static final class LenOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath; // optional
 
     public LenOp(List<String> valuePath) {
@@ -477,6 +496,11 @@ public final class JfrPath {
   }
 
   public static final class UppercaseOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public UppercaseOp(List<String> valuePath) {
@@ -485,6 +509,11 @@ public final class JfrPath {
   }
 
   public static final class LowercaseOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public LowercaseOp(List<String> valuePath) {
@@ -493,6 +522,11 @@ public final class JfrPath {
   }
 
   public static final class TrimOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public TrimOp(List<String> valuePath) {
@@ -501,6 +535,11 @@ public final class JfrPath {
   }
 
   public static final class AbsOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public AbsOp(List<String> valuePath) {
@@ -509,6 +548,11 @@ public final class JfrPath {
   }
 
   public static final class RoundOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public RoundOp(List<String> valuePath) {
@@ -517,6 +561,11 @@ public final class JfrPath {
   }
 
   public static final class FloorOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public FloorOp(List<String> valuePath) {
@@ -525,6 +574,11 @@ public final class JfrPath {
   }
 
   public static final class CeilOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public CeilOp(List<String> valuePath) {
@@ -533,6 +587,11 @@ public final class JfrPath {
   }
 
   public static final class FormatDurationOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
 
     public FormatDurationOp(List<String> valuePath) {
@@ -541,6 +600,11 @@ public final class JfrPath {
   }
 
   public static final class ContainsOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
     public final String substr;
 
@@ -551,6 +615,11 @@ public final class JfrPath {
   }
 
   public static final class ReplaceOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
     public final String target;
     public final String replacement;
@@ -660,6 +729,11 @@ public final class JfrPath {
 
   /** select(field1,field2,...) - Project only specified fields from events */
   public static final class SelectOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<SelectItem> items;
 
     public SelectOp(List<SelectItem> items) {
@@ -786,6 +860,11 @@ public final class JfrPath {
   }
 
   public static final class AsDateTimeOp implements PipelineOp {
+    @Override
+    public boolean isPerEventApplicable() {
+      return true;
+    }
+
     public final List<String> valuePath;
     public final String format;
 

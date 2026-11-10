@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,7 +30,7 @@ class QuestionPrefixTest {
   @BeforeEach
   void setUp() {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
@@ -37,7 +38,7 @@ class QuestionPrefixTest {
           when(s.getType()).thenReturn("jfr");
           return s;
         };
-    SessionManager<JFRSession> sessions = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sessions = new SessionManager<>(factory, ctx);
     io = new CommandDispatcherTest.BufferIO();
     dispatcher = new CommandDispatcher(sessions, io, r -> {});
     dispatcher.dispatch("open " + Path.of("does-not-need-to-exist.jfr"));

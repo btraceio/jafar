@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,14 +23,14 @@ class JfrPathTransformOpsTest {
   void uppercaseOnCpSymbolString() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     // grab a baseline string
     var qStr = JfrPathParser.parse("cp/jdk.types.Symbol/string");
-    var vals = evaluator.evaluateValues(sessions.getCurrent().get().session, qStr);
+    var vals = evaluator.evaluateValues((JFRSession) sessions.getCurrent().get().session, qStr);
     String sample = null;
     for (Object v : vals) {
       if (v instanceof String s && !s.isEmpty()) {
@@ -41,7 +42,8 @@ class JfrPathTransformOpsTest {
 
     // transform via uppercase()
     var q = JfrPathParser.parse("cp/jdk.types.Symbol/string | uppercase()");
-    List<Map<String, Object>> rows = evaluator.evaluate(sessions.getCurrent().get().session, q);
+    List<Map<String, Object>> rows =
+        evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, q);
     assertFalse(rows.isEmpty());
     // find a row that matches our sample
     String up = sample.toUpperCase(java.util.Locale.ROOT);
@@ -60,13 +62,14 @@ class JfrPathTransformOpsTest {
   void roundOnCpuLoadMachineTotal() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var q = JfrPathParser.parse("events/jdk.CPULoad/machineTotal | round()");
-    List<Map<String, Object>> rows = evaluator.evaluate(sessions.getCurrent().get().session, q);
+    List<Map<String, Object>> rows =
+        evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, q);
     assertFalse(rows.isEmpty(), "Expected some rows");
     for (Map<String, Object> r : rows) {
       Object v = r.get("value");
@@ -80,15 +83,15 @@ class JfrPathTransformOpsTest {
   void floorAndCeilOnCpuLoad() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var q1 = JfrPathParser.parse("events/jdk.CPULoad/machineTotal | floor()");
     var q2 = JfrPathParser.parse("events/jdk.CPULoad/machineTotal | ceil()");
-    var r1 = evaluator.evaluate(sessions.getCurrent().get().session, q1);
-    var r2 = evaluator.evaluate(sessions.getCurrent().get().session, q2);
+    var r1 = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, q1);
+    var r2 = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, q2);
     assertFalse(r1.isEmpty());
     assertFalse(r2.isEmpty());
     for (Map<String, Object> m : r1) assertTrue(m.get("value") instanceof Number);
@@ -99,13 +102,13 @@ class JfrPathTransformOpsTest {
   void containsAndReplaceOnCpSymbol() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var qContains = JfrPathParser.parse("cp/jdk.types.Symbol/string | contains(\"java/\")");
-    var rows = evaluator.evaluate(sessions.getCurrent().get().session, qContains);
+    var rows = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, qContains);
     assertFalse(rows.isEmpty());
     Boolean sawTrue = false;
     for (Map<String, Object> m : rows) {
@@ -116,7 +119,7 @@ class JfrPathTransformOpsTest {
       }
     }
     var qReplace = JfrPathParser.parse("cp/jdk.types.Symbol/string | replace(\"/\",\".\")");
-    var rows2 = evaluator.evaluate(sessions.getCurrent().get().session, qReplace);
+    var rows2 = evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, qReplace);
     assertFalse(rows2.isEmpty());
     boolean hasDot = false;
     for (Map<String, Object> m : rows2) {
