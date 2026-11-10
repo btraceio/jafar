@@ -98,7 +98,10 @@ class LiveTailIT {
       }
       assertNotNull(repo, "child JFR repository not discovered within 30s for PID " + childPid);
 
-      // 2. events stream with correct values (limit exits cleanly with code 0)
+      // 2. events stream with correct values (limit exits cleanly with code 0). The tail is
+      // filtered to the emitter's heartbeat type: unfiltered, the first events to arrive are the
+      // JDK's own periodic events (ObjectAllocationSample, ExecutionSample) and under CI load
+      // they win the race to a small --limit window before any heartbeat is emitted.
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       AtomicInteger rc = new AtomicInteger(-1);
       CountDownLatch done = new CountDownLatch(1);
@@ -107,7 +110,14 @@ class LiveTailIT {
               () -> {
                 PrintStream ps = new PrintStream(out);
                 try {
-                  rc.set(cliWith(ps, ps).execute("tail", Long.toString(childPid), "--limit", "5"));
+                  rc.set(
+                      cliWith(ps, ps)
+                          .execute(
+                              "tail",
+                              Long.toString(childPid),
+                              "events/" + EVENT_TYPE,
+                              "--limit",
+                              "5"));
                 } finally {
                   done.countDown();
                 }
