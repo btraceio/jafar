@@ -87,7 +87,8 @@ script's 90-second cap; run it in the background for more than a few commands.
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
 evidence that it works. Confirmation messages lie — see R3.
 
-## R2. Enumerate every path before you call it wired
+| Variable stores | the global `VariableStore` and every open session's store: `set` can copy a lazy variable into any of them, so session close, `invalidate` and `unset` must reach all of them, in both shells (`Shell.closeSession`, `CommandDispatcher.forgetSession`) |
+| `show` of a variable | the whole-variable path and the substituted-query path: flags (`--limit`, `--format`) are substituted on both, and a jar test runs each with a variable-valued flag |
 
 When adding a capability, list every implementation of the interface and every dispatcher that could
 reach it, then check each one. Write the list down; do not do it from memory.
@@ -145,7 +146,7 @@ In this repository the recurring multiplicities are:
 > prompt are two paths; a constructor parameter must not share a name with a field that code in
 > the constructor reaches.
 
-## R3. A fallback that hides a misconfiguration is a bug
+A failure path that loses the failure is a fallback too. A command handler that prints an error and returns normally must record it through the shell's error channel ([Shells.md](Shells.md#scripting-is-shared-one-implementation-four-front-ends)); a `finally` must not run completion callbacks (`onArrayEnd`, `onComplexValueEnd`) on the failure path, where they can throw and replace the original exception. Check: the test that makes the operation fail asserts the original exception type, or the script's stop-on-error summary, not only that something failed.
 
 A `catch` that substitutes a default, a literal that stands in for a real value, a lookup that
 returns `null` and is quietly tolerated — each turns a loud failure into a wrong answer. Either
@@ -244,7 +245,7 @@ looks identical to the file not being read at all.
 > Pinned by `ParseErrorMessageTest` on `NodePoolFixture`. **A failure is only reported once its
 > reason reaches the reader; check what the prompt prints, not what the stack trace holds.**
 
-## R4. Documentation is code — run it
+R4 covers every command a change commits, not only prose: a `package.json` or Gradle script, a gate script and a CI step must each have been run on the final tree, with the result stated (R8). A gate script that nothing invokes (no npm script, no CI job, no row in [Gates.md](Gates.md)) is not a gate; wire it or delete it. Check: run each script the diff adds or edits (`npm run <name>`, `scripts/<gate>.sh`), and grep `.github/workflows/` for every new gate script.
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before
 committing them.
@@ -510,7 +511,7 @@ When a rule earns its place, add the one-line summary to the table in
 [AGENTS.md](../../AGENTS.md#read-this-first) as well — that table is what gets read; this file is
 what gets read second.
 
-## Keeping the rest of it honest
+- **A doc claim that restates a manifest field changes with that field.** Runtime floors, module format and entry points (`engines`, `exports`, `type` in `package.json`; toolchain versions in Gradle) are restated in READMEs and [Build.md](Build.md). When the diff touches one, grep the docs for the old value (for example `grep -rn 'Node.js 20' --include='*.md' .`) and update every hit in the same commit.
 
 The same obligation runs through `doc/agents/`:
 
