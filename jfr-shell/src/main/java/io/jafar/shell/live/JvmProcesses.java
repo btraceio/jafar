@@ -12,6 +12,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,12 +23,14 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>Process listing: scans the HotSpot perf-data tree ({@code <temp base>/hsperfdata_<user>/})
  *       for PID files. The temp base follows HotSpot {@code os::get_temp_directory()} semantics —
- *       hardcoded {@code /tmp} on POSIX, {@code %TEMP%}/{@code %TMP%} on Windows — NOT {@code
- *       java.io.tmpdir}, which a {@code -Djava.io.tmpdir} override moves independently while
- *       hsperfdata and the JFR repository stay put. Only a minimal subset of the perf-data format
- *       is parsed (prologue + entry walk for the {@code java.command} string counter), mirroring
- *       the reference layout in {@code sun.management.counter.perf}; any parse or permission
- *       failure degrades that row to PID-only and never aborts the listing.
+ *       hardcoded {@code /tmp} on Linux, the per-user Darwin temp dir on macOS, {@code
+ *       %TEMP%}/{@code %TMP%} on Windows — NOT {@code java.io.tmpdir} in general, which a {@code
+ *       -Djava.io.tmpdir} override moves independently while hsperfdata and the JFR repository stay
+ *       put. Symlinked {@code hsperfdata_*} directories and symlinked PID files are skipped like
+ *       repository candidates (planted-entry defense). Only a minimal subset of the perf-data
+ *       format is parsed (prologue + entry walk for the {@code java.command} string counter),
+ *       mirroring the reference layout in {@code sun.management.counter.perf}; any parse or
+ *       permission failure degrades that row to PID-only and never aborts the listing.
  *   <li>Repository lookup: HotSpot's JFR event repository lives at {@code <temp
  *       base>/<yyyy_MM_dd_HH_mm_ss>_<pid>} on all three platforms. {@code openRepository(Path)}'s
  *       built-in base-dir discovery picks the latest directory by mtime, which breaks on hosts
@@ -49,30 +52,52 @@ public final class JvmProcesses {
 
   private static final Pattern REPO_DIR_PATTERN = Pattern.compile(".*_(\\d{1,10})$");
 
+  /** Perf-data files above this size are rejected, never parsed from a truncated buffer. */
+  private static final long MAX_PERF_FILE_SIZE = 1024 * 1024;
+
   private JvmProcesses() {}
 
   /**
    * The HotSpot perf-data / JFR-repository temp base for this platform, mirroring {@code
-   * os::get_temp_directory()} per platform: Linux hardcodes {@code /tmp} (a target-side {@code
-   * -XX:AltTempDir} is not discoverable from outside — covered by the {@code --repository} flag);
-   * macOS uses the per-user Darwin temp dir (HotSpot {@code confstr(_CS_DARWIN_USER_TEMP_DIR)},
-   * which is what {@code $TMPDIR} points at); Windows uses {@code %TEMP%}/{@code %TMP%}. NOT {@code
-   * java.io.tmpdir} in general — a {@code -Djava.io.tmpdir} override moves that property while
-   * hsperfdata and the JFR repository stay put.
+   * os::get_temp_directory()} per platform:
+   *
+   * <ul>
+   *   <li>Linux: hardcoded {@code /tmp} (HotSpot hardcodes it; a target-side {@code -XX:AltTempDir}
+   *       is not discoverable from outside — covered by the {@code --repository} flag);
+   *   <li>macOS: {@code $TMPDIR} primary; when unset, the fallback is this JVM's {@code
+   *       java.io.tmpdir} default (initialized by HotSpot from the same {@code
+   *       confstr(_CS_DARWIN_USER_TEMP_DIR)} per-user value, gated to the Darwin {@code
+   *       /var/folders/} shape so a launcher-side {@code -Djava.io.tmpdir} override cannot move the
+   *       scan base), with {@code /tmp} as a final best-effort guess — a degraded environment may
+   *       miss discovery and needs {@code --repository};
+   *   <li>Windows: {@code %TEMP%}, then {@code %TMP%}, then {@code java.io.tmpdir} (the per-user
+   *       temp default), with {@code C:\\Temp} as a last-resort blank-property default.
+   * </ul>
+   *
+   * NOT {@code java.io.tmpdir} in general — a {@code -Djava.io.tmpdir} override moves that property
+   * while hsperfdata and the JFR repository stay put.
    */
   public static Path tempBase() {
     String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
     if (os.contains("windows")) {
       String t = System.getenv("TEMP");
       if (t == null || t.isBlank()) t = System.getenv("TMP");
-      if (t == null || t.isBlank()) t = "C:\\Temp";
+      if (t == null || t.isBlank()) t = System.getProperty("java.io.tmpdir", "C:\\Temp");
       return Path.of(t);
     }
     if (os.contains("mac") || os.contains("darwin")) {
       String t = System.getenv("TMPDIR");
       if (t != null && !t.isBlank()) return Path.of(t);
-      // fall through to the Darwin default, which is also java.io.tmpdir's default
+      // $TMPDIR unset (cron, non-login ssh, ...): HotSpot never consults $TMPDIR on macOS —
+      // os_bsd.cpp os::get_temp_directory() always uses confstr(_CS_DARWIN_USER_TEMP_DIR),
+      // whose value the JVM copies into the default java.io.tmpdir. Gate the fallback to the
+      // Darwin per-user shape so a -Djava.io.tmpdir override of THIS launcher cannot move the
+      // scan base; a degraded environment may miss discovery and needs --repository.
+      String tmpdir = System.getProperty("java.io.tmpdir");
+      if (tmpdir != null && tmpdir.startsWith("/var/folders/")) return Path.of(tmpdir);
     }
+    // last resort (HotSpot's own confstr-failure fallback on macOS); may miss JVMs —
+    // use --repository
     return Path.of("/tmp");
   }
 
@@ -88,17 +113,36 @@ public final class JvmProcesses {
   /** {@link #listLocalJvm()} over an explicit base — the test seam. */
   static List<JvmProcess> listLocalJvm(Path base) {
     List<JvmProcess> out = new ArrayList<>();
+    // One walk of the repository tree per call, shared across all rows (bucketed by PID) —
+    // never re-walk the base per row.
+    Map<Long, List<Path>> repoIndex;
+    try {
+      repoIndex = indexRepositoryDirs(base);
+    } catch (IOException e) {
+      repoIndex = Map.of();
+    }
     try (DirectoryStream<Path> hsdirs = Files.newDirectoryStream(base, "hsperfdata_*")) {
       for (Path hsdir : hsdirs) {
-        if (!Files.isDirectory(hsdir)) continue;
+        if (!Files.isDirectory(hsdir) || Files.isSymbolicLink(hsdir)) continue;
         try (DirectoryStream<Path> pids = Files.newDirectoryStream(hsdir)) {
           for (Path pidFile : pids) {
             Integer pid = parsePid(pidFile.getFileName().toString());
             if (pid == null) continue;
-            String command = readJavaCommand(pidFile);
+            // Symlinked or non-regular PID file: skip the command read (a planted FIFO would
+            // block the listing; a symlink may point outside the temp tree) but still list
+            // the row PID-only, matching the repository-path posture.
+            String command = null;
+            if (!Files.isSymbolicLink(pidFile) && Files.isRegularFile(pidFile)) {
+              command = readJavaCommand(pidFile);
+            }
             Path repo = null;
             try {
-              repo = findRepository(pid, base).orElse(null);
+              repo =
+                  resolveRepository(
+                      pid,
+                      repoIndex.getOrDefault((long) pid, List.of()),
+                      base,
+                      System.getProperty("user.name"));
             } catch (RuntimeException | IOException ignored) {
               // listing must survive discovery failures per entry
             }
@@ -116,42 +160,43 @@ public final class JvmProcesses {
   }
 
   /**
-   * Finds and hardens the JFR repository directory for {@code pid}. Rejections and failure modes:
-   *
-   * <ul>
-   *   <li>no matching directory → empty
-   *   <li>symlinked directory, directory not owned by the current user, or no regular file inside →
-   *       candidate rejected (planted-directory defense: the JDK JFR parser would run over
-   *       attacker-controlled bytes)
-   *   <li>directory mtime predates the process start instant (stale repository of a crashed JVM
-   *       under a reused PID) → rejected; a dead PID is rejected outright
-   *   <li>several surviving candidates → {@link IllegalArgumentException} naming them; ambiguous is
-   *       safer than wrong
-   * </ul>
-   *
-   * @throws IOException when no repository was found (message names the searched base and suggests
-   *     {@code --repository})
+   * Walks {@code base} once and buckets every {@code yyyy_MM_dd_HH_mm_ss_<pid>} candidate by its
+   * trailing PID. Non-directory or symlinked entries are not candidates. The PID is parsed
+   * defensively ({@code Long.parseLong}) — a trailing number beyond any real PID is simply not a
+   * candidate, never an error.
    */
-  public static Optional<Path> findRepository(int pid) throws IOException {
-    return findRepository(pid, tempBase());
-  }
-
-  /** {@link #findRepository(int)} over an explicit base — the test seam. */
-  static Optional<Path> findRepository(int pid, Path base) throws IOException {
-    List<Path> candidates = new ArrayList<>();
+  static Map<Long, List<Path>> indexRepositoryDirs(Path base) throws IOException {
+    Map<Long, List<Path>> index = new java.util.HashMap<>();
     try (DirectoryStream<Path> dirs = Files.newDirectoryStream(base)) {
       for (Path dir : dirs) {
         if (!Files.isDirectory(dir) || Files.isSymbolicLink(dir)) continue;
         Matcher m = REPO_DIR_PATTERN.matcher(dir.getFileName().toString());
         if (!m.matches()) continue;
-        if (Integer.parseInt(m.group(1)) != pid) continue;
-        if (!isPlausibleRepository(dir, pid)) continue;
-        candidates.add(dir);
+        long entryPid;
+        try {
+          entryPid = Long.parseLong(m.group(1));
+        } catch (NumberFormatException e) {
+          continue;
+        }
+        index.computeIfAbsent(entryPid, k -> new ArrayList<>()).add(dir);
       }
     } catch (IOException e) {
       throw new IOException("Cannot scan " + base + " for JFR repositories: " + e.getMessage(), e);
     }
+    return index;
+  }
 
+  /**
+   * Hardens a PID's candidate bucket (from {@link #indexRepositoryDirs}) down to one repository.
+   * Empty bucket → {@link IOException} naming the searched base; several surviving candidates →
+   * ambiguous {@link IOException}; exactly one → the path.
+   */
+  private static Path resolveRepository(int pid, List<Path> bucket, Path base, String currentUser)
+      throws IOException {
+    List<Path> candidates = new ArrayList<>();
+    for (Path dir : bucket) {
+      if (isPlausibleRepository(dir, pid, currentUser)) candidates.add(dir);
+    }
     if (candidates.isEmpty()) {
       throw new IOException(
           "No JFR event repository found for PID "
@@ -170,28 +215,78 @@ public final class JvmProcesses {
               + candidates
               + "; pass the right one explicitly with --repository <dir>");
     }
-    return Optional.of(candidates.get(0));
+    return candidates.get(0);
   }
 
-  private static boolean isPlausibleRepository(Path dir, int pid) {
+  /**
+   * Finds and hardens the JFR repository directory for {@code pid}. Rejections and failure modes:
+   *
+   * <ul>
+   *   <li>no matching directory → {@link IOException} (message names the searched base and suggests
+   *       {@code --repository})
+   *   <li>directory PID tail larger than an int → skipped, not an error
+   *   <li>current user name unavailable ({@code user.name} null/blank) → candidate rejected
+   *       (fail-closed)
+   *   <li>symlinked directory, directory not owned by the current user, or no regular file inside →
+   *       candidate rejected (planted-directory defense: the JDK JFR parser would run over
+   *       attacker-controlled bytes)
+   *   <li>directory mtime predates the process start instant (stale repository of a crashed JVM
+   *       under a reused PID) → rejected; a dead PID is rejected outright
+   *   <li>several surviving candidates → {@link IOException} naming them; ambiguous is safer than
+   *       wrong
+   * </ul>
+   *
+   * @throws IOException when no repository was found (message names the searched base and suggests
+   *     {@code --repository})
+   */
+  public static Path findRepository(int pid) throws IOException {
+    return findRepository(pid, tempBase());
+  }
+
+  /**
+   * {@link #findRepository(int)} over an explicit base — the test seam. The current user is read
+   * from {@code user.name} here (production single source of the real user); the 3-arg overload
+   * takes it explicitly.
+   */
+  static Path findRepository(int pid, Path base) throws IOException {
+    return findRepository(pid, base, System.getProperty("user.name"));
+  }
+
+  /** Full resolution with an explicit current-user parameter (the hardening seam for tests). */
+  static Path findRepository(int pid, Path base, String currentUser) throws IOException {
+    Map<Long, List<Path>> index = indexRepositoryDirs(base);
+    return resolveRepository(pid, index.getOrDefault((long) pid, List.of()), base, currentUser);
+  }
+
+  /**
+   * Planted-directory defense, parameterized by the expected current user (the hardening seam:
+   * tests inject a synthetic user; production passes {@code user.name}). Fail-closed: a missing or
+   * blank {@code currentUser} rejects every candidate. Package-visible — re-run at attach time in
+   * {@link DefaultLiveStreams} to narrow the discovery-to-open TOCTOU window.
+   */
+  static boolean isPlausibleRepository(Path dir, int pid, String currentUser) {
     try {
       var attrs = Files.readAttributes(dir, java.nio.file.attribute.BasicFileAttributes.class);
       if (attrs.isSymbolicLink() || !attrs.isDirectory()) return false;
-      // owner must be the current user
+      // owner must be the current user — fail closed when it cannot be determined
       String owner = Files.getOwner(dir).getName();
-      String user = System.getProperty("user.name");
-      if (user != null && !user.equals(owner)) return false;
+      if (currentUser == null || currentUser.isBlank()) return false;
+      if (!ownerMatches(owner, currentUser)) return false;
 
       // liveness: a crashed JVM leaves its repository behind and PIDs are reused; a PID with
       // no live process at all means the repository is stale
       Optional<ProcessHandle> handle = ProcessHandle.of(pid);
       if (handle.isEmpty() || !handle.get().isAlive()) return false;
 
-      // at least one regular file inside (chunk or metadata file)
+      // at least one regular file inside (chunk or metadata file); a symlinked inner entry
+      // rejects the candidate outright (do not follow links out of the repository); the first
+      // accepted regular file must also be owned by the current user
       boolean hasFile = false;
       try (DirectoryStream<Path> inner = Files.newDirectoryStream(dir)) {
         for (Path f : inner) {
+          if (Files.isSymbolicLink(f)) return false;
           if (Files.isRegularFile(f)) {
+            if (!ownerMatches(Files.getOwner(f).getName(), currentUser)) return false;
             hasFile = true;
             break;
           }
@@ -212,6 +307,35 @@ public final class JvmProcesses {
     }
   }
 
+  /**
+   * Owner comparison tolerant of Windows domain-qualified names ({@code MACHINE\\user} vs the bare
+   * {@code user.name}); exact case-sensitive match elsewhere.
+   */
+  private static boolean ownerMatches(String owner, String user) {
+    String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+    if (os.contains("windows")) {
+      if (owner.equalsIgnoreCase(user)) return true;
+      int slash = owner.lastIndexOf('\\');
+      return slash >= 0 && owner.substring(slash + 1).equalsIgnoreCase(user);
+    }
+    return user.equals(owner);
+  }
+
+  /** The listing legend printed under the shared {@link #renderRow} rows. */
+  public static final String JFR_LEGEND = "[jfr] = disk-backed JFR event repository found";
+
+  /**
+   * The shared per-row listing line: 90-char command truncation + the {@code [jfr]} repository
+   * marker, byte-identical across the interactive dispatcher and the one-shot {@code ps}.
+   */
+  public static String renderRow(JvmProcess p) {
+    String cmd = p.command() == null ? "<unreadable>" : p.command();
+    if (cmd.length() > 90) {
+      cmd = cmd.substring(0, 89) + "…";
+    }
+    return "  " + p.pid() + "  " + (p.hasRepository() ? "[jfr] " : "      ") + cmd;
+  }
+
   private static Integer parsePid(String name) {
     try {
       int pid = Integer.parseInt(name);
@@ -225,12 +349,16 @@ public final class JvmProcesses {
    * Reads the {@code java.command} string counter from a hsperfdata file. Mirrors the entry walk of
    * {@code sun.management.counter.perf} (prologue: magic BE-int, byte-order byte, version bytes;
    * entries: 4-byte-aligned from {@code entry_offset} while {@code < used}). Returns {@code null}
-   * on any parse failure, permission denial, or torn read.
+   * on any parse failure, permission denial, torn read, file larger than 1 MiB, or non-UTF-8
+   * command bytes.
    */
   static String readJavaCommand(Path perfFile) {
     ByteBuffer buf;
     try (FileChannel ch = FileChannel.open(perfFile, StandardOpenOption.READ)) {
-      buf = ByteBuffer.allocate((int) Math.min(ch.size(), 1024 * 1024));
+      // An oversize file is a reject boundary, not a truncation: parsing a capped buffer
+      // would validate offsets against bytes that were never read.
+      if (ch.size() > MAX_PERF_FILE_SIZE) return null;
+      buf = ByteBuffer.allocate((int) ch.size());
       while (ch.read(buf) != -1) {
         if (buf.hasRemaining() == false) break;
       }
@@ -269,24 +397,40 @@ public final class JvmProcesses {
       int entryLength = buf.getInt();
       int nameOffset = buf.getInt();
       int vectorLength = buf.getInt();
-      byte dataType = buf.get(); // 0 = byte/string, 5 = long (PerfDataType ordinal)
+      byte dataType =
+          buf.get(); // PerfDataType character code: 'B' = byte/string counter, 'J' = long
       buf.get(); // flags
       buf.get(); // units
       buf.get(); // variability
       int dataOffset = buf.getInt();
-      if (entryLength <= 0 || entryStart + entryLength > buf.limit()) return null;
-      if (nameOffset > 0 && entryStart + nameOffset < buf.limit()) {
+      // File-supplied offsets: all sums in long arithmetic — int sums can overflow and wrap
+      // negative, passing the bounds check on a planted file.
+      if (entryLength <= 0 || (long) entryStart + entryLength > buf.limit()) return null;
+      if (nameOffset > 0 && (long) entryStart + nameOffset < buf.limit()) {
         String name = readCString(buf, entryStart + nameOffset);
         if ("sun.rt.javaCommand".equals(name)
-            && dataType
-                == 'B' /* PerfDataType.BYTE (string counters are byte arrays with units=STRING) */
+            && dataType == 'B' // PerfDataType.BYTE: string counters are byte arrays
             && vectorLength > 0
+            && vectorLength <= MAX_PERF_FILE_SIZE
             && dataOffset > 0
-            && entryStart + dataOffset + vectorLength <= buf.limit()) {
+            && (long) entryStart + dataOffset + vectorLength <= buf.limit()) {
           byte[] bytes = new byte[vectorLength];
           buf.position(entryStart + dataOffset);
           buf.get(bytes);
-          String s = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+          // Strict UTF-8: malformed bytes degrade the row to PID-only instead of a silent
+          // mojibake replacement.
+          String s;
+          try {
+            s =
+                java.nio.charset.StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes))
+                    .toString();
+          } catch (java.nio.charset.CharacterCodingException e) {
+            return null;
+          }
           int nul = s.indexOf('\0');
           return nul >= 0 ? s.substring(0, nul) : s;
         }

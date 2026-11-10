@@ -47,12 +47,44 @@ public final class TailRunner {
   private TailRunner() {}
 
   /**
+   * Shared tail-filter validator — the single source for the interactive {@code tail} command, the
+   * one-shot {@code jfr-shell tail} CLI, and the tests: parse errors and non-{@code events} roots
+   * throw {@link IllegalArgumentException} with the canonical message.
+   */
+  public static io.jafar.shell.jfrpath.JfrPath.Query parseFilter(String expr) {
+    io.jafar.shell.jfrpath.JfrPath.Query filter;
+    try {
+      filter = io.jafar.shell.jfrpath.JfrPathParser.parse(expr);
+    } catch (RuntimeException e) {
+      throw new IllegalArgumentException("invalid tail filter: " + e.getMessage(), e);
+    }
+    if (filter.root != io.jafar.shell.jfrpath.JfrPath.Root.EVENTS) {
+      throw new IllegalArgumentException(
+          "tail filters must use the events root (e.g. 'events/jdk.ExecutionSample')");
+    }
+    return filter;
+  }
+
+  /** Shared tail-format validator: {@code table}/{@code json} only, canonical lowercase message. */
+  public static Format parseFormat(String format) {
+    return switch (format) {
+      case "table" -> Format.TABLE;
+      case "json" -> Format.JSON;
+      default -> throw new IllegalArgumentException("unknown format: " + format + " (table|json)");
+    };
+  }
+
+  /**
    * Installs a SIGINT handler that interrupts the tail thread, so Ctrl-C ends the stream instead of
    * killing the process (nothing else in the shell registers one — before this, Ctrl-C during a
    * command was default-JVM death). Uses JLine's {@code Signals} (native handler via the same
    * mechanism the terminal uses); in the TUI, raw mode keeps ISIG off and Ctrl-C arrives as a key
    * event that cancels the executor future — the interrupt below is then already set and the
-   * handler is a harmless extra. Returns the registration handle for {@link #restoreSignal}.
+   * handler is a harmless extra. JLine's {@code Signals.register} returns the previously installed
+   * handler as the registration object, and {@code Signals.unregister} re-installs it —
+   * capture-and-restore of the previous INT handler is preserved (jline 3.21.0 reflective wrapper
+   * over {@code sun.misc.Signal.handle}). Returns the registration handle for {@link
+   * #restoreSignal}.
    */
   private static Object installSignal(Thread tailThread) {
     try {
@@ -81,7 +113,7 @@ public final class TailRunner {
    * @return exit reason for the summary line
    */
   public static String run(
-      LiveJfrSession session,
+      LiveStreamView session,
       io.jafar.shell.jfrpath.JfrPath.Query filter,
       Format format,
       long limit,
@@ -123,10 +155,23 @@ public final class TailRunner {
           }
           continue;
         }
+        String typeName = raw.getEventType().getName();
+        // Pre-decode type membership: events whose type can never match are filtered without
+        // paying for the full recursive decode.
+        if (filter != null && !JfrPathEvaluator.matchesType(filter, typeName)) {
+          filtered++;
+          continue;
+        }
         Map<String, Object> map = LiveEventDecoder.decode(raw);
-        map.put(JfrPathEvaluator.EVENT_TYPE_KEY, raw.getEventType().getName());
+        // The decorated start time is captured BEFORE the pipeline runs: a transform may drop
+        // or rewrite the startTime key, but the table timestamp must stay the event's own.
+        long startNanos =
+            map.get(LiveEventDecoder.START_TIME_KEY) instanceof Long l
+                ? l
+                : raw.getStartTime().getEpochSecond() * 1_000_000_000L
+                    + raw.getStartTime().getNano();
         if (filter != null) {
-          if (!evaluator.matchesEvent(filter, map)) {
+          if (!evaluator.matchesEvent(filter, typeName, map)) {
             filtered++;
             continue;
           }
@@ -143,7 +188,7 @@ public final class TailRunner {
             break;
           }
         }
-        sink.event(format(raw.getEventType().getName(), map, format));
+        sink.event(format(typeName, startNanos, map, format));
         emitted++;
         if (limit > 0 && emitted >= limit) {
           reason = "limit reached";
@@ -170,44 +215,67 @@ public final class TailRunner {
     return summary;
   }
 
-  static String format(String typeName, Map<String, Object> map, Format format) {
+  static String format(String typeName, long startNanos, Map<String, Object> map, Format format) {
     if (format == Format.JSON) {
       return JsonLines.toJson(typeName, map);
     }
     StringBuilder sb = new StringBuilder(128);
-    Object start = map.get("startTime");
-    if (start instanceof Long nanos) {
-      sb.append(TIME_FMT.format(Instant.ofEpochSecond(0, nanos)));
-    }
+    sb.append(TIME_FMT.format(Instant.ofEpochSecond(0, startNanos)));
     sb.append(' ').append(typeName);
     int fields = 0;
     for (Map.Entry<String, Object> e : map.entrySet()) {
       String key = e.getKey();
-      if (key.equals(JfrPathEvaluator.EVENT_TYPE_KEY)
-          || key.equals("startTime")
-          || key.equals("duration")) {
+      if (LiveEventDecoder.NON_DATA_KEYS.contains(key)) {
         continue;
       }
       if (fields >= MAX_TABLE_FIELDS) {
         sb.append(" …");
         break;
       }
-      String value = String.valueOf(e.getValue());
-      if (value.length() > MAX_VALUE_LEN) {
-        value = value.substring(0, MAX_VALUE_LEN - 1) + "…";
-      }
-      sb.append(' ').append(key).append('=').append(value);
+      sb.append(' ').append(key).append('=').append(summarizeValue(e.getValue()));
       fields++;
     }
     return sb.toString();
   }
 
-  /** Line-oriented sink printing straight through (readline shell, one-shot CLI). */
+  /**
+   * Bounded table rendering: non-scalar values become a type+size placeholder instead of a full
+   * {@code toString} (never materialized before the 48-char truncation); long scalars still
+   * truncate at {@link #MAX_VALUE_LEN} with an ellipsis.
+   */
+  private static String summarizeValue(Object v) {
+    if (v instanceof Map<?, ?> m) {
+      return "map(size=" + m.size() + ")";
+    }
+    if (v instanceof java.util.Collection<?> c) {
+      return "list(size=" + c.size() + ")";
+    }
+    if (v instanceof Iterable<?> it) {
+      int n = 0;
+      for (Object ignored : it) {
+        if (++n >= 1000) {
+          return "list(size>=1000+)";
+        }
+      }
+      return "list(size=" + n + ")";
+    }
+    String s = String.valueOf(v);
+    return s.length() > MAX_VALUE_LEN ? s.substring(0, MAX_VALUE_LEN - 1) + "…" : s;
+  }
+
+  /**
+   * Line-oriented sink printing straight through (readline shell, one-shot CLI). Event lines and
+   * the final summary go to stdout in BOTH formats (the summary is the run's receipt); the periodic
+   * {@code listening: ...} status line goes to stdout in TABLE mode and is SUPPRESSED in JSON mode
+   * — stdout must stay pure JSON-lines.
+   */
   public static final class PrintSink implements Sink {
     private final io.jafar.shell.cli.CommandDispatcher.IO io;
+    private final Format format;
 
-    public PrintSink(io.jafar.shell.cli.CommandDispatcher.IO io) {
+    public PrintSink(io.jafar.shell.cli.CommandDispatcher.IO io, Format format) {
       this.io = io;
+      this.format = format;
     }
 
     @Override
@@ -217,6 +285,9 @@ public final class TailRunner {
 
     @Override
     public void status(String line) {
+      if (format == Format.JSON) {
+        return; // keep stdout pure JSON-lines
+      }
       io.println(line);
     }
 

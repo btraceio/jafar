@@ -2442,30 +2442,27 @@ public final class JfrPathEvaluator {
    * <p>Pipeline operators are NOT evaluated here; use {@link #applyEventOps} for the per-event
    * subset.
    */
-  public boolean matchesEvent(Query query, Map<String, Object> event) {
+  public boolean matchesEvent(Query query, String typeName, Map<String, Object> event) {
     if (query.root != Root.EVENTS) {
       throw new UnsupportedOperationException("per-event matching only supports 'events/' queries");
     }
-    if (!query.eventTypes.isEmpty()) {
-      if (query.isMultiType) {
-        if (!new HashSet<>(query.eventTypes).contains(typeOf(event))) return false;
-      } else if (!query.eventTypes.get(0).equals(typeOf(event))) {
-        return false;
-      }
-    }
+    if (!matchesType(query, typeName)) return false;
     return matchesAll(event, query.predicates);
   }
 
   /**
-   * The event type name carried by an event map passed to {@link #matchesEvent} / {@link
-   * #applyEventOps}. Live callers deliver maps decorated with a {@code "__type"} key (or the
-   * reserved key below) because the raw map of field values does not carry the type.
+   * Shared event-type membership rule for per-event matching: empty (or absent) eventTypes match
+   * all types; a multi-type query matches when the type name is listed; a single-type query matches
+   * on exact equality. Uses {@code List.contains} over the immutable query list — no per-event
+   * allocation on the live tail hot path.
    */
-  public static final String EVENT_TYPE_KEY = "__eventType";
-
-  private static String typeOf(Map<String, Object> event) {
-    Object t = event.get(EVENT_TYPE_KEY);
-    return t != null ? String.valueOf(t) : null;
+  public static boolean matchesType(Query query, String typeName) {
+    if (query.eventTypes == null || query.eventTypes.isEmpty()) return true;
+    // Immutable query lists reject contains(null); a null type name can only match the
+    // match-all (empty list) case above.
+    if (typeName == null) return false;
+    if (query.isMultiType) return query.eventTypes.contains(typeName);
+    return query.eventTypes.get(0).equals(typeName);
   }
 
   /**
@@ -2475,12 +2472,17 @@ public final class JfrPathEvaluator {
    * contains}, {@code replace}, {@code asdatetime}. Returns the transformed map, or {@code null}
    * when a filter op excluded the event.
    *
-   * <p>Row-set operators (aggregations, ordering, windowing — {@code count}, {@code groupBy},
-   * {@code top}, {@code sortby}, {@code head/tail}, {@code distinct}, {@code toMap}, {@code
-   * timeRange}, {@code quantiles}, {@code stats}, {@code sum}, {@code stackprofile}, {@code
-   * flamegraph}, {@code crossref}, {@code decorate*}, {@code sketch}) throw {@link
+   * <p>Row-set operators (aggregations, ordering, windowing) throw {@link
    * UnsupportedPipelineOperationException} naming the operator: they need the full row set, which
-   * does not exist in a live stream.
+   * does not exist in a live stream. The per-event-capable subset is declared per operator via
+   * {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op reaching this path is rejected
+   * by that check.
+   *
+   * <p>The input map is MUTATED IN PLACE by the transform operators ({@code len}, {@code
+   * uppercase}, {@code lowercase}, {@code trim}, {@code abs}, {@code round}, {@code floor}, {@code
+   * ceil}, {@code formatduration}, {@code replace}, {@code asdatetime}); callers must pass a
+   * per-event map they exclusively own (the live tail path passes a freshly decoded map). {@code
+   * select} still returns a new map (projection semantics).
    */
   public Map<String, Object> applyEventOps(
       List<JfrPath.PipelineOp> pipeline, Map<String, Object> event) {
@@ -2494,6 +2496,9 @@ public final class JfrPathEvaluator {
   }
 
   private Map<String, Object> applyEventOp(Map<String, Object> row, JfrPath.PipelineOp op) {
+    if (!op.isPerEventApplicable()) {
+      throw new UnsupportedPipelineOperationException(opName(op));
+    }
     return switch (op) {
       case JfrPath.FilterOp f -> matchesPredicate(row, f.predicate) ? row : null;
       case JfrPath.ContainsOp co -> {
@@ -2502,7 +2507,6 @@ public final class JfrPathEvaluator {
       }
       case JfrPath.SelectOp sel -> applySelectEvent(row, sel);
       case JfrPath.LenOp len -> {
-        Map<String, Object> out = new LinkedHashMap<>(row);
         Object val = eventValue(row, len.valuePath);
         int l = 0;
         if (val instanceof String s) {
@@ -2512,8 +2516,8 @@ public final class JfrPathEvaluator {
         } else if (val != null && val.getClass().isArray()) {
           l = java.lang.reflect.Array.getLength(val);
         }
-        out.put("len", l);
-        yield out;
+        row.put("len", l);
+        yield row;
       }
       case JfrPath.UppercaseOp up -> stringTransformEvent(row, up.valuePath, String::toUpperCase);
       case JfrPath.LowercaseOp lo -> stringTransformEvent(row, lo.valuePath, String::toLowerCase);
@@ -2523,33 +2527,30 @@ public final class JfrPathEvaluator {
       case JfrPath.FloorOp fl -> numberTransformEvent(row, fl.valuePath, Math::floor);
       case JfrPath.CeilOp ce -> numberTransformEvent(row, ce.valuePath, Math::ceil);
       case JfrPath.FormatDurationOp fd -> {
-        Map<String, Object> out = new LinkedHashMap<>(row);
         Object val = eventValue(row, fd.valuePath);
         if (val instanceof Number n) {
           String formatted = formatDuration(n.longValue());
-          putTransformed(row, out, fd.valuePath, formatted);
+          putTransformed(row, fd.valuePath, formatted);
         }
-        yield out;
+        yield row;
       }
       case JfrPath.ReplaceOp rp -> {
-        Map<String, Object> out = new LinkedHashMap<>(row);
         Object val = eventValue(row, rp.valuePath);
         if (val instanceof String s) {
-          putTransformed(row, out, rp.valuePath, s.replace(rp.target, rp.replacement));
+          putTransformed(row, rp.valuePath, s.replace(rp.target, rp.replacement));
         }
-        yield out;
+        yield row;
       }
       case JfrPath.AsDateTimeOp ft -> {
-        Map<String, Object> out = new LinkedHashMap<>(row);
         Object val = eventValue(row, ft.valuePath);
         if (val instanceof Number n) {
           Instant instant = Instant.ofEpochSecond(0, n.longValue());
           putTransformed(
-              row, out, ft.valuePath, getFormatter(ft.format).format(instant.atZone(SYSTEM_ZONE)));
+              row, ft.valuePath, getFormatter(ft.format).format(instant.atZone(SYSTEM_ZONE)));
         }
-        yield out;
+        yield row;
       }
-      default -> throw new UnsupportedPipelineOperationException(opName(op));
+      default -> throw new AssertionError("per-event drift: " + opName(op));
     };
   }
 
@@ -2558,15 +2559,12 @@ public final class JfrPathEvaluator {
   }
 
   private static void putTransformed(
-      Map<String, Object> original,
-      Map<String, Object> out,
-      List<String> path,
-      String transformed) {
+      Map<String, Object> row, List<String> path, String transformed) {
     String key = path.isEmpty() ? null : String.join("/", path);
     if (key != null) {
-      out.put(key, transformed);
-    } else if (!original.isEmpty()) {
-      out.put(original.keySet().iterator().next(), transformed);
+      row.put(key, transformed);
+    } else if (!row.isEmpty()) {
+      row.put(row.keySet().iterator().next(), transformed);
     }
   }
 
@@ -2574,29 +2572,27 @@ public final class JfrPathEvaluator {
       Map<String, Object> row, List<String> path, java.util.function.Function<String, String> fn) {
     Object val = eventValue(row, path);
     if (!(val instanceof String s)) {
-      return new LinkedHashMap<>(row);
+      return row;
     }
-    Map<String, Object> out = new LinkedHashMap<>(row);
-    putTransformed(row, out, path, fn.apply(s));
-    return out;
+    putTransformed(row, path, fn.apply(s));
+    return row;
   }
 
   private static Map<String, Object> numberTransformEvent(
       Map<String, Object> row, List<String> path, java.util.function.DoubleUnaryOperator fn) {
     Object val = eventValue(row, path);
     if (!(val instanceof Number n)) {
-      return new LinkedHashMap<>(row);
+      return row;
     }
     double transformed = fn.applyAsDouble(n.doubleValue());
-    Map<String, Object> out = new LinkedHashMap<>(row);
     // Same value type as the row-based applyNumberTransform: a double, not a string
     String key = path.isEmpty() ? null : String.join("/", path);
     if (key != null) {
-      out.put(key, transformed);
+      row.put(key, transformed);
     } else if (!row.isEmpty()) {
-      out.put(row.keySet().iterator().next(), transformed);
+      row.put(row.keySet().iterator().next(), transformed);
     }
-    return out;
+    return row;
   }
 
   private Map<String, Object> applySelectEvent(Map<String, Object> row, JfrPath.SelectOp op) {
@@ -3858,6 +3854,16 @@ public final class JfrPathEvaluator {
   }
 
   private boolean matchOp(Object val, JfrPath.Op op, Object literal) {
+    if (literal == null) {
+      // Null-literal predicates are presence checks: 'field == null' matches a missing/null
+      // field, 'field != null' matches a present one. Other operators against null are
+      // meaningless and match nothing.
+      return switch (op) {
+        case EQ -> val == null;
+        case NE -> val != null;
+        default -> false;
+      };
+    }
     if (val == null) return false;
     int cmp = compareValues(val, literal);
     return switch (op) {

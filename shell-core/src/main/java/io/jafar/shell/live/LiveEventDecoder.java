@@ -28,7 +28,23 @@ import jdk.jfr.consumer.RecordedObject;
  * RecordedObject} flattening carries it (verified against a purpose-built recording).
  */
 public final class LiveEventDecoder {
+
+  /** Decorated key carrying the event start as absolute epoch nanos (live decode contract). */
+  public static final String START_TIME_KEY = "startTime";
+
+  /** Decorated key carrying the event duration in nanos (live decode contract). */
+  public static final String DURATION_KEY = "duration";
+
+  /** The decorated keys that are NOT user-visible event fields (rewritten built-in times). */
+  public static final java.util.Set<String> NON_DATA_KEYS =
+      java.util.Set.of(START_TIME_KEY, DURATION_KEY);
+
   private LiveEventDecoder() {}
+
+  /** Marker for a field value that could not be converted (lenient live degradation). */
+  public static String unconvertibleMarker(RuntimeException e) {
+    return "<unconvertible: " + e.getClass().getSimpleName() + ">";
+  }
 
   /** Full live conversion: field map with startTime/duration rewritten to absolute values. */
   public static Map<String, Object> decode(RecordedEvent event) {
@@ -41,16 +57,16 @@ public final class LiveEventDecoder {
       try {
         map.put(name, convertValue(event.getValue(name)));
       } catch (RuntimeException e) {
-        map.put(name, "<unconvertible: " + e.getClass().getSimpleName() + ">");
+        map.put(name, unconvertibleMarker(e));
       }
     }
     // The built-in startTime/duration field values from the raw flatten are chunk-relative
     // ticks; rewrite them with the absolute values the query pipeline's time handling expects.
     // JFR reserves these field names — no custom event type can declare its own.
     map.put(
-        "startTime",
+        START_TIME_KEY,
         event.getStartTime().getEpochSecond() * 1_000_000_000L + event.getStartTime().getNano());
-    map.put("duration", event.getDuration().toNanos());
+    map.put(DURATION_KEY, event.getDuration().toNanos());
     return map;
   }
 

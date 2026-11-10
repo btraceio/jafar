@@ -210,8 +210,13 @@ public final class Shell implements AutoCloseable {
     this.jfrIo = ioAdapter;
     // Shares globalStore: jfr-shell's completer, used for JFR sessions here, completes ${...}
     // global names from the dispatcher's store, which would otherwise be a private empty one.
-    this.moduleContext =
+    CommandDispatcher jfrDispatcher =
         new CommandDispatcher(sessions, ioAdapter, sessionChangeListener, null, globalStore);
+    // Live streaming (connect/tail, issue #92) ships in jfr-shell only — the unified shell is an
+    // explicit Phase-1 exclusion (doc/design/jfr-event-streaming.md). Flagged off so the routing
+    // branch in execute() refuses them loudly instead of running them.
+    jfrDispatcher.setLiveStreamingEnabled(false);
+    this.moduleContext = jfrDispatcher;
 
     // Create fallback completer for basic commands
     this.fallbackCompleter = new ShellCompleter(sessions, moduleById, globalStore);
@@ -239,6 +244,7 @@ public final class Shell implements AutoCloseable {
                 }
                 moduleCompleter.complete(reader, line, candidates);
                 if (line.wordIndex() == 0) {
+                  candidates.removeIf(c -> UNRUN_FIRST_WORDS.contains(c.value()));
                   fallbackCompleter.addShellCommands(line, candidates);
                 }
                 return;
@@ -570,6 +576,14 @@ public final class Shell implements AutoCloseable {
       return true;
     }
 
+    // Live-streaming commands are refused loudly here, not silently unknown: route them to
+    // the JFR dispatcher whose live-streaming flag is off (issue #92), so its guard names
+    // the reason instead of the shell printing a bare 'Unknown command'.
+    if (matchesCommand(input, "connect") || matchesCommand(input, "tail")) {
+      jfrDispatcher().dispatch(input);
+      return true;
+    }
+
     return false;
   }
 
@@ -613,6 +627,16 @@ public final class Shell implements AutoCloseable {
 
   // The same names as an array, for the per-line match below: iterating it allocates nothing.
   private static final String[] JFR_COMMAND_NAMES = JFR_COMMANDS.toArray(new String[0]);
+
+  /**
+   * First words jfr-shell's CommandCompleter offers that this shell never runs: live streaming
+   * (connect/tail, issue #92) ships in jfr-shell only — the unified shell is an explicit Phase-1
+   * exclusion (doc/design/jfr-event-streaming.md; the dispatch side of the same exclusion is the
+   * flag-off + routing branch in execute()). Stripped from module first-word completion so Tab
+   * never offers a command the prompt refuses (Verification.md R1).
+   */
+  private static final java.util.Set<String> UNRUN_FIRST_WORDS =
+      java.util.Set.of("connect", "tail");
 
   /**
    * True for {@code metadata --summary} or {@code chunks}; false for a query that starts with the

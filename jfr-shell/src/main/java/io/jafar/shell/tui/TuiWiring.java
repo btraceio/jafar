@@ -3,7 +3,6 @@ package io.jafar.shell.tui;
 import dev.tamboui.terminal.Backend;
 import dev.tamboui.terminal.Terminal;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
 import java.util.concurrent.ExecutorService;
@@ -72,7 +71,7 @@ public final class TuiWiring {
   public static Components wire(
       Backend backend,
       Terminal<? extends Backend> tuiTerminal,
-      SessionManager<? extends Session> sessions,
+      SessionManager<io.jafar.shell.core.Session> sessions,
       ExecutorService commandExecutor,
       TuiAdapter adapter,
       CommandDispatcher.SessionChangeListener sessionChangeCallback) {
@@ -83,7 +82,7 @@ public final class TuiWiring {
     CommandDispatcher dispatcher =
         new CommandDispatcher(
             sessions,
-            new CommandDispatcher.IO() {
+            new CommandDispatcher.TuiOutput() {
               @Override
               public void println(String s) {
                 executor.addOutputLine(s);

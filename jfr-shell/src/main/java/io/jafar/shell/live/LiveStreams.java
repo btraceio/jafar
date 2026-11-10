@@ -21,6 +21,13 @@ public interface LiveStreams {
    */
   Path findRepository(int pid) throws IOException;
 
-  /** Creates and starts a live session attached to {@code repository}. */
-  LiveJfrSession attach(int pid, Path repository) throws IOException;
+  /**
+   * Creates and starts a live session attached to {@code repository}. The repository is hardened
+   * first (planted-directory defense, including on explicitly user-supplied {@code --repository}
+   * paths); a rejected repository never opens a stream.
+   */
+  LiveStreamView attach(int pid, Path repository) throws IOException;
+
+  /** The perf-data base directory discovery searches — surfaced in user-facing text. */
+  Path searchedBase();
 }

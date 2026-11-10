@@ -21,15 +21,34 @@ public final class DefaultLiveStreams implements LiveStreams {
 
   @Override
   public Path findRepository(int pid) throws IOException {
-    return JvmProcesses.findRepository(pid)
-        .orElseThrow(() -> new java.nio.file.NoSuchFileException("repository for PID " + pid));
+    // JvmProcesses.findRepository throws the descriptive IOException (searched temp base +
+    // --repository hint) and never returns empty — no wrapper message on top of it.
+    return JvmProcesses.findRepository(pid);
   }
 
   @Override
-  public LiveJfrSession attach(int pid, Path repository) throws IOException {
+  public LiveStreamView attach(int pid, Path repository) throws IOException {
+    // Hardening at attach time (planted-directory defense + TOCTOU narrowing): applies to
+    // discovery-found AND explicitly user-supplied --repository paths. The check is boolean —
+    // the message enumerates the possible rejection reasons honestly.
+    if (!JvmProcesses.isPlausibleRepository(repository, pid, System.getProperty("user.name"))) {
+      throw new IOException(
+          "Repository "
+              + repository
+              + " is not a plausible tail source for PID "
+              + pid
+              + "; it was rejected because it failed one or more of: symlinked path, not owned"
+              + " by the current user, no regular file inside, target not alive, directory"
+              + " predates the target start; pass the right directory with --repository");
+    }
     LiveJfrSession session =
         new LiveJfrSession(pid, repository, "jfr-live", EventStream::openRepository);
     session.start();
     return session;
+  }
+
+  @Override
+  public Path searchedBase() {
+    return JvmProcesses.tempBase();
   }
 }

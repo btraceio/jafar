@@ -2,7 +2,6 @@ package io.jafar.shell.live;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,14 +27,17 @@ import jdk.jfr.consumer.RecordedEvent;
  *       onEvent} callback — queued events would corrupt.
  *   <li>Slow-consumer policy is drop-oldest, keep-newest (tail semantics favor the newest events;
  *       the target cannot be back-pressured through an on-disk repository anyway). Drops are
- *       counted and reported via {@link #getStatistics()} / the tail status line.
+ *       counted and reported via {@link #getStatistics()} / the tail status line. The end-of-stream
+ *       marker can never be evicted by {@code enqueue} (it re-checks {@code closed} before every
+ *       poll), and {@code close()} force-inserts it when the queue is full, evicting and counting
+ *       oldest backlog events.
  *   <li>{@link #close()} is idempotent and does NOT unregister from the session manager —
  *       unregistration is manager-owned ({@code closeById} removes the entry before calling close,
  *       so a reverse call would re-enter the manager monitor). Closing enqueues an end-marker so an
  *       in-flight {@code tail} observes closure promptly.
  * </ul>
  */
-public final class LiveJfrSession implements io.jafar.shell.core.Session {
+public final class LiveJfrSession implements LiveStreamView {
 
   /** End-of-stream sentinel; {@code null} cannot enter a {@link BlockingQueue}. */
   private static final Object END_MARKER = new Object();
@@ -110,9 +112,23 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
     }
     received.incrementAndGet();
     while (!queue.offer(event)) {
-      // drop-oldest, keep-newest
-      queue.poll();
-      dropped.incrementAndGet();
+      // drop-oldest, keep-newest. The end-marker can never be evicted here: close() sets
+      // `closed` (volatile) BEFORE inserting the marker, so this re-check bails out without
+      // polling once the marker is in (do not "simplify" the ordering away).
+      if (closed) {
+        return; // close() won the race — never poll: the end-marker must survive
+      }
+      Object evicted = queue.poll();
+      if (evicted == END_MARKER) {
+        // Put the marker back into the freed slot and drop/count the arriving event instead.
+        dropped.incrementAndGet();
+        while (!queue.offer(END_MARKER)) {
+          Object older = queue.poll();
+          if (older != null && older != END_MARKER) dropped.incrementAndGet();
+        }
+        return;
+      }
+      if (evicted != null) dropped.incrementAndGet();
     }
   }
 
@@ -124,6 +140,7 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
    *     #isClosed()} / {@link #getStreamState()}
    * @throws InterruptedException when the polling thread is interrupted (the tail-cancel path)
    */
+  @Override
   public RecordedEvent pollEvent(long timeoutMillis) throws InterruptedException {
     if (ended) {
       return null;
@@ -144,10 +161,7 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
     return pid;
   }
 
-  public Path getRepository() {
-    return repository;
-  }
-
+  @Override
   public long getDroppedCount() {
     return dropped.get();
   }
@@ -156,6 +170,7 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
     return received.get();
   }
 
+  @Override
   public String getStreamState() {
     return streamState.get();
   }
@@ -199,7 +214,10 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
     return stats;
   }
 
-  /** Idempotent close; the end-marker wakes pollers. Does NOT unregister from the manager. */
+  /**
+   * Idempotent close; the end-marker wakes pollers and is force-inserted when the queue is full.
+   * Does NOT unregister from the manager.
+   */
   @Override
   public void close() {
     if (closed) return;
@@ -210,12 +228,12 @@ public final class LiveJfrSession implements io.jafar.shell.core.Session {
       // closing a stream whose target died can throw; the session is closed either way
     }
     streamState.set("closed");
-    queue.offer(END_MARKER);
-  }
-
-  /** Uptime since attach, for status display. */
-  public Duration uptime() {
-    return Duration.ofMillis(System.currentTimeMillis() - attachTimeMillis);
+    // Force the end-marker in even when the queue is full: evict oldest backlog events
+    // (each eviction counted, consistent with the drop-oldest policy) until the marker fits.
+    while (!queue.offer(END_MARKER)) {
+      Object evicted = queue.poll();
+      if (evicted != null && evicted != END_MARKER) dropped.incrementAndGet();
+    }
   }
 
   /** Sorted type-name snapshot for display. */

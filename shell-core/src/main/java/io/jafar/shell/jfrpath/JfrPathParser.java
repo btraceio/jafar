@@ -406,6 +406,12 @@ public final class JfrPathParser {
 
       return result;
     }
+    // null literal (presence checks: 'field == null' / 'field != null'); must come before the
+    // identifier fallback so a bare 'null' is not read as a field name
+    if (startsWithIgnoreCase("null") && isWordBoundaryAt(pos + 4)) {
+      pos += 4;
+      return null;
+    }
     // boolean literals
     if (startsWithIgnoreCase("true")) {
       pos += 4;

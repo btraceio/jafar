@@ -68,7 +68,9 @@ public final class ShellCompleter implements Completer {
     // Register completers in priority order
     this.completers =
         List.of(
-            new CommandCompleter(),
+            // NULL/unknown dispatcher defaults to ENABLED: jfr-shell hosts (and every existing
+            // completer test constructing ShellCompleter(sessions, null)) keep connect/tail.
+            new CommandCompleter(dispatcher == null || dispatcher.supportsLiveStreaming()),
             new RootCompleter(),
             new ChunkIdCompleter(),
             new MetadataSubpropCompleter(),

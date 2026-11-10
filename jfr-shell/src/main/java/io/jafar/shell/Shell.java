@@ -436,92 +436,82 @@ public final class Shell implements AutoCloseable {
   }
 
   private void printHelp() {
-    terminal.writer().println("JFR Shell Commands:");
-    terminal.writer().println();
-    terminal.writer().println("Session Management:");
-    terminal.writer().println("  open <path> [--alias NAME]     Open a recording as a new session");
-    terminal
-        .writer()
-        .println("  connect [<pid>] [--alias N]    List local JVMs / attach a live JFR session");
-    terminal.writer().println("  tail [filter] [--limit N]      Stream events from a live session");
-    terminal.writer().println("  sessions                       List all sessions");
-    terminal.writer().println("  use <id|alias>                 Switch current session");
-    terminal.writer().println("  info [id|alias]                Show session information");
-    terminal.writer().println("  close [id|alias|--all]         Close session(s)");
-    terminal.writer().println();
-    terminal.writer().println("Analysis:");
-    terminal.writer().println("  show <expr> [options]          Execute JfrPath queries");
-    terminal.writer().println("  metadata [options]             List and inspect metadata types");
-    terminal.writer().println("  chunks [options]               List chunk information");
-    terminal.writer().println("  chunk <index> show             Show specific chunk details");
-    terminal.writer().println("  cp [<type>] [options]          Browse constant pool entries");
-    terminal.writer().println();
+    printHelp(terminal.writer());
+    terminal.flush();
+  }
+
+  /** Rendered to {@code w} so tests can pin the help text without a system terminal. */
+  static void printHelp(java.io.PrintWriter w) {
+    w.println("JFR Shell Commands:");
+    w.println();
+    w.println("Session Management:");
+    w.println("  open <path> [--alias NAME]     Open a recording as a new session");
+    w.println("  connect [<pid>] [--alias NAME]  List local JVMs / attach a live JFR session");
+    w.println("  tail [filter] [--limit N]      Stream events from a live session");
+    w.println("  sessions                       List all sessions");
+    w.println("  use <id|alias>                 Switch current session");
+    w.println("  info [id|alias]                Show session information");
+    w.println("  close [id|alias|--all]         Close session(s)");
+    w.println();
+    w.println("Analysis:");
+    w.println("  show <expr> [options]          Execute JfrPath queries");
+    w.println("  metadata [options]             List and inspect metadata types");
+    w.println("  chunks [options]               List chunk information");
+    w.println("  chunk <index> show             Show specific chunk details");
+    w.println("  cp [<type>] [options]          Browse constant pool entries");
+    w.println();
     // Listed even when no backend module is on the classpath: each command says so itself, and a
     // command absent from 'help' is a command nobody finds.
-    terminal.writer().println("Ask (LLM, optional):");
-    terminal
-        .writer()
-        .println("  ask <question>                 Several queries, read each, then conclude");
-    terminal.writer().println("  ? <question>                   Short for 'ask'");
-    terminal
-        .writer()
-        .println("  as-query <question>            Turn a question into one query and run it");
-    terminal.writer().println("  explain                        Explain the most recent result");
-    terminal.writer().println("  llm status|cost                Backends, readiness, token usage");
-    terminal.writer().println();
-    terminal.writer().println("Variables:");
-    terminal
-        .writer()
-        .println("  set [--global] <name> = <val>  Set variable (scalar or lazy query)");
-    terminal.writer().println("  vars [--global|--session]      List variables");
-    terminal.writer().println("  unset <name>                   Remove variable");
-    terminal.writer().println("  echo <text>                    Print with ${var} substitution");
-    terminal.writer().println("  invalidate <name>              Clear cached lazy variable");
-    terminal.writer().println();
-    terminal.writer().println("Conditionals:");
-    terminal.writer().println("  if <condition>                 Start conditional block");
-    terminal.writer().println("  elif <condition>               Else-if branch");
-    terminal.writer().println("  else                           Else branch");
-    terminal.writer().println("  endif                          End conditional block");
-    terminal
-        .writer()
-        .println("  A condition that fails to evaluate is an error, not false: no branch of");
-    terminal
-        .writer()
-        .println("  its block runs, and the block stays open (...(N)>) until its endif.");
-    terminal.writer().println();
-    terminal.writer().println("Scripting:");
-    terminal.writer().println("  script list                    List available scripts");
-    terminal.writer().println("  script run <name> [args...]    Run script by name");
-    terminal.writer().println("  script <path> [args...]        Run script by full path");
-    terminal
-        .writer()
-        .println("  record start [path]            Start recording commands to script");
-    terminal.writer().println("  record stop                    Stop recording and save script");
-    terminal.writer().println("  record status                  Show recording status");
-    terminal.writer().println();
-    terminal.writer().println("General:");
-    terminal
-        .writer()
-        .println("  help [<command>]               Show help (use 'help <command>' for details)");
-    terminal.writer().println("  exit|quit                      Exit shell");
-    terminal.writer().println();
-    terminal.writer().println("Quick Examples:");
-    terminal.writer().println("  show events/jdk.FileRead[bytesRead>=1000] --limit 5");
-    terminal.writer().println("  show events/jdk.FileRead | count()");
-    terminal.writer().println("  show events/jdk.ExecutionSample | groupBy(thread/name)");
-    terminal.writer().println();
-    terminal.writer().println("Scripting Examples:");
-    terminal.writer().println("  script list                             List available scripts");
-    terminal.writer().println("  script run basic-analysis /tmp/app.jfr  Run script by name");
-    terminal.writer().println("  script /path/to/analysis.jfrs arg1      Run script by path");
-    terminal.writer().println();
-    terminal.writer().println("For more info:");
-    terminal.writer().println("  Type 'help show' for JfrPath query syntax");
-    terminal.writer().println("  Type 'help ?' for the LLM commands and their settings");
-    terminal.writer().println("  See example scripts in jfr-shell/src/main/resources/examples/");
-    terminal.writer().println("  Visit: https://github.com/btraceio/jafar");
-    terminal.flush();
+    w.println("Ask (LLM, optional):");
+    w.println("  ask <question>                 Several queries, read each, then conclude");
+    w.println("  ? <question>                   Short for 'ask'");
+    w.println("  as-query <question>            Turn a question into one query and run it");
+    w.println("  explain                        Explain the most recent result");
+    w.println("  llm status|cost                Backends, readiness, token usage");
+    w.println();
+    w.println("Variables:");
+    w.println("  set [--global] <name> = <val>  Set variable (scalar or lazy query)");
+    w.println("  vars [--global|--session]      List variables");
+    w.println("  unset <name>                   Remove variable");
+    w.println("  echo <text>                    Print with ${var} substitution");
+    w.println("  invalidate <name>              Clear cached lazy variable");
+    w.println();
+    w.println("Conditionals:");
+    w.println("  if <condition>                 Start conditional block");
+    w.println("  elif <condition>               Else-if branch");
+    w.println("  else                           Else branch");
+    w.println("  endif                          End conditional block");
+    w.println("  A condition that fails to evaluate is an error, not false: no branch of");
+    w.println("  its block runs, and the block stays open (...(N)>) until its endif.");
+    w.println();
+    w.println("Scripting:");
+    w.println("  script list                    List available scripts");
+    w.println("  script run <name> [args...]    Run script by name");
+    w.println("  script <path> [args...]        Run script by full path");
+    w.println("  record start [path]            Start recording commands to script");
+    w.println("  record stop                    Stop recording and save script");
+    w.println("  record status                  Show recording status");
+    w.println();
+    w.println("General:");
+    w.println("  help [<command>]               Show help (use 'help <command>' for details)");
+    w.println("  exit|quit                      Exit shell");
+    w.println();
+    w.println("Quick Examples:");
+    w.println("  show events/jdk.FileRead[bytesRead>=1000] --limit 5");
+    w.println("  show events/jdk.FileRead | count()");
+    w.println("  show events/jdk.ExecutionSample | groupBy(thread/name)");
+    w.println();
+    w.println("Scripting Examples:");
+    w.println("  script list                             List available scripts");
+    w.println("  script run basic-analysis /tmp/app.jfr  Run script by name");
+    w.println("  script /path/to/analysis.jfrs arg1      Run script by path");
+    w.println();
+    w.println("For more info:");
+    w.println("  Type 'help show' for JfrPath query syntax");
+    w.println("  Type 'help ?' for the LLM commands and their settings");
+    w.println("  See example scripts in jfr-shell/src/main/resources/examples/");
+    w.println("  Visit: https://github.com/btraceio/jafar");
+    w.flush();
   }
 
   @Override

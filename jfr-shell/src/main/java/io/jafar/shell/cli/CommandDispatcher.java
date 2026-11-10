@@ -35,7 +35,7 @@ import io.jafar.shell.jfrpath.JfrPathParser;
 import io.jafar.shell.live.DefaultLiveStreams;
 import io.jafar.shell.live.JvmProcess;
 import io.jafar.shell.live.JvmProcesses;
-import io.jafar.shell.live.LiveJfrSession;
+import io.jafar.shell.live.LiveStreamView;
 import io.jafar.shell.live.LiveStreams;
 import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.providers.ChunkProvider;
@@ -70,11 +70,18 @@ public class CommandDispatcher {
     void error(String s);
   }
 
+  /**
+   * Marker for the TUI surface's IO: {@code tail} output must go through the bounded-ring {@code
+   * TailRunner.TuiSink}, not unbounded per-event {@code println}. Selected at construction via
+   * {@link #countingErrors}, which preserves the marker through its error-counting wrapper.
+   */
+  public interface TuiOutput extends IO {}
+
   public interface SessionChangeListener {
     void onCurrentSessionChanged(SessionManager.SessionRef<? extends Session> current);
   }
 
-  private final SessionManager<? extends Session> sessions;
+  private final SessionManager<Session> sessions;
   private final IO io;
   // Every io.error, so runScript fails a line that reported an error rather than counting it
   private final ScriptRunner.ErrorTally errorTally = new ScriptRunner.ErrorTally();
@@ -98,9 +105,14 @@ public class CommandDispatcher {
 
   // Live streaming (issue #92): injectable so tests drive connect/tail with fakes.
   private LiveStreams liveStreams = DefaultLiveStreams.INSTANCE;
+  // Host shells that do not ship live streaming (the unified jafar-shell) flag it off; jfr-shell
+  // hosts never call the setter (default true).
+  private boolean liveStreaming = true;
   // >0 while dispatch is executing inside runScript — tail requires --limit there because
-  // script output is buffered to script end and no interrupt path exists.
-  private int scriptDepth;
+  // script output is buffered to script end and no interrupt path exists. Atomic: dispatch()
+  // reads it on TUI executor threads while the shell thread writes it.
+  private final java.util.concurrent.atomic.AtomicInteger scriptDepth =
+      new java.util.concurrent.atomic.AtomicInteger();
 
   // The last query typed by hand and its rows, so `explain` can describe what you are looking at.
   // Held here rather than pushed into LlmCommands on every query, because constructing that is
@@ -109,12 +121,12 @@ public class CommandDispatcher {
   private List<Map<String, Object>> lastResultRows;
 
   public CommandDispatcher(
-      SessionManager<? extends Session> sessions, IO io, SessionChangeListener listener) {
+      SessionManager<Session> sessions, IO io, SessionChangeListener listener) {
     this(sessions, io, listener, null, null, true);
   }
 
   public CommandDispatcher(
-      SessionManager<? extends Session> sessions,
+      SessionManager<Session> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector) {
@@ -122,7 +134,7 @@ public class CommandDispatcher {
   }
 
   public CommandDispatcher(
-      SessionManager<? extends Session> sessions,
+      SessionManager<Session> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -131,7 +143,7 @@ public class CommandDispatcher {
   }
 
   public CommandDispatcher(
-      SessionManager<? extends Session> sessions,
+      SessionManager<Session> sessions,
       IO io,
       SessionChangeListener listener,
       JfrSelector selector,
@@ -145,8 +157,15 @@ public class CommandDispatcher {
     this.verbose = verbose || isVerboseEnabled();
   }
 
-  /** The caller's IO, with each {@code error} also recorded in {@code tally}. */
+  /**
+   * The caller's IO, with each {@code error} also recorded in {@code tally}. A {@link TuiOutput}
+   * caller keeps its marker through the wrapper (the runtime type of the wrapped field is what the
+   * tail sink selection reads).
+   */
   private static IO countingErrors(IO io, ScriptRunner.ErrorTally tally) {
+    if (io instanceof TuiOutput) {
+      return new TuiCountingIO(io, tally);
+    }
     return new IO() {
       @Override
       public void println(String s) {
@@ -164,6 +183,32 @@ public class CommandDispatcher {
         io.error(s);
       }
     };
+  }
+
+  private static final class TuiCountingIO implements TuiOutput {
+    private final IO io;
+    private final ScriptRunner.ErrorTally tally;
+
+    TuiCountingIO(IO io, ScriptRunner.ErrorTally tally) {
+      this.io = io;
+      this.tally = tally;
+    }
+
+    @Override
+    public void println(String s) {
+      io.println(s);
+    }
+
+    @Override
+    public void printf(String fmt, Object... args) {
+      io.printf(fmt, args);
+    }
+
+    @Override
+    public void error(String s) {
+      tally.record(s);
+      io.error(s);
+    }
   }
 
   /**
@@ -311,7 +356,7 @@ public class CommandDispatcher {
                     }
                     return List.of();
                   }
-                  if (cur.isPresent() && cur.get().session instanceof LiveJfrSession) {
+                  if (cur.isPresent() && cur.get().session instanceof LiveStreamView) {
                     throw new IllegalStateException(
                         "LLM queries are not supported for a live session (use tail)");
                   }
@@ -393,10 +438,10 @@ public class CommandDispatcher {
     return null;
   }
 
-  /** Returns the current session as a live streaming session, or {@code null}. */
-  private LiveJfrSession currentLiveSession() {
+  /** Returns the current session as a live streaming view, or {@code null}. */
+  private LiveStreamView currentLiveSession() {
     var cur = sessions.current();
-    if (cur.isPresent() && cur.get().session instanceof LiveJfrSession live) {
+    if (cur.isPresent() && cur.get().session instanceof LiveStreamView live) {
       return live;
     }
     return null;
@@ -417,6 +462,16 @@ public class CommandDispatcher {
   /** Replaces the live-discovery seam (tests inject fakes here). */
   public void setLiveStreams(LiveStreams liveStreams) {
     this.liveStreams = java.util.Objects.requireNonNull(liveStreams, "liveStreams");
+  }
+
+  /** Hosts that exclude live streaming (the unified jafar-shell) call this before any dispatch. */
+  public void setLiveStreamingEnabled(boolean enabled) {
+    this.liveStreaming = enabled;
+  }
+
+  /** Whether {@code connect}/{@code tail} are available on this dispatcher's surface. */
+  public boolean supportsLiveStreaming() {
+    return liveStreaming;
   }
 
   // The recording's own documentation for its event types, read once per recording. Parsing
@@ -785,7 +840,7 @@ public class CommandDispatcher {
       List<String> lines, List<String> arguments, boolean continueOnError) {
     Conditionals callers = conditionals;
     conditionals = new Conditionals();
-    scriptDepth++;
+    scriptDepth.incrementAndGet();
     try {
       ScriptRunner runner =
           new ScriptRunner(
@@ -804,7 +859,7 @@ public class CommandDispatcher {
       return new ScriptRunner.ExecutionResult(result.getSuccessCount(), errors);
     } finally {
       conditionals = callers;
-      scriptDepth--;
+      scriptDepth.decrementAndGet();
     }
   }
 
@@ -913,9 +968,21 @@ public class CommandDispatcher {
           cmdInfo(args);
           return true;
         case "connect":
+          if (!liveStreaming) {
+            io.error(
+                "connect is not supported in this shell (live streaming ships in jfr-shell, issue"
+                    + " #92)");
+            return true;
+          }
           cmdConnect(args);
           return true;
         case "tail":
+          if (!liveStreaming) {
+            io.error(
+                "tail is not supported in this shell (live streaming ships in jfr-shell, issue"
+                    + " #92)");
+            return true;
+          }
           cmdTail(args);
           return true;
         case "show":
@@ -1084,7 +1151,7 @@ public class CommandDispatcher {
   }
 
   /**
-   * {@code connect} — no args: list local JVMs; {@code connect <pid> [--alias N] [--repository
+   * {@code connect} — no args: list local JVMs; {@code connect <pid> [--alias NAME] [--repository
    * DIR]}: attach a live session to the target's JFR event repository and make it current.
    */
   private void cmdConnect(List<String> args) {
@@ -1135,7 +1202,7 @@ public class CommandDispatcher {
       }
     }
 
-    LiveJfrSession session;
+    LiveStreamView session;
     try {
       session = liveStreams.attach(pid, repository);
     } catch (Exception e) {
@@ -1143,13 +1210,13 @@ public class CommandDispatcher {
       return;
     }
     try {
-      // Erasure bridge: the manager is typed SessionManager<? extends Session>; a live session
-      // registers through the Session-typed view (register is the manager's only mutation here).
-      @SuppressWarnings("unchecked")
-      SessionManager<Session> typed = (SessionManager<Session>) (SessionManager<?>) sessions;
-      typed.register(session, alias);
+      sessions.register(session, alias);
     } catch (RuntimeException e) {
-      session.close();
+      try {
+        session.close();
+      } catch (Exception ignored) {
+        // the session is discarded either way; report the registration failure
+      }
       io.error("connect failed: " + e.getMessage());
       return;
     }
@@ -1172,18 +1239,14 @@ public class CommandDispatcher {
       return;
     }
     if (processes.isEmpty()) {
-      io.println("No local JVMs found (perf-data tree under " + JvmProcesses.tempBase() + ")");
+      io.println("No local JVMs found (perf-data tree under " + liveStreams.searchedBase() + ")");
       return;
     }
     io.println("Local JVMs (use 'connect <pid>' to attach):");
     for (JvmProcess p : processes) {
-      String cmd = p.command() == null ? "<unreadable>" : p.command();
-      if (cmd.length() > 90) {
-        cmd = cmd.substring(0, 89) + "…";
-      }
-      io.println("  " + p.pid() + "  " + (p.hasRepository() ? "[jfr] " : "      ") + cmd);
+      io.println(JvmProcesses.renderRow(p));
     }
-    io.println("[jfr] = disk-backed JFR event repository found");
+    io.println(JvmProcesses.JFR_LEGEND);
   }
 
   /**
@@ -1192,7 +1255,7 @@ public class CommandDispatcher {
    * script mode {@code --limit} is required (no interrupt path, buffered output).
    */
   private void cmdTail(List<String> args) {
-    LiveJfrSession session = currentLiveSession();
+    LiveStreamView session = currentLiveSession();
     if (session == null) {
       io.error("No live session open (use 'connect <pid>' first)");
       return;
@@ -1222,39 +1285,49 @@ public class CommandDispatcher {
             return;
           }
           format = args.get(++i);
-          if (!format.equals("table") && !format.equals("json")) {
-            io.error("Unknown format: " + format + " (table|json)");
+        }
+        default -> {
+          // Unknown --options are rejected loudly; bare words (including single-dash tokens,
+          // which JfrPath predicates legitimately contain, e.g. negative numbers) form the filter.
+          if (a.startsWith("--")) {
+            io.error("Unknown tail option: " + a);
             return;
           }
+          filterParts.add(a);
         }
-        default -> filterParts.add(a);
       }
     }
-    if (scriptDepth > 0 && limit <= 0) {
+    if (scriptDepth.get() > 0 && limit <= 0) {
       io.error("tail in script mode requires --limit (no interrupt path while a script runs)");
       return;
     }
 
     io.jafar.shell.jfrpath.JfrPath.Query filter = null;
+    TailRunner.Format fmt;
+    try {
+      fmt = TailRunner.parseFormat(format);
+    } catch (IllegalArgumentException e) {
+      io.error(e.getMessage());
+      return;
+    }
     if (!filterParts.isEmpty()) {
       String expr = String.join(" ", filterParts);
       try {
-        filter = JfrPathParser.parse(expr);
-        if (filter.root != JfrPath.Root.EVENTS) {
-          io.error("tail filters must use the events root (e.g. 'events/jdk.ExecutionSample')");
-          return;
-        }
-      } catch (Exception e) {
+        filter = TailRunner.parseFilter(expr);
+      } catch (IllegalArgumentException e) {
         io.error("Invalid tail filter: " + e.getMessage());
         return;
       }
     }
 
-    TailRunner.Format fmt =
-        format.equals("json") ? TailRunner.Format.JSON : TailRunner.Format.TABLE;
     // tail binds to the session captured NOW: a later 'use' does not re-target it; closing
-    // this session (or the target dying) ends the stream with a summary line.
-    TailRunner.run(session, filter, fmt, limit, new TailRunner.PrintSink(io));
+    // this session (or the target dying) ends the stream with a summary line. The TUI surface
+    // streams through the bounded-ring TuiSink; readline/one-shot print straight through.
+    TailRunner.Sink sink =
+        io instanceof TuiOutput
+            ? new TailRunner.TuiSink(io, limit > 0 ? (int) Math.min(limit, 10_000) : 500)
+            : new TailRunner.PrintSink(io, fmt);
+    TailRunner.run(session, filter, fmt, limit, sink);
   }
 
   private void cmdClose(List<String> args) throws Exception {
@@ -1433,7 +1506,8 @@ public class CommandDispatcher {
     }
     if (tokens.isEmpty()) {
       io.error(
-          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N] [--list-match any|all|none]");
+          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N]"
+              + " [--list-match any|all|none]");
       return;
     }
     // Extract expression from fullLine to preserve pipe operators that get lost in tokenization
@@ -1885,7 +1959,8 @@ public class CommandDispatcher {
     }
     if ("constants".equals(sub)) {
       io.println(
-          "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]");
+          "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format"
+              + " table|json|csv|tui]");
       io.println("       constants/<type> | crossref()");
       io.println("Browse constant pool entries in the current recording.");
       io.println("");
@@ -1900,13 +1975,15 @@ public class CommandDispatcher {
       io.println("  constants/jdk.types.StackTrace | crossref()  # crossref check");
       io.println("");
       io.println(
-          "Constant pools contain indexed reference data like symbols, methods, classes, and threads.");
+          "Constant pools contain indexed reference data like symbols, methods, classes, and"
+              + " threads.");
       io.println("Use 'constants/<type>' for more advanced filtering with JfrPath expressions.");
       return;
     }
     if ("show".equals(sub) || "select".equals(sub)) {
       io.println(
-          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N] [--list-match any|all|none]");
+          "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N]"
+              + " [--list-match any|all|none]");
       io.println("Where <expr> is a JfrPath like:");
       io.println("  events/<type>[field/path op literal][...]");
       io.println("  metadata/<type>[/field][...]   (use --tree [--depth N] for recursive tree)");
@@ -1927,13 +2004,15 @@ public class CommandDispatcher {
       io.println("    | quantiles(q1,q2[,path=]) → pXX columns at requested quantiles");
       io.println("    | sketch([path])           → stats + p50,p90,p99");
       io.println(
-          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])");
+          "    | groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value,"
+              + " asc=false])");
       io.println(
           "                                    → group by key and aggregate with optional sorting");
       io.println("    | sortBy(field[, asc=false])   → sort rows by field");
       io.println("    | top(n[, by=path, asc=false]) → top N rows sorted by path");
       io.println(
-          "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock conversion");
+          "    | timerange([path][, duration=path][, format=\"...\"]) → time range with wall-clock"
+              + " conversion");
       io.println("  Field projection:");
       io.println("    | select(field1, field2, ...) → project specific fields");
       io.println("    | select(field as alias)      → rename fields");
@@ -1949,18 +2028,22 @@ public class CommandDispatcher {
       io.println("        | select(\"${path} (${bytesRead} bytes)\" as description)");
       io.println("        | select(if(bytes > 1000, 'large', 'small') as size)");
       io.println(
-          "    | toMap(keyField, valueField) → convert rows to map (last value wins for duplicates)");
+          "    | toMap(keyField, valueField) → convert rows to map (last value wins for"
+              + " duplicates)");
       io.println("      Examples:");
       io.println(
-          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
+          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name,"
+              + " value)");
       io.println("        echo CPU engine: ${config.cpuEngine}");
       io.println(
           "    merge(${map1}, ${map2}, ...) → merge multiple maps (last wins for duplicates)");
       io.println("      Examples:");
       io.println(
-          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name, value)");
+          "        set config = events/jdk.ActiveSetting | select(name, value) | toMap(name,"
+              + " value)");
       io.println(
-          "        set stats = events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when, heapUsed)");
+          "        set stats = events/jdk.GCHeapSummary | select(when, heapUsed) | toMap(when,"
+              + " heapUsed)");
       io.println("        set report = merge(${config}, ${stats}, {\"date\": \"2024-01-15\"})");
       io.println("        echo Date: ${report.date}, CPU: ${report.cpuEngine}");
       io.println("  Value transforms (also usable in filters where applicable):");
@@ -1988,9 +2071,11 @@ public class CommandDispatcher {
       io.println("    events/jdk.FileRead/bytesRead | stats()");
       io.println("    events/jdk.ExecutionSample | groupBy(thread/name)");
       io.println(
-          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count desc");
+          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)  # sorted by count"
+              + " desc");
       io.println(
-          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  # alphabetical");
+          "    events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)  #"
+              + " alphabetical");
       io.println("    events/jdk.FileRead | top(10, by=bytesRead)");
       io.println("    events/jdk.ExecutionSample | timerange()  # min/max startTime");
       io.println("  Field projection:");
@@ -2005,7 +2090,8 @@ public class CommandDispatcher {
       io.println(
           "    events/jdk.GCHeapSummary[when/when=\"After GC\"]/heapSpace[committedSize>1000000]");
       io.println(
-          "    events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, \".*Foo.*\")]]");
+          "    events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string,"
+              + " \".*Foo.*\")]]");
       return;
     }
     if ("metadata".equals(sub) || "types".equals(sub)) {
@@ -2029,7 +2115,8 @@ public class CommandDispatcher {
           "  Usage: metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]");
       io.println("  Flags:");
       io.println(
-          "    --tree         Hierarchical view (class → fields → annotations/settings); use --depth to limit");
+          "    --tree         Hierarchical view (class → fields → annotations/settings); use"
+              + " --depth to limit");
       io.println("    --json         Full JSON with all properties");
       io.println("    --fields       Tabular list of fields (name, type, dimension, annotations)");
       io.println("    --annotations  Class-level annotations only");
@@ -2045,7 +2132,8 @@ public class CommandDispatcher {
       io.println("List chunks in the current recording.");
       io.println("Options:");
       io.println(
-          "  --summary      Show aggregate statistics (totalChunks, totalSize, avgSize, minSize, maxSize, compressedCount)");
+          "  --summary      Show aggregate statistics (totalChunks, totalSize, avgSize, minSize,"
+              + " maxSize, compressedCount)");
       io.println("  --range N-M    Show chunks from index N to M (inclusive)");
       io.println("Examples:");
       io.println("  chunks");
@@ -2774,7 +2862,8 @@ public class CommandDispatcher {
       io.error(
           "Backend '"
               + backend.getId()
-              + "' does not support constant pool queries. Use 'jafar' backend for full introspection.");
+              + "' does not support constant pool queries. Use 'jafar' backend for full"
+              + " introspection.");
       return;
     }
 
@@ -2819,7 +2908,8 @@ public class CommandDispatcher {
                 ? "Missing value for " + a
                 : "Unknown option for constants: " + a);
         io.error(
-            "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format table|json|csv|tui]");
+            "Usage: constants [<type>] [--summary] [--range N-M] [--limit N] [--format"
+                + " table|json|csv|tui]");
         return;
       }
     }
@@ -3087,6 +3177,13 @@ public class CommandDispatcher {
     var cur = sessions.current();
     if (cur.isEmpty()) {
       io.error("No session open for query evaluation");
+      return;
+    }
+
+    // A live session has no JfrPath query evaluator (lazy queries need file-backed rows) —
+    // guarded here, AFTER the set output / LLM settings / map-literal / plain-value paths, so
+    // those keep working under a live session.
+    if (liveSessionGuard("lazy query variables")) {
       return;
     }
 

@@ -408,7 +408,11 @@ Notes:
   in-memory recording only reaches the on-disk repository at rotation/dump.
 - Discovery scans the platform temp base (`/tmp` on Linux, the per-user temp dir on macOS,
   `%TEMP%` on Windows). If the target uses `-XX:FlightRecorderOptions=repository=...` or a
-  custom location, pass it with `--repository <dir>` (both `connect` and `tail`).
+  custom location, pass it with `--repository <dir>` — supported by `connect <pid>` (interactive)
+  and the one-shot `jfr-shell tail <pid>` command only. The interactive `tail` streams from the
+  repository the live session attached to at `connect` time; it accepts only `--limit` and
+  `--format`. Explicitly passed repositories are hardened like discovery-found ones (same owner,
+  liveness and symlink checks).
 - While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`,
   `backend`, LLM queries) are rejected with a pointer to `tail`; `sessions`/`use`/`close`/`info`
   work unchanged. Per-event filters only — aggregations are Phase 2 (see the design doc,

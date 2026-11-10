@@ -25,9 +25,12 @@ file-bound: `JFRSession(Path)` and the `EventSource` SPI both require a finite f
   The temp base is the HotSpot `os::get_temp_directory()` semantics — hardcoded `/tmp` on
   Linux (a target-side `-XX:AltTempDir` is not discoverable from outside; the
   `--repository` flag covers it), the per-user Darwin temp dir on macOS (HotSpot
-  `confstr(_CS_DARWIN_USER_TEMP_DIR)`, which `$TMPDIR` points at — verified empirically
-  during implementation), `%TEMP%`/`%TMP%` on Windows — **not** `java.io.tmpdir`, which a
-  `-Djava.io.tmpdir` override moves independently. [R-M3] [verified-mac]
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`; `$TMPDIR` primary — it equals the confstr value in
+  normal launchd sessions, but HotSpot itself never reads `$TMPDIR` — then this JVM's
+  `java.io.tmpdir` default gated to the `/var/folders/` shape, `/tmp` as a documented
+  last-resort guess), `%TEMP%` → `%TMP%` → `java.io.tmpdir` on Windows — **not**
+  `java.io.tmpdir` in general, which a `-Djava.io.tmpdir` override moves independently.
+  [R-M3] [verified-mac]
 - `jdk.jfr.repository` is a *system property*, not a perf counter: hsperfdata cannot
   map PID → repository. Attach-free discovery = scan the temp base for
   `yyyy_MM_dd_HH_mm_ss_<pid>` directories and match the trailing PID. `openRepository`'s
@@ -89,8 +92,9 @@ push stream into it; backends parse finite files, live streaming is a JDK-API co
 ### Components
 
 1. **`JvmProcesses`** (discovery)
-   - `listLocalJvm()`: scan the OS temp base (`/tmp` on Linux/macOS, `%TEMP%`/`%TMP%`
-     on Windows — resolved once, documented why) for `hsperfdata_<user>` dirs; for the
+   - `listLocalJvm()`: scan the OS temp base (`/tmp` on Linux, `$TMPDIR` else the gated
+     `java.io.tmpdir` fallback on macOS, `%TEMP%`/`%TMP%`/`java.io.tmpdir` on Windows —
+     resolved once, documented why) for `hsperfdata_<user>` dirs; for the
      readable ones parse the perf-data prologue/entry structure minimally to extract
      PID (from the filename) and `java.command`. Unknown entries skipped; any parse or
      permission failure degrades that entry, never the listing.
@@ -164,12 +168,18 @@ push stream into it; backends parse finite files, live streaming is a JDK-API co
 5. **`TailRunner`** — the streaming loop shared by all three surfaces. Inputs: a live
    session (captured at command start; later `use` does not re-target it [R-M6]), a
    per-event matcher, and an `EventSink`:
-   - `PrintStreamSink` (readline shell, one-shot CLI): format + println + flush per
-     event (readline `IO` already flushes per line).
-   - `TuiBufferSink` (TUI): does **not** print per event — `io.println` appends to the
+   - `PrintSink` (readline shell, one-shot CLI): format + println + flush per
+     event (readline `IO` already flushes per line). The periodic `listening: …`
+     status line goes to stdout in table mode and is suppressed in JSON mode —
+     stdout stays pure JSON-lines; the final `tail finished (…)` summary is the
+     run's receipt and prints in both modes.
+   - `TuiSink` (TUI): does **not** print per event — `io.println` appends to the
      TUI output buffer unboundedly during a run, so instead it keeps a bounded
-     ring buffer (last `--limit`, default 500) of formatted lines and updates the
-     progress-message area periodically (every ~1 s: `N events, D dropped`); at
+     ring buffer (last `--limit`, default 500, capped at 10 000) of formatted lines
+     and updates the progress-message area periodically (every ~1 s: `N events,
+     D dropped`). Wired via the `CommandDispatcher.TuiOutput` marker interface: the
+     TUI's `IO` implements the marker, `cmdTail` selects `TuiSink` for marked IOs,
+     and the marker survives the dispatcher's error-counting wrapper. At
      completion the ring buffer is printed once via `io.println` and lands in the tab.
      On Ctrl-C cancel, the TUI discards the buffer (existing cancel semantics —
      documented limitation; readline is the streaming surface) [R-M1].
@@ -236,33 +246,43 @@ With a live session current, file-bound commands are **guarded**, not broken:
   `tail` (none exists today; today Ctrl-C during a command kills the JVM) and the
   previous handler restored on completion.
 - **TUI**: commands stay dispatcher-owned (adapter `dispatch` is a no-op fallback).
-  Output via `TuiBufferSink` (above); Ctrl-C already cancels the running command via
+  Output via `TuiSink` (above); Ctrl-C already cancels the running command via
   `future.cancel(true)` and `TailRunner` is interrupt-responsive — no TuiCommandExecutor
   changes.
 - **One-shot CLI**: new picocli subcommands `ps` (list) and
   `tail <pid> [filter] [--repository DIR] [--limit N] [--format table|json]` in
   `Main.java`. They bypass `executeNonInteractive` (which buffers all output) and use
-  `PrintStreamSink` on `System.out`. Backend-validation duplication in `Main`'s
+  `PrintSink` on `System.out`. Backend-validation duplication in `Main`'s
   subcommands is extracted while adding these.
+- **Live-streaming capability**: live streaming ships in jfr-shell only — the unified
+  `jafar-shell` is an explicit Phase-1 exclusion (issue #92). The unified shell flags its
+  dispatcher off (`setLiveStreamingEnabled(false)`), routes `connect`/`tail` to that dispatcher
+  so the refusal names the reason (never a bare "Unknown command"), and strips the two words
+  from first-word completion — Tab never offers a command the prompt refuses.
 
 ### Signal handling [R-M5]
 
-- Readline shell + TUI: JLine terminal handler / existing cancel path respectively.
-- One-shot: `sun.misc.Signal` as the **primary** mechanism (documented as
-  JDK-internal): `Signal.handle(new Signal("INT"), …)` closes the stream and the main
-  thread returns normally → exit 0. A dumb JLine terminal does **not** intercept
-  SIGINT (jline 3.21.0's `DumbTerminal` never registers a native handler — only
-  `PosixSysTerminal` does), so a JLine-based handler is used only when an interactive
-  system terminal is actually available. Shutdown hook kept only as leak protection
-  for non-SIGINT exits, not as the Ctrl-C mechanism.
+- All three surfaces share ONE mechanism: `TailRunner.installSignal` registers a single
+  SIGINT handler via JLine `Signals.register("INT", …)` — a reflective wrapper over
+  `sun.misc.Signal.handle` (documented as JDK-internal, accessed reflectively to avoid a
+  compile-time dependency) that interrupts the tail thread. The registration object returned
+  IS the previously installed handler; `restoreSignal` passes it back to
+  `Signals.unregister`, which re-installs it — capture-and-restore of the previous handler
+  is preserved (verified against jline 3.21.0).
+- A dumb JLine terminal does not intercept SIGINT (jline 3.21.0's `DumbTerminal` never
+  registers a native handler — only `PosixSysTerminal` does), so the handler works there
+  too: the stream ends and the main thread returns normally → exit 0.
+- TUI additionally cancels via `future.cancel(true)` (raw mode keeps ISIG off; Ctrl-C
+  arrives as a key event). Shutdown hook kept only as leak protection for non-SIGINT
+  exits, not as the Ctrl-C mechanism.
 
 ## Risk register
 
 | Risk | Mitigation |
 |---|---|
-| Repository discovery differs across platforms/configs (`-XX:FlightRecorderOptions=repository=…`) | `--repository` escape hatch on both `connect` and `tail`; discovery failure names the searched temp base and suggests the flag |
+| Repository discovery differs across platforms/configs (`-XX:FlightRecorderOptions=repository=…`) | `--repository` on `connect <pid>` and the one-shot `jfr-shell tail <pid>` (hardened like discovery-found repositories — the escape hatch no longer bypasses the planted-directory defense); discovery failure names the searched temp base and suggests the flag |
 | hsperfdata parsing fragile across JDK versions | parser reads only the prologue/entry structure; unknown entries skipped; any failure degrades the row to PID-only, never crashes |
-| Unbounded output in TUI | `TuiBufferSink` ring buffer; per-event printing only on line-oriented surfaces |
+| Unbounded output in TUI | `TuiSink` ring buffer (wired via the `TuiOutput` marker); per-event printing only on line-oriented surfaces |
 | Blocking dispatch wedges shell | interrupt-responsive loop + signal handler; TUI already cancels via future |
 | Events dropped under slow consumer | bounded raw-event queue, drop-oldest, drop counter in `info` + status line; repository-wrap loss documented as the true ceiling |
 | Stale repository / PID reuse | liveness + start-time cross-checks before attach |
@@ -282,7 +302,7 @@ With a live session current, file-bound commands are **guarded**, not broken:
   one-shot `tail <pid>` end-to-end: events arrive, filter behavior holds, SIGINT exits
   **0** (dumb-terminal handler path), target-JVM kill ends tail with status line.
   Mirrors the triage reproducer.
-- TUI: `TuiBufferSink` cap + progress-cadence unit-tested (no new TuiCommandExecutor
+- TUI: `TuiSink` cap + progress-cadence unit-tested (no new TuiCommandExecutor
   code to test beyond wiring); readline dispatcher cases + help text focused tests.
 - Live `getAvailableTypes()` via `onMetadata` covered by the integration test.
 - Corrupted-event guard test: with the stream's default `setReuse(false)`, a queued

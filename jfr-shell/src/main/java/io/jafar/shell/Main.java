@@ -11,6 +11,7 @@ import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -555,23 +556,19 @@ public final class Main implements Callable<Integer> {
   static class PsCommand implements Callable<Integer> {
     @Override
     public Integer call() {
-      var processes = io.jafar.shell.live.JvmProcesses.listLocalJvm();
+      var processes = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.listLocalJvm();
       if (processes.isEmpty()) {
         System.out.println(
             "No local JVMs found (perf-data tree under "
-                + io.jafar.shell.live.JvmProcesses.tempBase()
+                + io.jafar.shell.live.DefaultLiveStreams.INSTANCE.searchedBase()
                 + ")");
         return 0;
       }
       System.out.println("Local JVMs (use 'jfr-shell tail <pid>' to stream events):");
       for (var p : processes) {
-        String cmd = p.command() == null ? "<unreadable>" : p.command();
-        if (cmd.length() > 90) {
-          cmd = cmd.substring(0, 89) + "…";
-        }
-        System.out.println("  " + p.pid() + "  " + (p.hasRepository() ? "[jfr] " : "      ") + cmd);
+        System.out.println(io.jafar.shell.live.JvmProcesses.renderRow(p));
       }
-      System.out.println("[jfr] = disk-backed JFR event repository found");
+      System.out.println(io.jafar.shell.live.JvmProcesses.JFR_LEGEND);
       return 0;
     }
   }
@@ -614,82 +611,92 @@ public final class Main implements Callable<Integer> {
         description = "Output format: table (default), json")
     private String format = "table";
 
+    // Package-private output routing override; null => the process streams (System.out/err).
+    // Integration tests (LiveTailIT) inject captured PrintStreams here so they can read tail
+    // output without swapping the process-global streams from worker threads.
+    transient PrintStream outOverride;
+    transient PrintStream errOverride;
+
     @Override
     public Integer call() {
+      final PrintStream out = outOverride != null ? outOverride : System.out;
+      final PrintStream err = errOverride != null ? errOverride : System.err;
+      // Validate filter/format FIRST (cheap, no I/O) so a bad expression never reaches the
+      // hardening check or opens any stream.
+      io.jafar.shell.jfrpath.JfrPath.Query filter = null;
+      TailRunner.Format fmt;
+      try {
+        if (filterExpr != null && !filterExpr.isBlank()) {
+          filter = TailRunner.parseFilter(filterExpr);
+        }
+        fmt = TailRunner.parseFormat(format);
+      } catch (IllegalArgumentException e) {
+        err.println("Error: " + e.getMessage());
+        return 1;
+      }
+
       Path repo;
       try {
         if (repository != null) {
           repo = Path.of(repository);
           if (!java.nio.file.Files.isDirectory(repo)) {
-            System.err.println("Error: repository directory not found: " + repo);
+            err.println("Error: repository directory not found: " + repo);
             return 1;
           }
         } else {
-          repo =
-              io.jafar.shell.live.JvmProcesses.findRepository(pid)
-                  .orElseThrow(
-                      () ->
-                          new java.io.IOException(
-                              "repository for PID " + pid + " (discovery failed)"));
+          // Discovery failure throws the rich IOException (searched temp base + --repository
+          // suggestion); it propagates to the catch below verbatim.
+          repo = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.findRepository(pid);
         }
       } catch (Exception e) {
-        System.err.println("Error: " + e.getMessage());
+        err.println("Error: " + e.getMessage());
         return 1;
       }
 
-      io.jafar.shell.jfrpath.JfrPath.Query filter = null;
-      if (filterExpr != null && !filterExpr.isBlank()) {
-        try {
-          filter = io.jafar.shell.jfrpath.JfrPathParser.parse(filterExpr);
-          if (filter.root != io.jafar.shell.jfrpath.JfrPath.Root.EVENTS) {
-            System.err.println(
-                "Error: tail filters must use the events root (e.g. 'events/jdk.ExecutionSample')");
-            return 1;
-          }
-        } catch (Exception e) {
-          System.err.println("Error: invalid tail filter: " + e.getMessage());
-          return 1;
-        }
-      }
-      if (format != null && !format.equals("table") && !format.equals("json")) {
-        System.err.println("Error: unknown format: " + format + " (table|json)");
-        return 1;
-      }
-
-      try {
-        io.jafar.shell.live.LiveJfrSession session =
-            new io.jafar.shell.live.LiveJfrSession(
-                pid, repo, "jfr-live", jdk.jfr.consumer.EventStream::openRepository);
-        // Leak protection for non-SIGINT exits only; the Ctrl-C path is TailRunner's signal
-        // handler interrupting the loop, which returns normally (exit 0).
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> session.close()));
-        session.start();
+      // attach applies the full planted-directory hardening (explicit --repository paths
+      // included) and returns a STARTED session. LiveJfrSession implements AutoCloseable
+      // (Session); close() is idempotent and never throws. TWRS closes the stream and its
+      // dispatch thread on the error path too; the shutdown hook stays for hard process exits
+      // (double-close is a no-op). The Ctrl-C path is TailRunner's signal handler interrupting
+      // the loop, which returns normally (exit 0).
+      try (io.jafar.shell.live.LiveStreamView session =
+          io.jafar.shell.live.DefaultLiveStreams.INSTANCE.attach(pid, repo)) {
+        Runtime.getRuntime()
+            .addShutdownHook(
+                new Thread(
+                    () -> {
+                      try {
+                        session.close();
+                      } catch (Exception ignored) {
+                        // close() is idempotent and never throws in practice
+                      }
+                    }));
         TailRunner.run(
             session,
             filter,
-            format.equals("json") ? TailRunner.Format.JSON : TailRunner.Format.TABLE,
+            fmt,
             limit == null ? -1 : limit,
             new TailRunner.PrintSink(
                 new CommandDispatcher.IO() {
                   @Override
                   public void println(String s) {
-                    System.out.println(s);
+                    out.println(s);
                   }
 
                   @Override
-                  public void printf(String fmt, Object... args) {
-                    System.out.printf(fmt, args);
+                  public void printf(String fmt2, Object... args) {
+                    out.printf(fmt2, args);
                   }
 
                   @Override
                   public void error(String s) {
-                    System.err.println(s);
+                    err.println(s);
                   }
-                }));
-        session.close();
+                },
+                fmt));
         return 0;
       } catch (Exception e) {
-        System.err.println("Error: " + e.getMessage());
+        err.println("Error: " + e.getMessage());
         return 1;
       }
     }
