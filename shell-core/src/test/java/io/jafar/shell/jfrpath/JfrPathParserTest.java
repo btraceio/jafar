@@ -547,4 +547,59 @@ class JfrPathParserTest {
     assertEquals(20, op.buckets);
     assertEquals(0.5, op.minPct, 0.001);
   }
+
+  /** A bare index/slice bracket with no preceding named segment is a parse error, not a segment. */
+  @Test
+  void rejectsBareIndexBracketWithoutSegment() {
+    assertThrows(
+        IllegalArgumentException.class, () -> JfrPathParser.parse("events/jdk.FileRead[0]"));
+    assertThrows(IllegalArgumentException.class, () -> JfrPathParser.parse("events/(A|B)[0]"));
+    assertThrows(
+        IllegalArgumentException.class, () -> JfrPathParser.parse("events/jdk.FileRead[f=1][0]"));
+    assertThrows(IllegalArgumentException.class, () -> JfrPathParser.parse("chunks[0]"));
+  }
+
+  /** Index brackets still attach to the preceding segment, including stacked brackets. */
+  @Test
+  void parsesIndexBracketsAttachedToSegments() {
+    var q = JfrPathParser.parse("events/jdk.FileRead/frames[0]");
+    assertTrue(q.segments.get(q.segments.size() - 1).endsWith("[0]"), q.segments.toString());
+
+    var stacked = JfrPathParser.parse("events/jdk.FileRead/frames[0][1]");
+    assertTrue(
+        stacked.segments.get(stacked.segments.size() - 1).endsWith("[0][1]"),
+        stacked.segments.toString());
+  }
+
+  /** A quoted groupBy key without ${} interpolation is a constant key — a parse error. */
+  @Test
+  void rejectsConstantLiteralGroupByKey() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JfrPathParser.parse("events/jdk.FileRead | groupBy(\"path\")"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JfrPathParser.parse("events/jdk.FileRead | groupBy('path')"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JfrPathParser.parse("events/jdk.FileRead | groupBy(3)"));
+  }
+
+  /** Template keys and computed-expression keys stay legal; unquoted paths untouched. */
+  @Test
+  void parsesComputedAndTemplateGroupByKeys() {
+    var template =
+        JfrPathParser.parse("events/jdk.FileRead | groupBy(\"${frames[0]}#${n}\", agg=count)");
+    var templateOp = (JfrPath.GroupByOp) template.pipeline.get(0);
+    assertInstanceOf(JfrPath.StringTemplate.class, templateOp.keyExpr);
+
+    var expr = JfrPathParser.parse("events/jdk.ExecutionSample | groupBy(n * 10)");
+    var exprOp = (JfrPath.GroupByOp) expr.pipeline.get(0);
+    assertInstanceOf(JfrPath.BinExpr.class, exprOp.keyExpr);
+
+    var plain = JfrPathParser.parse("events/jdk.FileRead | groupBy(frames[0])");
+    var plainOp = (JfrPath.GroupByOp) plain.pipeline.get(0);
+    assertNull(plainOp.keyExpr);
+    assertEquals(java.util.List.of("frames[0]"), plainOp.keyPath);
+  }
 }
