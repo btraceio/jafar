@@ -63,17 +63,43 @@ public final class JfrPathParser {
 
     List<Predicate> preds = new ArrayList<>();
     // Interleave segments and filters: a/b[c>0]/d[e=1]
+    // True when the position sits directly after a segment name or an index/slice bracket, so a
+    // following [ attaches to it (a[0], a[0][1]) instead of opening a filter.
+    boolean afterSegment = false;
     while (!eof()) {
       if (peek() == '|' || Character.isWhitespace((char) peek())) break;
+      if (indexBracketClose() >= 0) {
+        // <segment> ::= <identifier> | <index> | <slice>: a bracket whose content is an index or
+        // a start:end slice is array traversal on the current segment; anything else is a filter.
+        // A bare index/slice bracket with no preceding named segment is a syntax error, never a
+        // standalone segment (no evaluator path can consume a bracket-only segment).
+        String bracket = input.substring(pos, indexBracketClose() + 1);
+        pos = indexBracketClose() + 1;
+        if (!afterSegment || segments.isEmpty()) {
+          throw error(
+              "Array index or slice must directly follow a segment name, e.g. frames[0] (got '"
+                  + bracket
+                  + "'); use chunks/<n> to select a chunk");
+        }
+        segments.set(segments.size() - 1, segments.get(segments.size() - 1) + bracket);
+        afterSegment = true;
+        if (peek() == '/') {
+          pos++;
+          afterSegment = false;
+        }
+        continue;
+      }
       if (peek() != '[') {
         // For multi-type queries, we already consumed the type list
         if (!isMultiType || segments.size() > 0) {
           String seg = readUntil('/', '[', ' ', '|');
           if (!seg.isEmpty()) segments.add(seg);
+          afterSegment = true;
         }
       }
-      // consume zero or more filters after the current segment, prefixing their paths
-      while (!eof() && peek() == '[') {
+      // consume zero or more filters after the current segment, prefixing their paths;
+      // a bracket holding an index/slice ends the filter run and is handled above
+      while (!eof() && peek() == '[' && indexBracketClose() < 0) {
         pos++; // [
         Predicate p = parsePredicate();
         if (p instanceof FieldPredicate fp) {
@@ -88,9 +114,11 @@ public final class JfrPathParser {
         }
         preds.add(p);
         expect(']');
+        afterSegment = false;
       }
       if (peek() == '/') {
         pos++;
+        afterSegment = false;
         continue;
       }
       if (peek() == '|' || Character.isWhitespace((char) peek())) break;
@@ -626,6 +654,7 @@ public final class JfrPathParser {
       return new JfrPath.SumOp(valuePath);
     } else if ("groupby".equals(name)) {
       List<String> keyPath = List.of();
+      JfrPath.Expr keyExpr = null;
       String aggFunc = "count";
       List<String> aggValuePath = List.of();
       JfrPath.Expr valueExpr = null;
@@ -634,8 +663,23 @@ public final class JfrPathParser {
       if (peek() == '(') {
         pos++;
         skipWs();
-        // First arg is always the key path
-        keyPath = parsePathArg();
+        // First arg is the key: a plain path (possibly array-indexed), or a computed
+        // expression/string template. A FieldRef keeps the plain-path fan-out behaviour.
+        if (peek() == '"' || peek() == '\'' || detectExpression()) {
+          keyExpr = parseExpression();
+          skipWs();
+          if (keyExpr instanceof JfrPath.FieldRef fr) {
+            keyPath = fr.fieldPath;
+          } else if (keyExpr instanceof JfrPath.Literal lit) {
+            throw error(
+                "groupBy key '"
+                    + lit.value
+                    + "' is a constant: every event would land in one group. Use an unquoted field"
+                    + " path (groupBy(thread/name)) or a ${...} template (groupBy(\"${a}/${b}\"))");
+          }
+        } else {
+          keyPath = parsePathArg();
+        }
         skipWs();
         // Parse optional agg=, value=, sortBy=, asc= parameters
         while (peek() == ',') {
@@ -680,7 +724,8 @@ public final class JfrPathParser {
         }
         expect(')');
       }
-      return new JfrPath.GroupByOp(keyPath, aggFunc, aggValuePath, valueExpr, sortBy, ascending);
+      return new JfrPath.GroupByOp(
+          keyPath, keyExpr, aggFunc, aggValuePath, valueExpr, sortBy, ascending);
     } else if ("sortby".equals(name)
         || "sort".equals(name)
         || "orderby".equals(name)
@@ -1097,6 +1142,17 @@ public final class JfrPathParser {
     while (!eof()) {
       String seg = readIdent();
       if (seg.isEmpty()) break;
+      // Array element traversal: name[index] or name[start:end], possibly stacked (a[0][1])
+      while (peek() == '[') {
+        int close = input.indexOf(']', pos);
+        if (close < 0) throw error("Unclosed '[' in path");
+        String inside = input.substring(pos + 1, close).trim();
+        if (!isValidIndexOrSlice(inside)) {
+          throw error("Expected array index or start:end slice, got '" + inside + "'");
+        }
+        seg += input.substring(pos, close + 1);
+        pos = close + 1;
+      }
       fp.add(seg);
       // Accept both / and . as path separators for nested field access
       if (peek() == '/' || peek() == '.') {
@@ -1107,6 +1163,35 @@ public final class JfrPathParser {
     }
     if (fp.isEmpty()) throw error("Expected path");
     return fp;
+  }
+
+  private static boolean isValidIndexOrSlice(String s) {
+    int c = s.indexOf(':');
+    if (c < 0) return isInt(s);
+    String from = s.substring(0, c).trim();
+    String to = s.substring(c + 1).trim();
+    return (from.isEmpty() || isInt(from)) && (to.isEmpty() || isInt(to));
+  }
+
+  /**
+   * If the bracket at pos holds an index or slice (not a filter predicate), the position of its
+   * closing ']'.
+   */
+  private int indexBracketClose() {
+    if (peek() != '[') return -1;
+    int close = input.indexOf(']', pos);
+    if (close <= pos) return -1;
+    String inside = input.substring(pos + 1, close).trim();
+    return isValidIndexOrSlice(inside) ? close : -1;
+  }
+
+  private static boolean isInt(String s) {
+    try {
+      Integer.parseInt(s);
+      return true;
+    } catch (NumberFormatException e) {
+      return false;
+    }
   }
 
   private JfrPath.SelectOp parseSelect() {

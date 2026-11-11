@@ -69,6 +69,23 @@ events/jdk.ExecutionSample/stackTrace/frames/0          # First element
 events/jdk.ExecutionSample/stackTrace/frames/0:3        # Slice [0,3)
 ```
 
+### Array Indexing and Slices
+
+A bracket whose content is an index or a `start:end` slice traverses array elements, attached to a
+field or standing alone — the same traversal the pipeline operators' path arguments accept:
+
+```
+events/jdk.ExecutionSample/stackTrace/frames[0]              # First frame
+events/jdk.ExecutionSample/stackTrace/frames[0:3]            # Slice [0,3), fanned out flat
+events/jdk.ExecutionSample/stackTrace/frames[0]/lineNumber   # A field of that element
+```
+
+A bracket holding anything else is a filter, so `frames[0]` traverses and `frames[n>0]` filters.
+Out-of-range or negative indexes resolve to nothing: a bare path projection yields no value, in
+groupBy the event contributes no group, and in select() the row is kept with a null value for that
+field. Slices are honoured on the last bracket group of the last segment only; a slice elsewhere
+is rejected with an error.
+
 ### Metadata Aliases
 Convenient shortcuts for metadata navigation:
 ```
@@ -462,15 +479,19 @@ events/jdk.ExecutionSample[sampledThread/javaName="main"] | flamegraph()
 
 ### Group By
 ```
-| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
+| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
 ```
 
 Group results by key and apply aggregation function with optional sorting.
 
 **Parameters**:
-- `keyPath` - Field path to group by
+- `key` - What to group by: a field path (with array indexing, e.g. `frames[0]`), a string template
+  (`"${a}-${b}"`), or a computed expression (`n * 10`). A plain path fans out over arrays it
+  crosses — one group per element; an indexed path (`frames[0]`) selects a single element per
+  event; a slice (`frames[0:2]`) fans out over the selected range. A template or expression
+  evaluates to one key per event; an event where it evaluates to nothing contributes no group.
 - `agg` - Aggregation function (default: `count`)
-- `value` - Value path for sum/avg/min/max
+- `value` - Value path for sum/avg/min/max (accepts array indexing too)
 - `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
 - `asc` - Sort ascending (default: `false`, descending)
 
@@ -494,6 +515,9 @@ A group-by over a type with no events at all is still an empty result, not an er
 events/jdk.FileRead | groupBy(path, agg=count)                              # Count by file path
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)                   # Total bytes by path
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count)                # Count by thread name
+events/jdk.ExecutionSample | groupBy(stackTrace/frames[0]/lineNumber, agg=count)   # Count by top frame line
+events/jdk.FileRead | groupBy("${path}:${bytesRead}", agg=count)                # Composed template key
+events/jdk.FileRead | groupBy(bytesRead / 1024, agg=count)                      # Bucketing by expression
 events/jdk.FileRead | groupBy(path, agg=avg, value=bytesRead)                   # Avg bytes by path
 events/jdk.FileRead | groupBy(path, agg=min, value=bytesRead)                   # Min bytes by path
 events/jdk.FileRead | groupBy(path, agg=max, value=bytesRead)                   # Max bytes by path
@@ -655,7 +679,8 @@ Project specific fields from events, filtering out all other fields. Supports bo
 **Use Cases**: Reduce output to only relevant fields, compute derived values, transform data, control JSON output structure, focus analysis on specific attributes.
 
 **Parameters**:
-- `field` - Simple field path to include in output
+- `field` - Simple field path to include in output (array indexing and tail slices work:
+  `frames[0]`, `frames[0:2]`)
 - `field as alias` - Field path with custom output name
 - `expression as alias` - Computed expression (requires alias)
 - Supports nested fields using `/` syntax (e.g., `eventThread/javaThreadId`)
@@ -666,6 +691,8 @@ Project specific fields from events, filtering out all other fields. Supports bo
 - Expressions require `as alias` clause
 - Works with filters and other query operations
 - Expressions are evaluated per row
+- Array traversal keeps one value per row: `frames[0]` reaches the element, an unindexed array
+  field stays whole, a tail slice yields a List — select never fans out rows
 
 **Simple Field Selection**:
 ```
@@ -677,6 +704,11 @@ events/jdk.FileRead | select(path, bytesRead)
 
 # Select nested fields
 events/jdk.ExecutionSample | select(sampledThread/javaThreadId, sampledThread/javaName)
+
+# Array element traversal
+events/jdk.ExecutionSample | select(stackTrace/frames[0]/lineNumber as topLine)
+events/jdk.ExecutionSample | select("top=${stackTrace/frames[0]/method/name}" as topFrame)
+events/jdk.ExecutionSample | select(frames[0:2] as firstTwoFrames)
 
 # Field with alias
 events/jdk.ExecutionSample | select(sampledThread/javaThreadId as threadId)
