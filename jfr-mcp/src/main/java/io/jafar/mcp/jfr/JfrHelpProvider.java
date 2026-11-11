@@ -124,11 +124,16 @@ public final class JfrHelpProvider {
         events/jdk.FileRead | top(10, by=bytesRead, asc=true)  # smallest first
         ```
 
-        ## groupBy(field[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
-        Group by field and aggregate.
+        ## groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
+        Group by key and aggregate. The key is a field path (array indexing works: frames[0]),
+        a string template ("${a}-${b}"), or a computed expression (n * 10). Indexed paths fan out
+        over arrays they cross; a template or expression yields one key per event, and an event
+        where it evaluates to nothing contributes no group.
         ```
         events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
         events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)
+        events/jdk.ExecutionSample | groupBy(stackTrace/frames[0]/lineNumber, agg=count)
+        events/jdk.ExecutionSample | groupBy("${state/name}", agg=count)
         events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)
         ```
 
@@ -155,11 +160,15 @@ public final class JfrHelpProvider {
         ```
 
         ## select(field1, field2, expr as alias, ...)
-        Project specific fields or compute expressions.
+        Project specific fields or compute expressions. Field paths accept array indexing
+        (frames[0]) and tail slices (frames[0:2]); templates interpolate them: "top=${frames[0]}".
+        Select keeps one value per row — it never fans out over arrays.
         ```
         events/jdk.FileRead | select(path, bytesRead)
         events/jdk.FileRead | select(path, bytesRead / 1024 as kb)
         events/jdk.ExecutionSample | select(sampledThread/javaName as thread, startTime)
+        events/jdk.ExecutionSample | select(stackTrace/frames[0]/lineNumber as topLine)
+        events/jdk.ExecutionSample | select("top=${stackTrace/frames[0]/method/name}" as top)
         ```
 
         ## sortBy(field[, asc=false])

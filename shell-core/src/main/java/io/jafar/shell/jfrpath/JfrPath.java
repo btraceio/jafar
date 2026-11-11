@@ -378,6 +378,18 @@ public final class JfrPath {
 
   public static final class GroupByOp implements PipelineOp {
     public final List<String> keyPath; // path to group by
+
+    /**
+     * Computed key expression or template. When non-null and not a {@link FieldRef} it takes
+     * precedence over {@link #keyPath}: each row's key is obtained by evaluating the expression
+     * once, so a string template or computed expression yields one group per distinct evaluated
+     * value, and a row whose key evaluates to {@code null} contributes no group. A {@link FieldRef}
+     * key expression is mirrored into {@link #keyPath} by the parser, preserving plain-path array
+     * fan-out (one group per element). Behavior is owned by {@code RowOps.applyGroupBy} (cached
+     * rows) and {@code Aggregations.aggregateGroupBy}/{@code groupKeys} (streaming).
+     */
+    public final Expr keyExpr;
+
     public final String aggFunc; // "count", "sum", "avg", "min", "max"
     public final List<String> valuePath; // for sum/avg/min/max (simple path)
     public final Expr valueExpr; // for computed expressions (takes precedence over valuePath)
@@ -404,7 +416,34 @@ public final class JfrPath {
         Expr valueExpr,
         String sortBy,
         boolean ascending) {
+      this(keyPath, null, aggFunc, valuePath, valueExpr, sortBy, ascending);
+    }
+
+    /**
+     * Full groupby with an optional computed key. See the {@link #keyExpr} field contract: a
+     * non-FieldRef {@code keyExpr} overrides {@code keyPath} and produces one key per row (a row
+     * whose key evaluates to null contributes no group); a FieldRef {@code keyExpr} must be
+     * mirrored in {@code keyPath} to keep plain-path fan-out (the parser does this folding).
+     *
+     * @param keyPath path to group by (used when {@code keyExpr} is null or a FieldRef); never null
+     *     — pass {@code List.of()} when the key is fully supplied by {@code keyExpr}
+     * @param keyExpr computed key expression or template, or null for plain-path grouping
+     * @param aggFunc aggregation function: "count", "sum", "avg", "min", "max"
+     * @param valuePath value path for sum/avg/min/max
+     * @param valueExpr computed value expression (takes precedence over {@code valuePath})
+     * @param sortBy "key" or "value", or null for no sorting
+     * @param ascending sort order when {@code sortBy} is set
+     */
+    public GroupByOp(
+        List<String> keyPath,
+        Expr keyExpr,
+        String aggFunc,
+        List<String> valuePath,
+        Expr valueExpr,
+        String sortBy,
+        boolean ascending) {
       this.keyPath = List.copyOf(keyPath);
+      this.keyExpr = keyExpr;
       this.aggFunc = aggFunc == null ? "count" : aggFunc;
       this.valuePath = valuePath == null ? List.of() : List.copyOf(valuePath);
       this.valueExpr = valueExpr;
