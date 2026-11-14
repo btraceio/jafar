@@ -52,7 +52,18 @@ documented gaps are in [Gates.md](Gates.md).
 ## Key Classes to Understand
 - `JafarParser`: Factory methods for creating typed/untyped parsers
 - `TypedJafarParserImpl`/`UntypedJafarParserImpl`: Core implementation classes
-- `ParsingContext`: Manages shared resources and metadata across parsing sessions
+- `ParsingContext`: Manages shared resources and metadata across parsing sessions.
+  `withParallelism(n)` returns a view sharing the caches whose parsers build their
+  `StreamingChunkParser` with `n` chunk threads; `withParallelism(1)` is the sequential,
+  file-ordered mode. The pool size is fixed when the `StreamingChunkParser` is constructed (typed:
+  in the parser's constructor; untyped: per `run()`), which is why it is a context property and
+  not a setter on the parser
+- Handler registries (`TypedJafarParserImpl.handlerMap`, `UntypedJafarParserImpl.handlers`) are
+  copy-on-write: writers replace the field under a lock, the dispatch loop reads it once per
+  event. Do not go back to iterating a mutable collection there - a handler that deregisters
+  during `run()` then throws `ConcurrentModificationException` out of `run()` (regression tests:
+  `UntypedHandlerDeregistrationTest`, `TypedJafarParserLifecycleTest`), and the per-event iterator
+  costs 32 bytes per event on JDK 21 (measured; see `gradle/allocation-budgets.properties`)
 - `ChunkParserListener`: Low-level parsing lifecycle hooks. **Callbacks for different chunks run
   concurrently**: `StreamingChunkParser` submits every chunk to a pool of `max(nproc - 2, 1)`
   threads, and only the callbacks of one chunk run in sequence. A listener that collects into one

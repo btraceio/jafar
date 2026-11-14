@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`ParsingContext.withParallelism(int)`** - a context sharing the original's caches whose parsers
+  read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
+  file order, so handlers need no synchronization. The default stays
+  `max(availableProcessors - 2, 1)`
+- **`HandlerRegistration` is `AutoCloseable`**: `close()` deregisters the handler without the
+  parser argument `destroy(JafarParser)` needed. `destroy` is deprecated
 - **`Values.resolvedDeepCollapsed(Map)` and `ComplexType.isSimpleType()`** (#108). Resolves
   constant-pool references to JFR simple types (`jdk.types.ThreadState`, ...) to their scalar, as
   the typed API does, decided by the recording's metadata rather than a `size() == 1` guess.
@@ -39,6 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Deregistering a handler while `run()` is in progress** no longer fails the parse. With two or
+  more handlers registered, a handler deregistering itself or another handler, or another thread
+  deregistering one, made `run()` throw an `IOException` caused by a
+  `ConcurrentModificationException`, in both the typed and the untyped parser. Handlers are now held
+  in a copy-on-write array read once per event: the event being dispatched may still reach a
+  deregistered handler, at most one per parsing thread, and no later event does. Handlers are also
+  called in registration order now; the order was unspecified before
+- **Typed `HandlerRegistration.destroy`** called a second time, or after the parser was closed,
+  threw a `NullPointerException`; it is idempotent now
+- **Untyped `HandlerRegistration.destroy(wrongParser)`** removed the handler anyway unless
+  assertions were enabled (then it threw an `AssertionError`); it does nothing now, as the typed
+  parser already did and the Javadoc says
+- **Documentation said handlers run "synchronously on the parser thread".** They run concurrently
+  on the chunk parsing threads and must be thread-safe; README, Javadoc, tutorials, LIMITATIONS and
+  PERFORMANCE now say so and state the ordering (file order within a chunk, none between chunks).
+  The untyped examples that tested `Values.get(...) instanceof ArrayType` (never true: `Values.get`
+  returns the backing array) and the `chunkInfo().convertTicks(...)` examples (no such method) are
+  corrected, and the README gained a table of the Java value each JFR field type decodes to
 - **Metadata of multi-chunk recordings: one class per name, every chunk's fields.** Each chunk
   carries its own metadata, and chunks can disagree (a recording can join chunks from different
   writers). `metadata` and `metadata/<type>` listed a class once per chunk, or showed whichever

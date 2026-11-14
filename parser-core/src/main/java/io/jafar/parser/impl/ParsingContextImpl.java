@@ -26,7 +26,10 @@ public final class ParsingContextImpl implements ParsingContext {
   private final TypedParserContextFactory typedFactory;
 
   /** The start timestamp for tracking uptime. */
-  private final long startTs = System.nanoTime();
+  private final long startTs;
+
+  /** Requested chunk parsing threads; 0 selects the default. */
+  private final int parallelism;
 
   // DeserializerFactory is classpath-static: discovered once and reused across all contexts.
   private static final DeserializerFactory DESERIALIZER_FACTORY = discoverDeserializerFactory();
@@ -67,6 +70,32 @@ public final class ParsingContextImpl implements ParsingContext {
   /** Constructs a new ParsingContextImpl. */
   public ParsingContextImpl() {
     this.typedFactory = new TypedParserContextFactory(DESERIALIZER_FACTORY);
+    this.startTs = System.nanoTime();
+    this.parallelism = 0;
+  }
+
+  /** A view of {@code other} that shares its caches and clock, with its own parallelism. */
+  private ParsingContextImpl(ParsingContextImpl other, int parallelism) {
+    this.typedFactory = other.typedFactory;
+    this.startTs = other.startTs;
+    this.parallelism = parallelism;
+  }
+
+  @Override
+  public ParsingContext withParallelism(int parallelism) {
+    if (parallelism < 1) {
+      throw new IllegalArgumentException("parallelism must be at least 1: " + parallelism);
+    }
+    return new ParsingContextImpl(this, parallelism);
+  }
+
+  /**
+   * The number of chunk parsing threads parsers of this context use.
+   *
+   * @return the requested number, or {@code 0} for the default
+   */
+  public int parallelism() {
+    return parallelism;
   }
 
   /**

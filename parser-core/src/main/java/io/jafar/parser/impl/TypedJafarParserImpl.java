@@ -23,10 +23,11 @@ import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
-import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,8 +50,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    * @param <T> the type of JFR events this handler processes
    */
   private final class HandlerRegistrationImpl<T> implements HandlerRegistration<T> {
-    private final WeakReference<Class<?>> clzRef;
-    private final WeakReference<TypedJafarParser> cookieRef;
+    private final Class<?> clz;
     private final JFRHandler.Impl<?> handler;
 
     /**
@@ -58,26 +58,23 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
      *
      * @param clz the class type for the handler
      * @param handler the JFR handler implementation
-     * @param cookie the parser instance that owns this registration
      */
-    HandlerRegistrationImpl(Class<?> clz, JFRHandler.Impl<?> handler, TypedJafarParser cookie) {
-      this.clzRef = new WeakReference<>(clz);
+    HandlerRegistrationImpl(Class<?> clz, JFRHandler.Impl<?> handler) {
+      this.clz = clz;
       this.handler = handler;
-      this.cookieRef = new WeakReference<>(cookie);
+    }
+
+    @Override
+    public void close() {
+      removeHandler(clz, handler);
     }
 
     /** {@inheritDoc} */
     @Override
+    @Deprecated
     public void destroy(JafarParser cookie) {
-      if (cookie != null && cookie.equals(cookieRef.get())) {
-        Class<?> clz = clzRef.get();
-        if (clz != null) {
-          Set<JFRHandler.Impl<?>> handlers = handlerMap.get(clz);
-          handlers.remove(handler);
-          if (handlers.isEmpty()) {
-            handlerMap.remove(clz);
-          }
-        }
+      if (cookie == TypedJafarParserImpl.this) {
+        close();
       }
     }
   }
@@ -91,8 +88,15 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   /** Path to the JFR recording file. */
   private final Path recording;
 
-  /** Map of event classes to their registered handlers. */
-  private final Map<Class<?>, Set<JFRHandler.Impl<?>>> handlerMap;
+  /**
+   * Event classes to their registered handlers, in registration order. Copy-on-write: neither a
+   * published map nor any array in it is ever modified, so the chunk threads dispatching an event
+   * read a stable snapshot while {@link #handle} and deregistration replace the field (both under
+   * {@code handlersLock}).
+   */
+  private volatile Map<Class<?>, JFRHandler.Impl<?>[]> handlerMap = Collections.emptyMap();
+
+  private final Object handlersLock = new Object();
 
   /** Map of chunk indices to type ID to class mappings. */
   private final IntObjectArrayMap<LongObjectHashMap<Class<?>>> chunkTypeClassMap;
@@ -116,9 +120,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    * @param parsingContext the parsing context to use
    */
   public TypedJafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
-    this.parser = new StreamingChunkParser(parsingContext.typedContextFactory());
+    this.parser =
+        new StreamingChunkParser(
+            parsingContext.typedContextFactory(), parsingContext.parallelism());
     this.recording = recording;
-    this.handlerMap = new HashMap<>();
     this.chunkTypeClassMap = new IntObjectArrayMap<>();
     this.globalHandlerMap = new HashMap<>();
     this.factoryMap = new HashMap<>();
@@ -131,7 +136,8 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   private TypedJafarParserImpl(TypedJafarParserImpl other, ChunkParserListener listener) {
     this.parser = other.parser;
     this.recording = other.recording;
-    this.handlerMap = new HashMap<>(other.handlerMap);
+    // published maps and their arrays are never modified, so sharing the current one is safe
+    this.handlerMap = other.handlerMap;
     this.chunkTypeClassMap = new IntObjectArrayMap<>(other.chunkTypeClassMap);
     this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
     this.factoryMap = new HashMap<>(other.factoryMap);
@@ -147,11 +153,52 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       ValidationUtils.requireNonNull(handler, "handler");
       addDeserializer(clz);
       JFRHandler.Impl<T> handlerImpl = new JFRHandler.Impl<>(clz, handler);
-      handlerMap.computeIfAbsent(clz, k -> new HashSet<>()).add(handlerImpl);
+      synchronized (handlersLock) {
+        Map<Class<?>, JFRHandler.Impl<?>[]> updated = new HashMap<>(handlerMap);
+        JFRHandler.Impl<?>[] current = updated.get(clz);
+        JFRHandler.Impl<?>[] extended;
+        if (current == null) {
+          extended = new JFRHandler.Impl<?>[] {handlerImpl};
+        } else {
+          extended = Arrays.copyOf(current, current.length + 1);
+          extended[current.length] = handlerImpl;
+        }
+        updated.put(clz, extended);
+        handlerMap = updated;
+      }
 
-      return new HandlerRegistrationImpl<>(clz, handlerImpl, this);
+      return new HandlerRegistrationImpl<>(clz, handlerImpl);
     } catch (JafarConfigurationException e) {
       throw new RuntimeException(e);
+    }
+  }
+
+  private void removeHandler(Class<?> clz, JFRHandler.Impl<?> handler) {
+    synchronized (handlersLock) {
+      JFRHandler.Impl<?>[] current = handlerMap.get(clz);
+      if (current == null) {
+        return; // already removed, or cleared by close()
+      }
+      int idx = -1;
+      for (int i = 0; i < current.length; i++) {
+        if (current[i] == handler) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx < 0) {
+        return;
+      }
+      Map<Class<?>, JFRHandler.Impl<?>[]> updated = new HashMap<>(handlerMap);
+      if (current.length == 1) {
+        updated.remove(clz);
+      } else {
+        JFRHandler.Impl<?>[] shrunk = new JFRHandler.Impl<?>[current.length - 1];
+        System.arraycopy(current, 0, shrunk, 0, idx);
+        System.arraycopy(current, idx + 1, shrunk, idx, current.length - idx - 1);
+        updated.put(clz, shrunk);
+      }
+      handlerMap = updated;
     }
   }
 
@@ -322,7 +369,10 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             LongObjectHashMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
             Class<?> typeClz = typeClassMap.get(typeId);
             if (typeClz != null) {
-              if (handlerMap.containsKey(typeClz)) {
+              // One read per event: a handler deregistered while this event is being dispatched
+              // (from a handler or from another thread) still receives it, and no later one.
+              JFRHandler.Impl<?>[] handlers = handlerMap.get(typeClz);
+              if (handlers != null) {
                 RecordingStream stream = context.get(RecordingStream.class);
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
 
@@ -330,8 +380,8 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 Object deserialized = clz.read(stream);
 
                 ControlImpl ctrl = (ControlImpl) control.get();
-                for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
-                  handler.handle(deserialized, ctrl);
+                for (int i = 0; i < handlers.length; i++) {
+                  handlers[i].handle(deserialized, ctrl);
                   if (ctrl.isAborted()) {
                     return false;
                   }
@@ -352,7 +402,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
       parser.close();
       chunkTypeClassMap.clear();
-      handlerMap.clear();
+      synchronized (handlersLock) {
+        handlerMap = Collections.emptyMap();
+      }
       globalHandlerMap.clear();
       factoryMap.clear();
     }

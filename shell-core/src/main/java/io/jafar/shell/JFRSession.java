@@ -506,7 +506,7 @@ public final class JFRSession implements Session {
     closed = true;
     // Clean up all registrations
     for (HandlerRegistration<?> registration : registrations) {
-      registration.destroy(parser);
+      registration.close();
     }
     registrations.clear();
 

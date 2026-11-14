@@ -12,9 +12,11 @@ import java.nio.file.Path;
  * by {@link UntypedJafarParser}. Implementations are {@link AutoCloseable}; prefer
  * try-with-resources to ensure resources are released.
  *
- * <p>Calling {@link #run()} reads the recording and synchronously invokes all registered handlers.
- * If a handler throws, parsing stops and the exception is propagated to the caller of {@code
- * run()}.
+ * <p>Calling {@link #run()} reads the recording and invokes all registered handlers; it returns
+ * when every handler call has completed. Handlers are called on parser-owned threads, concurrently
+ * for different chunks of the recording, and must be thread-safe unless the parser was created from
+ * {@link ParsingContext#withParallelism(int) ParsingContext.withParallelism(1)}. If a handler
+ * throws, parsing stops and the exception is propagated to the caller of {@code run()}.
  */
 public interface JafarParser {
   /**
@@ -60,7 +62,8 @@ public interface JafarParser {
   }
 
   /**
-   * Parses the recording and synchronously invokes registered handlers.
+   * Parses the recording and invokes registered handlers on the chunk parsing threads; returns when
+   * every chunk has been parsed and every handler call has completed.
    *
    * @throws IOException if an I/O error occurs while reading the recording or if a parsing error
    *     occurs and is wrapped as an I/O failure

@@ -26,14 +26,7 @@ import org.slf4j.LoggerFactory;
 public final class StreamingChunkParser implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(StreamingChunkParser.class);
 
-  private final ExecutorService executor =
-      Executors.newFixedThreadPool(
-          Math.max(Runtime.getRuntime().availableProcessors() - 2, 1),
-          r -> {
-            Thread t = new Thread(r);
-            t.setDaemon(true);
-            return t;
-          });
+  private final ExecutorService executor;
 
   private boolean closed = false;
   private final ParserContextFactory contextFactory;
@@ -44,7 +37,43 @@ public final class StreamingChunkParser implements AutoCloseable {
    * @param contextFactory the factory for creating parser contexts
    */
   public StreamingChunkParser(ParserContextFactory contextFactory) {
+    this(contextFactory, 0);
+  }
+
+  /**
+   * Constructs a new StreamingChunkParser with the specified context factory and number of chunk
+   * parsing threads.
+   *
+   * <p>Chunks are submitted in file order to a first-in-first-out queue, so with one thread they
+   * are parsed, and their listener callbacks delivered, strictly one after another in file order.
+   *
+   * @param contextFactory the factory for creating parser contexts
+   * @param parallelism the number of chunk parsing threads; {@code 0} selects the default, {@link
+   *     #defaultParallelism()}
+   * @throws IllegalArgumentException if {@code parallelism} is negative
+   */
+  public StreamingChunkParser(ParserContextFactory contextFactory, int parallelism) {
+    if (parallelism < 0) {
+      throw new IllegalArgumentException("parallelism must not be negative: " + parallelism);
+    }
     this.contextFactory = contextFactory;
+    this.executor =
+        Executors.newFixedThreadPool(
+            parallelism == 0 ? defaultParallelism() : parallelism,
+            r -> {
+              Thread t = new Thread(r);
+              t.setDaemon(true);
+              return t;
+            });
+  }
+
+  /**
+   * The number of chunk parsing threads used when none is requested.
+   *
+   * @return {@code max(availableProcessors - 2, 1)}
+   */
+  public static int defaultParallelism() {
+    return Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
   }
 
   /**

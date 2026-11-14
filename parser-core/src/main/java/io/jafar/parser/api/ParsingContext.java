@@ -67,6 +67,33 @@ public interface ParsingContext {
   UntypedJafarParser newUntypedParser(Path path, UntypedStrategy strategy);
 
   /**
+   * Returns a context that shares this context's cached resources but whose parsers read chunks on
+   * {@code parallelism} threads instead of the default {@code max(availableProcessors - 2, 1)}.
+   *
+   * <p>With {@code withParallelism(1)} a parser delivers events strictly one at a time, in the
+   * order they appear in the file, chunk after chunk, and every handler call is complete before
+   * {@code run()} returns. Handlers then need no synchronization of their own. Handlers are still
+   * called on a parser-owned thread, not on the thread that called {@code run()}. With any larger
+   * value, chunks are parsed concurrently: handlers must be thread-safe, events keep file order
+   * only within one chunk, and there is no order between chunks.
+   *
+   * <p>This context is not changed; parsers already created from it keep their setting.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; contexts created by {@link #create()} support
+   * it.
+   *
+   * @param parallelism the number of chunk parsing threads, at least 1
+   * @return a context sharing this context's resources, with the given parallelism
+   * @throws IllegalArgumentException if {@code parallelism} is less than 1
+   * @throws UnsupportedOperationException if this implementation does not support it
+   */
+  default ParsingContext withParallelism(int parallelism) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support withParallelism");
+  }
+
+  /**
    * Returns the uptime of the parsing context in nanoseconds.
    *
    * <p>Measures cumulative time since creation, across all parser sessions using this context.
