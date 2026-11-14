@@ -244,7 +244,9 @@ workflow itself is exercised before it reaches the default branch
 1. **String Allocation**: Despite caching, string-heavy recordings allocate significant memory
 2. **Bytecode Generation**: First parse of a new event type has overhead for code generation (amortized over repeated parses)
 3. **Large Constant Pools**: Million+ unique entries may cause memory pressure
-4. **Single-Threaded Handlers**: Handlers execute sequentially on the parser thread
+4. **Handlers run on the parsing threads**: one chunk per thread, so a slow or contended handler
+   stalls the decoding of its chunk; `ParsingContext.withParallelism(1)` trades the parallel
+   speed-up for sequential, file-ordered handler calls
 
 ## Future Optimization Opportunities
 
