@@ -4,8 +4,6 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -18,13 +16,12 @@ import org.junit.jupiter.api.Test;
  * asserting the SPECIFIC observed outcome — the delivered jafar exception class plus a message
  * fragment, or the exact delivered-event count. "Did not crash" is not an outcome.
  *
- * <p>Three seeds (string-table-size, huge-length, deep-metadata) escape the fuzz oracle (an {@code
- * Error} or a non-jafar, non-{@code IOException} root cause in the delivered chain, D4). Per D3
- * their escapes are pinned in {@code known-escapes.txt} — the parser is NOT fixed in this run — and
- * each escape test asserts the pinned delivered throwable, looked up by the committed seed's sha256
- * so the allowlist stays the single source of truth for what is pinned (I1). The legal escapes and
- * the clean parse additionally assert they are NOT pinned: a pin whose input no longer escapes must
- * fail as stale, from this test as well as from {@link EscapeOracle}.
+ * <p>Every seed is either parsed cleanly or rejected with an {@code IOException} whose cause chain
+ * is legal per D4 (an {@code IOException} or {@code io.jafar.*} root, no {@code Error}), so none is
+ * pinned in {@code known-escapes.txt}; each test also asserts that, because a pin whose input does
+ * not escape must fail as stale from here as well as from {@link EscapeOracle}. Three seeds
+ * (string-table-size, huge-length, deep-metadata) did escape the oracle when they were added, and
+ * were pinned until the parser checked what they corrupt; their tests record the former outcome.
  *
  * <p>The intended paths below were confirmed by reading the delivered stack traces (Verification.md
  * R3, "half an event"); the source anchors are recorded per test in the comments.
@@ -145,104 +142,79 @@ public class AdversarialOutcomeTest {
   }
 
   /**
-   * Corrupted string-table size: the index 108 escapes {@code MutableMetadataLookup.getString}'s
-   * table (size 25) as an {@code IllegalArgumentException} that the chunk boundary wraps but does
-   * not convert — the root cause is neither {@code io.jafar.*} nor {@code IOException} (D4). Pinned
-   * in known-escapes.txt; the test asserts the pinned delivered throwable plus the specific
-   * message.
+   * Corrupted string-table size: an element name index (108) lies outside the string table (size
+   * 25). {@code MetadataEvent.readElement} looks the index up through {@code
+   * ParsingUtils.metadataString}, which reports it as an {@code IOException} — the index came from
+   * the recording, so it is the recording that is wrong. A legal escape per D4, not pinned.
+   *
+   * <p>Until the lookup was routed through {@code metadataString} this escaped with an {@code
+   * IllegalArgumentException} root and was pinned in known-escapes.txt.
    */
   @Test
-  void corruptedStringTableSizeEscapesWithThePinnedThrowable() {
-    String sha = assertSeedSha("adv-string-table-size", SHA_STRING_TABLE_SIZE);
-    String pinned = assertPinned(sha, "adv-string-table-size");
-    for (UntypedStrategy strategy : FUZZ_STRATEGIES) {
-      Outcome outcome = parse(seed("adv-string-table-size"), strategy);
-      assertDelivered(outcome, strategy);
-      Assertions.assertEquals(
-          pinned, outcome.delivered.getClass().getName(), strategy + ": the pinned throwable");
-      Assertions.assertTrue(
-          outcome
-              .delivered
-              .getMessage()
-              .contains("String index 108 out of bounds (string table size: 25)"),
-          strategy + ": message fragment; got '" + outcome.delivered.getMessage() + "'");
-    }
+  void corruptedStringTableSizeIsRejectedAsMalformedMetadata() {
+    assertLegalEscape(
+        "adv-string-table-size",
+        SHA_STRING_TABLE_SIZE,
+        "String index 108 out of bounds (string table size: 25)");
   }
 
   /**
    * Huge declared string length (1<<24, 16 MiB, against a ~405-byte recording, with no payload
-   * behind it): {@code ParsingUtils.readUTF8} allocates {@code byte[1<<24]} and {@code
-   * RecordingStream.read} rejects the read with {@code RuntimeException}("unexpected EOF"), which
-   * the chunk boundary wraps but does not convert — a non-jafar root cause (D4), delivered as
-   * {@code IOException}("Error occurred while parsing JFR recording: unexpected EOF"). Pinned;
-   * asserted with the pinned delivered throwable plus message.
+   * behind it): {@code ParsingUtils.readUTF8} checks the declared length against the bytes that are
+   * left before it sizes a buffer from it, and rejects it with an {@code IOException}. A legal
+   * escape per D4, not pinned.
    *
-   * <p>The case originally declared an exact 2^31 length. That variant is the real unbounded-work
-   * vector — the length narrows to a negative int, passes the buffer-reuse check, and the parser
-   * loops on it past {@code shutdownNow()} (an abandoned executor burned ~17 CPU-hours on it) —
-   * recorded under R8/D3 for the report; a fix belongs in the parser, out of scope for this run.
-   * The seed was shrunk to 1<<24 so the parse completes in bounded time while keeping the
-   * corrupted-huge-length semantics (the reader fails on the declared length, not on any real
-   * payload).
+   * <p>Until that check existed the parser allocated {@code byte[1<<24]} first and failed on the
+   * read with a bare {@code RuntimeException}("unexpected EOF"); a length of 2^31 narrowed to a
+   * negative int and never terminated. Both are the same missing check.
    */
   @Test
-  void hugeDeclaredLengthEscapesWithThePinnedThrowable() {
-    String sha = assertSeedSha("adv-huge-length", SHA_HUGE_LENGTH);
-    String pinned = assertPinned(sha, "adv-huge-length");
-    for (UntypedStrategy strategy : FUZZ_STRATEGIES) {
-      Outcome outcome = parse(seed("adv-huge-length"), strategy);
-      assertDelivered(outcome, strategy);
-      Assertions.assertEquals(
-          pinned, outcome.delivered.getClass().getName(), strategy + ": the pinned throwable");
-      Assertions.assertTrue(
-          outcome
-              .delivered
-              .getMessage()
-              .contains("Error occurred while parsing JFR recording: unexpected EOF"),
-          strategy + ": message fragment; got '" + outcome.delivered.getMessage() + "'");
-    }
+  void hugeDeclaredLengthIsRejectedBeforeAnythingIsAllocated() {
+    assertLegalEscape(
+        "adv-huge-length",
+        SHA_HUGE_LENGTH,
+        "String of 16777216 byte(s) exceeds the remaining 278 byte(s)");
   }
 
   /**
    * Deeply nested metadata (chain of unknown 'deep' elements, depth 200,000): {@code
-   * readSubelements} recurses until the pool thread's stack overflows. The delivered class is
-   * stably {@code java.io.IOException}, but WHICH Error sits at the chain's root depends on JVM
-   * history — {@code StackOverflowError}, or the {@code NoClassDefFoundError} produced when the
-   * SOE-damaged {@code StackTraceElement$HashedModules} class-init fails mid-unwind (both observed)
-   * — so only the delivered throwable is pinned, and this test asserts an Error is present without
-   * naming it.
+   * MetadataEvent.readElement} bounds the nesting at {@code MAX_ELEMENT_DEPTH} (64, the Go parser's
+   * bound) and rejects the recording with an {@code IOException}. A legal escape per D4, not pinned
+   * — and no {@code Error} in the chain.
    *
-   * <p>stderr is silenced for this one parse: the unwind logs the SAME pinned SOE at ERROR once per
-   * recursion level (~2,300 entries, each a full 1024-frame trace — ~250 MB). Swallowing it changes
-   * nothing about the outcome asserted here (R9: the payload is asserted, not the logs), and the
-   * un-silenced replay of this seed by {@code UntypedParserFuzzTest} keeps the full evidence in its
-   * test report.
+   * <p>Until the bound existed the elements recursed until the pool thread's stack overflowed, and
+   * the unwind logged the same {@code StackOverflowError} once per recursion level.
    */
   @Test
-  void deepMetadataRecursionEscapesWithThePinnedThrowable() {
-    String sha = assertSeedSha("adv-deep-metadata", SHA_DEEP_METADATA);
-    String pinned = assertPinned(sha, "adv-deep-metadata");
-    PrintStream originalErr = System.err;
-    System.setErr(
-        new PrintStream(
-            new OutputStream() {
-              @Override
-              public void write(int b) {
-                // discard: see the Javadoc — log spam of a pinned, already-reported escape
-              }
-            },
-            true));
-    try {
-      Outcome outcome = parse(seed("adv-deep-metadata"), UntypedStrategy.SPARSE_ACCESS);
-      Assertions.assertNotNull(outcome.delivered, "the deep-recursion vector must escape");
+  void deepMetadataNestingIsRejectedAtTheDepthBound() {
+    assertLegalEscape(
+        "adv-deep-metadata", SHA_DEEP_METADATA, "Metadata element nesting exceeds 64 levels");
+  }
+
+  /**
+   * A seed the parser rejects as malformed: delivered as {@code IOException} with the given message
+   * fragment under both fuzz strategies, with an {@code IOException} at the root of the cause chain
+   * and no {@code Error} anywhere in it — and therefore not pinned.
+   */
+  private static void assertLegalEscape(String name, String expectedSha, String fragment) {
+    String sha = assertSeedSha(name, expectedSha);
+    assertNotPinned(
+        sha, "a legal (all-IOException) escape must not be listed in known-escapes.txt");
+    for (UntypedStrategy strategy : FUZZ_STRATEGIES) {
+      Outcome outcome = parse(seed(name), strategy);
+      assertDelivered(outcome, strategy);
       Assertions.assertEquals(
-          pinned, outcome.delivered.getClass().getName(), "the pinned delivered throwable");
+          java.io.IOException.class, outcome.delivered.getClass(), strategy + ": delivered class");
       Assertions.assertTrue(
+          outcome.delivered.getMessage().contains(fragment),
+          strategy + ": message fragment; got '" + outcome.delivered.getMessage() + "'");
+      Assertions.assertFalse(
           chainContainsError(outcome.delivered),
-          "the pinned escape reason: an Error must appear in the cause chain (D4); chain root "
-              + rootClassName(outcome.delivered));
-    } finally {
-      System.setErr(originalErr);
+          strategy + ": legal escape — no Error may appear in the cause chain");
+      Assertions.assertEquals(
+          java.io.IOException.class.getName(),
+          rootClassName(outcome.delivered),
+          strategy + ": the root cause must be the IOException that names the defect (D4)");
     }
   }
 
@@ -314,24 +286,6 @@ public class AdversarialOutcomeTest {
             + " regenerate with ./gradlew :test-recordings:generateAdversarialRecordings and"
             + " re-pin in known-escapes.txt if it escapes");
     return actual;
-  }
-
-  /**
-   * The escape must be pinned in known-escapes.txt; returns the pinned delivered throwable FQCN.
-   */
-  private static String assertPinned(String sha, String name) {
-    Map<String, String> escapes = EscapeOracle.loadKnownEscapes();
-    String pinned = escapes.get(sha);
-    Assertions.assertNotNull(
-        pinned,
-        "adversarial seed '"
-            + name
-            + "' (sha256 "
-            + sha
-            + ") escapes the oracle but has no"
-            + " known-escapes.txt entry; add '<sha> <delivered throwable FQCN>' with a '# reason:'"
-            + " comment (D3: pin, do not fix the parser)");
-    return pinned;
   }
 
   /** A seed that does not escape must not carry a pin — that pin would be stale (I1). */

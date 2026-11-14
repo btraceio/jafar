@@ -324,12 +324,19 @@ chain the oracle saw.
   (the outcome tests enforce that).
 
 There is deliberately no third PR-body statement (D3): a crash or
-escape found by fuzzing or the adversarial recordings is pinned here,
-and the parser itself is not fixed in this run — a fix under ~20 lines
-is reported to the coordinator and not applied. The three pinned entries
-today are the adversarial cases `deep-metadata`, `huge-length` and
-`string-table-size`, each delivering `java.io.IOException` around a
-non-jafar root cause.
+escape found by fuzzing or the adversarial recordings is either fixed in
+the parser — as a parser change like any other, with its Java/Go parity
+outcome — or pinned here with its reason.
+
+**The list is empty today, and a pin does not make a fuzz session
+green.** A pin excuses one input by sha256; a coverage-guided session
+mutates that input into thousands of neighbours with other hashes that
+trip the same defect. While the list held the adversarial cases
+`deep-metadata`, `huge-length` and `string-table-size`, every nightly
+session re-found one of those defects (or the unchecked chunk header
+next to them) within seconds. Pin an escape to keep the *regression
+replay* green while a fix is pending; expect the *nightly* to stay red
+until the defect itself is gone.
 
 ### Adversarial recordings
 
@@ -590,8 +597,8 @@ live benchmark.
 **Artifacts.** `build/jmh/*.json` is uploaded as `jmh-results` (90-day
 retention, `if: always()`). The next run fetches the previous *successful*
 run's `jmh-results` with the runner's own `gh` (`gh run list --workflow
-nightly-jmh.yml --status success -L1`, then `gh run download`, with
-`GH_TOKEN: github.token`), and pipes
+nightly-jmh.yml --status success -L1 --json databaseId --jq '.[0].databaseId // ""'`,
+then `gh run download`, with `GH_TOKEN: github.token`), and pipes
 `python3 scripts/jmh_trend.py --current build/jmh [--previous …]` into
 `$GITHUB_STEP_SUMMARY`: benchmark, params, score ± error, unit and Δ% per
 benchmark, keyed on benchmark+params (JMH's own grouping). A missing or
@@ -616,6 +623,18 @@ pprof-parser; the parser-core empty-array finding and fix above), the trend
 script over the real JSON — including a doctored previous run for the Δ%
 path — the hermetic test suite, and the YAML parse. The first scheduled run
 is the first real execution.
+
+It was, and it failed: the "Fetch previous results" step carried
+`--jq '.[0].databaseId || ""'`, and jq has no `||` — the alternative
+operator is `//`. `gh` answered `failed to parse jq expression (line 1,
+column 18)`, `set -e` ended the step, and every nightly was red from the
+first one, with both benchmark steps green above it. The expression is now
+`// ""`, and the part of this gap that *can* be closed before merge is
+closed: `scripts/tests/test_workflow_jq.sh` (in `run_all.sh`, so on every
+PR) compiles every `--jq '…'` expression in `.github/workflows` with `jq`
+and fails on a compile error, or on an expression it cannot extract. What
+it does not cover is unchanged: the `gh` calls themselves, the artifact
+download, and the triggers still execute only on a runner.
 
 ### Jazzer fuzz — [`nightly-fuzz.yml`](../../.github/workflows/nightly-fuzz.yml)
 
@@ -671,19 +690,44 @@ build) — and the coverage-guided corpus grows under
 case) and commits **nothing**. A human takes it from there: minimize the
 crash input, add it to the committed corpus by a visible hand edit, and pin
 the escape in `known-escapes.txt` exactly as the oracle's failure message
-names it (`<sha256> <delivered-throwable>` with a `# reason:` comment) —
-never a parser fix inside that change (D3).
+names it (`<sha256> <delivered-throwable>` with a `# reason:` comment).
+That keeps the regression replay green; it does not make the next
+session green (see [Known escapes](#known-escapes-i1)) — only a parser
+fix does, and that is a parser change like any other, with its parity
+outcome.
 
-**It finds real things.** The first local session
-(`-Pjafar.fuzz.maxDuration=30s`) found a D4 escape in 19 runs (the exec/s
-lines of its libFuzzer output are in the T38 report): an input whose parse
-escapes as `IOException` wrapping a `java.nio.BufferUnderflowException`
-root, input sha256
-`b231c025371f1a865e3b5cb0a231bb500a4fc147fc2f173c8d13b887fb91c376`, DEDUP
-`b97439600fb31b5d`, crash file preserved with the T38 task report for that
-human minimization (and deleted from the tree). Until it is pinned, a fuzz
-session can hit it at any time and the nightly fuzz step goes red — that
-is the net reporting a real finding, not a flake.
+**It finds real things — and was red from its first night for that
+reason.** The first local session (`-Pjafar.fuzz.maxDuration=30s`) found
+a D4 escape in 19 runs: an input whose parse escaped as `IOException`
+wrapping a `java.nio.BufferUnderflowException` root. It was recorded
+here and left unfixed, so every scheduled run on `main` failed within
+seconds of starting — run 43578193406 wrote its crash input after 20
+executions (sha256 `0931b392…2cd2`: one byte left over after the chunk,
+read as a chunk header). That was the net reporting a real finding, not
+a flake, and the fix was in the parser: it now validates the sizes,
+counts and offsets it reads, as the Go parser already did (the checks
+are listed in the CHANGELOG entry and pinned by
+`MalformedRecordingTest`). Three things that only showed up by running
+real sessions against the fix:
+
+- **Run more than one.** The first full session after the chunk-header
+  and bounds checks ran 58,406 executions — against 20 before — and
+  then found a string-table entry that is a *null* string being used as
+  an element name (`NullPointerException`). The second, with that
+  fixed, completed: 208,130 executions in 301 s, no finding; a third,
+  started from an empty generated corpus as a runner does, 211,090 in
+  301 s. A session that dies early says nothing about what lies behind
+  the first defect.
+- **A hang poisons the session's speed.** While the size-0 chunk loop
+  existed, each input that reached it cost the full
+  `jafar.fuzz.inputTimeoutMs` and left a thread spinning; a 90 s
+  keep-going session took 333 s for 528 executions (1.6 exec/s, against
+  ~690 exec/s once the loop was gone).
+- **`JAZZER_KEEP_GOING=N` does not survey findings.** Every oracle
+  failure is thrown from the same line, so Jazzer deduplicates them into
+  one: a keep-going session reported one escape and one slow unit. To
+  enumerate distinct defects, replay inputs through a throwaway `main`
+  that buckets by root-cause class and top `io.jafar` frame.
 
 **R8 — what is not verified before merge.** The `schedule` and
 `workflow_dispatch` triggers, the GitHub-side artifact upload, and the

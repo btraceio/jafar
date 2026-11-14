@@ -48,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
+  wrong with it.** The Java parser followed sizes, counts and offsets from the file without
+  checking them, so a damaged recording failed with whatever the JDK threw on the way
+  (`BufferUnderflowException`, `IllegalArgumentException`, `NullPointerException`,
+  `NegativeArraySizeException`, a bare `RuntimeException("unexpected EOF")`), overflowed the stack
+  on deeply nested metadata, or never returned: a chunk header declaring size 0 left the chunk
+  loop reading the same header forever. It now checks, as the Go parser already did: the chunk
+  header (enough bytes for a header, a size between the header and the bytes left, constant pool
+  and metadata offsets inside the chunk), the checkpoint chain (offsets inside the chunk, no
+  cycles), every count against the bytes that are left (string table, attributes, child elements,
+  constant pools and their entries, arrays, string lengths), metadata nesting (64 levels) and
+  inline value nesting (64 levels), and types and string indices the metadata does not declare.
+  Reads past the end of the data are reported as `EOFException` ("Unexpected end of recording
+  data: read of a varint at position 405 of 405"). `UntypedJafarParser.run()` and
+  `TypedJafarParser.run()` still throw `IOException`; the message and the cause chain changed,
+  the type did not. A metadata class without a `name` attribute is now rejected. Found by the
+  nightly fuzz session; pinned by `MalformedRecordingTest` and `AdversarialOutcomeTest`
 - **Deregistering a handler while `run()` is in progress** no longer fails the parse. With two or
   more handlers registered, a handler deregistering itself or another handler, or another thread
   deregistering one, made `run()` throw an `IOException` caused by a

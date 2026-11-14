@@ -34,6 +34,9 @@ public final class CheckpointEvent extends AbstractEvent {
   /** Size of this checkpoint event in bytes, including the size field itself. */
   private final int size;
 
+  /** Bounds the workaround for the JMC writer emitting zero type ids in checkpoints. */
+  private static final int MAX_ZERO_TYPE_IDS = 1024;
+
   /**
    * Constructs a new CheckpointEvent from the recording stream.
    *
@@ -44,10 +47,14 @@ public final class CheckpointEvent extends AbstractEvent {
     super(stream);
     this.stream = stream;
     this.start = stream.position();
-    this.size = (int) stream.readVarint();
-    if (size == 0) {
-      throw new IOException("Unexpected event size. Should be > 0");
+    long declaredSize = stream.readVarint();
+    // The size is where readConstantPools() expects the pools to end; one that is not positive, or
+    // that reaches past the chunk, can only come from a corrupted checkpoint (or a chain offset
+    // that does not point at one).
+    if (declaredSize <= 0 || declaredSize > stream.available() + (stream.position() - start)) {
+      throw new IOException("Checkpoint at " + start + ": unexpected event size " + declaredSize);
     }
+    this.size = (int) declaredSize;
     long typeId = stream.readVarint();
     if (typeId != 1) {
       throw new IOException("Unexpected event type: " + typeId + " (should be 1)");
@@ -78,12 +85,35 @@ public final class CheckpointEvent extends AbstractEvent {
 
     boolean skipAll = context.getConstantPools().isReady();
 
+    long end = start + size;
     long cpCount = stream.readVarint();
+    // A pool takes at least two bytes (type id and entry count) and an entry at least one (its
+    // id), so neither count can exceed the bytes left in this event. Unchecked, a corrupted count
+    // sizes the pool's map and drives the loops below.
+    if (cpCount < 0 || cpCount > end - stream.position()) {
+      throw new IOException(
+          "Checkpoint at " + start + ": implausible constant pool count " + cpCount);
+    }
     for (long i = 0; i < cpCount; i++) {
       long typeId = 0;
-      while ((typeId = stream.readVarint()) == 0)
-        ; // workaround for a bug in JMC JFR writer
-      int count = (int) stream.readVarint();
+      int zeroTypeIds = 0;
+      while ((typeId = stream.readVarint()) == 0) {
+        // workaround for a bug in JMC JFR writer - bounded, as in the Go parser, so that a run of
+        // zero bytes is not consumed as one endless "type id"
+        if (++zeroTypeIds > MAX_ZERO_TYPE_IDS) {
+          throw new IOException(
+              "Checkpoint at " + start + ": more than " + MAX_ZERO_TYPE_IDS + " zero type ids");
+        }
+      }
+      long declaredCount = stream.readVarint();
+      if (declaredCount < 0 || declaredCount > end - stream.position()) {
+        throw new IOException(
+            "Constant pool of type "
+                + typeId
+                + " declares an implausible entry count "
+                + declaredCount);
+      }
+      int count = (int) declaredCount;
       try {
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);
         if (clz == null) {
@@ -126,7 +156,6 @@ public final class CheckpointEvent extends AbstractEvent {
     // varint, say) still skips without error and indexes every later entry at the wrong offset.
     // The checkpoint's size is the only check that catches it. The JDK's ChunkParser fails here
     // too ("Size of check point event doesn't match content").
-    long end = start + size;
     if (stream.position() != end) {
       throw new IOException(
           "Checkpoint at "

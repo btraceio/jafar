@@ -16,35 +16,12 @@
 #     (the outcome tests of the case that pinned it enforce that).
 #
 # There is no third PR-body statement and no growth script for this list (D3): a crash or
-# escape found by fuzzing or adversarial recordings is pinned HERE, the parser itself is not
-# fixed in this run (a fix under ~20 lines is reported to the coordinator, not applied), and
-# parser-core / go-parser/jfr production code stays untouched.
+# escape found by fuzzing or adversarial recordings is either fixed in the parser - with the
+# Java/Go parity outcome recorded, as for any parser change - or pinned HERE with its reason.
 #
-# The three pinned escapes below are the adversarial recordings of io.jafar.testrecordings
-# adversarial.AdversarialRecordings (T24) whose parse escapes the D4 oracle. Parser fixes are
-# reported to the coordinator and NOT applied in this run (D3); their outcome tests are
-# AdversarialOutcomeTest (one per adv-* seed), which also enforces the corpus-file rule above.
-#
-# adv-deep-metadata: 'deep' elements nested 200,000 deep recurse in
-# MetadataEvent/AbstractMetadataElement.readSubelements until the pool thread's stack overflows.
-# The delivered java.io.IOException is stable, but the chain's root Error is not (StackOverflowError,
-# or the NoClassDefFoundError of the SOE-damaged StackTraceElement$HashedModules class-init), so
-# only the delivered throwable is pinned.
-# reason: readSubelements recursion SOE vector — an Error escapes the cause chain (D4)
-2c5b1a3f8b9fc832452617f9d20e3e8fa2e0b9f1011a167d5d0139f00d4e47bd java.io.IOException
-#
-# adv-huge-length: a declared UTF-8 string length of 1<<24 (16 MiB) against a ~405-byte recording
-# with no payload behind it: readUTF8 allocates byte[1<<24] and RecordingStream.read rejects it
-# with RuntimeException("unexpected EOF") — a non-jafar, non-IOException root cause (D4).
-# The 2^31 variant this case originally used is the real unbounded-work vector (the declared length
-# narrows to a negative int and the parser loops on it beyond shutdownNow(); ~17 CPU-hours burned
-# on an abandoned executor): recorded under R8/D3 for the report, a fix belongs in the parser, out
-# of scope. The seed was shrunk to 1<<24 so the parse completes in bounded time.
-# reason: declared string length far exceeds the recording — RuntimeException root escapes the boundary (D4)
-75e0b8ef6eaa45dd1a4476a2b4f563a9c270cf01d7a6a6ed1af91104880b9f95 java.io.IOException
-#
-# adv-string-table-size: a corrupted string-table size (25 entries) drives an out-of-bounds string
-# index (108) out of MutableMetadataLookup.getString as an IllegalArgumentException — a non-jafar,
-# non-IOException root cause (D4); the exact vector kb/fuzz-robustness-baseline predicted.
-# reason: string-table size corruption — IllegalArgumentException root escapes the boundary (D4)
-45bf4070483b634d5052a9f3040ed99029cb3321121be7e5f2c51c0bcfeb0c78 java.io.IOException
+# The list is empty. Its first three entries were the adversarial recordings adv-deep-metadata
+# (metadata nesting recursed into a StackOverflowError), adv-huge-length (a declared string
+# length was allocated before it was checked) and adv-string-table-size (an out-of-range string
+# index surfaced as IllegalArgumentException). The parser now rejects all three as malformed
+# with an IOException, so the oracle forced their removal ("stale known-escape"); their outcome
+# tests in AdversarialOutcomeTest assert the rejection and that no pin exists.

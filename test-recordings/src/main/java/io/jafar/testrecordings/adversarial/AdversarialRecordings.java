@@ -54,13 +54,14 @@ public enum AdversarialRecordings {
    * recording ({@code 1 << 24}, 16 MiB against a ~405-byte seed), with no payload following it: the
    * corrupted-huge-length vector.
    *
-   * <p>The length is {@code 1 << 24}, not the exact {@code 2^31} an earlier build used: the 2^31
-   * variant is the real unbounded-work vector — the declared length narrows to a negative {@code
-   * int}, passes the buffer-reuse check, and the parser then spends an unbounded per-unit loop on
-   * it, one that survives {@code shutdownNow()} (an abandoned executor burned ~17 CPU-hours here).
-   * That defect is recorded under R8/D3 for the report; a fix belongs in the parser, out of scope
-   * for this run. {@code 1 << 24} keeps the corrupted-huge-length semantics (the reader still fails
-   * on the declared length, not on any real payload) while the parse completes in bounded time.
+   * <p>The length is {@code 1 << 24}, not the exact {@code 2^31} an earlier build used. When this
+   * case was written the 2^31 variant was an unbounded-work vector — the declared length narrowed
+   * to a negative {@code int}, passed the buffer-reuse check, and the parser then spent an
+   * unbounded per-unit loop on it, one that survived {@code shutdownNow()} (an abandoned executor
+   * burned ~17 CPU-hours here) — so the seed was shrunk to keep the parse bounded. The parser now
+   * checks a declared string length against the bytes that are left before using it ({@code
+   * ParsingUtils.readUTF8}), which rejects both variants; the seed stays at {@code 1 << 24} because
+   * its bytes are pinned by sha256.
    */
   HUGE_LENGTH {
     @Override

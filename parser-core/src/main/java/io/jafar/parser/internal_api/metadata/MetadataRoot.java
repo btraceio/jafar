@@ -42,13 +42,13 @@ public final class MetadataRoot extends AbstractMetadataElement {
    * @param element the subelement that was read
    */
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (element.getKind() == MetadataElementKind.META) {
       metadata = (MetadataElement) element;
     } else if (element.getKind() == MetadataElementKind.REGION) {
       region = (MetadataRegion) element;
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 

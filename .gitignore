@@ -59,5 +59,9 @@ doc/temp/
 # jqwik test run state
 .jqwik-database
 
+# Jazzer's coverage-guided corpus, grown by a local fuzz session (JAZZER_FUZZ=1); the nightly
+# uploads it as an artifact and nothing commits it (doc/agents/Gates.md)
+parser-core/.cifuzz-corpus/
+
 # Working notes from investigation sessions; not part of the repository
 scratch/
