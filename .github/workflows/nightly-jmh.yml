@@ -102,7 +102,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_id="$(gh run list --workflow nightly-jmh.yml --status success -L1 --json databaseId --jq '.[0].databaseId || ""')"
+          # `//` is jq's alternative operator (null -> ""). jq has no `||` (gh evaluates
+          # the expression with gojq, which rejects it too): with it gh fails to parse
+          # the expression and, under `set -e`, takes the step - and the whole nightly -
+          # down before any baseline lookup. scripts/tests/test_workflow_jq.sh compiles
+          # every jq expression in the workflows on each PR.
+          run_id="$(gh run list --workflow nightly-jmh.yml --status success -L1 --json databaseId --jq '.[0].databaseId // ""')"
           if [ -z "$run_id" ]; then
             echo "no previous successful nightly-jmh run: nothing to compare against"
             echo "have_previous=false" >> "$GITHUB_OUTPUT"
