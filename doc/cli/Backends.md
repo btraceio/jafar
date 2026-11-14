@@ -47,6 +47,20 @@ Each backend declares a set of capabilities. JFR Shell adapts its features based
 | `UNTYPED_HANDLERS` | Map-based event access | ✓ | ✓ |
 | `CONTEXT_REUSE` | Share parsing context across sessions | ✓ | ✗ |
 
+> **Multi-chunk recordings (Datadog profiler and similar):** the JDK backend builds its type
+> table with `RecordingFile.readEventTypes()`, which merges every chunk's type table into one
+> id-to-name mapping. If chunks redefine the same type id (e.g. `jdk.VirtualizationInformation` and
+> `datadog.ExecutionSample` both as 101), the merged view misattributes or hides the chunk-local
+> types. The backend detects this and recovers the chunk-local types from event payloads, logging a
+> warning; ids in the recovered view are chunk-local and not unique across chunks, and a type
+> name defined in several chunks may appear once per chunk in listings. Detection happens on
+> metadata access (types with no events, or non-event types, cannot be recovered or warned about);
+> the recovery scan is capped at 2,000,000 events per call; the warning is emitted at most
+> once per recording change (switching between recordings may re-warn for a previously warned
+> recording). A type whose events all occur beyond the recovery-scan cap is reported as missing
+> for the rest of the session (the miss is cached). For exact per-chunk metadata, prefer the
+> Jafar backend.
+
 ## Writing a Custom Backend
 
 ### Prerequisites

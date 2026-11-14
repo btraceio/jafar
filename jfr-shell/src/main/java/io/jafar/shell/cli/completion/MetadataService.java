@@ -22,8 +22,11 @@ public final class MetadataService {
   /** Cache of type name -> metadata map */
   private final Map<String, Map<String, Object>> metadataCache = new ConcurrentHashMap<>();
 
+  /** Names known not to resolve in the current recording; avoids repeated full scans on misses. */
+  private volatile Set<String> missingMetadata = ConcurrentHashMap.newKeySet();
+
   /** Cache key for recording path - invalidate cache when path changes */
-  private Path cachedRecordingPath;
+  private volatile Path cachedRecordingPath;
 
   public MetadataService(SessionManager<JFRSession> sessions) {
     this.sessions = sessions;
@@ -174,21 +177,39 @@ public final class MetadataService {
       cachedRecordingPath = currentPath;
     }
 
-    return metadataCache.computeIfAbsent(
-        typeName,
-        name -> {
-          try {
-            return MetadataProvider.loadClass(currentPath, name);
-          } catch (Exception e) {
-            // Return null for types that can't be loaded
-            return null;
-          }
-        });
+    Set<String> missing = missingMetadata;
+    if (missing.contains(typeName)) {
+      return null;
+    }
+    Map<String, Object> cached =
+        metadataCache.computeIfAbsent(
+            typeName,
+            name -> {
+              try {
+                return MetadataProvider.loadClass(currentPath, name);
+              } catch (Exception e) {
+                // Return null for types that can't be loaded
+                return null;
+              }
+            });
+    if (cached == null) {
+      // ConcurrentHashMap.computeIfAbsent does not record null results; remember the miss, but
+      // only if invalidateCache() has not swapped in a fresh set since we read it - otherwise
+      // the add would land in an orphaned set; skip it.
+      if (missing == missingMetadata) {
+        missing.add(typeName);
+      }
+    } else {
+      // A positive entry must not be shadowed by a stale miss.
+      missingMetadata.remove(typeName);
+    }
+    return cached;
   }
 
   /** Invalidate all cached metadata. Call this when switching sessions or recording files. */
   public void invalidateCache() {
     metadataCache.clear();
+    missingMetadata = ConcurrentHashMap.newKeySet();
     cachedRecordingPath = null;
   }
 
