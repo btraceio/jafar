@@ -89,11 +89,7 @@ public final class ParsingContextImpl implements ParsingContext {
     return new ParsingContextImpl(this, parallelism);
   }
 
-  /**
-   * The number of chunk parsing threads parsers of this context use.
-   *
-   * @return the requested number, or {@code 0} for the default
-   */
+  @Override
   public int parallelism() {
     return parallelism;
   }

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
   file order, so handlers need no synchronization. The default stays
   `max(availableProcessors - 2, 1)`
+- **`ParsingContext.parallelism()`** - the value given to `withParallelism`, or `0` for the default.
+  `JFRSession`'s own scans (metadata, chunk ids, constant pool types) now size their chunk pool
+  from it; they used the default pool whatever the session's context said
 - **`HandlerRegistration` is `AutoCloseable`**: `close()` deregisters the handler without the
   parser argument `destroy(JafarParser)` needed. `destroy` is deprecated
 - **`Values.resolvedDeepCollapsed(Map)` and `ComplexType.isSimpleType()`** (#108). Resolves

@@ -58,6 +58,10 @@ documented gaps are in [Gates.md](Gates.md).
   file-ordered mode. The pool size is fixed when the `StreamingChunkParser` is constructed (typed:
   in the parser's constructor; untyped: per `run()`), which is why it is a context property and
   not a setter on the parser
+- `withParallelism` reaches only code that asks the context: the two parsers, and `JFRSession`'s
+  scans through `ParsingContext.parallelism()`. Code that builds a `StreamingChunkParser` with no
+  context in hand still uses the default pool: `JafarSources` (the backend SPI's metadata, chunk
+  and constant-pool sources are created without a context), `Scrubber` and `TypeGenerator`
 - Handlers live in `impl.HandlerRegistry`, one class for both parsers (untyped: one registry;
   typed: one per event class in a `ConcurrentHashMap`). It is a copy-on-write array with a
   registration count per handler: writers replace the array under the registry's lock, the

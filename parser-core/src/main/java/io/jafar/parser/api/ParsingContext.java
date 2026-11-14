@@ -94,6 +94,19 @@ public interface ParsingContext {
   }
 
   /**
+   * The number of chunk parsing threads requested with {@link #withParallelism(int)}.
+   *
+   * <p>Code that reads a recording with this context's settings but without one of its parsers uses
+   * this to size its own chunk pool.
+   *
+   * @return the requested number of chunk parsing threads, or {@code 0} when none was requested and
+   *     the default, {@code max(availableProcessors - 2, 1)}, applies
+   */
+  default int parallelism() {
+    return 0;
+  }
+
+  /**
    * Returns the uptime of the parsing context in nanoseconds.
    *
    * <p>Measures cumulative time since creation, across all parser sessions using this context.

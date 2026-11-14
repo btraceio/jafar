@@ -112,10 +112,19 @@ public final class JFRSession implements Session {
    *
    * @throws IOException if the recording cannot be parsed
    */
+  /**
+   * The chunk parser of the session's own scans (metadata, chunk ids, constant pool types). It
+   * takes its thread count from the session's {@link ParsingContext}, so a session opened with
+   * {@code withParallelism(n)} scans on {@code n} threads like its parsers do.
+   */
+  private StreamingChunkParser newScanParser() {
+    return new StreamingChunkParser(
+        new UntypedParserContextFactory(), parsingContext.parallelism());
+  }
+
   private void scanMetadata() throws IOException {
     ConcurrentSkipListMap<Integer, ChunkTypes> byChunk = new ConcurrentSkipListMap<>();
-    try (StreamingChunkParser parser =
-        new StreamingChunkParser(new UntypedParserContextFactory())) {
+    try (StreamingChunkParser parser = newScanParser()) {
       parser.parse(
           recordingPath,
           new ChunkParserListener() {
@@ -312,8 +321,7 @@ public final class JFRSession implements Session {
     if (chunkIdsFailure != null) throw chunkIdsFailure;
     // onChunkStart runs on one pool thread per chunk; the skip-list set orders by index.
     Set<Integer> ids = new ConcurrentSkipListSet<>();
-    try (StreamingChunkParser parser =
-        new StreamingChunkParser(new UntypedParserContextFactory())) {
+    try (StreamingChunkParser parser = newScanParser()) {
       parser.parse(
           recordingPath,
           new ChunkParserListener() {
@@ -344,8 +352,7 @@ public final class JFRSession implements Session {
     if (cpTypesFailure != null) throw cpTypesFailure;
     // onCheckpoint runs concurrently for different chunks: collect per chunk, merge in order.
     ConcurrentSkipListMap<Integer, Set<String>> byChunk = new ConcurrentSkipListMap<>();
-    try (StreamingChunkParser parser =
-        new StreamingChunkParser(new UntypedParserContextFactory())) {
+    try (StreamingChunkParser parser = newScanParser()) {
       parser.parse(
           recordingPath,
           new ChunkParserListener() {
