@@ -68,9 +68,18 @@ public final class ChunkHeader {
     order = index;
     offset = recording.position();
     long left = recording.available();
+    // The magic is checked first, whenever there are four bytes to check: a file that is not a
+    // recording at all should be told so ("Invalid JFR Magic Number"), whatever its length, and
+    // only something that starts like a chunk can be a truncated one. The Go parser orders the two
+    // checks the same way (checkMagic, then the header length).
+    if (left >= Integer.BYTES) {
+      int magic = recording.readInt();
+      if (magic != MAGIC_BE) {
+        throw new IOException("Invalid JFR Magic Number: " + Integer.toHexString(magic));
+      }
+    }
     if (left < SIZE) {
-      // Checked before the magic so that trailing bytes too short to be a header are reported as
-      // what they are; reading on would run off the end of the data half-way through a field.
+      // Reading on would run off the end of the data half-way through a field.
       throw new IOException(
           "Truncated chunk "
               + index
@@ -81,10 +90,6 @@ public final class ChunkHeader {
               + " byte(s) left, "
               + SIZE
               + " needed for a chunk header");
-    }
-    int magic = recording.readInt();
-    if (magic != MAGIC_BE) {
-      throw new IOException("Invalid JFR Magic Number: " + Integer.toHexString(magic));
     }
     major = recording.readShort();
     minor = recording.readShort();

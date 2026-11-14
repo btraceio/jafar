@@ -10,6 +10,7 @@ import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -60,6 +61,25 @@ public class MalformedRecordingTest {
     byte[] base = validBase();
     byte[] data = Arrays.copyOf(base, base.length + 1);
     assertRejected(data, "Truncated chunk 2 at offset 405: 1 byte(s) left, 68 needed");
+  }
+
+  /**
+   * A file that is not a recording is told so even when it is shorter than a chunk header: the
+   * magic is checked before the header length. The shells and the MCP server show this message for
+   * a mistaken file (doc/mcp/Tutorial.md quotes it), and an HTML error page saved as {@code .jfr}
+   * is the usual way to get one.
+   */
+  @Test
+  void shortFileThatIsNotARecordingReportsTheMagicNotATruncatedChunk() {
+    byte[] data = "<!DOCTYPE html>not a recording".getBytes(StandardCharsets.US_ASCII);
+    assertTrue(data.length < 68, "the case is a file shorter than a chunk header");
+    assertRejected(data, "Invalid JFR Magic Number: 3c21444f");
+  }
+
+  /** Fewer than the four bytes of a magic: nothing to compare, so it is a truncated chunk. */
+  @Test
+  void fileShorterThanTheMagicIsATruncatedChunk() {
+    assertRejected(new byte[] {'F', 'L', 'R'}, "Truncated chunk 1 at offset 0: 3 byte(s) left");
   }
 
   /**
