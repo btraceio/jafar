@@ -44,7 +44,7 @@ public abstract class AbstractMetadataElement {
    */
   protected final void readSubelements(MetadataEvent event) throws IOException {
     // now inspect all the enclosed elements
-    int elemCount = (int) stream.readVarint();
+    int elemCount = plausibleCount("child");
     for (int i = 0; i < elemCount; i++) {
       AbstractMetadataElement el = event.readElement(stream);
       if (el.getKind() != MetadataElementKind.UNKNOWN) {
@@ -59,7 +59,36 @@ public abstract class AbstractMetadataElement {
    * @param count the total count of subelements
    * @param element the subelement that was read
    */
-  protected void onSubelement(int count, AbstractMetadataElement element) {}
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {}
+
+  /**
+   * The failure for a subelement of a kind this element cannot contain.
+   *
+   * <p>Which elements nest in which is decided by the recording's bytes, so a wrong one is a
+   * property of the recording - an {@code IOException} like every other malformed-metadata
+   * condition - and not an illegal state of the parser.
+   *
+   * @param element the subelement that was read
+   * @return the exception to throw
+   */
+  protected final IOException unexpectedSubelement(AbstractMetadataElement element) {
+    return new IOException(
+        "Unexpected subelement " + element.getKind() + " in metadata element " + kind);
+  }
+
+  /**
+   * Reads an attribute or child count and checks it against the data that is left: each attribute
+   * and each child takes at least one byte, so a larger count cannot be honest, and following it
+   * would loop (and, for children, recurse) on garbage until the data runs out.
+   */
+  private int plausibleCount(String what) throws IOException {
+    long count = stream.readVarint();
+    if (count < 0 || count > stream.available()) {
+      throw new IOException(
+          "Metadata element " + kind + ": implausible " + what + " count " + count);
+    }
+    return (int) count;
+  }
 
   /**
    * Accepts a metadata visitor for processing this element.
@@ -82,12 +111,27 @@ public abstract class AbstractMetadataElement {
    * @throws IOException if an I/O error occurs during processing
    */
   protected final void processAttributes() throws IOException {
-    int attrCount = (int) stream.readVarint();
+    int attrCount = plausibleCount("attribute");
     for (int i = 0; i < attrCount; i++) {
       int kv = (int) stream.readVarint();
-      String key = metadataLookup.getString(kv);
+      String key = ParsingUtils.metadataString(metadataLookup, kv);
       int vv = (int) stream.readVarint();
-      String value = metadataLookup.getString(vv);
+      String value = ParsingUtils.metadataString(metadataLookup, vv);
+      if (key == null) {
+        // The string table may hold null strings (encoding 0); one cannot name an attribute.
+        throw new IOException(
+            "Metadata element "
+                + kind
+                + ": attribute whose name is a null string (index "
+                + kv
+                + ")");
+      }
+      if (value == null) {
+        // A null value says nothing about the attribute: leave it at its default, exactly as if
+        // the attribute were absent, instead of overwriting the default with null (the id
+        // attribute's default is what getId() parses).
+        continue;
+      }
       if ("id".equals(key)) {
         id = value;
       }

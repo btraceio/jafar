@@ -5,6 +5,7 @@ import io.jafar.parser.internal_api.collections.IntGrowableArray;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 /**
@@ -73,10 +74,24 @@ public final class TypeSkipper {
       MetadataField singleField = clz.getFields().get(0);
       MetadataClass fieldType = singleField.getType();
 
-      // Recursively unwrap nested simple types to get the actual field type
-      while (fieldType.isSimpleType()
-          && fieldType.getFields().size() == 1
-          && unwrappable(fieldType.getFields().get(0))) {
+      // Recursively unwrap nested simple types to get the actual field type. Bounded, and checked
+      // for types the metadata does not declare, like the unwrapping in fillSkipper.
+      for (int unwrapped = 0; ; unwrapped++) {
+        if (fieldType == null) {
+          throw malformed(
+              "Type "
+                  + clz.getName()
+                  + ": cannot skip a value of a type not declared in the metadata");
+        }
+        if (unwrapped > MAX_TYPE_DEPTH) {
+          throw malformed(
+              "Type " + clz.getName() + ": type nesting exceeds " + MAX_TYPE_DEPTH + " levels");
+        }
+        if (!(fieldType.isSimpleType()
+            && fieldType.getFields().size() == 1
+            && unwrappable(fieldType.getFields().get(0)))) {
+          break;
+        }
         fieldType = fieldType.getFields().get(0).getType();
       }
 
@@ -137,21 +152,61 @@ public final class TypeSkipper {
    * @param instructions the instruction list to fill
    */
   private static void fillSkipper(MetadataField fld, IntGrowableArray instructions) {
+    fillSkipper(fld, instructions, 0);
+  }
+
+  /**
+   * Upper bound on the nesting of inline types while compiling a skipper; the same bound as {@code
+   * GenericValueReader.MAX_VALUE_DEPTH}, for the same reason: the metadata decides what nests, and
+   * a type that contains itself inline never ends.
+   */
+  private static final int MAX_TYPE_DEPTH = 64;
+
+  /**
+   * The failure for metadata no skipper can be compiled from. Unchecked because skippers are
+   * created lazily from call sites that declare no checked exception; the cause is the {@link
+   * IOException} that describes the recording's defect.
+   */
+  private static UncheckedIOException malformed(String message) {
+    return new UncheckedIOException(new IOException(message));
+  }
+
+  private static void fillSkipper(MetadataField fld, IntGrowableArray instructions, int depth) {
+    if (depth > MAX_TYPE_DEPTH) {
+      throw malformed(
+          "Field " + fld.getName() + ": type nesting exceeds " + MAX_TYPE_DEPTH + " levels");
+    }
     int startingSize = instructions.size();
     int arraySizeIdx = -1;
     MetadataClass fldClz = fld.getType();
+    if (fldClz == null) {
+      throw malformed(
+          "Field "
+              + fld.getName()
+              + ": cannot skip a value of a type not declared in the metadata");
+    }
     if (fld.getDimension() > 0) {
       instructions.add(Instructions.ARRAY);
       arraySizeIdx = instructions.size();
       instructions.add(0); // reserve slot for the array size
     }
     boolean withCp = fld.hasConstantPool();
-    while (fldClz.isSimpleType()) {
+    // Bounded like the recursion below: a simple type whose single field is of its own type would
+    // otherwise be unwrapped forever.
+    for (int unwrapped = 0; fldClz.isSimpleType(); unwrapped++) {
       List<MetadataField> fl = fldClz.getFields();
       if (fl.size() != 1 || !unwrappable(fl.get(0))) {
         break; // skipped field by field below, keeping the inner field's own framing
       }
       fldClz = fl.get(0).getType();
+      if (fldClz == null || unwrapped >= MAX_TYPE_DEPTH) {
+        throw malformed(
+            "Field "
+                + fld.getName()
+                + (fldClz == null
+                    ? ": cannot skip a value of a type not declared in the metadata"
+                    : ": type nesting exceeds " + MAX_TYPE_DEPTH + " levels"));
+      }
     }
     String name = fldClz.getName();
     switch (name) {
@@ -183,7 +238,7 @@ public final class TypeSkipper {
           instructions.add(Instructions.CP_ENTRY);
         } else {
           for (MetadataField subField : fldClz.getFields()) {
-            fillSkipper(subField, instructions);
+            fillSkipper(subField, instructions, depth + 1);
           }
         }
         break;
@@ -291,7 +346,13 @@ public final class TypeSkipper {
     }
     int first = i + 2;
     int end = first + instructions[i + 1];
-    int count = (int) stream.readVarint();
+    long declared = stream.readVarint();
+    // As in ParsingUtils.arrayLength: a length beyond the bytes that are left cannot be honest,
+    // and an element type that occupies no bytes would otherwise spin here for the whole count.
+    if (declared < 0 || declared > stream.available()) {
+      throw new IOException("Implausible array length " + declared);
+    }
+    int count = (int) declared;
     for (int j = 0; j < count; j++) {
       for (int k = first; k < end; ) {
         k = skipOne(k, stream);

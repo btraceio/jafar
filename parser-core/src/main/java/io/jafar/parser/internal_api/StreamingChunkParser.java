@@ -6,10 +6,12 @@ import io.jafar.utils.CustomByteBuffer;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.BufferUnderflowException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -204,6 +206,17 @@ public final class StreamingChunkParser implements AutoCloseable {
         listener.onChunkEnd(chunkContext, chunkCounter, true);
         return;
       }
+      // A chunk with a payload has its metadata and at least one checkpoint; the header of one
+      // that was never finished still carries zeros. Following a zero offset would decode the
+      // chunk header itself as an event.
+      if (chunkHeader.metaOffset == 0 || chunkHeader.cpOffset == 0) {
+        throw new IOException(
+            "Chunk "
+                + chunkCounter
+                + " has no "
+                + (chunkHeader.metaOffset == 0 ? "metadata" : "constant pool")
+                + " offset; the chunk is incomplete");
+      }
       // read metadata
       if (!readMetadata(chunkStream, chunkHeader, listener, false)) {
         log.debug("'onMetadata' returned false. Skipping events for chunk {}", chunkCounter);
@@ -222,7 +235,7 @@ public final class StreamingChunkParser implements AutoCloseable {
         int eventSize;
         try {
           eventSize = (int) chunkStream.readVarint();
-        } catch (BufferUnderflowException e) {
+        } catch (UncheckedIOException e) {
           log.warn(
               "Buffer underflow reading event size at position {}, stopping chunk", eventStartPos);
           break;
@@ -238,7 +251,7 @@ public final class StreamingChunkParser implements AutoCloseable {
           long eventType;
           try {
             eventType = chunkStream.readVarint();
-          } catch (BufferUnderflowException e) {
+          } catch (UncheckedIOException e) {
             log.warn(
                 "Buffer underflow reading event type at position {}, stopping chunk",
                 chunkStream.position());
@@ -268,6 +281,10 @@ public final class StreamingChunkParser implements AutoCloseable {
       listener.onChunkEnd(chunkContext, chunkCounter, false);
     } catch (IOException e) {
       throw e;
+    } catch (UncheckedIOException e) {
+      // RecordingStream reports running off the end of the chunk this way because its read methods
+      // declare no checked exception; here, where IOException can be thrown again, unwrap it.
+      throw e.getCause();
     } catch (Throwable t) {
       throw new RuntimeException(t);
     }
@@ -308,6 +325,21 @@ public final class StreamingChunkParser implements AutoCloseable {
       while (stream.available() > 0) {
         ChunkHeader header = new ChunkHeader(stream, chunkCounter);
         long headerSize = (stream.position() - header.offset);
+        long left = stream.available() + headerSize;
+        if (header.size > left) {
+          // Without this the slice below fails on the buffer's own bounds, and a recording cut off
+          // mid-chunk is indistinguishable from a parser bug.
+          throw new IOException(
+              "Chunk "
+                  + chunkCounter
+                  + " at offset "
+                  + header.offset
+                  + " declares size "
+                  + header.size
+                  + " but only "
+                  + left
+                  + " byte(s) are left");
+        }
 
         RecordingStream chunkStream =
             stream.slice(
@@ -368,6 +400,19 @@ public final class StreamingChunkParser implements AutoCloseable {
 
   private boolean readConstantPool(
       RecordingStream stream, int position, ChunkParserListener listener) throws IOException {
+    // The chain may run forwards or backwards (each checkpoint carries a signed delta to the
+    // next), so a corrupted delta can point anywhere - including back at a checkpoint already
+    // read, which never terminates.
+    //
+    // A chain that keeps one direction cannot revisit a position. That is the ordinary case - the
+    // JDK links each checkpoint back to the one before it - so nothing is tracked, and nothing
+    // allocated (a boxed set per chunk put the untyped parse 7.6 KB over its allocation budget),
+    // until the direction first reverses. From then on positions are recorded: a cycle revisits
+    // each of its positions without end, so recording from any point on still catches it at the
+    // second visit.
+    int direction = 0;
+    Set<Integer> visited = null;
+    long length = stream.position() + stream.available();
     while (true) {
       stream.position(position);
       CheckpointEvent event = new CheckpointEvent(stream);
@@ -376,11 +421,28 @@ public final class StreamingChunkParser implements AutoCloseable {
         return false;
       }
       int delta = event.nextOffsetDelta;
-      if (delta != 0) {
-        position += delta;
-      } else {
+      if (delta == 0) {
         break;
       }
+      long next = (long) position + delta;
+      if (next < 0 || next >= length) {
+        throw new IOException(
+            "Checkpoint at "
+                + position
+                + ": next checkpoint offset "
+                + next
+                + " is outside the chunk");
+      }
+      int sign = Integer.signum(delta);
+      if (direction == 0) {
+        direction = sign;
+      } else if (sign != direction && visited == null) {
+        visited = new HashSet<>();
+      }
+      if (visited != null && !visited.add((int) next)) {
+        throw new IOException("Checkpoint at " + position + ": cyclic checkpoint chain");
+      }
+      position = (int) next;
     }
     stream.getContext().onConstantPoolsReady();
     return true;
