@@ -71,11 +71,16 @@ public interface JafarParser {
   void run() throws IOException;
 
   /**
-   * Configures a parser listener for chunk-level parsing events.
+   * Returns a parser for the same recording that additionally reports chunk-level parsing events to
+   * {@code listener}.
+   *
+   * <p>The returned parser shares this parser's handlers: a handler registered or deregistered
+   * through either one, before or after this call, is registered or deregistered for both. The
+   * shared handlers are released when the last of the parsers sharing them is closed.
    *
    * @param <T> the type of parser being configured
    * @param listener the chunk parser listener to use
-   * @return this parser instance for method chaining
+   * @return a parser sharing this parser's handlers, with the listener installed
    */
   <T extends JafarParser> T withParserListener(ChunkParserListener listener);
 }

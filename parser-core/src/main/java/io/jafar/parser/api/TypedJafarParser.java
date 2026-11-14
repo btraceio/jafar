@@ -82,8 +82,12 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    *
    * <p>Handlers are called from the chunk parsing threads, concurrently unless the parser was
    * created with a parallelism of one, and must be thread-safe (see the class description). If a
-   * handler throws, parsing stops and the exception propagates to {@link #run()}. Register handlers
-   * before calling {@code run()}.
+   * handler throws, parsing stops and the exception propagates to {@link #run()}.
+   *
+   * <p>Calling this while {@code run()} is in progress, from any thread, is safe, but whether the
+   * new handler receives events of the run in progress is unspecified: the event types a run
+   * decodes are fixed as its chunks start. Register handlers before calling {@code run()} for a
+   * defined result.
    *
    * @param <T> the type of JFR events this handler processes
    * @param clz JFR event interface to handle

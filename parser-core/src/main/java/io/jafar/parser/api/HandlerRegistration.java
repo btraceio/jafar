@@ -8,8 +8,13 @@ package io.jafar.parser.api;
  * in progress: an event already being dispatched when the handler is deregistered may still be
  * delivered to it, at most one per parsing thread; no later event is.
  *
- * <p>Closing a parser deregisters all of its handlers, so a registration only needs to be closed to
- * stop a handler while the parser stays in use.
+ * <p>Each call to {@code handle} returns its own registration and each registration counts once:
+ * closing one never releases another, including another registration of the same handler.
+ *
+ * <p>A parser and the parsers derived from it with {@code withParserListener} share their handlers,
+ * so closing a registration deregisters the handler for all of them. Closing the last of those
+ * parsers deregisters everything; a registration only needs to be closed to stop a handler while
+ * the parser stays in use.
  *
  * @param <T> the handled event type
  */

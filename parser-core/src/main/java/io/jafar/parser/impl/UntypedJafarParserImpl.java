@@ -13,9 +13,10 @@ import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Implementation of UntypedJafarParser for processing JFR recordings without type safety.
@@ -36,24 +37,29 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     /** The event handler associated with this registration. */
     private final EventHandler handler;
 
-    /**
-     * Constructs a new HandlerRegistrationImpl with the specified handler.
-     *
-     * @param handler the event handler to register
-     */
-    HandlerRegistrationImpl(EventHandler handler) {
+    /** The registry generation this registration was counted in. */
+    private final long registeredIn;
+
+    private final AtomicBoolean closed = new AtomicBoolean();
+
+    HandlerRegistrationImpl(EventHandler handler, long registeredIn) {
       this.handler = handler;
+      this.registeredIn = registeredIn;
     }
 
     @Override
     public void close() {
-      removeHandler(handler);
+      // once per registration: a second close() must not release another registration's count
+      if (closed.compareAndSet(false, true)) {
+        handlers.remove(handler, registeredIn);
+      }
     }
 
     @Override
     @Deprecated
     public void destroy(JafarParser cookie) {
-      if (cookie == UntypedJafarParserImpl.this) {
+      if (cookie instanceof UntypedJafarParserImpl
+          && ((UntypedJafarParserImpl) cookie).handlers == handlers) {
         close();
       }
     }
@@ -71,17 +77,20 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   /** The optimization strategy for event deserialization. */
   private final UntypedStrategy strategy;
 
-  private static final EventHandler[] NO_HANDLERS = new EventHandler[0];
+  /**
+   * The registered event handlers. Shared with the copies {@link #withParserListener} makes, so a
+   * handler registered or deregistered through one of them is registered or deregistered for all.
+   */
+  private final HandlerRegistry<EventHandler> handlers;
 
   /**
-   * The registered event handlers, in registration order, as a copy-on-write array: the array an
-   * element was read from is never modified, so the chunk threads dispatching an event iterate a
-   * stable snapshot while {@link #handle} and deregistration replace the field (both under {@code
-   * handlersLock}). A handler instance appears at most once.
+   * How many parsers share {@link #handlers} and have not been closed; the handlers are cleared
+   * when the last one closes.
    */
-  private volatile EventHandler[] handlers = NO_HANDLERS;
+  private final AtomicInteger owners;
 
-  private final Object handlersLock = new Object();
+  /** Whether this parser has given up its share of {@link #handlers}. */
+  private final AtomicBoolean released = new AtomicBoolean();
 
   private volatile DecodeErrorHandler decodeErrorHandler;
 
@@ -106,6 +115,8 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     this.path = path;
     this.context = context;
     this.strategy = strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
+    this.handlers = new HandlerRegistry<>(new EventHandler[0]);
+    this.owners = new AtomicInteger(1);
     this.parserListener = null;
   }
 
@@ -120,8 +131,9 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     this.context = other.context;
     this.strategy = other.strategy;
 
-    // the arrays are never modified in place, so sharing the current one is safe
     this.handlers = other.handlers;
+    this.owners = other.owners;
+    this.owners.incrementAndGet();
     this.decodeErrorHandler = other.decodeErrorHandler;
     this.parserListener = listener;
   }
@@ -129,42 +141,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   @Override
   public HandlerRegistration<?> handle(EventHandler handler) {
     Objects.requireNonNull(handler, "handler");
-    synchronized (handlersLock) {
-      EventHandler[] current = handlers;
-      if (indexOf(current, handler) < 0) {
-        EventHandler[] updated = Arrays.copyOf(current, current.length + 1);
-        updated[current.length] = handler;
-        handlers = updated;
-      }
-    }
-    return new HandlerRegistrationImpl<>(handler);
-  }
-
-  private void removeHandler(EventHandler handler) {
-    synchronized (handlersLock) {
-      EventHandler[] current = handlers;
-      int idx = indexOf(current, handler);
-      if (idx < 0) {
-        return; // already removed, or cleared by close()
-      }
-      if (current.length == 1) {
-        handlers = NO_HANDLERS;
-        return;
-      }
-      EventHandler[] updated = new EventHandler[current.length - 1];
-      System.arraycopy(current, 0, updated, 0, idx);
-      System.arraycopy(current, idx + 1, updated, idx, current.length - idx - 1);
-      handlers = updated;
-    }
-  }
-
-  private static int indexOf(EventHandler[] array, EventHandler handler) {
-    for (int i = 0; i < array.length; i++) {
-      if (array[i].equals(handler)) {
-        return i;
-      }
-    }
-    return -1;
+    return new HandlerRegistrationImpl<>(handler, handlers.add(handler));
   }
 
   /** System property that, when {@code false}, forces the generic reader. */
@@ -209,7 +186,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
           public void onEventValue(MetadataClass type, Map<String, Object> value, Control ctl) {
             // One read per event: a handler deregistered while this event is being dispatched
             // (from a handler or from another thread) still receives it, and no later one.
-            EventHandler[] current = handlers;
+            EventHandler[] current = handlers.snapshot();
             for (int i = 0; i < current.length; i++) {
               current[i].handle(type, value, ctl);
               if (((ControlImpl) ctl).isAborted()) {
@@ -251,8 +228,8 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
 
   @Override
   public void close() throws Exception {
-    synchronized (handlersLock) {
-      handlers = NO_HANDLERS;
+    if (released.compareAndSet(false, true) && owners.decrementAndGet() == 0) {
+      handlers.clear();
     }
   }
 

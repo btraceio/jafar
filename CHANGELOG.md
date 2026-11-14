@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a copy-on-write array read once per event: the event being dispatched may still reach a
   deregistered handler, at most one per parsing thread, and no later event does. Handlers are also
   called in registration order now; the order was unspecified before
+- **Registering a typed handler while `run()` is in progress**, or from two threads, wrote plain
+  `HashMap`s the chunk threads were reading. The typed parser's type, factory and handler maps are
+  concurrent now. Whether a handler registered mid-run receives events of that run is still
+  unspecified; register before `run()`
+- **The same untyped handler registered twice** occupied one slot, so closing either registration
+  removed it for both. Registrations are counted: the handler is still called once per event and
+  stays until every registration is closed
+- **A parser and its `withParserListener` copies share their handlers.** Before, the typed copy
+  shared the handler sets that existed when it was made but not later ones, and the untyped copy
+  shared nothing, so a registration could not reliably deregister a handler from a copy. Now a
+  handler registered or deregistered through any of them applies to all, and the handlers are
+  released when the last of them is closed
 - **Typed `HandlerRegistration.destroy`** called a second time, or after the parser was closed,
   threw a `NullPointerException`; it is idempotent now
 - **Untyped `HandlerRegistration.destroy(wrongParser)`** removed the handler anyway unless

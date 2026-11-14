@@ -87,7 +87,7 @@ public class TypedJafarParserLifecycleTest {
 
   /** Upper bound on events a deregistered handler may still receive: one per parsing thread. */
   private static final int PARSING_THREADS =
-      Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+      io.jafar.parser.internal_api.StreamingChunkParser.defaultParallelism();
 
   // Before the copy-on-write handler map, run() threw an IOException caused by a
   // ConcurrentModificationException here.
@@ -156,6 +156,150 @@ public class TypedJafarParserLifecycleTest {
       reg.destroy(unrelated);
       p.run();
       assertEquals(total, count.get());
+    }
+  }
+
+  // Before the parsers shared one registry, the copy held a snapshot of the handlers and a
+  // registration made on the original could not deregister the handler from it.
+  @Test
+  void registrationOnOriginalDeregistersFromWithParserListenerCopy() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    String path = new File(uri).getAbsolutePath();
+    int total = countSamples(path);
+    AtomicInteger count = new AtomicInteger();
+    try (TypedJafarParser p = TypedJafarParser.open(path)) {
+      HandlerRegistration<JFRExecutionSample> reg =
+          p.handle(JFRExecutionSample.class, (e, c) -> count.incrementAndGet());
+      TypedJafarParser copy =
+          p.withParserListener(io.jafar.parser.internal_api.ChunkParserListener.NOOP);
+
+      copy.run();
+      assertEquals(total, count.get());
+
+      reg.close();
+      count.set(0);
+      copy.run();
+      assertEquals(0, count.get());
+    }
+  }
+
+  // A handler registered on the original after the copy was made reaches the copy too, including
+  // for an event type nobody had registered when the copy was made.
+  @Test
+  void handlerRegisteredAfterTheCopyIsSeenByTheCopy() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    String path = new File(uri).getAbsolutePath();
+    int total = countSamples(path);
+    AtomicInteger count = new AtomicInteger();
+    try (TypedJafarParser p = TypedJafarParser.open(path)) {
+      TypedJafarParser copy =
+          p.withParserListener(io.jafar.parser.internal_api.ChunkParserListener.NOOP);
+      p.handle(JFRExecutionSample.class, (e, c) -> count.incrementAndGet());
+      copy.run();
+      assertEquals(total, count.get());
+    }
+  }
+
+  // Deregistration from a thread that is not a parsing thread, while run() is dispatching: see
+  // UntypedHandlerDeregistrationTest for the mechanism. With the handlers of a class in a HashSet
+  // this threw ConcurrentModificationException out of run().
+  @Test
+  void anotherThreadClosesARegistrationWhileRunIsDispatching() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    String path = new File(uri).getAbsolutePath();
+    int total = countSamples(path);
+    int handlerCount = 4;
+    java.util.concurrent.CountDownLatch parked = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicBoolean firstCall =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    AtomicInteger[] counts = new AtomicInteger[handlerCount];
+    HandlerRegistration<?>[] regs = new HandlerRegistration<?>[handlerCount];
+    AtomicInteger parkedHandler = new AtomicInteger(-1);
+
+    try (TypedJafarParser p = TypedJafarParser.open(path)) {
+      for (int i = 0; i < handlerCount; i++) {
+        int self = i;
+        counts[i] = new AtomicInteger();
+        regs[i] =
+            p.handle(
+                JFRExecutionSample.class,
+                (e, c) -> {
+                  counts[self].incrementAndGet();
+                  if (firstCall.compareAndSet(true, false)) {
+                    parkedHandler.set(self);
+                    parked.countDown();
+                    try {
+                      resume.await();
+                    } catch (InterruptedException ex) {
+                      Thread.currentThread().interrupt();
+                    }
+                  }
+                });
+      }
+      Thread closer =
+          new Thread(
+              () -> {
+                try {
+                  parked.await();
+                  for (int i = 0; i < handlerCount; i++) {
+                    if (i != parkedHandler.get()) {
+                      regs[i].close();
+                    }
+                  }
+                } catch (InterruptedException ex) {
+                  Thread.currentThread().interrupt();
+                } finally {
+                  resume.countDown();
+                }
+              });
+      closer.start();
+      p.run();
+      closer.join();
+    }
+    int survivor = parkedHandler.get();
+    assertEquals(total, counts[survivor].get(), "the handler left registered");
+    for (int i = 0; i < handlerCount; i++) {
+      if (i != survivor) {
+        assertTrue(
+            counts[i].get() <= PARSING_THREADS,
+            "handler " + i + " closed during the first event received " + counts[i].get());
+      }
+    }
+  }
+
+  // Registering from another thread while run() is in progress: handle() writes the type and
+  // handler maps the chunk threads read. This is a stress net, not a deterministic reproduction:
+  // it was not seen to fail on the HashMap-based code (the window is a HashMap resize).
+  @Test
+  void anotherThreadRegistersHandlersWhileRunIsInProgress() throws Exception {
+    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+    String path = new File(uri).getAbsolutePath();
+    int total = countSamples(path);
+    for (int round = 0; round < 20; round++) {
+      AtomicInteger count = new AtomicInteger();
+      java.util.concurrent.atomic.AtomicBoolean running =
+          new java.util.concurrent.atomic.AtomicBoolean(true);
+      try (TypedJafarParser p = TypedJafarParser.open(path)) {
+        p.handle(JFRExecutionSample.class, (e, c) -> count.incrementAndGet());
+        Thread registrar =
+            new Thread(
+                () -> {
+                  while (running.get()) {
+                    p.handle(io.jafar.parser.types.JFRGCHeapSummary.class, (e, c) -> {}).close();
+                    p.handle(io.jafar.parser.types.JFRThread.class, (e, c) -> {}).close();
+                    p.handle(io.jafar.parser.types.JFRClass.class, (e, c) -> {}).close();
+                  }
+                });
+        registrar.start();
+        try {
+          p.run();
+        } finally {
+          running.set(false);
+          registrar.join();
+        }
+      }
+      assertEquals(total, count.get(), "round " + round);
     }
   }
 }

@@ -58,12 +58,19 @@ documented gaps are in [Gates.md](Gates.md).
   file-ordered mode. The pool size is fixed when the `StreamingChunkParser` is constructed (typed:
   in the parser's constructor; untyped: per `run()`), which is why it is a context property and
   not a setter on the parser
-- Handler registries (`TypedJafarParserImpl.handlerMap`, `UntypedJafarParserImpl.handlers`) are
-  copy-on-write: writers replace the field under a lock, the dispatch loop reads it once per
-  event. Do not go back to iterating a mutable collection there - a handler that deregisters
-  during `run()` then throws `ConcurrentModificationException` out of `run()` (regression tests:
+- Handlers live in `impl.HandlerRegistry`, one class for both parsers (untyped: one registry;
+  typed: one per event class in a `ConcurrentHashMap`). It is a copy-on-write array with a
+  registration count per handler: writers replace the array under the registry's lock, the
+  dispatch loop reads it once per event with `snapshot()`. Do not go back to iterating a mutable
+  collection there - a handler that deregisters during `run()` then throws
+  `ConcurrentModificationException` out of `run()` (regression tests:
   `UntypedHandlerDeregistrationTest`, `TypedJafarParserLifecycleTest`), and the per-event iterator
   costs 32 bytes per event on JDK 21 (measured; see `gradle/allocation-budgets.properties`)
+- A parser and its `withParserListener` copies share the registry (typed: also the type and
+  factory maps) and an owner count; the shared state is cleared when the last owner closes. The
+  typed copies also share one `StreamingChunkParser`, which is **not** owner-counted: closing any
+  of them shuts its pool (counting it would leak the pool in the common
+  `p.withParserListener(l).run()` pattern, where the copy is never closed)
 - `ChunkParserListener`: Low-level parsing lifecycle hooks. **Callbacks for different chunks run
   concurrently**: `StreamingChunkParser` submits every chunk to a pool of `max(nproc - 2, 1)`
   threads, and only the callbacks of one chunk run in sequence. A listener that collects into one

@@ -340,8 +340,9 @@ For the architecture of the `parser` module, see the [Parser Architecture](parse
   - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).
   - `run()`: parse and invoke registered handlers.
 - `HandlerRegistration` (`AutoCloseable`)
-  - `close()`: deregister the handler. Idempotent; safe from inside a handler, from another thread
-    during `run()`, and after the parser is closed. An event already being dispatched may still
+  - `close()`: deregister the handler. Each registration counts once, so closing one never
+    releases another registration of the same handler. Idempotent; safe from inside a handler, from
+    another thread during `run()`, and after the parser is closed. An event already being dispatched may still
     reach the handler, at most one per parsing thread. Closing the parser deregisters everything,
     so this is only needed to stop a handler while the parser stays in use.
   - `destroy(JafarParser)`: deprecated; use `close()`.

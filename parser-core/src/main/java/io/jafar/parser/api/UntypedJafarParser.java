@@ -210,6 +210,13 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    *
    * <p>Exceptions thrown from the handler stop parsing and propagate to {@link #run()}.
    *
+   * <p>A handler is called once per event however often it is registered. Registering the same
+   * handler again (one that {@code equals} a registered one) returns a further registration of it,
+   * and the handler stays registered until every registration has been closed.
+   *
+   * <p>Safe to call while {@code run()} is in progress, from any thread; the handler receives the
+   * events dispatched after it was registered.
+   *
    * @param handler consumer of event maps
    * @return a registration that can be closed to stop receiving events
    */
