@@ -111,7 +111,19 @@ public final class MetadataClass extends AbstractMetadataElement {
     super(stream, MetadataElementKind.CLASS);
     this.associatedChunk = stream.getContext().getChunkIndex();
     readSubelements(eventr);
-    metadataLookup.addClass(getId(), this);
+    if (getName() == null) {
+      // Types are dispatched on by name (primitives, java.lang.String) and registered by name; a
+      // class without one cannot be decoded or skipped, only tripped over later.
+      throw new IOException("Metadata class without a name attribute");
+    }
+    long id;
+    try {
+      id = getId();
+    } catch (NumberFormatException e) {
+      // getId() parses the "id" attribute unchecked; here the attribute came from the recording.
+      throw new IOException("Metadata class " + getName() + ": invalid type id");
+    }
+    metadataLookup.addClass(id, this);
   }
 
   /**
@@ -252,7 +264,7 @@ public final class MetadataClass extends AbstractMetadataElement {
    * @param count the total count of subelements
    * @param element the subelement that was read
    */
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (element.getKind() == MetadataElementKind.SETTING) {
       if (settings == null) {
         settings = new HashMap<>(count * 2, 0.5f);
@@ -271,7 +283,7 @@ public final class MetadataClass extends AbstractMetadataElement {
       MetadataField field = (MetadataField) element;
       fields.add(field);
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 

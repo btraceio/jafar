@@ -53,23 +53,26 @@ drifts from the generator output, naming the file and the regeneration command.
 | Seed | Corrupts | Intended path (stack-verified) | Pinned outcome |
 |---|---|---|---|
 | `adv-valid-base` | nothing (control) | parses and delivers events | 4 events delivered exactly |
-| `adv-string-table-size` | the metadata string table declares 25 entries while the element tree references index 108 | `MutableMetadataLookup.getString` | pinned escape (see below): `IOException` wrapping an `IllegalArgumentException` root |
-| `adv-huge-length` | a UTF-8 string length of `1<<24` (16 MiB) declared against a ~405-byte recording, with no payload behind it | `readUTF8` allocation, `RecordingStream.read` rejection | pinned escape: `IOException` wrapping a `RuntimeException("unexpected EOF")` root |
+| `adv-string-table-size` | the metadata string table declares 25 entries while the element tree references index 108 | the string lookup in `MetadataEvent.readElement` | legal escape: `IOException` "String index 108 out of bounds (string table size: 25)" |
+| `adv-huge-length` | a UTF-8 string length of `1<<24` (16 MiB) declared against a ~405-byte recording, with no payload behind it | the length check in `ParsingUtils.readUTF8`, before anything is allocated | legal escape: `IOException` "String of 16777216 byte(s) exceeds the remaining 278 byte(s)" |
 | `adv-bad-cp-id` | a constant-pool entry of an undeclared type | `CheckpointEvent.readConstantPools` | legal escape: `IOException` "the type is not declared in the chunk metadata" |
-| `adv-deep-metadata` | `'deep'` elements nested 200,000 deep | the recursive `readSubelements` (the SOE vector) | pinned escape: `IOException` with a `StackOverflowError` in the chain |
+| `adv-deep-metadata` | `'deep'` elements nested 200,000 deep | the nesting bound in `MetadataEvent.readElement` (formerly the SOE vector) | legal escape: `IOException` "Metadata element nesting exceeds 64 levels" |
 | `adv-bad-chunk-offsets` | chunk 1's size field disagrees with chunk 2's offset | the next `ChunkHeader` read | legal escape: `IOException` "Invalid JFR Magic Number: 20001" |
 
 The seeds are written to `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/`
 — Jazzer's regression-inputs directory, so every ordinary `./gradlew :parser-core:test` run replays them.
 Each file's specific outcome is additionally asserted by parser-core's `AdversarialOutcomeTest` ("did not
-crash" is not an outcome); the three seeds that escape the fuzz oracle's cause-chain contract are pinned in
-`parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` (shrink-only; a stale entry fails).
+crash" is not an outcome). No seed escapes the fuzz oracle's cause-chain contract today, so
+`parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` (shrink-only; a stale entry fails)
+is empty: `string-table-size`, `huge-length` and `deep-metadata` were pinned there until the parser checked
+what they corrupt, and the oracle then forced the entries out.
 
 The seed files carry **no `.jfr` extension**: `.gitignore` ignores `*.jfr`, and the seeds must be committed —
 `git check-ignore` exits 1 for `adv-valid-base`. Jazzer replays every file in the directory regardless of its
-name. Separately, the `huge-length` case declares `1<<24` and not the exact `2^31`: the 2^31 declared
-length narrows to a negative int and drives an uninterruptible loop in the parser — the real unbounded-work
-vector, recorded rather than fixed (D3) — see [the gates document](../doc/agents/Gates.md).
+name. Separately, the `huge-length` case declares `1<<24` and not the exact `2^31`: when the case was
+written, a 2^31 declared length narrowed to a negative int and drove an uninterruptible loop in the parser.
+The parser now rejects any declared string length beyond the bytes that are left, 2^31 included; the seed
+keeps `1<<24` because its bytes are pinned by sha256 — see [the gates document](../doc/agents/Gates.md).
 
 For one-off dumps, `TestRecordingGenerator` has a manual mode: `adversarial <output-dir>`.
 
