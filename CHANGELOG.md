@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`ParsingContext.withParallelism(int)`** - a context sharing the original's caches whose parsers
+  read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
+  file order, so handlers need no synchronization. The default stays
+  `max(availableProcessors - 2, 1)`
+- **`ParsingContext.parallelism()`** - the value given to `withParallelism`, or `0` for the default.
+  `JFRSession`'s own scans (metadata, chunk ids, constant pool types) now size their chunk pool
+  from it; they used the default pool whatever the session's context said
+- **`HandlerRegistration` is `AutoCloseable`**: `close()` deregisters the handler without the
+  parser argument `destroy(JafarParser)` needed. `destroy` is deprecated
 - **`Values.resolvedDeepCollapsed(Map)` and `ComplexType.isSimpleType()`** (#108). Resolves
   constant-pool references to JFR simple types (`jdk.types.ThreadState`, ...) to their scalar, as
   the typed API does, decided by the recording's metadata rather than a `size() == 1` guess.
@@ -56,6 +65,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TypedJafarParser.run()` still throw `IOException`; the message and the cause chain changed,
   the type did not. A metadata class without a `name` attribute is now rejected. Found by the
   nightly fuzz session; pinned by `MalformedRecordingTest` and `AdversarialOutcomeTest`
+- **Deregistering a handler while `run()` is in progress** no longer fails the parse. With two or
+  more handlers registered, a handler deregistering itself or another handler, or another thread
+  deregistering one, made `run()` throw an `IOException` caused by a
+  `ConcurrentModificationException`, in both the typed and the untyped parser. Handlers are now held
+  in a copy-on-write array read once per event: the event being dispatched may still reach a
+  deregistered handler, at most one per parsing thread, and no later event does. Handlers are also
+  called in registration order now; the order was unspecified before
+- **Registering a typed handler while `run()` is in progress**, or from two threads, wrote plain
+  `HashMap`s the chunk threads were reading. The typed parser's type, factory and handler maps are
+  concurrent now. Whether a handler registered mid-run receives events of that run is still
+  unspecified; register before `run()`
+- **The same untyped handler registered twice** occupied one slot, so closing either registration
+  removed it for both. Registrations are counted: the handler is still called once per event and
+  stays until every registration is closed
+- **A parser and its `withParserListener` copies share their handlers.** Before, the typed copy
+  shared the handler sets that existed when it was made but not later ones, and the untyped copy
+  shared nothing, so a registration could not reliably deregister a handler from a copy. Now a
+  handler registered or deregistered through any of them applies to all, and the handlers are
+  released when the last of them is closed
+- **Typed `HandlerRegistration.destroy`** called a second time, or after the parser was closed,
+  threw a `NullPointerException`; it is idempotent now
+- **Untyped `HandlerRegistration.destroy(wrongParser)`** removed the handler anyway unless
+  assertions were enabled (then it threw an `AssertionError`); it does nothing now, as the typed
+  parser already did and the Javadoc says
+- **Documentation said handlers run "synchronously on the parser thread".** They run concurrently
+  on the chunk parsing threads and must be thread-safe; README, Javadoc, tutorials, LIMITATIONS and
+  PERFORMANCE now say so and state the ordering (file order within a chunk, none between chunks).
+  The untyped examples that tested `Values.get(...) instanceof ArrayType` (never true: `Values.get`
+  returns the backing array) and the `chunkInfo().convertTicks(...)` examples (no such method) are
+  corrected, and the README gained a table of the Java value each JFR field type decodes to
 - **Metadata of multi-chunk recordings: one class per name, every chunk's fields.** Each chunk
   carries its own metadata, and chunks can disagree (a recording can join chunks from different
   writers). `metadata` and `metadata/<type>` listed a class once per chunk, or showed whichever

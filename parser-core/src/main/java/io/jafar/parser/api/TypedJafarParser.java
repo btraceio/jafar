@@ -13,8 +13,14 @@ import java.nio.file.Paths;
  * representing event fields, optionally annotated with {@link JfrField} when names differ.
  * Registered {@link JFRHandler handlers} receive fully deserialized event instances.
  *
- * <p>Handlers are invoked synchronously on the parser thread. Keep handler logic fast, or offload
- * work to another thread.
+ * <p><b>Threading.</b> A recording's chunks are parsed in parallel, one task per chunk on a pool of
+ * {@code max(availableProcessors - 2, 1)} threads, so handlers are called concurrently from several
+ * parser-owned threads and must be thread-safe. Events are delivered in file order within one
+ * chunk; there is no order between chunks. {@link Control.ChunkInfo#chunkId()} is unique per parsed
+ * chunk within the JVM, so it can key per-chunk state; it is not the chunk's position in the file.
+ * Every handler call has completed when {@code run()} returns. For strictly sequential,
+ * file-ordered delivery create the parser from {@link ParsingContext#withParallelism(int)
+ * ParsingContext.withParallelism(1)}.
  */
 public interface TypedJafarParser extends JafarParser, AutoCloseable {
   /**
@@ -74,19 +80,26 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    * <p>The {@code clz} must be an interface annotated with {@link JfrType}. Methods correspond to
    * event fields; when names differ, annotate with {@link JfrField}.
    *
-   * <p>Handlers are invoked synchronously on the parser thread. If a handler throws, parsing stops
-   * and the exception propagates to {@link #run()}.
+   * <p>Handlers are called from the chunk parsing threads, concurrently unless the parser was
+   * created with a parallelism of one, and must be thread-safe (see the class description). If a
+   * handler throws, parsing stops and the exception propagates to {@link #run()}.
+   *
+   * <p>Calling this while {@code run()} is in progress, from any thread, is safe, but whether the
+   * new handler receives events of the run in progress is unspecified: the event types a run
+   * decodes are fixed as its chunks start. Register handlers before calling {@code run()} for a
+   * defined result.
    *
    * @param <T> the type of JFR events this handler processes
    * @param clz JFR event interface to handle
    * @param handler callback receiving deserialized events and parse {@link Control}
-   * @return a registration that can be destroyed to stop receiving events
+   * @return a registration that can be closed to stop receiving events
    * @throws IllegalArgumentException if {@code clz} is invalid
    */
   <T> HandlerRegistration<T> handle(Class<T> clz, JFRHandler<T> handler);
 
   /**
-   * Parses the recording and synchronously invokes registered handlers.
+   * Parses the recording and invokes registered handlers on the chunk parsing threads; returns when
+   * every chunk has been parsed and every handler call has completed.
    *
    * @throws IOException if reading fails or a parsing error occurs
    */

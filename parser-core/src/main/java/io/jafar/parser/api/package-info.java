@@ -18,7 +18,9 @@
  *   <li>Create and <b>reuse</b> a {@link io.jafar.parser.api.ParsingContext} across sessions to
  *       enable caching.
  *   <li>Parsers are {@link java.lang.AutoCloseable}; prefer try-with-resources.
- *   <li>Handlers are invoked synchronously on the parser thread; keep them fast or offload work.
+ *   <li>Handlers are called from the chunk parsing threads, concurrently for different chunks: make
+ *       them thread-safe, or create the parser from {@code ParsingContext.withParallelism(1)} for
+ *       sequential, file-ordered delivery. Keep them fast or offload work.
  * </ul>
  *
  * <p><b>Example</b>
@@ -31,7 +33,7 @@
  *         // process event
  *       });
  *   p.run();
- *   reg.destroy(p);
+ *   reg.close(); // optional: closing the parser deregisters every handler
  * }
  * }</pre>
  */

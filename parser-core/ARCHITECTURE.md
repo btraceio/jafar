@@ -10,7 +10,7 @@ infrastructure. ASM-based code generation (CodeGenerator, ClassDefiners) lives i
 - Core loop: `StreamingChunkParser` reads chunks and emits `ChunkParserListener` callbacks.
 - Metadata: `MetadataEvent` populates `MutableMetadataLookup`; typed context binds deserializers.
 - Constant pools: `CheckpointEvent` records offsets in `MutableConstantPools` for lazy materialization.
-- Typed path: generated deserializers map events to interfaces; handlers run synchronously.
+- Typed path: generated deserializers map events to interfaces; handlers run on the chunk parsing threads (concurrently across chunks).
 - Untyped path: events become `Map<String,Object>` with lazy constant-pool resolution.
 
 ## Architecture Diagram

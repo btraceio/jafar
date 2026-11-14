@@ -15,7 +15,13 @@ public interface ComplexType {
    * <p>The map contains field names as keys and their corresponding values as values. Values can be
    * primitives, strings, or other complex types.
    *
-   * @return a map representing the complex value structure
+   * <p>A constant-pool reference is resolved when this method is called, not when the event is
+   * delivered. The result is {@code null} when the reference points at no entry (a null reference
+   * in the recording, or a constant pool the chunk does not contain), and resolution of a corrupted
+   * entry can throw.
+   *
+   * @return a map representing the complex value structure, or {@code null} if the reference
+   *     resolves to nothing
    */
   Map<String, Object> getValue();
 

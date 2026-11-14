@@ -74,23 +74,32 @@ import java.util.Map;
  *     Object id = thread.get("javaThreadId");
  *   }
  *
- *   Object framesVal = Values.get(value, "stackTrace", "frames");
- *   if (framesVal instanceof ArrayType at) {
- *     Object arr = at.getArray();
- *     if (arr instanceof Object[] objs) {
- *       for (Object el : objs) {
- *         if (el instanceof ComplexType cpx) {
- *           Map<String, Object> m = cpx.getValue();
- *         } else if (el instanceof Map) {
- *           Map<String, Object> m = (Map<String, Object>) el; // inline complex element
- *         }
+ *   // Values.get returns the backing Java array, never the ArrayType wrapper
+ *   Object frames = Values.get(value, "stackTrace", "frames");
+ *   if (frames instanceof Object[] objs) {
+ *     for (Object el : objs) {
+ *       if (el instanceof ComplexType cpx) {
+ *         Map<String, Object> m = cpx.getValue(); // constant-pool reference; may be null
+ *       } else if (el instanceof Map) {
+ *         Map<String, Object> m = (Map<String, Object>) el; // inline complex element
  *       }
  *     }
  *   }
  * });
  * }</pre>
  *
- * <p>Handlers are invoked synchronously on the parser thread.
+ * <p>{@link Values#resolvedDeep(Map)} returns a copy of an event with every {@link ComplexType} and
+ * {@link ArrayType} replaced by its map or array, at any depth, for consumers that prefer one
+ * representation over branching.
+ *
+ * <p><b>Threading.</b> A recording's chunks are parsed in parallel, one task per chunk on a pool of
+ * {@code max(availableProcessors - 2, 1)} threads, so handlers are called concurrently from several
+ * parser-owned threads and must be thread-safe. Events are delivered in file order within one
+ * chunk; there is no order between chunks. {@link Control.ChunkInfo#chunkId()} is unique per parsed
+ * chunk within the JVM, so it can key per-chunk state; it is not the chunk's position in the file.
+ * Every handler call has completed when {@code run()} returns. For strictly sequential,
+ * file-ordered delivery create the parser from {@link ParsingContext#withParallelism(int)
+ * ParsingContext.withParallelism(1)}.
  *
  * @see UntypedStrategy
  * @see ParsingContext#newUntypedParser(Path, UntypedStrategy)
@@ -201,8 +210,15 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    *
    * <p>Exceptions thrown from the handler stop parsing and propagate to {@link #run()}.
    *
+   * <p>A handler is called once per event however often it is registered. Registering the same
+   * handler again (one that {@code equals} a registered one) returns a further registration of it,
+   * and the handler stays registered until every registration has been closed.
+   *
+   * <p>Safe to call while {@code run()} is in progress, from any thread; the handler receives the
+   * events dispatched after it was registered.
+   *
    * @param handler consumer of event maps
-   * @return a registration that can be destroyed to stop receiving events
+   * @return a registration that can be closed to stop receiving events
    */
   HandlerRegistration<?> handle(EventHandler handler);
 

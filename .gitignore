@@ -52,6 +52,10 @@ doc/temp/
 # Sphinx review session state (credentials, reports)
 .sphinx/
 
+# Investigation session state; private working notes, not repository content
+# (doc/plans/agent-configuration-guardrails.md, Decisions 3)
+.investigations/
+
 # jqwik test run state
 .jqwik-database
 

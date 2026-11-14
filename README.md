@@ -33,12 +33,21 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
     // ctl.abort(); // optionally stop parsing immediately without throwing
   });
   p.run();
-  reg.destroy(p); // deregister
+  reg.close(); // deregister (optional: closing the parser deregisters every handler)
 }
 ```
 
 Notes:
-- Handlers run synchronously on the parser thread. Keep work small or offload.
+- Handlers must be thread-safe. A recording's chunks are parsed in parallel on a pool of
+  `max(availableProcessors - 2, 1)` threads, so a handler is called concurrently from several
+  parser-owned threads: a plain `HashMap` or `ArrayList` updated from a handler loses data. Events
+  arrive in file order within one chunk and in no order between chunks.
+  `ctl.chunkInfo().chunkId()` is unique per parsed chunk within the JVM, so it can key per-chunk
+  state; it is not the chunk's position in the file.
+- For strictly sequential delivery in file order - one event at a time, no synchronization needed
+  in handlers - create the parser from a context with one parsing thread:
+  `ParsingContext.create().withParallelism(1).newTypedParser(path)` (or `newUntypedParser`).
+- `run()` returns once every handler call has completed. Keep handler work small or offload.
 - Exceptions thrown from a handler stop parsing and propagate from `run()`.
 - Call `ctl.abort()` inside a handler to stop parsing early without an exception. It stops the
   whole recording, not only the current chunk; because chunks are parsed in parallel, handlers may
@@ -63,12 +72,36 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
     }
   });
   p.run();
-  reg.destroy(p);
+  reg.close();
 }
 ```
 
 ### Complex and array values in untyped events
-- **ComplexType**: Complex fields may appear either inline as `Map<String, Object>` or as a wrapper implementing `io.jafar.parser.api.ComplexType` (e.g., constant-pool backed references). Use `getValue()` on a `ComplexType` to obtain the resolved `Map<String, Object>`.
+The value of a field in an untyped event map depends on the field's JFR type:
+
+| JFR field | Java value in the map |
+|---|---|
+| `boolean`, `byte`, `short`, `char`, `float`, `double` | `Boolean`, `Byte`, `Short`, `Character`, `Float`, `Double` |
+| `int`, `long` | `Long` (JFR `int` is widened) |
+| `@Timestamp(TICKS)` field | `Long`, epoch nanoseconds (already converted from ticks) |
+| `@Timespan(TICKS)` field | `Long`, nanoseconds (already converted from ticks) |
+| `java.lang.String` | `String`; a `ComplexType` when the field is declared constant-pool backed |
+| struct stored inline in the event | `Map<String, Object>` |
+| any field declared constant-pool backed (thread, class, stack trace, ...) | `ComplexType`; `getValue()` resolves it to a `Map<String, Object>`, or `null` if the reference points at nothing |
+| array | `ArrayType`; `getArray()` is a primitive array (`long[]` for JFR `int` and `long`) or an `Object[]` whose elements follow this table |
+| absent value | `null` |
+
+So one logical "nested object" has two representations, `Map` and `ComplexType`, and which one you
+get depends on how the recording stores the value. Two ways to avoid branching on it:
+
+- `Values.get(event, path...)` and `Values.as(event, Class, path...)` unwrap every `ComplexType` on
+  the path and unwrap the value they return: they hand back a `Map` or a Java array, never a
+  `ComplexType` or `ArrayType`. They do not unwrap the *elements* of a returned `Object[]`.
+- `Values.resolvedDeep(event)` returns a copy with every `ComplexType` and `ArrayType` replaced by
+  its map or array at any depth; `Values.resolvedDeepCollapsed(event)` additionally replaces a
+  reference to a JFR simple type by its single value.
+
+- **ComplexType**: Complex fields may appear either inline as `Map<String, Object>` or as a wrapper implementing `io.jafar.parser.api.ComplexType` (e.g., constant-pool backed references). Use `getValue()` on a `ComplexType` to obtain the resolved `Map<String, Object>`; it is `null` when the reference points at no constant-pool entry.
 - **ArrayType**: When a field is an array, the value implements `io.jafar.parser.api.ArrayType`. Use `getType()` to inspect the array class (e.g., `long[].class`, `Object[].class`) and `getArray()` to access the underlying Java array. Arrays of JFR `int` are `long[]`, matching scalar `int` fields, which are `Long`: tick-based `@Timestamp`/`@Timespan` values are converted to nanoseconds, which do not fit in an `int`.
 
 Examples:
@@ -86,26 +119,24 @@ try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/path/to/rec
       System.out.println("thread id=" + thread.get("javaThreadId") + ", name=" + thread.get("javaName"));
     }
 
-    // ArrayType: arrays of primitives, Strings, maps, or ComplexType elements
-    Object framesVal = Values.get(value, "stackTrace", "frames");
+    // Arrays: Values.get returns the backing Java array, not the ArrayType wrapper.
+    // (Reading the field directly, e.g. map.get("frames"), gives the ArrayType.)
+    Object frames = Values.get(value, "stackTrace", "frames");
     // You can also reference the array elements directly
     Object firstFrame = Values.get(value, "stackTrace", "frames", 0);
-    if (framesVal instanceof ArrayType at) {
-      Object arr = at.getArray();
-      if (arr instanceof Object[] objs) {
-        for (Object el : objs) {
-          if (el instanceof ComplexType cpx) {
-            Map<String, Object> m = cpx.getValue();
-            // use fields from the resolved element
-          } else if (el instanceof Map) {
-            Map<String, Object> m = (Map<String, Object>) el; // inline complex value
-          } else {
-            // primitive wrapper or String
-          }
+    if (frames instanceof Object[] objs) {
+      for (Object el : objs) {
+        if (el instanceof ComplexType cpx) {
+          Map<String, Object> m = cpx.getValue(); // may be null
+          // use fields from the resolved element
+        } else if (el instanceof Map) {
+          Map<String, Object> m = (Map<String, Object>) el; // inline complex value
+        } else {
+          // primitive wrapper or String
         }
-      } else if (arr instanceof long[] longs) { // JFR int and long arrays
-        for (long l : longs) { /* ... */ }
       }
+    } else if (frames instanceof long[] longs) { // JFR int and long arrays
+      for (long l : longs) { /* ... */ }
     }
   });
   p.run();
@@ -308,6 +339,13 @@ For the architecture of the `parser` module, see the [Parser Architecture](parse
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: start a session.
   - `withParserListener(ChunkParserListener)`: observe low-level parse events (advanced, see below).
   - `run()`: parse and invoke registered handlers.
+- `HandlerRegistration` (`AutoCloseable`)
+  - `close()`: deregister the handler. Each registration counts once, so closing one never
+    releases another registration of the same handler. Idempotent; safe from inside a handler, from
+    another thread during `run()`, and after the parser is closed. An event already being dispatched may still
+    reach the handler, at most one per parsing thread. Closing the parser deregisters everything,
+    so this is only needed to stop a handler while the parser stays in use.
+  - `destroy(JafarParser)`: deprecated; use `close()`.
 - `TypedJafarParser`
   - `handle(Class<T>, JFRHandler<T>) -> HandlerRegistration<T>`
   - Static `open(String|Path[, ParsingContext])` are also available, but prefer `JafarParser.newTypedParser(Path)`.
@@ -319,6 +357,8 @@ For the architecture of the `parser` module, see the [Parser Architecture](parse
   - `ComplexType`: wrapper around complex values. `getValue()` resolves to a `Map<String, Object>`. Note that some complex fields may be provided inline as a `Map` without a wrapper.
 - `ParsingContext`
   - `create()`: build a reusable context.
+  - `withParallelism(int)`: a context sharing this one's caches whose parsers use that many chunk
+    parsing threads; `withParallelism(1)` gives sequential, file-ordered handler calls.
   - `newTypedParser(Path)` / `newUntypedParser(Path)`: create parsers bound to the shared context.
   - `uptime()`: cumulative processing time across sessions using the context.
 - `Control`
@@ -326,8 +366,8 @@ For the architecture of the `parser` module, see the [Parser Architecture](parse
   - `abort()`: stop the whole parse (all chunks, no exception thrown). The calling thread gets no
     further event; each other chunk thread finishes at most the one event it is dispatching. A later
     `run()` starts afresh. Full contract in the `Control.abort()` Javadoc.
-  - `chunkInfo()`: chunk metadata with `startTime()`, `duration()`, `size()`, and `convertTicks(long, TimeUnit)`.
-    - Why `convertTicks(...)`? JFR records many time values in chunk-relative ticks. Converting on demand avoids creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. Convert only when needed and to the unit you need.
+  - `chunkInfo()`: chunk metadata with `chunkId()`, `startTime()`, `duration()`, `size()`, and the tick conversions `asDurationNanos(long)`, `asEpochNanos(long)`, `asDuration(long)`, `asInstant(long)`.
+    - Why convert on demand? The typed API hands tick-based fields over as raw ticks. The `long`-returning conversions avoid creating `Instant`/`Duration` objects for every event, minimizing allocation and GC pressure when a scalar value suffices. The untyped API has already converted `@Timestamp(TICKS)` and `@Timespan(TICKS)` fields to nanoseconds; do not convert those again.
 
 ### Typed runtime (JDK support)
 - The typed parser defines small, generated classes at runtime. It automatically picks the best available strategy for the running JDK:
@@ -374,24 +414,27 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to.jfr")))
         }
       });
   p.run();
-  reg.destroy(p);
+  reg.close();
 }
 ```
 
-- Converting JFR ticks to time units
+- Reading time values
 
 ```java
-// Some fields are expressed in JFR ticks. Convert them only when needed.
+// Untyped: @Timestamp(TICKS) and @Timespan(TICKS) fields are already nanoseconds.
 try (UntypedJafarParser p = JafarParser.newUntypedParser(Paths.get("/file.jfr"))) {
   p.handle((type, value, ctl) -> {
-    long ticksObj = value.get("startTime"); // example field holding ticks
-    long nanos = ctl.chunkInfo().convertTicks(n.longValue(), TimeUnit.NANOSECONDS);
-    // Use nanos directly, or wrap as Instant only when necessary
-    Instant startTs = ctl.chunkInfo().startTime().plusNanos(nanos);
-    // use the startTs instant ...
+    Object startTime = value.get("startTime");
+    if (startTime instanceof Long) {
+      long epochNanos = (Long) startTime;
+      // Use epochNanos directly, or wrap as Instant only when necessary
+      Instant startTs = Instant.ofEpochSecond(0, epochNanos);
+    }
   });
   p.run();
 }
+// Typed: tick-based fields are raw ticks; convert with the chunk's clock when needed, e.g.
+//   long nanos = ctl.chunkInfo().asDurationNanos(event.duration());
 ```
 
 - Observing parse lifecycle (low-level)

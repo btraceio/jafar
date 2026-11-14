@@ -242,14 +242,18 @@ parser.handle((type, value, ctl) -> {
 
 ### ArrayType Wrapper
 
-Array fields use the `ArrayType` wrapper:
+Array fields use the `ArrayType` wrapper. You see the wrapper when you read the field from its map
+directly; `Values.get` unwraps it and returns the backing Java array (see
+[Iterating Arrays](#iterating-arrays)):
 
 ```java
 import io.jafar.parser.api.ArrayType;
 
 parser.handle((type, value, ctl) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-        Object framesObj = Values.get(value, "stackTrace", "frames");
+        Object stackTrace = Values.get(value, "stackTrace"); // a Map
+        Object framesObj =
+            stackTrace instanceof Map ? ((Map<?, ?>) stackTrace).get("frames") : null;
 
         if (framesObj instanceof ArrayType) {
             ArrayType arrayType = (ArrayType) framesObj;
@@ -297,23 +301,23 @@ Process all array elements:
 ```java
 parser.handle((type, value, ctl) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-        Object framesObj = Values.get(value, "stackTrace", "frames");
+        // Values.get returns the backing array, not the ArrayType wrapper
+        Object array = Values.get(value, "stackTrace", "frames");
 
-        if (framesObj instanceof ArrayType) {
-            Object array = ((ArrayType) framesObj).getArray();
+        if (array instanceof Object[]) {
+            Object[] frames = (Object[]) array;
 
-            if (array instanceof Object[]) {
-                Object[] frames = (Object[]) array;
+            for (Object frameObj : frames) {
+                if (frameObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> frame = (Map<String, Object>) frameObj;
 
-                for (Object frameObj : frames) {
-                    if (frameObj instanceof Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> frame = (Map<String, Object>) frameObj;
-
-                        Object methodName = Values.get(frame, "method", "name", "string");
-                        System.out.println("  Method: " + methodName);
-                    } else if (frameObj instanceof ComplexType) {
-                        Map<String, Object> frame = ((ComplexType) frameObj).getValue();
+                    Object methodName = Values.get(frame, "method", "name", "string");
+                    System.out.println("  Method: " + methodName);
+                } else if (frameObj instanceof ComplexType) {
+                    // getValue() is null when the reference points at no constant-pool entry
+                    Map<String, Object> frame = ((ComplexType) frameObj).getValue();
+                    if (frame != null) {
                         Object methodName = Values.get(frame, "method", "name", "string");
                         System.out.println("  Method: " + methodName);
                     }
@@ -330,21 +334,18 @@ Handle primitive array types:
 
 ```java
 parser.handle((type, value, ctl) -> {
-    Object arrayObj = Values.get(value, "someField");
+    // Values.get returns the backing array, not the ArrayType wrapper
+    Object array = Values.get(value, "someField");
 
-    if (arrayObj instanceof ArrayType) {
-        Object array = ((ArrayType) arrayObj).getArray();
-
-        if (array instanceof long[]) {
-            // JFR 'int' and 'long' arrays both decode to long[]
-            long[] longs = (long[]) array;
-            for (long l : longs) {
-                System.out.println("Value: " + l);
-            }
-        } else if (array instanceof byte[]) {
-            byte[] bytes = (byte[]) array;
-            System.out.println("Byte array length: " + bytes.length);
+    if (array instanceof long[]) {
+        // JFR 'int' and 'long' arrays both decode to long[]
+        long[] longs = (long[]) array;
+        for (long l : longs) {
+            System.out.println("Value: " + l);
         }
+    } else if (array instanceof byte[]) {
+        byte[] bytes = (byte[]) array;
+        System.out.println("Byte array length: " + bytes.length);
     }
 });
 ```
@@ -548,9 +549,10 @@ that event are skipped. Chunks are parsed in parallel, so `count` can end slight
 at most one extra event per other parsing thread - so cap on your own count if you need an exact
 number.
 
-### Converting Ticks
+### Reading Durations and Timestamps
 
-Convert JFR tick values to time units:
+`@Timespan(TICKS)` and `@Timestamp(TICKS)` fields are already converted: the map holds nanoseconds
+and epoch nanoseconds. Do not convert them again:
 
 ```java
 parser.handle((type, value, ctl) -> {
@@ -558,8 +560,7 @@ parser.handle((type, value, ctl) -> {
         Object durationObj = Values.get(value, "duration");
 
         if (durationObj instanceof Number) {
-            long ticks = ((Number) durationObj).longValue();
-            long nanos = ctl.chunkInfo().convertTicks(ticks, TimeUnit.NANOSECONDS);
+            long nanos = ((Number) durationObj).longValue();
             double ms = nanos / 1_000_000.0;
 
             System.out.printf("Duration: %.2f ms%n", ms);
