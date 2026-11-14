@@ -32,6 +32,21 @@ check() { # check <description> <expected-exit> <expected-grep> <cmd...>
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# Helper: run a command, keep its output and exit status, but turn the status into 3
+# if the output contains the given fixed string.
+not_in_output() { # not_in_output <forbidden> <cmd...>
+    local forbidden="$1"
+    shift
+    local out rc=0
+    out=$("$@" 2>&1) || rc=$?
+    printf '%s\n' "$out"
+    if grep -qF "$forbidden" <<<"$out"; then
+        printf 'output contains forbidden text: %s\n' "$forbidden"
+        return 3
+    fi
+    return "$rc"
+}
+
 # Helper: write changed-file list and body, then run the script.
 case_files=""
 case_body=""
@@ -89,25 +104,49 @@ check "empty statement: blocked" 1 "no parity statement" gate
 case_files=("$JAVA" "go-parser/jfr/parser_test.go"); case_body=""
 check "Java change plus Go test: still one-sided" 1 "no parity statement" gate
 
-# 10. Local mode against a scratch git repo.
-scratch=$(mktemp -d)
-git -C "$scratch" init -q -b main
-# Hermetic: fixture commits must not need the developer's signing agent.
-git -C "$scratch" config commit.gpgSign false
-git -C "$scratch" config tag.gpgSign false
-git -C "$scratch" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
-git -C "$scratch" checkout -q -b feature
-mkdir -p "$scratch/parser-core/src/main/java/io/jafar/parser/impl"
-echo x > "$scratch/parser-core/src/main/java/io/jafar/parser/impl/Foo.java"
-git -C "$scratch" add -A
-git -C "$scratch" -c user.email=t@t -c user.name=t commit -q -m change
-out=$( cd "$scratch" && "$script" --base main 2>&1 ) || rc=$?
-if [ "${rc:-0}" = "1" ] && grep -qF "Add the statement" <<<"$out"; then
-    printf 'ok   local mode: one-sided branch asked for a statement\n'; pass=$((pass + 1))
-else
-    printf 'FAIL local mode: rc=%s out=%s\n' "${rc:-0}" "$out"; fail=$((fail + 1))
-fi
-rm -rf "$scratch"
+# 9a. The failure names the side that changed, not its counterpart (PR-body mode).
+#     Each side is asserted both ways: the right label present, the wrong one absent.
+case_files=("$JAVA"); case_body=""
+check "one-sided Java, no statement: names the Java side" 1 \
+    "untyped parser on the parser-core (Java) side only" gate
+check "one-sided Java, no statement: does not name the Go side" 1 "" \
+    not_in_output "go-parser (Go)" gate
+case_files=("$GO"); case_body=""
+check "one-sided Go, no statement: names the Go side" 1 \
+    "untyped parser on the go-parser (Go) side only" gate
+check "one-sided Go, no statement: does not name the Java side" 1 "" \
+    not_in_output "parser-core (Java)" gate
+
+# 10. Local mode against a scratch git repo: a one-sided branch is asked for a
+#     statement, and the message names the side that changed.
+local_gate() { # local_gate <changed-path>
+    local path="$1" scratch rc=0
+    scratch=$(mktemp -d)
+    git -C "$scratch" init -q -b main
+    # Hermetic: fixture commits must not need the developer's signing agent.
+    git -C "$scratch" config commit.gpgSign false
+    git -C "$scratch" config tag.gpgSign false
+    git -C "$scratch" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+    git -C "$scratch" checkout -q -b feature
+    mkdir -p "$scratch/$(dirname "$path")"
+    echo x > "$scratch/$path"
+    git -C "$scratch" add -A
+    git -C "$scratch" -c user.email=t@t -c user.name=t commit -q -m change
+    ( cd "$scratch" && "$script" --base main ) || rc=$?
+    rm -rf "$scratch"
+    return "$rc"
+}
+
+check "local mode: one-sided branch asked for a statement" 1 "Add the statement" \
+    local_gate "$JAVA"
+check "local mode, Java-only branch: names the Java side" 1 \
+    "untyped parser on the parser-core (Java) side only" local_gate "$JAVA"
+check "local mode, Java-only branch: does not name the Go side" 1 "" \
+    not_in_output "go-parser (Go)" local_gate "$JAVA"
+check "local mode, Go-only branch: names the Go side" 1 \
+    "untyped parser on the go-parser (Go) side only" local_gate "$GO"
+check "local mode, Go-only branch: does not name the Java side" 1 "" \
+    not_in_output "parser-core (Java)" local_gate "$GO"
 
 # 11. An unreadable base ref fails loudly instead of passing as an empty diff (R3).
 out=$("$script" --base origin/does-not-exist 2>&1) && rc=0 || rc=$?
